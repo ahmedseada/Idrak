@@ -50,120 +50,94 @@ internal static partial class VulkanKernels
         }
 
         // First pass of the column reductions: one invocation per (split s, column j) takes rows [s·chunk, (s+1)·chunk) of
-        // the block a[offset + r·ld + j] in order and writes part[(s·cols + j)·3 …]:
+        // the block a[offset + r·ld + j] (chunk a power of two of SplitLeaf-row leaves) and writes part[(s·cols + j)·3 …]:
         //   mode 0: count, mean and Σ(a - mean)² (the moments, for normalization statistics);
         //   mode 1: Σ a and Σ a·b (b may be a again);
         //   mode 2: Σ b·x̂ and Σ b with x̂ = (a - stats[r]) · stats[rows + r] (layer-norm gamma and beta gradients).
+        // In the two-pass reductions' one order (VulkanKernels.Order.cs): each leaf's sums in turn from +0 (its moments:
+        // its mean, then the squares about it), the leaves through a PairwiseStack.
         yield return ("group_partials_columns", () =>
         {
             var k = new KernelBuilder("group_partials_columns", Block);
             var (a, b, stats, part) = (k.Buffer("a"), k.Buffer("b"), k.Buffer("stats"), k.Buffer("part"));
-            var (rows, cols, ld, offset, splits, mode) = (k.PushInt("rows"), k.PushInt("cols"), k.PushInt("ld"), k.PushInt("offset"), k.PushInt("splits"), k.PushInt("mode"));
+            var (rows, cols, ld, offset, chunk, mode) = (k.PushInt("rows"), k.PushInt("cols"), k.PushInt("ld"), k.PushInt("offset"), k.PushInt("chunk"), k.PushInt("mode"));
+            var splits = (rows + chunk - 1) / chunk;
+            var stack = new PairwiseStack(k, PartialStride, ReductionStackEntries, ReductionMerge(k, mode.Eq(0)));
             Grid(k, splits * cols, idx =>
             {
                 var (s, j) = (idx / cols, idx % cols);
-                var chunk = (rows + splits - 1) / splits;
                 var start = s * chunk;
                 var end = k.Min(rows, start + chunk);
                 var at = offset + j;
-                var o = idx * PartialStride;
-                var (s1, s2) = (k.Local(0f), k.Local(0f));
-                k.If(mode.Eq(0), () =>
+                stack.Reset();
+                k.For(k.Int(0), (end - start + SplitLeaf - 1) / SplitLeaf, 1, leaf =>
                 {
-                    k.For(start, end, 1, r => s1.V = s1.V + a[at + r * ld]);
-                    var n = k.Max(end - start, k.Int(0)).ToFloat();
-                    var mean = k.Select(n > 0f, s1.V / k.Max(n, k.Float(1f)), k.Float(0f));
-                    k.For(start, end, 1, r =>
-                    {
-                        var d = a[at + r * ld] - mean;
-                        s2.V = k.Fma(d, d, s2.V);
-                    });
-                    part[o] = n;
-                    part[o + 1] = mean;
-                    part[o + 2] = s2.V;
-                }, () =>
-                {
-                    k.If(mode.Eq(1), () => k.For(start, end, 1, r =>
-                    {
-                        var v = a[at + r * ld];
-                        s1.V = s1.V + v;
-                        s2.V = k.Fma(v, b[at + r * ld], s2.V);
-                    }), () => k.For(start, end, 1, r =>
-                    {
-                        var g = b[at + r * ld];
-                        s1.V = k.Fma(g, (a[at + r * ld] - stats[r]) * stats[rows + r], s1.V);
-                        s2.V = s2.V + g;
-                    }));
-                    part[o] = s1.V;
-                    part[o + 1] = s2.V;
-                    part[o + 2] = k.Float(0f);
+                    var first = start + leaf * SplitLeaf;
+                    var last = k.Min(end, first + SplitLeaf);
+                    stack.Push(leaf, LeafPartials(k, mode, first, last, r => a[at + r * ld], r => b[at + r * ld], r => (a[at + r * ld] - stats[r]) * stats[rows + r]));
                 });
+                var total = stack.Total(ReductionEmpty(k, mode.Eq(0)));
+                var o = idx * PartialStride;
+                for (int i = 0; i < PartialStride; i++)
+                {
+                    part[o + i] = total[i];
+                }
             });
             return k.Build();
         });
 
         // First pass of the group reductions over long contiguous runs: a workgroup per (group g, split s) of the
         // [outer, groups, inner] view (group g holds M = outer · inner elements, element m at ((m / inner) · groups + g) ·
-        // inner + m % inner) takes elements [s·chunk, (s+1)·chunk) and writes part[(g·splits + s)·3 …]: mode 0 the
-        // moments (count, mean, M2: a sum, then the squares about the mean), mode 1 Σ a and Σ a·b.
+        // inner + m % inner) takes elements [s·chunk, (s+1)·chunk) (chunk a power of two of SplitLeaf-element leaves)
+        // and writes part[(g·splits + s)·3 …]: mode 0 the moments (count, mean, M2), mode 1 Σ a and Σ a·b. In the
+        // two-pass reductions' one order: invocation t takes an aligned run of the split's leaves (each leaf's sums in
+        // turn, the leaves through a PairwiseStack), the invocations' results then merged in the pairwise tree of
+        // consecutive invocations (KernelBuilder.ReducePairwise), so any width gives the same bits.
         yield return ("group_partials_rows", () =>
         {
             var k = new KernelBuilder("group_partials_rows", Block);
             var (a, b, part) = (k.Buffer("a"), k.Buffer("b"), k.Buffer("part"));
-            var (outer, groups, inner, splits, mode) = (k.PushInt("outer"), k.PushInt("groups"), k.PushInt("inner"), k.PushInt("splits"), k.PushInt("mode"));
-            var scratch = k.Shared("scratch", Block);
+            var (outer, groups, inner, chunk, mode) = (k.PushInt("outer"), k.PushInt("groups"), k.PushInt("inner"), k.PushInt("chunk"), k.PushInt("mode"));
+            var scratch = Enumerable.Range(0, PartialStride).Select(i => k.Shared("scratch" + i, Block)).ToArray();
+            var moments = mode.Eq(0);
+            var merge = ReductionMerge(k, moments);
+            var stack = new PairwiseStack(k, PartialStride, ReductionStackEntries, merge);
+            var total = outer * inner;
+            var splits = (total + chunk - 1) / chunk;
+            int blockShift = System.Numerics.BitOperations.Log2((uint)Block);
             EachRow(k, groups * splits, w =>
             {
                 var (g, s) = (w / splits, w % splits);
-                var total = outer * inner;
-                var chunk = (total + splits - 1) / splits;
                 var start = s * chunk;
                 var end = k.Min(total, start + chunk);
+                var per = k.Max(k.Int(1), (chunk / SplitLeaf) >> blockShift);
+                var unitBegin = start + k.LocalX * per * SplitLeaf;
+                var unitEnd = k.Min(end, unitBegin + per * SplitLeaf);
                 Val At(Val m) => (m / inner * groups + g) * inner + m % inner;
+                stack.Reset();
+                k.For(k.Int(0), k.Max(k.Int(0), (unitEnd - unitBegin + SplitLeaf - 1) / SplitLeaf), 1, leaf =>
+                {
+                    var first = unitBegin + leaf * SplitLeaf;
+                    var last = k.Min(unitEnd, first + SplitLeaf);
+                    stack.Push(leaf, LeafPartials(k, mode, first, last, m => a[At(m)], m => b[At(m)], null));
+                });
+                var mine = stack.Total(ReductionEmpty(k, moments));
+                var all = k.ReducePairwise(scratch, mine, merge);
                 var o = w * PartialStride;
-                var (s1, s2) = (k.Local(0f), k.Local(0f));
-                k.If(mode.Eq(0), () =>
+                k.If(k.LocalX.Eq(0), () =>
                 {
-                    k.For(start + k.LocalX, end, Block, m => s1.V = s1.V + a[At(m)]);
-                    var sum = k.ReduceSum(scratch, s1.V);
-                    var n = k.Max(end - start, k.Int(0)).ToFloat();
-                    var mean = k.Select(n > 0f, sum / k.Max(n, k.Float(1f)), k.Float(0f));
-                    k.For(start + k.LocalX, end, Block, m =>
+                    for (int i = 0; i < PartialStride; i++)
                     {
-                        var d = a[At(m)] - mean;
-                        s2.V = k.Fma(d, d, s2.V);
-                    });
-                    var m2 = k.ReduceSum(scratch, s2.V);
-                    k.If(k.LocalX.Eq(0), () =>
-                    {
-                        part[o] = n;
-                        part[o + 1] = mean;
-                        part[o + 2] = m2;
-                    });
-                }, () =>
-                {
-                    k.For(start + k.LocalX, end, Block, m =>
-                    {
-                        var at = At(m);
-                        var v = a[at];
-                        s1.V = s1.V + v;
-                        s2.V = k.Fma(v, b[at], s2.V);
-                    });
-                    var sumA = k.ReduceSum(scratch, s1.V);
-                    var sumAB = k.ReduceSum(scratch, s2.V);
-                    k.If(k.LocalX.Eq(0), () =>
-                    {
-                        part[o] = sumA;
-                        part[o + 1] = sumAB;
-                        part[o + 2] = k.Float(0f);
-                    });
+                        part[o + i] = all[i];
+                    }
                 });
             });
             return k.Build();
         });
 
-        // Second pass: one invocation per group g adds its partials p = s·strideS + g·strideG + i (s < splits, i < count)
-        // in that order. Mode 0 merges moments (Chan et al.) into mean (out0), biased variance (out1) and
+        // Second pass: one invocation per group g merges its partials p = s·strideS + g·strideG + i: for each i < count in
+        // turn its splits s < splits in their pairwise tree (aligned subtrees of the leaves), then the i's from the
+        // first. Mode 0 merges moments (Chan et al., the left part first) into mean (out0), biased variance (out1) and
         // 1 / sqrt(variance + eps) (out2); mode 1 adds the first sums to out0 (flags bit 0) and the second to out1 (bit 1).
         yield return ("group_finish", () =>
         {
@@ -171,40 +145,39 @@ internal static partial class VulkanKernels
             var (part, out0, out1, out2) = (k.Buffer("part"), k.Buffer("out0"), k.Buffer("out1"), k.Buffer("out2"));
             var (groups, splits, strideS, strideG, count) = (k.PushInt("groups"), k.PushInt("splits"), k.PushInt("strideS"), k.PushInt("strideG"), k.PushInt("count"));
             var (mode, flags, eps) = (k.PushInt("mode"), k.PushInt("flags"), k.PushFloat("eps"));
+            var moments = mode.Eq(0);
+            var merge = ReductionMerge(k, moments);
+            var stack = new PairwiseStack(k, PartialStride, SplitStackEntries, merge);
             Grid(k, groups, g =>
             {
-                var (n, mean, m2) = (k.Local(0f), k.Local(0f), k.Local(0f));
-                k.For(k.Int(0), splits, 1, s => k.For(k.Int(0), count, 1, i =>
+                var empty = ReductionEmpty(k, moments);
+                var acc = empty.Select(v => k.Local(v)).ToArray();
+                k.For(k.Int(0), count, 1, i =>
                 {
-                    var o = (s * strideS + g * strideG + i) * PartialStride;
-                    k.If(mode.Eq(0), () =>
+                    stack.Reset();
+                    k.For(k.Int(0), splits, 1, s =>
                     {
-                        var nb = part[o];
-                        k.If(nb > 0f, () =>
-                        {
-                            var na = n.V;
-                            var total = na + nb;
-                            var delta = part[o + 1] - mean.V;
-                            mean.V = mean.V + delta * (nb / total);
-                            m2.V = m2.V + part[o + 2] + delta * delta * (na * nb / total);
-                            n.V = total;
-                        });
-                    }, () =>
-                    {
-                        mean.V = mean.V + part[o];
-                        m2.V = m2.V + part[o + 1];
+                        var o = (s * strideS + g * strideG + i) * PartialStride;
+                        stack.Push(s, [.. Enumerable.Range(0, PartialStride).Select(c => part[o + c])]);
                     });
-                }));
-                k.If(mode.Eq(0), () =>
+                    var column = stack.Total(empty);
+                    var merged = merge([.. acc.Select(v => v.V)], column);
+                    for (int c = 0; c < PartialStride; c++)
+                    {
+                        acc[c].V = merged[c];
+                    }
+                });
+                var (n, mean, m2) = (acc[0].V, acc[1].V, acc[2].V);       // mode 1: the two sums in n and mean
+                k.If(moments, () =>
                 {
-                    var variance = k.Select(n.V > 0f, k.Max(m2.V / k.Max(n.V, k.Float(1f)), k.Float(0f)), k.Float(0f));
-                    out0[g] = mean.V;
+                    var variance = k.Select(n > 0f, k.Max(m2 / k.Max(n, k.Float(1f)), k.Float(0f)), k.Float(0f));
+                    out0[g] = mean;
                     out1[g] = variance;
                     out2[g] = 1f / k.Sqrt(variance + eps);
                 }, () =>
                 {
-                    k.If((flags & 1).Ne(0), () => out0[g] = out0[g] + mean.V);
-                    k.If((flags & 2).Ne(0), () => out1[g] = out1[g] + m2.V);
+                    k.If((flags & 1).Ne(0), () => out0[g] = k.AddRounded(out0[g], n));
+                    k.If((flags & 2).Ne(0), () => out1[g] = k.AddRounded(out1[g], mean));
                 });
             });
             return k.Build();
@@ -624,4 +597,79 @@ internal static partial class VulkanKernels
         });
         return k.Build();
     }
+
+    // Entries of a reduction pass's pairwise stack over its leaves: a split's walk of up to 2^12 leaves (the backend's
+    // ReductionPlan keeps it within that).
+    private const int ReductionStackEntries = 13;
+
+    // The partials of one leaf [first, last) of a reduction (mode 0 the moments: count, its mean, the squares about it;
+    // mode 1 Σ a and Σ a·b; mode 2 Σ b·x̂ and Σ b), each in turn from +0, reading element i's a, b and x̂ (null: no mode
+    // 2) only in the modes that use them.
+    private static Val[] LeafPartials(KernelBuilder k, Val mode, Val first, Val last, Func<Val, Val> readA, Func<Val, Val> readB, Func<Val, Val>? readHat)
+    {
+        var (s1, s2) = (k.Local(0f), k.Local(0f));
+        var result = new[] { k.Local(0f), k.Local(0f), k.Local(0f) };
+        k.If(mode.Eq(0), () =>
+        {
+            k.For(first, last, 1, r => s1.V = k.AddRounded(s1.V, readA(r)));
+            var n = (last - first).ToFloat();
+            var mean = s1.V / n;
+            k.For(first, last, 1, r =>
+            {
+                var d = readA(r) - mean;
+                s2.V = k.Fma(d, d, s2.V);
+            });
+            (result[0].V, result[1].V, result[2].V) = (n, mean, s2.V);
+        }, () =>
+        {
+            void Sums() => k.For(first, last, 1, r =>
+            {
+                var v = readA(r);
+                s1.V = k.AddRounded(s1.V, v);
+                s2.V = k.Fma(v, readB(r), s2.V);
+            });
+
+            if (readHat is null)
+            {
+                Sums();
+            }
+            else
+            {
+                k.If(mode.Eq(1), Sums, () => k.For(first, last, 1, r =>
+                {
+                    var g = readB(r);
+                    s1.V = k.Fma(g, readHat(r), s1.V);
+                    s2.V = k.AddRounded(s2.V, g);
+                }));
+            }
+
+            (result[0].V, result[1].V) = (s1.V, s2.V);
+        });
+        return [.. result.Select(v => v.V)];
+    }
+
+    // The merge of two reduction partials: moments (Chan et al.) with `moments`, else the sums.
+    private static Func<Val[], Val[], Val[]> ReductionMerge(KernelBuilder k, Val moments) => (left, right) =>
+    {
+        var result = left.Select(_ => k.Local(0f)).ToArray();
+        k.If(moments, () =>
+        {
+            var chan = MomentsMerge(k, left, right);
+            for (int i = 0; i < result.Length; i++)
+            {
+                result[i].V = chan[i];
+            }
+        }, () =>
+        {
+            var sums = SumsMerge(k)(left, right);
+            for (int i = 0; i < result.Length; i++)
+            {
+                result[i].V = sums[i];
+            }
+        });
+        return [.. result.Select(r => r.V)];
+    };
+
+    // An empty reduction partial: no elements (moments) or -0 sums.
+    private static Val[] ReductionEmpty(KernelBuilder k, Val moments) => [k.Select(moments, k.Float(0f), k.Float(-0f)), k.Float(-0f), k.Float(-0f)];
 }

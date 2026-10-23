@@ -105,6 +105,9 @@ internal sealed partial class KernelBuilder
     /// <summary>Whether this kernel's reductions finish in subgroups (see <see cref="t_butterfly"/>).</summary>
     public bool Subgroups => _butterfly > 0;
 
+    /// <summary>The butterfly width this kernel's reductions finish with (0: workgroup memory alone; see <see cref="t_butterfly"/>).</summary>
+    public int Butterfly => _butterfly;
+
     // ------------------------------------------------------------------ declarations
 
     /// <summary>The next storage buffer (binding = how many were declared before it).</summary>
@@ -348,6 +351,16 @@ internal sealed partial class KernelBuilder
         return sum;
     }
 
+    /// <summary>a · b rounded on its own: never fused into the addition it feeds (NoContraction), for sums whose every
+    /// term must round the same way in every kernel.</summary>
+    public Val MulRounded(Val a, Val b)
+    {
+        Expect(a, ScalarKind.Float);
+        var product = a * b;
+        _m.Decorate(product.Id, Decoration.NoContraction);
+        return product;
+    }
+
     /// <summary>The index of the highest set bit of an integer (-1 for 0).</summary>
     public Val FindMsb(Val x) => Ext(Glsl.FindUMsb, x);
 
@@ -505,6 +518,65 @@ internal sealed partial class KernelBuilder
         }
 
         var result = acc.V;
+        Barrier();                                                       // everyone has read the scratch before it is reused
+        return result;
+    }
+
+    /// <summary>
+    /// The merge of <paramref name="values"/> over the workgroup's x invocations (a power of two) in the pairwise tree of
+    /// consecutive invocations: invocation 2i with 2i + 1, then aligned pairs of those, and so on, the lower invocation's
+    /// value always the left operand of <paramref name="merge"/> (which need not commute). So the invocations' values
+    /// stand for consecutive, aligned parts of a sequence, and the result is the sequence's own tree whatever the width.
+    /// Returned to every invocation through <paramref name="scratch"/> (one array per value, each at least the width
+    /// long). With subgroups the levels below the butterfly run as xor shuffles over the same pairs (each pair computes
+    /// one merge with its operands in order), the rest through workgroup memory. Uniform control flow only.
+    /// </summary>
+    public Val[] ReducePairwise(SharedArray[] scratch, Val[] values, Func<Val[], Val[], Val[]> merge)
+    {
+        if (_localY * _localZ != 1 || (_localX & (_localX - 1)) != 0 || scratch.Length != values.Length || scratch.Any(s => s.Length < _localX))
+        {
+            throw new InvalidOperationException($"{_name}: reductions need a 1-D power-of-two workgroup and scratch as wide for each value.");
+        }
+
+        int butterfly = Math.Min(_butterfly, _localX);
+        var lane = LocalX;
+        var acc = values.Select(v => Local(v)).ToArray();
+        for (int stride = 1; stride < butterfly; stride *= 2)
+        {
+            var other = acc.Select(a => SubgroupShuffleXor(a.V, (uint)stride)).ToArray();
+            var upper = (lane & stride).Ne(0);                           // this invocation holds the right operand
+            var left = acc.Select((a, i) => Select(upper, other[i], a.V)).ToArray();
+            var right = acc.Select((a, i) => Select(upper, a.V, other[i])).ToArray();
+            var merged = merge(left, right);
+            for (int i = 0; i < acc.Length; i++)
+            {
+                acc[i].V = merged[i];
+            }
+        }
+
+        for (int i = 0; i < acc.Length; i++)
+        {
+            scratch[i][lane] = acc[i].V;
+        }
+
+        Barrier();
+        for (int stride = Math.Max(butterfly, 1); stride < _localX; stride *= 2)
+        {
+            int s = stride;
+            If((lane & (2 * s - 1)).Eq(0), () =>
+            {
+                var left = scratch.Select(a => a[lane]).ToArray();
+                var right = scratch.Select(a => a[lane + s]).ToArray();
+                var merged = merge(left, right);
+                for (int i = 0; i < scratch.Length; i++)
+                {
+                    scratch[i][lane] = merged[i];
+                }
+            });
+            Barrier();
+        }
+
+        var result = scratch.Select(a => a[Int(0)]).ToArray();
         Barrier();                                                       // everyone has read the scratch before it is reused
         return result;
     }

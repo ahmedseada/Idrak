@@ -11,7 +11,7 @@ namespace Idrak.Gpu.Vulkan;
 // Storages that fit one binding take the path they always did (bound whole, one dispatch).
 //
 //   - the packed products (int8, int4, bfloat16): windows of rows of k, a whole number of splits each; each window's
-//     dispatch writes its splits' partial sums, which gemv_reduce adds in split order (VulkanKernels.PackedGemv);
+//     dispatch writes its splits' partial sums, which gemv_reduce finishes in the products' one order (VulkanKernels.Order.cs);
 //   - the embedding gathers (float32, bfloat16): windows of table rows; each dispatch writes the outputs whose row its
 //     window holds;
 //   - the dequantizations: windows of rows of k of the packed weights and of the float32 output alike.
@@ -87,9 +87,9 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ packed products
 
-    // Rows of k a split of a packed product's chunk is a multiple of when its weights are windowed: int4's scale groups
-    // (32 rows), else any row.
-    private static int WindowUnit(VulkanKernels.PackedFormat format) => format == VulkanKernels.PackedFormat.Int4 ? VulkanKernels.GemvChunkAlign : 1;
+    // Rows of k a window of a packed product's weights is a multiple of: a leaf of the packed products' one order
+    // (GemvChunkAlign rows, also int4's scale groups), so splits of whole leaves fit windows.
+    private static int WindowUnit(VulkanKernels.PackedFormat format) => VulkanKernels.GemvChunkAlign;
 
     // Rows of x per group of a windowed packed product whose x and y windows start at aligned offsets (rows of k and of
     // n floats): the step between such rows.
@@ -135,47 +135,53 @@ internal sealed partial class VulkanBackend
         return most / step * step;
     }
 
-    // A packed product over weights in windows of `window` rows of k: the chunk (rows per split, a multiple of the
-    // format's unit) is made to divide the window, at most `chunk` and with at most maxComputeWorkGroupCount[1] splits
-    // per window (one split per window when the partial sums of more would not fit a binding); then for each group of
-    // rows of x whose partial sums fit a binding (all of them unless m is large), one dispatch per window writes its
-    // splits' partial sums, and gemv_reduce adds them in split order.
-    private void RunPackedWindows(VulkanKernels.PackedFormat format, string kernel, int width, uint columnBlocks, int blockRows, int chunk, int window,
+    // A packed product over weights in windows of `window` rows of k, in the packed products' one order
+    // (VulkanKernels.Order.cs): splits of a power of two of k's leaves each (chunk rows), the one nearest the choice's
+    // that fits a window, the stack (GemvPlan's bounds), the workgroup count along y per window and partial sums of at
+    // least one aligned group of rows of x; the window cut to a whole number of chunks (its starts stay aligned: chunks
+    // and alignment steps are powers of two). Then for each group of rows of x whose partial sums fit a binding (all of
+    // them unless m is large), one dispatch per window writes its splits' partial sums, and gemv_reduce finishes the
+    // tree. False when no chunk fits.
+    private bool RunPackedWindows(VulkanKernels.PackedFormat format, int block, int choice, string kernel, uint columnBlocks, int window,
         Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
     {
-        int unit = WindowUnit(format), units = window / unit, want = Math.Max(1, chunk / unit), parts = 0;
-        for (int d = Math.Min(want, units); d >= 1 && parts == 0; d--)
+        const int Leaf = VulkanKernels.GemvChunkAlign;
+        int width = WidthOf(choice), blockRows = VulkanKernels.GemvRowBlocks[block], slices = width / VulkanKernels.GemvWordCounts[choice & 7];
+        int entries = VulkanKernels.GemvStackEntries(format, blockRows);
+        long tree = (long)System.Numerics.BitOperations.RoundUpToPowerOf2((ulong)Math.Max(1, ((long)k + Leaf - 1) / Leaf));
+        long fewest = Math.Max(1, tree / ((long)slices << entries));
+        int wanted = System.Numerics.BitOperations.Log2((ulong)(tree / Math.Clamp(LargestPowerOfTwo(Math.Max(1, (choice & Rest) >> 3)), fewest, Math.Max(fewest, tree / slices))));
+        int chunk = 0, splits = 0, perWindow = 0;
+        long group = 0;
+        int best = int.MaxValue;
+        for (int d = 0; (long)Leaf << d <= Math.Min(window, tree * Leaf) && tree >> d >= fewest; d++)
         {
-            parts = units % d == 0 && units / d <= Limits.MaxGroupsY ? d : 0;
+            int c = Leaf << d, cut = window / c * c, total = (k + c - 1) / c;
+            long rowsPer = total == 1 ? m : PartialRows(total, m, n, k);
+            int distance = Math.Abs(d - wanted) * 2 + (d > wanted ? 1 : 0);
+            if (cut / c <= Limits.MaxGroupsY && rowsPer > 0 && distance < best)
+            {
+                (best, chunk, splits, perWindow, group) = (distance, c, total, cut / c, rowsPer);
+            }
         }
 
-        for (int d = want + 1; d <= units && parts == 0; d++)
+        if (chunk == 0)
         {
-            parts = units % d == 0 && units / d <= Limits.MaxGroupsY ? d : 0;
+            return false;
         }
 
-        chunk = Math.Max(parts, 1) * unit;
-        int splits = (k + chunk - 1) / chunk;
-        long group = splits == 1 ? m : PartialRows(splits, m, n, k);
-        if (group <= 0 || group < m && PartialRows((k + window - 1) / window, m, n, k) > group)
-        {
-            chunk = window;                                                    // one split per window: fewer partial sums
-            splits = (k + chunk - 1) / chunk;
-            group = splits == 1 ? m : PartialRows(splits, m, n, k);            // PackedWindowRows checked one step fits
-        }
-
-        int perWindow = window / chunk, rowsPer = (int)group;
+        int rowsPerGroup = (int)group;
         long rowBytes = ((long)n + VulkanKernels.ColumnsPerWord(format) - 1) / VulkanKernels.ColumnsPerWord(format) * 4;
         var dispatched = width == Width ? Kernel(kernel) : KernelAt(kernel, width, Limits.SubgroupReductions);
-        var output = splits == 1 ? null : Allocate(splits * rowsPer * n, zeroed: false);
+        var output = splits == 1 ? null : Allocate(splits * rowsPerGroup * n, zeroed: false);
         try
         {
-            Span<byte> b = stackalloc byte[24];
+            Span<byte> b = stackalloc byte[32];
             Span<long> at = stackalloc long[4];
             Span<byte> reduceBytes = stackalloc byte[12];
-            for (int r0 = 0; r0 < m; r0 += rowsPer)
+            for (int r0 = 0; r0 < m; r0 += rowsPerGroup)
             {
-                int mm = Math.Min(rowsPer, m - r0);
+                int mm = Math.Min(rowsPerGroup, m - r0);
                 uint rowBlocks = (uint)((mm + blockRows - 1) / blockRows);
                 long xAt = (long)r0 * k * 4, yAt = (long)r0 * n * 4;
                 var target = output ?? y;
@@ -183,7 +189,7 @@ internal sealed partial class VulkanBackend
                 for (int first = 0; first < splits; first += perWindow)
                 {
                     long row = (long)first * chunk;
-                    var push = new Push(b).I(mm).I(n).I(k).I(chunk).I(first).I(splits).Bytes;
+                    var push = new Push(b).I(mm).I(n).I(k).I(chunk).I(first).I(splits).I(Leaf).I(0).Bytes;
                     uint count = (uint)Math.Min(perWindow, splits - first);
                     at[0] = xAt;
                     at[1] = row * rowBytes;
@@ -224,6 +230,8 @@ internal sealed partial class VulkanBackend
         {
             output?.Release();                                                 // reused in queue order
         }
+
+        return true;
     }
 
     private static long Gcd(long a, long b)
@@ -303,7 +311,7 @@ internal sealed partial class VulkanBackend
     // A dequantization of packed weights [k, n] (or of an output) larger than a binding: one dispatch per window of rows
     // of k of the packed weights, the output (and int4's scales) alike. False when int8's scales do not fit a binding or
     // no window fits.
-    private bool DequantizeWindows(VulkanKernels.PackedFormat format, Storage packed, Storage? scales, Storage w, int k, int n)
+    private bool DequantizeWindows(VulkanKernels.PackedFormat format, Storage packed, Storage? scales, Storage w, int k, int n, bool unscaled = false)
     {
         bool int4 = format == VulkanKernels.PackedFormat.Int4;
         long words = ((long)n + VulkanKernels.ColumnsPerWord(format) - 1) / VulkanKernels.ColumnsPerWord(format);
@@ -321,12 +329,12 @@ internal sealed partial class VulkanBackend
             _ => "bf16_dequantize",
         };
         var dispatched = Kernel(name);
-        Span<byte> b = stackalloc byte[8];
+        Span<byte> b = stackalloc byte[12];
         Span<long> at = stackalloc long[3];
         for (long row = 0; row < k; row += window)
         {
             int rows = (int)Math.Min(window, k - row);
-            var push = new Push(b).I(rows).I(n).Bytes;
+            var push = format == VulkanKernels.PackedFormat.Int8 ? new Push(b).I(rows).I(n).I(unscaled ? 1 : 0).Bytes : new Push(b).I(rows).I(n).Bytes;
             uint groups = GridGroups((long)rows * n);
             if (scales is null)
             {

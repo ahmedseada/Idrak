@@ -12,6 +12,12 @@ internal static partial class Tests
     [
         ("vulkan reductions: reductions finished in subgroups give the bits of reductions through workgroup memory alone (softmax, log-softmax, RMS norm with and without a gain, layer norm fused and for training with its statistics, a whole sum), at the device's width", VulkanReductionOrder),
         ("vulkan reductions: a row's sums have one order fixed by its length: every row kernel gives the same bits at every width the device allows, with and without subgroups, through a workgroup and through one invocation (rows of 1, 40, 1025 and 3001 columns)", VulkanRowOrder),
+        ("vulkan reductions: the two-pass reductions give the same bits for every split count, at every width, with and without subgroups (column sums, layer-norm gamma and beta gradients, group moments and sums through columns and through a workgroup per group)", VulkanOrderSplits),
+        ("vulkan product order: packed products (int8, int4, bfloat16; 1, 3 and 8 rows; weights in windows of a binding) give the same bits for every word variant and split count of k, at every width, with and without subgroups", VulkanOrderGemv),
+        ("vulkan product order: fused packed products (three sharing an input, gate and up, the gated down projection, projection + residual + RMS norm) give the same bits for every word variant and split count, at every width, with and without subgroups", VulkanOrderFused),
+        ("vulkan product order: float32 products (small, tiled, register-blocked; transposes; beta 0 and 0.5) give the same bits at every width, with and without subgroups", VulkanOrderMatMul),
+        ("vulkan product order: prompt-sized packed products (few-rows kernels, expanded weights through each float32 kernel, tiled) give the same bits at every width, with and without subgroups", VulkanOrderPrompt),
+        ("vulkan product order: decoding attention (float32, bfloat16, int8 caches; head sizes 6 to 256; windows and soft-caps) gives the same bits for every split count of the cached positions, at every width, with and without subgroups", VulkanOrderAttention),
     ];
 
     private static void VulkanReductionOrder(Device device)

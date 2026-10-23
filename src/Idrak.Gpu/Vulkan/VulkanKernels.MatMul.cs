@@ -35,7 +35,7 @@ internal static partial class VulkanKernels
                 var (bStart, bStep) = (k.Select(tb, col * depth, col), k.Select(tb, k.Int(1), n));
                 var acc = k.Local(0f);
                 k.For(k.Int(0), depth, 1, kk => acc.V = k.Fma(a[aBase + aStart + kk * aStep], b[bBase + bStart + kk * bStep], acc.V));
-                k.If(beta.Eq(0), () => c[o] = acc.V, () => c[o] = acc.V + beta * c[o]);
+                k.If(beta.Eq(0), () => c[o] = acc.V, () => c[o] = k.Fma(beta, c[o], acc.V));
             });
             return k.Build();
         });
@@ -55,19 +55,32 @@ internal static partial class VulkanKernels
             }
         }
 
-        // y[i] = Σ_s part[s, i] over the splits in order (· scales[i % n] for int8): one invocation per output.
+        // y[i] = Σ_s part[s, i] over the splits in their pairwise tree (· scales[i % n] for int8): one invocation per output.
         yield return ("gemv_reduce", () => GemvReduce("gemv_reduce", scaled: false));
         yield return ("int8_gemv_reduce", () => GemvReduce("int8_gemv_reduce", scaled: true));
 
+        // y[i] = y[i] · scales[i % n], the product rounded on its own (int8's column scales on finished sums).
+        yield return ("scale_columns", () =>
+        {
+            var k = new KernelBuilder("scale_columns", Block);
+            var (scales, y) = (k.Buffer("scales"), k.Buffer("y"));
+            var (count, n) = (k.PushInt("count"), k.PushInt("n"));
+            Grid(k, count, i => y[i] = k.MulRounded(y[i], scales[i % n]));
+            return k.Build();
+        });
+
+        // w[i] = the int8 weight of row r, column j times its column's scale; with unscaled ≠ 0 the weight alone (the
+        // prompt-sized products' expanded weights: int8's column scales multiply the finished sums, as the packed kernels do).
         yield return ("int8_dequantize", () =>
         {
             var k = new KernelBuilder("int8_dequantize", Block);
             var (q, scales, w) = (k.Buffer("q"), k.Buffer("scales"), k.Buffer("w"));
-            var (rows, n) = (k.PushInt("k"), k.PushInt("n"));
+            var (rows, n, unscaled) = (k.PushInt("k"), k.PushInt("n"), k.PushInt("unscaled"));
             Grid(k, rows * n, i =>
             {
                 var (r, j) = (i / n, i % n);
-                w[i] = Int8At(k, q, r * ((n + 3) / 4), j) * scales[j];
+                var v = Int8At(k, q, r * ((n + 3) / 4), j);
+                w[i] = k.Select(unscaled.Ne(0), v, k.MulRounded(v, scales[j]));
             });
             return k.Build();
         });
@@ -253,7 +266,7 @@ internal static partial class VulkanKernels
                     k.If((row < m) & (col < n), () =>
                     {
                         var o = bi * m * n + row * n + col;
-                        k.If(beta.Eq(0), () => c[o] = value.V, () => c[o] = value.V + beta * c[o]);
+                        k.If(beta.Eq(0), () => c[o] = value.V, () => c[o] = k.Fma(beta, c[o], value.V));
                     });
                 }
             }
@@ -308,7 +321,7 @@ internal static partial class VulkanKernels
             k.If((row < m) & (col < n), () =>
             {
                 var o = bi * m * n + row * n + col;
-                k.If(beta.Eq(0), () => c[o] = acc.V, () => c[o] = acc.V + beta * c[o]);
+                k.If(beta.Eq(0), () => c[o] = acc.V, () => c[o] = k.Fma(beta, c[o], acc.V));
             });
         }, k.GroupsZ);
         return k.Build();
@@ -357,183 +370,33 @@ internal static partial class VulkanKernels
     //   int4: signed nibbles, eight per word (⌈n / 8⌉ words, nibble c = column 8w + c); w = nibble · scales[kk / 32, j]
     //         (scale rows of 8·⌈n / 8⌉ values per 32 rows of k), each weight scaled before its multiply-add;
     //   bfloat16: two per word (⌈n / 2⌉ words, the even column in the low half).
-    // Grid: x = ⌈words / L⌉ column blocks, y = splits of k, z = ⌈m / rows⌉ row blocks. A workgroup of W (the width) is
-    // L lanes (consecutive words of a row of k: 32 lanes read 128 contiguous bytes) × S = W / L slices of its split's
-    // rows [s · chunk, min(k, (s + 1) · chunk)), s = first + y (chunk a multiple of 32, from the host): slice t takes
-    // rows ≡ t (mod S), so the workgroup reads S consecutive rows of L words at a time, and each word an invocation reads
-    // feeds rows × (columns per word) multiply-adds kept in registers. Then the slices' sums are added in slice order
-    // through workgroup memory (`batch` sums per lane per round, two barriers a round) and stored: to y[r, j] when the
-    // product has one split in all (`splits`; int8 scaled), else to part[s, r, j] for gemv_reduce. Lanes past the last
-    // word read the last word again and store nothing; rows of the block past m read row m - 1 and store nothing.
-    //
-    // The weights' binding (and int4's scales') starts at row first · chunk of k: a dispatch over one window of weights
-    // larger than a binding (VulkanBackend.LargeStorage.cs) takes the splits of that window; otherwise first is 0.
-    //
-    // Workgroup memory: partial[b · W + slice · L + lane] is written by invocation (slice, lane) only, after a barrier
-    // that ends the previous round's reads; it is read after the next barrier.
+    // Grid: x = ⌈words / L⌉ column blocks, y = splits of k, z = ⌈m / rows⌉ row blocks (sequential: ⌈m / (rows · S)⌉). A
+    // workgroup of W (the width) is L lanes (consecutive words of a row of k: 32 lanes read 128 contiguous bytes) × S = W /
+    // L slices; the sums in the packed products' one order (GemvBody, VulkanKernels.Order.cs): each slice takes an
+    // aligned run of leaves of the split's rows, and each word an invocation reads feeds rows × (columns per word)
+    // multiply-adds kept in registers. The results are stored to y[r, j] when the product has one split in all (`splits`;
+    // int8 scaled), else to part[s, r, j] for gemv_reduce. Push: m, n, k, chunk (rows per split, a power of two of
+    // leaves), first (the window's first split), splits, leaf (rows per leaf: 32, or the whole k with sequential),
+    // sequential (the prompt-sized products' order: one split, slices on rows of x).
     private static SpirvKernel PackedGemv(string name, PackedFormat format, int rows, int lanes)
     {
-        int threads = Block, slices = threads / lanes, laneShift = System.Numerics.BitOperations.Log2((uint)lanes);
-        int perWord = ColumnsPerWord(format);
-        int sums = rows * perWord, batch = Math.Min(sums, 8);
-        var k = new KernelBuilder(name, threads);
+        var k = new KernelBuilder(name, Block);
         var x = k.Buffer("x");
         var q = k.Buffer(format == PackedFormat.BFloat16 ? "packed" : "q");
         var scales = format == PackedFormat.BFloat16 ? null : k.Buffer("scales");
         var y = k.Buffer("y");
         var (m, n, depth, chunk) = (k.PushInt("m"), k.PushInt("n"), k.PushInt("k"), k.PushInt("chunk"));
         var (firstSplit, splits) = (k.PushInt("first"), k.PushInt("splits"));
-        var partial = k.Shared("partial", threads * batch);
-        var tid = k.LocalX;
-        var (lane, slice) = (tid & (lanes - 1), tid >> laneShift);
-        var words = (n + (perWord - 1)) / perWord;
-        var wordAt = k.Min(k.GroupX * lanes + lane, words - 1);
+        var (leaf, sequential) = (k.PushInt("leaf"), k.PushInt("sequential"));
         var split = firstSplit + k.GroupY;
-        var baseRow = firstSplit * chunk;                                   // the row of k the weights' binding starts at
-        var kBegin = split * chunk;
-        var kEnd = k.Min(depth, kBegin + chunk);
-        var rowBase = k.GroupZ * rows;
-        var xRows = new Val[rows];
-        for (int r = 0; r < rows; r++)
-        {
-            xRows[r] = k.Min(rowBase + r, m - 1) * depth;
-        }
-
-        var acc = new Var[sums];
-        for (int i = 0; i < sums; i++)
-        {
-            acc[i] = k.Local(0f);
-        }
-
-        // The weights of word `bits` (int4: times the group's scales), then every row's multiply-adds for row kk of k.
-        void Accumulate(Val kk, Val bits, Val[]? groupScales)
-        {
-            var w = new Val[perWord];
-            for (int c = 0; c < perWord; c++)
-            {
-                w[c] = format switch
-                {
-                    PackedFormat.Int8 => ((bits << (24 - 8 * c)) >> 24).ToFloat(),
-                    PackedFormat.Int4 => ((bits << (28 - 4 * c)) >> 28).ToFloat() * groupScales![c],
-                    _ => c == 0 ? (bits.AsUInt() << 16).AsFloat() : (bits.AsUInt() & k.UInt(0xFFFF0000u)).AsFloat(),
-                };
-            }
-
-            for (int r = 0; r < rows; r++)
-            {
-                var xv = x[xRows[r] + kk];
-                for (int c = 0; c < perWord; c++)
-                {
-                    acc[r * perWord + c].V = k.Fma(xv, w[c], acc[r * perWord + c].V);
-                }
-            }
-        }
-
-        Val Word(Val kk) => q.Int((kk - baseRow) * words + wordAt);
-
-        if (format == PackedFormat.Int4)
-        {
-            // Group by group (32 rows sharing scales; kBegin is a multiple of 32): this invocation's eight scales once per
-            // group, then its 32 / S rows of the group (fewer in the last group of k).
-            k.For(kBegin / 32, (kEnd + 31) / 32, 1, g =>
-            {
-                var groupScales = new Val[perWord];
-                for (int c = 0; c < perWord; c++)
-                {
-                    groupScales[c] = scales![(g - baseRow / 32) * (words * 8) + wordAt * 8 + c];
-                }
-
-                var first = g * 32 + slice;
-                var end = k.Min(g * 32 + 32, kEnd);
-                k.If((g * 32 + 32).Eq(end), () =>
-                {
-                    var loaded = new Val[32 / slices];
-                    for (int u = 0; u < loaded.Length; u++)
-                    {
-                        loaded[u] = Word(first + u * slices);
-                    }
-
-                    for (int u = 0; u < loaded.Length; u++)
-                    {
-                        Accumulate(first + u * slices, loaded[u], groupScales);
-                    }
-                }, () => k.For(first, end, slices, kk => Accumulate(kk, Word(kk), groupScales)));
-            });
-        }
-        else
-        {
-            // Four rows per step (their words loaded before any is used), then the rest one by one.
-            const int Unroll = 4;
-            var kk = k.Local(kBegin + slice);
-            k.While(() => kk.V + (Unroll - 1) * slices < kEnd, () =>
-            {
-                var at = kk.V;
-                var loaded = new Val[Unroll];
-                for (int u = 0; u < Unroll; u++)
-                {
-                    loaded[u] = Word(at + u * slices);
-                }
-
-                for (int u = 0; u < Unroll; u++)
-                {
-                    Accumulate(at + u * slices, loaded[u], null);
-                }
-
-                kk.V = at + Unroll * slices;
-            });
-            k.While(() => kk.V < kEnd, () =>
-            {
-                var at = kk.V;
-                Accumulate(at, Word(at), null);
-                kk.V = at + slices;
-            });
-        }
-
-        // The slices' sums, `batch` per lane per round: output o < L · batch (invocations o, o + W, …) adds sum b = o / L
-        // of lane o % L over the S slices in order and stores it.
         var single = splits.Eq(1);
-        for (int round = 0; round < sums / batch; round++)
-        {
-            if (round > 0)
-            {
-                k.Barrier();                                                   // the previous round's reads are done
-            }
-
-            for (int b = 0; b < batch; b++)
-            {
-                partial[k.Int(b * threads) + tid] = acc[round * batch + b].V;
-            }
-
-            k.Barrier();
-            int first = round * batch;
-            for (int pass = 0; pass * threads < lanes * batch; pass++)
-            {
-                var o = tid + pass * threads;
-                k.If(o < lanes * batch, () =>
-                {
-                    var (l, b) = (o & (lanes - 1), o >> laneShift);
-                    var total = partial[b * threads + l];
-                    for (int s = 1; s < slices; s++)
-                    {
-                        total = total + partial[b * threads + k.Int(s * lanes) + l];
-                    }
-
-                    var index = first + b;
-                    var (r, c) = (index / perWord, index % perWord);
-                    var (row, j) = (rowBase + r, (k.GroupX * lanes + l) * perWord + c);
-                    k.If((row < m) & (j < n), () =>
-                    {
-                        var value = format == PackedFormat.Int8 ? k.Select(single, total * scales![j], total) : total;
-                        y[(split * m + row) * n + j] = value;
-                    });
-                });
-            }
-        }
-
+        var body = new GemvBody(k, format, rows, lanes, m, depth, chunk, k.GroupZ, unroll: true, i => x[i], firstSplit, leaf, sequential.Ne(0));
+        body.Product(q, scales, n, (_, row, j, total) =>
+            y[(split * m + row) * n + j] = format == PackedFormat.Int8 ? k.Select(single, k.MulRounded(total, scales![j]), total) : total);
         return k.Build();
     }
 
-    // y[i] = Σ_s part[s · count + i] for s < splits, in split order (int8: times scales[i % n]).
+    // y[i] = Σ_s part[s · count + i] for s < splits in their pairwise tree (int8: times scales[i % n]).
     private static SpirvKernel GemvReduce(string name, bool scaled)
     {
         var k = new KernelBuilder(name, Block);
@@ -541,11 +404,11 @@ internal static partial class VulkanKernels
         var scales = scaled ? k.Buffer("scales") : null;
         var y = k.Buffer("y");
         var (count, n, splits) = (k.PushInt("count"), k.PushInt("n"), k.PushInt("splits"));
+        var stack = new PairwiseStack(k, 1, SplitStackEntries, SumsMerge(k));
         Grid(k, count, i =>
         {
-            var total = k.Local(part[i]);
-            k.For(k.Int(1), splits, 1, s => total.V = total.V + part[s * count + i]);
-            y[i] = scales is null ? total.V : total.V * scales[i % n];
+            var total = Pairwise(k, stack, splits, s => part[s * count + i]);
+            y[i] = scales is null ? total : k.MulRounded(total, scales[i % n]);
         });
         return k.Build();
     }

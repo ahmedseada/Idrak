@@ -47,23 +47,42 @@ internal sealed partial class VulkanBackend
     // Whether the device binds as many storages per stage as the kernel declares (maxPerStageDescriptorStorageBuffers).
     private bool Bindable(string kernel) => Kernel(kernel).Bindings <= _physical.Properties.MaxPerStageDescriptorStorageBuffers;
 
-    // Splits of k and rows per split for a packed product's choice (splits · 8 + word variant in its rest): chunks a
-    // multiple of 32 rows; one split where the splits exceed the device's workgroup count along y or their partial sums
-    // (`partial` floats per split) exceed a binding.
-    private (int Splits, int Chunk) GemvPlan(int choice, int k, long partial)
+    // Splits of k and rows per split for a packed product's choice (splits · 8 + word variant in its rest) in the packed
+    // products' one order (VulkanKernels.Order.cs): k in leaves of GemvChunkAlign rows, P the power of two at or above
+    // their count; a split takes P / splits of them (an aligned subtree), each of its `slices` slices P / (splits ·
+    // slices), at least one and at most what the kernel's pairwise stack walks (2^entries). The choice's splits
+    // are kept within that (any choice gives the same sums; it decides only how the work is spread); fewer where their
+    // partial sums (`partial` floats per split) exceed a binding or the device's workgroup count along y, down to the
+    // fewest the stack allows; (0, 0) when even those do not fit.
+    private (int Splits, int Chunk) GemvPlan(int choice, int k, long partial, int slices, int entries)
     {
-        const int Align = VulkanKernels.GemvChunkAlign;
-        int splits = Math.Max(1, (choice & Rest) >> 3);
-        int chunk = Math.Max(Align, ((k + splits - 1) / splits + Align - 1) / Align * Align);
-        splits = Math.Max(1, (k + chunk - 1) / chunk);
-        if (splits > Limits.MaxGroupsY || splits * partial > int.MaxValue || BlockBytes((int)Math.Min(int.MaxValue, splits * partial)) > MaxStorageBytes)
+        const int Leaf = VulkanKernels.GemvChunkAlign;
+        long tree = (long)BitOperations.RoundUpToPowerOf2((ulong)Math.Max(1, ((long)k + Leaf - 1) / Leaf));
+        long fewest = Math.Max(1, tree / ((long)slices << entries));
+        long most = Math.Max(fewest, tree / slices);
+        long wanted = Math.Clamp(LargestPowerOfTwo(Math.Max(1, (choice & Rest) >> 3)), fewest, most);
+        for (long splits = wanted; splits >= fewest; splits /= 2)
         {
-            splits = 1;
-            chunk = Math.Max(Align, (k + Align - 1) / Align * Align);
+            long chunk = tree / splits * Leaf, dispatched = (k + chunk - 1) / chunk;
+            if (dispatched <= Limits.MaxGroupsY && (dispatched == 1 || dispatched * partial <= int.MaxValue
+                && BlockBytes((int)(dispatched * partial)) <= MaxStorageBytes))
+            {
+                return ((int)dispatched, (int)Math.Min(chunk, int.MaxValue / 2));
+            }
         }
 
-        return (splits, chunk);
+        return (0, 0);
     }
+
+    // GemvPlan of a choice for a kernel of `format` and row block `block`.
+    private (int Splits, int Chunk) GemvPlan(int choice, VulkanKernels.PackedFormat format, int block, int k, long partial) =>
+        GemvPlan(choice, k, partial, WidthOf(choice) / VulkanKernels.GemvWordCounts[choice & 7],
+            VulkanKernels.GemvStackEntries(format, VulkanKernels.GemvRowBlocks[block]));
+
+    // The candidates of a packed product (GemvCandidates) that GemvPlan spreads differently, the formula's choice first:
+    // choices it makes the same plan of would only be measured twice.
+    private int[] DistinctGemv(int[] candidates, int fallback, VulkanKernels.PackedFormat format, int block, int k, long partial) =>
+        [.. candidates.Prepend(fallback).Distinct().DistinctBy(c => (WidthOf(c), c & 7, GemvPlan(c, format, block, k, partial).Splits))];
 
     // The choice of a fused product (the same candidates as a plain packed product of nmax columns): forced by the test
     // settings, stored, or the formula's (the device's width, 32 words, the most splits allowed). -1 when no variant fits.
@@ -100,9 +119,10 @@ internal sealed partial class VulkanBackend
 
     // Measures a fused product's candidates on scratch copies of the outputs (bit i of `writes`: operand i). Kept apart
     // from the operations so their usual calls make no closure.
-    private int MeasureFused(VulkanTuneKey key, VulkanKernels.PackedFormat format, int nmax, int maxSplits, int fallback, ReadOnlySpan<Storage> operands,
-        ulong writes, Action<int, Storage[]> run) =>
-        TuneWithScratch(key, GemvCandidates(VulkanKernels.ColumnsPerWord(format), nmax, maxSplits), fallback, operands.ToArray(), writes, run);
+    private int MeasureFused(VulkanTuneKey key, VulkanKernels.PackedFormat format, int block, int k, long partial, int nmax, int maxSplits, int fallback,
+        ReadOnlySpan<Storage> operands, ulong writes, Action<int, Storage[]> run) =>
+        TuneWithScratch(key, DistinctGemv(GemvCandidates(VulkanKernels.ColumnsPerWord(format), nmax, maxSplits), fallback, format, block, k, partial), fallback,
+            operands.ToArray(), writes, run);
 
     // ------------------------------------------------------------------ several products sharing an input
 
@@ -156,22 +176,26 @@ internal sealed partial class VulkanBackend
             choice = MeasureMany(key, f, block, choice, maxSplits, operands, count, m, k, n[0], n[1], n[2], flags);
         }
 
-        RunMany(f, block, choice, operands, count, m, k, n[0], n[1], n[2], flags);
-        return true;
+        return RunMany(f, block, choice, operands, count, m, k, n[0], n[1], n[2], flags);
     }
 
     private int MeasureMany(VulkanTuneKey key, VulkanKernels.PackedFormat f, int block, int fallback, int maxSplits, ReadOnlySpan<Storage> operands,
         int count, int m, int k, int n0, int n1, int n2, int flags) =>
-        MeasureFused(key, f, Math.Max(n0, Math.Max(n1, n2)), maxSplits, fallback, operands, 0b111UL << 10,
+        MeasureFused(key, f, block, k, (long)count * m * Math.Max(n0, Math.Max(n1, n2)), Math.Max(n0, Math.Max(n1, n2)), maxSplits, fallback, operands, 0b111UL << 10,
             (c, s) => RunMany(f, block, c, s, count, m, k, n0, n1, n2, flags));
 
-    private void RunMany(VulkanKernels.PackedFormat f, int block, int choice, ReadOnlySpan<Storage> io, int count, int m, int k, int n0, int n1, int n2, int flags)
+    private bool RunMany(VulkanKernels.PackedFormat f, int block, int choice, ReadOnlySpan<Storage> io, int count, int m, int k, int n0, int n1, int n2, int flags)
     {
         int width = WidthOf(choice), variant = choice & 7, rows = VulkanKernels.GemvRowBlocks[block], words = VulkanKernels.GemvWordCounts[variant];
         int perWord = VulkanKernels.ColumnsPerWord(f), nmax = Math.Max(n0, Math.Max(n1, n2));
         bool bf16 = f == VulkanKernels.PackedFormat.BFloat16;
         uint columnBlocks = (uint)(((long)(nmax + perWord - 1) / perWord + words - 1) / words), rowBlocks = (uint)((m + rows - 1) / rows);
-        var (splits, chunk) = GemvPlan(choice, k, (long)count * m * nmax);
+        var (splits, chunk) = GemvPlan(choice, f, block, k, (long)count * m * nmax);
+        if (splits == 0)
+        {
+            return false;
+        }
+
         var part = splits > 1 ? Allocate(splits * count * m * nmax, zeroed: false) : null;
         try
         {
@@ -203,6 +227,8 @@ internal sealed partial class VulkanBackend
         {
             part?.Release();                                                   // reused in queue order
         }
+
+        return true;
     }
 
     // ------------------------------------------------------------------ gate and up with the activation
@@ -250,21 +276,25 @@ internal sealed partial class VulkanBackend
             choice = MeasurePair(key, f, block, choice, maxSplits, operands, m, k, n, flags, activation);
         }
 
-        RunPair(f, block, choice, operands, m, k, n, flags, activation);
-        return true;
+        return RunPair(f, block, choice, operands, m, k, n, flags, activation);
     }
 
     private int MeasurePair(VulkanTuneKey key, VulkanKernels.PackedFormat f, int block, int fallback, int maxSplits, ReadOnlySpan<Storage> operands,
         int m, int k, int n, int flags, int activation) =>
-        MeasureFused(key, f, n, maxSplits, fallback, operands, 0b111UL << 7, (c, s) => RunPair(f, block, c, s, m, k, n, flags, activation));
+        MeasureFused(key, f, block, k, 2L * m * n, n, maxSplits, fallback, operands, 0b111UL << 7, (c, s) => RunPair(f, block, c, s, m, k, n, flags, activation));
 
-    private void RunPair(VulkanKernels.PackedFormat f, int block, int choice, ReadOnlySpan<Storage> io, int m, int k, int n, int flags, int activation)
+    private bool RunPair(VulkanKernels.PackedFormat f, int block, int choice, ReadOnlySpan<Storage> io, int m, int k, int n, int flags, int activation)
     {
         int width = WidthOf(choice), variant = choice & 7, rows = VulkanKernels.GemvRowBlocks[block], words = VulkanKernels.GemvWordCounts[variant];
         int perWord = VulkanKernels.ColumnsPerWord(f);
         bool bf16 = f == VulkanKernels.PackedFormat.BFloat16;
         uint columnBlocks = (uint)(((long)(n + perWord - 1) / perWord + words - 1) / words), rowBlocks = (uint)((m + rows - 1) / rows);
-        var (splits, chunk) = GemvPlan(choice, k, 2L * m * n);
+        var (splits, chunk) = GemvPlan(choice, f, block, k, 2L * m * n);
+        if (splits == 0)
+        {
+            return false;
+        }
+
         var part = splits > 1 ? Allocate(splits * 2 * m * n, zeroed: false) : null;
         try
         {
@@ -295,6 +325,8 @@ internal sealed partial class VulkanBackend
         {
             part?.Release();                                                   // reused in queue order
         }
+
+        return true;
     }
 
     // ------------------------------------------------------------------ a down projection reading the activation
@@ -330,20 +362,24 @@ internal sealed partial class VulkanBackend
             choice = MeasureGated(key, f, block, choice, maxSplits, operands, m, n, k, activation);
         }
 
-        RunGated(f, block, choice, operands, m, n, k, activation);
-        return true;
+        return RunGated(f, block, choice, operands, m, n, k, activation);
     }
 
     private int MeasureGated(VulkanTuneKey key, VulkanKernels.PackedFormat f, int block, int fallback, int maxSplits, ReadOnlySpan<Storage> operands,
         int m, int n, int k, int activation) =>
-        MeasureFused(key, f, n, maxSplits, fallback, operands, 1UL << 4, (c, s) => RunGated(f, block, c, s, m, n, k, activation));
+        MeasureFused(key, f, block, k, (long)m * n, n, maxSplits, fallback, operands, 1UL << 4, (c, s) => RunGated(f, block, c, s, m, n, k, activation));
 
-    private void RunGated(VulkanKernels.PackedFormat f, int block, int choice, ReadOnlySpan<Storage> io, int m, int n, int k, int activation)
+    private bool RunGated(VulkanKernels.PackedFormat f, int block, int choice, ReadOnlySpan<Storage> io, int m, int n, int k, int activation)
     {
         int width = WidthOf(choice), variant = choice & 7, rows = VulkanKernels.GemvRowBlocks[block], words = VulkanKernels.GemvWordCounts[variant];
         int perWord = VulkanKernels.ColumnsPerWord(f);
         uint columnBlocks = (uint)(((long)(n + perWord - 1) / perWord + words - 1) / words), rowBlocks = (uint)((m + rows - 1) / rows);
-        var (splits, chunk) = GemvPlan(choice, k, (long)m * n);
+        var (splits, chunk) = GemvPlan(choice, f, block, k, (long)m * n);
+        if (splits == 0)
+        {
+            return false;
+        }
+
         var y = io[4];
         var output = splits == 1 ? y : Allocate(splits * m * n, zeroed: false);
         try
@@ -381,6 +417,8 @@ internal sealed partial class VulkanBackend
                 output.Release();                                              // reused in queue order
             }
         }
+
+        return true;
     }
 
     // ------------------------------------------------------------------ a projection, its residual and the next norm
@@ -409,13 +447,18 @@ internal sealed partial class VulkanBackend
 
         int width = WidthOf(choice), variant = choice & 7, words = VulkanKernels.GemvWordCounts[variant], perWord = VulkanKernels.ColumnsPerWord(f);
         uint columnBlocks = (uint)(((long)(n + perWord - 1) / perWord + words - 1) / words), rowBlocks = (uint)((m + rows - 1) / rows);
-        var (splits, chunk) = GemvPlan(choice, k, (long)m * n);
+        var (splits, chunk) = GemvPlan(choice, f, block, k, (long)m * n);
+        if (splits == 0)
+        {
+            return false;
+        }
+
         var output = splits == 1 ? y : Allocate(splits * m * n, zeroed: false);
         try
         {
             string kernel = GemvKernelNames[((int)f * VulkanKernels.GemvRowBlocks.Length + block) * VulkanKernels.GemvWordCounts.Length + variant];
-            Span<byte> b = stackalloc byte[24];
-            var push = new Push(b).I(m).I(n).I(k).I(chunk).I(0).I(splits).Bytes;   // the whole weights bound: splits from 0
+            Span<byte> b = stackalloc byte[32];
+            var push = new Push(b).I(m).I(n).I(k).I(chunk).I(0).I(splits).I(VulkanKernels.GemvChunkAlign).I(0).Bytes;   // the whole weights bound: splits from 0
             if (scales is null)
             {
                 RunAt(kernel, width, columnBlocks, (uint)splits, rowBlocks, [x, packed, output], push);
