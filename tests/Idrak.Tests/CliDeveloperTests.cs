@@ -21,7 +21,7 @@ internal static partial class Tests
         ("cli dev: onnx export of a small network round-trips through onnx import; onnx check matches the round trip, ONNX Runtime and reference outputs", CliDevOnnx),
         ("cli dev: kernels lists the kernel each operation runs on a device (registered, device, composed, host, none), as text and JSON, filtered by --source", CliDevKernelChain),
         ("cli dev: kernels dump writes non-empty PTX, SPIR-V and HIP files", CliDevKernels),
-        ("cli dev: test finds the source checkout and fails clearly outside one", CliDevTest),
+        ("cli dev: test finds the source checkout and fails clearly outside one, and counts from the runner's summary line", CliDevTest),
         ("cli dev: trace runs a command with telemetry to JSON Lines, live, and wrapped in one JSON document", CliDevTrace),
         ("cli dev: demo xor reaches its result on the device; spirals, shapes and gpt on the CPU", CliDevDemo),
         ("cli dev: shell runs typed commands with quotes, history and !N, and completes commands and options", CliDevShell),
@@ -295,6 +295,13 @@ internal static partial class Tests
             Check(root is not null && File.Exists(Path.Combine(root, "Idrak.slnx")), $"the checkout from {AppContext.BaseDirectory}");
             Check(TestCommand.FindRepositoryRoot(Path.Combine(root!, "src", "Idrak.Cli")) == root, "from a folder inside it");
             Check(TestCommand.FindRepositoryRoot(folder) is null, "no checkout around a temporary folder");
+
+            // The counts come from the runner's summary line, which --failures-only and --progress keep (PASS lines are not shown).
+            Check(TestCommand.SummaryCounts("112 passed, 2 failed") == (112, 2), "the summary line");
+            Check(TestCommand.SummaryCounts("5 passed, 0 failed in 3m 05s") == (5, 0), "the summary line with --progress's time");
+            Check(TestCommand.SummaryCounts("0 passed, 1 failed, 1 hung") == (0, 1), "the summary line of a hang");
+            Check(TestCommand.SummaryCounts("  PASS 3 passed, 2 failed") is null && TestCommand.SummaryCounts("== cpu: CPU") is null
+                && TestCommand.SummaryCounts("3 passed") is null && TestCommand.SummaryCounts("x passed, 2 failed") is null, "other lines are not a summary");
             TestCommand.StartFolder = folder;
             try
             {

@@ -26,7 +26,7 @@ internal sealed class TestCommand : Command
     public override string Usage =>
         "[--filter TEXT] [--device NAME] [-- RUNNER ARGUMENTS]\n\n" +
         "Runs tests/Idrak.Tests of the Idrak source checkout that holds the current folder (dotnet run -c Release).\n" +
-        "Arguments after -- go to the test runner (e.g. -- --bench-window). Variables saved by idrak env set reach it too.\n\n" +
+        "Arguments after -- go to the test runner (e.g. -- --bench-window, -- --progress --failures-only). Variables saved by idrak env set reach it too.\n\n" +
         "Options:\n" +
         "      --filter TEXT   only tests whose name contains TEXT (IDRAK_FILTER)\n" +
         "  -d, --device NAME   only this device, or several separated by commas (IDRAK_DEVICES); default every device found\n\n" +
@@ -105,6 +105,10 @@ internal sealed class TestCommand : Command
                 failed++;
                 failures.Add(trimmed);
             }
+            else if (SummaryCounts(trimmed) is var (summaryPassed, summaryFailed))
+            {
+                (passed, failed) = (summaryPassed, summaryFailed);             // the runner's own count (PASS lines are not shown under --failures-only)
+            }
 
             context.Write(line);
         }
@@ -121,6 +125,28 @@ internal sealed class TestCommand : Command
             ["exitCode"] = process.ExitCode,
         });
         return process.ExitCode == 0 ? ExitCodes.Ok : ExitCodes.Failed;
+    }
+
+    /// <summary>The counts of the runner's summary line ("112 passed, 2 failed", maybe followed by more), or null for another line.</summary>
+    internal static (int Passed, int Failed)? SummaryCounts(ReadOnlySpan<char> line)
+    {
+        int space = line.IndexOf(' ');
+        if (space <= 0 || !int.TryParse(line[..space], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int passed))
+        {
+            return null;
+        }
+
+        var rest = line[(space + 1)..];
+        if (!rest.StartsWith("passed, ", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        rest = rest["passed, ".Length..];
+        int end = rest.IndexOf(' ');
+        return end > 0 && rest[(end + 1)..].StartsWith("failed", StringComparison.Ordinal)
+            && int.TryParse(rest[..end], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int failed)
+            ? (passed, failed) : null;
     }
 
     /// <summary>The nearest folder at or above <paramref name="start"/> holding Idrak.slnx and the test runner, or null.</summary>
