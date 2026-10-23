@@ -83,7 +83,7 @@ internal sealed unsafe partial class VulkanBackend
     private const double TuneBudget = 500;
 
     // Bumped when kernels change what their variants mean, so stored choices of an older version are not used.
-    private const int TuningVersion = 3;                               // 3: products, splits and attention in one order
+    private const int TuningVersion = 4;                               // 3: products, splits and attention in one order; 4: convolution too
 
     // Not readonly: a cluster rank shares rank 0's table (VulkanBackend.SharedTuning.cs).
     private Dictionary<VulkanTuneKey, int> _tuned = [];
