@@ -34,7 +34,7 @@ Idrak is a neural network library for **.NET 10**, written entirely in C#.
   device or a kernel is added from a plug-in without touching the library.
 
 This file is the library's map: what it can do today, on which hardware that was verified, how it is laid out, what
-the next version should be, and what is planned.
+the current release holds, and what is planned.
 
 ---
 
@@ -65,6 +65,22 @@ and `Idrak.Gpu` along; the others are added by domain.
 | `Idrak.Onnx.Runtime` | Runs ONNX models with ONNX Runtime as Idrak modules, so they serve through the same engine and endpoints. |
 | `Idrak.Abstraction.Testing` | The conformance and stress kit: checks a device, a sampler, a tokenizer, a RoPE scaling, a codec, a recognizer or a synthesizer against the library default on fixed and random cases, and replays saved regression cases. |
 | `Idrak.Cli` | The `idrak` tool (`dotnet tool install --global Idrak.Cli`). |
+
+### Reserved packages
+
+These names are kept on NuGet and GitHub for packages that are planned. Each is published with the release's version
+but holds no types yet; installing one adds nothing beyond its dependency.
+
+| Package | Reserved for |
+|---|---|
+| `Idrak.Diffusion` | Image and audio generation by denoising: denoisers, schedules and samplers, latent codecs, conditioning ([plan 20](plans/opened/20-diffusion.md)). |
+| `Idrak.Diffusion.Plugins` | The diffusion model families as plug-ins. |
+| `Idrak.Video` | Video in and out: frame decoding and encoding, frame sampling, video datasets. |
+| `Idrak.Video.Plugins` | The video model families as plug-ins. |
+| `Idrak.Data.Plugins` | Document formats as plug-ins on `Idrak.Data`, Office first ([plan 28](plans/opened/28-documents.md)). |
+| `Idrak.HarfBuzz` | HarfBuzz as a second text shaper ([plug-in plan 1](plans/opened/plugins/1-harfbuzz.md)). |
+| `Idrak.CoreML` | Apple's Neural Engine through Core ML ([Apple plan](plans/opened/5-apple.md), step 5). |
+| `Idrak.Extensions` | Extensions and helpers over the library's contracts that apps share. |
 
 ---
 
@@ -141,7 +157,7 @@ and `Idrak.Gpu` along; the others are added by domain.
   options; Gemma 3 vision, Qwen-VL, LLaVA and a from-scratch family `IdrakVision` in the plug-in package
   `Idrak.Vision.Plugins` (with the CRNN line recognizer); images in `idrak chat`, `idrak serve` (`/v1` `image_url`, multipart,
   `/api/chat`).
-- OCR: CTC models, the Arabic and legal OCR samples, `idrak vlm check`.
+- OCR: CTC models, the Arabic OCR sample, `idrak vlm check`.
 - Synthetic training pages: the library's own font engine (TrueType and CFF outlines, every GSUB and GPOS lookup
   kind, HarfBuzz-exact shaping on the checked strings, UAX #9 bidi), text layout with wrapping, justification and
   fallback fonts, page layouts, and about fifty seeded scan and paper effects (`idrak data synth`, `idrak data text`,
@@ -290,34 +306,42 @@ Working rules for this repository are in `CLAUDE.md`; the performance rules in `
 
 | Path | Contents |
 |---|---|
-| `src/` | the 13 packages |
+| `src/` | the 20 packages and the 8 reserved ones |
 | `tests/Idrak.Tests`, `tests/Idrak.PluginTests` | the test program (824 tests, filtered by group) and the plug-in tests |
 | `benches/Idrak.Benches` | the benches above |
-| `samples/` | plug-ins (QwenVision, IdrakVision) and 24 sample apps (chat, coding agent, GPT API and training, house prices, OCR and legal OCR, quantization, RAG, re-ranker, sentiment, shape recognition, summarizer, text generation, ONNX import, ...) |
+| `samples/` | 19 sample apps (Arabic OCR, chat, coding agent, GPT API and training, house prices and its API, OCR, ONNX import, an override checked with the testing kit, quantization, RAG, re-ranker, sentiment, shape recognition, spirals, summarizer, text generation, XOR), two of them with their own tests, and scripts (IdrakVision, OpenVoice, WhisperSpeech) |
 | `api/` | the public API dumps the guard test checks |
 | `docs/` | `optimization.md` and the longer guides |
 | `tools/` | fixture makers (Python references the tests compare against: uroman, HarfBuzz, torch losses, ffmpeg) |
 
 ---
 
-## Which version comes next: 0.4.0
+## Release 0.4.0
 
-The branch holds one breaking release, and it should ship as **0.4.0**, not as a 0.3.x patch:
+`VersionPrefix` is **0.4.0** and the tag `v0.4.0` marks the release; the `CHANGELOG.md` section "0.4.0" is its note. It
+is a breaking release, a minor bump under 0.x semantics:
 
 - `Idrak.Abstraction` is new and every shared type moved into it (the table in `CHANGELOG.md`); packages were regrouped
-  by domain (`Idrak.Datasets` → `Idrak.Data`, `Idrak.LanguageModels` retired into `Idrak` and `Idrak.Nlp` (renamed `Idrak.Text` in 2026-10), `Idrak.Onnx`
-  folded into `Idrak`, `Idrak.Vision`, `Idrak.Gpu`, `Idrak.Imaging`, `Idrak.Audio` new). Plug-ins compiled against
-  0.3.x must be rebuilt: that is a minor bump under 0.x semantics.
-- The engine reaches models only through contracts (`engine.Model<IChatModel>(name)`), with no shims for the old
-  calls.
-- MP3 is now built into `Idrak.Audio`; the `Idrak.Mp3Audio` sample plug-in is gone.
+  by domain (`Idrak.Datasets` → `Idrak.Data`, `Idrak.LanguageModels` retired into `Idrak` and `Idrak.Text`, `Idrak.Onnx`
+  folded into `Idrak`; `Idrak.Gpu`, `Idrak.Imaging`, `Idrak.Vision`, `Idrak.Audio`, `Idrak.Cluster`, `Idrak.Network`,
+  `Idrak.Reinforcement` and the four plug-in packages new). Plug-ins compiled against 0.3.x must be rebuilt.
+- The model families live in the plug-in packages, never in the library; the engine reaches models only through
+  contracts (`engine.Model<IChatModel>(name)`), with no shims for the old calls.
+- MP3 is built into `Idrak.Audio`; the `Idrak.Mp3Audio` sample plug-in and the legal OCR sample app are gone.
 
 Not 1.0 yet: the HIP device is untested on hardware, only NVIDIA GPUs have run the GPU paths, and some contracts still
-have the built-in implementation as their only one. `VersionPrefix` stays `0.3.1` until the owner
-tags; the `CHANGELOG.md` section "Unreleased (0.4.0)" is the release note.
+have the built-in implementation as their only one.
 
-Before the tag: the owner's GPU runs of the targeted groups that changed (`tuning`, `sampler`, `audio`, the kit), the
-result of the speech voice trained with the fixed trainer, and a `dotnet pack` of the packages.
+Publishing is done from a machine: pushing a tag publishes nothing (the Release workflow runs only by hand, as a
+fallback). `tools/publish.ps1` checks out the tag, packs every project under `src/`, pushes them to nuget.org after a
+confirmation and creates the GitHub release with the version's changelog section as its text and the packages attached:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\publish.ps1 -Version 0.4.0
+```
+
+`-SkipGitHub` publishes to nuget.org only, `-SkipNuGet` makes the GitHub release only; `tools\github-release.ps1
+-Version 0.4.0 -NotesOnly` prints the release text to check it.
 
 ---
 

@@ -1,9 +1,26 @@
 # Changelog
 
-## Unreleased (0.4.0, branch `abstraction`)
+## 0.4.0 (2026-10-23)
 
-`Idrak.Abstraction`, the package that will hold every contract of the library with its default implementation
-(plan 10). This first step moves the device layer into it; nothing behaves differently.
+A breaking release: `Idrak.Abstraction` holds every shared contract of the library with its default implementation
+(plan 10), the packages are regrouped by domain, the model families live in plug-in packages, and new packages cover
+imaging, vision, audio, clusters, networking and reinforcement learning. Plug-ins compiled against 0.3.x must be
+rebuilt.
+
+**Release housekeeping**
+
+- Reserved packages, published with this version and holding no types yet, so their names are kept on NuGet and
+  GitHub: `Idrak.Diffusion`, `Idrak.Diffusion.Plugins`, `Idrak.Video`, `Idrak.Video.Plugins`, `Idrak.Data.Plugins`,
+  `Idrak.HarfBuzz`, `Idrak.CoreML`, `Idrak.Extensions`. Each depends only on the package it will build on.
+- The legal OCR sample app (`samples/Idrak.Samples.LegalOcr` and its tests) is removed; `samples/Idrak.Samples.ArabicOcr`
+  stays.
+- Pushing a tag no longer publishes: the Release workflow runs only by hand (Actions > Release > Run workflow, with the
+  version), and its GitHub release carries the version's changelog section instead of a link. `tools/publish.ps1` is
+  the normal way to publish: it checks that the tag's `VersionPrefix` is the version, shows packing progress, takes the
+  nuget.org key from `-ApiKey`, `NUGET_API_KEY` or a prompt, and has `-SkipNuGet` and `-SkipGitHub`;
+  `tools/github-release.ps1` runs under Windows PowerShell 5.1 as well as PowerShell 7.
+
+**Plan 10: Idrak.Abstraction and the packages regrouped**
 
 - New package `Idrak.Abstraction`: `Device`, `DeviceType`, `ComputeResources` and the CPU device (also every other
   device's host fallback). `dotnet add package Idrak` brings it along. The GPU devices (CUDA, Vulkan, HIP) stay in
