@@ -139,7 +139,7 @@ internal sealed record KernelShapes
     /// <summary>
     /// Threads per block of the one-dimensional kernels and the block reductions (sum, group statistics): a quarter of the
     /// largest block, so at least four blocks stay resident per SM on every generation (an SM holds at least as many
-    /// threads as one block). 1024 / 4 = 256 on every CUDA GPU so far (5070 Ti, 5050, 3060 alike). A power of two (the
+    /// threads as one block). 1024 / 4 = 256 on every CUDA GPU measured so far. A power of two (the
     /// reductions halve it).
     /// </summary>
     public required int BlockSize { get; init; }
@@ -189,8 +189,8 @@ internal sealed record KernelShapes
     }
 
     /// <summary>
-    /// The shapes on every CUDA GPU so far (1024 threads per block, 32-lane warps): what the RTX 5070 Ti, RTX 5050 and
-    /// RTX 3060 (and compute 5.0 to 12.x as documented) all derive. <see cref="PtxKernels.Source"/> is built for these.
+    /// The shapes on every CUDA GPU so far (1024 threads per block, 32-lane warps): what every card measured so far (and
+    /// compute 5.0 to 12.x as documented) derives. <see cref="PtxKernels.Source"/> is built for these.
     /// </summary>
     public static KernelShapes Default { get; } = new() { BlockSize = 256, SamplerThreads = 1024, MaxWarpsPerBlock = 32 };
 

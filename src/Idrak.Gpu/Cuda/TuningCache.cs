@@ -44,7 +44,7 @@ internal static class TuneTiming
     /// A candidate that beats the formula's choice is timed against it again, in <paramref name="rounds"/> new pairs, and
     /// kept only when it wins by the margin a second time (<paramref name="confirm"/>; its median there goes to
     /// <paramref name="confirmation"/>[0], NaN when nothing needed confirming). Short products timed warm (prompt splits
-    /// on an RTX 5070 Ti, about 13 µs) gave medians 10% apart from one process to the next, so the fastest of eight
+    /// of about 13 µs) gave medians 10% apart from one process to the next, so the fastest of eight
     /// candidates was often a lucky one: one run kept 1 split, 22 µs against 12.7 for 6, in the tuning cache for good.
     /// The confirmation draws new timings, so a lucky first median rarely repeats, while a real gain does.
     /// </summary>

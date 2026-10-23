@@ -80,9 +80,8 @@ the plans is kept, as it was written, at the end ("The moved text").
 | 1.28 | Rule 80 left in epilogues: `gemm128/64_*` beta reads, the dK/dV write-back of `attn_bwd_kv_f32` and `attn_spans_bwd_kv_f32`, the span kernels' range prologue (fix when the file is next touched). | speed | Plan 14 backlog 11i |
 | 1.29 | `PtxKernels.Advanced.cs`, `.Convolution.cs`, `.Recurrent.cs` still interpolate numbers with the current culture (rule 49). | bug | Plan 14 backlog 11j |
 | 1.30 | R1 leftovers: `CtcMeta` allocates `new float[3·batch]` per CTC call (`CudaBackend.Ctc.cs:123`, Vulkan's too); prompt-sized packed products make a closure, delegate and small copy per call; tensor-core callers' `Run` delegates allocate twice per large product. | memory | Plan 14 backlog (CUDA order 7; section 2, CUDA) |
-| 1.31 | Card names in code comments: `CudaBackend.Quantized.cs` (4), `CudaDeviceLimits.cs` (3), `TuningCache.cs` (1), `Vulkan/VulkanBackend.Dispatch.cs` (1); reword as what was measured. | docs | Plan 14 backlog 1.3 (CUDA order 8) |
 
-**Dropped as done:** plan 14's 11e (`sum_f32` adds per-block partials in block order, `PtxKernels.cs:665-669`), 11f (`sumsq`, `multi_sumsq`, `sum_cols_strided`, `layernorm_bwd_params` store partials folded in a fixed order, `PtxKernels.Rows.cs:599-600`, `PtxKernels.Decoding.cs:110-112`), 11g (deterministic tensor-core split k, plan 17), 10a, 10c, 10d-10i (marked done and passing on CUDA in plan 14), 1.5 and CUDA order 1 (the fused recurrent kernels ran on CUDA, plan 14 10g).
+**Dropped as done:** 1.31 (card names in the CUDA and Vulkan code comments reworded as what was measured, 2026-10-23); plan 14's 11e (`sum_f32` adds per-block partials in block order, `PtxKernels.cs:665-669`), 11f (`sumsq`, `multi_sumsq`, `sum_cols_strided`, `layernorm_bwd_params` store partials folded in a fixed order, `PtxKernels.Rows.cs:599-600`, `PtxKernels.Decoding.cs:110-112`), 11g (deterministic tensor-core split k, plan 17), 10a, 10c, 10d-10i (marked done and passing on CUDA in plan 14), 1.5 and CUDA order 1 (the fused recurrent kernels ran on CUDA, plan 14 10g).
 
 ## Plan 2: CPU ([2-cpu.md](done/2-cpu.md))
 

@@ -151,7 +151,7 @@ internal sealed unsafe partial class CudaBackend
     internal static TuneKey GemvSplitsKey(int variant, int m, int n, int k) => new(TuneOp.GemvSplits, variant, m, n, k);
 
     // Split counts the few-row products are measured with: 1, 2, 3, 4, 6, 8, 12, ... up to GemvMaxSplits (the kernels
-    // take any chunk of k: a step of 64 rows, then single rows; --bench-gemv found 6 best on an RTX 3060 Laptop for the
+    // take any chunk of k: a step of 64 rows, then single rows; --bench-gemv found 6 best on one card for the
     // products into 1024 columns, which the powers of two alone missed by 25%), without counts that give the same
     // chunks once rounded to `align` (int4: a 64-row group); of two such counts the power of two stays, so the
     // formula's choice (GemvSplitCount) is always one of them.
@@ -207,7 +207,7 @@ internal sealed unsafe partial class CudaBackend
             // (`tail`: residual, sum, gain, normalized, eps, offset) are timed whole, the residual addition and the
             // normalization by the last block included, with their three outputs (y, sum, normalized) in scratch memory,
             // since the sum may be the residual itself. (Before, they took the plain kernel's choice for the shape, timed
-            // without that last step: --bench-gemv showed 8 splits chosen where 16 was 15% faster on an RTX 5070 Ti.)
+            // without that last step: --bench-gemv showed 8 splits chosen where 16 was 15% faster on one card.)
             // Once known, the choice is read without allocating (no candidate array, no closure).
             int formula = GemvSplitCount(columnBlocks, k);
             Span<int> candidates = stackalloc int[SplitCountsLength];
@@ -868,12 +868,12 @@ internal sealed unsafe partial class CudaBackend
     // recorded graphs stay valid as the cache fills (chunks are computed on the device from the current length).
     // How many splits is measured once per shape (kernel `variant`, rows, capacity, head size) on this card, over
     // filled lengths 64, 128, ... up to the capacity (scratch positions), by the geometric mean of their times, so each
-    // doubling of the context counts alike. (Measured at a full cache alone, an RTX 3060 Laptop chose 64 splits, 2%
+    // doubling of the context counts alike. (Measured at a full cache alone, one card chose 64 splits, 2%
     // faster there than 8, and ran 200 positions in 36.8 µs against 12.0 with 8.) Candidates: 1, 2, 3, 4, 6, 8, ... up to one split
     // per 64 cached positions (at most 64). The formula, about five blocks per SM (--bench-gemv: 16 rows → 22 splits,
     // 4000 positions 75.9 → ~35 µs, 1000 positions 22 → ~15 µs), is the default until then and when nothing can be
     // measured.
-    // A short filled length split as many ways reads a few positions per block and merges many parts: on an RTX 5070 Ti
+    // A short filled length split as many ways reads a few positions per block and merges many parts: on one card
     // 200 positions took 9.0 µs with the 24 splits measured at 4096, 7.6 with 16. So each block also takes at least
     // `minChunk` positions (the blocks past the filled length then add an empty part), measured per shape after the
     // splits over the same lengths; 1, the plain chunks, is the reference and stays unless another is faster. `attention`: the kernel's operands (RunDecode).
