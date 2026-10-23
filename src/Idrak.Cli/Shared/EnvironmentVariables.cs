@@ -167,6 +167,8 @@ internal static class EnvironmentVariables
         new("IDRAK_VULKAN_GRAPHS", Vulkan, "on", "0 or false: no recorded graphs on Vulkan; steps run directly (diagnostics)", OnDevice),
         new("IDRAK_VULKAN_BARRIER_KERNELS", Vulkan, "none", "Kernel names (comma-separated; copy and fill for copies and fills): a barrier before each of their commands (diagnostics)", OnDevice),
         new("IDRAK_VULKAN_KERNEL_LOG", Vulkan, "none", "A file the names of the Vulkan commands recorded are appended to, once each (diagnostics)", OnDevice),
+        new("IDRAK_DEBUG_OLD_ROWS", Vulkan, "not set", "1: Vulkan row kernels sum each invocation's columns in its own order (temporary: bisects the one-order sums)", OnDevice),
+        new("IDRAK_VULKAN_CHECK_NAN", Vulkan, "not set", "1: read back what every Vulkan kernel writes and report the first that writes NaN or +inf, naming it (slow; diagnostics)", OnDevice),
         new("VK_ICD_FILENAMES", Vulkan, "the loader's search", "The Vulkan loader: which driver (ICD) files to use (needed for Turnip on a phone)", [.. OnDevice, "setup android"]),
         new("VK_DRIVER_FILES", Vulkan, "the loader's search", "The Vulkan loader: the newer name of VK_ICD_FILENAMES", [.. OnDevice, "setup android"]),
         new("VK_INSTANCE_LAYERS", Vulkan, "none", "The Vulkan loader: layers to enable (e.g. validation), read by the loader itself", OnDevice),

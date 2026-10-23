@@ -433,8 +433,17 @@ internal static partial class VulkanKernels
         }
 
         // `count` sums over the row in its one order: `add` adds column j to the accumulators (from -0).
+        private static readonly bool DebugOldRows = Environment.GetEnvironmentVariable("IDRAK_DEBUG_OLD_ROWS") == "1";
+
         private Val[] Accumulate(int count, Val cols, Action<Var[], Val> add)
         {
+            if (DebugOldRows)
+            {
+                var old = Enumerable.Range(0, count).Select(_ => k.Local(k.Float(-0f))).ToArray();
+                Columns(cols, j => add(old, j));
+                return [.. old.Select(a => Sum(a.V))];
+            }
+
             var bits = k.Min(k.FindMsb(k.Max(cols, k.Int(1)) - 1) + 1, k.Int(LaneBits));
             var lanes = k.Int(1).ShiftLeft(bits);
             if (narrow)

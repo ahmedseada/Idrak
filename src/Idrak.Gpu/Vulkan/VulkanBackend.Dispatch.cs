@@ -47,6 +47,54 @@ internal sealed unsafe partial class VulkanBackend
 
     private static readonly HashSet<string> s_logged = new(StringComparer.Ordinal);
 
+    // IDRAK_VULKAN_CHECK_NAN=1 (diagnostics, slow): after every kernel, wait for it and read back the storages it writes;
+    // a NaN or +∞ there is reported on the error output with the kernel, its width and reductions, the storage, the
+    // index and the push constants, the first CheckNanReports of them (the first names the kernel that made it: every
+    // earlier kernel's outputs were finite). -∞ is left out (masks hold it); a storage of packed values (16-bit, 8-bit or
+    // 4-bit words) may read as NaN, and its kernel names it.
+    internal static bool CheckNan { get; set; } = Environment.GetEnvironmentVariable("IDRAK_VULKAN_CHECK_NAN") is "1" or "true";
+
+    private const int CheckNanReports = 12;
+
+    private static int s_nanReports;
+
+    private void CheckWrittenFinite(VulkanKernel kernel, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> push)
+    {
+        if (Capturing || Volatile.Read(ref s_nanReports) >= CheckNanReports)
+        {
+            return;
+        }
+
+        for (int i = 0; i < storages.Length; i++)
+        {
+            if ((kernel.Writes & (1UL << i)) == 0 || storages[i].Length <= 0)
+            {
+                continue;
+            }
+
+            var values = new float[storages[i].Length];
+            Download(storages[i], values);
+            int at = Array.FindIndex(values, v => float.IsNaN(v) || float.IsPositiveInfinity(v));
+            if (at < 0)
+            {
+                continue;
+            }
+
+            int count = values.Count(v => float.IsNaN(v) || float.IsPositiveInfinity(v));
+            var words = new int[push.Length / 4];
+            for (int w = 0; w < words.Length; w++)
+            {
+                words[w] = BitConverter.ToInt32(push.Slice(4 * w, 4));
+            }
+
+            if (Interlocked.Increment(ref s_nanReports) <= CheckNanReports)
+            {
+                Console.Error.WriteLine(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                    $"IDRAK_VULKAN_CHECK_NAN: {Name}: kernel '{kernel.Name}' (local size {kernel.LocalSizeX}, {(kernel.UsesSubgroups ? "subgroups" : "no subgroups")}, groups {groupsX} x {groupsY} x {groupsZ}) wrote {values[at]} at index {at} of storage {i} ({count} of {values.Length} values not finite); push constants as ints: [{string.Join(", ", words)}]"));
+            }
+        }
+    }
+
     private static void LogCommand(string name)
     {
         if (s_kernelLog is not null && s_logged.Add(name))
@@ -232,6 +280,10 @@ internal sealed unsafe partial class VulkanBackend
             Dispatches++;
             DispatchesByKernel?.AddOrUpdate(kernel.Name, 1, static (_, n) => n + 1);
             Recorded();
+            if (CheckNan)
+            {
+                CheckWrittenFinite(kernel, groupsX, groupsY, groupsZ, storages, pushConstants);
+            }
         }
     }
 
