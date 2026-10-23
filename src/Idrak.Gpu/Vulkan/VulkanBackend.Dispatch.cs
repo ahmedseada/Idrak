@@ -478,7 +478,7 @@ internal sealed unsafe partial class VulkanBackend
     private void RecordFill(VulkanBlock block)
     {
         // Always after a barrier when queued work may still use the block. The span bookkeeping already orders a fill
-        // after the commands it knows of, but on an RTX 5070 Ti (Vulkan, driver 610.88) training that zeros recycled
+        // after the commands it knows of, but on one vendor's driver training that zeros recycled
         // blocks went wrong unless a barrier preceded the fill (synchronization validation finds no hazard in the same
         // commands on Mesa's software driver). Fills are rare (a zeroed allocation of a busy block), so it costs little.
         var commands = Record(new ReadOnlySpan<VulkanBlock>(in block), writes: 1, "fill", forceBarrier: block.LastUse > _completed);
