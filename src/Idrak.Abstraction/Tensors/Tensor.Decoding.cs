@@ -129,10 +129,15 @@ public sealed partial class Tensor
         int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2], capacity = keys._shape[1];
         var y = Empty([heads, rowsPerHead, dim], q.Device);
         bool record = Autograd.IsEnabled && (q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad);
-        var lse = record ? Empty([heads, rowsPerHead], q.Device, track: false) : null;
+        // A checkpoint's first pass asks for the log-sum-exp too, so it runs the kernel its recompute runs (Autograd.IsFirstPass).
+        var lse = record || Autograd.IsFirstPass ? Empty([heads, rowsPerHead], q.Device, track: false) : null;
         q.Backend.AttentionTiled(q.Storage, keys.Storage, values.Storage, zero.Storage, y.Storage, lse?.Storage, heads, rowsPerHead, steps,
             capacity, dim, scale, variant);
-        if (record)
+        if (!record)
+        {
+            lse?.Dispose();
+        }
+        else
         {
             y.Record("attention", g =>
             {
@@ -187,10 +192,15 @@ public sealed partial class Tensor
         int headsPerTable = heads / tables;
         var y = Empty([heads, rows, dim], q.Device);
         bool record = Autograd.IsEnabled && (q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad);
-        var lse = record ? Empty([heads, rows], q.Device, track: false) : null;
+        // A checkpoint's first pass asks for the log-sum-exp too, so it runs the kernel its recompute runs (Autograd.IsFirstPass).
+        var lse = record || Autograd.IsFirstPass ? Empty([heads, rows], q.Device, track: false) : null;
         q.Backend.AttentionSpans(q.Storage, keys.Storage, values.Storage, starts.Storage, ends.Storage, y.Storage, lse?.Storage, heads, kvHeads, headsPerTable,
             rows, keyRows, dim, scale, variant);
-        if (record)
+        if (!record)
+        {
+            lse?.Dispose();
+        }
+        else
         {
             y.Record("attention_spans", g =>
             {

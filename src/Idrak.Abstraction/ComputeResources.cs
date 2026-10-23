@@ -110,7 +110,30 @@ public static class ComputeResources
         }
     }
 
+    /// <summary>
+    /// How long the first use of a shape may stall while its kernel choices are measured (a backend that bounds its
+    /// measurement: Vulkan): each candidate runs once while this lasts, and the rounds that settle close calls run only
+    /// when they fit in it too; past it the single runs decide (a candidate clearly faster than the formula's choice), and
+    /// a formula's choice slower than half of it is kept without trying the others. 500 ms by default;
+    /// IDRAK_TUNE_BUDGET_MS sets it in milliseconds.
+    /// </summary>
+    public static TimeSpan TuningBudget
+    {
+        get => s_tuningBudget;
+        set
+        {
+            if (!(value > TimeSpan.Zero))
+            {
+                throw new ArgumentOutOfRangeException(nameof(value), value, "The tuning budget is a positive time.");
+            }
+
+            s_tuningBudget = value;
+        }
+    }
+
     private static double s_tuningNeighbourOctaves = EnvironmentDouble("IDRAK_TUNE_NEIGHBOUR_OCTAVES") is { } octaves && octaves >= 0 ? octaves : 1;
+
+    private static TimeSpan s_tuningBudget = TimeSpan.FromMilliseconds(EnvironmentDouble("IDRAK_TUNE_BUDGET_MS") is { } budget && budget > 0 ? budget : 500);
 
     private static double s_workspaceShare = EnvironmentDouble("IDRAK_WORKSPACE_SHARE") is { } share && share > 0 && share <= 1 ? share : 0.5;
 
