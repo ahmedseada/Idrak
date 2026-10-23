@@ -1,12 +1,17 @@
 name: Release
 
-# Push a tag such as v0.1.0 to build, test, pack every package with that version and publish it to nuget.org.
+# Run by hand only (Actions > Release > Run workflow, with a version such as 0.4.0): it checks out the tag v<version>,
+# builds, tests, packs every package with that version and publishes it to nuget.org. Pushing a tag publishes nothing;
+# the owner normally publishes from a machine with tools/publish.ps1, and this workflow is the fallback.
 # Publishing uses nuget.org Trusted Publishing (no stored API key): nuget.org > your account > Trusted Publishing has a
 # policy for owner ahmedseada, repository Idrak, workflow release.yml; the repository secret NUGET_USER holds the
 # nuget.org user name (not the e-mail address). The login step trades GitHub's token for a key that lasts one hour.
 on:
-  push:
-    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'The version to publish, without the v (the tag v<version> must exist)'
+        required: true
 
 jobs:
   publish:
@@ -16,11 +21,15 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - name: Version from the tag
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Version from the input
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: echo "VERSION=${INPUT_VERSION#v}" >> "$GITHUB_ENV"
       - run: dotnet build Idrak.slnx -c Release -p:Version=$VERSION
       - run: dotnet run -c Release --no-build --project tests/Idrak.Tests
         env:
@@ -41,4 +50,4 @@ jobs:
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" artifacts/* --title "Idrak $VERSION" --notes "See CHANGELOG.md."
+        run: gh release create "v$VERSION" artifacts/*.nupkg --verify-tag --title "Idrak $VERSION" --notes "$(pwsh tools/github-release.ps1 -Version "$VERSION" -NotesOnly)"

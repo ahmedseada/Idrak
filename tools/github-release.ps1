@@ -2,8 +2,9 @@
 # the notes, and the packages attached when given. tools/publish.ps1 calls it after pushing to nuget.org; on its own it
 # backfills a release (Actions not running, or a release published from a machine):
 #
-#   pwsh tools/github-release.ps1 -Version 0.1.5                      (notes only)
-#   pwsh tools/github-release.ps1 -Version 0.1.5 -Packages artifacts   (and the .nupkg files in that folder)
+#   powershell -ExecutionPolicy Bypass -File tools\github-release.ps1 -Version 0.4.0                       (no files attached)
+#   powershell -ExecutionPolicy Bypass -File tools\github-release.ps1 -Version 0.4.0 -Packages artifacts   (and the .nupkg files)
+#   ... -NotesOnly                                                        (print the release text and stop, to check it)
 #
 # Needs the GitHub CLI (winget install GitHub.cli; gh auth login). A release that exists already is left as it is.
 param(
@@ -40,8 +41,13 @@ if ($NotesOnly) { $notes; return }
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'The GitHub CLI (gh) is not installed: winget install GitHub.cli, then gh auth login.' }
 git fetch origin --tags --quiet
 if (-not (git tag --list $tag)) { throw "There is no tag $tag." }
+# Windows PowerShell turns a native command's redirected error output into errors, which 'Stop' would throw: gh says
+# "release not found" there when there is none yet.
+$ErrorActionPreference = 'Continue'
 gh release view $tag *> $null
-if ($LASTEXITCODE -eq 0) { Write-Host "The release $tag exists already: left as it is."; return }
+$exists = $LASTEXITCODE -eq 0
+$ErrorActionPreference = 'Stop'
+if ($exists) { Write-Host "The release $tag exists already: left as it is (delete it on GitHub to make it again)."; return }
 
 $file = New-TemporaryFile
 try {
