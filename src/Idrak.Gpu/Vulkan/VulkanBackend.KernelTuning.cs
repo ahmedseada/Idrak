@@ -77,13 +77,13 @@ internal sealed unsafe partial class VulkanBackend
     internal static bool Autotune = Environment.GetEnvironmentVariable("IDRAK_AUTOTUNE") is not ("0" or "false");
 
     /// <summary>
-    /// Longest a shape's measurement may take, in milliseconds, estimated from one run of the formula's choice (a policy
-    /// for how long the first use of a shape may stall, not a property of any device): beyond it the formula is kept.
+    /// A candidate decided by one timed run each (the rounds would outlast ComputeResources.TuningBudget) replaces the
+    /// formula's choice only when it takes at most this share of its time: one run is noisier than five rounds' median.
     /// </summary>
-    private const double TuneBudget = 500;
+    private const double ScreenMargin = 0.5;
 
     // Bumped when kernels change what their variants mean, so stored choices of an older version are not used.
-    private const int TuningVersion = 4;                               // 3: products, splits and attention in one order; 4: convolution too
+    private const int TuningVersion = 5;                               // 3: products, splits and attention in one order; 4: convolution too; 5: a slow formula's choice no longer kept untried
 
     // Not readonly: a cluster rank shares rank 0's table (VulkanBackend.SharedTuning.cs).
     private Dictionary<VulkanTuneKey, int> _tuned = [];
@@ -217,36 +217,41 @@ internal sealed unsafe partial class VulkanBackend
 
     private int TuneTimed(VulkanTuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run)
     {
-        // The formula's choice first, once untimed (builds its pipelines) and once timed: when measuring every candidate
-        // would take longer than TuneBudget (a slow device, a large shape), the formula's choice is kept (and stored).
+        // The formula's choice first, once untimed (builds its pipelines) and once timed; then every other candidate the
+        // same way while ComputeResources.TuningBudget lasts (a slow formula's choice is where a faster one matters most,
+        // so it never stops the others being tried), unless the formula's choice alone takes half the budget (a slow
+        // device, a large shape: it is kept, and stored).
         Interlocked.Increment(ref _measurements);
         t_timing = true;
         var list = candidates.ToArray();
+        double budget = ComputeResources.TuningBudget.TotalMilliseconds;
+        var spent = Stopwatch.StartNew();
         double[] medians;
         try
         {
             int formulaAt = Array.IndexOf(list, fallback);
+            var once = new double[list.Length];
+            Array.Fill(once, double.MaxValue);
             if (formulaAt >= 0)
             {
                 run(fallback);
-                double first = TimeRuns(fallback, 1, run);
-                if (first * list.Length * 8 > TuneBudget)
+                once[formulaAt] = TimeRuns(fallback, 1, run);
+                if (once[formulaAt] * 2 > budget)
                 {
                     return Keep(key, fallback, list);
                 }
             }
 
             // A first run of each candidate outside the timing (builds its pipelines and settles the choices it needs),
-            // then one timed run each; candidates over 1.5 times the fastest are dropped.
-            var once = new double[list.Length];
-            for (int c = 0; c < list.Length; c++)
+            // then one timed run each, until the budget is spent (the rest are not tried); candidates over 1.5 times the
+            // fastest are dropped.
+            for (int c = 0; c < list.Length && spent.Elapsed.TotalMilliseconds <= budget; c++)
             {
                 if (c != formulaAt)
                 {
                     run(list[c]);
+                    once[c] = TimeRuns(list[c], 1, run);
                 }
-
-                once[c] = TimeRuns(list[c], 1, run);
             }
 
             double best = once.Min();
@@ -254,8 +259,16 @@ internal sealed unsafe partial class VulkanBackend
 
             // Each remaining candidate is timed as it runs in practice, several dispatches back to back (as many as take
             // about 0.5 ms, at most 32); candidates take turns, five rounds, so a device still raising its clocks slows
-            // every candidate alike; the median of the five is kept.
+            // every candidate alike; the median of the five is kept. When the rounds would outlast the budget, the single
+            // runs decide: the fastest when it takes at most ScreenMargin of the formula's choice's time, else the formula's.
             var repeats = kept.Select(c => Math.Clamp((int)Math.Ceiling(0.5 / Math.Max(once[c], 1e-3)), 1, 32)).ToArray();
+            double rounds = 5 * kept.Select((c, i) => once[c] * repeats[i]).Sum();
+            if (spent.Elapsed.TotalMilliseconds + rounds > budget)
+            {
+                int quickest = Array.IndexOf(once, best);
+                return Keep(key, formulaAt < 0 || best <= once[formulaAt] * ScreenMargin ? list[quickest] : fallback, list);
+            }
+
             var times = kept.Select(_ => new double[5]).ToArray();
             for (int round = 0; round < 5; round++)
             {

@@ -23,6 +23,92 @@ public static class Autograd
         return new NoGradScope(true);
     }
 
+    [ThreadStatic]
+    private static int t_firstPassDepth;
+
+    [ThreadStatic]
+    private static List<int>? t_recordedChoices;
+
+    [ThreadStatic]
+    private static Queue<int>? t_replayedChoices;
+
+    /// <summary>
+    /// Whether a pass the backward pass runs again with recording (an activation checkpoint's first pass,
+    /// <see cref="FirstPass"/>) runs on this thread: operations then compute as they do while recording (the kernels and
+    /// paths a gradient needs, no inference-only ones), so the kept output is the one the recompute gives, bit for bit.
+    /// </summary>
+    public static bool IsFirstPass => t_firstPassDepth > 0;
+
+    /// <summary>
+    /// Turns gradient recording off on this thread until disposed, for a pass the backward pass runs again with recording
+    /// (activation checkpointing): operations compute as they do while recording (<see cref="IsFirstPass"/>), and each
+    /// choice that hangs on the device's state at the time (a measured path, the memory free) goes into
+    /// <paramref name="choices"/>, which <see cref="Replay"/> hands to the recompute in the same order.
+    /// </summary>
+    /// <param name="choices">Receives the pass's choices, in order.</param>
+    public static ChoiceScope FirstPass(List<int> choices)
+    {
+        ArgumentNullException.ThrowIfNull(choices);
+        var scope = new ChoiceScope(t_recordedChoices, t_replayedChoices, firstPass: true);
+        t_disabledDepth++;
+        t_firstPassDepth++;
+        t_recordedChoices = choices;                                       // a recompute's queue goes on being read
+        return scope;
+    }
+
+    /// <summary>
+    /// Until disposed, the operations on this thread that make a choice <see cref="FirstPass"/> records take
+    /// <paramref name="choices"/> in order instead of choosing again (the recompute of a checkpointed pass).
+    /// </summary>
+    /// <param name="choices">What the first pass recorded.</param>
+    public static ChoiceScope Replay(IReadOnlyList<int> choices)
+    {
+        ArgumentNullException.ThrowIfNull(choices);
+        var scope = new ChoiceScope(t_recordedChoices, t_replayedChoices, firstPass: false);
+        t_recordedChoices = null;
+        t_replayedChoices = new Queue<int>(choices);
+        return scope;
+    }
+
+    // The choice a recompute replays, if one is left to replay on this thread.
+    internal static bool TryReplayChoice(out int choice)
+    {
+        if (t_replayedChoices is { Count: > 0 } replayed)
+        {
+            choice = replayed.Dequeue();
+            return true;
+        }
+
+        choice = 0;
+        return false;
+    }
+
+    // Keeps a choice for the recompute while a first pass records on this thread.
+    internal static void RecordChoice(int choice) => t_recordedChoices?.Add(choice);
+
+    /// <summary>Restores what <see cref="FirstPass"/> or <see cref="Replay"/> changed when disposed.</summary>
+    public readonly struct ChoiceScope : IDisposable
+    {
+        private readonly List<int>? _recorded;
+        private readonly Queue<int>? _replayed;
+        private readonly bool _firstPass;
+
+        internal ChoiceScope(List<int>? recorded, Queue<int>? replayed, bool firstPass) => (_recorded, _replayed, _firstPass) = (recorded, replayed, firstPass);
+
+        /// <inheritdoc />
+        public void Dispose()
+        {
+            if (_firstPass)
+            {
+                t_disabledDepth--;
+                t_firstPassDepth--;
+            }
+
+            t_recordedChoices = _recorded;
+            t_replayedChoices = _replayed;
+        }
+    }
+
     /// <summary>
     /// Defines an operation with its own forward and backward steps, written with public tensor operations (see
     /// <see cref="DifferentiableFunction"/>). Call <see cref="DifferentiableFunction.Apply"/> to run it.

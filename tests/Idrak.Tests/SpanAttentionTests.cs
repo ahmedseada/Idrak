@@ -27,6 +27,7 @@ internal static partial class Tests
         ("attention spans backward: the conformance kit's key-range cases (forward and gradient; random ranges, bidirectional, causal, windows, image blocks, grouped heads, tables, head sizes 1 to 256, a soft-cap) replay on the device call by call", SpanGradientCases),
         ("attention spans backward: float32 and bfloat16 (MixedPrecision): the forward pass (float32) and the gradient on the device match the CPU (head sizes 4 to 256: on CUDA the wide kernels over 128, rows and keys past several tiles, every rule, grouped heads, tables, a soft-cap), on the device's own kernels", SpanGradientPrecisions),
         ("attention spans backward: training through the fastest path (forced key ranges, forced composed, measured with the gradient) gives the same gradients; the key-range path runs AttentionSpansBackward", SpanTrainingPaths),
+        ("attention spans: a checkpointed pass's recompute takes the path its first pass took (composed in the first pass, the key ranges forced before the backward pass) and gives the gradients of the stored pass bit for bit; the first pass computes as with gradients (Autograd.IsFirstPass) and nothing is replayed past the recompute", CheckpointedAttentionPath),
     ];
 
     // The composed path for query head h: softmax(cap(scale · q kᵀ) + mask) v with the mask from the table's ranges.
@@ -866,6 +867,65 @@ internal static partial class Tests
                     AssertClose(gradients[0][t], gradients[i][t], 1e-3f, $"gradient {t} of path {i} against the key ranges' on {device}");
                 }
             }
+        }
+        finally
+        {
+            AttentionPaths.Forced = previous;
+        }
+    }
+
+    // A checkpointed block's recompute runs while other choices may have changed (a measured path, the memory free, here a
+    // forced path switched before the backward pass): it replays the paths its first pass took (Autograd.FirstPass and
+    // Replay), so the checkpointed gradients are the stored pass's, bit for bit. Where the device reports no memory (the
+    // CPU) both paths are the key ranges.
+    private static void CheckpointedAttentionPath(Device device)
+    {
+        var random = new Random(78);
+        const int Heads = 2, Rows = 40, Dim = 8;
+        float scale = 1f / MathF.Sqrt(Dim);
+        float[] xv = RandomArray(random, Rows * Dim), wv = RandomArray(random, Dim * 3 * Heads * Dim), cv = RandomArray(random, Heads * Rows * Dim);
+        var (starts, ends) = KeySpans.Bidirectional(Rows, Rows).ToTensors(device);
+        var previous = AttentionPaths.Forced;
+        try
+        {
+            float[][] Run(bool checkpointed, List<bool> firstPasses)
+            {
+                using var scope = new TensorScope();
+                var x = Tensor.From(xv, [Rows, Dim], device, requiresGrad: true);
+                var w = Tensor.From(wv, [Dim, 3 * Heads * Dim], device, requiresGrad: true);
+                Tensor Block(Tensor input)
+                {
+                    firstPasses.Add(Autograd.IsFirstPass);
+                    var qkv = input.MatMul(w).Reshape(Rows, 3, Heads, Dim).Permute(1, 2, 0, 3);
+                    Tensor Part(int i) => qkv.Narrow(0, i, 1).Reshape(Heads, Rows, Dim);
+                    return Tensor.AttentionFastest(Part(0), Part(1), Part(2), starts, ends, scale, everyKey: true);
+                }
+
+                AttentionPaths.Forced = AttentionPath.Composed;
+                var y = checkpointed ? Checkpointing.Checkpoint(Block, x) : Block(x);
+                AttentionPaths.Forced = AttentionPath.Spans;                       // the recompute must not follow this
+                (y * Tensor.From(cv, [Heads, Rows, Dim], device)).Sum().Backward();
+                return [x.Grad!.ToArray(), w.Grad!.ToArray()];
+            }
+
+            var storedPasses = new List<bool>();
+            var stored = Run(checkpointed: false, storedPasses);
+            var passes = new List<bool>();
+            var checkpointed = Run(checkpointed: true, passes);
+            Check(storedPasses.SequenceEqual([false]) && passes.SequenceEqual([true, false]) && !Autograd.IsFirstPass,
+                $"the first pass, and only it, computes as a first pass: {string.Join(", ", passes)}");
+            for (int t = 0; t < 2; t++)
+            {
+                int differ = Enumerable.Range(0, stored[t].Length).Count(i => BitConverter.SingleToInt32Bits(stored[t][i]) != BitConverter.SingleToInt32Bits(checkpointed[t][i]));
+                Check(differ == 0, $"gradient {t}: {differ} of {stored[t].Length} values differ between the checkpointed and the stored pass on {device}");
+            }
+
+            // Nothing is left to replay: the next call takes the path forced now.
+            AttentionPaths.Forced = AttentionPath.Spans;
+            using var q = Tensor.From(cv, [Heads, Rows, Dim], device);
+            using var trace = Kernels.Trace(device.Backend);
+            using var after = Tensor.AttentionFastest(q, q, q, starts, ends, scale, everyKey: true);
+            Check(trace.Calls(Ops.AttentionSpans) == 1, "after the recompute, a call takes the path forced then");
         }
         finally
         {

@@ -14,15 +14,12 @@ namespace Idrak.Layers;
 /// </summary>
 public static class Checkpointing
 {
-    [ThreadStatic]
-    private static int t_firstPass;
-
     /// <summary>
     /// Whether a checkpointed forward pass runs on this thread without recording (the pass the backward pass repeats with
-    /// recording): layers then compute as they do with gradients (no inference-only fused kernels), so the kept output is
-    /// the one the recompute gives, bit for bit.
+    /// recording; <see cref="Autograd.IsFirstPass"/>): layers then compute as they do with gradients (no inference-only
+    /// fused kernels), so the kept output is the one the recompute gives, bit for bit.
     /// </summary>
-    internal static bool FirstPass => t_firstPass > 0;
+    internal static bool FirstPass => Autograd.IsFirstPass;
 
     /// <summary>
     /// <paramref name="forward"/>(<paramref name="input"/>) checkpointed when <see cref="ActivationMemory.CheckpointsBlocks"/>
@@ -36,7 +33,8 @@ public static class Checkpointing
     /// <paramref name="forward"/>(input) without storing its intermediate results (activation checkpointing): the
     /// forward pass runs without recording, and the backward pass runs it again with recording, back-propagates through
     /// it and frees it at once. Parameters used inside receive their gradients then. Memory drops to the checkpointed
-    /// outputs at the cost of a second forward pass. The function must be deterministic (no dropout). The
+    /// outputs at the cost of a second forward pass. The function must be deterministic (no dropout); the recompute takes
+    /// the paths the first pass took (<see cref="Autograd.FirstPass"/>), so it gives the kept output again bit for bit. The
     /// recompute runs with the image blocks the first pass ran with (<see cref="ImageBlocks.Current"/>).
     /// </summary>
     public static Tensor Checkpoint(Func<Tensor, Tensor> forward, Tensor input)
@@ -52,19 +50,12 @@ public static class Checkpointing
         var images = ImageBlocks.Current;
         Tensor output;
         var seeds = new List<uint>();                                   // dropout masks are drawn again identically
+        var choices = new List<int>();                                  // and the paths taken (Autograd.FirstPass)
         using (Layers.DropoutSeeds.Record(seeds))
-        using (Autograd.NoGrad())
+        using (Autograd.FirstPass(choices))
         using (var pass = new TensorScope())
         {
-            t_firstPass++;
-            try
-            {
-                output = pass.Keep(forward(input));
-            }
-            finally
-            {
-                t_firstPass--;
-            }
+            output = pass.Keep(forward(input));
         }
 
         if (ReferenceEquals(output, input))
@@ -79,6 +70,7 @@ public static class Checkpointing
             replay.RequiresGrad = input.RequiresGrad;
             Tensor recomputed;
             using (Layers.DropoutSeeds.Replay(seeds))
+            using (Autograd.Replay(choices))
             using (images is not null && !ReferenceEquals(ImageBlocks.Current, images) ? images.Use() : (ImageBlocks.Scope?)null)
             {
                 recomputed = forward(replay);

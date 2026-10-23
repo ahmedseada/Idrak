@@ -25,11 +25,18 @@ public static class Idrak.Abstraction.AttentionPaths
   public static Idrak.Abstraction.AttentionPath Forced { get; set; }
 
 public static class Idrak.Abstraction.Autograd
+  nested Idrak.Abstraction.Autograd.ChoiceScope (below)
   nested Idrak.Abstraction.Autograd.NoGradScope (below)
+  public static Idrak.Abstraction.Autograd.ChoiceScope FirstPass(System.Collections.Generic.List<int> choices)
+  public static Idrak.Abstraction.Autograd.ChoiceScope Replay(System.Collections.Generic.IReadOnlyList<int> choices)
   public static Idrak.Abstraction.Autograd.NoGradScope NoGrad()
   public static Idrak.Abstraction.DifferentiableFunction Function(string name, System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Tensor> forward, System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor?>> backward)
   public static System.IDisposable OnGradientReady(System.Action<Idrak.Abstraction.Tensor, bool> ready)
   public static bool IsEnabled { get; }
+  public static bool IsFirstPass { get; }
+
+public readonly struct Idrak.Abstraction.Autograd.ChoiceScope : System.IDisposable
+  public void Dispose()
 
 public readonly struct Idrak.Abstraction.Autograd.NoGradScope : System.IDisposable
   public void Dispose()
@@ -822,6 +829,7 @@ public static class Idrak.Abstraction.ComputeResources
   public static Idrak.Abstraction.Devices.LookupTablePlacement ParseLookupTables(string? name)
   public static Idrak.Abstraction.MemoryUsage GetMemoryUsage(Idrak.Abstraction.Device device)
   public static System.Threading.Tasks.ParallelOptions ParallelOptions { get; }
+  public static System.TimeSpan TuningBudget { get; set; }
   public static bool AllowParallel { get; }
   public static bool OffloadColdFirst { get; set; }
   public static bool OffloadToHostMemory { get; set; }

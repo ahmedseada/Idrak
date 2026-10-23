@@ -28,10 +28,11 @@ internal sealed partial class VulkanBackend
         }
 
         // The workgroup width (rows per block and keys per tile follow from it): the device's own until measured, then
-        // the fastest of the candidate widths for this shape, as attention_tiled's.
-        bool lse = logSumExp is not null;
+        // the fastest of the candidate widths for this shape, as attention_tiled's. One key with or without the
+        // log-sum-exp (which only adds a store): a width sums in its own order, and a checkpoint's first pass and its
+        // recompute, or an evaluation and a training step, must give the same outputs.
         int width = Width;
-        var key = new VulkanTuneKey(VulkanTuneOp.SpanAttention, lse ? 1 : 0, heads, rows, keyRows, dim, kvHeads, headsPerTable);
+        var key = new VulkanTuneKey(VulkanTuneOp.SpanAttention, 0, heads, rows, keyRows, dim, kvHeads, headsPerTable);
         if (TryTuned(key, out int stored) && Array.IndexOf(CandidateWidths, stored) >= 0)
         {
             width = stored;

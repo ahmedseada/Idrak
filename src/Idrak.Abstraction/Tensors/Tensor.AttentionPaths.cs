@@ -89,7 +89,12 @@ public sealed partial class Tensor
         ArgumentNullException.ThrowIfNull(values);
         ArgumentNullException.ThrowIfNull(starts);
         ArgumentNullException.ThrowIfNull(ends);
-        return ComposedChosen(q, keys, values, starts, ends, scale, everyKey, mask, out int tables)
+        // A checkpoint's recompute takes the path its first pass took (the measured choice and the memory free may differ
+        // by then), so both give the same bits (Autograd.FirstPass).
+        int tables = q.Rank == 3 && q._shape[1] > 0 ? Math.Max(1, starts.Size / q._shape[1]) : 1;
+        bool composed = Autograd.TryReplayChoice(out int replayed) ? replayed != 0 : ComposedChosen(q, keys, values, starts, ends, scale, everyKey, mask, out tables);
+        Autograd.RecordChoice(composed ? 1 : 0);
+        return composed
             ? ComposedAttention(q, keys, values, everyKey ? null : mask, scale, tables)
             : AttentionSpans(q, keys, values, starts, ends, scale);
     }
@@ -99,9 +104,10 @@ public sealed partial class Tensor
     /// copied out (<see cref="Backend.AttentionSpansStrided"/>). <paramref name="packed"/> is [batch, rows, (heads +
     /// 2·kvHeads)·dim] (each row's queries, then its keys, then its values, head after head); the result is [batch, rows,
     /// heads·dim]. Null where AttentionFastest would take the composed scores (forced, measured faster, or the device has no
-    /// span kernel for the head size: the caller splits the heads for them) and while the gradient is recorded (this
-    /// records none). Otherwise the same values as splitting the heads ([batch·heads, rows, dim]), AttentionFastest and
-    /// joining them. The ranges as AttentionFastest's for the batch·heads query heads.
+    /// span kernel for the head size: the caller splits the heads for them), while the gradient is recorded (this records
+    /// none) and in a checkpoint's first pass (its recompute records). Otherwise the same values as splitting the heads
+    /// ([batch·heads, rows, dim]), AttentionFastest and joining them. The ranges as AttentionFastest's for the batch·heads
+    /// query heads.
     /// </summary>
     /// <param name="packed">[batch, rows, (heads + 2·kvHeads)·dim].</param>
     /// <param name="heads">Query heads per row.</param>
@@ -125,7 +131,7 @@ public sealed partial class Tensor
         }
 
         int batch = packed._shape[0], rows = packed._shape[1], width = packed._shape[2], tables = starts.Size / rows;
-        if (Autograd.IsEnabled && packed.RequiresGrad || tables == 0 || batch * heads % tables != 0 || starts.Device != packed.Device || ends.Device != packed.Device)
+        if (Autograd.IsEnabled && packed.RequiresGrad || Autograd.IsFirstPass || tables == 0 || batch * heads % tables != 0 || starts.Device != packed.Device || ends.Device != packed.Device)
         {
             return null;
         }
@@ -220,7 +226,7 @@ public sealed partial class Tensor
             return false;
         }
 
-        bool recording = Autograd.IsEnabled && (q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad);
+        bool recording = Autograd.IsFirstPass || Autograd.IsEnabled && (q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad);   // as its recompute
         var usage = backend.GetMemoryUsage();
         long? available = backend.AvailableMemory();
         if (available is { } free && usage.Limit is { } limit)
@@ -287,7 +293,7 @@ public sealed partial class Tensor
     {
         int heads = q._shape[0], rows = q._shape[1], dim = q._shape[2], kvHeads = keys._shape[0], keyRows = keys._shape[1];
         int group = heads / kvHeads;
-        if (!Autograd.IsEnabled || !(q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad))
+        if (!Autograd.IsFirstPass && (!Autograd.IsEnabled || !(q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad)))   // a first pass: its recompute's operations
         {
             using var grouped = group == 1 ? null : q.Reshape(kvHeads, group * rows, dim);
             using var scores = (grouped ?? q).MatMul(keys, transposeB: true);
