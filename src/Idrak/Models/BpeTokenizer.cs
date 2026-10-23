@@ -409,7 +409,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     /// </summary>
     public void EncodeRange(string text, int start, int length, List<int> ids)
     {
-        if (text.AsSpan(start, length).ContainsAnyInRange('\uD800', '\uDFFF'))
+        if (text.AsSpan(start, length).ContainsAny(Surrogates.Any))
         {
             text = WithoutLoneSurrogates(text.Substring(start, length));         // the range may cut a pair in half
             start = 0;
@@ -440,7 +440,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
     // becomes U+FFFD, as it does when such text is written as UTF-8.
     internal static string WithoutLoneSurrogates(string text)
     {
-        int at = text.AsSpan().IndexOfAnyInRange('\uD800', '\uDFFF');
+        int at = text.AsSpan().IndexOfAny(Surrogates.Any);
         if (at < 0)
         {
             return text;

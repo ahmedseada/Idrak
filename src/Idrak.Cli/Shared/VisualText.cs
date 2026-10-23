@@ -81,11 +81,21 @@ internal static class VisualText
         }
     }
 
+    // Everything from U+0590 up, searched through SearchValues: the generic range search boxes its bounds in a method's
+    // code before it is optimized.
+    private static readonly SearchValues<char> FromHebrew = SearchValues.Create(string.Create(0x10000 - 0x590, 0, static (chars, _) =>
+    {
+        for (int i = 0; i < chars.Length; i++)
+        {
+            chars[i] = (char)(0x590 + i);
+        }
+    }));
+
     /// <summary>Whether <paramref name="text"/> has anything this class would change: right-to-left text or Arabic letters.</summary>
     public static bool NeedsRendering(string text)
     {
         // Below U+0590 nothing needs it (surrogates are above it): a line of Latin text is one vectorized search.
-        int first = text.AsSpan().IndexOfAnyInRange('\u0590', '\uFFFF');
+        int first = text.AsSpan().IndexOfAny(FromHebrew);
         if (first < 0)
         {
             return false;
