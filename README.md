@@ -33,8 +33,8 @@ Idrak is a neural network library for **.NET 10**, written entirely in C#.
 - **Open by contract.** Every behaviour goes through a contract with a registry, so a model family, a file format, a
   device or a kernel is added from a plug-in without touching the library.
 
-This file is the library's map: what it can do today, on which hardware that was verified, how it is laid out, what
-the current release holds, and what is planned.
+This file is the library's map: what it can do today, on which hardware that was verified, how it is laid out, and what
+is planned.
 
 ---
 
@@ -313,35 +313,6 @@ Working rules for this repository are in `CLAUDE.md`; the performance rules in `
 | `api/` | the public API dumps the guard test checks |
 | `docs/` | `optimization.md` and the longer guides |
 | `tools/` | fixture makers (Python references the tests compare against: uroman, HarfBuzz, torch losses, ffmpeg) |
-
----
-
-## Release 0.4.0
-
-`VersionPrefix` is **0.4.0** and the tag `v0.4.0` marks the release; the `CHANGELOG.md` section "0.4.0" is its note. It
-is a breaking release, a minor bump under 0.x semantics:
-
-- `Idrak.Abstraction` is new and every shared type moved into it (the table in `CHANGELOG.md`); packages were regrouped
-  by domain (`Idrak.Datasets` → `Idrak.Data`, `Idrak.LanguageModels` retired into `Idrak` and `Idrak.Text`, `Idrak.Onnx`
-  folded into `Idrak`; `Idrak.Gpu`, `Idrak.Imaging`, `Idrak.Vision`, `Idrak.Audio`, `Idrak.Cluster`, `Idrak.Network`,
-  `Idrak.Reinforcement` and the four plug-in packages new). Plug-ins compiled against 0.3.x must be rebuilt.
-- The model families live in the plug-in packages, never in the library; the engine reaches models only through
-  contracts (`engine.Model<IChatModel>(name)`), with no shims for the old calls.
-- MP3 is built into `Idrak.Audio`; the `Idrak.Mp3Audio` sample plug-in and the legal OCR sample app are gone.
-
-Not 1.0 yet: the HIP device is untested on hardware, only NVIDIA GPUs have run the GPU paths, and some contracts still
-have the built-in implementation as their only one.
-
-Publishing is done from a machine: pushing a tag publishes nothing (the Release workflow runs only by hand, as a
-fallback). `tools/publish.ps1` checks out the tag, packs every project under `src/`, pushes them to nuget.org after a
-confirmation and creates the GitHub release with the version's changelog section as its text and the packages attached:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tools\publish.ps1 -Version 0.4.0
-```
-
-`-SkipGitHub` publishes to nuget.org only, `-SkipNuGet` makes the GitHub release only; `tools\github-release.ps1
--Version 0.4.0 -NotesOnly` prints the release text to check it.
 
 ---
 
