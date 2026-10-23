@@ -276,7 +276,7 @@ internal static partial class Tests
         TuneTiming.Choose([8, 16], 8, c => c == 0 ? 7.7f : 7.6f, confirmation: confirmation);
         Check(float.IsNaN(confirmation[0]), "nothing timed again when the formula's choice stays");
 
-        // Noisy timings, shaped like the prompt splits --bench-gemv logged on an RTX 5070 Ti (180 rows, 1024 -> 1024, 64-row
+        // Noisy timings, shaped like the prompt splits --bench-gemv logged on a 70-SM card (180 rows, 1024 -> 1024, 64-row
         // tiles, warm, about 13 µs): the formula's 4 splits, 6 splits 6% faster, the others as fast or slower, and each
         // timing off by up to 20% either way. Two processes kept 2 and 3 splits; an earlier one 1 (22 µs against 12.7).
         int[] prompt = [1, 2, 3, 4, 6, 8];
@@ -302,8 +302,8 @@ internal static partial class Tests
     }
 
     // Pure (no GPU): a clock that drifts through the whole measurement (a laptop GPU still raising its clocks, or one
-    // lowering them under a power limit) does not move the choice. Shaped like the 151936-column head on an RTX 5050
-    // Laptop (20 SMs, the formula's 1 split): --bench-gemv found 1 split fastest (657 µs; 2 splits 765), yet the
+    // lowering them under a power limit) does not move the choice. Shaped like the 151936-column head on a 20-SM
+    // card ( the formula's 1 split): --bench-gemv found 1 split fastest (657 µs; 2 splits 765), yet the
     // measured choice ran 7-9% slower.
     private static void TuneDrift(Device device)
     {
@@ -368,7 +368,7 @@ internal static partial class Tests
     }
 
     // Pure (no GPU): the few-row split choice as CudaBackend.PackedFewRows makes it (candidates, key, formula, TuneTiming)
-    // with fake timers shaped like --bench-gemv's results on an RTX 5070 Ti and an RTX 3060 Laptop.
+    // with fake timers shaped like --bench-gemv's results on a 70-SM and a 30-SM card.
     private static void GemvSelection(Device device)
     {
         if (device.Type != DeviceType.Cpu)
@@ -426,20 +426,20 @@ internal static partial class Tests
             return kept;
         }
 
-        // RTX 5070 Ti (70 SMs), o + add + norm 2048 → 1024: the fused kernel is fastest at 16 splits (7.5 µs against 8.8 at
+        // 70 SMs, o + add + norm 2048 → 1024: the fused kernel is fastest at 16 splits (7.5 µs against 8.8 at
         // 8); the plain kernel of the shape at 8. Before, the fused kernel took the plain kernel's 8.
-        var plain5070 = new Dictionary<int, float> { [1] = 28f, [2] = 15f, [3] = 11f, [4] = 9.5f, [6] = 8f, [8] = 7.0f, [12] = 7.3f, [16] = 7.6f, [24] = 8.2f, [32] = 8.8f };
-        var addNorm5070 = new Dictionary<int, float> { [1] = 30f, [2] = 16f, [3] = 12f, [4] = 10.5f, [6] = 9.3f, [8] = 8.8f, [12] = 8.0f, [16] = 7.5f, [24] = 7.9f, [32] = 8.3f };
-        Check(CudaBackend.GemvSplitCount(70, 8, 2048) == 16, "5070 Ti: the formula gives 16");
-        var chosen = Measure(70, 2048, (plainKey, plain5070), (addNormKey, addNorm5070));
-        Check(chosen[plainKey] == 8 && chosen[addNormKey] == 16, $"5070 Ti: plain {chosen[plainKey]}, add + norm {chosen[addNormKey]} (8 and 16)");
-        var collided = Measure(70, 2048, (plainKey, plain5070), (plainKey, addNorm5070));
+        var plain70 = new Dictionary<int, float> { [1] = 28f, [2] = 15f, [3] = 11f, [4] = 9.5f, [6] = 8f, [8] = 7.0f, [12] = 7.3f, [16] = 7.6f, [24] = 8.2f, [32] = 8.8f };
+        var addNorm70 = new Dictionary<int, float> { [1] = 30f, [2] = 16f, [3] = 12f, [4] = 10.5f, [6] = 9.3f, [8] = 8.8f, [12] = 8.0f, [16] = 7.5f, [24] = 7.9f, [32] = 8.3f };
+        Check(CudaBackend.GemvSplitCount(70, 8, 2048) == 16, "70 SMs: the formula gives 16");
+        var chosen = Measure(70, 2048, (plainKey, plain70), (addNormKey, addNorm70));
+        Check(chosen[plainKey] == 8 && chosen[addNormKey] == 16, $"70 SMs: plain {chosen[plainKey]}, add + norm {chosen[addNormKey]} (8 and 16)");
+        var collided = Measure(70, 2048, (plainKey, plain70), (plainKey, addNorm70));
         Check(collided[plainKey] == 8, "with the old shared key the fused kernel would run the plain kernel's 8 (8.8 µs, not 7.5)");
 
-        // RTX 3060 Laptop (30 SMs): 6 splits 15 µs, the formula's 8 about 20; 6 was not a candidate before.
-        var addNorm3060 = new Dictionary<int, float> { [1] = 40f, [2] = 26f, [3] = 19f, [4] = 17f, [6] = 15f, [8] = 20f, [12] = 19f, [16] = 21f, [24] = 25f, [32] = 29f };
-        Check(CudaBackend.GemvSplitCount(30, 8, 2048) == 8, "3060: the formula gives 8");
-        Check(Measure(30, 2048, (addNormKey, addNorm3060))[addNormKey] == 6, "3060: 6 splits chosen");
+        // 30 SMs: 6 splits 15 µs, the formula's 8 about 20; 6 was not a candidate before.
+        var addNorm30 = new Dictionary<int, float> { [1] = 40f, [2] = 26f, [3] = 19f, [4] = 17f, [6] = 15f, [8] = 20f, [12] = 19f, [16] = 21f, [24] = 25f, [32] = 29f };
+        Check(CudaBackend.GemvSplitCount(30, 8, 2048) == 8, "30 SMs: the formula gives 8");
+        Check(Measure(30, 2048, (addNormKey, addNorm30))[addNormKey] == 6, "30 SMs: 6 splits chosen");
 
         // A clock that rises 3x part way through the measurement (an idle laptop GPU): with ratios of pairs the choice
         // is 6 wherever the step falls; medians of the times themselves chose differently by where it fell.
@@ -453,7 +453,7 @@ internal static partial class Tests
             var times = new List<(int C, float T)>();
             float Timer(int c)
             {
-                float t = addNorm3060[list[c]] * (calls < step ? 3f : 1f);
+                float t = addNorm30[list[c]] * (calls < step ? 3f : 1f);
                 if (calls++ < total)
                 {
                     times.Add((c, t));                                          // the first pass (not the winner's timings again)
@@ -519,8 +519,8 @@ internal static partial class Tests
         var unknown = TuningCache.Parse(text + "NoSuchOp 0 1 2 3 0 0 0 = 4\nGemvSplits 0 1 x 3 0 0 0 = 4\nGemvSplits 1 1 2 3 0 0 0 = 8\n", identity);
         Check(unknown?.Count == entries.Count + 1, "lines that do not parse are skipped, the rest kept");
 
-        string name = TuningCache.FileName("NVIDIA GeForce RTX 3060 Laptop GPU; compute 8.6; 30 SMs; 6144 MiB");
-        Check(name == "NVIDIA_GeForce_RTX_3060_Laptop_GPU_compute_8.6_30_SMs_6144_MiB.txt", $"file name ({name})");
+        string name = TuningCache.FileName("Vendor GPU 1 Laptop; compute 8.6; 30 SMs; 6144 MiB");
+        Check(name == "Vendor_GPU_1_Laptop_compute_8.6_30_SMs_6144_MiB.txt", $"file name ({name})");
         Check(TuningCache.FileName("a/b\\c:d*e?f\"g<h>i|j") == "a_b_c_d_e_f_g_h_i_j.txt", "characters a file system rejects are replaced");
 
         Check(TuningCache.Folder(v => v == "IDRAK_TUNING_CACHE" ? "0" : null) is null, "IDRAK_TUNING_CACHE=0 turns the cache off");
@@ -650,9 +650,9 @@ internal static partial class Tests
         // The cards the defaults were measured on, and the other compute capabilities as documented.
         var cards = new (string Name, CudaDeviceLimits Limits)[]
         {
-            ("RTX 5070 Ti (12.0, 70 SMs)", CudaDeviceLimits.Documented(12, 0, 70, 16L << 30, 48 << 20)),
-            ("RTX 5050 Laptop (12.0, 20 SMs)", CudaDeviceLimits.Documented(12, 0, 20, 8L << 30, 32 << 20)),
-            ("RTX 3060 Laptop (8.6, 30 SMs)", CudaDeviceLimits.Documented(8, 6, 30, 6L << 30, 3 << 20)),
+            ("12.0, 70 SMs", CudaDeviceLimits.Documented(12, 0, 70, 16L << 30, 48 << 20)),
+            ("12.0, 20 SMs", CudaDeviceLimits.Documented(12, 0, 20, 8L << 30, 32 << 20)),
+            ("8.6, 30 SMs", CudaDeviceLimits.Documented(8, 6, 30, 6L << 30, 3 << 20)),
             ("8.0", CudaDeviceLimits.Documented(8, 0, 108)),
             ("8.9", CudaDeviceLimits.Documented(8, 9, 76)),
             ("9.0", CudaDeviceLimits.Documented(9, 0, 132)),

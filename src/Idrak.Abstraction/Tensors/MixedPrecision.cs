@@ -11,8 +11,8 @@ public enum MatMulPrecision
 
     /// <summary>
     /// Operands rounded to bfloat16 and multiplied on tensor cores, sums kept in float32 (as PyTorch's bfloat16 autocast):
-    /// several times faster on GPUs with bfloat16 tensor cores (NVIDIA compute capability 8.0 and newer: RTX 30xx and
-    /// later, A100, H100). Tensors stay float32; devices without such hardware (and the CPU) keep computing in float32.
+    /// several times faster on GPUs with bfloat16 tensor cores (NVIDIA compute capability 8.0 and
+    /// newer). Tensors stay float32; devices without such hardware (and the CPU) keep computing in float32.
     /// On Vulkan devices with cooperative matrices, such products run on them where measured faster (bfloat16 operands,
     /// or 16-bit float ones scaled per row and column where the device has no bfloat16 matrices: within bfloat16's error).
     /// </summary>
@@ -21,7 +21,7 @@ public enum MatMulPrecision
     /// <summary>
     /// Operands quantized to FP8 (e4m3: 4 exponent, 3 mantissa bits) with one scale per row of the left operand and per
     /// column of the right one, multiplied on FP8 tensor cores (twice the bfloat16 rate; NVIDIA compute capability 8.9
-    /// and newer: RTX 40xx / 50xx, H100) and summed in float32. Attention and devices without FP8 use bfloat16. Faster but
+    /// and newer) and summed in float32. Attention and devices without FP8 use bfloat16. Faster but
     /// coarser than <see cref="BFloat16"/>: compare training curves before relying on it.
     /// </summary>
     Float8,
