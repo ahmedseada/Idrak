@@ -286,7 +286,7 @@ internal static partial class Tests
         var ids = new List<int>(4096);
         int[] some = [1, 2, 3, 4, 5, 6, 7, 8];
         steps.Add($"ids.AddRange(span) {PerCall(() => { ids.Clear(); ids.AddRange(some.AsSpan()); }):F1}");
-        steps.Add($"ContainsAnyInRange(surrogates) {PerCall(() => _ = line.AsSpan().ContainsAnyInRange('\uD800', '\uDFFF')):F1}");
+        steps.Add($"the surrogate check {PerCall(() => _ = line.AsSpan().ContainsAny(Surrogates.Any)):F1}");
 
         // Each method of the chain EncodeRange calls, bound to the tokenizer (the code it runs, whatever its tier): the
         // first that allocates where the one it calls does not holds the allocation.

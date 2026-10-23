@@ -275,7 +275,7 @@ internal sealed class ShellCommand : Command
                 case ConsoleKey.Enter:
                     Console.WriteLine();
                     return text.ToString();
-                case ConsoleKey.D when key.Modifiers.HasFlag(ConsoleModifiers.Control) && text.Length == 0:
+                case ConsoleKey.D when (key.Modifiers & ConsoleModifiers.Control) != 0 && text.Length == 0:
                     return null;
                 case ConsoleKey.Backspace when cursor > 0:
                     text.Remove(--cursor, 1);

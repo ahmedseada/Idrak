@@ -612,14 +612,16 @@ public sealed class ModulePolicy<TAction> : IPolicy<float[], TAction>, ISchedule
                 }
 
                 observation.CopyTo(observations, at * _observationSize);
-                switch (trajectory.Actions[t])
+                // The action type by typeof, read through Unsafe.As: a type pattern on TAction boxes a choice at every
+                // step in a method's code before it is optimized (optimization rule 89).
+                var action = trajectory.Actions[t];
+                if (typeof(TAction) == typeof(int))
                 {
-                    case int choice:
-                        actions[at] = choice;
-                        break;
-                    case float[] values:
-                        values.AsSpan(0, _actionSize).CopyTo(actions.AsSpan(at * _actionSize));
-                        break;
+                    actions[at] = System.Runtime.CompilerServices.Unsafe.As<TAction, int>(ref action);
+                }
+                else if (action is float[] values)
+                {
+                    values.AsSpan(0, _actionSize).CopyTo(actions.AsSpan(at * _actionSize));
                 }
 
                 unitValues[at] = trajectory.Records[t].LogProbabilities[0];

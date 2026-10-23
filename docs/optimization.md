@@ -409,3 +409,39 @@ for every kernel, on every card: nothing below names or assumes a card.
     (`.maxntid`) so ptxas keeps its registers within what that block may use; static shared memory stays within the
     default per block (`CudaDeviceLimits.SharedPerBlock`).
 
+
+---
+
+## 12. Boxing that only unoptimized code does (learned from measured work)
+
+The tiered JIT runs a method's unoptimized code first and replaces it once the method is hot, but the replacement
+waits while other methods are still being compiled: on a machine whose JIT keeps compiling in the background (79 to
+133 methods a second in a quiet second, early in a test run), a hot method ran its unoptimized code for thousands of
+calls. Optimized code folds a box followed by a type or null test away; unoptimized code allocates it. So a path can
+allocate nothing on one machine and on every warm run, and allocate on every call on another. Each rule below came from
+a BPE encode that allocated 96 bytes a call (four boxed chars) on one machine only, October 2026.
+
+88. **No generic range search over chars (or any value type) on a hot path.** `ContainsAnyInRange`,
+    `IndexOfAnyInRange`, `IndexOfAnyExceptInRange`, `ContainsAnyExceptInRange` and the `LastIndexOf` forms test their
+    bounds with type patterns (`is null`, `is byte or sbyte`, `is short or ushort or char`), and unoptimized code boxes
+    the bounds for each test. Use a `static readonly SearchValues<char>` (rule 17) and its non-generic char overloads
+    (`ContainsAny`, `IndexOfAny`, `IndexOfAnyExcept`): the same vectorized search, nothing to box. (BPE's surrogate
+    check, `ContainsAnyInRange('\uD800', '\uDFFF')`, gave the 96 bytes a call alone; through `SearchValues`, 0. The
+    test "hidden boxing: nothing in src/ calls …" keeps them out of `src/`.)
+89. **No type or null test on a `T` that can be a value type, on a hot path.** `value is null`, `value?.GetHashCode()`,
+    `switch (value) { case int x: … }`, `value is float[] v` where `T` may be `int`, `(object)value`, and
+    `Enum.HasFlag` box in unoptimized code. Branch on `typeof(T) == typeof(int)` and read with
+    `Unsafe.As<T, int>(ref value)`; hash with `typeof(T).IsValueType ? value.GetHashCode() : value?.GetHashCode() ?? 0`;
+    test flags with `(flags & Flag) != 0`. A `class` constraint makes the box free (a reference is not boxed). A struct
+    used as a dictionary key implements `IEquatable<T>` (records do), or every lookup boxes it on every tier.
+90. **An allocation test that fails is diagnosed, not re-run.** In this order:
+    1. The type: the runtime's allocation ticks (`GCAllocationTick` through an `EventListener`, the tests'
+       `AllocatedTypes`) name what is allocated; a boxed char reads `System.Char`, a char array `System.Char[]`.
+    2. The step: measure each step of the call alone, and each method of its chain through a delegate bound to the
+       private method (`Delegate.CreateDelegate`), which runs the code version the call itself runs; the first that
+       allocates where the one it calls does not holds the allocation.
+    3. The JIT: run once with `DOTNET_TieredCompilation=0` (every method optimized at once). Passing then means a box
+       only unoptimized code makes: rules 88 and 89. `JitInfo.GetCompiledMethodCount()` over a second without calls shows
+       the background compiling that holds tier-up back.
+    4. The scan: the compiled IL's `box` instructions of a type parameter followed by a branch or `isinst` are the
+       sites of rule 89; walk them with their source lines (the portable PDB) and fix the hot ones.
