@@ -140,9 +140,10 @@ internal sealed partial class VulkanBackend
             return false;
         }
 
-        // Expanding the weights is the caller's own path: false lets it run (when that was measured faster here).
+        // Every choice runs here, expanding the weights too: the caller's own expansion would scale int8's weights before
+        // the product, against the one order of the prompt-sized products (VulkanKernels.Order.cs).
         int choice = PromptChoice(f, x, packed, scales, y, m, n, k);
-        return choice != 0 && (choice & Rest) != PromptExpand && RunPrompt(choice, f, x, packed, scales, y, m, n, k);
+        return choice != 0 && RunPrompt(choice, f, x, packed, scales, y, m, n, k);
     }
 
     // y = x · w for a packed product given to Int4MatMul or BFloat16MatMul (whose callers have no expanding path of their
@@ -217,7 +218,7 @@ internal sealed partial class VulkanBackend
     private int Float32PromptChoice(VulkanKernels.PackedFormat format, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
     {
         Span<int> buffer = stackalloc int[PromptCandidatesMost];
-        var candidates = PromptCandidates(format, m, n, k, buffer);
+        var candidates = PromptCandidates(format, m, n, k, PackedWindowRows(format, weights, scales, m, n, k) != 0, buffer);
         if (candidates.Length == 0)
         {
             return 0;
@@ -273,10 +274,11 @@ internal sealed partial class VulkanBackend
     }
 
     // Candidates of a prompt-sized packed product that can run here: the tiled kernel at each candidate width whose
-    // blocks the device's workgroup counts take, the few-rows kernels when their row blocks fit, expanding the weights
-    // when a float copy fits one storage, the cooperative-matrix kernel where the device has one and its blocks fit;
-    // written to `into` (PromptCandidatesMost long).
-    private ReadOnlySpan<int> PromptCandidates(VulkanKernels.PackedFormat format, int m, int n, int k, Span<int> into)
+    // blocks the device's workgroup counts take, the few-rows kernels in the prompt-sized products' order when their
+    // blocks fit and the weights fit one binding (`windowed`: they do not), expanding the weights when a float copy fits
+    // one storage, the cooperative-matrix kernel where the device has one and its blocks fit; written to `into`
+    // (PromptCandidatesMost long).
+    private ReadOnlySpan<int> PromptCandidates(VulkanKernels.PackedFormat format, int m, int n, int k, bool windowed, Span<int> into)
     {
         int count = 0;
         foreach (int width in CandidateWidths)
@@ -288,7 +290,7 @@ internal sealed partial class VulkanBackend
             }
         }
 
-        if ((m + 7) / 8 <= Limits.MaxGroupsZ && AnyGemv(VulkanKernels.ColumnsPerWord(format), n))
+        if (!windowed && PromptRowsVariant(format, m, n) >= 0)
         {
             into[count++] = WithWidth(Width, PromptFewRows);
         }
@@ -311,22 +313,52 @@ internal sealed partial class VulkanBackend
     // CandidateWidths), the few-rows kernels, expanding the weights, the cooperative-matrix kernel.
     private const int PromptCandidatesMost = 3 + 3;
 
-    // Whether a packed product of n columns has a variant without splits that runs here (GemvCandidates(perWord, n, 1)
-    // is not empty), without building them.
-    private bool AnyGemv(int perWord, int n)
+    // The word variant the few-rows kernels take for a prompt-sized product at the device's width (the first whose column
+    // blocks and row blocks the device's workgroup counts take), or -1.
+    private int PromptRowsVariant(VulkanKernels.PackedFormat format, int m, int n)
     {
-        foreach (int width in CandidateWidths)
+        int rows = VulkanKernels.GemvRowBlocks[GemvBlock(m)];
+        for (int v = 0; v < VulkanKernels.GemvWordCounts.Length; v++)
         {
-            for (int v = 0; v < VulkanKernels.GemvWordCounts.Length; v++)
+            int slices = Width / VulkanKernels.GemvWordCounts[v];
+            if (GemvValid(WithWidth(Width, 8 + v), VulkanKernels.ColumnsPerWord(format), n) && ((long)(m + rows - 1) / rows + slices - 1) / slices <= Limits.MaxGroupsZ)
             {
-                if (GemvValid(WithWidth(width, 8 + v), perWord, n))
-                {
-                    return true;
-                }
+                return v;
             }
         }
 
-        return false;
+        return -1;
+    }
+
+    // The few-rows kernels in the prompt-sized products' order (VulkanKernels.Order.cs): sequential mode, every term
+    // along k in turn (one leaf of all of k, one split), each slice of a workgroup on its own block of rows of x. False
+    // when they cannot run (weights larger than a binding, no variant fits).
+    private bool RunPromptRows(VulkanKernels.PackedFormat format, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
+    {
+        int variant = PromptRowsVariant(format, m, n);
+        if (variant < 0 || PackedWindowRows(format, weights, scales, m, n, k) != 0)
+        {
+            return false;
+        }
+
+        int block = GemvBlock(m), rows = VulkanKernels.GemvRowBlocks[block], words = VulkanKernels.GemvWordCounts[variant], slices = Width / words;
+        int perWord = VulkanKernels.ColumnsPerWord(format);
+        uint columnBlocks = (uint)(((long)(n + perWord - 1) / perWord + words - 1) / words);
+        uint groups = (uint)(((m + rows - 1) / rows + slices - 1) / slices);
+        int leaf = (int)Math.Min(int.MaxValue / 2, ((long)k + VulkanKernels.GemvChunkAlign - 1) / VulkanKernels.GemvChunkAlign * VulkanKernels.GemvChunkAlign);
+        string kernel = GemvKernelNames[((int)format * VulkanKernels.GemvRowBlocks.Length + block) * VulkanKernels.GemvWordCounts.Length + variant];
+        Span<byte> b = stackalloc byte[32];
+        var push = new Push(b).I(m).I(n).I(k).I(leaf).I(0).I(1).I(leaf).I(1).Bytes;
+        if (scales is null)
+        {
+            Run(kernel, columnBlocks, 1, groups, [x, weights, y], push);
+        }
+        else
+        {
+            Run(kernel, columnBlocks, 1, groups, [x, weights, scales, y], push);
+        }
+
+        return true;
     }
 
     // Runs a prompt-sized packed product with `choice`; false when the few-rows kernels cannot take it.
@@ -335,7 +367,7 @@ internal sealed partial class VulkanBackend
         switch (choice & Rest)
         {
             case PromptFewRows:
-                return PackedProduct(format, x, weights, scales, y, m, n, k);
+                return RunPromptRows(format, x, weights, scales, y, m, n, k);
             case PromptExpand:
                 var w = Allocate(k * n, zeroed: false);
                 try
@@ -343,8 +375,16 @@ internal sealed partial class VulkanBackend
                     switch (format)
                     {
                         case VulkanKernels.PackedFormat.Int8:
-                            Int8Dequantize(weights, scales!, w, k, n);
-                            break;
+                            // The weights unscaled through the product, then the column scales on the finished sums.
+                            if (!Int8Expand(weights, scales!, w, k, n))
+                            {
+                                return false;
+                            }
+
+                            BatchedMatMul(x, w, y, 1, m, n, k, false, false, 0f);
+                            Span<byte> scaled = stackalloc byte[8];
+                            Grid("scale_columns", (long)m * n, [scales!, y], new Push(scaled).I(m * n).I(n).Bytes);
+                            return true;
                         case VulkanKernels.PackedFormat.Int4:
                             Int4Dequantize(weights, scales!, w, k, n);
                             break;

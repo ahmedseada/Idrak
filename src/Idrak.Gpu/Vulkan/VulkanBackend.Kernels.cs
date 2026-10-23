@@ -963,8 +963,9 @@ internal sealed partial class VulkanBackend
     // 2, 4 or 8 rows (the smallest that holds m, else 8). The words per row of k (L) and the splits are measured per
     // shape among those the device's workgroup counts take; the formula's choice is 32 words and as many splits as keep
     // the partial sums within the weights' traffic and each chunk at least GemvMinChunk rows. Several splits write their
-    // partial sums to a temporary [splits, m, n] that gemv_reduce adds in split order. False when no variant fits the
-    // device's workgroup counts (the caller falls back).
+    // partial sums to a temporary [splits, m, n] that gemv_reduce finishes. Every choice sums in the packed products'
+    // one order (VulkanKernels.Order.cs; GemvPlan fits the splits to k's leaves), so the measurement decides only speed.
+    // False when no variant fits the device's workgroup counts (the caller falls back).
     private bool PackedProduct(VulkanKernels.PackedFormat format, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
     {
         if (m <= 0 || n <= 0)
@@ -986,8 +987,7 @@ internal sealed partial class VulkanBackend
             return false;
         }
 
-        RunPacked(format, block, chosen, x, weights, scales, y, m, n, k);
-        return true;
+        return RunPacked(format, block, chosen, x, weights, scales, y, m, n, k);
     }
 
     // The row block variant (index into GemvRowBlocks) for m rows: the smallest that holds them, else 8.
@@ -1039,7 +1039,8 @@ internal sealed partial class VulkanBackend
         Storage? scales, Storage y, int m, int n, int k)
     {
         Storage[] storages = scales is null ? [x, weights, y] : [x, weights, scales, y];
-        return TuneWithScratch(key, GemvCandidates(perWord, n, maxSplits), fallback, storages, 1UL << (storages.Length - 1),
+        return TuneWithScratch(key, DistinctGemv(GemvCandidates(perWord, n, maxSplits), fallback, format, block, k, (long)m * n), fallback, storages,
+            1UL << (storages.Length - 1),
             (c, s) => RunPacked(format, block, c, s[0], s[1], scales is null ? null : s[2], s[^1], m, n, k));
     }
 
@@ -1099,9 +1100,9 @@ internal sealed partial class VulkanBackend
         return words <= width && width / words <= VulkanKernels.GemvChunkAlign && columnBlocks <= Limits.MaxGroupsX;
     }
 
-    // Runs a packed product with `choice` = its width (WithWidth) and splits · 8 + word variant (the splits made
-    // consistent with 32-row chunks).
-    private void RunPacked(VulkanKernels.PackedFormat format, int block, int choice, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
+    // Runs a packed product with `choice` = its width (WithWidth) and splits · 8 + word variant (the splits as GemvPlan
+    // fits them to the leaves of k); false when no plan fits the device.
+    private bool RunPacked(VulkanKernels.PackedFormat format, int block, int choice, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
     {
         int width = WidthOf(choice), variant = choice & 7, rows = VulkanKernels.GemvRowBlocks[block], words = VulkanKernels.GemvWordCounts[variant];
         int perWord = VulkanKernels.ColumnsPerWord(format);
@@ -1109,18 +1110,18 @@ internal sealed partial class VulkanBackend
         string kernel = GemvKernelNames[((int)format * VulkanKernels.GemvRowBlocks.Length + block) * VulkanKernels.GemvWordCounts.Length + variant];
         if (PackedWindowRows(format, weights, scales, m, n, k) is var window and > 0)
         {
-            // Weights larger than a binding: one dispatch per window of rows, the choice's chunks fitted to the windows.
-            const int Align = VulkanKernels.GemvChunkAlign;
-            int wanted = Math.Max(1, (choice & Rest) >> 3);
-            int windowChunk = Math.Max(Align, ((k + wanted - 1) / wanted + Align - 1) / Align * Align);
-            RunPackedWindows(format, kernel, width, columnBlocks, rows, windowChunk, (int)window, x, weights, scales, y, m, n, k);
-            return;
+            // Weights larger than a binding: one dispatch per window of rows, the choice's splits fitted to the windows.
+            return RunPackedWindows(format, block, choice, kernel, columnBlocks, (int)window, x, weights, scales, y, m, n, k);
         }
 
-        var (splits, chunk) = GemvPlan(choice, k, (long)m * n);
+        var (splits, chunk) = GemvPlan(choice, format, block, k, (long)m * n);
+        if (splits == 0)
+        {
+            return false;
+        }
 
-        Span<byte> b = stackalloc byte[24];
-        var push = new Push(b).I(m).I(n).I(k).I(chunk).I(0).I(splits).Bytes;
+        Span<byte> b = stackalloc byte[32];
+        var push = new Push(b).I(m).I(n).I(k).I(chunk).I(0).I(splits).I(VulkanKernels.GemvChunkAlign).I(0).Bytes;
         var output = splits == 1 ? y : Allocate(splits * m * n, zeroed: false);
         try
         {
@@ -1154,6 +1155,8 @@ internal sealed partial class VulkanBackend
                 output.Release();                                              // reused in queue order
             }
         }
+
+        return true;
     }
 
     public override void Int8DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
@@ -1168,8 +1171,22 @@ internal sealed partial class VulkanBackend
             return;
         }
 
-        Span<byte> b = stackalloc byte[8];
-        Grid("int8_dequantize", (long)k * n, [q, scales, w], new Push(b).I(k).I(n).Bytes);
+        Span<byte> b = stackalloc byte[12];
+        Grid("int8_dequantize", (long)k * n, [q, scales, w], new Push(b).I(k).I(n).I(0).Bytes);
+    }
+
+    // The int8 weights as floats without their column scales (the prompt-sized products' expanded weights); false when
+    // they do not fit the device (windowed weights included).
+    private bool Int8Expand(Storage q, Storage scales, Storage w, int k, int n)
+    {
+        if (!Fit(q, scales, w))
+        {
+            return DequantizeWindows(VulkanKernels.PackedFormat.Int8, q, scales, w, k, n, unscaled: true);
+        }
+
+        Span<byte> b = stackalloc byte[12];
+        Grid("int8_dequantize", (long)k * n, [q, scales, w], new Push(b).I(k).I(n).I(1).Bytes);
+        return true;
     }
 
     public override void Int4DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
@@ -1381,8 +1398,9 @@ internal sealed partial class VulkanBackend
     }
 
     // Dispatches an attention kernel (storages: its bindings, the position second to last, the output last): query rows ×
-    // splits of the cached positions. The split count depends only on the shapes (each split's positions follow the
-    // current length on the device, at least an eighth of the width each): measured per shape over a full cache (where
+    // splits of the cached positions (a power of two). The split count depends only on the shapes (split s takes the
+    // blocks of positions b ≡ s modulo the splits, decoding attention's one order: every count and width gives the same
+    // bits, VulkanKernels.Order.cs): measured per shape over a full cache (where
     // attention costs most; shorter contexts then leave the extra splits empty), up to one per AttentionMinChunk
     // positions of capacity; the formula's choice is a tile (the width) of positions per split. With several splits the
     // kernel writes each split's (weighted values, max, total) to a temporary [rows, splits, dim + 2] and
@@ -1467,7 +1485,15 @@ internal sealed partial class VulkanBackend
         AttentionVariant variant)
     {
         // Dimensions per part of the workgroup: the head size rounded up to a power of two, at most the width.
-        int width = WidthOf(choice), splits = choice & (Plain - 1);
+        int width = WidthOf(choice), splits = LargestPowerOfTwo(choice & (Plain - 1));   // a power of two: the blocks' tree takes its bits
+        // A part of a workgroup walks at most 2^16 blocks of the head size (rounded up) per split (its stack's depth): more
+        // splits where a cache is longer (any count gives the same bits).
+        long blockSize = BitOperations.RoundUpToPowerOf2((uint)Math.Max(1, dim));
+        long parts = Math.Max(1, width / blockSize), blocks = (capacity + blockSize - 1) / blockSize;
+        while ((long)splits * parts << 16 < blocks && splits < Limits.MaxGroupsY / 2)
+        {
+            splits *= 2;
+        }
         bool subgroups = SubgroupsOf(choice);
         int dimShift = Math.Min(BitOperations.Log2(BitOperations.RoundUpToPowerOf2((uint)dim)), BitOperations.Log2((uint)width));
         Span<byte> b = stackalloc byte[36];

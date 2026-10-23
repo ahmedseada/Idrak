@@ -1,19 +1,29 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Numerics;
+
 namespace Idrak.Gpu.Vulkan;
 
 // Training operations as generated kernels (VulkanKernels.Training.cs): the layer-norm gradient, grouped normalization
 // and its reductions, column sums, the product with a bias, AdamW over many tensors, 8-bit Adam and the gradient of
-// tiled causal attention. Reductions run in two passes, partial sums per split and then the splits in order, so a shape
-// gives the same bits run after run; the split counts come from the width, or are measured per shape (VulkanTuneOp.Splits).
+// tiled causal attention. Reductions run in two passes, partial sums per split and then the splits, in the two-pass
+// reductions' one order (VulkanKernels.Order.cs), so a shape gives the same bits run after run and whatever its split
+// count, width or reductions; the split counts come from the width, or are measured per shape (VulkanTuneOp.Splits).
 internal sealed partial class VulkanBackend
 {
     // Reductions: fewest rows of a column per split, and fewest elements per invocation of a workgroup's split of a group.
     private const int SplitMinRows = 16, SplitMinPerLane = 4;
 
+    // Group runs shorter than this go through the column sums, longer ones through a workgroup per group: a property of
+    // the shape alone (not of the width), so every width takes the same path and sums in the same order.
+    private const int GroupColumnsBelow = VulkanKernels.MinWidth;
+
     // Variants of the reduction splits measured (the key's Variant): columns or groups, by first-pass mode.
     private const int SplitColumns = 0, SplitGroups = 4;
+
+    /// <summary>Tests and benchmarks only: the splits of the two-pass reductions (a power of two, at most the shape's most) instead of the measured or formula's.</summary>
+    internal static int? ReductionSplits { get; set; }
 
     // ------------------------------------------------------------------ layer norm
 
@@ -208,7 +218,11 @@ internal sealed partial class VulkanBackend
         int most = MostSplits(cols, rows, SplitMinRows);
         int formula = PowerOfTwoWithin((long)Width * Width / cols, most);
         int splits = formula;
-        if (most > 1)
+        if (ReductionSplits is int forced)
+        {
+            splits = PowerOfTwoWithin(forced, most);
+        }
+        else if (most > 1)
         {
             var key = new VulkanTuneKey(VulkanTuneOp.Splits, SplitColumns + mode, rows, cols, ld);
             if (!TryTuned(key, out splits) || splits < 1 || splits > most || (splits & (splits - 1)) != 0)
@@ -225,13 +239,27 @@ internal sealed partial class VulkanBackend
         TuneWithScratch(key, PowersOfTwo(most), formula, [a, b, stats, out0, out1], 0b11000,
             (s, bound) => RunColumnSums(s, mode, bound[0], bound[1], bound[2], rows, cols, ld, offset, bound[3], bound[4], flags));
 
-    private void RunColumnSums(int splits, int mode, Storage a, Storage b, Storage stats, int rows, int cols, int ld, int offset, Storage out0, Storage out1, int flags)
+    // The rows (elements) per split of a reduction over `length` with `splits` (a power of two) in the two-pass
+    // reductions' one order (VulkanKernels.Order.cs): a power of two of SplitLeaf leaves, P / splits of the P (the power of
+    // two at or above the leaves' count), at most what a pass's pairwise stack walks per invocation (`lanes` invocations
+    // share a split); and the splits that hold any of them.
+    private static (int Chunk, int Splits) ReductionPlan(long length, int splits, int lanes)
     {
+        const int Leaf = VulkanKernels.SplitLeaf;
+        long tree = (long)BitOperations.RoundUpToPowerOf2((ulong)Math.Max(1, (length + Leaf - 1) / Leaf));
+        long fewest = Math.Max(1, tree / ((long)lanes << 12));
+        long chunk = tree / Math.Clamp(LargestPowerOfTwo(splits), fewest, tree) * Leaf;
+        return ((int)Math.Min(chunk, int.MaxValue / 2), (int)Math.Max(1, (length + chunk - 1) / chunk));
+    }
+
+    private void RunColumnSums(int wanted, int mode, Storage a, Storage b, Storage stats, int rows, int cols, int ld, int offset, Storage out0, Storage out1, int flags)
+    {
+        var (chunk, splits) = ReductionPlan(rows, wanted, 1);
         var part = Allocate(splits * cols * VulkanKernels.PartialStride, zeroed: false);
         try
         {
             Span<byte> p = stackalloc byte[24];
-            Grid("group_partials_columns", (long)splits * cols, [a, b, stats, part], new Push(p).I(rows).I(cols).I(ld).I(offset).I(splits).I(mode).Bytes);
+            Grid("group_partials_columns", (long)splits * cols, [a, b, stats, part], new Push(p).I(rows).I(cols).I(ld).I(offset).I(chunk).I(mode).Bytes);
             Span<byte> f = stackalloc byte[32];
             Grid("group_finish", cols, [part, out0, out1, out1], new Push(f).I(cols).I(splits).I(cols).I(1).I(1).I(1).I(flags).F(0f).Bytes);
         }
@@ -244,7 +272,8 @@ internal sealed partial class VulkanBackend
     // Per-group reductions of the [outer, groups, inner] view: the moments into mean, variance and 1 / std (mode 0), or
     // Σ a and Σ a·b added to out0 and out1 by flags (mode 1). Runs of at least a width (inner ≥ width) go through a
     // workgroup per group and split; shorter runs through the column sums of [outer, groups·inner], each group then
-    // adding its inner columns. Splits: as many as make a width of workgroups (or width² invocations), measured per shape.
+    // merging its inner columns. Splits: as many as make a width of workgroups (or width² invocations), measured per
+    // shape; any count gives the same bits (ReductionPlan).
     private void GroupSums(int mode, Storage a, Storage b, int outer, int groups, int inner, Storage out0, Storage out1, Storage out2, int flags, float eps)
     {
         if (groups <= 0)
@@ -252,13 +281,17 @@ internal sealed partial class VulkanBackend
             return;
         }
 
-        bool columns = inner < Width;
+        bool columns = inner < GroupColumnsBelow;
         long length = (long)outer * inner;
         int units = columns ? groups * inner : groups;
         int most = columns ? MostSplits(units, outer, SplitMinRows) : MostSplits(units, length, (long)Width * SplitMinPerLane);
         int formula = columns ? PowerOfTwoWithin((long)Width * Width / Math.Max(1, units), most) : PowerOfTwoWithin((Width + groups - 1) / groups, most);
         int splits = formula;
-        if (most > 1 && units > 0)
+        if (ReductionSplits is int forced)
+        {
+            splits = PowerOfTwoWithin(forced, most);
+        }
+        else if (most > 1 && units > 0)
         {
             var key = new VulkanTuneKey(VulkanTuneOp.Splits, (columns ? SplitColumns : SplitGroups) + mode, outer, groups, inner);
             if (!TryTuned(key, out splits) || splits < 1 || splits > most || (splits & (splits - 1)) != 0)
@@ -277,9 +310,10 @@ internal sealed partial class VulkanBackend
             (s, bound) => RunGroupSums(s, columns, mode, bound[0], bound[1], outer, groups, inner, bound[2], bound[3], bound[4], flags, eps));
     }
 
-    private void RunGroupSums(int splits, bool columns, int mode, Storage a, Storage b, int outer, int groups, int inner,
+    private void RunGroupSums(int wanted, bool columns, int mode, Storage a, Storage b, int outer, int groups, int inner,
         Storage out0, Storage out1, Storage out2, int flags, float eps)
     {
+        var (chunk, splits) = ReductionPlan(columns ? outer : (long)outer * inner, wanted, columns ? 1 : Width);
         int units = columns ? groups * inner : groups;
         var part = Allocate(Math.Max(1, splits * units * VulkanKernels.PartialStride), zeroed: false);
         try
@@ -288,12 +322,12 @@ internal sealed partial class VulkanBackend
             {
                 int cols = groups * inner;
                 Span<byte> p = stackalloc byte[24];
-                Grid("group_partials_columns", (long)splits * cols, [a, b, a, part], new Push(p).I(outer).I(cols).I(cols).I(0).I(splits).I(mode).Bytes);
+                Grid("group_partials_columns", (long)splits * cols, [a, b, a, part], new Push(p).I(outer).I(cols).I(cols).I(0).I(chunk).I(mode).Bytes);
             }
             else
             {
                 Span<byte> p = stackalloc byte[20];
-                Run("group_partials_rows", RowGroups((long)groups * splits), 1, 1, [a, b, part], new Push(p).I(outer).I(groups).I(inner).I(splits).I(mode).Bytes);
+                Run("group_partials_rows", RowGroups((long)groups * splits), 1, 1, [a, b, part], new Push(p).I(outer).I(groups).I(inner).I(chunk).I(mode).Bytes);
             }
 
             // Partial p = s·strideS + g·strideG + i: columns (s·cols + g·inner + i, i < inner), groups (g·splits + s).

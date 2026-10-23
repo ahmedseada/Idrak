@@ -253,8 +253,9 @@ internal static partial class Tests
             return;
         }
 
-        // Vocabulary 4096, dim 96: the bfloat16 embedding (768 KiB), the int8 (384 KiB) and int4 (192 KiB) heads exceed a
-        // 128 KiB binding; every other storage of a decoding step fits.
+        // Vocabulary 4096, dim 96: the int8 (384 KiB) and int4 (192 KiB) heads exceed a 128 KiB binding, the bfloat16
+        // embedding and head (768 KiB) a 256 KiB one (a window of the packed products holds whole 32-row leaves of k, the
+        // one order's: 32 bfloat16 rows of 4096 columns take 256 KiB); every other storage of a decoding step fits.
         var backend = (VulkanBackend)device.Backend;
         var spec = new DecoderSpec
         {
@@ -268,14 +269,15 @@ internal static partial class Tests
         var counts = new ConcurrentDictionary<string, long>();
         try
         {
-            foreach (var (name, options, tied) in new[]
+            foreach (var (name, options, tied, range) in new[]
             {
-                ("int8", new DecoderBuildOptions { Seed = 4, Int8 = true }, false),
-                ("int4", new DecoderBuildOptions { Seed = 4, Int4 = true }, false),
-                ("bfloat16", new DecoderBuildOptions { Seed = 4, BFloat16 = true }, false),
-                ("bfloat16 tied (the head's columns as the table)", new DecoderBuildOptions { Seed = 4, BFloat16 = true }, true),
+                ("int8", new DecoderBuildOptions { Seed = 4, Int8 = true }, false, 128 << 10),
+                ("int4", new DecoderBuildOptions { Seed = 4, Int4 = true }, false, 128 << 10),
+                ("bfloat16", new DecoderBuildOptions { Seed = 4, BFloat16 = true }, false, 256 << 10),
+                ("bfloat16 tied (the head's columns as the table)", new DecoderBuildOptions { Seed = 4, BFloat16 = true }, true, 256 << 10),
             })
             {
+                backend.LimitStorageRange(range);
                 var built = spec with { TieEmbeddings = tied };
                 using var gpu = built.Build(null, options with { Device = device });
                 using var host = built.Build(null, options with { Device = Device.Cpu });
