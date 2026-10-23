@@ -77,6 +77,9 @@ internal sealed partial class KernelBuilder
     [ThreadStatic]
     internal static int t_butterfly;
 
+    /// <summary>The kernel's name.</summary>
+    public string Name => _name;
+
     /// <summary>Starts a kernel with this workgroup size.</summary>
     public KernelBuilder(string name, int localSizeX, int localSizeY = 1, int localSizeZ = 1)
     {
