@@ -128,6 +128,7 @@ internal static class EnvironmentVariables
         new("IDRAK_TUNE_BUDGET_MS", Tuning, "500", "How long the first use of a shape may stall while its kernel choices are measured, in milliseconds: each candidate runs once while it lasts, and past it the single runs decide (ComputeResources.TuningBudget; Vulkan)", OnDevice),
         new("IDRAK_TUNE_LOG", Tuning, "not set", "1: print every tuning measurement (candidates, time ratios, the choice) to the error output", OnDevice),
         new("IDRAK_CPU_TUNING_FILE", Tuning, "<cache>/cpu/tuning.tsv", "The CPU tuning file (empty: none)", Caches),
+        new("IDRAK_VULKAN_TUNE_OPS", Tuning, "every operation", "Operation names (comma-separated: MatMul, Rows, Splits, SpanAttention, …): only these measure their Vulkan kernel choices, the others keep the stored or formula's (diagnostics: isolating one operation's measurement)", OnDevice),
         new("IDRAK_VULKAN_TUNING_CACHE", Tuning, "<cache>/vulkan/tuning.tsv", "0 or false: no Vulkan tuning file; a path: the file", Caches),
         new("IDRAK_HIP_KERNEL_CACHE", Tuning, "<cache>/hip/kernels", "0 or false: compiled HIP kernels are not kept; a path: the folder", Caches),
 
