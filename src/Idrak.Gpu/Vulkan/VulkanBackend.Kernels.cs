@@ -16,21 +16,22 @@ internal sealed partial class VulkanBackend
 {
     // One VulkanKernel per generated kernel and workgroup width for the process (two devices of one width share them;
     // pipelines are cached per backend by kernel identity), and this backend's by name.
-    private static readonly ConcurrentDictionary<(string Name, int Width, bool Subgroups), VulkanKernel> Kernels = new();
+    private static readonly ConcurrentDictionary<(string Name, int Width, int Butterfly), VulkanKernel> Kernels = new();
     private readonly ConcurrentDictionary<string, VulkanKernel> _kernels = new();
 
-    // The kernel `name` built for this device: its width, and subgroup reductions where the device reports subgroup
-    // arithmetic for compute shaders.
+    // The kernel `name` built for this device: its width, and reductions finished in subgroups where the device reports
+    // subgroup shuffles for compute shaders.
     private VulkanKernel Kernel(string name) => _kernels.TryGetValue(name, out var known) ? known
-        : _kernels.GetOrAdd(name, n => KernelAt(n, Width, Limits.SubgroupArithmetic));
+        : _kernels.GetOrAdd(name, n => KernelAt(n, Width, Limits.SubgroupReductions));
 
-    // The kernel `name` built for workgroups of `width`, with or without subgroup reductions (the tuned operations try
-    // narrower widths than the device's, and both reductions).
-    private static VulkanKernel KernelAt(string name, int width, bool subgroups) => Kernels.GetOrAdd((name, width, subgroups), static key =>
-    {
-        var k = VulkanKernels.Get(key.Name, key.Width, key.Subgroups);
-        return new VulkanKernel(k.Words, k.Bindings, k.PushBytes, k.Name, k.Writes);
-    });
+    // The kernel `name` built for workgroups of `width`, its reductions finished in subgroups or not (the tuned operations
+    // try narrower widths than the device's, and both reductions: the same bits, measured for speed).
+    private VulkanKernel KernelAt(string name, int width, bool subgroups) =>
+        Kernels.GetOrAdd((name, width, subgroups && Limits.SubgroupReductions ? Math.Min(width, Limits.Butterfly) : 0), static key =>
+        {
+            var k = VulkanKernels.Get(key.Name, key.Width, key.Butterfly);
+            return new VulkanKernel(k.Words, k.Bindings, k.PushBytes, k.Name, k.Writes);
+        });
 
     // Workgroup widths a tuned operation tries: the device's, half and twice it, within MinWidth (and whole subgroups),
     // MaxWidth and the device's limits.
@@ -49,10 +50,10 @@ internal sealed partial class VulkanBackend
     private const int Plain = 1 << 23, Rest = Plain - 1;
 
     // Whether a choice uses subgroup reductions: where the device has them, unless Plain.
-    private bool SubgroupsOf(int choice) => Limits.SubgroupArithmetic && (choice & Plain) == 0;
+    private bool SubgroupsOf(int choice) => Limits.SubgroupReductions && (choice & Plain) == 0;
 
     // The reduction variants a tuned kernel with reductions tries: subgroups (where reported) and plain.
-    private int[] ReductionFlags => Limits.SubgroupArithmetic ? [0, Plain] : [0];
+    private int[] ReductionFlags => Limits.SubgroupReductions ? [0, Plain] : [0];
 
     // IDRAK_VULKAN_KERNELS=0 runs every operation through the host fallback (to compare or to isolate a kernel).
     private static readonly bool KernelsOff = Environment.GetEnvironmentVariable("IDRAK_VULKAN_KERNELS") is "0" or "false";
@@ -131,8 +132,8 @@ internal sealed partial class VulkanBackend
     private void RunAt(string kernel, int width, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> push,
         bool? subgroups = null)
     {
-        bool sub = subgroups ?? Limits.SubgroupArithmetic;
-        DispatchKernel(width == Width && sub == Limits.SubgroupArithmetic ? Kernel(kernel) : KernelAt(kernel, width, sub), groupsX, groupsY, groupsZ, storages, push);
+        bool sub = subgroups ?? Limits.SubgroupReductions;
+        DispatchKernel(width == Width && sub == Limits.SubgroupReductions ? Kernel(kernel) : KernelAt(kernel, width, sub), groupsX, groupsY, groupsZ, storages, push);
     }
 
     // Dispatches an element-wise kernel over n elements.
@@ -157,7 +158,7 @@ internal sealed partial class VulkanBackend
         var (narrowName, id) = _rowKernels.GetOrAdd(kernel, static n => (n + "_narrow", StableId(n)));
         int fallback = cols <= Width / 4 ? RowsNarrow : 0;
         var key = new VulkanTuneKey(VulkanTuneOp.Rows, id, rows, cols, 0);
-        if (!TryTuned(key, out int choice) || (choice & Plain) != 0 && !Limits.SubgroupArithmetic)
+        if (!TryTuned(key, out int choice) || (choice & Plain) != 0 && !Limits.SubgroupReductions)
         {
             choice = fallback;
             if (CanTune)
@@ -1412,7 +1413,7 @@ internal sealed partial class VulkanBackend
                 ? new VulkanTuneKey(VulkanTuneOp.Attention, format + 3, rows, rowsPerHead, steps, capacity, dim, span)
                 : new VulkanTuneKey(VulkanTuneOp.Attention, format, rows, rowsPerHead, steps, capacity, dim);
             if (!TryTuned(key, out choice) || Array.IndexOf(CandidateWidths, WidthOf(choice)) < 0
-                || (choice & Rest) > AttentionMaxSplits(WidthOf(choice), rows, span, dim) || (choice & Plain) != 0 && !Limits.SubgroupArithmetic)
+                || (choice & Rest) > AttentionMaxSplits(WidthOf(choice), rows, span, dim) || (choice & Plain) != 0 && !Limits.SubgroupReductions)
             {
                 choice = fallback;
                 if (CanTune)

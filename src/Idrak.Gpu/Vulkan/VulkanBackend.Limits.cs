@@ -31,12 +31,15 @@ internal sealed partial class VulkanBackend
 /// <param name="MaxGroupsY">maxComputeWorkGroupCount[1].</param>
 /// <param name="MaxGroupsZ">maxComputeWorkGroupCount[2].</param>
 /// <param name="SubgroupSize">subgroupSize (invocations that run in lockstep).</param>
-/// <param name="SubgroupArithmetic">Whether compute shaders have subgroup arithmetic (supportedStages has COMPUTE and
-/// supportedOperations has ARITHMETIC): the kernels' workgroup reductions then go through subgroups.</param>
+/// <param name="SubgroupReductions">Whether compute shaders have subgroup shuffles (supportedStages has COMPUTE and
+/// supportedOperations has BASIC and SHUFFLE): the kernels' workgroup reductions then finish in subgroups, as a butterfly
+/// over the pairs workgroup memory's tree pairs (the same bits).</param>
+/// <param name="Butterfly">The butterfly's invocations: the largest power of two no larger than the smallest subgroup the
+/// device runs a kernel in (minSubgroupSize where reported, else subgroupSize), so a butterfly never leaves its subgroup.</param>
 /// <param name="Width">Invocations per workgroup of the kernels (<see cref="VulkanKernels.WidthFor"/>, or
 /// IDRAK_VULKAN_WIDTH within the limits).</param>
 internal sealed record DeviceLimits(int MaxInvocations, int MaxSizeX, int SharedBytes, uint MaxGroupsX, uint MaxGroupsY, uint MaxGroupsZ,
-    int SubgroupSize, bool SubgroupArithmetic, int Width)
+    int SubgroupSize, bool SubgroupReductions, int Butterfly, int Width)
 {
     /// <summary>Tests: the kernel width every backend created afterwards uses (a power of two within the device's
     /// limits), instead of the formula's; IDRAK_VULKAN_WIDTH sets it for a process.</summary>
@@ -53,7 +56,10 @@ internal sealed record DeviceLimits(int MaxInvocations, int MaxSizeX, int Shared
         int invocations = (int)Math.Min(facts.MaxWorkGroupInvocations, int.MaxValue);
         int sizeX = (int)Math.Min(facts.MaxWorkGroupSize.X, int.MaxValue);
         int shared = (int)Math.Min(facts.MaxSharedMemoryBytes, int.MaxValue);
-        bool arithmetic = facts.ComputeSubgroups(VulkanDeviceFacts.SubgroupArithmetic) && SubgroupsOverride != false;
+        int smallest = (int)Math.Min(facts.MinSubgroupSize > 0 ? facts.MinSubgroupSize : facts.SubgroupSize, VulkanKernels.MaxWidth);
+        int butterfly = smallest >= 2 ? (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)smallest + 1) / 2 : 0;
+        bool reductions = butterfly >= 2 && facts.ComputeSubgroups(VulkanDeviceFacts.SubgroupBasic | VulkanDeviceFacts.SubgroupShuffle)
+            && SubgroupsOverride != false;
         int chosen = VulkanKernels.WidthFor(invocations, sizeX, shared, (int)facts.SubgroupSize);
         if (WidthOverride is int forced && forced >= VulkanKernels.MinWidth && forced <= Math.Min(VulkanKernels.MaxWidth, Math.Min(invocations, sizeX))
             && (forced & (forced - 1)) == 0 && VulkanKernels.SharedBytesBound(forced) <= shared)
@@ -62,10 +68,10 @@ internal sealed record DeviceLimits(int MaxInvocations, int MaxSizeX, int Shared
         }
 
         return new DeviceLimits(invocations, sizeX, shared, p.MaxComputeWorkGroupCountX, p.MaxComputeWorkGroupCountY, p.MaxComputeWorkGroupCountZ,
-            (int)facts.SubgroupSize, arithmetic, chosen);
+            (int)facts.SubgroupSize, reductions, reductions ? butterfly : 0, chosen);
     }
 
     /// <summary>The limits in one line, for benchmark headers.</summary>
     public override string ToString() =>
-        $"width {Width}, {(SubgroupArithmetic ? "subgroup" : "workgroup-memory")} reductions";
+        $"width {Width}, {(SubgroupReductions ? $"subgroup (butterfly {Butterfly})" : "workgroup-memory")} reductions";
 }

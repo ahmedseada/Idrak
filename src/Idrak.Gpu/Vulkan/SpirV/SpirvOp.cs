@@ -82,6 +82,7 @@ internal enum SpirvOp : ushort
     FOrdGreaterThan = 186,
     FOrdLessThanEqual = 188,
     FOrdGreaterThanEqual = 190,
+    BitReverse = 204,
     ShiftRightLogical = 194,
     ShiftRightArithmetic = 195,
     ShiftLeftLogical = 196,
@@ -97,8 +98,7 @@ internal enum SpirvOp : ushort
     Branch = 249,
     BranchConditional = 250,
     Return = 253,
-    GroupNonUniformFAdd = 350,
-    GroupNonUniformFMax = 358,
+    GroupNonUniformShuffleXor = 346,
     TypeCooperativeMatrixKHR = 4456,
     CooperativeMatrixLoadKHR = 4457,
     CooperativeMatrixStoreKHR = 4458,
@@ -128,6 +128,7 @@ internal enum Decoration : uint
     Binding = 33,
     DescriptorSet = 34,
     Offset = 35,
+    NoContraction = 42,
 }
 
 /// <summary>Built-in compute variables (values of the BuiltIn decoration).</summary>
@@ -169,6 +170,7 @@ internal enum Glsl : uint
     UMax = 41,
     SMax = 42,
     FClamp = 43,
+    FindUMsb = 75,
     SClamp = 45,
     Fma = 50,
 }

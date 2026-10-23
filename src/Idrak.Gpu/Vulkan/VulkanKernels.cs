@@ -27,7 +27,7 @@ internal static partial class VulkanKernels
 {
     /// <summary>
     /// Invocations per workgroup of the kernel being built (its 1-D width; the reductions are unrolled for it): the
-    /// width the device was given (<see cref="WidthFor"/>), set while <see cref="Get(string, int, bool)"/> builds a
+    /// width the device was given (<see cref="WidthFor"/>), set while <see cref="Get(string, int, int)"/> builds a
     /// kernel, and <see cref="MaxWidth"/> otherwise.
     /// </summary>
     public static int Block => t_width != 0 ? t_width : MaxWidth;
@@ -52,7 +52,7 @@ internal static partial class VulkanKernels
     [ThreadStatic]
     private static int t_width;
 
-    private static readonly ConcurrentDictionary<(string Name, int Width, bool Subgroups), SpirvKernel> Built = new();
+    private static readonly ConcurrentDictionary<(string Name, int Width, int Butterfly), SpirvKernel> Built = new();
 
     private static readonly Lazy<Dictionary<string, Func<SpirvKernel>>> LazyFactories = new(() =>
     {
@@ -73,31 +73,37 @@ internal static partial class VulkanKernels
     public static SpirvKernel Get(string name) => Get(name, MaxWidth);
 
     /// <summary>The kernel with this name for workgroups of <paramref name="width"/> (a power of two in
-    /// [<see cref="MinWidth"/>, <see cref="MaxWidth"/>]), its reductions through subgroup arithmetic when
-    /// <paramref name="subgroups"/> (for devices that report it), built on first use.</summary>
-    public static SpirvKernel Get(string name, int width, bool subgroups = false)
+    /// [<see cref="MinWidth"/>, <see cref="MaxWidth"/>]), its reductions finished by a subgroup butterfly of
+    /// <paramref name="butterfly"/> invocations (a power of two no larger than the device's smallest subgroup; 0 for
+    /// workgroup memory alone, the same bits either way), built on first use.</summary>
+    public static SpirvKernel Get(string name, int width, int butterfly = 0)
     {
         if (width is < MinWidth or > MaxWidth || (width & (width - 1)) != 0)
         {
             throw new ArgumentOutOfRangeException(nameof(width), width, $"A power of two from {MinWidth} to {MaxWidth}.");
         }
 
-        return Built.GetOrAdd((name, width, subgroups), static key =>
+        if (butterfly < 0 || (butterfly & (butterfly - 1)) != 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(butterfly), butterfly, "0, or a power of two.");
+        }
+
+        return Built.GetOrAdd((name, width, butterfly), static key =>
         {
             if (!LazyFactories.Value.TryGetValue(key.Name, out var build))
             {
                 throw new KeyNotFoundException($"No Vulkan kernel named '{key.Name}'.");
             }
 
-            var (savedWidth, savedSubgroups) = (t_width, KernelBuilder.t_subgroups);
-            (t_width, KernelBuilder.t_subgroups) = (key.Width, key.Subgroups);
+            var (savedWidth, savedButterfly) = (t_width, KernelBuilder.t_butterfly);
+            (t_width, KernelBuilder.t_butterfly) = (key.Width, key.Butterfly);
             try
             {
                 return build();
             }
             finally
             {
-                (t_width, KernelBuilder.t_subgroups) = (savedWidth, savedSubgroups);
+                (t_width, KernelBuilder.t_butterfly) = (savedWidth, savedButterfly);
             }
         });
     }

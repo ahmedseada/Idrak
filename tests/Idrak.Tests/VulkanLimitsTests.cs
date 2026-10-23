@@ -365,7 +365,7 @@ internal static partial class Tests
                     Console.WriteLine($"    vulkan:{ordinal}: subgroup size control {(first.SubgroupSizeControl ? $"on (sizes {facts.MinSubgroupSize}-{facts.MaxSubgroupSize}, candidates {string.Join(", ", first.SubgroupSizeCandidates(first.Width))}{(first.FullSubgroups ? ", full subgroups" : "")})" : "not reported")}");
                     measured = Run(first);
                     chosen = first.ChosenSubgroupSize("sum");
-                    if (first.SubgroupSizeControl && first.Limits.SubgroupArithmetic && VulkanBackend.Autotune)
+                    if (first.SubgroupSizeControl && first.Limits.SubgroupReductions && VulkanBackend.Autotune)
                     {
                         Check(chosen is not null, "a size was chosen for the sum kernel");
                         Check(File.Exists(cache) && File.ReadLines(cache).Any(l => l.Contains("SubgroupSize", StringComparison.Ordinal)), "the choice is stored");

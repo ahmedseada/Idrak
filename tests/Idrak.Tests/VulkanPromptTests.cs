@@ -68,7 +68,7 @@ internal static partial class Tests
             File.Delete(cache);
         }
 
-        string Label(VulkanBackend b) => $"{device} width {b.Width}{(b.Limits.SubgroupArithmetic ? ", subgroups" : "")}";
+        string Label(VulkanBackend b) => $"{device} width {b.Width}{(b.Limits.SubgroupReductions ? ", subgroups" : "")}";
     }
 
     // Runs `op` on the CPU and on the device (no host fallback; when given, the kernel `kernel` dispatched) over copies of

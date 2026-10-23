@@ -31,16 +31,14 @@ internal static partial class VulkanKernels
                 {
                     var o = r * cols;
                     var (mean, rstd) = (stats[r], stats[rows + r]);
-                    var (s1, s2) = (k.Local(0f), k.Local(0f));
-                    w.Columns(cols, j =>
+                    var sums = w.RowSums(2, cols, j =>
                     {
                         var g = dy[o + j] * gamma[j];
-                        s1.V = s1.V + g;
-                        s2.V = s2.V + g * ((x[o + j] - mean) * rstd);
+                        return [g, g * ((x[o + j] - mean) * rstd)];
                     });
                     var count = cols.ToFloat();
-                    var m1 = w.Sum(s1.V) / count;
-                    var m2 = w.Sum(s2.V) / count;
+                    var m1 = sums[0] / count;
+                    var m2 = sums[1] / count;
                     w.Columns(cols, j =>
                     {
                         var xhat = (x[o + j] - mean) * rstd;

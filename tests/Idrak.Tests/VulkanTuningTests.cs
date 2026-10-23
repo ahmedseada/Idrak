@@ -114,7 +114,7 @@ internal static partial class Tests
 
     private static void SplitKernelCases(VulkanBackend backend, bool full)
     {
-        string label = $"width {backend.Width}{(backend.Limits.SubgroupArithmetic ? ", subgroups" : "")} ({(backend.UnifiedMemory ? "mapped" : "staging")})";
+        string label = $"width {backend.Width}{(backend.Limits.SubgroupReductions ? ", subgroups" : "")} ({(backend.UnifiedMemory ? "mapped" : "staging")})";
         var cpu = CpuBackend.Instance;
         var random = new Random(17);
         float[] R(int n, float lo = -1f, float hi = 1f) => [.. Enumerable.Range(0, n).Select(_ => lo + (hi - lo) * random.NextSingle())];
