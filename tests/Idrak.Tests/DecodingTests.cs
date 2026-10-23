@@ -219,7 +219,7 @@ internal static partial class Tests
         {
             sampler.Sample(x);
             var counts = new float[V];
-            foreach (var t in sampler.Read(0, 1)[0])
+            foreach (var t in Sampled(sampler, $"{V} tokens, temperature {sampler.Temperature}, top-k {sampler.TopK}"))
             {
                 counts[t.Id]++;
             }
@@ -297,7 +297,7 @@ internal static partial class Tests
             using var onCpu = new TokenSampler(Device.Cpu, LargeRows, LargeV, 1) { TopK = topK, TopP = topP, MinP = minP, Seed = 5 };
             onDevice.Sample(largeX);
             onCpu.Sample(largeCpuX);
-            var got = onDevice.Read(0, 1)[0];
+            var got = Sampled(onDevice, $"{LargeV} tokens, top-k {topK}, top-p {topP}, min-p {minP}");
             var want = onCpu.Read(0, 1)[0];
             int differ = got.Zip(want).Count(p => p.First.Id != p.Second.Id);
             Check(differ <= 1, $"top-k {topK}: {differ} of {LargeRows} tokens differ from the CPU sampler");
@@ -309,6 +309,19 @@ internal static partial class Tests
                     Check(got[r].Alternatives[0].Id == want[r].Alternatives[0].Id, $"top-k {topK}, row {r}: best alternative");
                 }
             }
+        }
+    }
+
+    // A sampler's tokens of step 0, a failure naming the case it sampled.
+    private static SampledToken[] Sampled(TokenSampler sampler, string what)
+    {
+        try
+        {
+            return sampler.Read(0, 1)[0];
+        }
+        catch (InvalidOperationException ex)
+        {
+            throw new InvalidOperationException($"{what}: {ex.Message}", ex);
         }
     }
 
