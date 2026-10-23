@@ -297,6 +297,88 @@ internal sealed class SpirvModule
         };
     }
 
+    /// <summary>
+    /// The module with 32-bit floats' signed zeros, infinities and NaNs kept (SPV_KHR_float_controls: the
+    /// SignedZeroInfNanPreserve capability and execution mode, width 32), for a device that reports it: its driver may then
+    /// not assume floats are finite, so tests against ±∞ and NaN stay as written. The capability goes after the module's
+    /// capabilities, the extension after its extensions, the execution mode after the entry point's first; a module that
+    /// already declares the mode is returned as it is.
+    /// </summary>
+    public static uint[] WithInfNanPreserved(uint[] words)
+    {
+        const uint Preserve = 4461, PreserveCapability = 4466;
+        int capabilitiesEnd = -1, extensionsEnd = -1, modeEnd = -1;
+        uint entry = 0;
+        for (int i = 5; i < words.Length;)
+        {
+            int length = (int)(words[i] >> 16);
+            var op = (SpirvOp)(words[i] & 0xFFFF);
+            if (length == 0 || i + length > words.Length)
+            {
+                throw new ArgumentException("SPIR-V: an instruction runs past the module's end.", nameof(words));
+            }
+
+            if (op == SpirvOp.Capability)
+            {
+                capabilitiesEnd = i + length;
+            }
+            else if (op == SpirvOp.Extension)
+            {
+                extensionsEnd = i + length;
+            }
+            else if (op == SpirvOp.EntryPoint)
+            {
+                entry = words[i + 2];
+            }
+            else if (op == SpirvOp.ExecutionMode && words[i + 1] == entry)
+            {
+                if (words[i + 2] == Preserve)
+                {
+                    return words;
+                }
+
+                modeEnd = modeEnd < 0 ? i + length : modeEnd;
+            }
+            else if (op == SpirvOp.Function)
+            {
+                break;
+            }
+
+            i += length;
+        }
+
+        if (capabilitiesEnd < 0 || modeEnd < 0)
+        {
+            throw new ArgumentException("SPIR-V: no capability or no execution mode of the entry point.", nameof(words));
+        }
+
+        var result = new List<uint>(words.Length + 16);
+        var extension = new List<uint>();
+        Emit(extension, SpirvOp.Extension, Text("SPV_KHR_float_controls"));
+        int extensionAt = Math.Max(extensionsEnd, capabilitiesEnd);
+        for (int i = 0; i < words.Length; i++)
+        {
+            if (i == capabilitiesEnd)
+            {
+                Emit(result, SpirvOp.Capability, PreserveCapability);
+            }
+
+            if (i == extensionAt)
+            {
+                result.AddRange(extension);
+            }
+
+            if (i == modeEnd)
+            {
+                Emit(result, SpirvOp.ExecutionMode, entry, Preserve, 32);
+            }
+
+            result.Add(words[i]);
+        }
+
+        return [.. result];
+    }
+
     // A literal string: UTF-8, nul-terminated, padded with zeros to whole words.
     private static uint[] Text(string text)
     {

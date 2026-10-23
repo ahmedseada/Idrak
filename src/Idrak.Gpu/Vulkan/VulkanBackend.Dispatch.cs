@@ -699,9 +699,10 @@ internal sealed unsafe partial class VulkanBackend
         }
 
         ulong module;
-        fixed (uint* code = kernel.Spirv)
+        uint[] words = Limits.InfNanPreserve ? SpirvModule.WithInfNanPreserved(kernel.Spirv) : kernel.Spirv;
+        fixed (uint* code = words)
         {
-            var info = new VkShaderModuleCreateInfo { SType = StructureShaderModuleCreateInfo, CodeSize = (nuint)kernel.Spirv.Length * sizeof(uint), Code = code };
+            var info = new VkShaderModuleCreateInfo { SType = StructureShaderModuleCreateInfo, CodeSize = (nuint)words.Length * sizeof(uint), Code = code };
             int result = vkCreateShaderModule(_device, &info, null, out module);
             if (result != Success)
             {

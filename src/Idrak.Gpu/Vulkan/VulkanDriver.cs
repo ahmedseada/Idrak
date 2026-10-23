@@ -135,7 +135,7 @@ internal static unsafe partial class VulkanDriver
         StructurePhysicalDeviceProperties2 = 1000059001, StructurePhysicalDeviceDriverProperties = 1000196000,
         StructurePhysicalDeviceIdProperties = 1000071004, StructurePhysicalDeviceSubgroupProperties = 1000094000,
         StructurePhysicalDeviceMaintenance3Properties = 1000168000, StructurePhysicalDeviceSubgroupSizeControlProperties = 1000225000,
-        StructurePhysicalDevicePciBusInfoProperties = 1000212000;
+        StructurePhysicalDevicePciBusInfoProperties = 1000212000, StructurePhysicalDeviceFloatControlsProperties = 1000197000;
 
     public static uint MakeVersion(uint major, uint minor) => (major << 22) | (minor << 12);
 
@@ -494,6 +494,31 @@ internal unsafe struct VkPhysicalDeviceSubgroupProperties
     public uint SupportedStages;
     public uint SupportedOperations;
     public uint QuadOperationsInAllStages;
+}
+
+/// <summary>VkPhysicalDeviceFloatControlsProperties (Vulkan 1.2).</summary>
+[StructLayout(LayoutKind.Sequential)]
+internal unsafe struct VkPhysicalDeviceFloatControlsProperties
+{
+    public uint SType;
+    public void* PNext;
+    public uint DenormBehaviorIndependence;
+    public uint RoundingModeIndependence;
+    public uint SignedZeroInfNanPreserveFloat16;
+    public uint SignedZeroInfNanPreserveFloat32;
+    public uint SignedZeroInfNanPreserveFloat64;
+    public uint DenormPreserveFloat16;
+    public uint DenormPreserveFloat32;
+    public uint DenormPreserveFloat64;
+    public uint DenormFlushToZeroFloat16;
+    public uint DenormFlushToZeroFloat32;
+    public uint DenormFlushToZeroFloat64;
+    public uint RoundingModeRteFloat16;
+    public uint RoundingModeRteFloat32;
+    public uint RoundingModeRteFloat64;
+    public uint RoundingModeRtzFloat16;
+    public uint RoundingModeRtzFloat32;
+    public uint RoundingModeRtzFloat64;
 }
 
 /// <summary>VkPhysicalDeviceMaintenance3Properties (Vulkan 1.1).</summary>

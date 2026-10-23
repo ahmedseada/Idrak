@@ -192,13 +192,24 @@ internal static partial class Tests
             Check(kernel.LocalSize > 0 && kernel.LocalSize <= width, $"{kernel.Name}: local size {kernel.LocalSize} at width {width}");
         }
 
+        // SignedZeroInfNanPreserve added once (capability 4466, execution mode 4461 for 32-bit floats), and not twice.
+        foreach (var (_, kernel, _) in kernels.Where((_, i) => i % 97 == 0))
+        {
+            var preserved = SpirvModule.WithInfNanPreserved(kernel.Words);
+            Check(CountInstructions(preserved, 17, 4466) == 1 && CountInstructions(preserved, 16) == CountInstructions(kernel.Words, 16) + 1
+                && CountInstructions(preserved, 10) == CountInstructions(kernel.Words, 10) + 1 && preserved.Length == kernel.Words.Length + 2 + 4 + 7,
+                $"{kernel.Name}: SignedZeroInfNanPreserve declared {CountInstructions(preserved, 17, 4466)} times");
+            Check(ReferenceEquals(SpirvModule.WithInfNanPreserved(preserved), preserved), $"{kernel.Name}: SignedZeroInfNanPreserve added twice");
+        }
+
         // Same words on a second build (deterministic generation).
         Check(VulkanKernels.Unary(Idrak.Abstraction.Devices.UnaryOp.Gelu).Words.SequenceEqual(VulkanKernels.Get("unary_gelu").Words), "lookup by op");
 
         ValidateWithSpirvVal(kernels.Select(e => (e.Kernel, $"{e.Kernel.Name}_w{e.Width}{(e.Butterfly > 0 ? $"_b{e.Butterfly}" : "")}.spv")).ToList());
     }
 
-    // Runs spirv-val --target-env vulkan1.1 on every kernel (skipped when it is not installed).
+    // Runs spirv-val --target-env vulkan1.1 on every kernel, and vulkan1.2 on it with SignedZeroInfNanPreserve (skipped
+    // when it is not installed).
     private static void ValidateWithSpirvVal(List<(SpirvKernel Kernel, string File)> kernels)
     {
         if (SpirvValidator() is not { } validator)
@@ -226,6 +237,19 @@ internal static partial class Tests
                     Interlocked.Increment(ref memoryModel);
                 }
 
+                // As a device that keeps ±∞ and NaN builds it (SignedZeroInfNanPreserve: core in Vulkan 1.2).
+                if (passed)
+                {
+                    var preserved = SpirvModule.WithInfNanPreserved(entry.Kernel.Words);
+                    (passed, output) = Validate(file, preserved, "vulkan1.2");
+                    if (!passed && output.Contains("VulkanMemoryModel capability must also be declared", StringComparison.Ordinal))
+                    {
+                        (passed, output) = Validate(file, WithVulkanMemoryModel(preserved), "vulkan1.2");
+                    }
+
+                    output = passed ? output : $"with SignedZeroInfNanPreserve: {output}";
+                }
+
                 if (!passed)
                 {
                     lock (failures)
@@ -248,10 +272,10 @@ internal static partial class Tests
     }
 
     // Runs the validator on one module: whether it passed, and what it said.
-    private static (bool Passed, string Output) Validate(string file, uint[] words)
+    private static (bool Passed, string Output) Validate(string file, uint[] words, string target = "vulkan1.1")
     {
         WriteSpirv(file, words);
-        var start = new ProcessStartInfo(SpirvValidator()!, ["--target-env", "vulkan1.1", file]) { RedirectStandardError = true, RedirectStandardOutput = true };
+        var start = new ProcessStartInfo(SpirvValidator()!, ["--target-env", target, file]) { RedirectStandardError = true, RedirectStandardOutput = true };
         using var process = Process.Start(start)!;
         string output = process.StandardError.ReadToEnd() + process.StandardOutput.ReadToEnd();
         process.WaitForExit();

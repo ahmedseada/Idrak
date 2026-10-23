@@ -38,9 +38,18 @@ internal sealed partial class VulkanBackend
 /// device runs a kernel in (minSubgroupSize where reported, else subgroupSize), so a butterfly never leaves its subgroup.</param>
 /// <param name="Width">Invocations per workgroup of the kernels (<see cref="VulkanKernels.WidthFor"/>, or
 /// IDRAK_VULKAN_WIDTH within the limits).</param>
+/// <param name="InfNanPreserve">Whether the kernels declare SignedZeroInfNanPreserve for 32-bit floats (where the device
+/// reports it, <see cref="VulkanDeviceFacts.InfNanPreserve"/>, unless IDRAK_VULKAN_INF_NAN=0): the driver then keeps their
+/// tests against ±∞ and NaN (masks, sentinels, the sampler's +∞ wins and NaN never drawn) as written. Without it a driver
+/// may assume every float is finite and fold such a test either way, depending on the code around it.</param>
 internal sealed record DeviceLimits(int MaxInvocations, int MaxSizeX, int SharedBytes, uint MaxGroupsX, uint MaxGroupsY, uint MaxGroupsZ,
-    int SubgroupSize, bool SubgroupReductions, int Butterfly, int Width)
+    int SubgroupSize, bool SubgroupReductions, int Butterfly, int Width, bool InfNanPreserve)
 {
+    /// <summary>Tests: false makes backends created afterwards build their kernels without SignedZeroInfNanPreserve;
+    /// IDRAK_VULKAN_INF_NAN=0 sets it for a process.</summary>
+    internal static bool? InfNanOverride { get; set; } =
+        Environment.GetEnvironmentVariable("IDRAK_VULKAN_INF_NAN") is "0" or "false" ? false : null;
+
     /// <summary>Tests: the kernel width every backend created afterwards uses (a power of two within the device's
     /// limits), instead of the formula's; IDRAK_VULKAN_WIDTH sets it for a process.</summary>
     internal static int? WidthOverride { get; set; } =
@@ -68,10 +77,10 @@ internal sealed record DeviceLimits(int MaxInvocations, int MaxSizeX, int Shared
         }
 
         return new DeviceLimits(invocations, sizeX, shared, p.MaxComputeWorkGroupCountX, p.MaxComputeWorkGroupCountY, p.MaxComputeWorkGroupCountZ,
-            (int)facts.SubgroupSize, reductions, reductions ? butterfly : 0, chosen);
+            (int)facts.SubgroupSize, reductions, reductions ? butterfly : 0, chosen, facts.InfNanPreserve && InfNanOverride != false);
     }
 
     /// <summary>The limits in one line, for benchmark headers.</summary>
     public override string ToString() =>
-        $"width {Width}, {(SubgroupReductions ? $"subgroup (butterfly {Butterfly})" : "workgroup-memory")} reductions";
+        $"width {Width}, {(SubgroupReductions ? $"subgroup (butterfly {Butterfly})" : "workgroup-memory")} reductions{(InfNanPreserve ? ", ±∞ and NaN kept" : "")}";
 }

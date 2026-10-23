@@ -71,6 +71,13 @@ internal sealed record VulkanDeviceFacts
     /// <summary>The most descriptors in one descriptor set.</summary>
     public uint MaxPerSetDescriptors { get; init; }
 
+    /// <summary>
+    /// Whether 32-bit floats can keep signed zeros, infinities and NaNs as the arithmetic gives them
+    /// (shaderSignedZeroInfNanPreserveFloat32, Vulkan 1.2): a shader that declares SignedZeroInfNanPreserve then has its
+    /// tests against ±∞ and NaN kept, where without it the driver may assume every float is finite.
+    /// </summary>
+    public bool InfNanPreserve { get; init; }
+
     /// <summary>Whether compute shaders have subgroup operations of every kind in <paramref name="operations"/>.</summary>
     public bool ComputeSubgroups(uint operations) => (SubgroupStages & ShaderStageCompute) != 0 && (SubgroupOperations & operations) == operations;
 
@@ -90,7 +97,7 @@ internal sealed record VulkanDeviceFacts
         }
 
         string compute = (SubgroupStages & ShaderStageCompute) != 0 ? "" : ", not in compute";
-        return $"subgroup {subgroups} [{string.Join(' ', ops)}{compute}]; workgroup ≤ {MaxWorkGroupInvocations} " +
+        return $"subgroup {subgroups} [{string.Join(' ', ops)}{compute}]; {(InfNanPreserve ? "keeps" : "may drop")} ±∞ and NaN; workgroup ≤ {MaxWorkGroupInvocations} " +
                $"({MaxWorkGroupSize.X}×{MaxWorkGroupSize.Y}×{MaxWorkGroupSize.Z}); shared {MaxSharedMemoryBytes >> 10} KiB; " +
                $"storage ≤ {MaxStorageBufferRange >> 20} MiB; allocation ≤ {MaxMemoryAllocationSize >> 20} MiB";
     }
@@ -134,6 +141,13 @@ internal sealed unsafe partial class VulkanBackend
             chain = &sizes;
         }
 
+        var floats = new VkPhysicalDeviceFloatControlsProperties { SType = StructurePhysicalDeviceFloatControlsProperties };
+        if (hasDriver)
+        {
+            floats.PNext = chain;
+            chain = &floats;
+        }
+
         var pci = new VkPhysicalDevicePciBusInfoProperties { SType = StructurePhysicalDevicePciBusInfoProperties };
         bool hasPci = HasExtension(physical, PciBusInfoExtension);
         if (hasPci)
@@ -168,6 +182,7 @@ internal sealed unsafe partial class VulkanBackend
             MaxStorageBufferRange = properties.MaxStorageBufferRange,
             MaxMemoryAllocationSize = maintenance.MaxMemoryAllocationSize,
             MaxPerSetDescriptors = maintenance.MaxPerSetDescriptors,
+            InfNanPreserve = hasDriver && floats.SignedZeroInfNanPreserveFloat32 != 0,
         };
         return (facts, driverText);
     }
