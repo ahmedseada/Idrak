@@ -152,6 +152,7 @@ internal static class EnvironmentVariables
         new("IDRAK_VULKAN_MATRIX", Vulkan, "on where reported", "0 or false: cooperative matrices (matrix units) stay off", OnDevice),
         new("IDRAK_VULKAN_WIDTH", Vulkan, "measured", "Forces the kernels' workgroup width (a power of two within the device's limits; diagnostics only)", OnDevice),
         new("IDRAK_VULKAN_WIDTH_PROBE", Vulkan, "on", "0: keep the formula's width without measuring", OnDevice),
+        new("IDRAK_VULKAN_INF_NAN", Vulkan, "on where reported", "0 or false: kernels do not declare SignedZeroInfNanPreserve, so the driver may assume every float is finite (diagnostics)", OnDevice),
         new("IDRAK_VULKAN_SUBGROUPS", Vulkan, "on where reported", "0 or false: reductions through workgroup memory alone, as on devices without subgroup arithmetic", OnDevice),
         new("IDRAK_VULKAN_SUBGROUP_SIZE", Vulkan, "on where reported", "0 or false: no per-kernel subgroup size (every pipeline at the device's default)", OnDevice),
         new("IDRAK_VULKAN_STORAGE", Vulkan, "measured", "staging, mapped-device, mapped-cached or mapped-uncached: the memory tensors are kept in", OnDevice),
