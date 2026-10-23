@@ -260,6 +260,74 @@ internal static partial class Tests
                     b.LayerNormTrainKernel(x, g, beta, train, stats, rows, cols, 1e-5f);
                     outputs.Add(($"layer norm for training {at}", Down(train, rows * cols)));
                     outputs.Add(($"layer norm's statistics {at}", Down(stats, 2 * rows)));
+
+                    // The training step's row kernels: the gradients of softmax, the norms and the loss.
+                    var dy = Up([.. xs.Select(v => 0.5f * v * v - 0.25f)]);
+                    foreach (bool log in new[] { false, true })
+                    {
+                        var dx = Out(rows * cols);
+                        b.SoftmaxBackwardKernel(norm, dy, dx, rows, cols, log);
+                        outputs.Add(($"{(log ? "log-softmax" : "softmax")} backward {at}", Down(dx, rows * cols)));
+                    }
+
+                    var rmsDx = Out(rows * cols);
+                    b.RmsNormBackwardKernel(dy, norm, inv, rmsDx, rows, cols);
+                    outputs.Add(($"RMS norm backward {at}", Down(rmsDx, rows * cols)));
+                    var (sum, added) = (Out(rows * cols), Out(rows * cols));
+                    b.AddRmsNormAffineKernel(x, dy, sum, g, added, rows, cols, 1e-6f, 0f);
+                    outputs.Add(($"add and RMS norm {at}", Down(added, rows * cols)));
+                    outputs.Add(($"add and RMS norm's sum {at}", Down(sum, rows * cols)));
+                    var (lnDx, dgamma, dbeta) = (Out(rows * cols), Out(cols), Out(cols));
+                    b.LayerNormBackwardKernel(x, g, dy, stats, lnDx, dgamma, dbeta, rows, cols);
+                    outputs.Add(($"layer norm backward {at}", Down(lnDx, rows * cols)));
+                    outputs.Add(($"layer norm's gamma gradient {at}", Down(dgamma, cols)));
+                    var logits = Up(xs);
+                    var targets = Up([.. Enumerable.Range(0, rows).Select(r => (float)(r * 7 % cols))]);
+                    var weights = Up([.. Enumerable.Range(0, rows).Select(r => 1f + r)]);
+                    var losses = Out(rows);
+                    b.SoftmaxCrossEntropyRowsKernel(logits, targets, weights, losses, rows, cols, 0.5f);
+                    outputs.Add(($"cross-entropy {at}", Down(losses, rows)));
+                    outputs.Add(($"cross-entropy's gradient {at}", Down(logits, rows * cols)));
+                    var (gainRows, weight) = (Up([.. Enumerable.Range(0, rows).Select(r => 0.5f + r)]), Out(rows * cols));
+                    b.WeightNormKernel(gainRows, x, weight, rows, cols);
+                    outputs.Add(($"weight norm {at}", Down(weight, rows * cols)));
+                }
+                finally
+                {
+                    foreach (var st in made)
+                    {
+                        st.Release();
+                    }
+                }
+            }
+
+            // RMS norm with the rotary embedding (decoding's per-head norm): heads of 16 and 128 dimensions.
+            foreach (int cols in new[] { 16, 128 })
+            {
+                const int Heads = 2, Steps = 3;
+                int rows = 2 * Steps * Heads, half = cols / 2;
+                var made = new List<Storage>();
+                Storage Up(float[] values)
+                {
+                    var st = b.Allocate(values.Length, false);
+                    b.Upload(values, st);
+                    made.Add(st);
+                    return st;
+                }
+
+                try
+                {
+                    var x = Up([.. Enumerable.Range(0, rows * cols).Select(i => MathF.Sin(i * 0.37f) * 2)]);
+                    var gain = Up([.. Enumerable.Range(0, cols).Select(i => 0.5f + MathF.Cos(i * 0.11f))]);
+                    var cos = Up([.. Enumerable.Range(0, Steps * half).Select(i => MathF.Cos(i * 0.21f))]);
+                    var sin = Up([.. Enumerable.Range(0, Steps * half).Select(i => MathF.Sin(i * 0.21f))]);
+                    var positions = Up([0f, 1f, 2f]);
+                    var y = b.Allocate(rows * cols, true);
+                    made.Add(y);
+                    b.RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, 1e-6f, 0f, Heads, Steps, half, interleaved: false);
+                    var values = new float[rows * cols];
+                    b.Download(y, values);
+                    outputs.Add(($"RMS norm with rotary embedding, {cols} dimensions", values));
                 }
                 finally
                 {
