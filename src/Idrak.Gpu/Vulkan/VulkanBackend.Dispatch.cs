@@ -58,8 +58,16 @@ internal sealed unsafe partial class VulkanBackend
 
     private static int s_nanReports;
 
+    // Whether this device said the check is on (once, so a run with nothing to report shows it ran).
+    private int _nanCheckShown;
+
     private void CheckWrittenFinite(VulkanKernel kernel, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> push)
     {
+        if (Interlocked.Exchange(ref _nanCheckShown, 1) == 0)
+        {
+            Console.Error.WriteLine($"IDRAK_VULKAN_CHECK_NAN: {Name}: checking what every kernel writes (no recorded graphs)");
+        }
+
         if (Capturing || Volatile.Read(ref s_nanReports) >= CheckNanReports)
         {
             return;
