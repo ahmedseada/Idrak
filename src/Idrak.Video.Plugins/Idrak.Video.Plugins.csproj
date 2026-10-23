@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A reserved package: the name is kept on NuGet and GitHub, nothing is built yet (planned, no plan written yet). -->
+  <PropertyGroup>
+    <RootNamespace>Idrak.Video.Plugins</RootNamespace>
+    <AssemblyName>Idrak.Video.Plugins</AssemblyName>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Video.Plugins</PackageId>
+    <Description>Reserved for the video model families as plug-ins on Idrak.Video, one namespace per family, as Idrak.Text.Plugins and Idrak.Vision.Plugins hold theirs. Nothing is implemented in this version: the package holds no types yet.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Video\Idrak.Video.csproj" />
+  </ItemGroup>
+
+</Project>

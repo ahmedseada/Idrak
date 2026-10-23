@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A reserved package: the name is kept on NuGet and GitHub, nothing is built yet (plans/opened/20-diffusion.md). -->
+  <PropertyGroup>
+    <RootNamespace>Idrak.Diffusion.Plugins</RootNamespace>
+    <AssemblyName>Idrak.Diffusion.Plugins</AssemblyName>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Diffusion.Plugins</PackageId>
+    <Description>Reserved for the diffusion model families as plug-ins on Idrak.Diffusion, one namespace per family, as Idrak.Text.Plugins and Idrak.Vision.Plugins hold theirs. Nothing is implemented in this version: the package holds no types yet.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Diffusion\Idrak.Diffusion.csproj" />
+  </ItemGroup>
+
+</Project>

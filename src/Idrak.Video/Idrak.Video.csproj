@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A reserved package: the name is kept on NuGet and GitHub, nothing is built yet (planned, no plan written yet). -->
+  <PropertyGroup>
+    <RootNamespace>Idrak.Video</RootNamespace>
+    <AssemblyName>Idrak.Video</AssemblyName>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Video</PackageId>
+    <Description>Reserved for video in and out: decoding and encoding frames, frame sampling and video datasets, with the contracts the video model families plug into. Nothing is implemented in this version: the package holds no types yet.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Abstraction\Idrak.Abstraction.csproj" />
+  </ItemGroup>
+
+</Project>

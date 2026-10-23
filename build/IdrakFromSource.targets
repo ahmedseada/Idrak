@@ -22,7 +22,7 @@
 
   <ItemGroup Condition="'$(IdrakFromSource)' != ''">
     <!-- The library's packages, as src/ names them (tests/Idrak.Tests checks the list against src/). -->
-    <_IdrakSourcePackage Include="Idrak;Idrak.Abstraction;Idrak.Abstraction.Testing;Idrak.Gpu;Idrak.Imaging;Idrak.Data;Idrak.Text;Idrak.Vision;Idrak.Audio;Idrak.Reinforcement;Idrak.Text.Plugins;Idrak.Vision.Plugins;Idrak.Audio.Plugins;Idrak.Reinforcement.Plugins;Idrak.Cluster;Idrak.Network;Idrak.Mcp;Idrak.AspNetCore;Idrak.Onnx.Runtime" />
+    <_IdrakSourcePackage Include="Idrak;Idrak.Abstraction;Idrak.Abstraction.Testing;Idrak.Gpu;Idrak.Imaging;Idrak.Data;Idrak.Text;Idrak.Vision;Idrak.Audio;Idrak.Reinforcement;Idrak.Text.Plugins;Idrak.Vision.Plugins;Idrak.Audio.Plugins;Idrak.Reinforcement.Plugins;Idrak.Cluster;Idrak.Network;Idrak.Mcp;Idrak.AspNetCore;Idrak.Onnx.Runtime;Idrak.Diffusion;Idrak.Diffusion.Plugins;Idrak.Video;Idrak.Video.Plugins;Idrak.Data.Plugins;Idrak.HarfBuzz;Idrak.CoreML;Idrak.Extensions" />
     <!-- The app's references among them, each swapped for the clone's project. -->
     <_IdrakNotReferenced Include="@(_IdrakSourcePackage)" Exclude="@(PackageReference)" />
     <_IdrakReferenced Include="@(_IdrakSourcePackage)" Exclude="@(_IdrakNotReferenced)" />

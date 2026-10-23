@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A reserved package: the name is kept on NuGet and GitHub, nothing is built yet (plans/opened/plugins/1-harfbuzz.md). -->
+  <PropertyGroup>
+    <RootNamespace>Idrak.HarfBuzz</RootNamespace>
+    <AssemblyName>Idrak.HarfBuzz</AssemblyName>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.HarfBuzz</PackageId>
+    <Description>Reserved for HarfBuzz as a second text shaper beside the library's own, registered by name, for checking fonts against it and for apps that want it to shape. Nothing is implemented in this version: the package holds no types yet.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Imaging\Idrak.Imaging.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A reserved package: the name is kept on NuGet and GitHub, nothing is built yet (plans/opened/5-apple.md, step 5). -->
+  <PropertyGroup>
+    <RootNamespace>Idrak.CoreML</RootNamespace>
+    <AssemblyName>Idrak.CoreML</AssemblyName>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.CoreML</PackageId>
+    <Description>Reserved for Apple's Neural Engine through Core ML: an exported model converted to Core ML and run behind the library's serving contracts. Nothing is implemented in this version: the package holds no types yet.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Abstraction\Idrak.Abstraction.csproj" />
+  </ItemGroup>
+
+</Project>
