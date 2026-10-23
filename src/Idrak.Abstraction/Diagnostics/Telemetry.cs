@@ -189,6 +189,11 @@ public interface ITelemetryHook
     {
     }
 
+    /// <summary>A rank of a cluster run took rank 0's measured kernel choices, or kept its own (<see cref="TelemetryLevel.Network"/>).</summary>
+    void OnChoicesShared(in MeasuredChoicesShared e)
+    {
+    }
+
     /// <summary>A rank joined, slowed, dropped, rejoined or finished (<see cref="TelemetryLevel.Network"/>).</summary>
     void OnRankState(in RankStateChanged e)
     {
@@ -415,6 +420,18 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Network) != 0)
             {
                 h.OnTransportChosen(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports whether a rank took rank 0's measured choices, to the hooks listening at <see cref="TelemetryLevel.Network"/>.</summary>
+    public static void ChoicesShared(in MeasuredChoicesShared e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Network) != 0)
+            {
+                h.OnChoicesShared(in e);
             }
         }
     }

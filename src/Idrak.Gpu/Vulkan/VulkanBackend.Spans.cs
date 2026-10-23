@@ -225,14 +225,8 @@ internal sealed partial class VulkanBackend
 
                 if (composed * 2 < spans || spans * 2 < composed)
                 {
-                    chosen = composed < spans ? 1 : 0;
                     Interlocked.Increment(ref _measurements);
-                    lock (_tuned)
-                    {
-                        _tuned[key] = chosen;
-                    }
-
-                    SaveTuning(key, chosen);
+                    chosen = Keep(key, composed < spans ? 1 : 0, [0, 1]);   // another rank's, when it stored one first
                 }
                 else
                 {

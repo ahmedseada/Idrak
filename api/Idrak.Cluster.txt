@@ -42,6 +42,7 @@ public sealed record Idrak.Cluster.ClusterRank : System.IEquatable<Idrak.Cluster
   public Idrak.Abstraction.Cluster.ICollectives Collectives { get; init; }
   public Idrak.Abstraction.Cluster.ITransport Transport { get; init; }
   public Idrak.Abstraction.Device Device { get; init; }
+  public Idrak.Abstraction.Devices.MeasuredChoicesResult? SharedChoices { get; init; }
   public bool BeginStep(long step)
   public int Rank { get; init; }
   public long Step { get; }

@@ -146,6 +146,7 @@ public sealed record Idrak.Abstraction.Cluster.ClusterOptions : System.IEquatabl
   public bool Overlap { get; init; }
   public bool OwnTensorsOnly { get; init; }
   public bool Pipelined { get; }
+  public bool ShareTuning { get; init; }
   public bool StreamedSave { get; init; }
   public bool? Suggest { get; init; }
   public double RebalanceTolerance { get; init; }
@@ -1866,6 +1867,15 @@ public interface Idrak.Abstraction.Devices.IHostStaging : System.IDisposable
   public void Upload(int slot, Idrak.Abstraction.Devices.Storage destination, int offset, int floats)
   public void Wait(int slot)
 
+public interface Idrak.Abstraction.Devices.IMeasuredChoicesProvider
+  public Idrak.Abstraction.Devices.MeasuredChoices Export(Idrak.Abstraction.Devices.Backend backend)
+  public Idrak.Abstraction.Devices.MeasuredChoicesResult Follow(Idrak.Abstraction.Devices.Backend follower, Idrak.Abstraction.Devices.Backend leader)
+  public Idrak.Abstraction.Devices.MeasuredChoicesResult Import(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.MeasuredChoices choices)
+  public bool Handles(Idrak.Abstraction.Devices.Backend backend)
+  public string Name { get; }
+  public string Summary { get; }
+  public void Leave(Idrak.Abstraction.Devices.Backend follower)
+
 public interface Idrak.Abstraction.Devices.IMemoryOffload
   public (default) bool PlaceOnHost(Idrak.Abstraction.Devices.Storage storage)
   public (default) int KeepFree()
@@ -1893,6 +1903,32 @@ public enum Idrak.Abstraction.Devices.LookupTablePlacement : byte
   Automatic = 0
   DeviceMemory = 2
   HostMemory = 1
+
+public static class Idrak.Abstraction.Devices.MeasuredChoiceProviders
+  public static Idrak.Abstraction.Devices.IMeasuredChoicesProvider? Default(string name)
+  public static Idrak.Abstraction.Devices.IMeasuredChoicesProvider? Find(string name)
+  public static Idrak.Abstraction.Devices.IMeasuredChoicesProvider? For(Idrak.Abstraction.Devices.Backend backend)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Devices.IMeasuredChoicesProvider> All { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Devices.IMeasuredChoicesProvider provider)
+
+public sealed record Idrak.Abstraction.Devices.MeasuredChoices : System.IEquatable<Idrak.Abstraction.Devices.MeasuredChoices>
+  public MeasuredChoices(string Kind, string Identity, string Device, System.Collections.Generic.IReadOnlyDictionary<string, string> Entries)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Entries { get; init; }
+  public byte[] ToBytes()
+  public static Idrak.Abstraction.Devices.MeasuredChoices FromBytes(System.ReadOnlySpan<byte> bytes)
+  public string Device { get; init; }
+  public string Identity { get; init; }
+  public string Kind { get; init; }
+
+public sealed record Idrak.Abstraction.Devices.MeasuredChoicesResult : System.IEquatable<Idrak.Abstraction.Devices.MeasuredChoicesResult>
+  public MeasuredChoicesResult(bool Taken, int Choices, string Detail)
+  public bool Taken { get; init; }
+  public int Choices { get; init; }
+  public string Detail { get; init; }
 
 public sealed class Idrak.Abstraction.Devices.MemoryAccountant
   public Idrak.Abstraction.MemoryUsage Usage { get; }
@@ -2009,6 +2045,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void Complete()
   public void OnBatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
   public void OnCalibrated(in Idrak.Abstraction.Diagnostics.ProfileCalibrated e)
+  public void OnChoicesShared(in Idrak.Abstraction.Diagnostics.MeasuredChoicesShared e)
   public void OnCollective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
@@ -2051,6 +2088,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstract
   public Idrak.Abstraction.Diagnostics.TelemetryLevel Levels { get; }
   public void OnBatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
   public void OnCalibrated(in Idrak.Abstraction.Diagnostics.ProfileCalibrated e)
+  public void OnChoicesShared(in Idrak.Abstraction.Diagnostics.MeasuredChoicesShared e)
   public void OnCollective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
@@ -2175,6 +2213,7 @@ public interface Idrak.Abstraction.Diagnostics.ISettingAdvisor
 public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnBatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
   public (default) void OnCalibrated(in Idrak.Abstraction.Diagnostics.ProfileCalibrated e)
+  public (default) void OnChoicesShared(in Idrak.Abstraction.Diagnostics.MeasuredChoicesShared e)
   public (default) void OnCollective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public (default) void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public (default) void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
@@ -2236,6 +2275,7 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public void Dispose()
   public void OnBatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
   public void OnCalibrated(in Idrak.Abstraction.Diagnostics.ProfileCalibrated e)
+  public void OnChoicesShared(in Idrak.Abstraction.Diagnostics.MeasuredChoicesShared e)
   public void OnCollective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
@@ -2269,6 +2309,14 @@ public readonly record struct Idrak.Abstraction.Diagnostics.LayerForward : Syste
   public int[] OutputShape { get; init; }
   public string Layer { get; init; }
   public string LayerType { get; init; }
+
+public readonly record struct Idrak.Abstraction.Diagnostics.MeasuredChoicesShared : System.IEquatable<Idrak.Abstraction.Diagnostics.MeasuredChoicesShared>
+  public MeasuredChoicesShared(int Rank, string Device, bool Taken, int Choices, string Detail)
+  public bool Taken { get; init; }
+  public int Choices { get; init; }
+  public int Rank { get; init; }
+  public string Detail { get; init; }
+  public string Device { get; init; }
 
 public sealed class Idrak.Abstraction.Diagnostics.MetricsRecorder : Idrak.Abstraction.Diagnostics.ITelemetryHook
   public Idrak.Abstraction.Diagnostics.TelemetryLevel Levels { get; }
@@ -2533,6 +2581,7 @@ public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static long Start(Idrak.Abstraction.Diagnostics.TelemetryLevel level)
   public static void BatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
   public static void Calibrated(in Idrak.Abstraction.Diagnostics.ProfileCalibrated e)
+  public static void ChoicesShared(in Idrak.Abstraction.Diagnostics.MeasuredChoicesShared e)
   public static void Collective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public static void DeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
   public static void Engine(in Idrak.Abstraction.Diagnostics.EngineEvent e)

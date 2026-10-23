@@ -402,6 +402,17 @@ public readonly record struct PipelineStepped(string Schedule, int Rank, int Sta
 /// <param name="Reason">Why (the selector's rule, or "forced by the options").</param>
 public readonly record struct TransportChosen(int RankA, int RankB, string Transport, string Reason);
 
+/// <summary>
+/// Published at <c>TelemetryLevel.Network</c> once per rank after rank 0 as a cluster run starts (<c>ClusterOptions.ShareTuning</c>):
+/// whether the rank runs rank 0's measured kernel choices (<see cref="Devices.MeasuredChoiceProviders"/>) or keeps its own, and why.
+/// </summary>
+/// <param name="Rank">The rank.</param>
+/// <param name="Device">Its device.</param>
+/// <param name="Taken">Whether it runs rank 0's choices; false: it keeps its own (another device, driver or kind than rank 0's).</param>
+/// <param name="Choices">How many of rank 0's choices it took (those known then).</param>
+/// <param name="Detail">What happened, or why not.</param>
+public readonly record struct MeasuredChoicesShared(int Rank, string Device, bool Taken, int Choices, string Detail);
+
 /// <summary>How a rank stands in its group.</summary>
 public enum RankState
 {

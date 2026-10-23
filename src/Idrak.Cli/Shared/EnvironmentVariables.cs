@@ -326,6 +326,7 @@ internal static class EnvironmentVariables
         new("IDRAK_CLUSTER_DIRECT_WAKE", Cluster, "1", "1 or 0: a waiting receive on a real transport is woken by the thread that queued its message, not through the thread pool", ClusterRun),
         new("IDRAK_CLUSTER_OWN_TENSORS", Cluster, "1", "1 or 0: a pipeline stage or a parameters shard reads only its own tensors from the checkpoint (0: every rank loads the whole model first)", ClusterRun),
         new("IDRAK_CLUSTER_STREAMED_SAVE", Cluster, "1", "1 or 0: a pipeline's or a sharded run's checkpoint is streamed to rank 0 a tensor at a time (0: every share gathered whole first)", ClusterRun),
+        new("IDRAK_CLUSTER_SHARE_TUNING", Cluster, "1", "1 or 0: every rank runs rank 0's measured kernel choices (variants, splits, the width, the attention path) instead of measuring its own, so a seeded run on N ranks runs one process's kernels; a rank on another device or driver keeps its own", ClusterRun),
         new("IDRAK_CLUSTER_SOCKET_BUFFER", Cluster, "the system's", "The socket buffers' size (B, KB, MB, GB)", ClusterRun),
         new("IDRAK_CLUSTER_BUCKET_BYTES", Cluster, "measured on the first step (kept in the tuning cache over a real transport)", "The size of a gradient bucket: gradients are reduced a bucket at a time, each sent once the backward pass finished it (B, KB, MB, GB)", ClusterRun),
         new("IDRAK_CLUSTER_MESSAGE_COST", Cluster, "measured on this machine", "Seconds one collective's messages cost beyond their bytes, which the measured bucket size counts", ClusterRun),

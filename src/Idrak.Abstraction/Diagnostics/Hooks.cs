@@ -170,6 +170,11 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
     public void OnTransportChosen(in TransportChosen e) => _out.WriteLine($"Ranks {e.RankA} and {e.RankB} use {e.Transport} ({e.Reason})");
 
     /// <inheritdoc />
+    public void OnChoicesShared(in MeasuredChoicesShared e) =>
+        _out.WriteLine(e.Taken ? string.Create(CultureInfo.InvariantCulture, $"Rank {e.Rank} ({e.Device}) runs rank 0's measured choices ({e.Choices} known): {e.Detail}")
+            : $"Rank {e.Rank} ({e.Device}) keeps its own measured choices: {e.Detail}");
+
+    /// <inheritdoc />
     public void OnRankState(in RankStateChanged e) =>
         _out.WriteLine($"Rank {e.Rank} {e.State.ToString().ToLowerInvariant()}" + (e.Step >= 0 ? string.Create(CultureInfo.InvariantCulture, $" at step {e.Step}") : "") + (e.Detail is { } d ? ": " + d : "")
             + (e.Seed is { } seed ? string.Create(CultureInfo.InvariantCulture, $" (replay with --seed {seed} --step {e.Step})") : ""));
@@ -447,6 +452,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnTransportChosen(in TransportChosen e) => Write(e);
 
     /// <inheritdoc />
+    public void OnChoicesShared(in MeasuredChoicesShared e) => Write(e);
+
+    /// <inheritdoc />
     public void OnRankState(in RankStateChanged e) => Write(e);
 
     /// <inheritdoc />
@@ -542,6 +550,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnTransportChosen(in TransportChosen e) => _channel.OnTransportChosen(in e);
+
+    /// <inheritdoc />
+    public void OnChoicesShared(in MeasuredChoicesShared e) => _channel.OnChoicesShared(in e);
 
     /// <inheritdoc />
     public void OnRankState(in RankStateChanged e) => _channel.OnRankState(in e);
@@ -829,6 +840,14 @@ public static class TelemetryJson
                 w.WriteNumber("rank_b", e.RankB);
                 w.WriteString("transport", e.Transport);
                 w.WriteString("reason", e.Reason);
+                break;
+            case MeasuredChoicesShared e:
+                w.WriteString("event", "choices_shared");
+                w.WriteNumber("rank", e.Rank);
+                w.WriteString("device", e.Device);
+                w.WriteBoolean("taken", e.Taken);
+                w.WriteNumber("choices", e.Choices);
+                w.WriteString("detail", e.Detail);
                 break;
             case RankStateChanged e:
                 w.WriteString("event", "rank_state");
