@@ -23,7 +23,9 @@
 //                                                   time left, passed and failed so far and the test running (in place on a terminal, a line a
 //                                                   minute when redirected; IDRAK_PROGRESS picks the reporter)
 //   … -- --failures-only (IDRAK_TEST_FAILURES_ONLY=1)  only the device headers, the FAIL and HANG lines and the summary on the standard output
-//                                                   (the tests' own lines dropped): … -- --progress --failures-only | Tee-Object fails.txt
+//                                                   (the tests' own lines dropped)
+//   … -- --failures-file fails.txt (IDRAK_TEST_FAILURES_FILE)  the runner also writes those lines to the file as they happen:
+//                                                   … -- --progress --failures-only --failures-file fails.txt
 
 using System.Diagnostics;
 using Idrak;
@@ -166,8 +168,9 @@ if (args is ["--dump-spirv", var spirvFolder])
 }
 
 // What the run is on, so a pasted result says where it passed (each GPU's line adds its compute capability and driver).
-Console.WriteLine($"Idrak tests: {System.Runtime.InteropServices.RuntimeInformation.OSDescription} "
-                  + $"({System.Runtime.InteropServices.RuntimeInformation.OSArchitecture}), {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
+string runHeader = $"Idrak tests: {System.Runtime.InteropServices.RuntimeInformation.OSDescription} "
+                   + $"({System.Runtime.InteropServices.RuntimeInformation.OSArchitecture}), {System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}";
+Console.WriteLine(runHeader);
 
 // Every device: the CPU and each GPU found (IDRAK_DEVICES=cpu,cuda:1,vulkan:0 … to choose, including devices not
 // listed by default, such as a software Vulkan driver), since the library runs on any of them.
@@ -192,6 +195,15 @@ var selected = Tests.All.Where(t => filters is null || filters.Any(f => t.Name.C
 // own lines go through a writer that takes the progress line off the screen first, or nowhere when only failures show.
 bool progress = args.Contains("--progress") || Tests.RunnerFlag("IDRAK_TEST_PROGRESS");
 bool failuresOnly = args.Contains("--failures-only") || Tests.RunnerFlag("IDRAK_TEST_FAILURES_ONLY");
+
+// --failures-file PATH (IDRAK_TEST_FAILURES_FILE): the header, the device headers, the failures and the summary written by
+// the runner itself as they happen, so the console keeps the progress line and the lines in order (a pipe to another
+// program prints them late, onto the progress line).
+string? failuresPath = Array.IndexOf(args, "--failures-file") is var at and >= 0
+    ? (at + 1 < args.Length ? args[at + 1] : throw new InvalidOperationException("--failures-file needs a path."))
+    : Environment.GetEnvironmentVariable("IDRAK_TEST_FAILURES_FILE") is { Length: > 0 } named ? named : null;
+using var failuresFile = failuresPath is null ? null : new StreamWriter(failuresPath, append: false, new System.Text.UTF8Encoding(false)) { AutoFlush = true };
+failuresFile?.WriteLine(runHeader);
 var results = Console.Out;
 var screen = Console.Error;                                                      // the progress line's writer, and the lock both share
 long total = (long)selected.Length * devices.Count, done = 0;
@@ -216,14 +228,19 @@ else if (inPlace is not null)
     Console.SetOut(new Tests.ProgressAwareWriter(results, screen, inPlace));
 }
 
-// A line of the runner's own, with the progress line off the screen while it is written (the test's end shows it again).
-void Report(string line)
+// A line of the runner's own, with the progress line off the screen while it is written (the test's end shows it again);
+// one that is not a pass also goes to the failures file.
+void Report(string line, bool pass = false)
 {
     lock (screen)
     {
         inPlace?.Erase();
         results.WriteLine(line);
         results.Flush();
+        if (!pass)
+        {
+            failuresFile?.WriteLine(line);
+        }
     }
 }
 
@@ -283,7 +300,7 @@ foreach (var device in devices)
             passed++;
             if (!failuresOnly)
             {
-                Report($"  PASS {name} ({sw.ElapsedMilliseconds} ms)");
+                Report($"  PASS {name} ({sw.ElapsedMilliseconds} ms)", pass: true);
             }
         }
         catch (Exception ex)
@@ -311,7 +328,7 @@ Volatile.Write(ref running, null);
 clock?.Dispose();
 bar?.Clear();
 Console.SetOut(results);
-results.WriteLine(bar is null ? $"{passed} passed, {failed} failed" : $"{passed} passed, {failed} failed in {ProgressText.Duration(runStarted.Elapsed)}");
+Report(bar is null ? $"{passed} passed, {failed} failed" : $"{passed} passed, {failed} failed in {ProgressText.Duration(runStarted.Elapsed)}");
 return failed == 0 ? 0 : 1;
 
 internal static partial class Tests
