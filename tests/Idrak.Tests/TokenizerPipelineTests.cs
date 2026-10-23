@@ -423,7 +423,22 @@ internal static partial class Tests
             }
 
             long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-            Check(allocated == 0, $"a warm run allocated {allocated} bytes over 400 texts: {spec}");
+            if (allocated != 0)
+            {
+                // Name the texts that allocate, and what.
+                var culprits = new List<string>();
+                foreach (string text in texts)
+                {
+                    long at = GC.GetAllocatedBytesForCurrentThread();
+                    pipeline.Run(text, 0, text.Length, true, output);
+                    if (GC.GetAllocatedBytesForCurrentThread() - at is var bytes and > 0)
+                    {
+                        culprits.Add($"'{text}' {bytes} bytes, again: {AllocatedTypes(() => pipeline.Run(text, 0, text.Length, true, output))}");
+                    }
+                }
+
+                Check(false, $"a warm run allocated {allocated} bytes over 400 texts: {spec}\n  {string.Join("\n  ", culprits)}");
+            }
         }
 
         // Text NFKC changes: the library's own normalization (UnicodeNormalization) allocates nothing either.
@@ -447,6 +462,7 @@ internal static partial class Tests
 
         double perText = (GC.GetAllocatedBytesForCurrentThread() - start) / 200.0;
         Console.WriteLine($"    text NFKC changes: {perText:F0} bytes a text");
-        Check(perText == 0, $"text NFKC changes allocated {perText:F0} bytes a text; the library's normalization allocates nothing");
+        Check(perText == 0, $"text NFKC changes allocated {perText:F0} bytes a text; the library's normalization allocates nothing: "
+            + string.Join("; ", changing.Select(text => $"'{text}' again: {AllocatedTypes(() => nfkc.Run(text, 0, text.Length, true, output))}")));
     }
 }

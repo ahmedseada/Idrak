@@ -203,7 +203,7 @@ internal static partial class Tests
                 if (allocated != 0)
                 {
                     // Name the lines that allocate.
-                    var culprits = new List<string>();
+                    var culprits = new List<(int Index, string Text)>();
                     foreach (var (line, i) in taken.Select((l, i) => (l, i)))
                     {
                         long start = GC.GetAllocatedBytesForCurrentThread();
@@ -211,11 +211,17 @@ internal static partial class Tests
                         tokenizer.EncodeRange(line, 0, line.Length, ids);
                         if (GC.GetAllocatedBytesForCurrentThread() - start is var bytes and > 0)
                         {
-                            culprits.Add($"line {i} ({bytes} bytes, {line.Length} characters) '{Escaped(line[..Math.Min(40, line.Length)])}'");
+                            culprits.Add((i, $"line {i} ({bytes} bytes, {line.Length} characters) '{Escaped(line[..Math.Min(40, line.Length)])}'"));
                         }
                     }
 
-                    Check(false, $"{name}, cache {cache}: a warm pass allocated {allocated} bytes over {taken.Length * 3} lines:\n  {string.Join("\n  ", culprits.Take(8))}");
+                    string first = culprits.Count > 0 ? taken[culprits[0].Index] : taken[0];
+                    string types = AllocatedTypes(() =>
+                    {
+                        ids.Clear();
+                        tokenizer.EncodeRange(first, 0, first.Length, ids);
+                    });
+                    Check(false, $"{name}, cache {cache}: a warm pass allocated {allocated} bytes over {taken.Length * 3} lines:\n  {string.Join("\n  ", culprits.Take(8).Select(c => c.Text))}\n  line {(culprits.Count > 0 ? culprits[0].Index : 0)} again: {types}");
                 }
             }
         }
