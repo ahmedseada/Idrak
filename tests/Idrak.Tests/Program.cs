@@ -19,9 +19,15 @@
 //   … -- --bench-offload                                                         time training steps with weights or optimizer state in system memory
 //   IDRAK_FILTER=retrieval dotnet run --project tests/Idrak.Tests   only tests whose name contains the text ("a|b": any of several)
 //   IDRAK_TIMEOUT=60 …    a test still running after this many seconds (default 300) is reported as HANG and the run stops
+//   … -- --progress (IDRAK_TEST_PROGRESS=1)        the library's progress line on the error output: a bar, the share done, tests a second, the
+//                                                   time left, passed and failed so far and the test running (in place on a terminal, a line a
+//                                                   minute when redirected; IDRAK_PROGRESS picks the reporter)
+//   … -- --failures-only (IDRAK_TEST_FAILURES_ONLY=1)  only the device headers, the FAIL and HANG lines and the summary on the standard output
+//                                                   (the tests' own lines dropped): … -- --progress --failures-only | Tee-Object fails.txt
 
 using System.Diagnostics;
 using Idrak;
+using Idrak.Abstraction.Diagnostics;
 using Idrak.Data;
 using Idrak.Datasets;
 using Idrak.Diagnostics;
@@ -175,8 +181,65 @@ else if (!Device.IsCudaAvailable)
     Console.WriteLine($"CUDA not available ({CudaBackend.UnavailableReason}); testing {string.Join(", ", devices)}.");
 }
 
+// IDRAK_FILTER: one text, or several separated by "|" (a test runs when its name contains any of them, ignoring case), so
+// every group a change touches runs in one invocation.
+string[]? filters = Environment.GetEnvironmentVariable("IDRAK_FILTER") is { Length: > 0 } filter
+? filter.Split('|', StringSplitOptions.RemoveEmptyEntries)
+: null;
+var selected = Tests.All.Where(t => filters is null || filters.Any(f => t.Name.Contains(f, StringComparison.OrdinalIgnoreCase))).ToArray();
+
+// --progress and --failures-only (or their variables): the runner's lines go to the standard output as it was; the tests'
+// own lines go through a writer that takes the progress line off the screen first, or nowhere when only failures show.
+bool progress = args.Contains("--progress") || Tests.RunnerFlag("IDRAK_TEST_PROGRESS");
+bool failuresOnly = args.Contains("--failures-only") || Tests.RunnerFlag("IDRAK_TEST_FAILURES_ONLY");
+var results = Console.Out;
+var screen = Console.Error;                                                      // the progress line's writer, and the lock both share
+long total = (long)selected.Length * devices.Count, done = 0;
 int failed = 0, passed = 0;
 string? running = null;
+var runStarted = Stopwatch.StartNew();
+var bar = progress ? ProgressReporters.Start(Tests.ProgressLabel(0, total), total) : null;
+if (bar is not null)
+{
+    bar.Detail = () => $"{passed} passed, {failed} failed  {Volatile.Read(ref running)}";
+}
+
+// Only a line drawn in place is taken off the screen for other output; a redirected one ("plain") is a line of its own
+// at its interval, so other output goes around it as it is.
+var inPlace = bar is not null && ProgressReporters.Choose() == ProgressReporters.ConsoleReporter ? bar : null;
+if (failuresOnly)
+{
+    Console.SetOut(TextWriter.Null);
+}
+else if (inPlace is not null)
+{
+    Console.SetOut(new Tests.ProgressAwareWriter(results, screen, inPlace));
+}
+
+// A line of the runner's own, with the progress line off the screen while it is written (the test's end shows it again).
+void Report(string line)
+{
+    lock (screen)
+    {
+        inPlace?.Erase();
+        results.WriteLine(line);
+        results.Flush();
+    }
+}
+
+// One test ended (run, or counted as failed on a lost device).
+void Ended()
+{
+    long now = Interlocked.Increment(ref done);
+    if (bar is not null)
+    {
+        bar.Label = Tests.ProgressLabel(now, total);
+        bar.Advance();
+    }
+}
+
+// The time so far and the time left move during a long test too (Advance(0) shows at the reporter's own interval).
+using var clock = bar is null ? null : new Timer(_ => bar.Advance(0), null, 1000, 1000);
 var runningSince = Stopwatch.StartNew();
 int timeout = int.TryParse(Environment.GetEnvironmentVariable("IDRAK_TIMEOUT"), out int t) ? t : 300;
 var watchdog = new Thread(() =>
@@ -186,27 +249,24 @@ var watchdog = new Thread(() =>
         Thread.Sleep(1000);
         if (Volatile.Read(ref running) is { } current && runningSince.Elapsed.TotalSeconds > timeout)
         {
-            Console.WriteLine($"  HANG {current}: still running after {timeout} s");
-            Console.WriteLine($"{passed} passed, {failed} failed, 1 hung");
+            bar?.Clear();
+            Report($"  HANG {current}: still running after {timeout} s");
+            Report($"{passed} passed, {failed} failed, 1 hung");
             Environment.Exit(3);
         }
     }
 }) { IsBackground = true };
 watchdog.Start();
-// IDRAK_FILTER: one text, or several separated by "|" (a test runs when its name contains any of them, ignoring case), so
-// every group a change touches runs in one invocation.
-string[]? filters = Environment.GetEnvironmentVariable("IDRAK_FILTER") is { Length: > 0 } filter
-? filter.Split('|', StringSplitOptions.RemoveEmptyEntries)
-: null;
 foreach (var device in devices)
 {
-    Console.WriteLine($"== {device}: {device.Name}");
+    Report($"== {device}: {device.Name}");
     string? lostIn = null;
-    foreach (var (name, test) in Tests.All.Where(t => filters is null || filters.Any(f => t.Name.Contains(f, StringComparison.OrdinalIgnoreCase))))
+    foreach (var (name, test) in selected)
     {
         if (lostIn is not null)
         {
             failed++;
+            Ended();
             continue;                                                            // counted, not run: the device is unusable
         }
 
@@ -221,12 +281,15 @@ foreach (var device in devices)
             }
 
             passed++;
-            Console.WriteLine($"  PASS {name} ({sw.ElapsedMilliseconds} ms)");
+            if (!failuresOnly)
+            {
+                Report($"  PASS {name} ({sw.ElapsedMilliseconds} ms)");
+            }
         }
         catch (Exception ex)
         {
             failed++;
-            Console.WriteLine($"  FAIL {name}: {(Environment.GetEnvironmentVariable("IDRAK_TRACE") == "1" ? ex.ToString() : ex.Message)}");
+            Report($"  FAIL {name}: {(Environment.GetEnvironmentVariable("IDRAK_TRACE") == "1" ? ex.ToString() : ex.Message)}");
 
             // A kernel that faults (illegal or misaligned address, illegal instruction, launch failure) ruins the CUDA
             // context: every later call on it fails the same way. Name the test and skip the rest on this device.
@@ -235,15 +298,20 @@ foreach (var device in devices)
                     || message.Contains("LAUNCH_FAILED", StringComparison.Ordinal) || message.Contains("HARDWARE_STACK_ERROR", StringComparison.Ordinal)))
             {
                 lostIn = name;
-                Console.WriteLine($"  the CUDA context was lost in this test: the remaining {device} tests are skipped and counted as failed.");
-                Console.WriteLine("  (the fault is reported where the device is next used; IDRAK_CUDA_DEBUG=1 names the kernel that faulted)");
+                Report($"  the CUDA context was lost in this test: the remaining {device} tests are skipped and counted as failed.");
+                Report("  (the fault is reported where the device is next used; IDRAK_CUDA_DEBUG=1 names the kernel that faulted)");
             }
         }
+
+        Ended();
     }
 }
 
 Volatile.Write(ref running, null);
-Console.WriteLine($"{passed} passed, {failed} failed");
+clock?.Dispose();
+bar?.Clear();
+Console.SetOut(results);
+results.WriteLine(bar is null ? $"{passed} passed, {failed} failed" : $"{passed} passed, {failed} failed in {ProgressText.Duration(runStarted.Elapsed)}");
 return failed == 0 ? 0 : 1;
 
 internal static partial class Tests

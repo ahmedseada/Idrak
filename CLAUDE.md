@@ -58,11 +58,10 @@ These are the owner's standing rules. They hold in every session, after every co
 - **Keep the owner informed.** Before each step, say in a line what you are about to do and why; never go quiet while
   working. The same for the software: long work shows live progress (what it is doing, how far, how fast, time left).
 - **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`. Every
-  test run in them saves its output and ends with the command that extracts the failed lines (each FAIL line with its
-  message lines, the device headers and the summary) into `fails.txt` for the owner to paste:
+  test run in them shows the live progress line and saves only the failed lines (each FAIL line with its message lines,
+  the device headers and the summary) into `fails.txt` for the owner to paste:
   ```powershell
-  dotnet run -c Release --no-build --project tests\Idrak.Tests 2>&1 | Tee-Object -FilePath test.log
-  $k = $false; Get-Content test.log | Where-Object { if ($_ -match '^  (PASS|FAIL) ') { $k = $_.StartsWith('  FAIL') } elseif ($_ -notmatch '^  \S') { $k = $false }; $k -or $_ -match '^== |^\d+ passed' } | Set-Content -Encoding utf8 fails.txt; Get-Content fails.txt
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only | Tee-Object -FilePath fails.txt
   ```
 - **"Just answer"** means answer the question without writing or changing code.
 - **Stay on the owner's current task.** Do not steer to a different feature or conclusion; report results and offer
