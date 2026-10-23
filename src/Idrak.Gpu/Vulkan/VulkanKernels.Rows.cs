@@ -432,22 +432,9 @@ internal static partial class VulkanKernels
             return Max(acc.V);
         }
 
-        // IDRAK_DEBUG_OLD_ROWS (temporary): 1 for every kernel, or kernel name prefixes separated by commas.
-        private static readonly string[] DebugOldRows = Environment.GetEnvironmentVariable("IDRAK_DEBUG_OLD_ROWS") is { Length: > 0 } old
-            ? old.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : [];
-
-        private bool OldRows => DebugOldRows.Any(p => p == "1" || k.Name.StartsWith(p, StringComparison.Ordinal));
-
         // `count` sums over the row in its one order: `add` adds column j to the accumulators (from -0).
         private Val[] Accumulate(int count, Val cols, Action<Var[], Val> add)
         {
-            if (OldRows)
-            {
-                var old = Enumerable.Range(0, count).Select(_ => k.Local(k.Float(-0f))).ToArray();
-                Columns(cols, j => add(old, j));
-                return [.. old.Select(a => Sum(a.V))];
-            }
-
             var bits = k.Min(k.FindMsb(k.Max(cols, k.Int(1)) - 1) + 1, k.Int(LaneBits));
             var lanes = k.Int(1).ShiftLeft(bits);
             if (narrow)
