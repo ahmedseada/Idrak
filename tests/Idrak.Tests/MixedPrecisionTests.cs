@@ -632,7 +632,7 @@ internal static partial class Tests
                     // The key bias adds q·b to every score of a query row, which softmax ignores: its gradient is exactly zero
                     // (Σ_j dS_ij = 0), so what both runs hold is rounding left over from the cancellation (float32 on the CPU:
                     // ~3e-6 against ~160 for the key weight; bfloat16 on GPUs: ~0.04, 2e-4 of it, and the two runs' leftovers
-                    // differ by 25% of themselves on an RTX 3060 where another kernel or split count sums them). A relative
+                    // differ by 25% of themselves on a card where another kernel or split count sums them). A relative
                     // comparison of two roundings is meaningless; both must stay small against the key weight's gradient,
                     // which a wrong softmax backward (Σ_j dS_ij ≠ 0) would not (about a tenth of it).
                     double scale = Norm(composed.Grads[weight]);
@@ -905,7 +905,7 @@ internal static partial class Tests
                     }
                 });
                 // Replayed until the GPU's speed has settled (as the tuning warms up, TuneTiming.Warm): a laptop GPU idle
-                // before the first row still runs at a fraction of its clocks (the RTX 3060 Laptop's first "auto",
+                // before the first row still runs at a fraction of its clocks (one laptop card's first "auto",
                 // 3 splits, timed 32.9 µs against 26.2 for the same 3 splits a column later, also after a fixed 30 ms).
                 TuneTiming.Warm(() =>
                 {
@@ -996,7 +996,7 @@ internal static partial class Tests
 
         // Short prompts through int8 weights, by row count: up to 8 rows take the GEMV kernels, from 9 the packed
         // tensor-core products (before, 9-63 rows expanded the whole weight to float32 first: 2.3 ms against 0.36 ms
-        // for the 151936-column head on an RTX 5070 Ti).
+        // for the 151936-column head on one card).
         Console.WriteLine();
         int[] rowCounts = [1, 8, 9, 16, 32, 48, 63, 64, 96];
         Console.WriteLine($"{"rows through int8 weights",-32} " + string.Join(" ", rowCounts.Select(r => $"{r,9}")));
