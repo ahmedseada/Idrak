@@ -20,7 +20,7 @@ idrak run MODEL --image scan.png "Read the page."
 ```
 
 ```csharp
-// an app references Idrak.Vision.Plugins (the legal OCR sample registers it beside Gemma 3's)
+// an app references Idrak.Vision.Plugins and registers it beside Gemma 3's
 using Idrak.Vision.Plugins.Qwen;
 
 QwenVisionPlugin.Register();

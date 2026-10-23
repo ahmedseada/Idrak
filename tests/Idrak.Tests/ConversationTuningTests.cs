@@ -7,7 +7,7 @@ using Idrak.Text;
 using Idrak.Text.Abstractions;
 using Idrak.Abstraction.Generation;
 
-// The library's conversation tuning (ConversationTuning: what idrak tune and the legal OCR app train with) on the tiny
+// The library's conversation tuning (ConversationTuning: what idrak tune trains with) on the tiny
 // Gemma 3 and LlamaFactory's ShareGPT records: the data and its images read, a held-out share, the image side, the
 // scorer and the tuning settings prepared; a run trains, reports each step and the answers as they are scored, and
 // writes the adapter, its image preparation and manifest; a stopped run saves what it trained so far.

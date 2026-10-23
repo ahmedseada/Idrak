@@ -28,7 +28,7 @@ It is a plug-in of its own, not part of an Arabic package: the Arabic shaper is 
 | `Idrak.HarfBuzz` (the plug-in) | `samples/HarfBuzz/Idrak.HarfBuzz` | an outside plug-in like `samples/Gemma3Vision`: references Idrak and Idrak.Imaging as packages, and HarfBuzzSharp (a pinned version) |
 | Named shapers: a way to pick a shaper by its name, beside the by-script table | `TextShapers` (Idrak.Abstraction) | the only library change: today a shaper is found by script ("Arab", "*"); a second shaper for the same script needs a name to be chosen by (see phase 2) |
 | `--against NAME` | `idrak data fonts` (Idrak.Cli) | compares the library's shaping with a named shaper in process, no files |
-| `Shaper` setting | `TextStyle` (Imaging), `SyntheticPageOptions`, `idrak data synth --shaper`, the Legal OCR app's `Synthetic.Shaper` | nothing fixed: pages may be shaped by a chosen shaper |
+| `Shaper` setting | `TextStyle` (Imaging), `SyntheticPageOptions`, `idrak data synth --shaper` | nothing fixed: pages may be shaped by a chosen shaper |
 | Tests | `samples/HarfBuzz/Idrak.HarfBuzz.Tests` (its own runner and filter, like the app tests) | the main test project must not reference a native dependency |
 
 ## Phases
@@ -59,7 +59,7 @@ It is a plug-in of its own, not part of an Arabic package: the Arabic shaper is 
      the named shaper, compared glyph for glyph, the same report as `--harfbuzz FILE` (which stays, for references made
      elsewhere). With no `-P`, the message names the plug-in to load.
    - `TextStyle.Shaper` (null: by script, as today), `SyntheticPageOptions` passes it on, `idrak data synth --shaper
-     NAME`, the Legal OCR app's `Synthetic.Shaper` setting with a plug-in path setting to load it.
+     NAME`, setting with a plug-in path setting to load it.
    Done when: the CLI compares the seven fonts in one command, and a synthetic page made with `--shaper harfbuzz` has the
    same text and, for the checked fonts, the same pixels as one made by the library's shaper.
 
