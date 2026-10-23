@@ -85,11 +85,12 @@ internal sealed unsafe partial class VulkanBackend
     // Bumped when kernels change what their variants mean, so stored choices of an older version are not used.
     private const int TuningVersion = 2;                               // 2: subgroup reductions in the tree's order
 
-    private readonly Dictionary<VulkanTuneKey, int> _tuned = [];
+    // Not readonly: a cluster rank shares rank 0's table (VulkanBackend.SharedTuning.cs).
+    private Dictionary<VulkanTuneKey, int> _tuned = [];
 
     // Convolution choices lent by the nearest measured class of the same shape (ComputeResources.TuningNeighbourOctaves):
     // known for their keys, never saved and never lent on, so a choice reaches one neighbourhood and no further.
-    private readonly Dictionary<VulkanTuneKey, int> _lent = [];
+    private Dictionary<VulkanTuneKey, int> _lent = [];
     private bool _tuningLoaded;
 
     // While candidates are timed, choices they need themselves use what is already known (or the formula), so one
@@ -231,13 +232,7 @@ internal sealed unsafe partial class VulkanBackend
                 double first = TimeRuns(fallback, 1, run);
                 if (first * list.Length * 8 > TuneBudget)
                 {
-                    lock (_tuned)
-                    {
-                        _tuned[key] = fallback;
-                    }
-
-                    SaveTuning(key, fallback);
-                    return fallback;
+                    return Keep(key, fallback, list);
                 }
             }
 
@@ -298,13 +293,7 @@ internal sealed unsafe partial class VulkanBackend
             chosen = fallback;                                             // within the noise of the formula's choice
         }
 
-        lock (_tuned)
-        {
-            _tuned[key] = chosen;
-        }
-
-        SaveTuning(key, chosen);
-        return chosen;
+        return Keep(key, chosen, list);
     }
 
     // Milliseconds of `count` back-to-back runs of one candidate: the queue drained before and after, timed on the host.
@@ -367,9 +356,10 @@ internal sealed unsafe partial class VulkanBackend
     private string KernelTuningPrefix() =>
         $"kernels/{TuningKey()}/w{Width}/{(Limits.SubgroupReductions ? "subgroups" : "plain")}/{(MatrixShape is { } shape ? $"coop{shape}/" : "")}v{TuningVersion}/";
 
-    // Reads the stored kernel choices ("prefix op variant a b c d e f", tab, value, tab, device name). Unreadable files
-    // are ignored. Called with _tuned locked.
-    private void LoadTuning()
+    // Reads the stored kernel choices ("prefix op variant a b c d e f", tab, value, tab, device name); `keepKnown`: only
+    // those not known here (a cluster's rank 0 reading what others stored since). Unreadable files are ignored. Called
+    // with _tuned locked.
+    private void LoadTuning(bool keepKnown = false)
     {
         try
         {
@@ -400,9 +390,10 @@ internal sealed unsafe partial class VulkanBackend
                     ok &= int.TryParse(parts[i + 1], NumberStyles.Integer, CultureInfo.InvariantCulture, out numbers[i]);
                 }
 
-                if (ok)
+                var key = new VulkanTuneKey(op, numbers[0], numbers[1], numbers[2], numbers[3], numbers[4], numbers[5], numbers[6]);
+                if (ok && !(keepKnown && _tuned.ContainsKey(key)))
                 {
-                    _tuned[new VulkanTuneKey(op, numbers[0], numbers[1], numbers[2], numbers[3], numbers[4], numbers[5], numbers[6])] = value;
+                    _tuned[key] = value;
                 }
             }
         }

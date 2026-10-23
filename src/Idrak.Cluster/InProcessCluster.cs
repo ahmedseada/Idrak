@@ -18,6 +18,12 @@ public sealed record ClusterRank(int Rank, Device Device, ITransport Transport, 
 
     internal SimStepper? Stepper { get; init; }
 
+    /// <summary>
+    /// Whether this rank runs rank 0's measured kernel choices (<see cref="ClusterOptions.ShareTuning"/>) or keeps its own, and
+    /// why; null on rank 0, with sharing off, and for a device that measures none.
+    /// </summary>
+    public MeasuredChoicesResult? SharedChoices { get; init; }
+
     /// <summary>The step this rank last began (<see cref="BeginStep"/>), or -1 before the first.</summary>
     public long Step => Stepper?.Step ?? _step;
 
@@ -152,6 +158,8 @@ public static class InProcessCluster
             devices[r] = SimulatedDevices.Carve(Device.Parse(options.Simulation.CarveFrom ?? spec.Device), spec.MemoryBytes, r);
         }
 
+        // Every rank runs rank 0's measured kernel choices, followed before any rank's thread makes one (ShareTuning).
+        using var shared = ChoiceSharing.Follow(devices, options);
         var errors = new Exception?[world];
         var simulated = new TimeSpan[world];
         var worlds = new SimWorld?[world];
@@ -181,7 +189,7 @@ public static class InProcessCluster
                     }
 
                     State(rank, RankState.Joined, -1, null, worlds[rank]?.Seed);
-                    me = new ClusterRank(rank, devices[rank], transport, group, context) { Stepper = stepper };
+                    me = new ClusterRank(rank, devices[rank], transport, group, context) { Stepper = stepper, SharedChoices = shared.Results[rank] };
                     work(me);
                     simulated[rank] = transport.SimulatedTime;
                     stepper?.Finish();

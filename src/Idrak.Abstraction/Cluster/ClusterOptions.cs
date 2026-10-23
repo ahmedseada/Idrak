@@ -282,6 +282,15 @@ public sealed record ClusterOptions
     /// </summary>
     public long? GatherBytes { get; init; }
 
+    /// <summary>
+    /// Whether every rank runs rank 0's measured kernel choices (a kernel's variant, its splits, the workgroup width, the
+    /// attention path: <see cref="Devices.MeasuredChoiceProviders"/>) instead of measuring its own, so a seeded run on N ranks
+    /// runs the kernels one process runs. Rank 0 still measures (or reads its cache); a rank on another device or driver than
+    /// rank 0's keeps its own and says so (<see cref="Diagnostics.MeasuredChoicesShared"/>). Speed is unchanged; 0 lets each
+    /// rank measure its own (<c>IDRAK_CLUSTER_SHARE_TUNING</c>: 1 or 0).
+    /// </summary>
+    public bool ShareTuning { get; init; } = true;
+
     /// <summary>The socket buffers' bytes, or null for the system's (<c>IDRAK_CLUSTER_SOCKET_BUFFER</c>).</summary>
     public long? SocketBufferBytes { get; init; }
 
@@ -500,6 +509,7 @@ public sealed record ClusterOptions
         "IDRAK_CLUSTER_SYNC_WEIGHTS", "IDRAK_CLUSTER_REBALANCE_EVERY", "IDRAK_CLUSTER_REBALANCE_STEPS", "IDRAK_CLUSTER_REBALANCE_TOLERANCE",
         "IDRAK_CLUSTER_GRADIENT_SYNC", "IDRAK_CLUSTER_START", "IDRAK_CLUSTER_SHARD", "IDRAK_CLUSTER_GATHER_BYTES", "IDRAK_CLUSTER_ASYNC_STAGING",
         "IDRAK_CLUSTER_DEVICE_COLLECTIVES", "IDRAK_CLUSTER_DEVICE_ACTIVATIONS", "IDRAK_CLUSTER_DIRECT_WAKE", "IDRAK_CLUSTER_OWN_TENSORS", "IDRAK_CLUSTER_STREAMED_SAVE",
+        "IDRAK_CLUSTER_SHARE_TUNING",
         "IDRAK_CLUSTER_PLACEMENT",
         "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_STAGES", "IDRAK_CLUSTER_PIPELINE_BALANCE", "IDRAK_CLUSTER_PIPELINE_CUTS", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
         "IDRAK_CLUSTER_SUGGEST", "IDRAK_CLUSTER_SUGGEST_STEPS", "IDRAK_CLUSTER_SUGGEST_SLICE",
@@ -580,6 +590,7 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_DIRECT_WAKE") is { } directWake) o = o with { DirectWake = Flag("IDRAK_CLUSTER_DIRECT_WAKE", directWake) };
         if (Read(variable, "IDRAK_CLUSTER_OWN_TENSORS") is { } ownTensors) o = o with { OwnTensorsOnly = Flag("IDRAK_CLUSTER_OWN_TENSORS", ownTensors) };
         if (Read(variable, "IDRAK_CLUSTER_STREAMED_SAVE") is { } streamed) o = o with { StreamedSave = Flag("IDRAK_CLUSTER_STREAMED_SAVE", streamed) };
+        if (Read(variable, "IDRAK_CLUSTER_SHARE_TUNING") is { } shareTuning) o = o with { ShareTuning = Flag("IDRAK_CLUSTER_SHARE_TUNING", shareTuning) };
         if (Read(variable, "IDRAK_CLUSTER_PLACEMENT") is { } placement)
         {
             o = o with { Placement = placement.ToLowerInvariant() is "single" or "pipeline" ? placement.ToLowerInvariant() : throw Bad("IDRAK_CLUSTER_PLACEMENT", placement, "single or pipeline") };

@@ -57,11 +57,12 @@ internal sealed unsafe partial class CudaBackend
     /// <summary>Keep measured choices in the user's cache folder and read them at the next start (IDRAK_TUNING_CACHE=0: off).</summary>
     internal static bool PersistTuning = TuningCache.Folder() is not null;
 
-    private readonly Dictionary<TuneKey, int> _tuned = [];
+    // Not readonly: a cluster rank shares rank 0's tables and measuring lock (CudaBackend.SharedTuning.cs).
+    private Dictionary<TuneKey, int> _tuned = [];
 
     // Choices lent by the nearest measured class of the same shape (ComputeResources.TuningNeighbourOctaves): known for
     // their keys, never saved and never lent on, so a choice reaches one neighbourhood and no further.
-    private readonly Dictionary<TuneKey, int> _lent = [];
+    private Dictionary<TuneKey, int> _lent = [];
 
     // Choices read from the cache file (null until first needed); each is used only when it is still one of the
     // candidates the shape offers, so a file from a build with other candidates cannot pick an invalid one.
@@ -171,7 +172,7 @@ internal sealed unsafe partial class CudaBackend
         lock (_tuned)
         {
             file = TuningFileLocked();
-            snapshot = new Dictionary<TuneKey, int>(_tuned);
+            snapshot = OwnChoicesLocked();                                 // not what another process's rank 0 gave
         }
 
         if (file is { } f)
@@ -289,7 +290,7 @@ internal sealed unsafe partial class CudaBackend
     // Measurements one at a time on a device: they share the timing events and the work stream, and two threads measuring
     // at once read each other's events (CUDA_ERROR_NOT_READY) and time each other's kernels. Reentrant: a candidate's first
     // run may settle a choice of its own.
-    private readonly Lock _measuring = new();
+    private Lock _measuring = new();
 
     // Tune's measuring part (its closure is created here, not on every call).
     private int TuneMeasured(TuneKey key, ReadOnlySpan<int> candidates, int fallback, Action<int> run, bool cold, Action<int, int>? part, int parts)
@@ -470,6 +471,7 @@ internal sealed unsafe partial class CudaBackend
         lock (_tuned)
         {
             _tuned[key] = chosen;
+            _imported?.Remove(key);                                        // measured here: this backend's own
             MeasuredCount++;
         }
 

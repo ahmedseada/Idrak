@@ -422,7 +422,17 @@ public static class LocalhostCluster
             }
 
             var collectives = Collectives.Get(options.CollectiveFor(topology)).Create(transport, device, context);
-            return new LocalhostRank(new ClusterRank(rank, device, transport, collectives, context), plan);
+            try
+            {
+                // Every rank runs rank 0's measured kernel choices, taken before this rank's work makes one (ShareTuning).
+                var shared = ChoiceSharing.Exchange(transport, device, options);
+                return new LocalhostRank(new ClusterRank(rank, device, transport, collectives, context) { SharedChoices = shared }, plan);
+            }
+            catch
+            {
+                collectives.Dispose();
+                throw;
+            }
         }
         catch
         {

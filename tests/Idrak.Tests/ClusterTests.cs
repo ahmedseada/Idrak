@@ -129,6 +129,8 @@ internal static partial class Tests
             ["IDRAK_CLUSTER_SUGGEST"] = "0", ["IDRAK_CLUSTER_SUGGEST_STEPS"] = "5", ["IDRAK_CLUSTER_SUGGEST_SLICE"] = "1024",
             // Plan 27, R7: how the ranks agree on a stop, how often the boundary's own exchange runs, how long an asker waits.
             ["IDRAK_CLUSTER_STOP"] = "all-reduce", ["IDRAK_CLUSTER_STOP_EVERY"] = "4", ["IDRAK_CLUSTER_STOP_WAIT"] = "30",
+            // Phase 3: whether the ranks run rank 0's measured kernel choices.
+            ["IDRAK_CLUSTER_SHARE_TUNING"] = "0",
         };
         Check(good.Keys.Order().SequenceEqual(ClusterOptions.Variables.Order()), $"every variable has a test value: {string.Join(", ", ClusterOptions.Variables.Except(good.Keys))}");
         var defaults = new ClusterOptions();
@@ -156,6 +158,7 @@ internal static partial class Tests
               && all.Timeout == TimeSpan.FromSeconds(2.5) && all.Key is not null,
             $"every value parsed: {all}");
         Check(all is { ChunkProbeBytes: 1L << 20, TuningFile: "sizes.txt", Simulation.EventLogFlushSteps: 4 }, $"the C8 settings parsed: {all}");
+        Check(defaults.ShareTuning && !all.ShareTuning, $"the ranks run rank 0's measured choices unless IDRAK_CLUSTER_SHARE_TUNING=0: {all.ShareTuning}");
         Check(!all.ToString().Contains("owner", StringComparison.Ordinal) && all.ToString().Contains("(secret)", StringComparison.Ordinal), "the key never in ToString");
         foreach (var (name, value, expected) in new[]
                  {
@@ -427,6 +430,7 @@ internal static partial class Tests
                         Telemetry.Collective(new CollectiveCompleted("ring", "all-reduce", 0, 4, 1 << 20, 1 << 20, TimeSpan.FromMilliseconds(4), TimeSpan.FromMilliseconds(17),
                             TimeSpan.FromMilliseconds(2), 3));
                         Telemetry.TransportChosen(new TransportChosen(0, 1, "tcp", "fastest available"));
+                        Telemetry.ChoicesShared(new MeasuredChoicesShared(2, "sim:2", false, 0, "kept its own: another device"));
                         Telemetry.RankState(new RankStateChanged(3, RankState.Slow, 12, "blocked others 40% of the step"));
                         Telemetry.Fault(new FaultInjected(7, 3, FaultKind.SlowWorker, [3], TimeSpan.FromMilliseconds(250), 2.5));
                         Telemetry.Calibrated(new ProfileCalibrated("ethernet-1g", 125e6, 112e6, TimeSpan.FromMicroseconds(80), TimeSpan.FromMicroseconds(95), 1.2e-4, 40));
@@ -438,15 +442,15 @@ internal static partial class Tests
 
             string text = console.ToString();
             foreach (string expected in new[] { "Transfer sim 0->1", "simulated 33.000 ms", "Collective ring all-reduce rank 0/4", "slowest rank 3", "Ranks 0 and 1 use tcp",
-                         "Rank 3 slow at step 12", "replay with --seed 7 --step 3", "Calibrated ethernet-1g: 125.0 -> 112.0 MB/s" })
+                         "Rank 2 (sim:2) keeps its own measured choices: kept its own: another device", "Rank 3 slow at step 12", "replay with --seed 7 --step 3", "Calibrated ethernet-1g: 125.0 -> 112.0 MB/s" })
             {
                 Check(text.Contains(expected, StringComparison.Ordinal), $"the console prints '{expected}':\n{text}");
             }
 
             Check(metrics.Collectives is [{ Collective: "ring", SlowestRank: 3 }] && training.Collectives.Count == 0, "the metrics recorder keeps collectives at the network level only");
             var events = File.ReadAllLines(path).Select(l => (string)JsonNode.Parse(l)!["event"]!).ToArray();
-            Check(events.SequenceEqual(["transfer", "collective", "transport_chosen", "rank_state", "fault", "profile_calibrated"]), $"the JSON lines: {string.Join(", ", events)}");
-            var fault = JsonNode.Parse(File.ReadAllLines(path)[4])!;
+            Check(events.SequenceEqual(["transfer", "collective", "transport_chosen", "choices_shared", "rank_state", "fault", "profile_calibrated"]), $"the JSON lines: {string.Join(", ", events)}");
+            var fault = JsonNode.Parse(File.ReadAllLines(path)[5])!;
             Check((int)fault["seed"]! == 7 && (long)fault["step"]! == 3 && (string)fault["kind"]! == "SlowWorker" && fault["ranks"]!.AsArray().Count == 1, $"a fault's replay key: {fault.ToJsonString()}");
         }
         finally

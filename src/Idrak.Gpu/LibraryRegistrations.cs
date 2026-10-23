@@ -9,7 +9,8 @@ namespace Idrak.Gpu;
 
 /// <summary>
 /// What this assembly adds to the registries of Idrak.Abstraction, which cannot name it: its GPU devices, CUDA first,
-/// then Vulkan, then HIP, in <see cref="DeviceProviders"/>. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls
+/// then Vulkan, then HIP, in <see cref="DeviceProviders"/>; and how the CUDA and Vulkan backends hand their measured
+/// choices between a cluster's ranks, in <see cref="MeasuredChoiceProviders"/> (HIP measures none). <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls
 /// <see cref="RegisterFor"/> once per registry, before that registry is first used, after the core assembly's own
 /// registrations when the application ships it.
 /// </summary>
@@ -18,6 +19,11 @@ internal static class LibraryRegistrations
     private static readonly Dictionary<Type, Action> ByRegistry = new()
     {
         [typeof(DeviceProviders)] = RegisterDevices,
+        [typeof(MeasuredChoiceProviders)] = () =>
+        {
+            MeasuredChoiceProviders.Register(new CudaMeasuredChoices());   // the ranks of a cluster run rank 0's measured choices
+            MeasuredChoiceProviders.Register(new VulkanMeasuredChoices());
+        },
     };
 
     private static void RegisterFor(Type registry)
