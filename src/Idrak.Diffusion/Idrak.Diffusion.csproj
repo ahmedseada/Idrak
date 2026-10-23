@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A reserved package: the name is kept on NuGet and GitHub, nothing is built yet (plans/opened/20-diffusion.md). -->
+  <PropertyGroup>
+    <RootNamespace>Idrak.Diffusion</RootNamespace>
+    <AssemblyName>Idrak.Diffusion</AssemblyName>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Diffusion</PackageId>
+    <Description>Reserved for image and audio generation by denoising: UNet and DiT denoisers, noise schedules and samplers, latent codecs (VAE) and text conditioning, with the contracts the diffusion families plug into. Nothing is implemented in this version: the package holds no types yet.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Abstraction\Idrak.Abstraction.csproj" />
+  </ItemGroup>
+
+</Project>

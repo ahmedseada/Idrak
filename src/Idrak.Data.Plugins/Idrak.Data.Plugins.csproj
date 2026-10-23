@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A reserved package: the name is kept on NuGet and GitHub, nothing is built yet (plans/opened/28-documents.md, "Not in this plan"). -->
+  <PropertyGroup>
+    <RootNamespace>Idrak.Data.Plugins</RootNamespace>
+    <AssemblyName>Idrak.Data.Plugins</AssemblyName>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Data.Plugins</PackageId>
+    <Description>Reserved for document formats as plug-ins on Idrak.Data, starting with Office (Word, Excel, PowerPoint) on the document contract. Nothing is implemented in this version: the package holds no types yet.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Data\Idrak.Data.csproj" />
+  </ItemGroup>
+
+</Project>

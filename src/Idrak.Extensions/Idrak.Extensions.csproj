@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- A reserved package: the name is kept on NuGet and GitHub, nothing is built yet (planned, no plan written yet). -->
+  <PropertyGroup>
+    <RootNamespace>Idrak.Extensions</RootNamespace>
+    <AssemblyName>Idrak.Extensions</AssemblyName>
+    <IsAotCompatible>true</IsAotCompatible>
+    <PackageId>Idrak.Extensions</PackageId>
+    <Description>Reserved for extensions and helpers over the library's contracts that apps share. Nothing is implemented in this version: the package holds no types yet.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Abstraction\Idrak.Abstraction.csproj" />
+  </ItemGroup>
+
+</Project>

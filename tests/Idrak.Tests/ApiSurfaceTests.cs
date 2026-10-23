@@ -40,8 +40,10 @@ internal static partial class Tests
     }
 
     // The packages whose surface is guarded: the library's, the testing kit included (apps build on it), the CLI not (an app).
+    // The reserved packages after Idrak.Onnx.Runtime hold no types yet: their dumps are empty until they are built.
     private static readonly string[] ApiAssemblyNames =
-        ["Idrak.Abstraction", "Idrak.Abstraction.Testing", "Idrak.Gpu", "Idrak", "Idrak.Imaging", "Idrak.Data", "Idrak.Text", "Idrak.Vision", "Idrak.Audio", "Idrak.Reinforcement", "Idrak.Text.Plugins", "Idrak.Vision.Plugins", "Idrak.Audio.Plugins", "Idrak.Reinforcement.Plugins", "Idrak.Cluster", "Idrak.Network", "Idrak.Mcp", "Idrak.AspNetCore", "Idrak.Onnx.Runtime"];
+        ["Idrak.Abstraction", "Idrak.Abstraction.Testing", "Idrak.Gpu", "Idrak", "Idrak.Imaging", "Idrak.Data", "Idrak.Text", "Idrak.Vision", "Idrak.Audio", "Idrak.Reinforcement", "Idrak.Text.Plugins", "Idrak.Vision.Plugins", "Idrak.Audio.Plugins", "Idrak.Reinforcement.Plugins", "Idrak.Cluster", "Idrak.Network", "Idrak.Mcp", "Idrak.AspNetCore", "Idrak.Onnx.Runtime",
+         "Idrak.Diffusion", "Idrak.Diffusion.Plugins", "Idrak.Video", "Idrak.Video.Plugins", "Idrak.Data.Plugins", "Idrak.HarfBuzz", "Idrak.CoreML", "Idrak.Extensions"];
 
     private static bool UpdateApi => Environment.GetEnvironmentVariable("IDRAK_UPDATE_API") == "1";
 

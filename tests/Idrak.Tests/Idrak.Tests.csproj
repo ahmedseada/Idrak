@@ -36,6 +36,15 @@
     <ProjectReference Include="..\..\src\Idrak.Network\Idrak.Network.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Cli\Idrak.Cli.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Abstraction.Testing\Idrak.Abstraction.Testing.csproj" />
+    <!-- The reserved packages (no types yet), referenced so the API guard loads them. -->
+    <ProjectReference Include="..\..\src\Idrak.Diffusion\Idrak.Diffusion.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Diffusion.Plugins\Idrak.Diffusion.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Video\Idrak.Video.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Video.Plugins\Idrak.Video.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Data.Plugins\Idrak.Data.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.HarfBuzz\Idrak.HarfBuzz.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.CoreML\Idrak.CoreML.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Extensions\Idrak.Extensions.csproj" />
     <ProjectReference Include="..\Idrak.PluginTests\Idrak.PluginTests.csproj" />
   </ItemGroup>
 
