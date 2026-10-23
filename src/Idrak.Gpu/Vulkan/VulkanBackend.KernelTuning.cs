@@ -104,6 +104,21 @@ internal sealed unsafe partial class VulkanBackend
     // (nothing recorded runs; the step before the recording measures its shapes).
     private bool CanTune => Autotune && !t_timing && _capture is null;
 
+    /// <summary>
+    /// The operations measured (IDRAK_VULKAN_TUNE_OPS: VulkanTuneOp names, comma-separated, to isolate one operation's
+    /// measurement); the others keep their stored or formula's choice. Null (the default): every operation.
+    /// </summary>
+    internal static HashSet<VulkanTuneOp>? TunedOps { get; set; } = ParseTunedOps(Environment.GetEnvironmentVariable("IDRAK_VULKAN_TUNE_OPS"));
+
+    private static HashSet<VulkanTuneOp>? ParseTunedOps(string? setting) =>
+        string.IsNullOrWhiteSpace(setting) ? null
+        : [.. setting.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(name => Enum.TryParse(name, ignoreCase: true, out VulkanTuneOp op) ? op
+                : throw new ArgumentException($"IDRAK_VULKAN_TUNE_OPS: '{name}' is not one of {string.Join(", ", Enum.GetNames<VulkanTuneOp>())}."))];
+
+    // Whether `op` is measured (TunedOps).
+    private static bool TunesOp(VulkanTuneOp op) => TunedOps is not { } only || only.Contains(op);
+
     /// <summary>Choices measured by this backend (tests: stored choices are not measured again).</summary>
     internal long Measurements => Interlocked.Read(ref _measurements);
 
@@ -199,7 +214,7 @@ internal sealed unsafe partial class VulkanBackend
             return candidates.Length == 1 ? candidates[0] : fallback;
         }
 
-        if (!CanTune)
+        if (!CanTune || !TunesOp(key.Op))
         {
             return fallback;
         }

@@ -160,7 +160,7 @@ internal sealed partial class VulkanBackend
         }
 
         long scores = (long)heads * rows * keyRows, outputs = (long)heads * rows * dim, keyFloats = (long)heads * keyRows * dim;
-        if (!CanTune || scores > int.MaxValue || outputs > int.MaxValue || keyFloats > int.MaxValue)
+        if (!CanTune || !TunesOp(VulkanTuneOp.AttentionPath) || scores > int.MaxValue || outputs > int.MaxValue || keyFloats > int.MaxValue)
         {
             return false;
         }
