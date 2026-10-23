@@ -16,4 +16,4 @@ samples/Idrak.Samples.LegalOcr/adapters/
 
 # The owner's test output and its extracted failures (CLAUDE.md, commands for the owner)
 /test.log
-/fails.txt
+/fails*.txt
