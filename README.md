@@ -41,7 +41,7 @@ the current release holds, and what is planned.
 ## Packages
 
 All packages build from this repository and share one version. `dotnet add package Idrak` brings `Idrak.Abstraction`
-and `Idrak.Gpu` along; the others are added by domain.
+along; the GPU devices are `dotnet add package Idrak.Gpu`, and the others are added by domain.
 
 | Package | What it holds |
 |---|---|

@@ -12,13 +12,176 @@ rebuilt.
 - Reserved packages, published with this version and holding no types yet, so their names are kept on NuGet and
   GitHub: `Idrak.Diffusion`, `Idrak.Diffusion.Plugins`, `Idrak.Video`, `Idrak.Video.Plugins`, `Idrak.Data.Plugins`,
   `Idrak.HarfBuzz`, `Idrak.CoreML`, `Idrak.Extensions`. Each depends only on the package it will build on.
-- The legal OCR sample app (`samples/Idrak.Samples.LegalOcr` and its tests) is removed; `samples/Idrak.Samples.ArabicOcr`
-  stays.
+- The legal OCR sample app (`samples/Idrak.Samples.LegalOcr` and its tests) is removed;
+  `samples/Idrak.Samples.ArabicOcr` stays.
 - Pushing a tag no longer publishes: the Release workflow runs only by hand (Actions > Release > Run workflow, with the
   version), and its GitHub release carries the version's changelog section instead of a link. `tools/publish.ps1` is
   the normal way to publish: it checks that the tag's `VersionPrefix` is the version, shows packing progress, takes the
   nuget.org key from `-ApiKey`, `NUGET_API_KEY` or a prompt, and has `-SkipNuGet` and `-SkipGitHub`;
   `tools/github-release.ps1` runs under Windows PowerShell 5.1 as well as PowerShell 7.
+
+**New packages**
+
+- `Idrak.Imaging`, moved out of `Idrak`: the PNG, JPEG, BMP and Netpbm codecs and encoders, Pillow's resampling,
+  filters and enhancements byte for byte (`PillowImageOps`, the named `ImageTransforms`), `ImagePreprocessor` (a model's
+  `preprocessor_config.json`, resize and normalize on the device), `ChatImageDecoder`, augmentations, the `"images"`
+  source, and a font engine (TrueType and CFF outlines, OpenType shaping through `TextShapers`, one UAX #9 `Bidi`).
+- `Idrak.Vision` now also holds image model families by architecture name (`ImageModels`, `ImageModelFamilies`; the
+  library registers none), detection and segmentation losses, matching and metrics, box- and mask-aware augmentations,
+  `DetectionDecoders`, line recognition (`ImageTask.LineRecognition`, `ModelLineReader`), `TextLineSegmenters` and the
+  `VisionTransformerEncoder`.
+- `Idrak.Audio`: `AudioData`; WAV, FLAC and MP3 decoding and WAV and MP3 encoding in C# (`AudioCodecs`,
+  `AudioEncoders`); `Resampler`, `Stft`, `MelFilterbank`, `LogMelFeatures`; speech recognition, synthesis, vocoder,
+  voice conversion and voice store contracts (`SpeechFamilies`, `SpeechSynthesisFamilies`, `Vocoders`,
+  `VoiceConverters`, `VoiceStores`); speech training (`SpeechTrainer`, `SpeechSynthesisTrainer`).
+- `Idrak.Cluster`: a cluster simulated on one machine (devices carved from a physical one with hard memory caps, the
+  `sim` transport on a virtual clock from link profiles, seeded faults and replay, the `cluster` profiler probe).
+- `Idrak.Network`: real transports (shared memory, TCP with a keyed rendezvous, a direct cable, copies between one
+  process's GPUs), naive, ring and hierarchical collectives, the fastest-first transport selector and the `network`
+  probe. Both packages build on the new `Idrak.Abstraction.Cluster` contracts and never reference each other.
+- `Idrak.Reinforcement`: the general algorithms on the new `Idrak.Abstraction.Reinforcement` contracts (`IEnvironment`,
+  `IPolicy`, `EnvironmentKinds`, `RewardFunctions`, `AdvantageEstimators`, `PolicyLosses`, `RolloutBatch`): estimators
+  `gae`, `group`, `leave-one-out`, `returns`; losses `reinforce`, `ppo`, `grpo`; `ReinforcementTrainer`,
+  `OffPolicyTrainer` (DQN) with `ReplayBuffer`, `ModulePolicy`. It does not reference `Idrak.Text`.
+- Four plug-in packages hold every model and environment family, one namespace per family, on the public API only.
+  Each family is an `IdrakPlugin` (`Idrak.Abstraction.Plugins`): `Register()` registers once, `Unregister()` restores
+  the registries.
+  - `Idrak.Text.Plugins` (`TextPlugins.RegisterAll()`): BERT, T5, Gemma, Llama, Qwen, Mistral, harmony, DeepSeek, and
+    the C#, TypeScript and Python coding-language profiles.
+  - `Idrak.Vision.Plugins` (`VisionPlugins.RegisterAll()`): Qwen-VL, LLaVA, IdrakVision, the CRNN line recognizer,
+    Gemma 3's vision part.
+  - `Idrak.Audio.Plugins` (`AudioPlugins.RegisterAll()`): Whisper, VITS (with uroman's Arabic romanizer), OpenVoice,
+    IdrakAudio, the espeak-ng phonemizer.
+  - `Idrak.Reinforcement.Plugins` (`ReinforcementPlugins.RegisterAll()`): `coding` (with the `container` sandbox),
+    `csharp`, and `classic` (bandit, CartPole, Pendulum, MountainCar).
+
+**Breaking changes after plan 10**
+
+- `Idrak.Nlp` is renamed `Idrak.Text` (package, assembly, namespaces); the plan 10 bullets below naming `Idrak.Nlp`
+  mean `Idrak.Text`. Its own types are in `Idrak.Text.Generation`, `.Retrieval`, `.Inference` and `.Abstractions`; the
+  token samplers (`ITokenSampler`, `TokenSampler`, `TokenSamplers`) moved to `Idrak.Abstraction.Generation`, the vector
+  stores (`IVectorStore`, `InMemoryVectorStore`, `VectorIndex`) to `Idrak.Abstraction.Retrieval`, `TextGenerator` to
+  core's `Idrak.Generation`.
+- `Idrak` no longer references `Idrak.Gpu`: add `Idrak.Gpu` for the CUDA, Vulkan and HIP devices (they register
+  themselves). Core's datasets are `Idrak.Datasets` (`Dataset`, `DataLoader`, `CsvSource`; `IBatchSource`, `Batch`,
+  `IScaler` in `Idrak.Datasets.Abstractions`); images are `Idrak.Imaging`; `CheckpointFormats`, `ITensorStore` and
+  `WeightFormat` are in `Idrak.Abstraction.Formats`; `CtcDecoders` and `TuningMetrics` in
+  `Idrak.Abstraction.Generation`.
+- The library registers no model family. A checkpoint, GGUF file or tool-call format whose family is not registered is
+  refused with "not registered" naming the package to reference. An app references the plug-in package and calls
+  `TextPlugins.RegisterAll()` (or `VisionPlugins`, `AudioPlugins`, `ReinforcementPlugins`), or one family's
+  `…Plugin.Register()`. The `idrak` tool registers all four at startup (`IDRAK_PLUGIN_PACKAGES`: `none` or a list).
+  - Moved to the plug-ins: `PretrainedFamilies.MixtralTensorName` → `MistralArchitectures.MixtralTensorName`,
+    `QwenMoeTensorName` → `QwenArchitectures.MoeTensorName`, `GemmaTensorName` → `GemmaArchitectures.TensorName`,
+    `RopeScaling.Llama3` → `LlamaRopeScaling.Create`, `ToolCallFormats.Qwen3Coder`, `Mistral`, `Harmony` and
+    `DeepSeek` → each plug-in's `ToolCallFormat`. `PretrainedFamilies.LlamaStyle` and `LlamaTensorName` are
+    `[Obsolete]` for one release: use `CommonArchitecture` and `CommonTensorName`.
+  - `GgufPreTokenizers` keeps only GPT-2's rule; an unregistered pre-tokenizer is refused unless
+    `GgufPreTokenizers.Fallback` is set (the Llama plug-in sets `llama3`). `TextPhonemizers` and `TextRomanizers`
+    register nothing in the library.
+- `FineTuningOptimizers` and `FineTuningSchedules` are removed: use the registries `OptimizerKinds` and
+  `LearningRateSchedules` (`Idrak.Abstraction.Training`, `Factory(name, settings)`). The `AnswerMetric` enum is
+  removed: `ChatEvaluation.Run` and `Score` take a `TuningMetrics` name (`number`, `exact`, `contains`, `f1`);
+  `ChatEvaluation.FinalNumber` → `TuningMetrics.FinalNumber`; `FineTuningLosses.LogSigmoid` → `Losses.LogSigmoid`.
+- The coding agent's task layer moved to `Idrak.Reinforcement.Plugins.Coding` (`CodingTask`, `CodingSuite`,
+  `CodingWorkspace`, `CodingOutcome`); `CodingAgent` returns a `CodingAgentRun` with no task in it. The library names
+  no programming language: profiles come from `CodingLanguages` (`IDRAK_CODING_LANGUAGES`).
+- Tokenizers: `ModelFiles.Tokenizer`, `PretrainedModel.Tokenizer` and the trainers use `IPretrainedTokenizer` instead
+  of `BpeTokenizer` (which keeps its public members and implements it).
+
+**Language and vision-language models**
+
+- Chat messages hold parts (`ChatPart`: `ChatText`, `ChatImage`, `ChatAudio`); `idrak run`/`chat --image`, `/image`
+  and `idrak serve` (`/v1` `image_url`, multipart upload) take images.
+- Vision contracts with no family in the library: `VisionFamilies`, `IVisionFamily`, `IVisionEncoder`,
+  `ImageAttentionRules` (`causal`, `grid`, `image-blocks`), `ImagePositionRules` and multi-axis rotary positions
+  (`RotarySections`). Gemma 3 (with pan and scan), Qwen2.5-VL, Qwen2-VL and LLaVA run on them, checked against
+  transformers on tiny references; `AttentionSpans` (one key range per query row) has CUDA and Vulkan kernels.
+- Vision-language fine-tuning: LoRA or QLoRA with images through `ConversationTuning` and `idrak tune`, the tower
+  frozen or trained, packing and recorded graphs with images, the span attention's gradient on CUDA and Vulkan.
+- Models made from a spec: `PretrainedModel.Create`, `Pretrainer` with staged pretraining (align, then train
+  everything) and resume, `IVisionFamily.Create` (IdrakVision), distillation from a vision-language teacher.
+- Synthetic document pages from text (`SyntheticPages`, `FontFormats`, `PageLayouts`, scan degradations as image
+  transforms) as tuning data.
+- Encoders and encoder-decoders: `PretrainedEncoders`, `PretrainedSeq2Seq`, `Seq2SeqGenerator` with beam search
+  (`GenerationOptions.NumBeams`, `LengthPenalty`, `EarlyStopping`), `AttentionPositionBiases` (`relative`,
+  `bucketed`), the engine kind `seq2seq`; the BERT and T5 plug-ins; `idrak run` and `serve` answer encoder-decoders.
+- GGUF: Gemma files read by the Gemma plug-in; fallback chat templates as the `GgufChatTemplates` registry.
+
+**Speech and audio**
+
+- Whisper recognition (beam search, timestamps, the no-speech check and temperature fallback); `CrossAttention` with
+  per-sequence memory lengths.
+- VITS and MMS-TTS synthesis (Arabic through uroman), recorded speakers of multi-speaker checkpoints, OpenVoice voice
+  conversion, a voice installed by name in a voice store, and a voice fine-tuned on a person's recordings.
+- Training from scratch with CTC, seq2seq and TTS objectives (durations from CTC alignments), distillation from an
+  audio-language teacher, automatic speech batches, `AudioSplitters` and `IAudioCleaner` stages; the IdrakAudio family
+  and the `"transcripts"` tuning format for audio-language models.
+
+**Tokenizers**
+
+- One contract, `IPretrainedTokenizer`; BPE, Unigram and WordPiece are library defaults of `TokenizerModels`, read
+  from `tokenizer.json`, `tokenizer.model` or `vocab.txt` (`TokenizerFiles`, `PretrainedTokenizers.Load`/`TryLoad`).
+- Detailed encodings (offsets, type ids, masks, pairs, truncation, padding, `EncodeBatch`); GGUF tokenizers `llama`,
+  `t5` and `bert` (`GgufTokenizers`); BPE, Unigram and WordPiece trainers (`TokenizerTrainers`).
+- `UnicodeNormalization` (Unicode 18.0 tables) replaces the platform's normalization, which did nothing under
+  invariant globalization. BPE allocates nothing once warm.
+- A `tokenizer.json` without a model type is read from what its model holds; decoded spaces follow
+  `clean_up_tokenization_spaces` (`TokenizerOptions.CleanUpSpaces`, `IDRAK_TOKENIZER_CLEANUP`).
+
+**Cluster and multi-device**
+
+- One topology file for every target; data parallel with overlap, measured buckets, compression and local SGD; ZeRO
+  sharding; pipeline parallelism; real transports (localhost mode, `cluster start` on each machine), measured and
+  calibrated back into the link profiles.
+- Ranks agree on a stop at one step boundary (`StopAgreements`) and a run can be paused and stopped with one
+  checkpoint (`RunSteerings`).
+- Every rank runs rank 0's measured kernel choices (`ClusterOptions.ShareTuning`, `IDRAK_CLUSTER_SHARE_TUNING`, on by
+  default; the `MeasuredChoiceProviders` contract, CUDA and Vulkan providers); a rank on another device keeps its own.
+
+**Reinforcement learning**
+
+- The language-model policy in `Idrak.Text` (`FineTuningSession`, `LanguageModelPolicy`), the `prompts` environment,
+  the rewards `metric`, `regex`, `json`, `length`, `judge` and `sum`, and command sandboxes (`CommandSandboxes`:
+  `process`; a sandbox that cannot enforce a limit refuses).
+- On-policy distillation from a teacher (`OnPolicyDistiller`), alone or beside a reward; rollouts and distillation on
+  a cluster; agentic coding on C# projects rewarded by the build and the tests; `IDRAK_RL_*` settings.
+
+**Performance and devices**
+
+- No default resource caps: every limit has an environment variable, `ComputeResources.WorkspaceShare` replaces the
+  fixed halves of free memory, and `TextGenerator`'s 4,096-token cap is gone.
+- Reading pages: CUDA span attention for head sizes up to 256, pages read together (`TextGenerator.StreamBatch`,
+  `ImageReader.ReadBatch`), bfloat16 prompt and encoder passes as options (`PrefillPrecision`, `EncoderPrecision`),
+  caches sized to the reply and to a layer's window, batches that do not fit read in halves; faster JPEG, PNG and resize
+  with the same bytes.
+- One operation each for weight norm, leaky ReLU, exact GELU and the WaveNet gate; the CPU's own vector exp, erf-GELU,
+  SiLU and softmax passes; row sums a warp (CUDA) or workgroup (Vulkan) a row.
+- Training reductions on CUDA in a fixed order with no float atomics. Vulkan sums each reduction, row, tuned product,
+  split count, decoding attention and convolution in one order fixed by the shape, so a tuned choice decides speed only
+  (stored choices are measured again); checkpointed passes recompute bit for bit.
+- Tuning: a choice lent from the nearest measured size class (`ComputeResources.TuningNeighbourOctaves`), every
+  candidate tried while `ComputeResources.TuningBudget` lasts (`IDRAK_TUNE_BUDGET_MS`), a `TuningCompleted` event.
+- Vulkan kernels keep ±∞ and NaN where the device reports `SignedZeroInfNanPreserve` (`IDRAK_VULKAN_INF_NAN=0` turns
+  it off); diagnostics `IDRAK_VULKAN_TUNE_OPS` (measure only the named operations) and `IDRAK_VULKAN_CHECK_NAN`
+  (names the first kernel that writes NaN or +∞).
+- Telemetry and profiling: `HostFallback` and `InferenceStage` events, `Profiler.Run` with `ProfileProbes` and
+  `ProfileWriters`, setting advisors (`ISettingAdvisor`), `ModelMemory`; `benches/Idrak.Benches` measures every device.
+
+**Command line**
+
+- `run`/`chat --image`, `--grayscale`, `vlm check`, `predict` and `train` for image models (`--task line-recognition`),
+  `data synth|text|fonts`; `create`, `create init`, `pretrain`, `data tokenizer|tokens`.
+- `transcribe`, `speak`, `voice add|list|show|remove|export|import|train`, `data audio|mel`, `--audio`.
+- `cluster init|inspect|sim|start|bench|replay|calibrate|ui`, `transports`, `--cluster FILE` on the training commands;
+  `reinforce`, `distill --on-policy`, `tokenize --offsets|--pair`, `rag index --keywords`, `pull owner/name/folder`.
+
+**Tests and tooling**
+
+- The test runner's `--progress`, `--failures-only` and `--failures-file PATH` (`IDRAK_TEST_PROGRESS`,
+  `IDRAK_TEST_FAILURES_ONLY`, `IDRAK_TEST_FAILURES_FILE`); `IDRAK_FILTER` takes `a|b|c`.
+- An allocation test that fails names the allocated types and bytes a call (the runtime's allocation ticks); a guard
+  test refuses hidden boxing in `src/` (optimization rules 88-90).
 
 **Plan 10: Idrak.Abstraction and the packages regrouped**
 
@@ -177,7 +340,7 @@ rebuilt.
     `protected`. (`TrainingHistory`'s setters and `TrainerContext`'s constructor, public for a while, are internal again
     since they live in core with `Trainer`: see wave 4.)
 - New package `Idrak.Gpu`: the CUDA, Vulkan and HIP devices and all their kernels, built on `Idrak.Abstraction` alone.
-  `Idrak` depends on it, so `dotnet add package Idrak` brings every device as before; `Idrak.Gpu` with
+  `Idrak` depended on it here (it no longer does: see "Breaking changes after plan 10"); `Idrak.Gpu` with
   `Idrak.Abstraction` alone gives the devices without the rest of the library. Namespaces `Idrak.Backends.Cuda`,
   `.Vulkan`, `.Hip` are `Idrak.Gpu.Cuda`, `.Vulkan`, `.Hip` (`CudaException`, `VulkanException`, `HipException`).
 - `Backend.Hardware` (`BackendHardware`: memory, compute units, lanes, kernel width, hardware kind, driver) is what a
