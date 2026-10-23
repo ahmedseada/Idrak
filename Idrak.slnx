@@ -2,8 +2,6 @@
   <Folder Name="/samples/">
     <Project Path="samples/Idrak.Samples.ArabicOcr/Idrak.Samples.ArabicOcr.csproj" />
     <Project Path="samples/Idrak.Samples.ArabicOcr.Tests/Idrak.Samples.ArabicOcr.Tests.csproj" />
-    <Project Path="samples/Idrak.Samples.LegalOcr/Idrak.Samples.LegalOcr.csproj" />
-    <Project Path="samples/Idrak.Samples.LegalOcr.Tests/Idrak.Samples.LegalOcr.Tests.csproj" />
     <Project Path="samples/Idrak.Samples.Chat/Idrak.Samples.Chat.csproj" />
     <Project Path="samples/Idrak.Samples.CodingAgent/Idrak.Samples.CodingAgent.csproj" />
     <Project Path="samples/Idrak.Samples.GptApi/Idrak.Samples.GptApi.csproj" />
@@ -45,6 +43,14 @@
     <Project Path="src/Idrak.Cluster/Idrak.Cluster.csproj" />
     <Project Path="src/Idrak.Network/Idrak.Network.csproj" />
     <Project Path="src/Idrak/Idrak.csproj" />
+    <Project Path="src/Idrak.Diffusion/Idrak.Diffusion.csproj" />
+    <Project Path="src/Idrak.Diffusion.Plugins/Idrak.Diffusion.Plugins.csproj" />
+    <Project Path="src/Idrak.Video/Idrak.Video.csproj" />
+    <Project Path="src/Idrak.Video.Plugins/Idrak.Video.Plugins.csproj" />
+    <Project Path="src/Idrak.Data.Plugins/Idrak.Data.Plugins.csproj" />
+    <Project Path="src/Idrak.HarfBuzz/Idrak.HarfBuzz.csproj" />
+    <Project Path="src/Idrak.CoreML/Idrak.CoreML.csproj" />
+    <Project Path="src/Idrak.Extensions/Idrak.Extensions.csproj" />
   </Folder>
   <Folder Name="/benches/">
     <Project Path="benches/Idrak.Benches/Idrak.Benches.csproj" />
