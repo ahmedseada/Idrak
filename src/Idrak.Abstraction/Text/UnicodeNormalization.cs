@@ -34,6 +34,10 @@ public static partial class UnicodeNormalization
     // it is skipped with a vectorized search (all of ASCII; Latin-1 too for NFC).
     private static readonly int[] Plain = [FirstChanging(0), FirstChanging(1), FirstChanging(2), FirstChanging(3)];
 
+    // Per form: the code units below Plain as SearchValues, for that search (the generic range search boxes its bounds
+    // in a method's code before it is optimized, and the quick check runs on every text).
+    private static readonly SearchValues<char>[] PlainChars = [.. Plain.Select(BelowAsSearchValues)];
+
     // Per form: one bit per UTF-16 code unit of the basic plane (8 KB a form, built once), set for a code point that is a
     // starter, Yes and a segment boundary: one load tells most letters (Arabic, CJK, Hangul syllables for NFC) apart.
     // Surrogates are never set, so a set bit is always a whole code point.
@@ -166,6 +170,7 @@ public static partial class UnicodeNormalization
         public readonly uint No, Maybe, Boundary;
         public readonly int Plain;
         public readonly ulong[] Bits;
+        public readonly SearchValues<char> PlainChars;
         public readonly bool Compatibility, Composes;
 
         public Rules(NormalizationForm form)
@@ -180,6 +185,7 @@ public static partial class UnicodeNormalization
             };
             Plain = UnicodeNormalization.Plain[index];
             Bits = PlainBits[index];
+            PlainChars = UnicodeNormalization.PlainChars[index];
         }
     }
 
@@ -235,7 +241,7 @@ public static partial class UnicodeNormalization
     private static Check QuickCheck(ReadOnlySpan<char> text, in Rules rules, out int safe)
     {
         safe = text.Length;
-        int i = text.IndexOfAnyExceptInRange('\0', (char)(rules.Plain - 1));
+        int i = text.IndexOfAnyExcept(rules.PlainChars);
         if (i < 0)
         {
             return Check.Yes;
@@ -613,6 +619,14 @@ public static partial class UnicodeNormalization
 
         throw new ArgumentException($"Invalid Unicode code point found at index {at}.", nameof(text));
     }
+
+    private static SearchValues<char> BelowAsSearchValues(int limit) => SearchValues.Create(string.Create(limit, 0, static (chars, _) =>
+    {
+        for (int i = 0; i < chars.Length; i++)
+        {
+            chars[i] = (char)i;
+        }
+    }));
 
     private static ulong[][] BuildPlainBits()
     {

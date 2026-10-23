@@ -1116,7 +1116,7 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
     // Whether the text holds half of a surrogate pair (a range may cut a pair).
     private static bool HasLoneSurrogate(ReadOnlySpan<char> text)
     {
-        int at = text.IndexOfAnyInRange('\uD800', '\uDFFF');
+        int at = text.IndexOfAny(Surrogates.Any);
         if (at < 0)
         {
             return false;

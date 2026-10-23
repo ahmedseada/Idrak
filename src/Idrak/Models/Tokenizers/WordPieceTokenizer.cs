@@ -173,7 +173,7 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
     {
         ArgumentNullException.ThrowIfNull(text);
         ArgumentNullException.ThrowIfNull(ids);
-        if (text.AsSpan(start, length).ContainsAnyInRange('\uD800', '\uDFFF'))
+        if (text.AsSpan(start, length).ContainsAny(Surrogates.Any))
         {
             text = BpeTokenizer.WithoutLoneSurrogates(text.Substring(start, length));   // the range may cut a pair in half
             start = 0;

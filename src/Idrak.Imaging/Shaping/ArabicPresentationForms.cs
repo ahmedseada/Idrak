@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Text;
 
 namespace Idrak.Imaging.Shaping;
@@ -57,11 +58,21 @@ public static class ArabicPresentationForms
         return UnicodeText.AllPresentationForms(codePoint, forms);
     }
 
+    // The Arabic block (U+0600 to U+06FF), searched through SearchValues: the generic range search boxes its bounds in
+    // a method's code before it is optimized.
+    private static readonly SearchValues<char> ArabicBlock = SearchValues.Create(string.Create(0x100, 0, static (chars, _) =>
+    {
+        for (int i = 0; i < chars.Length; i++)
+        {
+            chars[i] = (char)(0x600 + i);
+        }
+    }));
+
     /// <summary>Whether <paramref name="text"/> holds a letter this class shapes (a quick test before <see cref="Shape(string)"/>).</summary>
     public static bool HasArabic(ReadOnlySpan<char> text)
     {
         // Every letter with presentation forms lies in the Arabic block: a line without it is one vectorized search.
-        int first = text.IndexOfAnyInRange('؀', 'ۿ');
+        int first = text.IndexOfAny(ArabicBlock);
         if (first < 0)
         {
             return false;
