@@ -14,20 +14,56 @@ namespace Idrak.Gpu.Vulkan;
 //   forward          batch (image n, group q); rows: the group's filters f; columns: output positions (oh, ow); sum over
 //                    (c, kh, kw) of weight[q·Fg + f, (c, kh, kw)] · x[n, q·Cg + c, oh·SH - PH + kh·DH, ow·SW - PW + kw·DW],
 //                    then the bias and the activation.
-//   backward input   batch (n, q); rows: the group's channels c; columns: input positions (ih, iw); sum over (f, kh, kw) of
+//   backward input   batch (n, q); rows: the group's channels c; columns: input positions (ih, iw); sum over (kh, kw, f) of
 //                    weight[q·Fg + f, (c, kh, kw)] · dy[n, q·Fg + f, oh, ow] where ih = oh·SH - PH + kh·DH (and so for
 //                    the width) has a whole oh within [0, OH); added to dx.
 //   backward weight  batch (q, split s); rows: the group's filters f; columns: (c, kh, kw); sum over the positions (n, oh,
 //                    ow) of split s of dy[n, q·Fg + f, oh, ow] · x[n, q·Cg + c, ih, iw]: added to dweight with one
-//                    split, else written to part[s] and added split by split, in order (conv_split_reduce).
+//                    split, else written to part[s] and finished by conv_split_reduce.
 //
-// Every output adds its terms in the order of the sum, so a shape gives the same bits run after run. Push constants of
-// every convolution kernel: N, C, H, W, KH, KW, SH, SW, PH, PW, OH, OW, DH, DW, F, G, flags, splits (flags: 1 bias,
-// activation · 2 for the forward kernels).
+// One order per pass, whatever the choice (VulkanKernels.Order.cs; docs/optimization.md rule 86):
+//
+//   forward          every term of the sum in turn from +0, one fused multiply-add each (as the float32 products do), then
+//                    the bias and the activation: the composed path's order too.
+//   backward input   the composed path's order (its products, then col2im): dx, then each window (kh, kw) that covers
+//                    the element, kh then kw descending, each window's sum over the group's filters in turn from +0 by
+//                    fused multiply-adds, added in turn (InputPass, ConvWindowEnd).
+//   backward weight  the positions in leaves of ConvLeaf, each leaf's terms in turn from +0 by fused multiply-adds, the
+//                    leaves in the pairwise tree of consecutive leaves (PairwiseStack), a split an aligned power of two of
+//                    them (chunk, a push constant), conv_split_reduce the splits' tree, then dweight + the total; unfolded
+//                    (conv_unfolded_weight) the same product over im2col's patches.
+//
+// The depthwise kernels take the same orders (terms outside the image are skipped: adding 0 · v to a sum that started
+// from +0 changes nothing). Push constants of every convolution kernel: N, C, H, W, KH, KW, SH, SW, PH, PW, OH, OW, DH, DW,
+// F, G, flags, splits, chunk (flags: 1 bias, activation · 2 for the forward kernels; chunk: positions per split of the
+// weight gradient).
 internal static partial class VulkanKernels
 {
     /// <summary>The variants of the implicit convolution products (the backend's tile choice).</summary>
-    public static readonly string[] ConvolutionPasses = ["conv_forward", "conv_backward_input", "conv_backward_weight"];
+    public static readonly string[] ConvolutionPasses = ["conv_forward", "conv_backward_input", "conv_backward_weight", "conv_unfolded_weight"];
+
+    /// <summary>
+    /// Positions per leaf of the weight gradient's tree: a multiple of every step of the implicit products along the sum
+    /// (16 for the register-blocked kernel, MatSide(width) up to 32 for the tiled one), so a step never straddles leaves.
+    /// 128 rather than 32: the register-blocked kernel's 16 sums then go to its stack every 8 steps, not every 2 (on
+    /// lavapipe its weight gradient took 1.3 to 1.5 times the old time with leaves of 32, 1.02 to 1.07 with 128).
+    /// </summary>
+    public const int ConvLeaf = 128;
+
+    private const int ConvLeafShift = 7;
+
+    /// <summary>
+    /// Entries of the register-blocked weight gradient's pairwise stack (16 sums an entry, the top in registers): 128 floats
+    /// of function memory per invocation, a split walks at most 2^9 leaves (65,536 positions; the backend raises the
+    /// splits to fit).
+    /// </summary>
+    public const int ConvBlockedStackEntries = 9;
+
+    /// <summary>Entries of the tiled weight gradient's pairwise stack (one sum an entry): a split walks at most 2^18 leaves.</summary>
+    public const int ConvTileStackEntries = 18;
+
+    // Entries of the depthwise weight gradient's stack: an invocation walks at most 2^20 leaves (2^30 positions over 64 invocations need 2^17).
+    private const int ConvDepthwiseStackEntries = 20;
 
     private static IEnumerable<(string, Func<SpirvKernel>)> ConvolutionKernels()
     {
@@ -35,30 +71,28 @@ internal static partial class VulkanKernels
         {
             ("conv_forward", () => new ForwardPass()),
             ("conv_backward_input", () => new InputPass()),
-            ("conv_backward_weight", () => new WeightPass()),
+            ("conv_backward_weight", () => new WeightPass(unfolded: false)),
+            ("conv_unfolded_weight", () => new WeightPass(unfolded: true)),
         })
         {
             yield return (name, () => ConvGemmBlocked(name, spec()));
             yield return (name + "_tile", () => ConvGemmTile(name + "_tile", spec()));
         }
 
-        // dweight[i] += Σ_s part[s · count + i], splits in order.
+        // dweight[i] += Σ_s part[s · count + i], the splits (aligned subtrees of the leaves) in their pairwise tree.
         yield return ("conv_split_reduce", () =>
         {
             var k = new KernelBuilder("conv_split_reduce", Block);
             var (part, dw) = (k.Buffer("part"), k.Buffer("dw"));
             var (count, splits) = (k.PushInt("count"), k.PushInt("splits"));
-            Grid(k, count, i =>
-            {
-                var acc = k.Local(dw[i]);
-                k.For(k.Int(0), splits, 1, s => acc.V = acc.V + part[s * count + i]);
-                dw[i] = acc.V;
-            });
+            var stack = new PairwiseStack(k, 1, SplitStackEntries, SumsMerge(k));
+            Grid(k, count, i => dw[i] = dw[i] + Pairwise(k, stack, splits, s => part[s * count + i]));
             return k.Build();
         });
 
-        // Depthwise (one input channel per group, M = F / C filters a channel): an invocation per output adds its window,
-        // rows then columns, to the bias and applies the activation.
+        // Depthwise (one input channel per group, M = F / C filters a channel): an invocation per output sums its window,
+        // rows then columns, from +0 by fused multiply-adds (the forward product's order), adds the bias and applies the
+        // activation.
         yield return ("conv_depthwise", () =>
         {
             var k = new KernelBuilder("conv_depthwise", Block);
@@ -84,7 +118,7 @@ internal static partial class VulkanKernels
                         k.For(k.Int(0), g.KW, 1, j =>
                         {
                             var iw = ow * g.SW - g.PW + j * g.DW;
-                            k.If((iw >= 0) & (iw < g.W), () => acc.V = acc.V + w[(f * g.KH + i) * g.KW + j] * x[row + iw]);
+                            k.If((iw >= 0) & (iw < g.W), () => acc.V = k.Fma(w[(f * g.KH + i) * g.KW + j], x[row + iw], acc.V));
                         });
                     });
                 });
@@ -94,8 +128,9 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
-        // dx[n, c, ih, iw] += Σ over the channel's filters, in order, and the windows covering the element, in window
-        // order, of weight · dy: an invocation per input element.
+        // dx[n, c, ih, iw] += the windows covering the element, kh then kw descending (col2im's order), each window's sum
+        // over the channel's filters in order from +0 by fused multiply-adds, added to dx in turn (the input gradient's
+        // order): an invocation per input element.
         yield return ("conv_depthwise_backward_input", () =>
         {
             var k = new KernelBuilder("conv_depthwise_backward_input", Block);
@@ -111,22 +146,27 @@ internal static partial class VulkanKernels
                 var n = nc / g.C;
                 var perChannel = g.F / g.C;
                 var acc = k.Local(dx[idx]);
-                k.For(k.Int(0), perChannel, 1, m =>
+                k.For(k.Int(0), g.KH, 1, u =>
                 {
-                    var f = c * perChannel + m;
-                    var plane = (n * g.F + f) * g.OH;
-                    k.For(k.Int(0), g.KH, 1, i =>
+                    var i = g.KH - 1 - u;
+                    var th = ih + g.PH - i * g.DH;
+                    var oh = th / g.SH;
+                    k.If((th >= 0) & (th % g.SH).Eq(0) & (oh < g.OH), () =>
                     {
-                        var th = ih + g.PH - i * g.DH;
-                        var oh = th / g.SH;
-                        k.If((th >= 0) & (th % g.SH).Eq(0) & (oh < g.OH), () =>
+                        k.For(k.Int(0), g.KW, 1, v =>
                         {
-                            k.For(k.Int(0), g.KW, 1, j =>
+                            var j = g.KW - 1 - v;
+                            var tw = iw + g.PW - j * g.DW;
+                            var ow = tw / g.SW;
+                            k.If((tw >= 0) & (tw % g.SW).Eq(0) & (ow < g.OW), () =>
                             {
-                                var tw = iw + g.PW - j * g.DW;
-                                var ow = tw / g.SW;
-                                k.If((tw >= 0) & (tw % g.SW).Eq(0) & (ow < g.OW), () =>
-                                    acc.V = acc.V + w[(f * g.KH + i) * g.KW + j] * dy[(plane + oh) * g.OW + ow]);
+                                var window = k.Local(0f);
+                                k.For(k.Int(0), perChannel, 1, m =>
+                                {
+                                    var f = c * perChannel + m;
+                                    window.V = k.Fma(w[(f * g.KH + i) * g.KW + j], dy[((n * g.F + f) * g.OH + oh) * g.OW + ow], window.V);
+                                });
+                                acc.V = acc.V + window.V;
                             });
                         });
                     });
@@ -136,14 +176,25 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
-        // dweight[f, i, j] += Σ_{n, oh, ow} dy[n, f, oh, ow] · x[n, f / M, ih, iw]: a workgroup per weight, its invocations
-        // over the positions (a fixed stride), then the workgroup's sum (a fixed tree), so the bits do not change.
+        // dweight[f, i, j] += Σ_{n, oh, ow} dy[n, f, oh, ow] · x[n, f / M, ih, iw] in the weight gradient's order: a
+        // workgroup per weight; the positions in leaves of ConvLeaf, invocation t walking leaves [t · per, (t + 1) · per)
+        // (per the power of two that lets the workgroup cover them all) through a PairwiseStack, each leaf's terms in turn
+        // from +0; the invocations' subtrees then merged in the pairwise tree of consecutive invocations
+        // (KernelBuilder.ReducePairwise), so any width gives the bits of the implicit products at any split count.
         yield return ("conv_depthwise_backward_weight", () =>
         {
             var k = new KernelBuilder("conv_depthwise_backward_weight", Block);
             var (x, dy, dw) = (k.Buffer("x"), k.Buffer("dy"), k.Buffer("dw"));
             var g = ConvPushes(k);
-            var scratch = k.Shared("scratch", Block);
+            var scratch = new[] { k.Shared("scratch", Block) };
+            var merge = SumsMerge(k);
+            var stack = new PairwiseStack(k, 1, ConvDepthwiseStackEntries, merge);
+            var positions = g.N * g.OH * g.OW;
+            var leaves = (positions + (ConvLeaf - 1)) >> ConvLeafShift;
+            var per = k.Local(1);
+            k.While(() => per.V * Block < leaves, () => per.V = per.V * 2);
+            var first = k.LocalX * per.V;
+            var last = k.Min(leaves, first + per.V);
             EachRow(k, g.F * g.KH * g.KW, e =>
             {
                 var j = e % g.KW;
@@ -151,20 +202,25 @@ internal static partial class VulkanKernels
                 var i = t % g.KH;
                 var f = t / g.KH;
                 var c = f / (g.F / g.C);
-                var positions = g.N * g.OH * g.OW;
-                var acc = k.Local(0f);
-                k.For(k.LocalX, positions, Block, p =>
+                stack.Reset();
+                k.For(first, last, 1, leaf =>
                 {
-                    var ow = p % g.OW;
-                    var u = p / g.OW;
-                    var oh = u % g.OH;
-                    var n = u / g.OH;
-                    var ih = oh * g.SH - g.PH + i * g.DH;
-                    var iw = ow * g.SW - g.PW + j * g.DW;
-                    k.If((ih >= 0) & (ih < g.H) & (iw >= 0) & (iw < g.W), () =>
-                        acc.V = k.Fma(dy[((n * g.F + f) * g.OH + oh) * g.OW + ow], x[((n * g.C + c) * g.H + ih) * g.W + iw], acc.V));
+                    var acc = k.Local(0f);
+                    var start = leaf << ConvLeafShift;
+                    k.For(start, k.Min(positions, start + ConvLeaf), 1, p =>
+                    {
+                        var ow = p % g.OW;
+                        var u = p / g.OW;
+                        var oh = u % g.OH;
+                        var n = u / g.OH;
+                        var ih = oh * g.SH - g.PH + i * g.DH;
+                        var iw = ow * g.SW - g.PW + j * g.DW;
+                        k.If((ih >= 0) & (ih < g.H) & (iw >= 0) & (iw < g.W), () =>
+                            acc.V = k.Fma(dy[((n * g.F + f) * g.OH + oh) * g.OW + ow], x[((n * g.C + c) * g.H + ih) * g.W + iw], acc.V));
+                    });
+                    stack.Push(leaf - first, [acc.V]);
                 });
-                var sum = k.ReduceSum(scratch, acc.V);
+                var sum = k.ReducePairwise(scratch, stack.Total([k.Float(-0f)]), merge)[0];
                 k.If(k.LocalX.Eq(0), () => dw[e] = dw[e] + sum);
             });
             return k.Build();
@@ -315,12 +371,12 @@ internal static partial class VulkanKernels
 
     // The push constants of the convolution kernels, in the order they declare them.
     private readonly record struct ConvGeometryPush(Val N, Val C, Val H, Val W, Val KH, Val KW, Val SH, Val SW, Val PH, Val PW, Val OH, Val OW,
-        Val DH, Val DW, Val F, Val G, Val Flags, Val Splits);
+        Val DH, Val DW, Val F, Val G, Val Flags, Val Splits, Val Chunk);
 
     private static ConvGeometryPush ConvPushes(KernelBuilder k) => new(
         k.PushInt("N"), k.PushInt("C"), k.PushInt("H"), k.PushInt("W"), k.PushInt("KH"), k.PushInt("KW"), k.PushInt("SH"), k.PushInt("SW"),
         k.PushInt("PH"), k.PushInt("PW"), k.PushInt("OH"), k.PushInt("OW"), k.PushInt("DH"), k.PushInt("DW"), k.PushInt("F"), k.PushInt("G"),
-        k.PushInt("flags"), k.PushInt("splits"));
+        k.PushInt("flags"), k.PushInt("splits"), k.PushInt("chunk"));
 
     // ------------------------------------------------------------------ the implicit products
 
@@ -339,6 +395,20 @@ internal static partial class VulkanKernels
         }
 
         protected abstract void Buffers(KernelBuilder k);
+
+        // Whether the sum runs in the weight gradient's order (leaves in a pairwise tree, see the file's comment) rather
+        // than every term in turn.
+        public virtual bool Tree => false;
+
+        // Whether the sum runs in the input gradient's order: segments of SegmentLength terms, each summed from +0, then
+        // added in turn to Initial where Covers holds (ConvSegmentEnd).
+        public virtual bool Windows => false;
+
+        public virtual Val SegmentLength => throw new NotSupportedException();
+
+        public virtual Val Initial(Val row, Val column) => throw new NotSupportedException();
+
+        public virtual Val Covers(Val segment, Val column) => throw new NotSupportedException();
 
         public abstract Val Batch { get; }
 
@@ -409,13 +479,18 @@ internal static partial class VulkanKernels
         }
     }
 
-    // dx += the transposed convolution of dy.
+    // dx += the transposed convolution of dy, in the input gradient's order (the composed path's: the products' sums over
+    // the filters, then the folded windows, Backend.Convolution.cs and col2im): segment s is window r = KH·KW - 1 - s
+    // (kh, kw descending, as col2im walks oh and ow ascending), its terms the group's filters f, dx then each covering
+    // window's sum in turn.
     private sealed class InputPass : ConvPass
     {
         private Buf _dy = null!, _w = null!, _dx = null!;
         private Val _n, _q, _fg, _cg, _patch;
 
         protected override void Buffers(KernelBuilder k) => (_dy, _w, _dx) = (k.Buffer("dy"), k.Buffer("w"), k.Buffer("dx"));
+
+        public override bool Windows => true;
 
         public override Val Batch => G.N * G.G;
 
@@ -432,42 +507,55 @@ internal static partial class VulkanKernels
 
         public override Val SumStart => K.Int(0);
 
-        public override Val SumEnd => _fg * G.KH * G.KW;
+        public override Val SumEnd => G.KH * G.KW * _fg;
 
-        public override Val A(Val row, Val kk)
-        {
-            var area = G.KH * G.KW;
-            var (f, r) = (kk / area, kk % area);
-            return _w[(_q * _fg + f) * _patch + row * area + r];
-        }
+        public override Val SegmentLength => _fg;
 
-        public override (Val, Func<Val>) B(Val kk, Val column)
+        // A segment's window (its index in the patch) and a term's filter.
+        private (Val R, Val F) Term(Val kk) => (G.KH * G.KW - 1 - kk / _fg, kk % _fg);
+
+        // Window r's output position for input position `column`, and whether it reads that position.
+        private (Val Inside, Val Oh, Val Ow) Window(Val r, Val column)
         {
-            var area = G.KH * G.KW;
-            var (f, r) = (kk / area, kk % area);
             var (kh, kw) = (r / G.KW, r % G.KW);
             var (ih, iw) = (column / G.W, column % G.W);
             var th = ih + G.PH - kh * G.DH;
             var tw = iw + G.PW - kw * G.DW;
             var (oh, ow) = (th / G.SH, tw / G.SW);
-            var inside = (th >= 0) & (tw >= 0) & (th % G.SH).Eq(0) & (tw % G.SW).Eq(0) & (oh < G.OH) & (ow < G.OW);
+            return ((th >= 0) & (tw >= 0) & (th % G.SH).Eq(0) & (tw % G.SW).Eq(0) & (oh < G.OH) & (ow < G.OW), oh, ow);
+        }
+
+        public override Val A(Val row, Val kk)
+        {
+            var (r, f) = Term(kk);
+            return _w[(_q * _fg + f) * _patch + row * (G.KH * G.KW) + r];
+        }
+
+        public override (Val, Func<Val>) B(Val kk, Val column)
+        {
+            var (r, f) = Term(kk);
+            var (inside, oh, ow) = Window(r, column);
             return (inside, () => _dy[((_n * G.F + _q * _fg + f) * G.OH + oh) * G.OW + ow]);
         }
 
-        public override void Store(Val row, Val column, Val value)
-        {
-            var o = (_n * G.C + _q * _cg + row) * (G.H * G.W) + column;
-            _dx[o] = _dx[o] + value;
-        }
+        public override Val Initial(Val row, Val column) => _dx[(_n * G.C + _q * _cg + row) * (G.H * G.W) + column];
+
+        public override Val Covers(Val segment, Val column) => Window(G.KH * G.KW - 1 - segment, column).Inside;
+
+        public override void Store(Val row, Val column, Val value) => _dx[(_n * G.C + _q * _cg + row) * (G.H * G.W) + column] = value;
     }
 
-    // dweight += dyᵀ · patches, the positions in splits.
-    private sealed class WeightPass : ConvPass
+    // dweight += dyᵀ · patches, the positions in splits of `chunk` (an aligned power of two of the leaves). Unfolded, the
+    // patches are read from im2col's cols [(n, oh, ow), (c, kh, kw)] (zeros outside the image) instead of gathered from x.
+    private sealed class WeightPass(bool unfolded) : ConvPass
     {
         private Buf _x = null!, _dy = null!, _dw = null!, _part = null!;
         private Val _q, _s, _fg, _cg, _patch, _start, _end;
 
-        protected override void Buffers(KernelBuilder k) => (_x, _dy, _dw, _part) = (k.Buffer("x"), k.Buffer("dy"), k.Buffer("dw"), k.Buffer("part"));
+        protected override void Buffers(KernelBuilder k) =>
+            (_x, _dy, _dw, _part) = (k.Buffer(unfolded ? "cols" : "x"), k.Buffer("dy"), k.Buffer("dw"), k.Buffer("part"));
+
+        public override bool Tree => true;
 
         public override Val Batch => G.G * G.Splits;
 
@@ -477,10 +565,8 @@ internal static partial class VulkanKernels
             (_fg, _cg) = (G.F / G.G, G.C / G.G);
             _patch = _cg * G.KH * G.KW;
             var total = G.N * G.OH * G.OW;
-            var chunk = (total + G.Splits - 1) / G.Splits;
-            chunk = (chunk + (MatDepth - 1)) / MatDepth * MatDepth;               // whole steps of the sum
-            _start = K.Min(_s * chunk, total);
-            _end = K.Min(_start + chunk, total);
+            _start = K.Min(_s * G.Chunk, total);
+            _end = K.Min(_start + G.Chunk, total);
         }
 
         public override Val Rows => _fg;
@@ -499,6 +585,11 @@ internal static partial class VulkanKernels
 
         public override (Val, Func<Val>) B(Val kk, Val column)
         {
+            if (unfolded)
+            {
+                return (K.Bool(true), () => _x[kk * (G.C * G.KH * G.KW) + _q * _patch + column]);
+            }
+
             var outputs = G.OH * G.OW;
             var (n, p) = (kk / outputs, kk % outputs);
             var (oh, ow) = (p / G.OW, p % G.OW);
@@ -540,6 +631,15 @@ internal static partial class VulkanKernels
             acc[i] = k.Local(ScalarKind.Float);
         }
 
+        var stack = pass.Tree ? new PairwiseStack(k, acc.Length, ConvBlockedStackEntries, SumsMerge(k)) : null;
+        var columnOf = Enumerable.Range(0, Per).Select(j => colBase + tx + side * j).ToArray();
+        var rowOf = Enumerable.Range(0, Per).Select(i => rowBase + ty + side * i).ToArray();
+        var segments = pass.Windows ? new ConvSegments(k, pass, acc.Length, segment =>
+        {
+            var covers = columnOf.Select(c => pass.Covers(segment, c)).ToArray();
+            return [.. Enumerable.Range(0, acc.Length).Select(o => covers[o % Per])];
+        }) : null;
+
         // Invocation tid's p-th element of each staged tile: (r, ka) of the left operand along the sum (16 consecutive
         // invocations a row), (kb, col) of the right one along the columns.
         var loads = new (Val R, Val KA, Val Col, Val KB)[tileEdge * MatDepth / threads];
@@ -552,13 +652,15 @@ internal static partial class VulkanKernels
         k.For(k.GroupZ, pass.Batch, bi =>
         {
             pass.Begin(bi);
-            var (rows, columns, end) = (pass.Rows, pass.Columns, pass.SumEnd);
+            var (rows, columns, start, end) = (pass.Rows, pass.Columns, pass.SumStart, pass.SumEnd);
             foreach (var v in acc)
             {
                 v.V = k.Float(0f);
             }
 
-            k.For(pass.SumStart, end, MatDepth, t =>
+            stack?.Reset();
+            segments?.Begin(MatDepth, o => (rowOf[o / Per], columnOf[o % Per]), rows, columns);
+            k.For(start, end, MatDepth, t =>
             {
                 foreach (var (r, ka, col, kb) in loads)
                 {
@@ -574,40 +676,76 @@ internal static partial class VulkanKernels
                 }
 
                 k.Barrier();
-                var sums = acc.Select(v => v.V).ToArray();
-                for (int e = 0; e < MatDepth; e++)
+
+                // The step's terms; `each`: a segment may end after any of them (segments not a multiple of the step).
+                void Multiply(bool each)
                 {
-                    var av = new Val[Per];
-                    var bv = new Val[Per];
-                    for (int i = 0; i < Per; i++)
+                    var sums = acc.Select(v => v.V).ToArray();
+                    for (int e = 0; e < MatDepth; e++)
                     {
-                        av[i] = tileA[k.Int(e * stride + side * i) + ty];
-                        bv[i] = tileB[k.Int(e * stride + side * i) + tx];
+                        var av = new Val[Per];
+                        var bv = new Val[Per];
+                        for (int i = 0; i < Per; i++)
+                        {
+                            av[i] = tileA[k.Int(e * stride + side * i) + ty];
+                            bv[i] = tileB[k.Int(e * stride + side * i) + tx];
+                        }
+
+                        for (int i = 0; i < Per; i++)
+                        {
+                            for (int j = 0; j < Per; j++)
+                            {
+                                sums[i * Per + j] = k.Fma(av[i], bv[j], sums[i * Per + j]);
+                            }
+                        }
+
+                        if (each)
+                        {
+                            for (int i = 0; i < acc.Length; i++)
+                            {
+                                acc[i].V = sums[i];
+                            }
+
+                            segments!.End(t + (e + 1), acc);
+                            sums = acc.Select(v => v.V).ToArray();
+                        }
                     }
 
-                    for (int i = 0; i < Per; i++)
+                    for (int i = 0; i < acc.Length; i++)
                     {
-                        for (int j = 0; j < Per; j++)
-                        {
-                            sums[i * Per + j] = k.Fma(av[i], bv[j], sums[i * Per + j]);
-                        }
+                        acc[i].V = sums[i];
                     }
                 }
 
-                for (int i = 0; i < acc.Length; i++)
+                if (segments is null)
                 {
-                    acc[i].V = sums[i];
+                    Multiply(false);
+                }
+                else
+                {
+                    k.If(segments.Aligned, () => Multiply(false), () => Multiply(true));
                 }
 
                 k.Barrier();
+                if (stack is not null)
+                {
+                    ConvLeafEnd(k, stack, acc, t, MatDepth, start, end);
+                }
+
+                if (segments is not null)
+                {
+                    k.If(segments.Aligned, () => segments.End(t + MatDepth, acc));
+                }
             });
 
+            Val[] totals = segments is not null ? segments.Totals
+                : stack is null ? [.. acc.Select(v => v.V)] : stack.Total([.. acc.Select(_ => k.Float(-0f))]);
             for (int i = 0; i < Per; i++)
             {
                 for (int j = 0; j < Per; j++)
                 {
-                    var (row, col, value) = (rowBase + ty + side * i, colBase + tx + side * j, acc[i * Per + j]);
-                    k.If((row < rows) & (col < columns), () => pass.Store(row, col, value.V));
+                    var (row, col, value) = (rowOf[i], columnOf[j], totals[i * Per + j]);
+                    k.If((row < rows) & (col < columns), () => pass.Store(row, col, value));
                 }
             }
         }, k.GroupsZ);
@@ -630,12 +768,17 @@ internal static partial class VulkanKernels
         var row = k.GroupY * side + ty;
         var col = k.GroupX * side + tx;
         var at = ty * side + tx;
+        var stack = pass.Tree ? new PairwiseStack(k, 1, ConvTileStackEntries, SumsMerge(k)) : null;
+        var segments = pass.Windows ? new ConvSegments(k, pass, 1, segment => [pass.Covers(segment, col)]) : null;
         k.For(k.GroupZ, pass.Batch, bi =>
         {
             pass.Begin(bi);
-            var (rows, columns, end) = (pass.Rows, pass.Columns, pass.SumEnd);
+            var (rows, columns, start, end) = (pass.Rows, pass.Columns, pass.SumStart, pass.SumEnd);
             var acc = k.Local(0f);
-            k.For(pass.SumStart, end, side, t =>
+            stack?.Reset();
+            segments?.Begin(side, _ => (row, col), rows, columns);
+
+            k.For(start, end, side, t =>
             {
                 var (ka, kb) = (t + tx, t + ty);
                 var va = k.Local(0f);
@@ -646,17 +789,113 @@ internal static partial class VulkanKernels
                 k.If((kb < end) & (col < columns) & inside, () => vb.V = load());
                 tileB[at] = vb.V;
                 k.Barrier();
-                var sum = acc.V;
-                for (int e = 0; e < side; e++)
+
+                // The step's terms; `each`: a segment may end after any of them (segments not a multiple of the step).
+                void Multiply(bool each)
                 {
-                    sum = k.Fma(tileA[ty * side + e], tileB[k.Int(e * side) + tx], sum);
+                    var sum = acc.V;
+                    for (int e = 0; e < side; e++)
+                    {
+                        sum = k.Fma(tileA[ty * side + e], tileB[k.Int(e * side) + tx], sum);
+                        if (each)
+                        {
+                            acc.V = sum;
+                            segments!.End(t + (e + 1), [acc]);
+                            sum = acc.V;
+                        }
+                    }
+
+                    acc.V = sum;
                 }
 
-                acc.V = sum;
+                if (segments is null)
+                {
+                    Multiply(false);
+                }
+                else
+                {
+                    k.If(segments.Aligned, () => Multiply(false), () => Multiply(true));
+                }
+
                 k.Barrier();
+                if (stack is not null)
+                {
+                    ConvLeafEnd(k, stack, [acc], t, side, start, end);
+                }
+
+                if (segments is not null)
+                {
+                    k.If(segments.Aligned, () => segments.End(t + side, [acc]));
+                }
             });
-            k.If((row < rows) & (col < columns), () => pass.Store(row, col, acc.V));
+            var total = segments is not null ? segments.Totals[0] : stack is null ? acc.V : stack.Total([k.Float(-0f)])[0];
+            k.If((row < rows) & (col < columns), () => pass.Store(row, col, total));
         }, k.GroupsZ);
         return k.Build();
+    }
+
+    // The input gradient's windows in an implicit product (ConvPass.Windows): the sum runs from 0 in segments of
+    // pass.SegmentLength terms, each output's sum from +0; when a segment ends (End: after the term before `next`), each
+    // output adds its sum to its total where the segment's window covers it (`covers`: per output) and its sum starts again
+    // from +0. Aligned: the segments are a multiple of the step, so they end only with a step (checked once a step);
+    // otherwise after any term. The segment's end and index are the workgroup's own.
+    private sealed class ConvSegments(KernelBuilder k, ConvPass pass, int outputs, Func<Val, Val[]> covers)
+    {
+        private readonly Var[] _totals = [.. Enumerable.Range(0, outputs).Select(_ => k.Local(ScalarKind.Float))];
+        private readonly Var _end = k.Local(ScalarKind.Int), _index = k.Local(ScalarKind.Int);
+        private Val _length;
+
+        public Val Aligned { get; private set; }
+
+        public Val[] Totals => [.. _totals.Select(t => t.V)];
+
+        // Starts a batch entry: each output's total from pass.Initial (output o at place(o), within rows and columns).
+        public void Begin(int step, Func<int, (Val Row, Val Column)> place, Val rows, Val columns)
+        {
+            _length = pass.SegmentLength;
+            Aligned = (_length % step).Eq(0);
+            _end.V = _length;
+            _index.V = k.Int(0);
+            for (int o = 0; o < _totals.Length; o++)
+            {
+                var (row, column, total) = (place(o).Row, place(o).Column, _totals[o]);
+                total.V = k.Float(0f);
+                k.If((row < rows) & (column < columns), () => total.V = pass.Initial(row, column));
+            }
+        }
+
+        public void End(Val next, Var[] sums) => k.If(next.Eq(_end.V), () =>
+        {
+            var covered = covers(_index.V);
+            for (int o = 0; o < sums.Length; o++)
+            {
+                _totals[o].V = k.Select(covered[o], _totals[o].V + sums[o].V, _totals[o].V);
+                sums[o].V = k.Float(0f);
+            }
+
+            _end.V = _end.V + _length;
+            _index.V = _index.V + 1;
+        });
+    }
+
+    // The weight gradient's leaves in an implicit product: after the step of `step` terms at t (the split's sum running
+    // from `start`, a multiple of ConvLeaf, to `end`), when the step ends a leaf or the split, the leaf's sums go to the
+    // pairwise stack (its index in the split) and the sums start again from +0. The condition is the workgroup's own.
+    private static void ConvLeafEnd(KernelBuilder k, PairwiseStack stack, Var[] sums, Val t, int step, Val start, Val end)
+    {
+        if (ConvLeaf % step != 0)
+        {
+            throw new InvalidOperationException($"A step of {step} along the sum straddles the weight gradient's leaves of {ConvLeaf}.");
+        }
+
+        var next = t + step;
+        k.If(((next - start) & (ConvLeaf - 1)).Eq(0) | (next >= end), () =>
+        {
+            stack.Push((t - start) >> ConvLeafShift, [.. sums.Select(v => v.V)]);
+            foreach (var v in sums)
+            {
+                v.V = k.Float(0f);
+            }
+        });
     }
 }

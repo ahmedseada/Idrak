@@ -11,7 +11,8 @@ using Idrak.Gpu.Vulkan;
 // for the composed path's products on tensor cores or cooperative matrices): for each shape (a backbone's 3 x 3, a stem's
 // 7 x 7 stride 2, a pointwise 1 x 1, a depthwise 3 x 3, a text line's tall and wide filters) the forward pass, the input
 // gradient and the weight gradient, timed through each path the device has (composed: im2col and its products; tile:
-// the implicit product on 16 x 16 tiles; blocked: on 64 x 64 tiles; depthwise), through the measured choice ("auto", the
+// the implicit product on 16 x 16 tiles; blocked: on 64 x 64 tiles; depthwise; on Vulkan the weight gradient's unfolded
+// products too: im2col's patches through the weight gradient's product, tiled and blocked), through the measured choice ("auto", the
 // one the library runs), and through the host fallback (the CPU's kernel on host copies plus the copies down and up: what
 // a device without kernels pays). Milliseconds per call, the median of five timed rounds after a warm-up. On the CPU
 // (IDRAK_DEVICES=cpu): the operation as the CPU runs it (its kernel: the composed path, depthwise as direct loops) against
@@ -38,7 +39,7 @@ internal static partial class Tests
             ("text line 3x3, 1 -> 32, 32x400, batch 16", new(16, 1, 32, 400, 3, 3, 1, 1, 1, 1), 32, 1),
             ("text line 2x1 stride 2x1, 64 -> 128, 16x200, batch 16", new(16, 64, 16, 200, 2, 1, 2, 1, 0, 0), 128, 1),
         ];
-        (string Name, int? Path)[] paths = [("host", -1), ("composed", 0), ("tile", 1), ("blocked", 2), ("depthwise", 3), ("auto", null)];
+        (string Name, int? Path)[] paths = [("host", -1), ("composed", 0), ("tile", 1), ("blocked", 2), ("depthwise", 3), ("unfolded tile", 4), ("unfolded blocked", 5), ("auto", null)];
         foreach (var device in devices)
         {
             if (device.Type == DeviceType.Cpu)
@@ -63,23 +64,26 @@ internal static partial class Tests
                 var cells = new List<string>();
                 foreach (var (_, path) in paths)
                 {
-                    if (path == 3 && !(groups > 1 && groups == g.C))
+                    if (path == 3 && !(groups > 1 && groups == g.C) || path is 4 or 5 && device.Type != DeviceType.Vulkan)
                     {
                         cells.Add($"{"-",22}");
                         continue;
                     }
 
+                    bool weightOnly = path is 4 or 5;                     // the unfolded products are the weight gradient's
+
                     CudaBackend.ConvolutionPath = path is >= 0 ? path : null;
                     VulkanBackend.ConvolutionPath = path is >= 0 ? path : null;
                     try
                     {
-                        double forward = path == -1 ? TimeHost(backend, x.Storage, w.Storage, y.Storage, input, weights, output, b => b.Convolution(Host(b, 0), Host(b, 1), null, Host(b, 2), g, filters, groups, ConvActivation.None))
+                        double forward = weightOnly ? double.NaN : path == -1 ? TimeHost(backend, x.Storage, w.Storage, y.Storage, input, weights, output, b => b.Convolution(Host(b, 0), Host(b, 1), null, Host(b, 2), g, filters, groups, ConvActivation.None))
                             : Time(device, () => backend.Convolution(x.Storage, w.Storage, null, y.Storage, g, filters, groups, ConvActivation.None));
-                        double inputGradient = path == -1 ? TimeHost(backend, dy.Storage, w.Storage, dx.Storage, output, weights, input, b => b.ConvolutionBackwardInput(Host(b, 0), Host(b, 1), Host(b, 2), g, filters, groups))
+                        double inputGradient = weightOnly ? double.NaN : path == -1 ? TimeHost(backend, dy.Storage, w.Storage, dx.Storage, output, weights, input, b => b.ConvolutionBackwardInput(Host(b, 0), Host(b, 1), Host(b, 2), g, filters, groups))
                             : Time(device, () => backend.ConvolutionBackwardInput(dy.Storage, w.Storage, dx.Storage, g, filters, groups));
                         double weightGradient = path == -1 ? TimeHost(backend, x.Storage, dy.Storage, dw.Storage, input, output, weights, b => b.ConvolutionBackwardWeight(Host(b, 0), Host(b, 1), Host(b, 2), g, filters, groups))
                             : Time(device, () => backend.ConvolutionBackwardWeight(x.Storage, dy.Storage, dw.Storage, g, filters, groups));
-                        cells.Add($"{$"{forward:F2} / {inputGradient:F2} / {weightGradient:F2}",22}");
+                        static string Ms(double ms) => double.IsNaN(ms) ? "-" : ms.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+                        cells.Add($"{$"{Ms(forward)} / {Ms(inputGradient)} / {Ms(weightGradient)}",22}");
                     }
                     catch (Exception e) when (e is not OutOfMemoryException)
                     {
