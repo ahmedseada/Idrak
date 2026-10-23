@@ -763,7 +763,7 @@ exits with 1, a usage error with 2), and `ToolConsole` lost its standalone conso
 `IToolHost` is required). The tune.json format stays `idrak-tune/1`: it names the kind of file, alongside
 `idrak-train/1`, `idrak-prep/1` and `idrak-network/1`, not the tool. `idrak tune init` now writes it and `idrak tune
 --config` accepts it (it had rejected the key, so a tune.json from `idrak suggest --base` did not run) and refuses
-another file's format. The pack loops in the workflows and tools/publish.ps1 pack every project under src/, so they
+another file's format. The pack loops in the workflows pack every project under src/, so they
 needed no change.
 
 ## Polish after the merge

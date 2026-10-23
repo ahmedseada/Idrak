@@ -16,6 +16,9 @@ artifacts/
 *.nupkg
 *.snupkg
 
+# The owner's own publishing script, kept on the owner's machine only
+/tools/publish.ps1
+
 # The owner's test output and its extracted failures (CLAUDE.md, commands for the owner)
 /test.log
 /fails*.txt

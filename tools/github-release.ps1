@@ -1,6 +1,6 @@
 # Creates the GitHub release of a version: tag v<Version>, title "Idrak <Version>", the version's CHANGELOG section as
-# the notes, and the packages attached when given. tools/publish.ps1 calls it after pushing to nuget.org; on its own it
-# backfills a release (Actions not running, or a release published from a machine):
+# the notes, and the packages attached when given; it also backfills a release (Actions not running, or a release
+# published from a machine):
 #
 #   powershell -ExecutionPolicy Bypass -File tools\github-release.ps1 -Version 0.4.0                       (no files attached)
 #   powershell -ExecutionPolicy Bypass -File tools\github-release.ps1 -Version 0.4.0 -Packages artifacts   (and the .nupkg files)

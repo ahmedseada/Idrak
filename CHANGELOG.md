@@ -15,9 +15,7 @@ rebuilt.
 - The legal OCR sample app (`samples/Idrak.Samples.LegalOcr` and its tests) is removed;
   `samples/Idrak.Samples.ArabicOcr` stays.
 - Pushing a tag no longer publishes: the Release workflow runs only by hand (Actions > Release > Run workflow, with the
-  version), and its GitHub release carries the version's changelog section instead of a link. `tools/publish.ps1` is
-  the normal way to publish: it checks that the tag's `VersionPrefix` is the version, shows packing progress, takes the
-  nuget.org key from `-ApiKey`, `NUGET_API_KEY` or a prompt, and has `-SkipNuGet` and `-SkipGitHub`;
+  version), and its GitHub release carries the version's changelog section instead of a link.
   `tools/github-release.ps1` runs under Windows PowerShell 5.1 as well as PowerShell 7.
 
 **New packages**

@@ -1,8 +1,7 @@
 name: Release
 
 # Run by hand only (Actions > Release > Run workflow, with a version such as 0.4.0): it checks out the tag v<version>,
-# builds, tests, packs every package with that version and publishes it to nuget.org. Pushing a tag publishes nothing;
-# the owner normally publishes from a machine with tools/publish.ps1, and this workflow is the fallback.
+# builds, tests, packs every package with that version and publishes it to nuget.org. Pushing a tag publishes nothing.
 # Publishing uses nuget.org Trusted Publishing (no stored API key): nuget.org > your account > Trusted Publishing has a
 # policy for owner ahmedseada, repository Idrak, workflow release.yml; the repository secret NUGET_USER holds the
 # nuget.org user name (not the e-mail address). The login step trades GitHub's token for a key that lasts one hour.
