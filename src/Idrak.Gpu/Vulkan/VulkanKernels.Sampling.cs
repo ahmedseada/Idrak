@@ -17,6 +17,13 @@ internal static partial class VulkanKernels
     /// <summary>Largest vocabulary the narrow sampler and penalties (one invocation per row, no barriers) are meant for.</summary>
     public const int NarrowVocabulary = 256;
 
+    /// <summary>
+    /// Largest vocabulary the sampler kernels take (2^24): token ids go between invocations through float workgroup memory
+    /// as float values, exact up to it, never as a float's bits (an id's bits are a denormal and -1's a NaN, which a driver
+    /// may flush or change: drawn tokens came back wrong or none at one workgroup width). A larger one samples on the host.
+    /// </summary>
+    public const int MaxSampledVocabulary = 1 << 24;
+
     // The statistics stored per sampled token (Backend.SampleRows).
     private const int StatsPerToken = 13;
 
@@ -390,7 +397,7 @@ internal static partial class VulkanKernels
         parts[lane] = part.V;
         k.If(lane.Eq(0), () =>
         {
-            shared[k.Int(2)] = k.Int(-1).AsFloat();                             // nothing sampled unless a lane writes a token
+            shared[k.Int(2)] = k.Float(-1f);                                    // nothing sampled unless a lane writes a token
             shared[k.Int(3)] = k.Float(0f);
         });
         k.Barrier();
@@ -432,11 +439,11 @@ internal static partial class VulkanKernels
                 });
                 walk.V = walk.V + 1;
             });
-            shared[k.Int(2)] = chosen.V.AsFloat();
+            shared[k.Int(2)] = chosen.V.ToFloat();
             shared[k.Int(3)] = chosenWeight.V;
         });
         k.Barrier();
-        var token = shared[k.Int(2)].AsInt();
+        var token = shared[k.Int(2)].ToInt();
         var tokenWeight = shared[k.Int(3)];
         k.Barrier();
         return (token, tokenWeight, total.V);
@@ -447,7 +454,7 @@ internal static partial class VulkanKernels
     {
         var lane = k.LocalX;
         values[lane] = value;
-        indices[lane] = id.AsFloat();
+        indices[lane] = id.ToFloat();
         k.Barrier();
         for (int stride = Block / 2; stride > 0; stride /= 2)
         {
@@ -455,17 +462,17 @@ internal static partial class VulkanKernels
             k.If(lane < s, () =>
             {
                 var (va, vb) = (values[lane], values[lane + s]);
-                var (ia, ib) = (indices[lane].AsInt(), indices[lane + s].AsInt());
+                var (ia, ib) = (indices[lane].ToInt(), indices[lane + s].ToInt());
                 k.If((vb > va) | (vb.Eq(va) & (ib < ia) & (ib >= 0)) | ((ia < 0) & (ib >= 0)), () =>
                 {
                     values[lane] = vb;
-                    indices[lane] = ib.AsFloat();
+                    indices[lane] = ib.ToFloat();
                 });
             });
             k.Barrier();
         }
 
-        var result = (values[k.Int(0)], indices[k.Int(0)].AsInt());
+        var result = (values[k.Int(0)], indices[k.Int(0)].ToInt());
         k.Barrier();
         return result;
     }
