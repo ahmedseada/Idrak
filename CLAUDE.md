@@ -61,7 +61,7 @@ These are the owner's standing rules. They hold in every session, after every co
   test run in them shows the live progress line and saves only the failed lines (each FAIL line with its message lines,
   the device headers and the summary) into `fails.txt` for the owner to paste:
   ```powershell
-  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only | Tee-Object -FilePath fails.txt
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file fails.txt
   ```
 - **"Just answer"** means answer the question without writing or changing code.
 - **Stay on the owner's current task.** Do not steer to a different feature or conclusion; report results and offer

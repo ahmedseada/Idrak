@@ -221,10 +221,67 @@ internal static partial class Tests
                         ids.Clear();
                         tokenizer.EncodeRange(first, 0, first.Length, ids);
                     });
-                    Check(false, $"{name}, cache {cache}: a warm pass allocated {allocated} bytes over {taken.Length * 3} lines:\n  {string.Join("\n  ", culprits.Take(8).Select(c => c.Text))}\n  line {(culprits.Count > 0 ? culprits[0].Index : 0)} again: {types}");
+                    Check(false, $"{name}, cache {cache}: a warm pass allocated {allocated} bytes over {taken.Length * 3} lines:\n  {string.Join("\n  ", culprits.Take(8).Select(c => c.Text))}\n  line {(culprits.Count > 0 ? culprits[0].Index : 0)} again: {types}\n  {BpeStageBytes(tokenizer, first)}");
                 }
             }
         }
+    }
+
+    // Each step of a BPE encode on its own, in bytes a call (the steps EncodeRange takes for a piece the cache holds), and
+    // the methods the JIT compiles in a second without calls (others compiling hold back tiering), so a failure names the step.
+    private static string BpeStageBytes(IPretrainedTokenizer tokenizer, string line)
+    {
+        if (tokenizer is not BpeTokenizer bpe)
+        {
+            return $"the tokenizer is a {tokenizer.GetType().Name}, not BpeTokenizer: no steps measured";
+        }
+
+        static double PerCall(Action call)
+        {
+            for (int i = 0; i < 2000; i++)
+            {
+                call();
+            }
+
+            long start = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 2000; i++)
+            {
+                call();
+            }
+
+            return (GC.GetAllocatedBytesForCurrentThread() - start) / 2000.0;
+        }
+
+        T Field<T>(string field) => (T)typeof(BpeTokenizer).GetField(field, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(bpe)!;
+        var steps = new List<string>();
+        if (Field<TokenizerRegex?>("_addedPattern") is { } added)
+        {
+            steps.Add($"added-token matches {PerCall(() => { foreach (var match in added.Local.EnumerateMatches(line)) { _ = match; } }):F1}");
+        }
+
+        char[] buffer = new char[line.Length + 16];
+        foreach (var (prepend, from, to) in Field<List<(string? Prepend, char From, char To)>?>("_normalizerSteps") ?? [])
+        {
+            if (prepend is null)
+            {
+                steps.Add($"Replace('{from}', '{to}') {PerCall(() => { line.CopyTo(buffer); buffer.AsSpan(0, line.Length).Replace(from, to); }):F1}");
+            }
+        }
+
+        var cache = Field<PieceCache>("_cache");
+        string piece = ((Field<List<(string? Prepend, char From, char To)>?>("_normalizerSteps") ?? []).FirstOrDefault(s => s.Prepend is not null).Prepend ?? "")
+            + line.Replace(' ', '\u2581');
+        bool held = cache.TryGet(piece, out _);
+        steps.Add($"piece cache lookup ({(held ? "held" : "not held")}) {PerCall(() => cache.TryGet(piece, out _)):F1}");
+        var ids = new List<int>(4096);
+        int[] some = [1, 2, 3, 4, 5, 6, 7, 8];
+        steps.Add($"ids.AddRange(span) {PerCall(() => { ids.Clear(); ids.AddRange(some.AsSpan()); }):F1}");
+        steps.Add($"the whole EncodeRange {PerCall(() => { ids.Clear(); bpe.EncodeRange(line, 0, line.Length, ids); }):F1}");
+        long compiled = System.Runtime.JitInfo.GetCompiledMethodCount();
+        Thread.Sleep(1000);
+        long quiet = System.Runtime.JitInfo.GetCompiledMethodCount() - compiled;
+        return $"bytes a call by step: {string.Join(", ", steps)}; the JIT compiled {quiet} methods in a second without calls"
+            + $" (tiered compilation {(AppContext.TryGetSwitch("System.Runtime.TieredCompilation", out bool tiered) ? tiered.ToString() : "default")})";
     }
 
     private static void TokenizersBpeBaseline(Device device)
