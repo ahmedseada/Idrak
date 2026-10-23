@@ -177,9 +177,10 @@ internal static partial class Tests
     {
         // Every width a device may be given: powers of two from MinWidth to MaxWidth.
         var widths = Enumerable.Range(0, 16).Select(i => 1 << i).Where(w => w >= VulkanKernels.MinWidth && w <= VulkanKernels.MaxWidth).ToArray();
-        // … each with its reductions through workgroup memory and through subgroup arithmetic.
-        var kernels = VulkanKernels.Names.SelectMany(n => widths.SelectMany(w => new[] { false, true }
-            .Select(sub => (Width: w, Kernel: VulkanKernels.Get(n, w, sub), Subgroups: sub)))).ToList();
+        // … each with its reductions through workgroup memory alone and finished by subgroup butterflies (a small
+        // subgroup's and a common one's).
+        var kernels = VulkanKernels.Names.SelectMany(n => widths.SelectMany(w => new[] { 0, 8, 32 }
+            .Select(butterfly => (Width: w, Kernel: VulkanKernels.Get(n, w, butterfly), Butterfly: butterfly)))).ToList();
         Check(kernels.Count > 40 * widths.Length, $"only {kernels.Count} kernels");
         foreach (var (width, kernel, _) in kernels)
         {
@@ -194,7 +195,7 @@ internal static partial class Tests
         // Same words on a second build (deterministic generation).
         Check(VulkanKernels.Unary(Idrak.Abstraction.Devices.UnaryOp.Gelu).Words.SequenceEqual(VulkanKernels.Get("unary_gelu").Words), "lookup by op");
 
-        ValidateWithSpirvVal(kernels.Select(e => (e.Kernel, $"{e.Kernel.Name}_w{e.Width}{(e.Subgroups ? "_subgroups" : "")}.spv")).ToList());
+        ValidateWithSpirvVal(kernels.Select(e => (e.Kernel, $"{e.Kernel.Name}_w{e.Width}{(e.Butterfly > 0 ? $"_b{e.Butterfly}" : "")}.spv")).ToList());
     }
 
     // Runs spirv-val --target-env vulkan1.1 on every kernel (skipped when it is not installed).

@@ -123,8 +123,7 @@ internal static partial class VulkanKernels
                 w.Each(rows, r =>
                 {
                     var o = r * cols;
-                    var squares = k.Local(0f);
-                    w.Columns(cols, j =>
+                    var squares = w.RowSumOfSquares(cols, j =>
                     {
                         var total = k.Local(part[o + j]);
                         k.For(k.Int(1), splits, 1, s => total.V = total.V + part[(s * rows + r) * cols + j]);
@@ -132,9 +131,9 @@ internal static partial class VulkanKernels
                         y[o + j] = v;
                         var s = residual[o + j] + v;
                         sum[o + j] = s;
-                        squares.V = k.Fma(s, s, squares.V);
+                        return s;
                     });
-                    var inverse = 1f / k.Sqrt(w.Sum(squares.V) / cols.ToFloat() + eps);
+                    var inverse = 1f / k.Sqrt(squares / cols.ToFloat() + eps);
                     w.Columns(cols, j => normalized[o + j] = sum[o + j] * inverse * (gain[j] + offset));
                 });
                 return k.Build();

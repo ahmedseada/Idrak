@@ -66,15 +66,16 @@ internal sealed partial class KernelBuilder
     private readonly Dictionary<BuiltIn, uint> _builtIns = [];
     private readonly Dictionary<(BuiltIn, int), Val> _builtInValues = [];
     private int _sharedBytes;
-    private readonly bool _subgroups = t_subgroups;
+    private readonly int _butterfly = t_butterfly;
 
     /// <summary>
-    /// Whether kernels built on this thread from now on reduce through subgroup arithmetic (GroupNonUniformArithmetic,
-    /// for devices that report it for compute shaders) instead of workgroup memory alone. Set around a build by the
+    /// The subgroup butterfly kernels built on this thread from now on finish their reductions with: a power of two no
+    /// larger than the smallest subgroup the device runs them in (the levels of the reduction's tree below it run as
+    /// subgroup shuffles, the others through workgroup memory), or 0 for workgroup memory alone. Set around a build by the
     /// kernel catalog.
     /// </summary>
     [ThreadStatic]
-    internal static bool t_subgroups;
+    internal static int t_butterfly;
 
     /// <summary>Starts a kernel with this workgroup size.</summary>
     public KernelBuilder(string name, int localSizeX, int localSizeY = 1, int localSizeZ = 1)
@@ -101,8 +102,8 @@ internal sealed partial class KernelBuilder
     /// <summary>Workgroup width.</summary>
     public int LocalSizeX => _localX;
 
-    /// <summary>Whether this kernel's reductions use subgroup arithmetic (see <see cref="t_subgroups"/>).</summary>
-    public bool Subgroups => _subgroups;
+    /// <summary>Whether this kernel's reductions finish in subgroups (see <see cref="t_butterfly"/>).</summary>
+    public bool Subgroups => _butterfly > 0;
 
     // ------------------------------------------------------------------ declarations
 
@@ -161,6 +162,13 @@ internal sealed partial class KernelBuilder
         _m.Name(variable, name);
         _sharedBytes += 4 * length;
         return new SharedArray(this, variable, length);
+    }
+
+    /// <summary>A float array of this invocation's own (function memory): a few values indexed at run time.</summary>
+    public SharedArray LocalArray(int length)
+    {
+        uint type = _m.TypeArray(TypeOf(ScalarKind.Float), (uint)length);
+        return new SharedArray(this, _m.LocalVariable(_m.TypePointer(StorageClass.Function, type)), length, StorageClass.Function);
     }
 
     /// <summary>A function-local variable (for values that live across Ifs and loop iterations).</summary>
@@ -245,15 +253,15 @@ internal sealed partial class KernelBuilder
         return value;
     }
 
-    /// <summary>The sum (or maximum) of a float over the invocations of this subgroup, returned to all of them (subgroup
-    /// kernels only; every invocation of the subgroup must take part).</summary>
-    public Val SubgroupReduce(Val value, bool max)
+    /// <summary>The float <paramref name="value"/> of the invocation of this subgroup whose index differs from this one's
+    /// by the bits of <paramref name="mask"/> (subgroup kernels only; that invocation must take part).</summary>
+    public Val SubgroupShuffleXor(Val value, uint mask)
     {
         Expect(value, ScalarKind.Float);
         _m.Capability(61);                                               // GroupNonUniform
-        _m.Capability(63);                                               // GroupNonUniformArithmetic
+        _m.Capability(65);                                               // GroupNonUniformShuffle
         uint scope = _m.ConstantUInt(3);                                 // Subgroup
-        return new Val(this, _m.Value(max ? SpirvOp.GroupNonUniformFMax : SpirvOp.GroupNonUniformFAdd, TypeOf(ScalarKind.Float), scope, 0, value.Id), ScalarKind.Float);
+        return new Val(this, _m.Value(SpirvOp.GroupNonUniformShuffleXor, TypeOf(ScalarKind.Float), scope, value.Id, _m.ConstantUInt(mask)), ScalarKind.Float);
     }
 
     private Val BuiltInValue(BuiltIn builtIn, int component)
@@ -329,6 +337,22 @@ internal sealed partial class KernelBuilder
 
     /// <summary>a · b + c (fused where the device fuses).</summary>
     public Val Fma(Val a, Val b, Val c) => Ext(Glsl.Fma, a, b, c);
+
+    /// <summary>a + b rounded on its own: never contracted with the multiplication that made b (NoContraction), so every
+    /// kernel that adds the same terms in the same order gets the same bits, whatever its driver fuses.</summary>
+    public Val AddRounded(Val a, Val b)
+    {
+        Expect(a, ScalarKind.Float);
+        var sum = a + b;
+        _m.Decorate(sum.Id, Decoration.NoContraction);
+        return sum;
+    }
+
+    /// <summary>The index of the highest set bit of an integer (-1 for 0).</summary>
+    public Val FindMsb(Val x) => Ext(Glsl.FindUMsb, x);
+
+    /// <summary>An integer's bits in reverse order.</summary>
+    public Val BitReverse(Val x) => Op(SpirvOp.BitReverse, x.Kind, x);
 
     /// <summary>|x| (float or signed int).</summary>
     public Val Abs(Val x) => Ext(x.Kind == ScalarKind.Float ? Glsl.FAbs : Glsl.SAbs, x);
@@ -435,53 +459,54 @@ internal sealed partial class KernelBuilder
     /// The sum of <paramref name="value"/> over the workgroup's x invocations (a power of two), returned to all of them
     /// through <paramref name="scratch"/> (at least the workgroup width long). Uniform control flow only.
     /// </summary>
-    public Val ReduceSum(SharedArray scratch, Val value) => Reduce(scratch, value, (a, b) => a + b, max: false);
+    public Val ReduceSum(SharedArray scratch, Val value) => Reduce(scratch, value, (a, b) => a + b);
 
     /// <summary>The largest <paramref name="value"/> over the workgroup's x invocations (see <see cref="ReduceSum"/>).</summary>
-    public Val ReduceMax(SharedArray scratch, Val value) => Reduce(scratch, value, Max, max: true);
+    public Val ReduceMax(SharedArray scratch, Val value) => Reduce(scratch, value, Max);
 
-    // Without subgroups: a tree through workgroup memory (log2 width rounds, a barrier each). With them: each subgroup
-    // reduces its values, its first invocation stores the result in scratch[subgroup], and after a barrier every
-    // subgroup reduces those (a subgroup's width of them at a time, in order: the same result in every invocation),
-    // whatever the subgroup size; a barrier then frees the scratch. Two barriers instead of log2 width + 2.
-    private Val Reduce(SharedArray scratch, Val value, Func<Val, Val, Val> combine, bool max)
+    // One order whatever the reduction: a tree over the workgroup's invocations whose every level pairs invocation l with
+    // l + stride, the strides halving from half the width to 1. Without subgroups every level goes through workgroup
+    // memory (a barrier each). With them, the levels whose stride reaches the butterfly (the smallest subgroup the device
+    // runs the kernel in, fixed when the kernel is built) still do, and the rest run in each subgroup as a xor butterfly
+    // over the same pairs, a shuffle a level and no barrier: float addition is commutative, so every invocation ends with
+    // the tree's own bits, at any subgroup size. The subgroup's own reduction (OpGroupNonUniformFAdd) sums in an order the
+    // driver picks: a fused kernel and the composed operation it stands for gave different bits (docs/optimization.md
+    // rule 86).
+    private Val Reduce(SharedArray scratch, Val value, Func<Val, Val, Val> combine)
     {
         if (_localY * _localZ != 1 || (_localX & (_localX - 1)) != 0 || scratch.Length < _localX)
         {
             throw new InvalidOperationException($"{_name}: reductions need a 1-D power-of-two workgroup and scratch as wide.");
         }
 
-        if (_subgroups)
-        {
-            var mine = SubgroupReduce(value, max);
-            If(SubgroupLocalId.Eq(0), () => scratch[SubgroupId] = mine);
-            Barrier();
-            var identity = Float(max ? float.NegativeInfinity : 0f);
-            var acc = Local(identity);
-            For(Int(0), NumSubgroups, start =>
-            {
-                var at = start + SubgroupLocalId;
-                var part = Select(at < NumSubgroups, scratch[Min(at, Int(_localX - 1))], identity);
-                acc.V = combine(acc.V, SubgroupReduce(part, max));
-            }, SubgroupSize);
-            var result = acc.V;
-            Barrier();                                                   // everyone has read the scratch before it is reused
-            return result;
-        }
-
+        int butterfly = Math.Min(_butterfly, _localX);
         var lane = LocalX;
         scratch[lane] = value;
         Barrier();
-        for (int stride = _localX / 2; stride > 0; stride /= 2)
+        for (int stride = _localX / 2; stride > 0 && stride >= butterfly; stride /= 2)
         {
             int s = stride;
             If(lane < s, () => scratch[lane] = combine(scratch[lane], scratch[lane + s]));
             Barrier();
         }
 
-        var total = scratch[Int(0)];
-        Barrier();                                                       // everyone has read it before the scratch is reused
-        return total;
+        if (butterfly == 0)
+        {
+            var total = scratch[Int(0)];
+            Barrier();                                                   // everyone has read it before the scratch is reused
+            return total;
+        }
+
+        // Each subgroup takes the first butterfly's worth of partials (by its own index, so every subgroup ends with them).
+        var acc = Local(scratch[SubgroupLocalId % butterfly]);
+        for (int stride = butterfly / 2; stride > 0; stride /= 2)
+        {
+            acc.V = combine(acc.V, SubgroupShuffleXor(acc.V, (uint)stride));
+        }
+
+        var result = acc.V;
+        Barrier();                                                       // everyone has read the scratch before it is reused
+        return result;
     }
 
     // ------------------------------------------------------------------ the module
@@ -557,8 +582,8 @@ internal sealed partial class KernelBuilder
         return _m.Value(SpirvOp.AccessChain, _bufferElement, variable, _m.ConstantInt(0), index.Id);
     }
 
-    internal uint SharedElement(uint variable, Val index) =>
-        _m.Value(SpirvOp.AccessChain, _m.TypePointer(StorageClass.Workgroup, TypeOf(ScalarKind.Float)), variable, index.Id);
+    internal uint SharedElement(uint variable, Val index, StorageClass storage = StorageClass.Workgroup) =>
+        _m.Value(SpirvOp.AccessChain, _m.TypePointer(storage, TypeOf(ScalarKind.Float)), variable, index.Id);
 }
 
 /// <summary>A 32-bit value computed by a kernel (an SSA id with its type), with C# operators that emit SPIR-V.</summary>
@@ -825,8 +850,8 @@ internal sealed class Buf(KernelBuilder builder, uint variable, int binding)
     public Val UInt(Val index) => this[index].AsUInt();
 }
 
-/// <summary>A workgroup-shared float array.</summary>
-internal sealed class SharedArray(KernelBuilder builder, uint variable, int length)
+/// <summary>A float array in workgroup memory (shared by the workgroup) or function memory (an invocation's own).</summary>
+internal sealed class SharedArray(KernelBuilder builder, uint variable, int length, StorageClass storage = StorageClass.Workgroup)
 {
     /// <summary>Elements.</summary>
     public int Length => length;
@@ -834,14 +859,14 @@ internal sealed class SharedArray(KernelBuilder builder, uint variable, int leng
     /// <summary>Element <paramref name="index"/>.</summary>
     public Val this[Val index]
     {
-        get => new(builder, builder.Module.Value(SpirvOp.Load, builder.TypeOf(ScalarKind.Float), builder.SharedElement(variable, index)), ScalarKind.Float);
+        get => new(builder, builder.Module.Value(SpirvOp.Load, builder.TypeOf(ScalarKind.Float), builder.SharedElement(variable, index, storage)), ScalarKind.Float);
         set
         {
             KernelBuilder.Expect(value, ScalarKind.Float);
-            builder.Module.Code(SpirvOp.Store, builder.SharedElement(variable, index), value.Id);
+            builder.Module.Code(SpirvOp.Store, builder.SharedElement(variable, index, storage), value.Id);
         }
     }
 
     /// <summary>A pointer to element <paramref name="index"/> (where a cooperative matrix is stored).</summary>
-    internal uint Pointer(Val index) => builder.SharedElement(variable, index);
+    internal uint Pointer(Val index) => builder.SharedElement(variable, index, storage);
 }

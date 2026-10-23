@@ -83,7 +83,7 @@ internal sealed unsafe partial class VulkanBackend
     private const double TuneBudget = 500;
 
     // Bumped when kernels change what their variants mean, so stored choices of an older version are not used.
-    private const int TuningVersion = 1;
+    private const int TuningVersion = 2;                               // 2: subgroup reductions in the tree's order
 
     private readonly Dictionary<VulkanTuneKey, int> _tuned = [];
 
@@ -365,7 +365,7 @@ internal sealed unsafe partial class VulkanBackend
     // one (their candidates join the measurement, so choices stored without them are measured again) and version of the
     // kernels' variants.
     private string KernelTuningPrefix() =>
-        $"kernels/{TuningKey()}/w{Width}/{(Limits.SubgroupArithmetic ? "subgroups" : "plain")}/{(MatrixShape is { } shape ? $"coop{shape}/" : "")}v{TuningVersion}/";
+        $"kernels/{TuningKey()}/w{Width}/{(Limits.SubgroupReductions ? "subgroups" : "plain")}/{(MatrixShape is { } shape ? $"coop{shape}/" : "")}v{TuningVersion}/";
 
     // Reads the stored kernel choices ("prefix op variant a b c d e f", tab, value, tab, device name). Unreadable files
     // are ignored. Called with _tuned locked.

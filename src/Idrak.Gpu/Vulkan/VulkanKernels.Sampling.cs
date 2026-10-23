@@ -245,7 +245,7 @@ internal static partial class VulkanKernels
                 var total = w.RowSum(candidates, c =>
                 {
                     var v = Candidate(c);
-                    return k.Select(v >= threshold.V, Times(c) * k.Exp(v - max), k.Float(0f));
+                    return k.Select(v >= threshold.V, Times(c) * k.Exp(v - max), k.Float(-0f));
                 });
                 var goal = total * topP;
                 var lo = k.Local(k.Max(max - 40f, threshold.V));
@@ -253,13 +253,11 @@ internal static partial class VulkanKernels
                 k.For(k.Int(0), k.Int(24), 1, _ =>
                 {
                     var mid = (lo.V + hi.V) * 0.5f;
-                    var mass = k.Local(0f);
-                    w.Columns(candidates, c =>
+                    var kept = w.RowSum(candidates, c =>
                     {
                         var v = Candidate(c);
-                        k.If(v >= mid, () => mass.V = mass.V + Times(c) * k.Exp(v - max));
-                    });
-                    var kept = w.Sum(mass.V) >= goal;
+                        return k.Select(v >= mid, Times(c) * k.Exp(v - max), k.Float(-0f));
+                    }) >= goal;
                     lo.V = k.Select(kept, mid, lo.V);
                     hi.V = k.Select(kept, hi.V, mid);
                 });
@@ -491,9 +489,7 @@ internal static partial class VulkanKernels
         void Row(Buf xs, Buf g, Buf ys, Val r, Val epsilon, Val shift, Val perStep)
         {
             var o = r * cols;
-            var squares = k.Local(0f);
-            w.Columns(cols, j => squares.V = k.Fma(xs[o + j], xs[o + j], squares.V));
-            var scale = 1f / k.Sqrt(w.Sum(squares.V) / cols.ToFloat() + epsilon);
+            var scale = 1f / k.Sqrt(w.RowSumOfSquares(cols, j => xs[o + j]) / cols.ToFloat() + epsilon);
             var position = positions[r / perStep % steps].ToInt();
             w.Columns(half, p =>
             {

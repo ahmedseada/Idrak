@@ -166,7 +166,7 @@ internal sealed partial class VulkanBackend
 
         int perWindow = window / chunk, rowsPer = (int)group;
         long rowBytes = ((long)n + VulkanKernels.ColumnsPerWord(format) - 1) / VulkanKernels.ColumnsPerWord(format) * 4;
-        var dispatched = width == Width ? Kernel(kernel) : KernelAt(kernel, width, Limits.SubgroupArithmetic);
+        var dispatched = width == Width ? Kernel(kernel) : KernelAt(kernel, width, Limits.SubgroupReductions);
         var output = splits == 1 ? null : Allocate(splits * rowsPer * n, zeroed: false);
         try
         {
