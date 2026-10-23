@@ -227,6 +227,16 @@ internal static partial class Tests
         }
     }
 
+    private delegate void BpeTextIds(string text, int start, int length, List<int> ids);
+
+    private delegate void BpeTextIdsAt(string text, int start, int length, List<int> ids, bool atStart);
+
+    private delegate void BpeSpanTextIdsAt(ReadOnlySpan<char> segment, string? segmentString, List<int> ids, bool atStart);
+
+    private delegate void BpeSpanIds(ReadOnlySpan<char> text, List<int> ids);
+
+    private delegate void BpeSpanIdsMap(ReadOnlySpan<char> piece, List<int> ids, bool mapBytes);
+
     // Each step of a BPE encode on its own, in bytes a call (the steps EncodeRange takes for a piece the cache holds), and
     // the methods the JIT compiles in a second without calls (others compiling hold back tiering), so a failure names the step.
     private static string BpeStageBytes(IPretrainedTokenizer tokenizer, string line)
@@ -276,6 +286,23 @@ internal static partial class Tests
         var ids = new List<int>(4096);
         int[] some = [1, 2, 3, 4, 5, 6, 7, 8];
         steps.Add($"ids.AddRange(span) {PerCall(() => { ids.Clear(); ids.AddRange(some.AsSpan()); }):F1}");
+        steps.Add($"ContainsAnyInRange(surrogates) {PerCall(() => _ = line.AsSpan().ContainsAnyInRange('\uD800', '\uDFFF')):F1}");
+
+        // Each method of the chain EncodeRange calls, bound to the tokenizer (the code it runs, whatever its tier): the
+        // first that allocates where the one it calls does not holds the allocation.
+        TDelegate Method<TDelegate>(string method) where TDelegate : Delegate =>
+            (TDelegate)Delegate.CreateDelegate(typeof(TDelegate), bpe, typeof(BpeTokenizer).GetMethod(method, System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!);
+        var segments = Method<BpeTextIds>("EncodeSegments");
+        var text = Method<BpeTextIdsAt>("EncodeText");
+        var normalized = Method<BpeSpanTextIdsAt>("EncodeNormalized");
+        var ranges = Method<BpeSpanIds>("EncodeRanges");
+        var encodePiece = Method<BpeSpanIdsMap>("EncodePiece");
+        bool byteLevel = Field<bool>("_byteLevel");
+        steps.Add($"EncodeSegments {PerCall(() => { ids.Clear(); segments(line, 0, line.Length, ids); }):F1}");
+        steps.Add($"EncodeText {PerCall(() => { ids.Clear(); text(line, 0, line.Length, ids, true); }):F1}");
+        steps.Add($"EncodeNormalized {PerCall(() => { ids.Clear(); normalized(piece, null, ids, true); }):F1}");
+        steps.Add($"EncodeRanges {PerCall(() => { ids.Clear(); ranges(piece, ids); }):F1}");
+        steps.Add($"EncodePiece {PerCall(() => { ids.Clear(); encodePiece(piece, ids, byteLevel); }):F1}");
         steps.Add($"the whole EncodeRange {PerCall(() => { ids.Clear(); bpe.EncodeRange(line, 0, line.Length, ids); }):F1}");
         long compiled = System.Runtime.JitInfo.GetCompiledMethodCount();
         Thread.Sleep(1000);
