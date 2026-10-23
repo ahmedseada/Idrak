@@ -47,7 +47,7 @@ internal sealed partial class VulkanBackend
     public override void SampleRowsKernel(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
         int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
     {
-        if (!Fit(logits, ids, stats, step))
+        if (!Fit(logits, ids, stats, step) || vocabulary > VulkanKernels.MaxSampledVocabulary)
         {
             base.SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
             return;
