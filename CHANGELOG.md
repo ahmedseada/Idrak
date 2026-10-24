@@ -1,5 +1,96 @@
 # Changelog
 
+## 0.4.1 (2026-10-24)
+
+Adds to 0.4.0 without breaking it: fine-tuning Whisper on your own speech (new), live transcription, and an audio
+processing pipeline as images have. Code built against 0.4.0 compiles unchanged.
+
+**Fine-tuning Whisper (plan 29, new)**
+
+- `WhisperRecognizer` (`Idrak.Audio.Plugins`) is an `ISequenceSpeechModel`, so `SpeechTrainer` fine-tunes it with
+  the "seq2seq" objective as transformers trains `WhisperForConditionalGeneration`. The labels are the prompt's
+  language, task and `<|notimestamps|>` tokens, then the text's. The encoder reads the 30 s segment transcription
+  reads. The loss and every trained gradient match transformers' within 1e-4 on the test model. The encoder's
+  sinusoidal positions stay fixed, as in OpenAI's Whisper.
+- `WhisperRecognizer.Save` (each training checkpoint) writes a folder that transformers and `SpeechModels.Load`
+  both read: float32 weights under transformers' names, and `generation_config.json` with the language and task.
+- `SpeechModelOptions.Language` and `.Task`: the language and task the labels name, else `generation_config.json`'s
+  `language` and `task`. A multilingual checkpoint with no language refuses to make labels and names where to give one.
+- Training needs float32 weights: a model loaded with its float16 or bfloat16 weights kept as stored refuses to give
+  its network, naming `SpeechModelOptions.Weights`.
+- `SpeechTrainer` leaves out clips longer than the features' segment and notes them; such a clip's sound was cut while
+  its transcript stayed whole. Clips padded to a segment count as the whole segment in a batch, so an automatic batch
+  of short Whisper clips no longer overfills the device. Models with unpadded features batch as before.
+- `idrak pretrain` takes a Hugging Face id as well as a folder, and `--language` and `--task` for a speech recognizer.
+  Speech training loads its model in float32.
+- `SafeTensorsWriter.Write` with values produced one tensor at a time is public: saving a large model never holds all
+  its weights at once.
+
+**Live transcription (plan 30)**
+
+- `idrak transcribe MODEL --live` transcribes the microphone as you speak. `--live -` reads a recorder's pipe (a WAV
+  header, or raw `s16le` or `f32le`), and `--live FILE` streams a recording through the same path. The live line
+  shows the words heard so far, the uncertain ones last. Each finished segment is printed with its times. Ctrl+C or
+  `--timeout` finishes the last segment, then `-o` writes the transcript (text, JSON, SRT or WebVTT).
+- New options: `--list-inputs`, `--capture`, `--input`, `--input-rate`, `--input-channels`, `--input-format`,
+  `--step`, `--window`, `--silence`, `--silence-db`, `--silence-floor-db`, `--min-speech`, `--agreement`, `--commit`,
+  `--every-step`.
+- `Idrak.Audio`: `IAudioCapture`, `IAudioInput` and the `AudioCaptures` registry, with "winmm" (Windows' waveIn) and
+  "alsa" (Linux's libasound) built in. Each loads the system's own audio library when first used; no native files
+  are shipped. There is no macOS capture yet: pipe the sound in from ffmpeg.
+- `Idrak.Audio`: `PcmStreamInput` and `PcmSampleFormat`; `LiveTranscriber` over any speech recognizer, with
+  `LiveTranscriptionOptions` and `LiveTranscript`. The open segment is read again every step, and a commit policy
+  decides which words are final (`ILiveCommitPolicy`, `LiveCommitPolicies`, "agreement" built in). A segment ends at
+  the first pause after speech wherever it falls, at the window or at the end; it needs `MinSpeechSeconds`
+  (`--min-speech`, 0.3 s) of speech before it is read, so a click, a breath or the stop key alone is not transcribed;
+  quiet is never transcribed; the input is read on its own thread.
+
+**Audio processing (plan 31)**
+
+- `Idrak.Audio`: `IAudioProcessor` and the `AudioProcessors` registry, `IAudioStage`, `AudioProcessorStep`,
+  `AudioProcessorParameter` and `AudioPipeline`, the audio counterpart of `ImageTransformPipeline`. A pipeline is
+  text such as `highpass=80, dehum=50, denoise-live, presence=3, agc`, or JSON. `Apply` cleans a recording and keeps
+  it aligned with the input (a stage's look-ahead is taken off, so the length is kept). `Open` runs it block by block,
+  giving the same samples. `Wrap(IAudioInput)` cleans live sound and refuses a step that needs the whole recording,
+  naming its live alternative. A processor declares its inputs (kind, range, unit, default), and its steps are
+  checked from them; anyone registers one with `AudioProcessors.Register`.
+- Built in, 30 processors, each checked against a reference (scipy, pyloudnorm, or its own equations) and giving the
+  same samples block by block as whole:
+  - cleaning: `highpass` (with `order`), `denoise`, `trim`, `normalize`;
+  - filters: `gain`, `dc`, `lowpass`, `bandpass`, `notch`, `dehum`, `eq`, `lowshelf`, `highshelf`, `presence` (speech
+    clarity), `preemphasis`, `mono`, `resample`;
+  - dynamics: `gate`, `compress`, `limit` (look-ahead, never over its ceiling), `agc`, `loudness-live`, `loudness`
+    (ITU-R BS.1770 / EBU R128 integrated), `peaknorm`;
+  - noise and repair: `denoise-live`, `spectral-gate`, `declick`, `declip`, `deess`, `dereverb`.
+- `AudioCleaners` and the cleaning stages now run through the processors, with the same samples as before.
+- `Idrak.Audio.Plugins`: `rnnoise`, xiph's RNNoise (v0.1.1, BSD-3) ported to C#. Its output equals the C build's
+  sample for sample. The model is read from RNNoise's model file (`model=PATH`, `IDRAK_RNNOISE_MODEL`, or the cache);
+  sound at another rate is resampled to 48 kHz and back inside the stage.
+- `SpeechTrainingOptions.Processing`: a pipeline run on every clip after `Cleaning`, kept in the options' JSON and in
+  checkpoints.
+- Command line: `idrak audio process IN -o OUT --pipeline P` (`--block-seconds` runs it as live sound goes) and
+  `idrak audio processors [NAME...]`. `transcribe --audio-clean P` works for files and `--live` (`IDRAK_AUDIO_CLEAN`
+  is the default), and `speak --audio-clean P` cleans the synthesized sound. `--clean` in `pretrain`, `voice train`
+  and `data audio` takes a pipeline; a list of the old stage names works as before.
+
+**Faster**
+
+- One real FFT for the host STFT (mixed radix, nothing allocated per transform): `Stft.PowerOnHost` and
+  `ComplexOnHost` are 4 to 6 times faster warm. `Stft.Inverse` runs its overlap-add on every core with the same
+  results. The STFT calls no longer copy the spectra (21 MiB down to 1.9 MiB per call on 30 s of 16 kHz). This
+  speeds up Whisper's host features, Griffin-Lim, `denoise` and the spectral processors.
+
+**Changed**
+
+- A Whisper checkpoint whose `generation_config.json` names a language now transcribes in it when the request names
+  none, as transformers does; before, it detected the language. `TranscriptionOptions.Language` still decides.
+
+**Fixed**
+
+- `Stft` failed on a window whose size is a prime number.
+- A simulated cluster run (`idrak cluster sim` / `cluster replay`) no longer fails on another rank with "Cannot
+  access a closed Stream" when rank 0 finishes and closes its run log first.
+
 ## 0.4.0 (2026-10-23)
 
 A breaking release: `Idrak.Abstraction` holds every shared contract of the library with its default implementation
