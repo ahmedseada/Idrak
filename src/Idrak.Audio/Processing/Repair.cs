@@ -79,144 +79,9 @@ internal static class RepairProcessors
     };
 }
 
-// A real FFT of a power-of-two size N: the complex FFT of N / 2 points (iterative radix 2, decimation in time, its
-// twiddles worked out once) of the even samples plus i times the odd ones, then split into the N / 2 + 1 bins
-// (numpy's rfft and irfft, in double). Its scratch is its own: one per stage.
-internal sealed class RealFft
-{
-    private readonly int _size, _half;
-    private readonly int[] _reverse;
-    private readonly double[] _cos, _sin;                                       // e^(-2πi j / (N/2)), j < N / 4
-    private readonly double[] _splitCos, _splitSin;                             // e^(-2πi k / N), k ≤ N / 2
-    private readonly double[] _re, _im;
-
-    public RealFft(int size)
-    {
-        if (size < 4 || (size & (size - 1)) != 0)
-        {
-            throw new ArgumentException($"The real FFT takes a power of two of at least 4 points, not {size}.", nameof(size));
-        }
-
-        (_size, _half) = (size, size / 2);
-        _reverse = new int[_half];
-        int bits = System.Numerics.BitOperations.Log2((uint)_half);
-        for (int i = 0; i < _half; i++)
-        {
-            int r = 0;
-            for (int b = 0; b < bits; b++)
-            {
-                r |= ((i >> b) & 1) << (bits - 1 - b);
-            }
-
-            _reverse[i] = r;
-        }
-
-        _cos = new double[Math.Max(1, _half / 2)];
-        _sin = new double[_cos.Length];
-        for (int j = 0; j < _half / 2; j++)
-        {
-            _cos[j] = Math.Cos(2 * Math.PI * j / _half);
-            _sin[j] = -Math.Sin(2 * Math.PI * j / _half);
-        }
-
-        _splitCos = new double[_half + 1];
-        _splitSin = new double[_half + 1];
-        for (int k = 0; k <= _half; k++)
-        {
-            _splitCos[k] = Math.Cos(2 * Math.PI * k / size);
-            _splitSin[k] = -Math.Sin(2 * Math.PI * k / size);
-        }
-
-        _re = new double[_half];
-        _im = new double[_half];
-    }
-
-    public int Bins => _half + 1;
-
-    // X = rfft(x): x has N samples, real and imaginary N / 2 + 1 (the imaginary parts at 0 Hz and N / 2 exactly 0).
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    public void Forward(ReadOnlySpan<double> x, Span<double> real, Span<double> imaginary)
-    {
-        int half = _half;
-        for (int i = 0; i < half; i++)
-        {
-            int r = _reverse[i];
-            _re[r] = x[2 * i];
-            _im[r] = x[2 * i + 1];
-        }
-
-        Butterflies();
-        for (int k = 0; k <= half; k++)
-        {
-            int a = k == half ? 0 : k, b = k == 0 ? 0 : half - k;
-            double er = (_re[a] + _re[b]) / 2, ei = (_im[a] - _im[b]) / 2;
-            double oddRe = (_im[a] + _im[b]) / 2, oddIm = -(_re[a] - _re[b]) / 2;
-            double wr = _splitCos[k], wi = _splitSin[k];
-            real[k] = er + (wr * oddRe - wi * oddIm);
-            imaginary[k] = ei + (wr * oddIm + wi * oddRe);
-        }
-
-        imaginary[0] = 0;
-        imaginary[half] = 0;
-    }
-
-    // x = irfft(X) of N points (the imaginary parts at 0 Hz and N / 2 left out, as numpy's irfft does).
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    public void Inverse(ReadOnlySpan<double> real, ReadOnlySpan<double> imaginary, Span<double> x)
-    {
-        int half = _half;
-        for (int k = 0; k < half; k++)
-        {
-            int b = half - k;
-            double xr = real[k], xi = k == 0 ? 0 : imaginary[k];
-            double cr = real[b], ci = b == half ? 0 : -imaginary[b];             // conj(X[N/2 - k])
-            double er = (xr + cr) / 2, ei = (xi + ci) / 2;
-            double dr = (xr - cr) / 2, di = (xi - ci) / 2;
-            double wr = _splitCos[k], wi = -_splitSin[k];                       // W^-k = e^(+2πi k / N)
-            double oddRe = dr * wr - di * wi, oddIm = dr * wi + di * wr;
-            // Z = E + iO, conjugated for the inverse through the forward butterflies.
-            int r = _reverse[k];
-            _re[r] = er - oddIm;
-            _im[r] = -(ei + oddRe);
-        }
-
-        Butterflies();
-        double scale = 1.0 / half;
-        for (int i = 0; i < half; i++)
-        {
-            x[2 * i] = _re[i] * scale;
-            x[2 * i + 1] = -_im[i] * scale;
-        }
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-    private void Butterflies()
-    {
-        var re = _re.AsSpan(0, _half);
-        var im = _im.AsSpan(0, _half);
-        for (int length = 2; length <= _half; length <<= 1)
-        {
-            int halfLength = length / 2, step = _half / length;
-            for (int i = 0; i < _half; i += length)
-            {
-                for (int k = 0; k < halfLength; k++)
-                {
-                    double wr = _cos[k * step], wi = _sin[k * step];
-                    int a = i + k, b = a + halfLength;
-                    double tr = re[b] * wr - im[b] * wi, ti = re[b] * wi + im[b] * wr;
-                    re[b] = re[a] - tr;
-                    im[b] = im[a] - ti;
-                    re[a] += tr;
-                    im[a] += ti;
-                }
-            }
-        }
-    }
-}
-
 // The streaming STFT the live spectral stages share (denoise-live, dereverb), each channel on its own. Frame k holds the
 // samples (k + 1)H - N to (k + 1)H (N a power of two, H = N / 4; zeros before the start), windowed by a periodic Hann
-// (0.5 - 0.5 cos(2π n / N)); its spectrum (RealFft) goes through the stage's frame function, back, windowed again and
+// (0.5 - 0.5 cos(2π n / N)); its spectrum (the library's Fft) goes through the stage's frame function, back, windowed again and
 // overlap-added in double; a sample, once the last frame over it is in, is that sum divided by the squares of the four
 // windows over it (1.5 for a Hann at a quarter hop). Frame k is worked out when its last sample comes in, so a sample
 // is ready N - 1 samples after it came in: the output lags by N - 1 (the stage's Latency, silence first) and Flush runs
@@ -226,11 +91,11 @@ internal sealed class SpectralStream
 {
     private readonly int _size, _hop, _bins, _channels;
     private readonly double[] _window, _norm;
-    private readonly RealFft _fft;
+    private readonly Fft _fft;
     private readonly float[] _input;                                            // per channel, the last N samples (a ring)
     private readonly double[] _sum;                                             // per channel, the overlap-add (a ring of N)
     private readonly float[] _ready;                                            // per channel, the H samples the last frame finished
-    private readonly double[] _frame, _real, _imaginary;
+    private readonly double[] _frame, _real, _imaginary, _scratch;
     private readonly FrameOf _process;
     private long _taken;                                                        // samples taken per channel so far
     private long _end = long.MaxValue;                                          // the recording's length, once flushing
@@ -238,7 +103,7 @@ internal sealed class SpectralStream
     public SpectralStream(int size, int sampleRate, int channels, FrameOf process)
     {
         (_size, _hop, _channels, _process, SampleRate) = (size, size / 4, channels, process, sampleRate);
-        _fft = new RealFft(size);
+        _fft = Fft.For(size);
         _bins = _fft.Bins;
         _window = new double[size];
         for (int n = 0; n < size; n++)
@@ -264,6 +129,7 @@ internal sealed class SpectralStream
         _frame = new double[size];
         _real = new double[_bins];
         _imaginary = new double[_bins];
+        _scratch = new double[_fft.ScratchLength];
     }
 
     // One frame's spectrum of channel `channel`, changed in place; `inside` when the frame holds only the recording.
@@ -329,9 +195,9 @@ internal sealed class SpectralStream
             _frame[n] = input[k < _size ? k : k - _size] * _window[n];
         }
 
-        _fft.Forward(_frame, _real, _imaginary);
+        _fft.Forward(_frame, _real, _imaginary, _scratch);
         _process(c, _real, _imaginary, t + 1 - _size >= 0 && t + 1 <= _end);
-        _fft.Inverse(_real, _imaginary, _frame);
+        _fft.Inverse(_real, _imaginary, _frame, _scratch);
         for (int n = 0; n < _size; n++)
         {
             int k = start + n;

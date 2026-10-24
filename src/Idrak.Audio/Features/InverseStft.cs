@@ -29,34 +29,26 @@ public static partial class Stft
 
         var padded = Padded(samples, options);
         var window = Window(options.Window, size);
-        var plan = Plans.GetOrAdd(size, FftPlan.Create);
+        var fft = Fft.For(size);
         var outReal = GC.AllocateUninitializedArray<float>(frames * bins);
         var outImaginary = GC.AllocateUninitializedArray<float>(frames * bins);
         HostParallel.For(frames, 64, (first, last) =>
         {
-            var scratch = ArrayPool<double>.Shared.Rent(4 * size);
+            var scratch = ArrayPool<double>.Shared.Rent(fft.ScratchLength + 2 * bins);   // once per block of frames
             try
             {
-                var re = scratch.AsSpan(0, size);
-                var im = scratch.AsSpan(size, size);
-                var outRe = scratch.AsSpan(2 * size, size);
-                var outIm = scratch.AsSpan(3 * size, size);
+                var work = scratch.AsSpan(0, fft.ScratchLength);
+                var re = scratch.AsSpan(fft.ScratchLength, bins);
+                var im = scratch.AsSpan(fft.ScratchLength + bins, bins);
                 for (int f = first; f < last; f++)
                 {
-                    int at = f * hop;
-                    for (int n = 0; n < size; n++)
-                    {
-                        re[n] = window[n] * padded[at + n];
-                        im[n] = 0;
-                    }
-
-                    plan.Transform(re, im, outRe, outIm);
+                    fft.Forward(padded.AsSpan(f * hop, size), window, re, im, work);
                     var rowRe = outReal.AsSpan(f * bins, bins);
                     var rowIm = outImaginary.AsSpan(f * bins, bins);
                     for (int k = 0; k < bins; k++)
                     {
-                        rowRe[k] = (float)outRe[k];
-                        rowIm[k] = (float)outIm[k];
+                        rowRe[k] = (float)re[k];
+                        rowIm[k] = (float)im[k];
                     }
                 }
             }
@@ -101,41 +93,25 @@ public static partial class Stft
         }
 
         var window = Window(options.Window, size);
-        var plan = Plans.GetOrAdd(size, FftPlan.Create);
+        var fft = Fft.For(size);
         var realCopy = real[..(frames * bins)].ToArray();                        // the spans cannot cross into the parallel body
         var imaginaryCopy = imaginary[..(frames * bins)].ToArray();
         var windowed = GC.AllocateUninitializedArray<float>(frames * size);     // each frame's windowed samples, [frames, size]
         HostParallel.For(frames, 64, (first, last) =>
         {
-            var scratch = ArrayPool<double>.Shared.Rent(4 * size);
+            var scratch = ArrayPool<double>.Shared.Rent(fft.ScratchLength + size);   // once per block of frames
             try
             {
-                var re = scratch.AsSpan(0, size);
-                var im = scratch.AsSpan(size, size);
-                var outRe = scratch.AsSpan(2 * size, size);
-                var outIm = scratch.AsSpan(3 * size, size);
+                var work = scratch.AsSpan(0, fft.ScratchLength);
+                var x = scratch.AsSpan(fft.ScratchLength, size);
                 for (int f = first; f < last; f++)
                 {
-                    // The full conjugate-symmetric spectrum, conjugated: its forward transform, conjugated and scaled by 1 / N, is the inverse.
-                    var rowRe = realCopy.AsSpan(f * bins, bins);
-                    var rowIm = imaginaryCopy.AsSpan(f * bins, bins);
-                    for (int k = 0; k < bins; k++)
-                    {
-                        re[k] = rowRe[k];
-                        im[k] = -rowIm[k];
-                    }
-
-                    for (int k = bins; k < size; k++)
-                    {
-                        re[k] = rowRe[size - k];
-                        im[k] = rowIm[size - k];
-                    }
-
-                    plan.Transform(re, im, outRe, outIm);
+                    // The one-sided spectrum back to its samples (irfft: the parts at 0 Hz and N / 2 taken as real).
+                    fft.Inverse(realCopy.AsSpan(f * bins, bins), imaginaryCopy.AsSpan(f * bins, bins), x, work);
                     var frame = windowed.AsSpan(f * size, size);
                     for (int n = 0; n < size; n++)
                     {
-                        frame[n] = (float)(outRe[n] / size * window[n]);
+                        frame[n] = (float)(x[n] * window[n]);
                     }
                 }
             }

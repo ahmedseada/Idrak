@@ -9,14 +9,13 @@ namespace Idrak.Audio;
 /// <summary>
 /// The short-time Fourier transform of sound as power or magnitude spectra, [frames, bins] (bins = window / 2 + 1), as
 /// <c>torch.stft</c> computes it (a periodic window, centred frames with reflect padding, one-sided). Two computations
-/// give the same values: the host's (a mixed-radix FFT, frames in parallel) and the composed device path (the frames
+/// give the same values: the host's (the library's real FFT, frames in parallel) and the composed device path (the frames
 /// unfolded by <c>Im2Col</c>, one matrix product with the windowed cosine and sine basis, the halves squared and added:
 /// every step an operation each backend has, so it runs on every device with no kernel of its own).
 /// </summary>
 public static partial class Stft
 {
     private static readonly ConcurrentDictionary<(Device Device, int Window, string Name), Tensor> Bases = new();
-    private static readonly ConcurrentDictionary<int, FftPlan> Plans = new();
 
     /// <summary>The frames a signal of <paramref name="samples"/> samples gives (reflect padding when centred).</summary>
     public static int FramesFor(long samples, AudioFeatureOptions options)
@@ -85,31 +84,23 @@ public static partial class Stft
 
         var padded = Padded(samples, options);
         var window = Window(options.Window, size);
-        var plan = Plans.GetOrAdd(size, FftPlan.Create);
+        var fft = Fft.For(size);
         var target = GC.AllocateUninitializedArray<float>(frames * bins);
         HostParallel.For(frames, 64, (first, last) =>
         {
-            var scratch = ArrayPool<double>.Shared.Rent(4 * size);
+            var scratch = ArrayPool<double>.Shared.Rent(fft.ScratchLength + 2 * bins);   // once per block of frames
             try
             {
-                var re = scratch.AsSpan(0, size);
-                var im = scratch.AsSpan(size, size);
-                var outRe = scratch.AsSpan(2 * size, size);
-                var outIm = scratch.AsSpan(3 * size, size);
+                var work = scratch.AsSpan(0, fft.ScratchLength);
+                var re = scratch.AsSpan(fft.ScratchLength, bins);
+                var im = scratch.AsSpan(fft.ScratchLength + bins, bins);
                 for (int f = first; f < last; f++)
                 {
-                    int at = f * hop;
-                    for (int n = 0; n < size; n++)
-                    {
-                        re[n] = window[n] * padded[at + n];                      // the window applied as the frame is copied (rule 73)
-                        im[n] = 0;
-                    }
-
-                    plan.Transform(re, im, outRe, outIm);
+                    fft.Forward(padded.AsSpan(f * hop, size), window, re, im, work);   // the window applied as the frame is read (rule 73)
                     var row = target.AsSpan(f * bins, bins);
                     for (int k = 0; k < bins; k++)
                     {
-                        row[k] = (float)(outRe[k] * outRe[k] + outIm[k] * outIm[k]);
+                        row[k] = (float)(re[k] * re[k] + im[k] * im[k]);
                     }
                 }
             }
@@ -176,118 +167,5 @@ public static partial class Stft
             t.Load(values);
             return t;
         });
-    }
-
-    // A complex FFT of one size, mixed radix (2, 3, 5; any other prime factor by a direct sum), decimation in time,
-    // butterflies in a fixed order: the same bits every run.
-    private sealed class FftPlan
-    {
-        private readonly int _size;
-        private readonly int[] _factors;
-        private readonly double[] _cos, _sin;                                    // e^(-2πi j / size), j < size
-
-        private FftPlan(int size, int[] factors)
-        {
-            _size = size;
-            _factors = factors;
-            _cos = new double[size];
-            _sin = new double[size];
-            for (int j = 0; j < size; j++)
-            {
-                _cos[j] = Math.Cos(2 * Math.PI * j / size);
-                _sin[j] = -Math.Sin(2 * Math.PI * j / size);
-            }
-        }
-
-        public static FftPlan Create(int size)
-        {
-            var factors = new List<int>();
-            int rest = size;
-            foreach (int radix in new[] { 4, 2, 3, 5 })
-            {
-                while (rest % radix == 0)
-                {
-                    factors.Add(radix);
-                    rest /= radix;
-                }
-            }
-
-            for (int p = 7; rest > 1; p += 2)
-            {
-                while (rest % p == 0)
-                {
-                    factors.Add(p);
-                    rest /= p;
-                }
-            }
-
-            return new FftPlan(size, [.. factors]);
-        }
-
-        /// <summary>X = FFT(x): the outputs into <paramref name="outRe"/> and <paramref name="outIm"/>.</summary>
-        public void Transform(ReadOnlySpan<double> re, ReadOnlySpan<double> im, Span<double> outRe, Span<double> outIm)
-        {
-            var scratch = ArrayPool<double>.Shared.Rent(2 * _size);
-            try
-            {
-                Recurse(re, im, 0, 1, outRe, outIm, _size, 0, scratch.AsSpan(0, _size), scratch.AsSpan(_size, _size));
-            }
-            finally
-            {
-                ArrayPool<double>.Shared.Return(scratch);
-            }
-        }
-
-        // The n-point transform of x[offset + k·stride] into y[0 .. n): the r sub-transforms of n / r points, then the
-        // r-point butterflies combining them with the twiddles of the full size (W_size^(j · size / n)).
-        private void Recurse(ReadOnlySpan<double> re, ReadOnlySpan<double> im, int offset, int stride, Span<double> yRe, Span<double> yIm, int n, int depth,
-            Span<double> tRe, Span<double> tIm)
-        {
-            if (n == 1)
-            {
-                yRe[0] = re[offset];
-                yIm[0] = im[offset];
-                return;
-            }
-
-            int r = _factors[depth], m = n / r;
-            for (int q = 0; q < r; q++)
-            {
-                Recurse(re, im, offset + q * stride, stride * r, yRe.Slice(q * m, m), yIm.Slice(q * m, m), m, depth + 1, tRe, tIm);
-            }
-
-            // y[q · m + k] holds sub-transform q; X[k + s · m] = Σ_q W_n^(q k) W_r^(q s) y[q · m + k].
-            int step = _size / n;                                                // W_n^j = W_size^(j · step)
-            for (int k = 0; k < m; k++)
-            {
-                for (int q = 0; q < r; q++)
-                {
-                    int tw = (q * k * step) % _size;
-                    double a = yRe[q * m + k], b = yIm[q * m + k];
-                    tRe[q] = a * _cos[tw] - b * _sin[tw];
-                    tIm[q] = a * _sin[tw] + b * _cos[tw];
-                }
-
-                for (int s = 0; s < r; s++)
-                {
-                    double sumRe = 0, sumIm = 0;
-                    for (int q = 0; q < r; q++)
-                    {
-                        int tw = (q * s * m * step) % _size;                     // W_r^(q s) = W_size^(q s · size / r)
-                        sumRe += tRe[q] * _cos[tw] - tIm[q] * _sin[tw];
-                        sumIm += tRe[q] * _sin[tw] + tIm[q] * _cos[tw];
-                    }
-
-                    tRe[r + s] = sumRe;
-                    tIm[r + s] = sumIm;
-                }
-
-                for (int s = 0; s < r; s++)
-                {
-                    yRe[k + s * m] = tRe[r + s];
-                    yIm[k + s * m] = tIm[r + s];
-                }
-            }
-        }
     }
 }
