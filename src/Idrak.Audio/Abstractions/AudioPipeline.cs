@@ -180,9 +180,12 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
     }
 
     /// <summary>
-    /// The recording after every step, in order; <paramref name="audio"/> is not changed (the result is
-    /// <paramref name="audio"/> itself when no step changes it). Consecutive live steps run as one chain of stages over
-    /// one copy of the samples, written in place; a whole-recording step runs its <see cref="IAudioProcessor.Apply"/>.
+    /// The recording after every step, in order, aligned with it: the stages' look-ahead (<see cref="IAudioStage.Latency"/>)
+    /// is taken off, so a pipeline that keeps the length keeps it exactly. <paramref name="audio"/> is not changed (the
+    /// result is <paramref name="audio"/> itself when no step changes it). Consecutive live steps run as one chain of
+    /// stages over one copy of the samples, written in place; a whole-recording step runs its
+    /// <see cref="IAudioProcessor.Apply"/>. The blocks of <see cref="Open"/> give the same samples, shifted by its
+    /// <see cref="IAudioStage.Latency"/>.
     /// </summary>
     /// <exception cref="ArgumentException">A step cannot run at the recording's rate or channels.</exception>
     public AudioData Apply(AudioData audio)
@@ -209,7 +212,7 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
             {
                 // The samples are written in place: copied once while they are still the caller's.
                 var owned = ReferenceEquals(current.Samples, audio.Samples) ? AudioStages.Copy(current) : current;
-                current = AudioStages.Run(stage, owned);
+                current = AudioStages.Run(stage, owned, stage.Latency);
             }
 
             i = end;
@@ -261,10 +264,13 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
 
     // Steps opened one after the other, each on what the one before gives. A block goes through every stage; once one
     // gives nothing (a whole-recording stage holding the sound) the rest are not called. Flushing passes each stage's
-    // tail through the stages after it, then flushes those.
+    // tail through the stages after it, then flushes those. A whole-recording stage is given its input aligned: the
+    // shift of the live stages before it (their Latency, added in seconds) is dropped from the front, as Apply drops
+    // it, so the stage reads the very samples Apply gives it; the pipeline's Latency is the shift after the last one.
     private sealed class PipelineStage : IAudioStage
     {
         private readonly IAudioStage[] _stages;
+        private readonly int[] _drop;                                           // samples still to drop from the front of stage i's input
         private readonly int _inputRate, _inputChannels;
         private readonly AudioData _empty;
 
@@ -272,18 +278,32 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
         {
             (_inputRate, _inputChannels) = (sampleRate, channels);
             var stages = new List<IAudioStage>();
+            var drops = new List<int>();
             try
             {
-                double seconds = 0;
+                double shift = 0, delay = 0;
                 foreach (var step in steps)
                 {
-                    var stage = AudioProcessors.Get(step.Name).Open(step, sampleRate, channels);
+                    var processor = AudioProcessors.Get(step.Name);
+                    if (!processor.Live)
+                    {
+                        drops.Add((int)Math.Round(shift * sampleRate));
+                        shift = 0;
+                    }
+                    else
+                    {
+                        drops.Add(0);
+                    }
+
+                    var stage = processor.Open(step, sampleRate, channels);
                     stages.Add(stage);
                     (sampleRate, channels) = (stage.SampleRate, stage.Channels);
-                    seconds += (double)stage.Latency / sampleRate;
+                    shift += (double)stage.Latency / sampleRate;
+                    delay += (double)stage.Delay / sampleRate;
                 }
 
-                Latency = (int)Math.Round(seconds * sampleRate);
+                Latency = (int)Math.Round(shift * sampleRate);
+                Delay = Math.Max(Latency, (int)Math.Round(delay * sampleRate));
             }
             catch
             {
@@ -292,6 +312,7 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
             }
 
             _stages = [.. stages];
+            _drop = [.. drops];
             (SampleRate, Channels) = (sampleRate, channels);
             _empty = new AudioData([], channels, sampleRate);
         }
@@ -301,6 +322,8 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
         public int Channels { get; }
 
         public int Latency { get; }
+
+        public int Delay { get; }
 
         public AudioData Process(AudioData block)
         {
@@ -312,7 +335,7 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
 
             for (int i = 0; i < _stages.Length && block.Length > 0; i++)
             {
-                block = _stages[i].Process(block);
+                block = Into(i, block);
             }
 
             return block.Length > 0 ? block : _empty;
@@ -323,11 +346,29 @@ public sealed class AudioPipeline : IEquatable<AudioPipeline>
             var tail = _empty;
             for (int i = 0; i < _stages.Length; i++)
             {
-                var passed = tail.Length > 0 ? _stages[i].Process(tail) : tail;
+                var passed = tail.Length > 0 ? Into(i, tail) : tail;
                 tail = AudioStages.Concat(passed, _stages[i].Flush());
             }
 
             return tail.Length > 0 ? tail : _empty;
+        }
+
+        // The block through stage i, the front it still drops taken off first (a whole-recording stage's aligned input).
+        private AudioData Into(int i, AudioData block)
+        {
+            if (_drop[i] > 0)
+            {
+                int cut = Math.Min(_drop[i], block.Length);
+                _drop[i] -= cut;
+                if (cut == block.Length)
+                {
+                    return new AudioData([], block.Channels, block.SampleRate);
+                }
+
+                block = block.Slice(cut, block.Length - cut);
+            }
+
+            return _stages[i].Process(block);
         }
 
         public void Dispose()
@@ -379,28 +420,31 @@ internal static class AudioStages
     // A copy of the samples, for a stage that writes in place.
     public static AudioData Copy(AudioData audio) => new(audio.Samples.AsSpan().ToArray(), audio.Channels, audio.SampleRate);
 
-    // A whole recording (the stage's to write) through a stage and its flush.
-    public static AudioData Run(IAudioStage stage, AudioData owned) => Concat(stage.Process(owned), stage.Flush());
+    // A whole recording (the stage's to write) through a stage and its flush, its first `skip` samples (the stage's
+    // shift) left out.
+    public static AudioData Run(IAudioStage stage, AudioData owned, int skip) => Concat(stage.Process(owned), stage.Flush(), skip);
 
-    // a then b (the same rate and channels), planar; either alone when the other is empty.
-    public static AudioData Concat(AudioData a, AudioData b)
+    // a then b (the same rate and channels), planar, the first `skip` samples left out; one copy at most (none when one
+    // is empty and nothing is skipped).
+    public static AudioData Concat(AudioData a, AudioData b, int skip = 0)
     {
-        if (b.Length == 0)
+        if (skip == 0 && b.Length == 0)
         {
             return a;
         }
 
-        if (a.Length == 0)
+        if (skip == 0 && a.Length == 0)
         {
             return b;
         }
 
-        int channels = a.Channels, length = a.Length + b.Length;
+        int channels = a.Channels, fromA = Math.Min(skip, a.Length), fromB = Math.Min(skip - fromA, b.Length);
+        int restA = a.Length - fromA, restB = b.Length - fromB, length = restA + restB;
         var samples = GC.AllocateUninitializedArray<float>(channels * length);
         for (int c = 0; c < channels; c++)
         {
-            a.Channel(c).CopyTo(samples.AsSpan(c * length, a.Length));
-            b.Channel(c).CopyTo(samples.AsSpan(c * length + a.Length, b.Length));
+            a.Channel(c)[fromA..].CopyTo(samples.AsSpan(c * length, restA));
+            b.Channel(c)[fromB..].CopyTo(samples.AsSpan(c * length + restA, restB));
         }
 
         return new AudioData(samples, channels, a.SampleRate);

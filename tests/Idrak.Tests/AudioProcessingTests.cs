@@ -16,7 +16,7 @@ internal static partial class Tests
     [
         ("audio processing: the registry names highpass (live), denoise, trim and normalize (whole recording) as the library's; an unknown name is refused naming the registered ones and AudioProcessors.Register, a name with a comma, '=' or a space is refused; an app's processors, one implementing only Open (live) and one only Apply (whole recording), register, run in a pipeline and unregister", AudioProcessingRegistry),
         ("audio processing: pipeline text: values and space-separated options round-trip through text and JSON (strings and objects), an option after a comma joins the step before it, none or empty is the empty pipeline, Then and Contains; refused naming the cause: an unknown processor or option, a value that is not a number, one out of range (with its range and unit), a value to a processor that takes none", AudioProcessingText),
-        ("audio processing: a pipeline run block by block (blocks of 1, 7, 160 and 4,096 samples, mono and stereo, a stage with latency, whole-recording steps flushed at the end) gives Apply's samples bit for bit; Apply leaves its input unchanged; a live pipeline wraps an IAudioInput and gives the same samples; Wrap refuses a whole-recording step naming it; a block of another rate is refused", AudioProcessingBlocks),
+        ("audio processing: a pipeline run block by block (blocks of 1, 7, 160 and 4,096 samples, mono and stereo, a stage with latency, whole-recording steps flushed at the end) gives Apply's samples bit for bit once its latency is taken off; Apply keeps the length and leaves its input unchanged; a live pipeline wraps an IAudioInput and gives the same samples; Wrap refuses a whole-recording step naming it; a block of another rate is refused", AudioProcessingBlocks),
         ("audio processing: the cleaners run through their processors give the samples of the cleaners before plan 31 bit for bit (each stage and the chain highpass, denoise, trim, normalize, mono and stereo, a tone in bursts under noise with a DC offset), through AudioCleaners and through the pipeline text", AudioProcessingCleanersUnchanged),
     ];
 
@@ -123,6 +123,7 @@ internal static partial class Tests
                     var whole = pipeline.Apply(sound);
                     Check(ProcessingSame(sound.Samples, before), $"{text}: Apply leaves its input unchanged");
                     Check(!ReferenceEquals(whole.Samples, sound.Samples), $"{text}: Apply gives new samples");
+                    Check(text.Contains("trim", StringComparison.Ordinal) || whole.Length == sound.Length, $"{text}: Apply takes the look-ahead off, so the length is kept ({whole.Length} of {sound.Length})");
                     foreach (int size in new[] { 1, 7, 160, 4096 })
                     {
                         using var stage = pipeline.Open(sound.SampleRate, channels);
@@ -133,15 +134,15 @@ internal static partial class Tests
                         }
 
                         pieces.Add(stage.Flush());
-                        var joined = ProcessingJoin(pieces, stage.Channels, stage.SampleRate);
+                        var joined = ProcessingAligned(ProcessingJoin(pieces, stage.Channels, stage.SampleRate), stage.Latency);
                         Check(joined.Length == whole.Length && ProcessingSame(joined.Samples, whole.Samples),
-                            $"{text}, {channels} channel(s), blocks of {size}: {joined.Length} samples against Apply's {whole.Length}, the same bits");
+                            $"{text}, {channels} channel(s), blocks of {size}: {joined.Length} samples (its latency {stage.Latency} off) against Apply's {whole.Length}, the same bits");
                     }
                 }
 
                 using (var delayed = AudioPipeline.Parse($"{ProcessingDelay.Id}=37, highpass, {ProcessingDelay.Id}=11").Open(16000, channels))
                 {
-                    Check(delayed.Latency == 48, $"the latencies add up: {delayed.Latency}");
+                    Check(delayed.Latency == 48 && delayed.Delay == 48, $"the latencies add up: {delayed.Latency}, held back {delayed.Delay}");
                 }
 
                 var live = AudioPipeline.Parse($"highpass=100, {ProcessingGain.Id}=-3, {ProcessingDelay.Id}=9");
@@ -150,8 +151,14 @@ internal static partial class Tests
                 using var wrapped = live.Wrap(input);
                 Check(wrapped.SampleRate == 16000 && wrapped.Channels == channels && wrapped.Description.Contains("cleaned by highpass=100", StringComparison.Ordinal),
                     $"the wrapped input: {wrapped.Description}");
-                var heard = ProcessingJoin([.. wrapped.ReadAsync().ToBlockingEnumerable()], channels, 16000);
-                Check(ProcessingSame(heard.Samples, live.Apply(sound).Samples), "a wrapped live input gives the samples Apply gives");
+                int latency;
+                using (var liveStage = live.Open(16000, channels))
+                {
+                    latency = liveStage.Latency;
+                }
+
+                var heard = ProcessingAligned(ProcessingJoin([.. wrapped.ReadAsync().ToBlockingEnumerable()], channels, 16000), latency);
+                Check(latency == 9 && ProcessingSame(heard.Samples, live.Apply(sound).Samples), "a wrapped live input gives the samples Apply gives, shifted by its latency");
                 wrapped.Dispose();
                 Check(input.Disposed, "disposing the wrapped input disposes the input");
             }
@@ -241,6 +248,22 @@ internal static partial class Tests
         }
 
         return new AudioData(samples, channels, rate);
+    }
+
+    // The sound with its first `latency` samples (a stage's shift) left out: aligned with what Apply gives.
+    private static AudioData ProcessingAligned(AudioData sound, int latency) => latency == 0 ? sound : sound.Slice(latency, sound.Length - latency);
+
+    // Planar samples [channels, n] with each channel's first `skip` left out.
+    private static float[] ProcessingAligned(float[] planar, int channels, int skip)
+    {
+        int length = planar.Length / channels, kept = length - skip;
+        var aligned = new float[channels * kept];
+        for (int c = 0; c < channels; c++)
+        {
+            planar.AsSpan(c * length + skip, kept).CopyTo(aligned.AsSpan(c * kept));
+        }
+
+        return aligned;
     }
 
     // Bit for bit: the floats' bits, not their values (so -0 and 0 differ and NaN equals itself).

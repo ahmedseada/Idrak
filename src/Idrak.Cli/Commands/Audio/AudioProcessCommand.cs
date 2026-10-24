@@ -176,7 +176,7 @@ internal sealed class AudioProcessCommand : Command
                     parts.Add(tail);
                 }
 
-                result = Join(parts, stage.Channels, stage.SampleRate);
+                result = Join(parts, stage.Channels, stage.SampleRate, stage.Latency);   // the look-ahead off: the file Apply writes
             }
         }
         catch (ArgumentException e)
@@ -191,22 +191,25 @@ internal sealed class AudioProcessCommand : Command
     }
 
     // Blocks of the same rate and channels, in order, as one recording (planar), each channel copied in one pass.
-    private static AudioData Join(List<AudioData> parts, int channels, int sampleRate)
+    // The parts in order as one recording, its first `skip` samples (the stages' shift) left out.
+    private static AudioData Join(List<AudioData> parts, int channels, int sampleRate, int skip)
     {
-        if (parts.Count == 1)
+        if (parts.Count == 1 && skip == 0)
         {
             return parts[0];
         }
 
-        int length = parts.Sum(p => p.Length);
+        int length = Math.Max(0, parts.Sum(p => p.Length) - skip);
         var samples = GC.AllocateUninitializedArray<float>(channels * length);
         for (int c = 0; c < channels; c++)
         {
-            int at = c * length;
+            int at = c * length, left = skip;
             foreach (var part in parts)
             {
-                part.Channel(c).CopyTo(samples.AsSpan(at, part.Length));
-                at += part.Length;
+                int from = Math.Min(left, part.Length);
+                left -= from;
+                part.Channel(c)[from..].CopyTo(samples.AsSpan(at, part.Length - from));
+                at += part.Length - from;
             }
         }
 

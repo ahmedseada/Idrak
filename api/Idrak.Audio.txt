@@ -464,6 +464,7 @@ public interface Idrak.Audio.Abstractions.IAudioSplitter
   public string Name { get; }
 
 public interface Idrak.Audio.Abstractions.IAudioStage : System.IDisposable
+  public (default) int Delay { get; }
   public (default) int Latency { get; }
   public Idrak.Audio.Abstractions.AudioData Flush()
   public Idrak.Audio.Abstractions.AudioData Process(Idrak.Audio.Abstractions.AudioData block)

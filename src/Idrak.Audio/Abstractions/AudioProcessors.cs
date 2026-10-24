@@ -75,9 +75,10 @@ public interface IAudioProcessor
         : new BufferedStage(this, step, sampleRate, channels);
 
     /// <summary>
-    /// The whole recording after <paramref name="step"/>; <paramref name="audio"/> is not changed (the result is new
-    /// samples, or <paramref name="audio"/> itself when nothing changes). A whole-recording processor implements it; a
-    /// live one's default runs a copy through one <see cref="Open"/>ed stage.
+    /// The whole recording after <paramref name="step"/>, aligned with it (a stage's <see cref="IAudioStage.Latency"/>
+    /// taken off, so a step that keeps the length keeps it exactly); <paramref name="audio"/> is not changed (the result
+    /// is new samples, or <paramref name="audio"/> itself when nothing changes). A whole-recording processor implements
+    /// it; a live one's default runs a copy through one <see cref="Open"/>ed stage and drops its latency.
     /// </summary>
     AudioData Apply(AudioData audio, AudioProcessorStep step)
     {
@@ -88,14 +89,14 @@ public interface IAudioProcessor
         }
 
         using var stage = Open(step, audio.SampleRate, audio.Channels);
-        return AudioStages.Run(stage, AudioStages.Copy(audio));
+        return AudioStages.Run(stage, AudioStages.Copy(audio), stage.Latency);
     }
 }
 
 /// <summary>
 /// A processor opened for a rate and a channel count (<see cref="IAudioProcessor.Open"/>): blocks go in, in order, and
-/// sound comes out, delayed by <see cref="Latency"/>; <see cref="Flush"/> gives what is left at the end. Not thread-safe:
-/// one reader feeds it.
+/// sound comes out, shifted by <see cref="Latency"/> (silence first) and held back at most <see cref="Delay"/>;
+/// <see cref="Flush"/> gives what is left at the end. Not thread-safe: one reader feeds it.
 /// </summary>
 public interface IAudioStage : IDisposable
 {
@@ -105,8 +106,18 @@ public interface IAudioStage : IDisposable
     /// <summary>The channels of the sound it gives (a mix to mono changes them).</summary>
     int Channels { get; }
 
-    /// <summary>How many samples, at <see cref="SampleRate"/>, its output lags its input (a look-ahead); 0 for most, and for a stage that gives everything when flushed.</summary>
+    /// <summary>
+    /// How many samples, at <see cref="SampleRate"/>, its output is shifted by: output sample n is input sample
+    /// n - Latency, the first Latency samples silence and the last ones given by <see cref="Flush"/> (a look-ahead); 0
+    /// for most, and for a stage that gives everything when flushed. A recording's <c>Apply</c> takes it off.
+    /// </summary>
     int Latency => 0;
+
+    /// <summary>
+    /// The most samples, at <see cref="SampleRate"/>, it holds back before they come out: what a live listener waits
+    /// for. <see cref="Latency"/> unless the stage buffers without shifting (a resampler waiting for its taps).
+    /// </summary>
+    int Delay => Latency;
 
     /// <summary>
     /// The next block (at the rate and channels the stage was opened for); returns the sound ready so far, which may be

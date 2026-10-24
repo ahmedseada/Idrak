@@ -16,7 +16,7 @@ internal static partial class Tests
         ("audio processing: dynamics: cold and warm time of each stage on 10 s of 16 kHz mono (reported, not asserted)", AudioDynamicsTiming),
         ("audio processing: dynamics: the registry names gate, compress, limit, agc and loudness-live (live), loudness and peaknorm (whole recording) as the library's; no option of theirs is a processor's name (an option after a comma joins its step: agc, quiet=-40; normalize, peak=0.9); a live pipeline refuses loudness naming loudness-live, normalize naming agc, and peaknorm; the limiter reports its look-ahead as latency", AudioDynamicsRegistry),
         ("audio processing: dynamics: each stage against its reference (gate, compress, limit, agc, loudness-live within 1e-5; the limiter never over its ceiling; the integrated loudness within 0.01 LU of pyloudnorm with the standard's and RBJ's filters; the sample and true peaks; the loudness and peaknorm gains)", AudioDynamicsReference),
-        ("audio processing: dynamics: every stage run block by block (blocks of 1, 7, 160 and 4,096, mono and stereo, the limiter's latency and tail included) gives Apply's samples bit for bit, and a live stage allocates nothing per block once open", AudioDynamicsBlocks),
+        ("audio processing: dynamics: every stage run block by block (blocks of 1, 7, 160 and 4,096, mono and stereo, the limiter's latency and tail included) once its latency is off gives Apply's samples bit for bit, and a live stage allocates nothing per block once open", AudioDynamicsBlocks),
         ("audio processing: dynamics: pipeline text (compress=-20 ratio=3, limit=-1; makeup=auto) round-trips; refused naming the cause: a ratio under 1, a makeup that is not a number or auto, an unknown detector, a ceiling over 0 dBFS, a negative look-ahead, an overlap of 1, a rate too low for the K-weighting", AudioDynamicsText),
     ];
 
@@ -92,7 +92,13 @@ internal static partial class Tests
         {
             string text = (string)entry!["pipeline"]!;
             var input = DynamicsInput(entry);
-            var expected = ReadNpyFloat32(DynamicsData((string)entry["output"]!));
+            int latency;
+            using (var opened = AudioPipeline.Parse(text).Open(input.SampleRate, input.Channels))
+            {
+                latency = opened.Latency;
+            }
+
+            var expected = ProcessingAligned(ReadNpyFloat32(DynamicsData((string)entry["output"]!)), input.Channels, latency);   // the reference's look-ahead silence off
             var output = AudioPipeline.Parse(text).Apply(input);
             Check(output.Channels == input.Channels && output.Samples.Length == expected.Length,
                 $"{text}: {output.Channels} x {output.Length} samples, the reference {expected.Length / input.Channels}");
@@ -108,7 +114,7 @@ internal static partial class Tests
             {
                 double ceiling = Math.Pow(10, AudioPipeline.Parse(text).Steps[0].Number(-1) / 20);
                 Check(output.Samples.All(x => Math.Abs(x) <= ceiling), $"{text}: no sample over the ceiling {ceiling:G6}");
-                Check(output.Length == input.Length + AudioPipeline.Parse(text).Open(input.SampleRate, input.Channels).Latency, $"{text}: the output is longer by the look-ahead");
+                Check(output.Length == input.Length && latency > 0 == !text.Contains("lookahead=0", StringComparison.Ordinal), $"{text}: Apply takes the look-ahead ({latency}) off, the length kept");
             }
         }
 
@@ -196,7 +202,7 @@ internal static partial class Tests
                 }
 
                 pieces.Add(stage.Flush());
-                var joined = ProcessingJoin(pieces, stage.Channels, stage.SampleRate);
+                var joined = ProcessingAligned(ProcessingJoin(pieces, stage.Channels, stage.SampleRate), stage.Latency);
                 Check(joined.Length == whole.Length && ProcessingSame(joined.Samples, whole.Samples),
                     $"{text}, {sound.Channels} channel(s), blocks of {size}: {joined.Length} samples against Apply's {whole.Length}, the same bits");
             }

@@ -15,8 +15,8 @@ internal static partial class Tests
     [
         ("audio processing: repair: cold and warm time of each stage on 10 s of 16 kHz mono (reported, not asserted)", AudioRepairTiming),
         ("audio processing: repair: the registry names denoise-live, declick, declip, deess and dereverb (live) and spectral-gate (whole recording) as the library's; denoise's and spectral-gate's live alternative is denoise-live; no option of any registered processor is a processor's name; a live pipeline refuses spectral-gate naming denoise-live; each stage reports its look-ahead as latency", AudioRepairRegistry),
-        ("audio processing: repair: each stage against its reference within 1e-5 (its output longer by its latency), and its effect: the noise in the pauses down 10 dB with the bursts within 1 dB, the clicks' error down 20 dB, the clipped samples within a tenth of their error, the sibilance down 6 dB with the voice within 0.5 dB, the late reverberation down", AudioRepairReference),
-        ("audio processing: repair: every stage run block by block (blocks of 1, 7, 160 and 4,096, mono and stereo, the latency and tail included) gives Apply's samples bit for bit, and a live stage allocates nothing per block once open", AudioRepairBlocks),
+        ("audio processing: repair: each stage against its reference within 1e-5 (Apply aligned: the reference's look-ahead silence taken off), and its effect: the noise in the pauses down 10 dB with the bursts within 1 dB, the clicks' error down 20 dB, the clipped samples within a tenth of their error, the sibilance down 6 dB with the voice within 0.5 dB, the late reverberation down", AudioRepairReference),
+        ("audio processing: repair: every stage run block by block (blocks of 1, 7, 160 and 4,096, mono and stereo, the latency and tail included) once its latency is off gives Apply's samples bit for bit, and a live stage allocates nothing per block once open", AudioRepairBlocks),
         ("audio processing: repair: pipeline text (declip level=auto headroom=3, an option after a comma) round-trips; refused naming the cause: gain frames under 1, an empty noise memory, a reduction over 1, a click threshold of 0, a clip level that is not a number or auto or is over 0 dBFS, a value to declip, an unknown de-esser mode, a de-esser frequency over half the rate, a T60 of 0, an unknown option", AudioRepairText),
     ];
 
@@ -108,17 +108,17 @@ internal static partial class Tests
             var entry = node!;
             string text = (string)entry["pipeline"]!;
             var input = RepairInput(entry);
-            var expected = ReadNpyFloat32(RepairData((string)entry["output"]!));
             var pipeline = AudioPipeline.Parse(text);
             var output = pipeline.Apply(input);
             int latency = (int)entry["latency"]!;
+            var expected = ProcessingAligned(ReadNpyFloat32(RepairData((string)entry["output"]!)), input.Channels, latency);   // the reference's look-ahead silence off
             using (var stage = pipeline.Open(input.SampleRate, input.Channels))
             {
                 Check(stage.Latency == latency, $"{text}: latency {stage.Latency}, the reference's {latency}");
             }
 
-            Check(output.Channels == input.Channels && output.Samples.Length == expected.Length && output.Length == input.Length + latency,
-                $"{text}: {output.Channels} x {output.Length} samples, the reference {expected.Length / input.Channels} (the input's {input.Length} and the latency {latency})");
+            Check(output.Channels == input.Channels && output.Samples.Length == expected.Length && output.Length == input.Length,
+                $"{text}: {output.Channels} x {output.Length} samples, the reference {expected.Length / input.Channels} (the input's {input.Length}; Apply takes the latency {latency} off)");
             double largest = 0;
             for (int i = 0; i < expected.Length; i++)
             {
@@ -127,7 +127,7 @@ internal static partial class Tests
 
             Check(largest <= 1e-5, $"{text} on {entry["input"]}: the largest difference from the reference is {largest:G3}");
             Console.WriteLine($"    {text} on {entry["input"]}: largest difference {largest:G3}");
-            outputs[text] = output.Slice(latency, input.Length);
+            outputs[text] = output;
         }
 
         var clicks = RepairFile("clicks16k.npy", 16000);
@@ -342,7 +342,7 @@ internal static partial class Tests
                 }
 
                 pieces.Add(stage.Flush());
-                var joined = ProcessingJoin(pieces, stage.Channels, stage.SampleRate);
+                var joined = ProcessingAligned(ProcessingJoin(pieces, stage.Channels, stage.SampleRate), stage.Latency);
                 Check(joined.Length == whole.Length && ProcessingSame(joined.Samples, whole.Samples),
                     $"{text}, {sound.Channels} channel(s), blocks of {size}: {joined.Length} samples against Apply's {whole.Length}, the same bits");
             }

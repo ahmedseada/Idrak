@@ -527,7 +527,7 @@ internal sealed class DehumProcessor : IAudioProcessor
     }
 }
 
-// "eq" (live): the RBJ cookbook's peaking EQ: `gain` dB at the value's frequency, the band as wide as `q` says, the rest
+// "eq" (live): the RBJ cookbook's peaking EQ: `db` dB at the value's frequency, the band as wide as `q` says, the rest
 // left at its level.
 internal sealed class PeakingProcessor : IAudioProcessor
 {
@@ -537,7 +537,7 @@ internal sealed class PeakingProcessor : IAudioProcessor
 
     public string Label => "Peaking EQ";
 
-    public string Summary => "a band around the value's frequency, Hz, boosted or cut by `gain` dB (required), its width `q` (default 1)";
+    public string Summary => "a band around the value's frequency, Hz, boosted or cut by `db` dB (required), its width `q` (default 1)";
 
     public bool Live => true;
 
@@ -566,7 +566,7 @@ internal sealed class PeakingProcessor : IAudioProcessor
 }
 
 // "lowshelf" / "highshelf" (live): the RBJ cookbook's shelves: the sound below (low) or above (high) the value's frequency
-// boosted or cut by `gain` dB, the turn as steep as `slope` (1: the steepest without a bump) or, when given instead, `q`.
+// boosted or cut by `db` dB, the turn as steep as `slope` (1: the steepest without a bump) or, when given instead, `q`.
 internal sealed class ShelfProcessor(bool high) : IAudioProcessor
 {
     public const double DefaultSlope = 1;
@@ -575,7 +575,7 @@ internal sealed class ShelfProcessor(bool high) : IAudioProcessor
 
     public string Label => high ? "High shelf" : "Low shelf";
 
-    public string Summary => $"the sound {(high ? "above" : "below")} the value's frequency, Hz, boosted or cut by `gain` dB (required), the turn as steep as `slope` (default 1) or `q`";
+    public string Summary => $"the sound {(high ? "above" : "below")} the value's frequency, Hz, boosted or cut by `db` dB (required), the turn as steep as `slope` (default 1) or `q`";
 
     public bool Live => true;
 
@@ -761,8 +761,8 @@ internal sealed class MonoProcessor : IAudioProcessor
 // from the next output frame's first tap, each frame (one output sample per phase) is computed once its last tap has
 // come, and the flush adds the zeros the resampler pads with and gives the last frames, cut to its length. So blocks give
 // Resampler.Resample's samples bit for bit (the same taps over the same floats); Apply is Resampler.Resample itself. The
-// output trails the input by at most Latency samples (the kernel's half width plus one frame); the samples are not
-// shifted. Each block's output is a new block (its size is not the input's); a large block's frames are spread over the
+// output trails the input by at most Delay samples (the kernel's half width plus one frame); the samples are not
+// shifted (Latency 0). Each block's output is a new block (its size is not the input's); a large block's frames are spread over the
 // cores, a live block's stay on its thread.
 internal sealed class ResampleProcessor : IAudioProcessor
 {
@@ -840,14 +840,14 @@ internal sealed class ResampleProcessor : IAudioProcessor
             _buffer = new float[channels * _capacity];
             _filled = kernel.PadLeft;                                           // the resampler's zeros before the sound
             _empty = new AudioData([], channels, rate);
-            Latency = (int)((((long)kernel.PadLeft + kernel.From - 1) * kernel.To + kernel.From - 1) / kernel.From);   // ⌈(half + from - 1)·to / from⌉, the most held back
+            Delay = (int)((((long)kernel.PadLeft + kernel.From - 1) * kernel.To + kernel.From - 1) / kernel.From);   // ⌈(half + from - 1)·to / from⌉, the most held back
         }
 
         public int SampleRate { get; }
 
         public int Channels { get; }
 
-        public int Latency { get; }
+        public int Delay { get; }
 
         public AudioData Process(AudioData block)
         {

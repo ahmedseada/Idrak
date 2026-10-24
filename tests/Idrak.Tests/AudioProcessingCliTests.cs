@@ -100,7 +100,7 @@ internal static partial class Tests
     private static void AudioProcessingCliProcess()
     {
         string root = TempFolder("processing-cli"), wav = AudioData("wav/stereo16.wav");
-        const string Text = "highpass=80, gain=-3, normalize=-20 peak=0.9";
+        const string Text = "highpass=80, gain=-3, declick, normalize=-20 peak=0.9, limit=-1";   // declick and limit look ahead
         try
         {
             var decoded = AudioCodecs.Decode(wav);
@@ -110,6 +110,7 @@ internal static partial class Tests
             Check(code == 0 && output.Contains("real-time factor", StringComparison.Ordinal) && output.Contains("normalize=-20 peak=0.9", StringComparison.Ordinal)
                   && output.Contains($"wrote {whole}", StringComparison.Ordinal), $"audio process: exit {code}\n{output}\n{error}");
             ProcessingCliSameWithin16Bits(AudioCodecs.Decode(whole), expected, "audio process");
+            Check(AudioCodecs.Decode(whole).Length == decoded.Length, "the file keeps the input's length (the look-ahead of declick and limit taken off)");
 
             // Block by block (the live steps' state kept between blocks, normalize held until the end): the same file.
             string blocks = Path.Combine(root, "blocks.wav");
@@ -126,7 +127,7 @@ internal static partial class Tests
                 "@FILE gives the same file");
 
             var json = AudioCliJson("audio", "process", wav, "-o", Path.Combine(root, "json.wav"), "--pipeline", Text);
-            Check((string?)json["pipeline"] == Text && json["steps"]!.AsArray().Count == 3 && (bool?)json["steps"]![2]!["live"] == false
+            Check((string?)json["pipeline"] == Text && json["steps"]!.AsArray().Count == 5 && (bool?)json["steps"]![3]!["live"] == false
                   && (double)json["seconds_in"]! == Math.Round(decoded.Duration.TotalSeconds, 4) && (double)json["real_time_factor"]! > 0 && (int)json["channels_out"]! == decoded.Channels,
                 $"-j: {json}");
 

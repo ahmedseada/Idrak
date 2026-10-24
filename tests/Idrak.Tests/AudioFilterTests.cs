@@ -179,7 +179,7 @@ internal static partial class Tests
         foreach (var (from, to) in new[] { (16000, 8000), (16000, 44100), (8000, 16000), (44100, 16000) })
         {
             using var stage = AudioPipeline.Parse(string.Create(CultureInfo.InvariantCulture, $"resample={to}")).Open(from, 1);
-            Check(stage.SampleRate == to && stage.Channels == 1 && stage.Latency > 0, $"resample {from} to {to}: {stage.SampleRate} Hz, latency {stage.Latency}");
+            Check(stage.SampleRate == to && stage.Channels == 1 && stage.Latency == 0 && stage.Delay > 0, $"resample {from} to {to}: {stage.SampleRate} Hz, latency {stage.Latency} (not shifted), held back {stage.Delay}");
             var sound = ProcessingTone(from, 0.5, 1);
             long taken = 0, given = 0, held = 0;
             foreach (var block in ProcessingBlocks(sound, 97))
@@ -189,7 +189,7 @@ internal static partial class Tests
                 held = Math.Max(held, (taken * to + from - 1) / from - given);
             }
 
-            Check(held <= stage.Latency && held > stage.Latency / 2, $"resample {from} to {to}: held back up to {held} samples, its latency {stage.Latency}");
+            Check(held <= stage.Delay && held > stage.Delay / 2, $"resample {from} to {to}: held back up to {held} samples, its delay {stage.Delay}");
         }
     }
 
