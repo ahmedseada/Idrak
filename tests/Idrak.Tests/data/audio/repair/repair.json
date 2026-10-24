@@ -1,0 +1,511 @@
+{
+ "cases": [
+  {
+   "channels": 1,
+   "input": "speechwhite16k.npy",
+   "latency": 511,
+   "output": "00-denoise-live-speechwhite16k.npy",
+   "pipeline": "denoise-live",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speechpink16k.npy",
+   "latency": 255,
+   "output": "01-denoise-live-speechpink16k.npy",
+   "pipeline": "denoise-live=2 floor=-30 window=0.016 track=1 smooth=30 bias=1.4 frames=3",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speechwhite16k.npy",
+   "latency": 0,
+   "output": "02-spectral-gate-speechwhite16k.npy",
+   "pipeline": "spectral-gate",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speechpink16k.npy",
+   "latency": 0,
+   "output": "03-spectral-gate-speechpink16k.npy",
+   "pipeline": "spectral-gate=2 reduce=0.9 quantile=0.3 smooth=30 spread=60 window=0.032",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "clicks16k.npy",
+   "latency": 383,
+   "output": "04-declick-clicks16k.npy",
+   "pipeline": "declick",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "clicks16k.npy",
+   "latency": 223,
+   "output": "05-declick-clicks16k.npy",
+   "pipeline": "declick=8 length=1 order=24 frame=10",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "clipped16k.npy",
+   "latency": 411,
+   "output": "06-declip-clipped16k.npy",
+   "pipeline": "declip",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "clipped16k.npy",
+   "latency": 563,
+   "output": "07-declip-clipped16k.npy",
+   "pipeline": "declip level=-6.0206 near=0.1 length=4 run=3 order=20 frame=30 headroom=6",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "sibilant16k.npy",
+   "latency": 0,
+   "output": "08-deess-sibilant16k.npy",
+   "pipeline": "deess",
+   "rate": 16000
+  },
+  {
+   "channels": 2,
+   "input": "sibilant48k.npy",
+   "latency": 0,
+   "output": "09-deess-sibilant48k.npy",
+   "pipeline": "deess=-35 mode=band frequency=7000 q=0.7 ratio=6 knee=0 attack=0.5 release=80 window=2 link=false",
+   "rate": 48000
+  },
+  {
+   "channels": 1,
+   "input": "reverb16k.npy",
+   "latency": 511,
+   "output": "10-dereverb-reverb16k.npy",
+   "pipeline": "dereverb",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "reverb16k.npy",
+   "latency": 255,
+   "output": "11-dereverb-reverb16k.npy",
+   "pipeline": "dereverb=1.5 t60=0.6 delay=40 floor=-20 window=0.016 smooth=10",
+   "rate": 16000
+  }
+ ],
+ "effects": [
+  {
+   "burst_change_db": -0.3386436999383271,
+   "bursts": [
+    [
+     9600,
+     16000
+    ],
+    [
+     24000,
+     28799
+    ],
+    [
+     36800,
+     41600
+    ]
+   ],
+   "kind": "noise",
+   "noise_down_db": 15.960052401473718,
+   "pauses": [
+    [
+     4800,
+     6400
+    ],
+    [
+     19200,
+     20799
+    ],
+    [
+     32000,
+     33600
+    ],
+    [
+     44800,
+     48000
+    ]
+   ],
+   "pipeline": "denoise-live"
+  },
+  {
+   "burst_change_db": -0.7541125614784718,
+   "bursts": [
+    [
+     9600,
+     16000
+    ],
+    [
+     24000,
+     28799
+    ],
+    [
+     36800,
+     41600
+    ]
+   ],
+   "kind": "noise",
+   "noise_down_db": 12.486190053388974,
+   "pauses": [
+    [
+     4800,
+     6400
+    ],
+    [
+     19200,
+     20799
+    ],
+    [
+     32000,
+     33600
+    ],
+    [
+     44800,
+     48000
+    ]
+   ],
+   "pipeline": "denoise-live=2 floor=-30 window=0.016 track=1 smooth=30 bias=1.4 frames=3"
+  },
+  {
+   "burst_change_db": -0.40700500332808787,
+   "bursts": [
+    [
+     9600,
+     16000
+    ],
+    [
+     24000,
+     28799
+    ],
+    [
+     36800,
+     41600
+    ]
+   ],
+   "kind": "noise",
+   "noise_down_db": 24.571426825014704,
+   "pauses": [
+    [
+     4800,
+     6400
+    ],
+    [
+     19200,
+     20799
+    ],
+    [
+     32000,
+     33600
+    ],
+    [
+     44800,
+     48000
+    ]
+   ],
+   "pipeline": "spectral-gate"
+  },
+  {
+   "burst_change_db": -0.4177352918135675,
+   "bursts": [
+    [
+     9600,
+     16000
+    ],
+    [
+     24000,
+     28799
+    ],
+    [
+     36800,
+     41600
+    ]
+   ],
+   "kind": "noise",
+   "noise_down_db": 17.13656133873196,
+   "pauses": [
+    [
+     4800,
+     6400
+    ],
+    [
+     19200,
+     20799
+    ],
+    [
+     32000,
+     33600
+    ],
+    [
+     44800,
+     48000
+    ]
+   ],
+   "pipeline": "spectral-gate=2 reduce=0.9 quantile=0.3 smooth=30 spread=60 window=0.032"
+  },
+  {
+   "down_db": 40.96580816649349,
+   "error_after_db": -59.69729517195741,
+   "error_before_db": -18.731487005463915,
+   "kind": "clicks",
+   "largest_change_elsewhere": 0.0,
+   "pipeline": "declick",
+   "regions": [
+    [
+     1192,
+     1225
+    ],
+    [
+     3092,
+     3126
+    ],
+    [
+     4992,
+     5027
+    ],
+    [
+     7292,
+     7325
+    ],
+    [
+     9092,
+     9128
+    ],
+    [
+     11792,
+     11830
+    ],
+    [
+     13692,
+     13726
+    ]
+   ]
+  },
+  {
+   "down_db": 40.57583045305539,
+   "error_after_db": -59.30731745851931,
+   "error_before_db": -18.731487005463915,
+   "kind": "clicks",
+   "largest_change_elsewhere": 0.0,
+   "pipeline": "declick=8 length=1 order=24 frame=10",
+   "regions": [
+    [
+     1192,
+     1225
+    ],
+    [
+     3092,
+     3126
+    ],
+    [
+     4992,
+     5027
+    ],
+    [
+     7292,
+     7325
+    ],
+    [
+     9092,
+     9128
+    ],
+    [
+     11792,
+     11830
+    ],
+    [
+     13692,
+     13726
+    ]
+   ]
+  },
+  {
+   "clipped_samples": 5398,
+   "gain": 1.0,
+   "kind": "clipping",
+   "largest_error_after": 0.02661418914794922,
+   "pipeline": "declip",
+   "rms_error_after": 0.005791290366595282,
+   "rms_error_before": 0.21681207433878638
+  },
+  {
+   "clipped_samples": 5398,
+   "gain": 0.5011872336272722,
+   "kind": "clipping",
+   "largest_error_after": 0.05613598928401098,
+   "pipeline": "declip level=-6.0206 near=0.1 length=4 run=3 order=20 frame=30 headroom=6",
+   "rms_error_after": 0.014144388108011533,
+   "rms_error_before": 0.21681207433878638
+  },
+  {
+   "band": [
+    4000,
+    8000
+   ],
+   "band_down_db": 6.764294776262364,
+   "kind": "sibilance",
+   "pipeline": "deess",
+   "sibilants": [
+    [
+     5920,
+     7680
+    ],
+    [
+     17920,
+     20480
+    ],
+    [
+     27520,
+     28799
+    ]
+   ],
+   "voice": [
+    [
+     8800,
+     15200
+    ],
+    [
+     21600,
+     25599
+    ]
+   ],
+   "voice_change_db": -0.002557245618973525
+  },
+  {
+   "band": [
+    6000,
+    8500
+   ],
+   "band_down_db": 12.423382399085718,
+   "kind": "sibilance",
+   "pipeline": "deess=-35 mode=band frequency=7000 q=0.7 ratio=6 knee=0 attack=0.5 release=80 window=2 link=false",
+   "sibilants": [
+    [
+     1920,
+     3840
+    ],
+    [
+     18240,
+     21119
+    ]
+   ],
+   "voice": [
+    [
+     8159,
+     13919
+    ]
+   ],
+   "voice_change_db": -0.024833625680948046
+  },
+  {
+   "kind": "reverb",
+   "pipeline": "dereverb",
+   "speech": [
+    [
+     5600,
+     10399
+    ],
+    [
+     21600,
+     26400
+    ],
+    [
+     36000,
+     40800
+    ]
+   ],
+   "speech_change_db": -0.8691321464677131,
+   "tail_down_db": 5.087554385863157,
+   "tails": [
+    [
+     12479,
+     19200
+    ],
+    [
+     28480,
+     35200
+    ],
+    [
+     42880,
+     49600
+    ]
+   ]
+  },
+  {
+   "kind": "reverb",
+   "pipeline": "dereverb=1.5 t60=0.6 delay=40 floor=-20 window=0.016 smooth=10",
+   "speech": [
+    [
+     5600,
+     10399
+    ],
+    [
+     21600,
+     26400
+    ],
+    [
+     36000,
+     40800
+    ]
+   ],
+   "speech_change_db": -2.531388798431884,
+   "tail_down_db": 8.934304136150622,
+   "tails": [
+    [
+     12479,
+     19200
+    ],
+    [
+     28480,
+     35200
+    ],
+    [
+     42880,
+     49600
+    ]
+   ]
+  }
+ ],
+ "files": {
+  "00-denoise-live-speechwhite16k.npy": "f7523331bb0b4bf1dd7a92b5609879b16cd64d4b82e765456f6457b4b6de1632",
+  "01-denoise-live-speechpink16k.npy": "8c077f8bb0861ec97e82e9a5f49efea43a540314ed9b3940c24891dfafd19ef2",
+  "02-spectral-gate-speechwhite16k.npy": "306602c7c3094e463af966770d2f4dda0cb4e7237f53d5e8accaa3ea7ded7731",
+  "03-spectral-gate-speechpink16k.npy": "1a0539a81b613bbcc20c78b69bd7301b801255c1d98a7fd9c7ea4bd0101f33c2",
+  "04-declick-clicks16k.npy": "27e513f766c253a6357bd600ca49cff3f8660015996dd056ef8c79220c12b078",
+  "05-declick-clicks16k.npy": "ffa6da1e3f9a687bd9b7667dcf8cb43c7fc7221b4d279a2529e72a4e91d4a2fc",
+  "06-declip-clipped16k.npy": "9fc25cfbf1652179fa96f99758d3a3af448f51dfb1fd0ca92cf9576834b718ec",
+  "07-declip-clipped16k.npy": "01ed2c1cc7e856882e440eadcb0807fbcb0c3c811384082c5ef9c5b84301a587",
+  "08-deess-sibilant16k.npy": "28ef75f91a40890406f44274fbe9e79150a335920e91a074d17ac6cff3eb1623",
+  "09-deess-sibilant48k.npy": "3110046342b4fc1d2440085eab102637056029e6e67ec037e1bcb65e163865c1",
+  "10-dereverb-reverb16k.npy": "5e683808fdde341c8d5b37df69e60fc04983d57d1fb396923885fb0d7864c71e",
+  "11-dereverb-reverb16k.npy": "4b0823d1c2238edfe140d2f062c986a709360fb78afa26a043b5349e57eaf7ec",
+  "clicks16k.npy": "c53d9f4e1f0f2ed5abbe75daf6340f0ae0315808135ba3d11d29d4184c620824",
+  "clicksclean16k.npy": "904e58c9842412ff7f23325d55a015ca2004dbfadf6960c188cf33caf6abf82c",
+  "clipped16k.npy": "b87816eea704f4cf1172a5dd84f2e488d89daa02a46638af11610829a46f20b2",
+  "clippedclean16k.npy": "6f51fbb846f22ee9d805c0443e4b4b4b633ceae361b56fdce7ebb838c4851835",
+  "reverb16k.npy": "872bdca3812bbc4e5d01cbfb6d386f8b18f3e2ff4585a9ad7abf89c1e90cece6",
+  "sibilant16k.npy": "43b5c96e3f14a818eb17dae9942ddfe063d5c6e4aca08048e9e7ea41fd80a94f",
+  "sibilant48k.npy": "e69ca8c8b1171f5fe0046cb0b2c5dd58c0505fb450ace2eb75664e128100ba46",
+  "speechpink16k.npy": "ba60c2e2d8fe887f79cfed303ca23589107b47fe6ba8902e07b3ec2bd885da84",
+  "speechwhite16k.npy": "47e5a30845b8ce0a4003104c267f40c61bb875dd818ebfd48e2191e0682098b5"
+ },
+ "noisereduce": {
+  "burst_change_db": -12.49001671248573,
+  "input": "speechwhite16k.npy",
+  "noise_down_db": 35.31758927459301,
+  "tool": "noisereduce.reduce_noise(stationary=True, n_std_thresh_stationary=1.5, prop_decrease=1.0)"
+ },
+ "versions": {
+  "noisereduce": "3",
+  "numpy": "2.5.4",
+  "python": "3.13.16",
+  "scipy": "1.18.1"
+ }
+}

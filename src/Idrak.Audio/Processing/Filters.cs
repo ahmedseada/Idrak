@@ -161,7 +161,7 @@ internal static class FilterDesign
         Min = 0, MinExclusive = true, Max = 1000, Step = 0.1, Optional = true, Default = fallback, Help = help,
     };
 
-    public static readonly AudioProcessorParameter Decibels = new("gain", "Gain", AudioProcessorInput.Number)
+    public static readonly AudioProcessorParameter Decibels = new("db", "Gain", AudioProcessorInput.Number)
     {
         Min = -48, Max = 48, Step = 0.5, Unit = "dB", Help = "The boost (above 0) or cut (below 0); required",
     };
@@ -554,14 +554,14 @@ internal sealed class PeakingProcessor : IAudioProcessor
     {
         ArgumentNullException.ThrowIfNull(step);
         step.Validate(Parameters);
-        FilterDesign.Require(step, "gain", "DB");
+        FilterDesign.Require(step, "db", "DECIBELS");
     }
 
     private Biquad[] Design(AudioProcessorStep step, int sampleRate)
     {
         double hertz = step.Number();
         FilterDesign.ThrowIfNotBelowHalf(Name, "frequency", hertz, sampleRate);
-        return [Biquad.Peaking(hertz, step.Number("gain", 0), step.Number("q", DefaultQ), sampleRate)];
+        return [Biquad.Peaking(hertz, step.Number("db", 0), step.Number("q", DefaultQ), sampleRate)];
     }
 }
 
@@ -596,7 +596,7 @@ internal sealed class ShelfProcessor(bool high) : IAudioProcessor
     {
         ArgumentNullException.ThrowIfNull(step);
         step.Validate(Parameters);
-        FilterDesign.Require(step, "gain", "DB");
+        FilterDesign.Require(step, "db", "DECIBELS");
         if (step.Option("slope") is not null && step.Option("q") is not null)
         {
             throw new ArgumentException($"{Name} takes slope or q, not both (given '{step}').");
@@ -605,7 +605,7 @@ internal sealed class ShelfProcessor(bool high) : IAudioProcessor
 
     private Biquad[] Design(AudioProcessorStep step, int sampleRate)
     {
-        double hertz = step.Number(), decibels = step.Number("gain", 0), a = Math.Pow(10, decibels / 40);
+        double hertz = step.Number(), decibels = step.Number("db", 0), a = Math.Pow(10, decibels / 40);
         FilterDesign.ThrowIfNotBelowHalf(Name, "frequency", hertz, sampleRate);
         double alphaOverSin = step.Option("q") is not null
             ? 1 / (2 * step.Number("q", 1))

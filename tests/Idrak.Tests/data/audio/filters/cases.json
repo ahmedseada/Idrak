@@ -149,7 +149,7 @@
    "input": "noise",
    "length": 4800,
    "name": "eq-boost",
-   "pipeline": "eq=1000 gain=6 q=2",
+   "pipeline": "eq=1000 db=6 q=2",
    "rate": 16000
   },
   {
@@ -157,7 +157,7 @@
    "input": "speech",
    "length": 4800,
    "name": "eq-cut",
-   "pipeline": "eq=3000 gain=-12 q=0.7",
+   "pipeline": "eq=3000 db=-12 q=0.7",
    "rate": 16000
   },
   {
@@ -165,7 +165,7 @@
    "input": "speech",
    "length": 4800,
    "name": "lowshelf",
-   "pipeline": "lowshelf=200 gain=6",
+   "pipeline": "lowshelf=200 db=6",
    "rate": 16000
   },
   {
@@ -173,7 +173,7 @@
    "input": "hum",
    "length": 4800,
    "name": "lowshelf-slope",
-   "pipeline": "lowshelf=300 gain=-9 slope=0.5",
+   "pipeline": "lowshelf=300 db=-9 slope=0.5",
    "rate": 16000
   },
   {
@@ -181,7 +181,7 @@
    "input": "dc",
    "length": 4800,
    "name": "lowshelf-q",
-   "pipeline": "lowshelf=150 gain=4 q=0.9",
+   "pipeline": "lowshelf=150 db=4 q=0.9",
    "rate": 16000
   },
   {
@@ -189,7 +189,7 @@
    "input": "noise",
    "length": 4800,
    "name": "highshelf",
-   "pipeline": "highshelf=4000 gain=4",
+   "pipeline": "highshelf=4000 db=4",
    "rate": 16000
   },
   {
@@ -197,7 +197,7 @@
    "input": "speech",
    "length": 4800,
    "name": "highshelf-q",
-   "pipeline": "highshelf=2500 gain=-6 q=1.2",
+   "pipeline": "highshelf=2500 db=-6 q=1.2",
    "rate": 16000
   },
   {

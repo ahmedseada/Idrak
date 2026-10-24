@@ -105,7 +105,7 @@ internal static partial class Tests
         var sound = ProcessingTone(16000, 0.5, 2, noise: 0.05f, dc: 0.1f);
         var blocks = ProcessingBlocks(sound, 160).ToArray();
         foreach (string text in new[] { "gain=-3", "dc", "highpass", "highpass=80 order=5", "lowpass=3000 order=4", "bandpass", "notch=1000", "dehum harmonics=8",
-                     "eq=1000 gain=3", "lowshelf=200 gain=3", "highshelf=4000 gain=-3 q=0.8", "presence", "preemphasis" })
+                     "eq=1000 db=3", "lowshelf=200 db=3", "highshelf=4000 db=-3 q=0.8", "presence", "preemphasis" })
         {
             var step = AudioPipeline.Parse(text).Steps[0];
             var processor = AudioProcessors.Get(step.Name);
@@ -140,7 +140,7 @@ internal static partial class Tests
 
         Check(AudioProcessors.Describe().Contains("presence: the speech clarity control", StringComparison.Ordinal), $"presence is the speech clarity control: {AudioProcessors.Describe()}");
         Check(AudioProcessors.Get("dehum").Keys.SequenceEqual(["harmonics", "q"]) && AudioProcessors.Get("bandpass").Keys.SequenceEqual(["low", "high", "order"])
-              && AudioProcessors.Get("highpass").Keys.SequenceEqual(["order"]) && AudioProcessors.Get("lowshelf").Keys.SequenceEqual(["gain", "slope", "q"]),
+              && AudioProcessors.Get("highpass").Keys.SequenceEqual(["order"]) && AudioProcessors.Get("lowshelf").Keys.SequenceEqual(["db", "slope", "q"]),
             "the option keys follow the parameters");
 
         var pipeline = AudioPipeline.Parse("dehum=50 harmonics=4, presence=4");
@@ -148,7 +148,7 @@ internal static partial class Tests
             $"the text: {pipeline}");
         Check(AudioPipeline.Parse("dehum=60, harmonics=3, q=20, presence").ToString() == "dehum=60 harmonics=3 q=20, presence", "options after commas join the step before them");
         const string Every = "gain=-3, dc pole=0.99, highpass=80 order=4, lowpass=7000 order=3, bandpass high=3000 low=200 order=2, notch=1000 q=10, dehum=60 harmonics=3, "
-                             + "eq=1500 gain=2 q=1.5, lowshelf=120 gain=-3, highshelf=6000 gain=2 slope=0.7, presence=4 frequency=3500, preemphasis=0.95, mono, resample=8000";
+                             + "eq=1500 db=2 q=1.5, lowshelf=120 db=-3, highshelf=6000 db=2 slope=0.7, presence=4 frequency=3500, preemphasis=0.95, mono, resample=8000";
         var every = AudioPipeline.Parse(Every);
         Check(every.ToString() == Every && every.Live && AudioPipeline.Parse(every.ToString()).Equals(every) && AudioPipeline.FromJson(every.ToJson()).Equals(every),
             $"every filter in one pipeline round-trips through text and JSON: {every}");
@@ -214,12 +214,12 @@ internal static partial class Tests
             ("dehum=0", ["dehum is above 0 to 1000 Hz", "not 0"]),
             ("dehum harmonics=0", ["dehum harmonics is 1 to 100", "not 0"]),
             ("dehum width=3", ["dehum", "width", "harmonics, q"]),
-            ("eq=1000", ["eq needs gain=DB", "eq=1000"]),
-            ("eq=1000 gain=60", ["eq gain is -48 to 48 dB", "60"]),
-            ("eq gain=3", ["eq needs a value", "FREQUENCY"]),
-            ("lowshelf=200", ["lowshelf needs gain=DB"]),
-            ("lowshelf=200 gain=3 slope=0.5 q=1", ["lowshelf takes slope or q, not both"]),
-            ("highshelf=200 gain=3 slope=2", ["highshelf slope is above 0 to 1", "2"]),
+            ("eq=1000", ["eq needs db=DECIBELS", "eq=1000"]),
+            ("eq=1000 db=60", ["eq db is -48 to 48 dB", "60"]),
+            ("eq db=3", ["eq needs a value", "FREQUENCY"]),
+            ("lowshelf=200", ["lowshelf needs db=DECIBELS"]),
+            ("lowshelf=200 db=3 slope=0.5 q=1", ["lowshelf takes slope or q, not both"]),
+            ("highshelf=200 db=3 slope=2", ["highshelf slope is above 0 to 1", "2"]),
             ("presence=40", ["presence is -24 to 24 dB", "40"]),
             ("presence q=0", ["presence q is above 0 to 100", "not 0"]),
             ("preemphasis=1.5", ["preemphasis is 0 to 1", "1.5"]),
@@ -244,9 +244,9 @@ internal static partial class Tests
             ("bandpass high=9000", 16000, ["bandpass: the high edge 9000 Hz", "half the rate (16000 Hz)"]),
             ("notch=4000", 8000, ["notch: the frequency 4000 Hz", "half the rate (8000 Hz)"]),
             ("dehum=600", 1000, ["dehum: the mains frequency 600 Hz", "half the rate (1000 Hz)"]),
-            ("eq=9000 gain=3", 16000, ["eq: the frequency 9000 Hz", "half the rate (16000 Hz)"]),
-            ("lowshelf=4000 gain=3", 8000, ["lowshelf: the frequency 4000 Hz", "half the rate (8000 Hz)"]),
-            ("highshelf=12000 gain=3", 22050, ["highshelf: the frequency 12000 Hz", "half the rate (22050 Hz)"]),
+            ("eq=9000 db=3", 16000, ["eq: the frequency 9000 Hz", "half the rate (16000 Hz)"]),
+            ("lowshelf=4000 db=3", 8000, ["lowshelf: the frequency 4000 Hz", "half the rate (8000 Hz)"]),
+            ("highshelf=12000 db=3", 22050, ["highshelf: the frequency 12000 Hz", "half the rate (22050 Hz)"]),
             ("presence", 6000, ["presence: the frequency 3000 Hz", "half the rate (6000 Hz)"]),
             ("presence frequency=5000", 8000, ["presence: the frequency 5000 Hz", "half the rate (8000 Hz)"]),
         ];
@@ -258,7 +258,7 @@ internal static partial class Tests
         }
 
         // Opened directly (not through a pipeline), a step is still checked.
-        ThrowsNaming<ArgumentException>(() => AudioProcessors.Get("eq").Open(new AudioProcessorStep("eq", "1000"), 16000, 1), "eq opened without its gain", "eq needs gain=DB");
+        ThrowsNaming<ArgumentException>(() => AudioProcessors.Get("eq").Open(new AudioProcessorStep("eq", "1000"), 16000, 1), "eq opened without its gain", "eq needs db=DECIBELS");
         ThrowsNaming<ArgumentException>(() => AudioProcessors.Get("resample").Open(new AudioProcessorStep("resample", "-1"), 16000, 1), "resample opened at -1 Hz", "resample is 1 to 1000000 Hz");
 
         // The harmonics at or over half the rate are left out (dehum=1000 harmonics=10 at 8 kHz: 1 to 3 kHz), not refused.
@@ -273,7 +273,7 @@ internal static partial class Tests
         var stereo = ProcessingTone(16000, 10, 2, noise: 0.05f, dc: 0.1f, bursts: true);
         var lines = new List<string>();
         foreach (string text in new[] { "gain=-3", "dc", "highpass", "highpass=80 order=8", "lowpass=4000 order=4", "bandpass", "notch=1000", "dehum", "dehum harmonics=20",
-                     "eq=1000 gain=3", "lowshelf=200 gain=3", "highshelf=4000 gain=3", "presence", "preemphasis", "mono", "resample=8000", "resample=44100",
+                     "eq=1000 db=3", "lowshelf=200 db=3", "highshelf=4000 db=3", "presence", "preemphasis", "mono", "resample=8000", "resample=44100",
                      "dc, highpass=80, dehum, presence=4, gain=-3" })
         {
             var pipeline = AudioPipeline.Parse(text);

@@ -84,7 +84,10 @@ recording), which the cleaning stages above run through with the same samples as
 clarity of speech: a wide boost of the consonants' band), "preemphasis", "mono" and "resample" (live, Butterworth orders
 on highpass, lowpass and bandpass); the dynamics "gate",
 "compress", "limit" (look-ahead, never over its ceiling), "agc" and "loudness-live" (live), "loudness" (BS.1770 / R128
-integrated, to a target LUFS under a true-peak ceiling) and "peaknorm" (whole recording). After a comma a registered
+integrated, to a target LUFS under a true-peak ceiling) and "peaknorm" (whole recording); noise and repair,
+"denoise-live" (spectral gating against a running noise floor), "declick" (least-squares AR fill), "declip" (clipped
+runs rebuilt above the clip level), "deess" (a split-band compressor on the sibilance band) and "dereverb" (late-reverb
+spectral suppression) live, "spectral-gate" (a per-bin gate over a noise profile) whole recording. After a comma a registered
 name starts a new step, so an option is best written after a space (`normalize=-20 peak=0.9`). Anyone adds one with
 `AudioProcessors.Register`:
 

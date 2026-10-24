@@ -398,7 +398,9 @@ public sealed class AudioProcessorStep
 /// <c>dehum</c>, <c>eq</c>, <c>lowshelf</c>, <c>highshelf</c>, <c>presence</c> (the clarity of speech), <c>preemphasis</c>,
 /// <c>mono</c> and <c>resample</c>, and <c>highpass</c>'s <c>order</c>; dynamics, <c>gate</c>, <c>compress</c>, <c>limit</c> (a look-ahead limiter),
 /// <c>agc</c> and <c>loudness-live</c> (live), <c>loudness</c> (ITU-R BS.1770 / EBU R128 integrated) and <c>peaknorm</c>
-/// (whole recording). <see cref="Describe"/> lists them with their summaries. Register another with <see cref="Register"/>; one of a library name shadows the
+/// (whole recording); noise and repair, <c>denoise-live</c> (a running noise floor), <c>declick</c>, <c>declip</c>,
+/// <c>deess</c> and <c>dereverb</c> (live), <c>spectral-gate</c> (whole recording). <see cref="Describe"/> lists them with
+/// their summaries. No processor's option is named as a processor: after a comma a registered name starts a step. Register another with <see cref="Register"/>; one of a library name shadows the
 /// library's, which <see cref="Unregister"/> brings back.
 /// </summary>
 public static class AudioProcessors
@@ -427,6 +429,7 @@ public static class AudioProcessors
         table.RegisterDefault(Normalize, new NormalizeProcessor());
         FilterProcessors.RegisterDefaults(table);
         DynamicsProcessors.RegisterDefaults(table);
+        RepairProcessors.RegisterDefaults(table);
         return table;
     }
 

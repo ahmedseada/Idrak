@@ -95,13 +95,13 @@ CASES = [
     ("dehum", "dehum", "hum"),
     ("dehum-60", "dehum=60 harmonics=6 q=20", "speech"),
     ("dehum-stereo", "dehum=50 harmonics=12 q=15", "stereo"),
-    ("eq-boost", "eq=1000 gain=6 q=2", "noise"),
-    ("eq-cut", "eq=3000 gain=-12 q=0.7", "speech"),
-    ("lowshelf", "lowshelf=200 gain=6", "speech"),
-    ("lowshelf-slope", "lowshelf=300 gain=-9 slope=0.5", "hum"),
-    ("lowshelf-q", "lowshelf=150 gain=4 q=0.9", "dc"),
-    ("highshelf", "highshelf=4000 gain=4", "noise"),
-    ("highshelf-q", "highshelf=2500 gain=-6 q=1.2", "speech"),
+    ("eq-boost", "eq=1000 db=6 q=2", "noise"),
+    ("eq-cut", "eq=3000 db=-12 q=0.7", "speech"),
+    ("lowshelf", "lowshelf=200 db=6", "speech"),
+    ("lowshelf-slope", "lowshelf=300 db=-9 slope=0.5", "hum"),
+    ("lowshelf-q", "lowshelf=150 db=4 q=0.9", "dc"),
+    ("highshelf", "highshelf=4000 db=4", "noise"),
+    ("highshelf-q", "highshelf=2500 db=-6 q=1.2", "speech"),
     ("presence", "presence", "speech"),
     ("presence-strong", "presence=6 frequency=4000 q=1", "speech"),
     ("presence-soft", "presence=-4", "noise"),
@@ -217,9 +217,9 @@ def run_step(name, value, options, x, rate):
         rows = [notch(k * mains, q, rate) for k in range(1, int(num("harmonics", 4)) + 1) if k * mains < rate / 2]
         return channel(np.array(rows)), rate
     if name == "eq":
-        return channel(peaking(float(value), num("gain", 0), num("q", 1), rate)[None]), rate
+        return channel(peaking(float(value), num("db", 0), num("q", 1), rate)[None]), rate
     if name in ("lowshelf", "highshelf"):
-        return channel(shelf(name == "highshelf", float(value), num("gain", 0), options, rate)[None]), rate
+        return channel(shelf(name == "highshelf", float(value), num("db", 0), options, rate)[None]), rate
     if name == "presence":
         return channel(peaking(num("frequency", 3000), float(value or 3), num("q", 0.7), rate)[None]), rate
     if name == "preemphasis":

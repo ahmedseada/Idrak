@@ -179,6 +179,8 @@ internal sealed class DenoiseProcessor : IAudioProcessor
 
     public bool Live => false;
 
+    public string? LiveAlternative => RepairProcessors.DenoiseLive;
+
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
         new("", "Strength", AudioProcessorInput.Number)
