@@ -419,6 +419,8 @@ public sealed record Idrak.Audio.Plugins.Whisper.WhisperConfig : System.IEquatab
   public static Idrak.Audio.Plugins.Whisper.WhisperConfig Read(System.Text.Json.Nodes.JsonObject config, System.Text.Json.Nodes.JsonObject? generation, System.Collections.Generic.IReadOnlyDictionary<string, int> addedTokens)
   public static System.Collections.Generic.IReadOnlyDictionary<string, int> AddedTokens(string tokenizerFile)
   public string Activation { get; init; }
+  public string? Language { get; init; }
+  public string? Task { get; init; }
 
 public static class Idrak.Audio.Plugins.Whisper.WhisperDecoder
   public static Idrak.Layers.Sequential Read(Idrak.Abstraction.Formats.ITensorStore store, Idrak.Audio.Plugins.Whisper.WhisperConfig config, Idrak.Abstraction.Generation.EncoderWeights weights, Idrak.Abstraction.Device device, string prefix = "model.decoder.")
@@ -426,6 +428,7 @@ public static class Idrak.Audio.Plugins.Whisper.WhisperDecoder
 public sealed class Idrak.Audio.Plugins.Whisper.WhisperEncoder : Idrak.Abstraction.Module
   public Idrak.Audio.Plugins.Whisper.WhisperConfig Config { get; }
   public int Dim { get; }
+  public int StepsFor(int frames)
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
   public override string ToString()
@@ -444,11 +447,15 @@ public static class Idrak.Audio.Plugins.Whisper.WhisperPlugin
   public static void Register()
   public static void Unregister()
 
-public sealed class Idrak.Audio.Plugins.Whisper.WhisperRecognizer : Idrak.Audio.Abstractions.ISpeechRecognizer, System.IDisposable
+public sealed class Idrak.Audio.Plugins.Whisper.WhisperRecognizer : Idrak.Audio.Abstractions.ISequenceSpeechModel, Idrak.Audio.Abstractions.ISpeechRecognizer, Idrak.Audio.Abstractions.ITrainableSpeechModel, System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Generation.IPretrainedTokenizer Tokenizer { get; }
   public Idrak.Abstraction.Generation.KeyValueFormat CacheFormat { get; }
+  public Idrak.Abstraction.Module Network { get; }
   public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Tensor features)
+  public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, Idrak.Audio.Abstractions.SpeechForwardOptions? options = null)
+  public Idrak.Abstraction.Tensor Head(Idrak.Abstraction.Tensor hidden)
+  public Idrak.Abstraction.Tensor Hidden(Idrak.Abstraction.Tensor tokens, Idrak.Abstraction.Tensor memory, System.Collections.Generic.IReadOnlyList<int> steps)
   public Idrak.Audio.Abstractions.IAudioFeatureExtractor Features { get; }
   public Idrak.Audio.Abstractions.Transcription Transcribe(Idrak.Audio.Abstractions.AudioData audio, Idrak.Audio.Abstractions.TranscriptionOptions? options = null, System.IProgress<Idrak.Audio.Abstractions.TranscriptionProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
   public Idrak.Audio.Plugins.Whisper.WhisperConfig Config { get; }
@@ -461,6 +468,18 @@ public sealed class Idrak.Audio.Plugins.Whisper.WhisperRecognizer : Idrak.Audio.
   public System.Collections.Generic.IReadOnlySet<string> Languages { get; }
   public float NoSpeechProbability(Idrak.Abstraction.Tensor encoded, System.Collections.Generic.IReadOnlyList<int> prompt)
   public float[] Logits(Idrak.Abstraction.Tensor encoded, System.Collections.Generic.IReadOnlyList<int> prompt)
+  public int EndToken { get; }
+  public int MaxPositions { get; }
+  public int StartToken { get; }
+  public int StepsFor(int frames)
+  public int Vocabulary { get; }
+  public int[] Generate(Idrak.Abstraction.Tensor memory, int beams, System.Threading.CancellationToken cancellationToken = default)
+  public int[] Labels(string text)
   public static double CompressionRatio(string text)
+  public string Architecture { get; }
+  public string Task { get; }
+  public string Text(System.ReadOnlySpan<int> labels)
   public string? DetectLanguage(Idrak.Abstraction.Tensor encoded)
+  public string? Language { get; }
   public void Dispose()
+  public void Save(string folder)

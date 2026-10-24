@@ -2195,6 +2195,7 @@ public sealed class Idrak.Models.SafeTensorsReader : Idrak.Abstraction.Formats.I
 
 public static class Idrak.Models.SafeTensorsWriter
   public static void Write(string path, System.Collections.Generic.IEnumerable<(string, int[], float[])> tensors, Idrak.Models.SafeTensorType type = (Idrak.Models.SafeTensorType)2, System.Collections.Generic.IReadOnlyDictionary<string, string>? metadata = null)
+  public static void Write(string path, System.Collections.Generic.IReadOnlyList<(string, int[], System.Func<float[]>)> tensors, Idrak.Models.SafeTensorType type, System.Collections.Generic.IReadOnlyDictionary<string, string>? metadata = null)
 
 public sealed class Idrak.Models.Seq2SeqNetwork : Idrak.Abstraction.Generation.ISeq2SeqModel, System.IDisposable
   public Idrak.Abstraction.Device Device { get; }

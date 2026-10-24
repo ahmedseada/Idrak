@@ -4,6 +4,8 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Idrak.Audio;
 using Idrak.Generation;
 using Idrak.Layers;
@@ -19,13 +21,26 @@ namespace Idrak.Audio.Plugins.Whisper;
 /// checkpoint's suppressed tokens and, with timestamps, the family's timestamp rules. Every setting comes from the
 /// checkpoint's files or <see cref="TranscriptionOptions"/>.
 /// </summary>
-public sealed class WhisperRecognizer : ISpeechRecognizer
+/// <remarks>
+/// It is also a model the speech trainer fine-tunes with the "seq2seq" objective (<see cref="ISequenceSpeechModel"/>), as
+/// transformers trains <c>WhisperForConditionalGeneration</c>: the decoder starts from &lt;|startoftranscript|&gt;, the
+/// labels are the prompt's language, task and &lt;|notimestamps|&gt; tokens then the text's, and the end token is taught
+/// last; the encoder reads the segment the recognizer reads (the features padded to the checkpoint's 30 s). It trains in
+/// float32 (load it with <see cref="SpeechModelOptions.Weights"/> = <see cref="EncoderWeights.Float32"/>) and
+/// <see cref="Save"/> writes a folder transformers and <c>SpeechModels.Load</c> both read.
+/// </remarks>
+public sealed class WhisperRecognizer : ISequenceSpeechModel
 {
     private readonly CrossAttention[] _crosses;
+    private readonly Module[] _body;
+    private readonly Linear _head;
+    private readonly WhisperNetwork _network;
+    private readonly WhisperSource? _source;
+    private int[]? _prefix;
     private bool _disposed;
 
     internal WhisperRecognizer(WhisperConfig config, IPretrainedTokenizer tokenizer, IAudioFeatureExtractor features, WhisperEncoder encoder, Sequential decoder, Device device,
-        KeyValueFormat cache, IReadOnlyList<string> notes)
+        KeyValueFormat cache, IReadOnlyList<string> notes, WhisperSource? source = null, string? language = null, string? task = null)
     {
         Config = config;
         Tokenizer = tokenizer;
@@ -37,9 +52,25 @@ public sealed class WhisperRecognizer : ISpeechRecognizer
         Notes = notes;
         Languages = config.Languages.Keys.ToHashSet(StringComparer.Ordinal);
         _crosses = [.. decoder.Descendants().OfType<CrossAttention>()];
+        var modules = decoder.ToList();
+        _body = [.. modules.Take(modules.Count - 1)];
+        _head = modules[^1] as Linear ?? throw new InvalidDataException("A Whisper decoder ends with its head.");
+        _network = new WhisperNetwork(encoder, decoder);
+        _source = source;
+        Language = language is { Length: > 0 } given ? given.Trim().TrimStart('<', '|').TrimEnd('>', '|').ToLowerInvariant() : config.Language;
+        Task = task ?? config.Task ?? "transcribe";
         encoder.Eval();
         decoder.Eval();
     }
+
+    /// <summary>
+    /// The language its training labels and its transcriptions name when a request gives none
+    /// (<see cref="SpeechModelOptions.Language"/>, else generation_config.json's), or null.
+    /// </summary>
+    public string? Language { get; }
+
+    /// <summary>The task its training labels name (<see cref="SpeechModelOptions.Task"/>, else generation_config.json's, else "transcribe").</summary>
+    public string Task { get; }
 
     /// <summary>The checkpoint's settings.</summary>
     public WhisperConfig Config { get; }
@@ -415,7 +446,7 @@ public sealed class WhisperRecognizer : ISpeechRecognizer
         int count = sound.Length == 0 ? 1 : 1 + Math.Max(0, (sound.Length - chunkSamples + stepSamples - 1) / stepSamples);
         var segments = new List<TranscriptSegment>();
         TimeSpan features = TimeSpan.Zero, encoder = TimeSpan.Zero, decoder = TimeSpan.Zero;
-        string? language = options.Language, carried = options.Prompt;
+        string? language = options.Language ?? Language, carried = options.Prompt;
         var random = new Random(options.Seed);
         for (int i = 0; i < count; i++)
         {
@@ -562,14 +593,14 @@ public sealed class WhisperRecognizer : ISpeechRecognizer
             }
         }
 
-        async Task<List<TranscriptSegment>> Next(int samples)
+        async System.Threading.Tasks.Task<List<TranscriptSegment>> Next(int samples)
         {
             var piece = new AudioData([.. pending.Take(samples)], 1, rate);
             pending.RemoveRange(0, samples);
             double at = offset;
             offset += (double)samples / rate;
             var request = each with { Prompt = options.CarryText ? carried : options.Prompt };
-            var result = await Task.Run(() => Transcribe(piece, request, null, cancellationToken), CancellationToken.None).ConfigureAwait(false);
+            var result = await System.Threading.Tasks.Task.Run(() => Transcribe(piece, request, null, cancellationToken), CancellationToken.None).ConfigureAwait(false);
             if (result.Text.Length > 0)
             {
                 carried = result.Text;
@@ -578,6 +609,185 @@ public sealed class WhisperRecognizer : ISpeechRecognizer
             return [.. result.Segments.Select(s => s with { Start = s.Start + at, End = s.End + at })];
         }
     }
+
+    // ----- Training (ISequenceSpeechModel) -----
+
+    /// <inheritdoc />
+    public string Architecture => WhisperFamily.Architecture;
+
+    /// <inheritdoc />
+    /// <exception cref="InvalidOperationException">A projection holds packed weights (the checkpoint's float16 or bfloat16, kept as stored), which do not train.</exception>
+    public Module Network
+    {
+        get
+        {
+            ThrowIfDisposed();
+            if (Encoder.Descendants().Concat(Decoder.Descendants()).OfType<Linear>().FirstOrDefault(l => l.PackedWeight is not null) is { } packed)
+            {
+                throw new InvalidOperationException($"This Whisper model holds its projections as the checkpoint stores them ({packed.PackedWeight!.Description}), which do not train: "
+                    + "load it with SpeechModelOptions.Weights = EncoderWeights.Float32 to fine-tune it.");
+            }
+
+            return _network;
+        }
+    }
+
+    /// <inheritdoc />
+    public int Vocabulary => Config.Vocabulary;
+
+    /// <inheritdoc />
+    public int StartToken => Config.StartToken;
+
+    /// <inheritdoc />
+    public int EndToken => Config.EndToken;
+
+    /// <inheritdoc />
+    public int MaxPositions => Config.MaxTargetPositions;
+
+    /// <inheritdoc />
+    public int StepsFor(int frames) => Encoder.StepsFor(frames);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// The prompt's tokens after &lt;|startoftranscript|&gt; (the language's, the task's, &lt;|notimestamps|&gt;), then the
+    /// text's tokens as the tokenizer gives them: transformers' labels with the language and task set.
+    /// </remarks>
+    /// <exception cref="InvalidOperationException">The checkpoint knows languages and none is set.</exception>
+    public int[] Labels(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return [.. LabelPrefix(), .. Tokenizer.Encode(text)];
+    }
+
+    /// <inheritdoc />
+    /// <remarks>The text tokens only: the prompt's, the end and the timestamp tokens are left out.</remarks>
+    public string Text(ReadOnlySpan<int> labels)
+    {
+        var ids = new List<int>(labels.Length);
+        foreach (int label in labels)
+        {
+            if (label < Config.EndToken && !Tokenizer.IsSpecial(label))
+            {
+                ids.Add(label);
+            }
+        }
+
+        return Decode(ids);
+    }
+
+    // The labels' first tokens: the prompt after <|startoftranscript|>, made once.
+    private int[] LabelPrefix()
+    {
+        if (_prefix is { } prefix)
+        {
+            return prefix;
+        }
+
+        if (Config.Languages.Count > 0 && Language is null)
+        {
+            throw new InvalidOperationException("This Whisper checkpoint is multilingual: its labels start with a language token. Give the language "
+                + "(idrak pretrain --language CODE, SpeechModelOptions.Language) or set \"language\" in its generation_config.json "
+                + $"(it knows {string.Join(", ", Config.Languages.Keys.Order())}).");
+        }
+
+        var prompt = Prompt(Language, Task, timestamps: false);
+        return _prefix = [.. prompt.Skip(1)];
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// <paramref name="features"/> are [batch, frames, mels] as the trainer lays them out; each utterance is the
+    /// checkpoint's whole segment (its extractor pads and cuts to it), so every step is the utterance's own. With
+    /// <see cref="SpeechForwardOptions.Checkpointing"/> the encoder's layers keep only their outputs.
+    /// </remarks>
+    public Tensor Encode(Tensor features, IReadOnlyList<int> frames, SpeechForwardOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(features);
+        ThrowIfDisposed();
+        if (features.Rank != 3 || features.Shape[2] != Config.Mels)
+        {
+            throw new ArgumentException($"Whisper's encoder takes features [batch, frames, {Config.Mels}], got {Tensor.FormatShape(features.Shape)}.", nameof(features));
+        }
+
+        var input = features.Device == Device ? features : features.To(Device);
+        return Encoder.Run(input.Permute(0, 2, 1), options?.Checkpointing ?? false);
+    }
+
+    /// <inheritdoc />
+    public Tensor Hidden(Tensor tokens, Tensor memory, IReadOnlyList<int> steps)
+    {
+        ArgumentNullException.ThrowIfNull(tokens);
+        ArgumentNullException.ThrowIfNull(memory);
+        ThrowIfDisposed();
+        using var scope = EncoderMemory.Use(memory, steps);
+        var x = tokens;
+        foreach (var module in _body)
+        {
+            x = module.Forward(x);
+        }
+
+        return x;
+    }
+
+    /// <inheritdoc />
+    public Tensor Head(Tensor hidden) => _head.Forward(hidden);
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// Decodes from the training prompt (&lt;|startoftranscript|&gt; and the labels' first tokens) with the checkpoint's
+    /// suppressed tokens; the labels returned start with those tokens, as <see cref="Labels"/> does.
+    /// </remarks>
+    public int[] Generate(Tensor memory, int beams, CancellationToken cancellationToken = default)
+    {
+        var prefix = LabelPrefix();
+        var best = Decode(memory, [Config.StartToken, .. prefix], new TranscriptionOptions { Beams = Math.Max(1, beams) }, cancellationToken).FirstOrDefault();
+        return best is null ? [.. prefix] : [.. prefix, .. best.Tokens.Where(t => t != Config.EndToken)];
+    }
+
+    /// <inheritdoc />
+    /// <remarks>
+    /// config.json and generation_config.json (the language and task the labels name), model.safetensors in float32
+    /// under transformers' names, and every other file of the folder it was read from (the tokenizer's, the
+    /// preprocessor's) copied: a folder transformers' <c>from_pretrained</c> and <c>SpeechModels.Load</c> both read.
+    /// </remarks>
+    public void Save(string folder)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(folder);
+        ThrowIfDisposed();
+        var source = _source ?? throw new InvalidOperationException("This Whisper model was not read from a checkpoint folder, so it has no files to save with its weights.");
+        Directory.CreateDirectory(folder);
+        string target = Path.GetFullPath(folder);
+        if (!string.Equals(Path.GetFullPath(source.Folder), target, StringComparison.Ordinal))
+        {
+            foreach (string file in Directory.EnumerateFiles(source.Folder))
+            {
+                string name = Path.GetFileName(file);
+                if (!WhisperSource.IsWeights(name) && name is not ("config.json" or "generation_config.json"))
+                {
+                    File.Copy(file, Path.Combine(target, name), overwrite: true);
+                }
+            }
+        }
+
+        var options = new JsonSerializerOptions { WriteIndented = true };
+        var config = source.Config.DeepClone().AsObject();
+        config["dtype"] = "float32";                                         // what model.safetensors holds now
+        config.Remove("torch_dtype");
+        File.WriteAllText(Path.Combine(target, "config.json"), config.ToJsonString(options) + "\n");
+        var generation = source.Generation?.DeepClone().AsObject() ?? new JsonObject();
+        if (Language is not null)
+        {
+            generation["language"] = Language;
+        }
+
+        generation["task"] = Task;
+        File.WriteAllText(Path.Combine(target, "generation_config.json"), generation.ToJsonString(options) + "\n");
+        SafeTensorsWriter.Write(Path.Combine(target, "model.safetensors"), source.Layout.Tensors, SafeTensorType.F32, new Dictionary<string, string> { ["format"] = "pt" });
+    }
+
+    // Each stored tensor's gradient under transformers' name and layout (the tests compare them with transformers').
+    internal IEnumerable<(string Name, int[] Shape, float[]? Gradient)> Gradients() =>
+        (_source ?? throw new InvalidOperationException("This Whisper model was not read from a checkpoint folder.")).Layout.Gradients();
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -593,4 +803,26 @@ public sealed class WhisperRecognizer : ISpeechRecognizer
         Encoder.Dispose();
         Decoder.Dispose();
     }
+
+    // The trained layers: the encoder, then the decoder (the recognizer disposes them; disposing a tensor twice is a no-op).
+    private sealed class WhisperNetwork(WhisperEncoder encoder, Sequential decoder) : Module
+    {
+        public override IEnumerable<Module> Children() => [encoder, decoder];
+
+        protected override Tensor ForwardCore(Tensor input) =>
+            throw new NotSupportedException("A Whisper network runs in two parts: the model's Encode, then its Hidden and Head (or Generate).");
+    }
+}
+
+/// <summary>What a Whisper model was read from, for writing it back: the folder, its config files, where each tensor went.</summary>
+internal sealed record WhisperSource(string Folder, JsonObject Config, JsonObject? Generation, WhisperLayout Layout)
+{
+    /// <summary>Whether a checkpoint folder's file holds weights (written anew, not copied).</summary>
+    public static bool IsWeights(string name) =>
+        name.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".bin", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith(".pt", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".pth", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith(".msgpack", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".h5", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith(".ckpt", StringComparison.OrdinalIgnoreCase) || name.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith(".onnx", StringComparison.OrdinalIgnoreCase)
+        || name.EndsWith(".index.json", StringComparison.OrdinalIgnoreCase);
 }

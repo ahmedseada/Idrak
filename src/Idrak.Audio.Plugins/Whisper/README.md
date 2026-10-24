@@ -22,6 +22,37 @@ registered".
   opens and closes each phrase, never back in time) and segments read from the timestamp tokens.
 - **Language**: given (`TranscriptionOptions.Language`) or detected (one decoder step over the language tokens).
 
+## Fine-tuning (plan 29)
+
+`WhisperRecognizer` is also an `ISequenceSpeechModel`, so `SpeechTrainer` fine-tunes it with the "seq2seq" objective
+(and `idrak pretrain WHISPER --data transcripts.jsonl --audio clips --language ar` does from the command line), as
+transformers trains `WhisperForConditionalGeneration`:
+
+- **Labels**: the prompt after `<|startoftranscript|>` (`<|lang|><|task|><|notimestamps|>`), then the text's tokens; the
+  decoder reads the start token and the labels and is taught each label and then the end token. The language and task
+  come from `SpeechModelOptions.Language` and `.Task`, else from `generation_config.json`'s `language` and `task`; a
+  multilingual checkpoint with no language anywhere refuses to make labels. The same language is the transcription
+  default when a request names none.
+- **Sound**: the features the recognizer reads (each clip padded to the 30 s segment with Whisper's own silence), so
+  training sees what transcription sees. A clip longer than the segment is left out (its sound would be cut, its text
+  not), counted in the run's notes.
+- **Weights**: training needs float32 projections: load with `SpeechModelOptions.Weights = EncoderWeights.Float32` (the
+  CLI does); a model of packed float16 or bfloat16 weights refuses to give its network. `SpeechForwardOptions.Checkpointing`
+  checkpoints the encoder's layers.
+- **Saving**: `Save` (each checkpoint) writes a folder transformers and `SpeechModels.Load` both read: `config.json`,
+  `generation_config.json` with the language and task, `model.safetensors` in float32 under transformers' names (the
+  packed query, key and value split again, one tensor in memory at a time), and every other file of the source folder.
+
+```csharp
+WhisperPlugin.Register();
+using var model = (WhisperRecognizer)SpeechModels.Load("models/whisper-small",
+    new SpeechModelOptions { Device = device, Weights = EncoderWeights.Float32, Language = "ar" });
+var result = SpeechTrainer.Train(model, new SpeechSource(SpeechSources.Transcripts, ["train.jsonl"]),
+    new SpeechSource(SpeechSources.Transcripts, ["dev.jsonl"]), new SpeechTrainingOptions { Steps = 500, LearningRate = 1e-5f }, "runs/whisper-ar");
+```
+
+Not yet: timestamps in the labels, a language per utterance, adapters (LoRA) on the projections, a frozen encoder.
+
 ## The files a checkpoint needs
 
 | File | What |
@@ -58,6 +89,7 @@ through the encoder, and the testing kit's `SpeechRecognizerSuite`. On the CPU:
 
 ```
 IDRAK_DEVICES=cpu IDRAK_FILTER="audio asr" dotnet run -c Release --no-build --project tests/Idrak.Tests
+IDRAK_DEVICES=cpu IDRAK_FILTER="audio whisper train" dotnet run -c Release --no-build --project tests/Idrak.Tests
 ```
 
 **Memory.** With gradients off, the encoder runs each layer in a scope of its own and keeps only its output, so the

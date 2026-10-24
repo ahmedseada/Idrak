@@ -26,7 +26,8 @@ internal static class SpeechPretraining
 
     /// <summary>The value options only a speech run reads.</summary>
     public static readonly string[] ValueOptions =
-        ["--batch-seconds", "--metric", "--augment", "--clean", "--clean-settings", "--durations", "--duration-weight", "--min-seconds", "--max-seconds", "--decoder", "--beam", "--source"];
+        ["--batch-seconds", "--metric", "--augment", "--clean", "--clean-settings", "--durations", "--duration-weight", "--min-seconds", "--max-seconds", "--decoder", "--beam", "--source",
+         "--language", "--task"];
 
     /// <summary>The flags only a speech run reads.</summary>
     public static readonly string[] Flags = ["--skip-missing"];
@@ -290,9 +291,24 @@ internal static class SpeechPretraining
         {
             try
             {
-                var recognizer = SpeechModels.Load(folder, new SpeechModelOptions { Device = context.Device });
+                // Training reads and writes float32 weights (a checkpoint's float16 or bfloat16 projections, kept as stored, do
+                // not train); the language and task are those the labels name (Whisper's prompt).
+                var recognizer = SpeechModels.Load(folder, new SpeechModelOptions
+                {
+                    Device = context.Device, Weights = EncoderWeights.Float32, Language = context.Option("--language"), Task = context.Option("--task"),
+                });
                 if (recognizer is ITrainableSpeechModel trainable)
                 {
+                    try
+                    {
+                        _ = trainable.Labels("");                                // a setting the labels need (a language) is asked for before any work
+                    }
+                    catch (InvalidOperationException e)
+                    {
+                        recognizer.Dispose();
+                        throw new UsageException(e.Message);
+                    }
+
                     return new LoadedSpeechModel(trainable, null, recognizer);
                 }
 

@@ -401,13 +401,24 @@ public static class SpeechTrainer
         using var cache = options.FeatureCache is { } cacheName ? FeatureCaches.Create(cacheName, new FeatureCacheOptions { Folder = options.FeatureCacheFolder }) : null;
         var features = new FeatureSource(model.Features, cache, options);
 
-        // The utterances the objective can train on (CTC: their frames give at least the steps their labels need).
+        // The utterances the objective can train on (CTC: their frames give at least the steps their labels need). Features
+        // padded to a segment (PadSeconds: Whisper's 30 s) cut a longer clip's sound while its transcript stays whole, so such
+        // a clip is left out.
         var labels = new int[reader.Count][];
         var frames = new int[reader.Count];
         var usable = new List<int>(reader.Count);
         int rate = model.Features.Options.SampleRate;
+        double? segment = model.Features.Options.PadSeconds;
+        int tooLong = 0;
         for (int i = 0; i < reader.Count; i++)
         {
+            if (Longer(reader[i].Seconds, segment))
+            {
+                labels[i] = [];
+                tooLong++;
+                continue;
+            }
+
             labels[i] = model.Labels(reader[i].Text);
             frames[i] = model.Features.FramesFor((long)Math.Round(reader[i].Seconds * rate));
             if (model.Accepts(reader, i, frames[i], labels[i]))
@@ -416,10 +427,17 @@ public static class SpeechTrainer
             }
         }
 
-        int dropped = reader.Count - usable.Count;
-        if (dropped > 0)
+        if (tooLong > 0)
         {
-            string note = $"{dropped} utterances {model.Refused} and are left out";
+            string note = $"{tooLong} utterances are longer than the features' {segment:0.##} s segment (their sound would be cut, their text not) and are left out";
+            notes.Add(note);
+            trace?.Invoke(note);
+        }
+
+        int dropped = reader.Count - usable.Count;
+        if (dropped > tooLong)
+        {
+            string note = $"{dropped - tooLong} utterances {model.Refused} and are left out";
             notes.Add(note);
             trace?.Invoke(note);
         }
@@ -429,18 +447,21 @@ public static class SpeechTrainer
             throw new ArgumentException($"The training source holds no utterance the '{model.Objective}' objective can train on ({reader.Count} read, {dropped} that {model.Refused}).", nameof(train));
         }
 
-        int[] scored = evalReader is null ? [] : [.. Enumerable.Range(0, evalReader.Count).Where(i => model.Evaluates(evalReader, i))];
+        int[] scored = evalReader is null ? [] : [.. Enumerable.Range(0, evalReader.Count).Where(i => !Longer(evalReader[i].Seconds, segment) && model.Evaluates(evalReader, i))];
         if (evalReader is { Count: > 0 } && scored.Length < evalReader.Count)
         {
-            string note = $"evaluation: {evalReader.Count - scored.Length} utterances {model.Refused} and are not scored";
+            string note = $"evaluation: {evalReader.Count - scored.Length} utterances {model.Refused}{(segment is null ? "" : $" (or are longer than the features' {segment:0.##} s segment)")} and are not scored";
             notes.Add(note);
             trace?.Invoke(note);
         }
 
+        // What each utterance costs a batch, in padded seconds: its own length, or the whole segment when the features pad
+        // every clip to one (Whisper's 30 s: a 2 s clip runs through the model as 30 s), so batches and the automatic batch
+        // hold what the device measured.
         var seconds = new double[reader.Count];
         for (int i = 0; i < seconds.Length; i++)
         {
-            seconds[i] = reader[i].Seconds;
+            seconds[i] = segment ?? reader[i].Seconds;
         }
 
         var augmentations = options.Augmentations.Select(AudioAugmentations.Get).ToArray();
@@ -620,6 +641,9 @@ public static class SpeechTrainer
         string output = Path.GetDirectoryName(Path.GetFullPath(checkpointFolder))!;
         return Train(model, state.Train, state.Evaluation, overrides ?? state.Options, output, state with { Options = overrides ?? state.Options }, progress, cancellationToken, trace);
     }
+
+    // Whether a clip of `seconds` is longer than the features' segment (half a hop's leeway for the length's rounding).
+    private static bool Longer(double seconds, double? segment) => segment is { } pad && seconds > pad + 0.005;
 
     /// <summary>The latest checkpoint a run wrote into <paramref name="outputFolder"/>, or null.</summary>
     public static string? LatestCheckpoint(string outputFolder) => Checkpoints(outputFolder).Select(c => c.Folder).LastOrDefault();

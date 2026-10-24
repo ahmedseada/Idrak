@@ -160,6 +160,20 @@ public sealed record SpeechModelOptions
 
     /// <summary>The architecture to read the checkpoint as, when config.json names none or another.</summary>
     public string? Architecture { get; init; }
+
+    /// <summary>
+    /// The language the model reads, for a family whose prompt names one (Whisper's language token): the language of the
+    /// labels the speech trainer teaches it, and its transcription default when <see cref="TranscriptionOptions.Language"/>
+    /// is not given. Null: the checkpoint's own (Whisper: generation_config.json's "language"), else none (detected when
+    /// transcribing; a multilingual Whisper refuses to make labels without one).
+    /// </summary>
+    public string? Language { get; init; }
+
+    /// <summary>
+    /// The task the model is trained for, for a family whose prompt names one (Whisper: "transcribe" or "translate"). Null:
+    /// the checkpoint's own (generation_config.json's "task"), else "transcribe".
+    /// </summary>
+    public string? Task { get; init; }
 }
 
 /// <summary>What a speech family reads a checkpoint from (<see cref="ISpeechFamily.Read"/>).</summary>

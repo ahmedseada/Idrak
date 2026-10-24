@@ -94,6 +94,15 @@ public sealed partial record WhisperConfig
     /// <summary>How many timestamp steps into a segment its first timestamp may fall (max_initial_timestamp_index), or null for any.</summary>
     public int? MaxInitialTimestampIndex { get; init; } = 50;
 
+    /// <summary>
+    /// The language generation_config.json names ("language": a code, or a token such as "&lt;|ar|&gt;", read as its code),
+    /// or null: what transformers' generate and the speech trainer's labels use when a request names none.
+    /// </summary>
+    public string? Language { get; init; }
+
+    /// <summary>The task generation_config.json names ("task": "transcribe" or "translate"), or null.</summary>
+    public string? Task { get; init; }
+
     /// <summary>Each head's size.</summary>
     public int EncoderHeadDim => Dim / EncoderHeads;
 
@@ -182,6 +191,8 @@ public sealed partial record WhisperConfig
             SuppressTokens = Ids("suppress_tokens"),
             BeginSuppressTokens = Ids("begin_suppress_tokens"),
             TimePrecision = (generation?["time_precision"] ?? config["time_precision"]) is { } precision && precision.GetValueKind() == JsonValueKind.Number ? (double)precision : 0.02,
+            Language = generation?["language"] is JsonValue language && language.GetValueKind() == JsonValueKind.String ? Bare((string)language!).ToLowerInvariant() : null,
+            Task = generation?["task"] is JsonValue taskName && taskName.GetValueKind() == JsonValueKind.String ? (string)taskName! : null,
             MaxInitialTimestampIndex = (generation?["max_initial_timestamp_index"] ?? config["max_initial_timestamp_index"]) is { } initial
                 ? initial.GetValueKind() == JsonValueKind.Number ? (int)initial : null : 50,
         };

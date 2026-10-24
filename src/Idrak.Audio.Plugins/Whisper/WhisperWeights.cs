@@ -21,8 +21,8 @@ internal static class WhisperWeights
         return Tensor.Persistent(store.Read(name), [length], device, requiresGrad: true);
     }
 
-    /// <summary>A 2-D tensor [rows, columns] as a parameter (an embedding table, a position table).</summary>
-    public static Tensor Table(ITensorStore store, string name, int rows, int columns, Device device)
+    /// <summary>A 2-D tensor [rows, columns] as a parameter (an embedding table, a position table), or a fixed table without gradient.</summary>
+    public static Tensor Table(ITensorStore store, string name, int rows, int columns, Device device, bool trained = true)
     {
         var shape = Shape(store, name);
         if (shape.Length != 2 || shape[0] != rows || shape[1] != columns)
@@ -30,15 +30,19 @@ internal static class WhisperWeights
             throw new InvalidDataException($"The checkpoint's '{name}' is {Tensor.FormatShape(shape)}; [{rows}, {columns}] was expected.");
         }
 
-        return Tensor.Persistent(store.Read(name), [rows, columns], device, requiresGrad: true);
+        return Tensor.Persistent(store.Read(name), [rows, columns], device, requiresGrad: trained);
     }
 
-    /// <summary>A layer normalization from <c>{name}.weight</c> and <c>{name}.bias</c>.</summary>
-    public static LayerNorm Norm(ITensorStore store, string name, int features, float epsilon, Device device) =>
-        LayerNorm.FromWeights(Vector(store, name + ".weight", features, device), Vector(store, name + ".bias", features, device), epsilon);
+    /// <summary>A layer normalization from <c>{name}.weight</c> and <c>{name}.bias</c> (recorded in <paramref name="layout"/>).</summary>
+    public static LayerNorm Norm(ITensorStore store, string name, int features, float epsilon, Device device, WhisperLayout? layout = null)
+    {
+        var norm = LayerNorm.FromWeights(Vector(store, name + ".weight", features, device), Vector(store, name + ".bias", features, device), epsilon);
+        layout?.Add(name, norm);
+        return norm;
+    }
 
     /// <summary>A projection from <c>{name}.weight</c> [out, in] (and <c>{name}.bias</c> when stored), checked to be [inputs, outputs].</summary>
-    public static Linear Projection(ITensorStore store, string name, int inputs, int outputs, EncoderWeights weights, Device device)
+    public static Linear Projection(ITensorStore store, string name, int inputs, int outputs, EncoderWeights weights, Device device, WhisperLayout? layout = null)
     {
         var shape = Shape(store, name + ".weight");
         if (shape.Length != 2 || shape[0] != outputs || shape[1] != inputs)
@@ -46,7 +50,9 @@ internal static class WhisperWeights
             throw new InvalidDataException($"The checkpoint's '{name}.weight' is {Tensor.FormatShape(shape)}; [{outputs}, {inputs}] was expected.");
         }
 
-        return StoredWeights.Linear(store, name, weights, device);
+        var linear = StoredWeights.Linear(store, name, weights, device);
+        layout?.Add(name, linear);
+        return linear;
     }
 
     /// <summary>
@@ -54,11 +60,12 @@ internal static class WhisperWeights
     /// by side as one [dim, 3 · dim] layer for <see cref="MultiHeadAttention.FromWeights"/> (a key projection without a bias
     /// gets zeros).
     /// </summary>
-    public static Linear PackedQkv(ITensorStore store, string prefix, int dim, EncoderWeights weights, Device device)
+    public static Linear PackedQkv(ITensorStore store, string prefix, int dim, EncoderWeights weights, Device device, WhisperLayout? layout = null)
     {
         var packed = new float[dim * 3 * dim];
         var bias = new float[3 * dim];
         bool anyBias = false;
+        Span<bool> stored = stackalloc bool[3];
         string[] parts = ["q_proj", "k_proj", "v_proj"];
         for (int p = 0; p < 3; p++)
         {
@@ -79,13 +86,15 @@ internal static class WhisperWeights
             if (store.Contains(biasName))
             {
                 store.Read(biasName).AsSpan(0, dim).CopyTo(bias.AsSpan(p * dim, dim));
-                anyBias = true;
+                anyBias = stored[p] = true;
             }
         }
 
         // The three keep one precision: the one each stored tensor allows (a bfloat16 or float16 checkpoint's own, as stored).
         var kept = StoredWeights.Kept(store, weights, parts.Select(part => prefix + part + ".weight"));
-        return StoredWeights.Linear(packed, dim, 3 * dim, anyBias ? Tensor.Persistent(bias, [3 * dim], device, requiresGrad: true) : null, kept, device);
+        var linear = StoredWeights.Linear(packed, dim, 3 * dim, anyBias ? Tensor.Persistent(bias, [3 * dim], device, requiresGrad: true) : null, kept, device);
+        layout?.AddPacked(prefix, linear, dim, stored);
+        return linear;
     }
 
     /// <summary>The feed-forward activation named by the configuration.</summary>

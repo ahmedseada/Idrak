@@ -656,6 +656,14 @@
    "bytes": 158,
    "sha256": "1fe9e99d89c6919241284606107537104da0fa0fee0eeb93c97fbeab4805f09e"
   },
+  "tiny-whisper/reference/train-grads.safetensors": {
+   "bytes": 549648,
+   "sha256": "4fed7ab16713f1518d00d8bfdaad27366b6bae8e0524f4db74c2314a7090579c"
+  },
+  "tiny-whisper/reference/train.json": {
+   "bytes": 498,
+   "sha256": "64dbfef15b73c1171c14781789d655d79b701c558c74635f8fe5d1955e3dbcd0"
+  },
   "tiny-whisper/special_tokens.json": {
    "bytes": 720,
    "sha256": "23090e36bb6598a192752cd79d2158bbe48745b2ec56dcbad7d39227790a56fa"
@@ -904,6 +912,7 @@
   "resample",
   "features",
   "whisper",
+  "whisper-train",
   "ctc",
   "seq2seq",
   "audio-language",

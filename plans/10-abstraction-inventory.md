@@ -174,9 +174,9 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | json, pythonic | Abstraction, Idrak, Text, Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.TuningMetrics` | registry | public | — |  | cer, contains, exact, f1, number, wer | Abstraction, Audio, Text | Abstraction |
 | `Idrak.Abstraction.ICommandSandbox` | interface | public | — | ContainerSandbox, ProcessCommandSandbox |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
-| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +74 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +75 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Idrak, Text, Vision | Abstraction |
+| `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Audio.Plugins, Idrak, Text, Vision | Abstraction |
 | `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Operations.PluginOperations` | registry | public | — |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Plugins.IIdrakPlugin` | interface | public | — | BertPlugin.BertRegistration, CSharpCodingPlugin.CSharpCodingRegistration, CSharpLanguagePlugin.CSharpLanguageRegistration, ClassicControlPlugin.ClassicRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, +18 |  | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
@@ -345,7 +345,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.IAudioSplitter` | interface | public | — | SecondsSplitter, SilenceSplitter |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioTuningPart` | interface | public | Tensor | IdrakAudioLanguagePart |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ICtcSpeechModel` | interface | public | Tensor | IdrakAudioCtcModel |  | Audio, Audio.Plugins | Audio |
-| `Idrak.Audio.Abstractions.ISequenceSpeechModel` | interface | public | Tensor | IdrakAudioSeq2SeqModel |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.ISequenceSpeechModel` | interface | public | Tensor | IdrakAudioSeq2SeqModel, WhisperRecognizer |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ISpeakerEncoder` | interface | public | Device | OpenVoiceConverter |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ISpeechFamily` | interface | public | — | IdrakAudioFamily, WhisperFamily |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ISpeechReader` | interface | public | — | SpeechReader |  | Audio | Audio |
@@ -357,7 +357,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.ISpeechTrainingObjective` | interface | public | Tensor | CtcObjective, Seq2SeqObjective |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ITextPhonemizer` | interface | public | — | EspeakNgPhonemizer |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ITextRomanizer` | interface | public | — | UromanArabicRomanizer |  | Audio, Audio.Plugins | Audio |
-| `Idrak.Audio.Abstractions.ITrainableSpeechModel` | interface | public | Module | IdrakAudioCtcModel, IdrakAudioSeq2SeqModel |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.ITrainableSpeechModel` | interface | public | Module | IdrakAudioCtcModel, IdrakAudioSeq2SeqModel, WhisperRecognizer |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer` | interface | public | Module, Tensor | IdrakAudioTtsModel |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IVocoder` | interface | public | Device, Tensor | GriffinLimVocoder, HifiGanVocoder, VitsSynthesizer.DecoderVocoder, Vocoders.GuardedVocoder |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IVoiceConverter` | interface | public | — | OpenVoiceConverter |  | Audio, Audio.Plugins | Audio |

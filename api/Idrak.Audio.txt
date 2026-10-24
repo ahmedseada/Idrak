@@ -518,6 +518,8 @@ public sealed record Idrak.Audio.Abstractions.SpeechModelOptions : System.IEquat
   public Idrak.Abstraction.Generation.KeyValueFormat Cache { get; init; }
   public SpeechModelOptions()
   public string? Architecture { get; init; }
+  public string? Language { get; init; }
+  public string? Task { get; init; }
 
 public sealed record Idrak.Audio.Abstractions.SpeechSource : System.IEquatable<Idrak.Audio.Abstractions.SpeechSource>
   public SpeechSource(string Kind, System.Collections.Generic.IReadOnlyList<string> Paths)

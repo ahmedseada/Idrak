@@ -44,11 +44,13 @@ internal sealed class PretrainCommand : Command
         --min-seconds and --max-seconds S (utterances left out), --skip-missing (rows whose sound is missing), --source KIND (the speech
         source kind; told from the paths), --feature-cache memory|disk|none (disk); a synthesizer reads --durations
         alignments.jsonl (idrak data audio --align MODEL writes it) and --duration-weight W (1); a CTC recognizer learns
-        from a CTC --teacher's frame posteriors with --alpha and --temperature (0.5, 2). -C takes the trainer's options
+        from a CTC --teacher's frame posteriors with --alpha and --temperature (0.5, 2). A recognizer whose prompt names a
+        language and task (Whisper) is fine-tuned in --language CODE and --task transcribe|translate (default: its
+        generation_config.json's; a multilingual one needs a language); its checkpoints are folders transformers reads. -C takes the trainer's options
         as JSON (batch_seconds, learning_rate, …, with "train" and "evaluation" sources).
 
         Arguments:
-          MODEL  a model folder (idrak create writes one)
+          MODEL  a model folder (idrak create writes one) or a Hugging Face id (from the cache, else downloaded)
 
         Options:
           -C, --config FILE        the run's stages and settings (pretrain.json); the options below then change it
@@ -70,6 +72,8 @@ internal sealed class PretrainCommand : Command
               --steps N            the stage's optimizer steps (1000)
               --trained PARTS      what trains: decoder, embeddings, head, tower, projector, the model's parts'
                                    (audio-encoder, audio-projector), all (decoder,embeddings,head)
+              --language CODE      a speech recognizer's language, where its prompt names one (Whisper)
+              --task T             a speech recognizer's task, where its prompt names one: transcribe or translate
               --lr X               the peak learning rate (3e-4)
               --min-lr X           the rate at the end (0)
               --warmup F           the share of steps warming up (0.03)
@@ -111,6 +115,7 @@ internal sealed class PretrainCommand : Command
           idrak pretrain my-audio-lm --data talks.jsonl --audio clips.zip --trained audio-encoder,audio-projector
           idrak pretrain my-ctc --data train.jsonl --audio clips --eval dev.jsonl --batch-seconds 120
           idrak pretrain my-tts --data train.jsonl --audio clips --durations alignments.jsonl
+          idrak pretrain openai/whisper-small --data train.jsonl --audio clips --eval dev.jsonl --language ar --steps 500 --lr 1e-5
           idrak pretrain init -o pretrain.json
           idrak pretrain my-model -C pretrain.json -o run
           idrak pretrain my-model --tokens tokens.bin -o run --cluster lan.json --placement pipeline
@@ -134,8 +139,9 @@ internal sealed class PretrainCommand : Command
     public override int Run(CommandContext context)
     {
         using var cluster = ClusterJoin.Join(context, ownsRank: false);    // --cluster FILE, or a rank process of idrak cluster start (C5)
-        string modelFolder = context.Argument(0, "MODEL (a model folder; idrak create writes one)");
-        string run = context.Option("--out") ?? NewRunFolder(context, Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(modelFolder))));
+        string model = context.Argument(0, "MODEL (a model folder; idrak create writes one)");
+        string modelFolder = ModelChoices.Resolve(context, model);                 // a folder as it is; a Hugging Face id from the cache
+        string run = context.Option("--out") ?? NewRunFolder(context, Path.GetFileName(Path.TrimEndingDirectorySeparator(Directory.Exists(model) ? Path.GetFullPath(model) : model)));
         if (SpeechPretraining.Holds(modelFolder))
         {
             return SpeechPretraining.Run(context, modelFolder, run, context.IntOption("--log-every", 10));   // a recognizer or synthesizer

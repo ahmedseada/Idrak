@@ -26,7 +26,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "vlm"))
 from make_tiny import dump_json, save_npy, sha256, safetensors_index  # noqa: E402
 
-SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "ctc", "seq2seq", "audio-language", "tts", "vits", "vits-speakers", "voices", "vits-train", "transcripts"]
+SECTIONS = ["wav", "flac", "mp3", "resample", "features", "whisper", "whisper-train", "ctc", "seq2seq", "audio-language", "tts", "vits", "vits-speakers", "voices", "vits-train", "transcripts"]
 RATE = 16000
 SECONDS = 1.5
 
@@ -560,6 +560,51 @@ def write_whisper(out, extractor):
     dump_json(os.path.join(ref, "language.json"), {"logits": languages, "detected": max(languages, key=languages.get)})
     index, _ = safetensors_index(os.path.join(folder, "model.safetensors"))
     dump_json(os.path.join(folder, "tensors.json"), index)
+
+
+def write_whisper_train(out):
+    """Plan 29: transformers' training pass of tiny-whisper (as write_whisper saved it) on a batch of two utterances, as
+    Idrak's "seq2seq" objective computes it. The features: the fixture's 30 s log-mel and the same reversed in time
+    ([2, 3000, 80], the trainer's layout). Each utterance's labels are the prompt after <|startoftranscript|>
+    (<|ar|><|transcribe|><|notimestamps|>) then its text's tokens; the decoder reads the start token and the labels
+    (padded with the end token), is taught each label and then the end token, and the loss is each utterance's mean
+    cross-entropy averaged over the batch. Written: the labels, the loss and every trained parameter's gradient under
+    transformers' names (tied, so the head's part is in embed_tokens; the encoder's fixed positions get none)."""
+    from transformers import WhisperForConditionalGeneration
+    from safetensors.torch import save_file
+    torch = torch_setup()
+    F = torch.nn.functional
+    folder = os.path.join(out, "tiny-whisper")
+    ids = json.load(open(os.path.join(folder, "special_tokens.json"), encoding="utf-8"))
+    from tokenizers import Tokenizer
+    tok = Tokenizer.from_file(os.path.join(folder, "tokenizer.json"))
+    model = WhisperForConditionalGeneration.from_pretrained(folder, dtype=torch.float32)
+    model.train()
+    one = np.load(os.path.join(out, "features", "log-mel.npy")).astype(np.float32)          # [80, 3000]
+    features = torch.from_numpy(np.stack([one, one[:, ::-1].copy()]))                           # [2, 80, 3000]
+    texts = [CORPUS[0], CORPUS[2]]
+    prefix = [ids["<|ar|>"], ids["<|transcribe|>"], ids["<|notimestamps|>"]]
+    labels = [prefix + tok.encode(t).ids for t in texts]
+    eos, sot = ids["<|endoftext|>"], ids["<|startoftranscript|>"]
+    length = max(len(l) for l in labels) + 1
+    inputs = torch.full((2, length), eos, dtype=torch.long)
+    targets = torch.full((2, length), -100, dtype=torch.long)
+    for b, row in enumerate(labels):
+        inputs[b, 0] = sot
+        inputs[b, 1:len(row) + 1] = torch.tensor(row)
+        targets[b, :len(row)] = torch.tensor(row)
+        targets[b, len(row)] = eos
+    logits = model(input_features=features, decoder_input_ids=inputs).logits
+    ce = F.cross_entropy(logits.transpose(1, 2), targets, ignore_index=-100, reduction="none")      # [2, length]
+    counts = (targets != -100).sum(1)
+    loss = (ce.sum(1) / counts).mean()
+    loss.backward()
+    grads = {name: p.grad.detach().contiguous() for name, p in model.named_parameters() if p.grad is not None}
+    ref = os.path.join(folder, "reference")
+    os.makedirs(ref, exist_ok=True)
+    save_file(grads, os.path.join(ref, "train-grads.safetensors"))
+    dump_json(os.path.join(ref, "train.json"), {"texts": texts, "labels": labels, "loss": float(loss), "reversed_second": True,
+                                                "language": "ar", "task": "transcribe"})
 
 
 # The IdrakAudio plug-in's "ctc" task in torch (plan 21, S6): the same layers, names and order as
@@ -1862,6 +1907,8 @@ def main():
             from transformers import WhisperFeatureExtractor
             extractor = WhisperFeatureExtractor(feature_size=MELS, sampling_rate=RATE, hop_length=HOP, chunk_length=CHUNK_SECONDS, n_fft=N_FFT)
         write_whisper(args.out, extractor)
+    if "whisper-train" in sections:
+        write_whisper_train(args.out)
     if "ctc" in sections:
         write_ctc(args.out)
     if "seq2seq" in sections:

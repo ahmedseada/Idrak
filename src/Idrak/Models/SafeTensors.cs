@@ -526,10 +526,11 @@ public static class SafeTensorsWriter
 
     /// <summary>
     /// Writes tensors whose values are produced one at a time by <c>Values</c>, as each is written: the header comes from
-    /// the shapes, so only one tensor's values (and one chunk of its bytes) exist at once.
+    /// the shapes, so only one tensor's values (and one chunk of its bytes) exist at once (a model's weights are never all
+    /// on the host together).
     /// </summary>
-    internal static void Write(string path, IReadOnlyList<(string Name, int[] Shape, Func<float[]> Values)> tensors, SafeTensorType type,
-        IReadOnlyDictionary<string, string>? metadata)
+    public static void Write(string path, IReadOnlyList<(string Name, int[] Shape, Func<float[]> Values)> tensors, SafeTensorType type,
+        IReadOnlyDictionary<string, string>? metadata = null)
     {
         int size = type == SafeTensorType.F32 ? 4 : 2;
         var header = new JsonObject();
