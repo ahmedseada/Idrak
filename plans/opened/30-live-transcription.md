@@ -27,8 +27,11 @@ the same path (to try the settings on known speech). Any registered speech recog
    last finished segment is kept; every `StepSeconds` of new sound it is transcribed again whole, and the words the last
    `Agreement` transcriptions agree on from the start are committed (the commit policy is a contract,
    `ILiveCommitPolicy`, registered in `LiveCommitPolicies`; built in: `agreement`, Whisper-streaming's local agreement).
-   A segment ends at `SilenceSeconds` of quiet after speech, at `WindowSeconds`, or at the end of the input; its
-   whole text is committed then, and the next segment is given the last text as its prompt. Stretches with no speech
+   A segment ends at the first pause of `SilenceSeconds` after speech, wherever it falls since the last reading (so a
+   pause between two readings still ends the sentence, and the sound after it waits for the next), at `WindowSeconds`,
+   or at the end of the input; its whole text is committed then, and the next segment is given the last text as its
+   prompt. A segment needs `MinSpeechSeconds` of loud frames before it is read: a click, a breath or the stop key
+   alone is left out (Whisper, given almost no sound, echoes its prompt: the owner's first live runs showed it). Stretches with no speech
    are never transcribed (the quiet is measured per 20 ms frame: under the loudest frame heard by `SilenceDecibels`,
    and under `SilenceFloorDecibels` before anything loud), so silence does not turn into invented text. The input is
    read on its own task while the model works, so no sound is lost when a step takes longer than the step. `KeepUp`
@@ -38,7 +41,9 @@ the same path (to try the settings on known speech). Any registered speech recog
    `--list-inputs` lists the backends and their devices), `-` reads the pipe (`--input-rate`, `--input-channels`,
    `--input-format`), a file is streamed. The live line shows the segment as heard so far (committed words, then the
    tentative ones); each finished segment is printed as a line with its times. Ctrl+C stops the input: the last segment
-   is finished, then `-o` writes the whole transcript (text, JSON, SRT or WebVTT) and `-j` prints it. `--step`,
+   is finished (the line says so; the stop message gets its own line), then `-o` writes the whole transcript (text,
+   JSON, SRT or WebVTT) and `-j` prints it. A printed segment clears its line to the end, so right-to-left text never
+   leaves the live line's end behind. `--step`,
    `--window`, `--silence`, `--silence-db`, `--silence-floor-db`, `--agreement` set the library's options; every
    transcription option of the command applies to each step.
 

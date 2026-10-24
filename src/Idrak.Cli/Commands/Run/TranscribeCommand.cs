@@ -92,6 +92,7 @@ internal sealed partial class TranscribeCommand : Command
               --silence S        seconds of quiet after speech that end a segment (0.6)
               --silence-db D     a frame is quiet this many dB under the loudest heard (35)
               --silence-floor-db D  and always under this level, dB of full scale (-50)
+              --min-speech S     seconds of speech a segment needs to be read: a click or a breath is left out (0.3)
               --agreement N      readings in a row a word must keep before it is final (2)
               --commit NAME      the commit policy (agreement; a plug-in's)
               --every-step       read every step of the sound even when behind (a recording piped in; a FILE does)
@@ -113,7 +114,7 @@ internal sealed partial class TranscribeCommand : Command
         "--language", "--task", "--beam", "--length-penalty", "--max-tokens", "--chunk-seconds", "--overlap-seconds", "--prompt", "--temperature", "--batch",
         "--memory-fraction", "--weights", "--kv", "--out", "--fallback", "--best-of", "--compression-ratio-threshold", "--logprob-threshold", "--no-speech-threshold",
         "--capture", "--input", "--input-rate", "--input-channels", "--input-format", "--step", "--window", "--silence", "--silence-db", "--silence-floor-db",
-        "--agreement", "--commit",
+        "--agreement", "--commit", "--min-speech",
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } =

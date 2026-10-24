@@ -13,7 +13,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] AudioLiveGroup =
     [
         ("audio live: PcmStreamInput reads raw s16le stereo and f32le, a WAV header of unknown size with a chunk before its data, a stream shorter than a header, all through reads of three bytes at a time; frames split between reads wait for their rest", AudioLiveStream),
-        ("audio live: LiveTranscriber on a scripted recognizer: quiet before speech never transcribed, words committed once two readings agree, a segment ended by a pause and the last by the end, the first segment's text the second's prompt; a long tone cut by the window", AudioLiveScripted),
+        ("audio live: LiveTranscriber on a scripted recognizer: quiet before speech never transcribed, words committed once two readings agree, a segment ended by a pause and the last by the end, the first segment's text the second's prompt; a click under MinSpeechSeconds never read; a long tone cut by the window", AudioLiveScripted),
         ("audio live: tiny-whisper over pcm16.wav given in 0.1 s blocks: the steps' updates and one finished segment whose text is the whole file's transcription", AudioLiveWhisper),
         ("audio live: the captures: winmm and alsa registered with their reasons, this machine's chosen; ALSA's null device recorded through the driver (16 kHz mono blocks, stopped by the token) where libasound is installed", AudioLiveCaptures),
         ("audio live: idrak transcribe --live FILE prints the segment with its times and writes -o SRT; --list-inputs lists the captures; a second source refused", AudioLiveCli),
@@ -211,6 +211,14 @@ internal static partial class Tests
             $"the committed words and the segment's rest make its text: [{string.Join(" | ", committed)}] + '{segments[0].Committed}' against '{segments[0].Segment}'");
         Check(recognizer.Calls[0].Prompt == "start" && recognizer.Calls[^1].Prompt!.EndsWith(segments[0].Segment!, StringComparison.Ordinal),
             $"prompts: first '{recognizer.Calls[0].Prompt}', last '{recognizer.Calls[^1].Prompt}'");
+
+        // A 0.1 s click after a sentence (a breath, a key) is never read; with no minimum it is.
+        var clickedReader = new ScriptedRecognizer();
+        Updates(clickedReader, Pieces([(2, true), (0.8, false), (0.1, true), (0.8, false)]), options);
+        var everything = new ScriptedRecognizer();
+        Updates(everything, Pieces([(2, true), (0.8, false), (0.1, true), (0.8, false)]), options with { MinSpeechSeconds = 0 });
+        Check(clickedReader.Calls.All(c => c.LoudSeconds >= 0.25) && everything.Calls.Any(c => c.LoudSeconds < 0.2),
+            $"readings' loud seconds with the 0.3 s minimum: {string.Join(", ", clickedReader.Calls.Select(c => $"{c.LoudSeconds:0.00}"))}; without: {string.Join(", ", everything.Calls.Select(c => $"{c.LoudSeconds:0.00}"))}");
 
         var windowed = Updates(new ScriptedRecognizer(), Pieces([(6, true)]), options with { WindowSeconds = 2.5 });
         int cut = windowed.Count(u => u.SegmentEnded);

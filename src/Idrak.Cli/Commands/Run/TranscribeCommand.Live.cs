@@ -60,6 +60,7 @@ internal sealed partial class TranscribeCommand
             SilenceSeconds = AudioFiles.Number(context, "--silence", 0.6, 0.02),
             SilenceDecibels = AudioFiles.Number(context, "--silence-db", 35, 1),
             SilenceFloorDecibels = AudioFiles.Number(context, "--silence-floor-db", -50, -200, -1),
+            MinSpeechSeconds = AudioFiles.Number(context, "--min-speech", 0.3, 0),
             Agreement = context.IntOption("--agreement", 2) is > 0 and var agreement ? agreement : throw new UsageException("--agreement needs a whole number above 0."),
             Policy = context.Option("--commit") ?? LiveCommitPolicies.Agreement,
         };
@@ -163,6 +164,15 @@ internal sealed partial class TranscribeCommand
         line.Report(0);
         var heard = new StringBuilder();
         bool times = context.Flag("--timestamps") || context.Verbose;
+        // After Ctrl+C the last segment is still read: the line says so, so the wait is not taken for a hang.
+        using var stopping = interrupt.Token.Register(() =>
+        {
+            line.Label = $"{label}  finishing the last segment (Ctrl+C again to end at once)";
+            line.Report(0);
+        });
+        // A segment's line is cleared to its end on a terminal: the live line it replaces may have taken more columns than
+        // its characters (right-to-left text, wide characters), and spaces by count would leave its end behind.
+        string clearToEnd = Terminal.IsTerminal(context.Output) && Environment.GetEnvironmentVariable("TERM") != "dumb" ? "\u001b[K" : "";
         await foreach (var update in LiveTranscriber.TranscribeAsync(recognizer, input.ReadAsync(interrupt.Token), options).ConfigureAwait(false))
         {
             if (update.SegmentEnded)
@@ -173,13 +183,19 @@ internal sealed partial class TranscribeCommand
                 line.Erase();
                 if (!context.Json)
                 {
-                    context.Output.WriteLine(times ? $"[{Clock(update.Start)} - {Clock(update.End)}] {segment.Text}" : segment.Text);
+                    context.Output.Write(times ? $"[{Clock(update.Start)} - {Clock(update.End)}] {segment.Text}" : segment.Text);
+                    context.Output.Write(clearToEnd + "\n");
                     context.Output.Flush();
                 }
             }
             else if (update.Committed.Length > 0)
             {
                 heard.Append(heard.Length > 0 ? " " : "").Append(update.Committed);
+            }
+
+            if (interrupt.Requested)
+            {
+                continue;                                                      // the line says the last segment is being finished
             }
 
             string behind = update.Behind >= options.StepSeconds ? string.Create(CultureInfo.InvariantCulture, $"  ({update.Behind:0.0} s behind)") : "";

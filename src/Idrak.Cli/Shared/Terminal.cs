@@ -238,7 +238,12 @@ internal sealed class Interrupt : IDisposable
         }
 
         e.Cancel = true;
-        _context?.ErrorOutput.WriteLine(Messages.T("Stopping (Ctrl+C again to end at once)..."));
+        if (_context is not null)
+        {
+            ProgressLine.EraseOn(_context.ErrorOutput);                          // the message on a line of its own, not inside a progress line
+            _context.ErrorOutput.WriteLine(Messages.T("Stopping (Ctrl+C again to end at once)..."));
+        }
+
         _source.Cancel();
     }
 }

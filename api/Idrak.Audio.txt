@@ -543,6 +543,7 @@ public sealed record Idrak.Audio.Abstractions.LiveTranscriptionOptions : System.
   public Idrak.Audio.Abstractions.TranscriptionOptions Transcription { get; init; }
   public LiveTranscriptionOptions()
   public bool KeepUp { get; init; }
+  public double MinSpeechSeconds { get; init; }
   public double PreRollSeconds { get; init; }
   public double SilenceDecibels { get; init; }
   public double SilenceFloorDecibels { get; init; }

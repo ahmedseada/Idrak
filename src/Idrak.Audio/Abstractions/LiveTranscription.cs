@@ -26,6 +26,12 @@ public sealed record LiveTranscriptionOptions
     /// <summary>A frame under this level (decibels of full scale) is quiet whatever was heard before (a room before anyone speaks).</summary>
     public double SilenceFloorDecibels { get; init; } = -50;
 
+    /// <summary>
+    /// Seconds of loud 20 ms frames a segment needs before it is transcribed: a click, a breath or a keypress under it is
+    /// left out unread (a recognizer given almost no sound echoes its prompt, the text before).
+    /// </summary>
+    public double MinSpeechSeconds { get; init; } = 0.3;
+
     /// <summary>Seconds of the quiet before speech kept with it (the start of a word under the threshold).</summary>
     public double PreRollSeconds { get; init; } = 0.3;
 
@@ -50,11 +56,11 @@ public sealed record LiveTranscriptionOptions
     public void Check()
     {
         if (!(StepSeconds > 0) || !(WindowSeconds >= StepSeconds) || !(SilenceSeconds > 0) || !(SilenceDecibels > 0) || !(SilenceFloorDecibels < 0)
-            || !(PreRollSeconds >= 0) || Agreement < 1 || PromptCharacters < 0 || string.IsNullOrWhiteSpace(Policy))
+            || !(PreRollSeconds >= 0) || !(MinSpeechSeconds >= 0) || Agreement < 1 || PromptCharacters < 0 || string.IsNullOrWhiteSpace(Policy))
         {
             throw new ArgumentException($"Live transcription: StepSeconds ({StepSeconds}), SilenceSeconds ({SilenceSeconds}) and SilenceDecibels ({SilenceDecibels}) are positive, "
-                + $"WindowSeconds ({WindowSeconds}) at least StepSeconds, SilenceFloorDecibels ({SilenceFloorDecibels}) under 0, PreRollSeconds ({PreRollSeconds}) and PromptCharacters "
-                + $"({PromptCharacters}) not negative, Agreement ({Agreement}) at least 1, a Policy named.");
+                + $"WindowSeconds ({WindowSeconds}) at least StepSeconds, SilenceFloorDecibels ({SilenceFloorDecibels}) under 0, PreRollSeconds ({PreRollSeconds}), "
+                + $"MinSpeechSeconds ({MinSpeechSeconds}) and PromptCharacters ({PromptCharacters}) not negative, Agreement ({Agreement}) at least 1, a Policy named.");
         }
     }
 }

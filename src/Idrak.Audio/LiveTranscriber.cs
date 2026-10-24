@@ -90,6 +90,14 @@ public static class LiveTranscriber
 
                 if (ended)
                 {
+                    while (state.Pending)                                      // a segment cut at a pause leaves the rest to read
+                    {
+                        if (state.Step(recognizer, policy, ended: true, arriving.Reader, cancellationToken) is { } last)
+                        {
+                            yield return last;
+                        }
+                    }
+
                     break;
                 }
             }
@@ -118,6 +126,9 @@ public static class LiveTranscriber
         private string _context = options.Transcription.Prompt ?? "";
 
         public double NewSeconds => _rate == 0 ? 0 : (double)(_samples.Count - _processed) / _rate;
+
+        // Whole frames still held (after the sound ended, each step consumes some: a segment, or the rest as quiet).
+        public bool Pending => _levels.Count > 0;
 
         public void Add(AudioData block)
         {
@@ -173,9 +184,10 @@ public static class LiveTranscriber
 
             double threshold = Math.Max(_loudest - options.SilenceDecibels, options.SilenceFloorDecibels);
             int first = _levels.FindIndex(l => l >= threshold);
+            int preRoll = ended ? 0 : (int)(options.PreRollSeconds * _rate);  // at the end nothing follows: no pre-roll kept
             if (first < 0)
             {
-                Drop(_samples.Count - (int)(options.PreRollSeconds * _rate));   // only quiet: kept as the next speech's pre-roll
+                Drop(_samples.Count - preRoll);                                // only quiet: kept as the next speech's pre-roll
                 return null;
             }
 
@@ -185,17 +197,40 @@ public static class LiveTranscriber
                 Drop((first - keep) * _frame);                                // the quiet before the speech, but its pre-roll
             }
 
-            int quiet = 0;
-            for (int i = _levels.Count - 1; i >= 0 && _levels[i] < threshold; i--)
+            // Where the segment ends: the first pause of SilenceSeconds after enough speech (MinSpeechSeconds of loud frames),
+            // wherever it falls, so a pause between two readings still ends the sentence before it; a click or a breath
+            // followed by a pause, before any speech, is left behind as quiet.
+            int silence = Math.Max(1, (int)Math.Ceiling(options.SilenceSeconds * FramesPerSecond));
+            int needed = (int)Math.Ceiling(options.MinSpeechSeconds * FramesPerSecond);
+            int loud, cut;
+            while (true)
             {
-                quiet++;
+                (loud, cut, int blip) = Pause(threshold, silence, needed);
+                if (blip < 0 || _committed > 0 || _heard.Count > 0 || blip <= keep)
+                {
+                    break;
+                }
+
+                Drop((blip - keep) * _frame);                                  // the click and its pause, but the pre-roll
             }
 
             double seconds = (double)_samples.Count / _rate;
-            bool finish = ended || seconds >= options.WindowSeconds || (double)quiet / FramesPerSecond >= options.SilenceSeconds;
+            bool finish = cut >= 0 || ended || seconds >= options.WindowSeconds;
+            if (loud < needed)
+            {
+                if (finish)
+                {
+                    Drop(_samples.Count - preRoll);                            // too little speech to read: kept as quiet
+                }
+
+                return null;                                                   // too little speech yet to read
+            }
+
+            int length = cut >= 0 ? cut * _frame : _samples.Count;             // the segment's samples; after a pause, the rest waits
+            seconds = (double)length / _rate;
             var clock = Stopwatch.StartNew();
             var request = options.Transcription with { Prompt = _context.Length > 0 ? _context : null };
-            string text = recognizer.Transcribe(new AudioData([.. _samples], 1, _rate), request, null, cancellationToken).Text.Trim();
+            string text = recognizer.Transcribe(new AudioData([.. _samples.GetRange(0, length)], 1, _rate), request, null, cancellationToken).Text.Trim();
             var elapsed = clock.Elapsed;
             string[] words = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
             double start = _start, end = _start + seconds;
@@ -203,7 +238,7 @@ public static class LiveTranscriber
             if (finish)
             {
                 string rest = string.Join(' ', words.Skip(_committed));
-                Drop(_samples.Count);
+                Drop(length);
                 _heard.Clear();
                 _committed = 0;
                 if (text.Length == 0)
@@ -230,6 +265,27 @@ public static class LiveTranscriber
             string committed = stable > _committed ? string.Join(' ', words[_committed..stable]) : "";
             _committed = Math.Max(_committed, stable);
             return new LiveTranscript(committed, string.Join(' ', words.Skip(_committed)), null, start, end, elapsed, behind);
+        }
+
+        // One pass over the frames: the loud frames before the segment's end, the frame after the first pause of `silence`
+        // frames that follows `needed` loud ones (-1: none), and the frame after a pause that follows fewer (a click; -1: none).
+        private (int Loud, int Cut, int Blip) Pause(double threshold, int silence, int needed)
+        {
+            int loud = 0, run = 0;
+            for (int i = 0; i < _levels.Count; i++)
+            {
+                if (_levels[i] >= threshold)
+                {
+                    loud++;
+                    run = 0;
+                }
+                else if (loud > 0 && ++run >= silence)
+                {
+                    return loud >= needed ? (loud, i + 1, -1) : (loud, -1, i + 1);
+                }
+            }
+
+            return (loud, -1, -1);
         }
 
         // The sound waiting in the channel, in seconds: its blocks counted (not read), each as long as the last one heard.
