@@ -167,6 +167,7 @@ idrak tokenize qwen --chat "Hello" --count
 idrak tokenize ./bert-base-uncased "Hello, World!" --pair "Second" --special --offsets   # type ids, offsets
 idrak agent qwen "Add a test for Parse" --workspace ./src
 idrak transcribe ./whisper-small talk.wav -o talk.srt   # -j: segments and stage times
+idrak transcribe ./whisper-small --live -l ar -o live.srt   # the microphone; --live - a pipe; --list-inputs
 idrak speak ./mms-tts-eng "Hello." -o hello.wav            # -o hello.mp3 writes MP3
 idrak run -P MyAudioFamily.dll ./audio-model --audio clip.wav "What is said?"      # an audio-language model
 ```

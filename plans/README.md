@@ -10,6 +10,7 @@ Plans are kept by state: finished plans in [done/](done/), plans not started in 
 | Plan 20: Idrak.Diffusion (image generation by denoising) | [opened/20-diffusion.md](opened/20-diffusion.md) |
 | Plan 28: documents (a document contract, PDF built in, Office as a plug-in later) | [opened/28-documents.md](opened/28-documents.md) |
 | Plan 29: fine-tuning Whisper on your own speech (built, the owner's runs open) | [opened/29-whisper-tuning.md](opened/29-whisper-tuning.md) |
+| Plan 30: live transcription, `idrak transcribe --live` (built, the owner's runs open) | [opened/30-live-transcription.md](opened/30-live-transcription.md) |
 | Plug-in 1. Idrak.HarfBuzz: HarfBuzz as a second shaper | [opened/plugins/1-harfbuzz.md](opened/plugins/1-harfbuzz.md) |
 | Plug-in plans | [opened/plugins/README.md](opened/plugins/README.md) |
 

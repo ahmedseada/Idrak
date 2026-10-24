@@ -17,6 +17,14 @@ Built so far (phase S1):
   checked (a damaged frame refused by number). `FlacOptions`: `KeepCutEnd` (a file cut inside its last frame keeps its
   whole frames, as a WAV cut short does), `CheckCrc`, `FramesPerTask`. MP3 and MP2 decoding (`Mp3Codec`, a port of minimp3) and MP3 encoding (`Mp3Encoder`, written from the ISO specifications; `Mp3EncodeOptions`, the IDRAK_MP3_* variables) are built in too. Ogg and AAC would be plug-ins (`AudioCodecs.Register`).
 
+Live sound (plan 30): `AudioCaptures`, a registry of `IAudioCapture`s that record from the system's input devices,
+"winmm" (Windows' waveIn) and "alsa" (Linux's libasound) built in, each loading the system's own audio library at run
+time (`ForThisMachine` picks the first that can run, `Devices` lists the inputs); `PcmStreamInput` reads a stream as it
+arrives (a WAV header, or raw `s16le`/`f32le`); and `LiveTranscriber`, which transcribes any `IAudioInput` with any
+recognizer as the sound comes: the open segment read again every `StepSeconds`, its words made final by a commit policy
+(`LiveCommitPolicies`, "agreement" built in), a segment ended by a pause, by `WindowSeconds` or by the end, quiet never
+transcribed. `LiveTranscriptionOptions` holds every setting.
+
 Voices (phase S9, route B): `VoiceConverters` (a registry of converter families, none in the library; OpenVoice is
 the plug-in `Idrak.Audio.Plugins.OpenVoice`), `VoiceStores` with the built-in "folder" store (`FolderVoiceStore`: one folder per
 voice under `IDRAK_VOICES`, else voices/ under `IDRAK_CACHE` or `~/.cache/idrak`, with voice.json holding the consent,

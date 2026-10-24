@@ -69,6 +69,26 @@ public static class Idrak.Audio.Abstractions.AudioAugmentations
   public static string? Origin(string name)
   public static void Register(Idrak.Audio.Abstractions.IAudioAugmentation augmentation)
 
+public sealed record Idrak.Audio.Abstractions.AudioCaptureOptions : System.IEquatable<Idrak.Audio.Abstractions.AudioCaptureOptions>
+  public AudioCaptureOptions()
+  public double BlockSeconds { get; init; }
+  public int Channels { get; init; }
+  public int SampleRate { get; init; }
+  public string? Device { get; init; }
+  public void Check()
+
+public static class Idrak.Audio.Abstractions.AudioCaptures
+  public const string Alsa = "alsa"
+  public const string Winmm = "winmm"
+  public static Idrak.Audio.Abstractions.IAudioCapture ForThisMachine()
+  public static Idrak.Audio.Abstractions.IAudioCapture Get(string name)
+  public static Idrak.Audio.Abstractions.IAudioCapture? Default(string name)
+  public static Idrak.Audio.Abstractions.IAudioCapture? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Audio.Abstractions.IAudioCapture capture)
+
 public sealed record Idrak.Audio.Abstractions.AudioCheckpoint : System.IEquatable<Idrak.Audio.Abstractions.AudioCheckpoint>
   public AudioCheckpoint(string Architecture, System.Text.Json.Nodes.JsonObject Config, Idrak.Abstraction.Formats.ITensorStore Tensors, string? Folder, System.Func<Idrak.Abstraction.Formats.ITensorStore> Open, System.Collections.Generic.List<string> Notes)
   public Idrak.Abstraction.Formats.ITensorStore Tensors { get; init; }
@@ -215,6 +235,12 @@ public readonly record struct Idrak.Audio.Abstractions.AudioInfo : System.IEquat
   public long Samples { get; init; }
   public string Format { get; init; }
 
+public sealed record Idrak.Audio.Abstractions.AudioInputDevice : System.IEquatable<Idrak.Audio.Abstractions.AudioInputDevice>
+  public AudioInputDevice(string Id, string Name, bool IsDefault)
+  public bool IsDefault { get; init; }
+  public string Id { get; init; }
+  public string Name { get; init; }
+
 public sealed class Idrak.Audio.Abstractions.AudioPartKind : Idrak.Abstraction.Generation.IBinaryPartKind, Idrak.Abstraction.Generation.IChatPartKind
   public AudioPartKind()
   public Idrak.Abstraction.Generation.ChatPart FromBytes(System.ReadOnlySpan<byte> data, string? mediaType = null)
@@ -303,6 +329,12 @@ public interface Idrak.Audio.Abstractions.IAudioAugmentation
   public Idrak.Audio.Abstractions.AudioAugmentationStage Stage { get; }
   public string Name { get; }
 
+public interface Idrak.Audio.Abstractions.IAudioCapture
+  public Idrak.Audio.Abstractions.IAudioInput Open(Idrak.Audio.Abstractions.AudioCaptureOptions options)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioInputDevice> Devices()
+  public bool IsAvailable(out string reason)
+  public string Name { get; }
+
 public interface Idrak.Audio.Abstractions.IAudioCleaner
   public Idrak.Audio.Abstractions.AudioData Clean(Idrak.Audio.Abstractions.AudioData audio, Idrak.Audio.Abstractions.AudioCleaningOptions options)
   public string Name { get; }
@@ -329,6 +361,12 @@ public interface Idrak.Audio.Abstractions.IAudioFeatureExtractor
   public int FramesFor(long samples)
   public string Name { get; }
 
+public interface Idrak.Audio.Abstractions.IAudioInput : System.IDisposable
+  public System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.AudioData> ReadAsync(System.Threading.CancellationToken cancellationToken = default)
+  public int Channels { get; }
+  public int SampleRate { get; }
+  public string Description { get; }
+
 public interface Idrak.Audio.Abstractions.IAudioLanguageEncoder : System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> Encode(System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioData> audios)
@@ -351,6 +389,10 @@ public interface Idrak.Audio.Abstractions.ICtcSpeechModel : Idrak.Audio.Abstract
   public int Blank { get; }
   public int Classes { get; }
   public int StepsFor(int frames)
+
+public interface Idrak.Audio.Abstractions.ILiveCommitPolicy
+  public int Stable(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<string>> transcriptions, Idrak.Audio.Abstractions.LiveTranscriptionOptions options)
+  public string Name { get; }
 
 public interface Idrak.Audio.Abstractions.ISequenceSpeechModel : Idrak.Audio.Abstractions.ISpeechRecognizer, Idrak.Audio.Abstractions.ITrainableSpeechModel, System.IDisposable
   public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Tensor features, System.Collections.Generic.IReadOnlyList<int> frames, Idrak.Audio.Abstractions.SpeechForwardOptions? options = null)
@@ -475,6 +517,42 @@ public interface Idrak.Audio.Abstractions.IVoiceStore
   public string Location { get; }
   public string Name { get; }
   public void Export(string name, string zip)
+
+public static class Idrak.Audio.Abstractions.LiveCommitPolicies
+  public const string Agreement = "agreement"
+  public static Idrak.Audio.Abstractions.ILiveCommitPolicy Get(string name)
+  public static Idrak.Audio.Abstractions.ILiveCommitPolicy? Default(string name)
+  public static Idrak.Audio.Abstractions.ILiveCommitPolicy? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Audio.Abstractions.ILiveCommitPolicy policy)
+
+public sealed record Idrak.Audio.Abstractions.LiveTranscript : System.IEquatable<Idrak.Audio.Abstractions.LiveTranscript>
+  public LiveTranscript(string Committed, string Tentative, string? Segment, double Start, double End, System.TimeSpan Elapsed, double Behind)
+  public System.TimeSpan Elapsed { get; init; }
+  public bool SegmentEnded { get; }
+  public double Behind { get; init; }
+  public double End { get; init; }
+  public double Start { get; init; }
+  public string Committed { get; init; }
+  public string Tentative { get; init; }
+  public string? Segment { get; init; }
+
+public sealed record Idrak.Audio.Abstractions.LiveTranscriptionOptions : System.IEquatable<Idrak.Audio.Abstractions.LiveTranscriptionOptions>
+  public Idrak.Audio.Abstractions.TranscriptionOptions Transcription { get; init; }
+  public LiveTranscriptionOptions()
+  public bool KeepUp { get; init; }
+  public double PreRollSeconds { get; init; }
+  public double SilenceDecibels { get; init; }
+  public double SilenceFloorDecibels { get; init; }
+  public double SilenceSeconds { get; init; }
+  public double StepSeconds { get; init; }
+  public double WindowSeconds { get; init; }
+  public int Agreement { get; init; }
+  public int PromptCharacters { get; init; }
+  public string Policy { get; init; }
+  public void Check()
 
 public abstract class Idrak.Audio.Abstractions.PretrainedAudio
   protected PretrainedAudio()
@@ -821,6 +899,18 @@ public static class Idrak.Audio.AdversarialSynthesisTrainer
   public static Idrak.Audio.SpeechTrainingResult Train(Idrak.Audio.Abstractions.IAdversarialSpeechSynthesizer model, Idrak.Audio.Abstractions.SpeechSource train, Idrak.Audio.Abstractions.SpeechSource? evaluation, Idrak.Audio.SpeechTrainingOptions options, string outputFolder, Idrak.Audio.SpeechTrainingCheckpoint? resume = null, System.IProgress<Idrak.Audio.SpeechTrainingProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default, System.Action<string>? trace = null)
   public static System.Collections.Generic.IReadOnlyList<string> StateFiles { get; }
 
+public sealed class Idrak.Audio.AgreementPolicy : Idrak.Audio.Abstractions.ILiveCommitPolicy
+  public AgreementPolicy()
+  public int Stable(System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<string>> transcriptions, Idrak.Audio.Abstractions.LiveTranscriptionOptions options)
+  public string Name { get; }
+
+public sealed class Idrak.Audio.AlsaCapture : Idrak.Audio.Abstractions.IAudioCapture
+  public AlsaCapture()
+  public Idrak.Audio.Abstractions.IAudioInput Open(Idrak.Audio.Abstractions.AudioCaptureOptions options)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioInputDevice> Devices()
+  public bool IsAvailable(out string reason)
+  public string Name { get; }
+
 public static class Idrak.Audio.AudioLanguage
   public static Idrak.Audio.Abstractions.PretrainedAudio? Attach(Idrak.Models.PretrainedModel model, string? architecture = null, System.Collections.Generic.List<string>? notes = null)
 
@@ -1081,6 +1171,9 @@ public static class Idrak.Audio.LengthRegulation
   public static (int[], int[]) Rows(System.Collections.Generic.IReadOnlyList<int[]> durations, int length)
   public static int[] Durations(System.ReadOnlySpan<float> logDurations, float offset, float rate = 1f)
 
+public static class Idrak.Audio.LiveTranscriber
+  public static System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.LiveTranscript> TranscribeAsync(Idrak.Audio.Abstractions.ISpeechRecognizer recognizer, System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.AudioData> sound, Idrak.Audio.Abstractions.LiveTranscriptionOptions? options = null, System.Threading.CancellationToken cancellationToken = default)
+
 public sealed class Idrak.Audio.LogMelFeatures : Idrak.Audio.Abstractions.IAudioFeatureExtractor
   public Idrak.Abstraction.Tensor Extract(Idrak.Audio.Abstractions.AudioData audio, Idrak.Abstraction.Device device)
   public Idrak.Abstraction.Tensor Extract(System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioData> audios, Idrak.Abstraction.Device device)
@@ -1144,6 +1237,19 @@ public enum Idrak.Audio.Mp3Quality : int
   Fast = 0
   High = 2
   Standard = 1
+
+public enum Idrak.Audio.PcmSampleFormat : int
+  F32LE = 1
+  S16LE = 0
+
+public sealed class Idrak.Audio.PcmStreamInput : Idrak.Audio.Abstractions.IAudioInput, System.IDisposable
+  public PcmStreamInput(System.IO.Stream stream, string description, Idrak.Audio.PcmSampleFormat format = (Idrak.Audio.PcmSampleFormat)0, int sampleRate = 16000, int channels = 1, double blockSeconds = 0.05, bool leaveOpen = false)
+  public System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.AudioData> ReadAsync(System.Threading.CancellationToken cancellationToken = default)
+  public int Channels { get; }
+  public int SampleRate { get; }
+  public string Description { get; }
+  public string Format { get; }
+  public void Dispose()
 
 public sealed record Idrak.Audio.ResampleOptions : System.IEquatable<Idrak.Audio.ResampleOptions>
   public ResampleOptions()
@@ -1358,3 +1464,10 @@ public sealed class Idrak.Audio.WavEncoder : Idrak.Audio.Abstractions.IAudioEnco
   public string Extension { get; }
   public string Name { get; }
   public void Encode(Idrak.Audio.Abstractions.AudioData audio, System.IO.Stream output, Idrak.Audio.Abstractions.AudioEncodeOptions? options = null)
+
+public sealed class Idrak.Audio.WinmmCapture : Idrak.Audio.Abstractions.IAudioCapture
+  public Idrak.Audio.Abstractions.IAudioInput Open(Idrak.Audio.Abstractions.AudioCaptureOptions options)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioInputDevice> Devices()
+  public WinmmCapture()
+  public bool IsAvailable(out string reason)
+  public string Name { get; }

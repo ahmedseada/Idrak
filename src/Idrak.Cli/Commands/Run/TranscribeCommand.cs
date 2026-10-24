@@ -16,7 +16,7 @@ namespace Idrak.Cli.Commands.Run;
 /// (<see cref="SpeechModels"/>), one <see cref="ISpeechRecognizer.Transcribe"/> per file in the order given, as text,
 /// JSON, SRT or WebVTT.
 /// </summary>
-internal sealed class TranscribeCommand : Command
+internal sealed partial class TranscribeCommand : Command
 {
     private static readonly string[] Formats = ["text", "json", "srt", "vtt"];
 
@@ -26,6 +26,8 @@ internal sealed class TranscribeCommand : Command
 
     public override string Usage => """
         MODEL AUDIO... [options]
+        MODEL --live [-|FILE] [options]
+        --list-inputs
 
         Transcribes each sound file with the model's family (the tool registers Idrak.Audio.Plugins' families, Whisper
         among them; another plug-in with -P), in the order given; a progress line shows the file, the stage and the
@@ -34,6 +36,12 @@ internal sealed class TranscribeCommand : Command
         one JSON document (every file's text, language, segments and stage times). -v adds each file's stage times (the
         first file cold, the others warm; one file is transcribed again for its warm times) and the device's peak memory.
         Subtitles take the segments' times, so --format srt and vtt ask the model for timestamps.
+
+        --live transcribes as the sound comes: from the microphone (the system's audio, --capture and --input to choose;
+        --list-inputs shows them), from standard input with - (a recorder's WAV or raw PCM: ffmpeg, arecord, sox), or a
+        FILE streamed through the same path. The live line shows the words heard so far, the uncertain ones last; each
+        segment, ended by a pause, by --window or by the end, is printed as a line with its times. Ctrl+C (or --timeout)
+        stops the sound: the last segment is finished, then -o writes the whole transcript and -j prints it.
 
         Arguments:
           MODEL                  a model folder (config.json, weights, tokenizer, preprocessor_config.json), a hub id
@@ -73,6 +81,21 @@ internal sealed class TranscribeCommand : Command
           -o, --out FILE|DIR     write the result: FILE for one input, else a folder of NAME.EXT
               --format F         text (default), json, srt or vtt (also taken from -o FILE's extension)
               --no-warm          with -v, report the cold times only (one file is not transcribed again)
+              --live             transcribe as the sound comes (the microphone; - for standard input; a FILE streamed)
+              --capture NAME     the system's audio interface (winmm on Windows, alsa on Linux; default: this machine's)
+              --input DEVICE     the input device: a number or name part from --list-inputs (default: the system's)
+              --input-rate R     the sound's rate in Hz: the rate recorded, or raw PCM's on standard input (16000)
+              --input-channels C the sound's channels, as --input-rate (1)
+              --input-format F   raw PCM's samples on standard input: s16le (default) or f32le (a WAV header is read)
+              --step S           seconds of new sound before the segment is read again (1)
+              --window S         the longest segment in seconds (20)
+              --silence S        seconds of quiet after speech that end a segment (0.6)
+              --silence-db D     a frame is quiet this many dB under the loudest heard (35)
+              --silence-floor-db D  and always under this level, dB of full scale (-50)
+              --agreement N      readings in a row a word must keep before it is final (2)
+              --commit NAME      the commit policy (agreement; a plug-in's)
+              --every-step       read every step of the sound even when behind (a recording piped in; a FILE does)
+              --list-inputs      list the audio interfaces and their input devices, then exit
 
         Examples:
           idrak transcribe ./whisper-small talk.wav
@@ -80,16 +103,21 @@ internal sealed class TranscribeCommand : Command
           idrak transcribe ./whisper-small recordings/ -o texts/ --format vtt -d cuda
           idrak transcribe ./whisper-small talk.wav --beam 4 -j -v
           cat talk.wav | idrak transcribe ./whisper-small -
+          idrak transcribe ./whisper-small --live -l ar -o live.srt
+          ffmpeg -f dshow -i audio="Microphone" -ac 1 -ar 16000 -f s16le - | idrak transcribe ./whisper-small --live -
+          idrak transcribe ./whisper-small --live talk.wav --step 2
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--language", "--task", "--beam", "--length-penalty", "--max-tokens", "--chunk-seconds", "--overlap-seconds", "--prompt", "--temperature", "--batch",
         "--memory-fraction", "--weights", "--kv", "--out", "--fallback", "--best-of", "--compression-ratio-threshold", "--logprob-threshold", "--no-speech-threshold",
+        "--capture", "--input", "--input-rate", "--input-channels", "--input-format", "--step", "--window", "--silence", "--silence-db", "--silence-floor-db",
+        "--agreement", "--commit",
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } =
-        ["--timestamps", "--no-carry", "--bf16", "--no-bf16", "--no-timestamp-rules", "--no-suppress", "--no-warm", "--no-fallback", "--keep-silence"];
+        ["--timestamps", "--no-carry", "--bf16", "--no-bf16", "--no-timestamp-rules", "--no-suppress", "--no-warm", "--no-fallback", "--keep-silence", "--live", "--list-inputs", "--every-step"];
 
     /// <summary>
     /// The command's defaults: the library's, with OpenAI Whisper's guards on (the temperature fallback and the
@@ -104,7 +132,17 @@ internal sealed class TranscribeCommand : Command
 
     public override int Run(CommandContext context)
     {
+        if (context.Flag("--list-inputs"))
+        {
+            return ListInputs(context);
+        }
+
         string name = context.Argument(0, "MODEL (a speech recognition model folder, a hub id in the cache or an alias)");
+        if (context.Flag("--live"))
+        {
+            return Live(context, name);
+        }
+
         if (context.Positional.Count < 2)
         {
             throw new UsageException("Missing AUDIO (sound files, folders, globs, or - for standard input).");

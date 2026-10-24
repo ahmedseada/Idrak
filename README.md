@@ -172,7 +172,7 @@ but holds no types yet; installing one adds nothing beyond its dependency.
 - Recognition: the Whisper plug-in (`Idrak.Audio.Plugins.Whisper`) matching transformers' encoder output and logits within
   1e-4 and its greedy, beam and timestamp ids exactly, and fine-tuned on your own speech with its loss and gradients
   matching transformers' (`idrak pretrain WHISPER --language ar`, plan 29); CTC models trained from scratch;
-  `idrak transcribe`.
+  `idrak transcribe`, also live from the microphone or a pipe (`--live`, plan 30: Windows and Linux capture built in).
 - Synthesis: the VITS plug-in (`Idrak.Audio.Plugins.Vits`; MMS voices, Arabic romanisation matching uroman exactly),
   the OpenVoice tone-colour converter (`Idrak.Audio.Plugins.OpenVoice`), voices installed by name (`idrak voice
   add|pull|import|export|list|show|remove`), `idrak speak`.

@@ -18,7 +18,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Text` | 14 | 2 | 11 | 27 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 8 | 0 | 7 | 15 | 0 |
-| `Idrak.Audio` | 30 | 2 | 17 | 49 | 0 |
+| `Idrak.Audio` | 33 | 2 | 19 | 54 | 0 |
 | `Idrak.Cluster` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Network` | 2 | 4 | 1 | 7 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
@@ -327,6 +327,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
 | `Idrak.Audio.Abstractions.AudioAugmentations` | registry | public | — |  | noise, spec-mask, speed | Audio | Audio |
+| `Idrak.Audio.Abstractions.AudioCaptures` | registry | public | — |  | alsa, winmm | — | Audio |
 | `Idrak.Audio.Abstractions.AudioCleaners` | registry | public | — |  | denoise, highpass, normalize, trim | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioCodecs` | registry | public | — |  | flac, mp3, wav | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioEncoders` | registry | public | — |  | mp3, wav | — | Audio |
@@ -336,15 +337,18 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.IAdversarialSpeechSynthesizer` | interface | public | Module | VitsSynthesizer |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IAdversarialSynthesisStep` | interface | public | — | VitsTraining.Step |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IAudioAugmentation` | interface | public | — | NoiseAugmentation, SpecMaskAugmentation, SpeedAugmentation |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IAudioCapture` | interface | public | — | AlsaCapture, WinmmCapture |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioCleaner` | interface | public | — | DenoiseCleaner, HighPassCleaner, NormalizeCleaner, TrimCleaner |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioCodec` | interface | public | — | AudioCodecs.GuardedCodec, FlacCodec, Mp3Codec, WavCodec |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioEncoder` | interface | public | — | AudioEncoders.GuardedEncoder, Mp3Encoder, WavEncoder |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioFamily` | interface | public | — | IdrakAudioLanguageFamily |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IAudioFeatureExtractor` | interface | public | Device, Tensor | AudioFeatureExtractors.GuardedExtractor, LogMelFeatures, VitsTrainingFeatures |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.IAudioInput` | interface | public | — | CaptureQueue, PcmStreamInput |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioLanguageEncoder` | interface | public | Device | IdrakAudioLanguageEncoder |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IAudioSplitter` | interface | public | — | SecondsSplitter, SilenceSplitter |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioTuningPart` | interface | public | Tensor | IdrakAudioLanguagePart |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ICtcSpeechModel` | interface | public | Tensor | IdrakAudioCtcModel |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.ILiveCommitPolicy` | interface | public | — | AgreementPolicy |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISequenceSpeechModel` | interface | public | Tensor | IdrakAudioSeq2SeqModel, WhisperRecognizer |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ISpeakerEncoder` | interface | public | Device | OpenVoiceConverter |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ISpeechFamily` | interface | public | — | IdrakAudioFamily, WhisperFamily |  | Audio, Audio.Plugins | Audio |
@@ -363,6 +367,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.IVoiceConverter` | interface | public | — | OpenVoiceConverter |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IVoiceConverterFamily` | interface | public | — | OpenVoiceFamily |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IVoiceStore` | interface | public | — | FolderVoiceStore |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.LiveCommitPolicies` | registry | public | — |  | agreement | Audio | Audio |
 | `Idrak.Audio.Abstractions.PretrainedAudio` | abstract class | public | — | IdrakAudioLanguagePart |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.SpeechFamilies` | registry | public | — |  | — | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.SpeechSources` | registry | public | — |  | audio-folder, transcripts | Audio | Audio |
