@@ -70,6 +70,43 @@ floor read from its quietest frames and gated off through the STFT and back, at 
 isolates the voice registers under the same contract). The speech trainers run `SpeechTrainingOptions.Cleaning` over
 every utterance before its features (cached under the cleaning), and `idrak data audio --clean` writes cleaned files.
 
+Processing (plan 31): `AudioProcessors`, a registry of `IAudioProcessor`s, and `AudioPipeline`, a chain of them written
+as text the way images have `ImageTransformPipeline`: `highpass=80, denoise=1.5 quantile=0.2, trim, normalize=-20 peak=0.9`
+(steps comma-separated, each a name, an optional value and space-separated `key=value` options; JSON as a string or an
+array of strings and `{"name", "value", ...}` objects). A processor declares its inputs (`AudioProcessorParameter`: kind,
+range, unit, default), from which its keys and checks follow, and whether it is **live**: a live one opens an
+`IAudioStage` that takes blocks in order, keeping its state between them (implement `Open`); a whole-recording one
+implements `Apply` and its stage gives the result when flushed. `Apply` runs a recording (consecutive live steps over one
+copy, written in place), `Open` gives one stage for blocks, and `Wrap(IAudioInput)` cleans live sound as it comes,
+refusing a step that needs the whole recording. Built in: "highpass" (live), "denoise", "trim" and "normalize" (whole
+recording); the cleaning stages above run through them with the same samples as before. Anyone adds one with
+`AudioProcessors.Register`:
+
+```csharp
+sealed class Gain : IAudioProcessor
+{
+    public string Name => "gain";
+    public string Summary => "a gain in dB";
+    public bool Live => true;
+    public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
+        [new("", "Gain", AudioProcessorInput.Number) { Min = -60, Max = 24, Unit = "dB" }];
+
+    public IAudioStage Open(AudioProcessorStep step, int sampleRate, int channels) =>
+        new Stage((float)Math.Pow(10, step.Number() / 20), sampleRate, channels);
+
+    sealed class Stage(float gain, int sampleRate, int channels) : IAudioStage
+    {
+        public int SampleRate => sampleRate;
+        public int Channels => channels;
+        public AudioData Process(AudioData block) { foreach (ref float x in block.Samples.AsSpan()) x *= gain; return block; }
+        public AudioData Flush() => new([], channels, sampleRate);
+    }
+}
+
+AudioProcessors.Register(new Gain());
+var clean = AudioPipeline.Parse("highpass=80, gain=6").Apply(recording);
+```
+
 The command line (`idrak help audio`): `idrak transcribe`, `idrak speak`, `idrak voice add|list|show|remove|export|import`,
 `idrak data audio`, `idrak data mel`, and `--audio` on `idrak run` and `idrak chat`. The other phases are in
 plans/done/21-audio.md.

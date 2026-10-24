@@ -254,6 +254,80 @@ public readonly record struct Idrak.Audio.Abstractions.AudioPiece : System.IEqua
   public int Length { get; init; }
   public int Start { get; init; }
 
+public sealed class Idrak.Audio.Abstractions.AudioPipeline : System.IEquatable<Idrak.Audio.Abstractions.AudioPipeline>
+  public AudioPipeline(System.Collections.Generic.IEnumerable<Idrak.Audio.Abstractions.AudioProcessorStep> steps)
+  public Idrak.Audio.Abstractions.AudioData Apply(Idrak.Audio.Abstractions.AudioData audio)
+  public Idrak.Audio.Abstractions.AudioPipeline Then(Idrak.Audio.Abstractions.AudioPipeline? next)
+  public Idrak.Audio.Abstractions.IAudioInput Wrap(Idrak.Audio.Abstractions.IAudioInput input)
+  public Idrak.Audio.Abstractions.IAudioStage Open(int sampleRate, int channels)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioProcessorStep> Steps { get; }
+  public System.Text.Json.Nodes.JsonNode? ToJson()
+  public bool Contains(string name)
+  public bool Equals(Idrak.Audio.Abstractions.AudioPipeline? other)
+  public bool IsEmpty { get; }
+  public bool Live { get; }
+  public override bool Equals(object? obj)
+  public override int GetHashCode()
+  public override string ToString()
+  public static Idrak.Audio.Abstractions.AudioPipeline Empty { get; }
+  public static Idrak.Audio.Abstractions.AudioPipeline FromJson(System.Text.Json.Nodes.JsonNode? json)
+  public static Idrak.Audio.Abstractions.AudioPipeline Parse(string? text)
+  public void ThrowIfNotLive()
+
+public enum Idrak.Audio.Abstractions.AudioProcessorInput : int
+  Choice = 2
+  Integer = 1
+  Number = 0
+  Switch = 3
+
+public sealed record Idrak.Audio.Abstractions.AudioProcessorParameter : System.IEquatable<Idrak.Audio.Abstractions.AudioProcessorParameter>
+  public AudioProcessorParameter(string Key, string Label, Idrak.Audio.Abstractions.AudioProcessorInput Input)
+  public Idrak.Audio.Abstractions.AudioProcessorInput Input { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Choices { get; init; }
+  public bool MinExclusive { get; init; }
+  public bool Optional { get; init; }
+  public double? Max { get; init; }
+  public double? Min { get; init; }
+  public double? Step { get; init; }
+  public string Key { get; init; }
+  public string Label { get; init; }
+  public string Range { get; }
+  public string? Default { get; init; }
+  public string? Help { get; init; }
+  public string? Unit { get; init; }
+
+public sealed class Idrak.Audio.Abstractions.AudioProcessorStep
+  public AudioProcessorStep(string name, string? value = null, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>>? options = null)
+  public Idrak.Audio.Abstractions.AudioProcessorStep With(string key, string value)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; }
+  public bool Flag(string key, bool otherwise)
+  public double Number(double? otherwise = null)
+  public double Number(string key, double otherwise)
+  public int Integer(int? otherwise = null)
+  public int Integer(string key, int otherwise)
+  public override bool Equals(object? obj)
+  public override int GetHashCode()
+  public override string ToString()
+  public string Name { get; }
+  public string? Option(string key, string? otherwise = null)
+  public string? Value { get; }
+  public void ThrowIfUnknownOptions(System.Collections.Generic.IReadOnlyCollection<string> keys)
+  public void Validate(System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioProcessorParameter> parameters)
+
+public static class Idrak.Audio.Abstractions.AudioProcessors
+  public const string Denoise = "denoise"
+  public const string HighPass = "highpass"
+  public const string Normalize = "normalize"
+  public const string Trim = "trim"
+  public static Idrak.Audio.Abstractions.IAudioProcessor Get(string name)
+  public static Idrak.Audio.Abstractions.IAudioProcessor? Default(string name)
+  public static Idrak.Audio.Abstractions.IAudioProcessor? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Audio.Abstractions.IAudioProcessor processor)
+
 public sealed record Idrak.Audio.Abstractions.AudioSplitOptions : System.IEquatable<Idrak.Audio.Abstractions.AudioSplitOptions>
   public AudioSplitOptions()
   public System.Text.Json.Nodes.JsonObject ToJson()
@@ -373,9 +447,28 @@ public interface Idrak.Audio.Abstractions.IAudioLanguageEncoder : System.IDispos
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> Blocks(Idrak.Audio.Abstractions.AudioData audio)
   public int Width { get; }
 
+public interface Idrak.Audio.Abstractions.IAudioProcessor
+  public (default) Idrak.Audio.Abstractions.AudioData Apply(Idrak.Audio.Abstractions.AudioData audio, Idrak.Audio.Abstractions.AudioProcessorStep step)
+  public (default) Idrak.Audio.Abstractions.IAudioStage Open(Idrak.Audio.Abstractions.AudioProcessorStep step, int sampleRate, int channels)
+  public (default) System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+  public (default) System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioProcessorParameter> Parameters { get; }
+  public (default) string Label { get; }
+  public (default) string? LiveAlternative { get; }
+  public (default) void Check(Idrak.Audio.Abstractions.AudioProcessorStep step)
+  public bool Live { get; }
+  public string Name { get; }
+  public string Summary { get; }
+
 public interface Idrak.Audio.Abstractions.IAudioSplitter
   public System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioPiece> Split(Idrak.Audio.Abstractions.AudioData audio, Idrak.Audio.Abstractions.AudioSplitOptions options)
   public string Name { get; }
+
+public interface Idrak.Audio.Abstractions.IAudioStage : System.IDisposable
+  public (default) int Latency { get; }
+  public Idrak.Audio.Abstractions.AudioData Flush()
+  public Idrak.Audio.Abstractions.AudioData Process(Idrak.Audio.Abstractions.AudioData block)
+  public int Channels { get; }
+  public int SampleRate { get; }
 
 public interface Idrak.Audio.Abstractions.IAudioTuningPart
   public System.Collections.Generic.IReadOnlyList<(string, int[], float[])> Export(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, System.Collections.Generic.IReadOnlyCollection<string> parts)

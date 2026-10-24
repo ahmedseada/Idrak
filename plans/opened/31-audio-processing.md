@@ -1,6 +1,7 @@
 # Plan 31: an audio processing pipeline (clearer sound in, as images have)
 
-**Status:** planned 2026-10-24 against `main` 0e1fc0b8; phases below, built in order, at most two agents at a time.
+**Status:** planned 2026-10-24 against `main` 0e1fc0b8; phases below, built in order, at most two agents at a time. P0 built
+(contracts, registry, pipeline, the four cleaners as processors bit for bit; CPU "audio processing" 4/4).
 
 ## Why
 
@@ -17,7 +18,7 @@ would buy: Whisper's mistakes were mostly on unclear consonants.
   that processes blocks in order (state kept between them: a filter's memory, a compressor's envelope) and is flushed
   at the end. Whether it can run on live sound is declared: a stage that needs the whole recording (trim, integrated
   loudness, a noise floor read from the pauses) says so, and a live pipeline refuses it naming the live variant.
-- **`AudioPipeline`**: the image pipeline's text form, `highpass=80, dehum=50, denoise strength=1.5, presence=3,
+- **`AudioPipeline`**: the image pipeline's text form, `highpass=80, dehum=50, denoise=1.5 quantile=0.2, presence=3,
   compress ratio=3, loudness=-23`, each step a name, an optional value and `key=value` options, checked against the
   registry (an unknown name or option names what is registered). `Apply(AudioData)` for a recording; `Open(rate,
   channels)` for blocks; `Wrap(IAudioInput)` so live sound is cleaned before transcription.
