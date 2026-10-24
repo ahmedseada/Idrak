@@ -12,7 +12,7 @@ Plans are kept by state: finished plans in [done/](done/), plans not started in 
 | Plan 29: fine-tuning Whisper on your own speech (built, the owner's runs open) | [opened/29-whisper-tuning.md](opened/29-whisper-tuning.md) |
 | Plan 30: live transcription, `idrak transcribe --live` (built, the owner's runs open) | [opened/30-live-transcription.md](opened/30-live-transcription.md) |
 | Plan 31: an audio processing pipeline (filters, dynamics, noise and repair, live, rnnoise; built, the owner's runs open) | [opened/31-audio-processing.md](opened/31-audio-processing.md) |
-| Plan 32: Opus decoding as a plug-in, voice notes in (planned) | [opened/32-opus.md](opened/32-opus.md) |
+| Plan 32: Opus decoding as a plug-in, voice notes in (speech only; planned) | [opened/32-opus.md](opened/32-opus.md) |
 | Plug-in 1. Idrak.HarfBuzz: HarfBuzz as a second shaper | [opened/plugins/1-harfbuzz.md](opened/plugins/1-harfbuzz.md) |
 | Plug-in plans | [opened/plugins/README.md](opened/plugins/README.md) |
 
