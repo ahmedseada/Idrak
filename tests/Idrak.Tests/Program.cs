@@ -22,8 +22,10 @@
 //   … -- --progress (IDRAK_TEST_PROGRESS=1)        the library's progress line on the error output: a bar, the share done, tests a second, the
 //                                                   time left, passed and failed so far and the test running (in place on a terminal, a line a
 //                                                   minute when redirected; IDRAK_PROGRESS picks the reporter)
-//   … -- --failures-only (IDRAK_TEST_FAILURES_ONLY=1)  only the device headers, the FAIL and HANG lines and the summary on the standard output
+//   … -- --failures-only (IDRAK_TEST_FAILURES_ONLY=1)  only the device headers, the FAIL, HANG and SKIP lines and the summary on the standard output
 //                                                   (the tests' own lines dropped)
+//   a test whose data is not here (Tests.Skip: the owner's references, written by a tool's run) is a SKIP line naming the run
+//   that writes it, counted apart from passed and failed ("…, 2 skipped") and not written to the failures file
 //   … -- --failures-file fails.txt (IDRAK_TEST_FAILURES_FILE)  the runner also writes those lines to the file as they happen:
 //                                                   … -- --progress --failures-only --failures-file fails.txt
 
@@ -207,13 +209,13 @@ failuresFile?.WriteLine(runHeader);
 var results = Console.Out;
 var screen = Console.Error;                                                      // the progress line's writer, and the lock both share
 long total = (long)selected.Length * devices.Count, done = 0;
-int failed = 0, passed = 0;
+int failed = 0, passed = 0, skipped = 0;
 string? running = null;
 var runStarted = Stopwatch.StartNew();
 var bar = progress ? ProgressReporters.Start(Tests.ProgressLabel(0, total), total) : null;
 if (bar is not null)
 {
-    bar.Detail = () => $"{passed} passed, {failed} failed  {Volatile.Read(ref running)}";
+    bar.Detail = () => $"{Counts()}  {Volatile.Read(ref running)}";
 }
 
 // Only a line drawn in place is taken off the screen for other output; a redirected one ("plain") is a line of its own
@@ -244,6 +246,9 @@ void Report(string line, bool pass = false)
     }
 }
 
+// The counts so far: passed and failed, and the skipped tests when there are any.
+string Counts() => skipped == 0 ? $"{passed} passed, {failed} failed" : $"{passed} passed, {failed} failed, {skipped} skipped";
+
 // One test ended (run, or counted as failed on a lost device).
 void Ended()
 {
@@ -268,7 +273,7 @@ var watchdog = new Thread(() =>
         {
             bar?.Clear();
             Report($"  HANG {current}: still running after {timeout} s");
-            Report($"{passed} passed, {failed} failed, 1 hung");
+            Report($"{Counts()}, 1 hung");
             Environment.Exit(3);
         }
     }
@@ -303,6 +308,11 @@ foreach (var device in devices)
                 Report($"  PASS {name} ({sw.ElapsedMilliseconds} ms)", pass: true);
             }
         }
+        catch (Tests.SkippedException ex)
+        {
+            skipped++;
+            Report($"  SKIP {name}: {ex.Message}", pass: true);
+        }
         catch (Exception ex)
         {
             failed++;
@@ -328,7 +338,7 @@ Volatile.Write(ref running, null);
 clock?.Dispose();
 bar?.Clear();
 Console.SetOut(results);
-Report(bar is null ? $"{passed} passed, {failed} failed" : $"{passed} passed, {failed} failed in {ProgressText.Duration(runStarted.Elapsed)}");
+Report(bar is null ? Counts() : $"{Counts()} in {ProgressText.Duration(runStarted.Elapsed)}");
 return failed == 0 ? 0 : 1;
 
 internal static partial class Tests
@@ -873,4 +883,9 @@ internal static partial class Tests
             throw new Exception(message);
         }
     }
+
+    /// <summary>Ends the test as skipped: its data is not here (the owner's references), and <paramref name="reason"/> names the run that writes it.</summary>
+    internal static void Skip(string reason) => throw new SkippedException(reason);
+
+    internal sealed class SkippedException(string reason) : Exception(reason);
 }
