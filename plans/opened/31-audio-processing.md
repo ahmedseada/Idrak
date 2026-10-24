@@ -1,7 +1,8 @@
 # Plan 31: an audio processing pipeline (clearer sound in, as images have)
 
 **Status:** planned 2026-10-24 against `main` 0e1fc0b8; phases below, built in order, at most two agents at a time. P0 built
-(contracts, registry, pipeline, the four cleaners as processors bit for bit; CPU "audio processing" 4/4).
+(contracts, registry, pipeline, the four cleaners as processors bit for bit), P1 (filters) and P2 (dynamics; `peak` is
+`peaknorm` and agc's silence level `quiet`, since after a comma a registered name starts a step); CPU "audio processing" 14/14.
 
 ## Why
 

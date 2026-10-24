@@ -1,0 +1,349 @@
+{
+ "cases": [
+  {
+   "channels": 1,
+   "input": "tones",
+   "length": 4800,
+   "name": "gain-cut",
+   "pipeline": "gain=-6",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speech",
+   "length": 4800,
+   "name": "gain-boost",
+   "pipeline": "gain=4.5",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "dc",
+   "length": 4800,
+   "name": "dc",
+   "pipeline": "dc",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "dc",
+   "length": 4800,
+   "name": "dc-pole",
+   "pipeline": "dc pole=0.98",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "dc",
+   "length": 4800,
+   "name": "highpass",
+   "pipeline": "highpass",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speech",
+   "length": 4800,
+   "name": "highpass-order4",
+   "pipeline": "highpass=200 order=4",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "hum",
+   "length": 4800,
+   "name": "highpass-order3",
+   "pipeline": "highpass=150 order=3",
+   "rate": 16000
+  },
+  {
+   "channels": 2,
+   "input": "stereo",
+   "length": 4800,
+   "name": "highpass-stereo",
+   "pipeline": "highpass=100 order=4",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "tones",
+   "length": 4800,
+   "name": "lowpass",
+   "pipeline": "lowpass=1000",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "noise",
+   "length": 4800,
+   "name": "lowpass-order5",
+   "pipeline": "lowpass=2500 order=5",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speech",
+   "length": 4800,
+   "name": "lowpass-order8",
+   "pipeline": "lowpass=3000 order=8",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "noise",
+   "length": 4800,
+   "name": "bandpass",
+   "pipeline": "bandpass",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speech",
+   "length": 4800,
+   "name": "bandpass-order4",
+   "pipeline": "bandpass low=500 high=2000 order=4",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "tones",
+   "length": 4800,
+   "name": "notch",
+   "pipeline": "notch=440",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "hum",
+   "length": 4800,
+   "name": "notch-wide",
+   "pipeline": "notch=1000 q=10",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "hum",
+   "length": 4800,
+   "name": "dehum",
+   "pipeline": "dehum",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speech",
+   "length": 4800,
+   "name": "dehum-60",
+   "pipeline": "dehum=60 harmonics=6 q=20",
+   "rate": 16000
+  },
+  {
+   "channels": 2,
+   "input": "stereo",
+   "length": 4800,
+   "name": "dehum-stereo",
+   "pipeline": "dehum=50 harmonics=12 q=15",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "noise",
+   "length": 4800,
+   "name": "eq-boost",
+   "pipeline": "eq=1000 gain=6 q=2",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speech",
+   "length": 4800,
+   "name": "eq-cut",
+   "pipeline": "eq=3000 gain=-12 q=0.7",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speech",
+   "length": 4800,
+   "name": "lowshelf",
+   "pipeline": "lowshelf=200 gain=6",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "hum",
+   "length": 4800,
+   "name": "lowshelf-slope",
+   "pipeline": "lowshelf=300 gain=-9 slope=0.5",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "dc",
+   "length": 4800,
+   "name": "lowshelf-q",
+   "pipeline": "lowshelf=150 gain=4 q=0.9",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "noise",
+   "length": 4800,
+   "name": "highshelf",
+   "pipeline": "highshelf=4000 gain=4",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speech",
+   "length": 4800,
+   "name": "highshelf-q",
+   "pipeline": "highshelf=2500 gain=-6 q=1.2",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speech",
+   "length": 4800,
+   "name": "presence",
+   "pipeline": "presence",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speech",
+   "length": 4800,
+   "name": "presence-strong",
+   "pipeline": "presence=6 frequency=4000 q=1",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "noise",
+   "length": 4800,
+   "name": "presence-soft",
+   "pipeline": "presence=-4",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speech",
+   "length": 4800,
+   "name": "preemphasis",
+   "pipeline": "preemphasis",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "dc",
+   "length": 4800,
+   "name": "preemphasis-0.9",
+   "pipeline": "preemphasis=0.9",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "stereo",
+   "length": 4800,
+   "name": "mono",
+   "pipeline": "mono",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speech",
+   "length": 2400,
+   "name": "resample-8k",
+   "pipeline": "resample=8000",
+   "rate": 8000
+  },
+  {
+   "channels": 1,
+   "input": "tones",
+   "length": 13230,
+   "name": "resample-44k",
+   "pipeline": "resample=44100",
+   "rate": 44100
+  },
+  {
+   "channels": 1,
+   "input": "noise",
+   "length": 6615,
+   "name": "resample-22k",
+   "pipeline": "resample=22050 width=8 rolloff=0.95",
+   "rate": 22050
+  },
+  {
+   "channels": 1,
+   "input": "tones8k",
+   "length": 4800,
+   "name": "resample-up",
+   "pipeline": "resample=16000",
+   "rate": 16000
+  },
+  {
+   "channels": 2,
+   "input": "stereo",
+   "length": 3600,
+   "name": "resample-stereo",
+   "pipeline": "resample=12000",
+   "rate": 12000
+  },
+  {
+   "channels": 2,
+   "input": "stereo",
+   "length": 4800,
+   "name": "chain",
+   "pipeline": "dc, highpass=80 order=4, dehum=50 harmonics=4, presence=4, gain=-3",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "stereo",
+   "length": 2400,
+   "name": "chain-mono",
+   "pipeline": "mono, lowpass=3400 order=4, resample=8000, preemphasis",
+   "rate": 8000
+  }
+ ],
+ "inputs": {
+  "dc": {
+   "channels": 1,
+   "length": 4800,
+   "rate": 16000
+  },
+  "hum": {
+   "channels": 1,
+   "length": 4800,
+   "rate": 16000
+  },
+  "noise": {
+   "channels": 1,
+   "length": 4800,
+   "rate": 16000
+  },
+  "speech": {
+   "channels": 1,
+   "length": 4800,
+   "rate": 16000
+  },
+  "stereo": {
+   "channels": 2,
+   "length": 4800,
+   "rate": 16000
+  },
+  "tones": {
+   "channels": 1,
+   "length": 4800,
+   "rate": 16000
+  },
+  "tones8k": {
+   "channels": 1,
+   "length": 2400,
+   "rate": 8000
+  }
+ },
+ "versions": {
+  "numpy": "2.5.4",
+  "scipy": "1.18.1"
+ }
+}

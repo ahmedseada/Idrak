@@ -393,8 +393,12 @@ public sealed class AudioProcessorStep
 
 /// <summary>
 /// The audio processors a pipeline (<see cref="AudioPipeline"/>) can name, by name (ignoring case). The library's:
-/// <c>highpass</c> (live), <c>denoise</c>, <c>trim</c> and <c>normalize</c> (whole recording), the stages
-/// <see cref="AudioCleaners"/> runs. Register another with <see cref="Register"/>; one of a library name shadows the
+/// cleaning, <c>highpass</c> (live), <c>denoise</c>, <c>trim</c> and <c>normalize</c> (whole recording), the stages
+/// <see cref="AudioCleaners"/> runs; filters (live), <c>gain</c>, <c>dc</c>, <c>lowpass</c>, <c>bandpass</c>, <c>notch</c>,
+/// <c>dehum</c>, <c>eq</c>, <c>lowshelf</c>, <c>highshelf</c>, <c>presence</c> (the clarity of speech), <c>preemphasis</c>,
+/// <c>mono</c> and <c>resample</c>, and <c>highpass</c>'s <c>order</c>; dynamics, <c>gate</c>, <c>compress</c>, <c>limit</c> (a look-ahead limiter),
+/// <c>agc</c> and <c>loudness-live</c> (live), <c>loudness</c> (ITU-R BS.1770 / EBU R128 integrated) and <c>peaknorm</c>
+/// (whole recording). <see cref="Describe"/> lists them with their summaries. Register another with <see cref="Register"/>; one of a library name shadows the
 /// library's, which <see cref="Unregister"/> brings back.
 /// </summary>
 public static class AudioProcessors
@@ -421,6 +425,8 @@ public static class AudioProcessors
         table.RegisterDefault(Denoise, new DenoiseProcessor());
         table.RegisterDefault(Trim, new TrimProcessor());
         table.RegisterDefault(Normalize, new NormalizeProcessor());
+        FilterProcessors.RegisterDefaults(table);
+        DynamicsProcessors.RegisterDefaults(table);
         return table;
     }
 

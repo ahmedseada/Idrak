@@ -79,7 +79,13 @@ range, unit, default), from which its keys and checks follow, and whether it is 
 implements `Apply` and its stage gives the result when flushed. `Apply` runs a recording (consecutive live steps over one
 copy, written in place), `Open` gives one stage for blocks, and `Wrap(IAudioInput)` cleans live sound as it comes,
 refusing a step that needs the whole recording. Built in: "highpass" (live), "denoise", "trim" and "normalize" (whole
-recording); the cleaning stages above run through them with the same samples as before. Anyone adds one with
+recording), which the cleaning stages above run through with the same samples as before; the filters "gain", "dc",
+"lowpass", "bandpass", "notch", "dehum" (mains hum and its harmonics), "eq", "lowshelf", "highshelf", "presence" (the
+clarity of speech: a wide boost of the consonants' band), "preemphasis", "mono" and "resample" (live, Butterworth orders
+on highpass, lowpass and bandpass); the dynamics "gate",
+"compress", "limit" (look-ahead, never over its ceiling), "agc" and "loudness-live" (live), "loudness" (BS.1770 / R128
+integrated, to a target LUFS under a true-peak ceiling) and "peaknorm" (whole recording). After a comma a registered
+name starts a new step, so an option is best written after a space (`normalize=-20 peak=0.9`). Anyone adds one with
 `AudioProcessors.Register`:
 
 ```csharp

@@ -3,19 +3,21 @@
 
 namespace Idrak.Audio;
 
-// "highpass" (live): a second-order Butterworth high-pass (the RBJ cookbook's, Q = 1/√2) run over each channel in
-// order, in double, its memory kept between blocks; the DC offset and the rumble below the cutoff go, the voice above it
-// is untouched in level. The filter starts settled on the first sample's level (no step at the start). A cutoff of 0
-// leaves the sound as it is.
+// "highpass" (live): a Butterworth high-pass of `order` (default 2: the RBJ cookbook's, Q = 1/√2; higher orders as
+// cascaded sections, FilterDesign.Butterworth) run over each channel in order, in double, its memory kept between blocks
+// (BiquadStage); the DC offset and the rumble below the cutoff go, the voice above it is untouched in level. The filter
+// starts settled on the first sample's level (no step at the start). A cutoff of 0 leaves the sound as it is. Order 2
+// gives the samples of the high-pass before plan 31 bit for bit.
 internal sealed class HighPassProcessor : IAudioProcessor
 {
     public const double DefaultHertz = 60;
+    public const int DefaultOrder = 2;
 
     public string Name => AudioProcessors.HighPass;
 
     public string Label => "High-pass filter";
 
-    public string Summary => $"a second-order Butterworth high-pass at the value, Hz (default {DefaultHertz}; 0 leaves the sound): the DC offset and the rumble go";
+    public string Summary => $"a Butterworth high-pass at the value, Hz (default {DefaultHertz}; 0 leaves the sound), of `order` (default {DefaultOrder}): the DC offset and the rumble go";
 
     public bool Live => true;
 
@@ -23,72 +25,17 @@ internal sealed class HighPassProcessor : IAudioProcessor
     [
         new("", "Cutoff", AudioProcessorInput.Number)
         {
-            Min = 0, Step = 10, Unit = "Hz", Optional = true, Default = "60", Help = "Below it the sound is turned down, 12 dB an octave",
+            Min = 0, Step = 10, Unit = "Hz", Optional = true, Default = "60", Help = "Below it the sound is turned down, 6 dB an octave per order (12 at order 2)",
         },
+        FilterDesign.Order,
     ];
 
     public IAudioStage Open(AudioProcessorStep step, int sampleRate, int channels)
     {
         double cutoff = step.Number(DefaultHertz);
-        if (cutoff >= sampleRate / 2.0)
-        {
-            throw new ArgumentException($"highpass: the cutoff {cutoff} Hz is not below half the rate ({sampleRate} Hz).", nameof(step));
-        }
-
-        return new Stage(cutoff, sampleRate, channels);
-    }
-
-    private sealed class Stage : IAudioStage
-    {
-        private readonly double _b0, _b1, _b2, _a1, _a2;
-        private readonly double[] _state;                                       // x1, x2, y1, y2 per channel
-        private readonly bool _pass;
-        private bool _started;
-
-        public Stage(double cutoff, int sampleRate, int channels)
-        {
-            (SampleRate, Channels, _pass) = (sampleRate, channels, cutoff <= 0);
-            double w0 = 2 * Math.PI * cutoff / sampleRate, cos = Math.Cos(w0), alpha = Math.Sin(w0) / Math.Sqrt(2);
-            double a0 = 1 + alpha;
-            (_b0, _b1, _a1, _a2) = ((1 + cos) / 2 / a0, -(1 + cos) / a0, -2 * cos / a0, (1 - alpha) / a0);
-            _b2 = _b0;
-            _state = new double[4 * channels];
-        }
-
-        public int SampleRate { get; }
-
-        public int Channels { get; }
-
-        public AudioData Process(AudioData block)
-        {
-            int length = block.Length;
-            if (_pass || length == 0)
-            {
-                return block;
-            }
-
-            var samples = block.Samples;
-            for (int c = 0; c < Channels; c++)
-            {
-                var x = samples.AsSpan(c * length, length);
-                var s = _state.AsSpan(4 * c, 4);
-                double x1 = _started ? s[0] : x[0], x2 = _started ? s[1] : x[0], y1 = s[2], y2 = s[3];
-                for (int i = 0; i < length; i++)
-                {
-                    double xi = x[i];
-                    double yi = _b0 * xi + _b1 * x1 + _b2 * x2 - _a1 * y1 - _a2 * y2;
-                    x[i] = (float)yi;                                           // in place: x[i] is read before it is written
-                    (x2, x1, y2, y1) = (x1, xi, y1, yi);
-                }
-
-                (s[0], s[1], s[2], s[3]) = (x1, x2, y1, y2);
-            }
-
-            _started = true;
-            return block;
-        }
-
-        public AudioData Flush() => new([], Channels, SampleRate);
+        FilterDesign.ThrowIfNotBelowHalf(Name, "cutoff", cutoff, sampleRate);
+        Biquad[] sections = cutoff <= 0 ? [] : FilterDesign.Butterworth(high: true, step.Integer("order", DefaultOrder), cutoff, sampleRate);
+        return new BiquadStage(sections, sampleRate, channels);
     }
 }
 
@@ -149,6 +96,8 @@ internal sealed class NormalizeProcessor : IAudioProcessor
     public string Summary => $"the speech level (the RMS of the frames that are not silence) brought to the value, dBFS (default {DefaultTarget}), the peak kept under `peak`";
 
     public bool Live => false;
+
+    public string? LiveAlternative => "agc";
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [

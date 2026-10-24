@@ -1,0 +1,239 @@
+{
+ "files": {
+  "live-00-gate-speech16k.npy": "41095d5b022b7394cfd5dd7a69e75c6acd843994fd6d1518ee2496d0d20b8c22",
+  "live-01-gate-speech16k.npy": "1d197118ac2a96c0d64fe2e24380c181de8d513d9de97bf8c141e113d8e39bb5",
+  "live-02-gate-stereo48k.npy": "75f6d22df99cfa660edab3ce55e2f6e6dfaf60339bf7f0eff9cef4c50cd10882",
+  "live-03-compress-speech16k.npy": "57977b9a9e121aebeb7d567e32e386504efc550a1a60b90413aa3bf1f7009019",
+  "live-04-compress-speech16k.npy": "7ff3b468ade3e69ce2ebb4760abbe7eb380bcca7d3f1b88cc9738d616a3f0695",
+  "live-05-compress-stereo48k.npy": "159773e1201fcd4ce1184989cf048a0affd315380d15c5931e30aabb5312040d",
+  "live-06-compress-stereo48k.npy": "4c60787e35438dbc51734ce533456e6c6f3124cbc8acdaaaa4f26d05ec05506b",
+  "live-07-limit-speech16k.npy": "a613aeede110c072d778ad90f3d7c454962bf4ce46c45c6e0c2dcb38bd612b74",
+  "live-08-limit-stereo48k.npy": "3edae3c7d4ea35b9f194a74a5b6ee423facda7edc507ef85abab8746dd55f528",
+  "live-09-limit-stereo48k.npy": "c701d59c2002410e2d789d5117f6d9c15d5f359695ceaa6853078608d18b04c3",
+  "live-10-agc-speech16k.npy": "e18e54655d32b84d2e5c021306e4c9121390b19d399674136f755ba36d4b1507",
+  "live-11-agc-stereo48k.npy": "7d8642534b51f62a3587a27b9a5dfaea0e65e848c4a8d15c01f051d1fea21a7e",
+  "live-12-loudness-live-speech16k.npy": "547fb19f723481b2eff9a96092f456829a014c375f90963aa11efd7e3510a264",
+  "live-13-loudness-live-stereo48k.npy": "41e20c9566f6b2f21a5c31d8d68d41148f347417bd3379a52fa8d0ece2795562",
+  "noise16k.npy": "f9dc516e40a9d4527d1263695a2429e8eeb3faba09a78db22702d1916f0e6b48",
+  "speech16k.npy": "da2bb057023c59ee7f5f4c5aa452f818cbec7d4c3a261ae18ff2fd4644cf60f0",
+  "stereo48k.npy": "e1dda783bd238c5cf8499d4b74ab88cb8482ab571a3b8ce72023e8a41e3abe70",
+  "tone48k.npy": "34490ce319d71d310646124f547cd223829b6de0a889ea35f405abae57a1966e"
+ },
+ "live": [
+  {
+   "channels": 1,
+   "input": "speech16k.npy",
+   "output": "live-00-gate-speech16k.npy",
+   "pipeline": "gate=-40",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speech16k.npy",
+   "output": "live-01-gate-speech16k.npy",
+   "pipeline": "gate=-35 attack=5 hold=0 release=20 range=30 hysteresis=0 window=2",
+   "rate": 16000
+  },
+  {
+   "channels": 2,
+   "input": "stereo48k.npy",
+   "output": "live-02-gate-stereo48k.npy",
+   "pipeline": "gate=-30 link=false",
+   "rate": 48000
+  },
+  {
+   "channels": 1,
+   "input": "speech16k.npy",
+   "output": "live-03-compress-speech16k.npy",
+   "pipeline": "compress=-25 ratio=4",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "input": "speech16k.npy",
+   "output": "live-04-compress-speech16k.npy",
+   "pipeline": "compress=-30 ratio=8 knee=0 attack=1 release=50 makeup=auto detector=peak",
+   "rate": 16000
+  },
+  {
+   "channels": 2,
+   "input": "stereo48k.npy",
+   "output": "live-05-compress-stereo48k.npy",
+   "pipeline": "compress=-18 ratio=3 knee=10 makeup=4 window=20",
+   "rate": 48000
+  },
+  {
+   "channels": 2,
+   "input": "stereo48k.npy",
+   "output": "live-06-compress-stereo48k.npy",
+   "pipeline": "compress=-18 ratio=2 link=false",
+   "rate": 48000
+  },
+  {
+   "channels": 1,
+   "input": "speech16k.npy",
+   "output": "live-07-limit-speech16k.npy",
+   "pipeline": "limit=-6",
+   "rate": 16000
+  },
+  {
+   "channels": 2,
+   "input": "stereo48k.npy",
+   "output": "live-08-limit-stereo48k.npy",
+   "pipeline": "limit=-3 lookahead=2 release=20",
+   "rate": 48000
+  },
+  {
+   "channels": 2,
+   "input": "stereo48k.npy",
+   "output": "live-09-limit-stereo48k.npy",
+   "pipeline": "limit=-6 lookahead=0 link=false",
+   "rate": 48000
+  },
+  {
+   "channels": 1,
+   "input": "speech16k.npy",
+   "output": "live-10-agc-speech16k.npy",
+   "pipeline": "agc=-18 attack=20 release=200 window=50",
+   "rate": 16000
+  },
+  {
+   "channels": 2,
+   "input": "stereo48k.npy",
+   "output": "live-11-agc-stereo48k.npy",
+   "pipeline": "agc max=12 min=-6 quiet=-40 link=false",
+   "rate": 48000
+  },
+  {
+   "channels": 1,
+   "input": "speech16k.npy",
+   "output": "live-12-loudness-live-speech16k.npy",
+   "pipeline": "loudness-live=-20 window=400 attack=50 release=200",
+   "rate": 16000
+  },
+  {
+   "channels": 2,
+   "input": "stereo48k.npy",
+   "output": "live-13-loudness-live-stereo48k.npy",
+   "pipeline": "loudness-live hop=50 max=6 weighting=rbj",
+   "rate": 48000
+  }
+ ],
+ "loudness": [
+  {
+   "channels": 1,
+   "input": "speech16k.npy",
+   "integrated": -17.47054759710856,
+   "integrated_rbj": -17.595480669916984,
+   "pyloudnorm_deman": -17.47054759710856,
+   "pyloudnorm_kweighting": -17.595480669916984,
+   "rate": 16000,
+   "sample_peak": 0.9022960662841797,
+   "true_peak": 0.9037126898765564
+  },
+  {
+   "channels": 2,
+   "input": "stereo48k.npy",
+   "integrated": -11.028434412970313,
+   "integrated_rbj": -11.070381215936983,
+   "pyloudnorm_deman": -11.028434412970315,
+   "pyloudnorm_kweighting": -11.070381215936981,
+   "rate": 48000,
+   "sample_peak": 0.9990000128746033,
+   "true_peak": 1.2398638725280762
+  },
+  {
+   "channels": 2,
+   "input": "tone48k.npy",
+   "integrated": -22.999903597369507,
+   "integrated_rbj": -23.041319754964597,
+   "pyloudnorm_deman": -22.999903597369507,
+   "pyloudnorm_kweighting": -23.041319754964594,
+   "rate": 48000,
+   "sample_peak": 0.07079457491636276,
+   "true_peak": 0.07083921879529953
+  },
+  {
+   "channels": 1,
+   "input": "noise16k.npy",
+   "integrated": -17.94306623139613,
+   "integrated_rbj": -18.06790640912403,
+   "pyloudnorm_deman": -17.94306623139613,
+   "pyloudnorm_kweighting": -18.06790640912403,
+   "rate": 16000,
+   "sample_peak": 0.4064183533191681,
+   "true_peak": 0.4103768467903137
+  }
+ ],
+ "versions": {
+  "numpy": "2.5.4",
+  "pyloudnorm": "0.1.1+",
+  "python": "3.13.16",
+  "scipy": "1.18.1"
+ },
+ "whole": [
+  {
+   "channels": 1,
+   "gain": 0.5290873521776579,
+   "input": "speech16k.npy",
+   "pipeline": "loudness",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "gain": 0.7846047553987331,
+   "input": "speech16k.npy",
+   "pipeline": "loudness=-16 ceiling=-3 meter=sample",
+   "rate": 16000
+  },
+  {
+   "channels": 2,
+   "gain": 0.7102671364584819,
+   "input": "stereo48k.npy",
+   "pipeline": "loudness=-14",
+   "rate": 48000
+  },
+  {
+   "channels": 1,
+   "gain": 0.758182984391039,
+   "input": "speech16k.npy",
+   "pipeline": "loudness=-20 weighting=rbj absolute=-60",
+   "rate": 16000
+  },
+  {
+   "channels": 1,
+   "gain": 0.2454589314140672,
+   "input": "noise16k.npy",
+   "pipeline": "loudness=-30 meter=none block=300 overlap=0.5 relative=-8",
+   "rate": 16000
+  },
+  {
+   "channels": 2,
+   "gain": 0.9999889012985961,
+   "input": "tone48k.npy",
+   "pipeline": "loudness=-23 oversample=8 taps=8",
+   "rate": 48000
+  },
+  {
+   "channels": 1,
+   "gain": 0.987758864786012,
+   "input": "speech16k.npy",
+   "pipeline": "peaknorm",
+   "rate": 16000
+  },
+  {
+   "channels": 2,
+   "gain": 0.5709867027100645,
+   "input": "stereo48k.npy",
+   "pipeline": "peaknorm=-3 meter=true",
+   "rate": 48000
+  },
+  {
+   "channels": 2,
+   "gain": 13.335214985064095,
+   "input": "tone48k.npy",
+   "pipeline": "peaknorm=-0.5 meter=true oversample=2 taps=3",
+   "rate": 48000
+  }
+ ]
+}

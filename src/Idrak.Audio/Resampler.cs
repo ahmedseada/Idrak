@@ -146,7 +146,8 @@ public static class Resampler
         target.CopyTo(output);
     }
 
-    private static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
+    // The dot product of a phase's taps with the sound; the "resample" processor's stage takes it too, so blocks give these bits.
+    internal static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
     {
         int i = 0;
         float sum = 0f;

@@ -333,7 +333,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.AudioEncoders` | registry | public | — |  | mp3, wav | — | Audio |
 | `Idrak.Audio.Abstractions.AudioFamilies` | registry | public | — |  | — | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.AudioFeatureExtractors` | registry | public | — |  | log-mel | Audio.Plugins | Audio |
-| `Idrak.Audio.Abstractions.AudioProcessors` | registry | public | — |  | denoise, highpass, normalize, trim | Audio | Audio |
+| `Idrak.Audio.Abstractions.AudioProcessors` | registry | public | — |  | agc, bandpass, compress, dc, dehum, denoise, eq, gain, +16 | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioSplitters` | registry | public | — |  | seconds, silence | — | Audio |
 | `Idrak.Audio.Abstractions.IAdversarialSpeechSynthesizer` | interface | public | Module | VitsSynthesizer |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IAdversarialSynthesisStep` | interface | public | — | VitsTraining.Step |  | Audio, Audio.Plugins | Audio |
@@ -346,9 +346,9 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.IAudioFeatureExtractor` | interface | public | Device, Tensor | AudioFeatureExtractors.GuardedExtractor, LogMelFeatures, VitsTrainingFeatures |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IAudioInput` | interface | public | — | AudioPipeline.ProcessedInput, CaptureQueue, PcmStreamInput |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioLanguageEncoder` | interface | public | Device | IdrakAudioLanguageEncoder |  | Audio, Audio.Plugins | Audio |
-| `Idrak.Audio.Abstractions.IAudioProcessor` | interface | public | — | DenoiseProcessor, HighPassProcessor, NormalizeProcessor, TrimProcessor |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IAudioProcessor` | interface | public | — | AgcProcessor, BandPassProcessor, CompressProcessor, DcProcessor, DehumProcessor, DenoiseProcessor, +17 |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioSplitter` | interface | public | — | SecondsSplitter, SilenceSplitter |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.IAudioStage` | interface | public | — | AudioPipeline.PipelineStage, BufferedStage, HighPassProcessor.Stage |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IAudioStage` | interface | public | — | AgcProcessor.Stage, AudioPipeline.PipelineStage, BiquadStage, BufferedStage, CompressProcessor.Stage, GainProcessor.Stage, +6 |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioTuningPart` | interface | public | Tensor | IdrakAudioLanguagePart |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ICtcSpeechModel` | interface | public | Tensor | IdrakAudioCtcModel |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ILiveCommitPolicy` | interface | public | — | AgreementPolicy |  | Audio | Audio |

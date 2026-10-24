@@ -31,6 +31,12 @@ versions may differ in the last bits of the torch outputs (the WAV files and the
 - `"audio asr:"` (S4): the encoder output and the step-1 logits within 1e-4; the greedy, beam and timestamp ids exact.
 - `"audio train:"` (S6): `CtcAlignment.Viterbi` on `logp-step1.npy` gives `alignment.json` exactly (its log-probability within 1e-4); the plug-in's step-1 loss within 1e-4 and every tensor's gradient within 1e-4 of that tensor's largest, for both models; the three SGD steps' losses within 1e-4.
 - `"audio tts:"` (S5): the waveform within 1e-4.
+- `"audio processing: filters:"` (plan 31, P1): `filters/`, written by `tools/audio/make_audio_filters.py` (numpy, scipy):
+  each filter's output (scipy's `sosfilt` started settled on the first sample, RBJ's formulas, iirnotch, torchaudio's
+  windowed-sinc resampler in float64) within 1e-5, chains rounded to float32 between steps as Idrak does.
+- `"audio processing: dynamics:"` (plan 31, P2): `dynamics/`, written by `tools/audio/make_audio_dynamics.py` (numpy, scipy,
+  pyloudnorm): each live stage's output (gate, compress, limit, agc, loudness-live) within 1e-5 of the script's
+  sample-by-sample equations, the integrated loudness within 0.01 LU of pyloudnorm, each whole-recording gain exact.
 
 ## Regenerate
 
