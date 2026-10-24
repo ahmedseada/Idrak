@@ -1,0 +1,84 @@
+{
+  "source": {
+    "repository": "https://github.com/xiph/rnnoise.git",
+    "tag": "v0.1.1",
+    "commit": "6cbfd53eb348a8d394e0757b4025c6ded34eb2b6"
+  },
+  "compiler": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "flags": [
+    "-O2",
+    "-ffp-contract=off",
+    "-std=gnu99"
+  ],
+  "machine": "x86_64",
+  "numpy": "2.5.3",
+  "rate": 48000,
+  "frame": 480,
+  "frames": 200,
+  "input_samples": 96000,
+  "output_samples": 95520,
+  "scale": 32768,
+  "layers": [
+    {
+      "name": "input_dense",
+      "kind": "dense",
+      "inputs": 42,
+      "neurons": 24,
+      "activation": 0
+    },
+    {
+      "name": "vad_gru",
+      "kind": "gru",
+      "inputs": 24,
+      "neurons": 24,
+      "activation": 2
+    },
+    {
+      "name": "noise_gru",
+      "kind": "gru",
+      "inputs": 90,
+      "neurons": 48,
+      "activation": 2
+    },
+    {
+      "name": "denoise_gru",
+      "kind": "gru",
+      "inputs": 114,
+      "neurons": 96,
+      "activation": 2
+    },
+    {
+      "name": "denoise_output",
+      "kind": "dense",
+      "inputs": 96,
+      "neurons": 22,
+      "activation": 1
+    },
+    {
+      "name": "vad_output",
+      "kind": "dense",
+      "inputs": 24,
+      "neurons": 1,
+      "activation": 1
+    }
+  ],
+  "vad_mean": 0.627643346786499,
+  "files": {
+    "rnnoise.rnnn": {
+      "bytes": 302903,
+      "sha256": "5f13bf429376d8ab06bd27b1edcdb919500803de35ba90e71abb585a3502eaf6"
+    },
+    "input.npy": {
+      "bytes": 384128,
+      "sha256": "ec1d39d75c41b5d9ef26024217af769a124832f0be6d9b670a6f6b5161f5e835"
+    },
+    "output.npy": {
+      "bytes": 382208,
+      "sha256": "f5973a04fb691ad842125cbeb0fc70a6fbf8d84be983c5dd31b652d194c8245c"
+    },
+    "vad.npy": {
+      "bytes": 928,
+      "sha256": "1ee4bb289b5b8e82783dc3e7228b3cc2ca371202296d5c9fcb49dc5dc84d18aa"
+    }
+  }
+}

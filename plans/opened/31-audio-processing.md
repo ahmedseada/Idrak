@@ -3,7 +3,10 @@
 **Status:** planned 2026-10-24 against `main` 0e1fc0b8; phases below, built in order, at most two agents at a time. P0 built
 (contracts, registry, pipeline, the four cleaners as processors bit for bit), P1 (filters) and P2 (dynamics; `peak` is
 `peaknorm` and agc's silence level `quiet`, since after a comma a registered name starts a step, and eq's and the shelves' gain is `db`), P3 (noise and repair:
-`denoise-live`, `spectral-gate`, `declick`, `declip`, `deess`, `dereverb`) and P4 (the command line, `SpeechTrainingOptions.Processing`).
+`denoise-live`, `spectral-gate`, `declick`, `declip`, `deess`, `dereverb`), P4 (the command line, `SpeechTrainingOptions.Processing`)
+and P5 (`rnnoise` in Idrak.Audio.Plugins, xiph's classic network bit for bit; bench rows `audio-process` for every
+stage). Along the way: Apply keeps a recording aligned (Latency is the shift, Delay what a live listener waits), and the
+STFT runs on one real FFT with the overlap-add in parallel. Left: the owner's runs below.
 
 ## Why
 

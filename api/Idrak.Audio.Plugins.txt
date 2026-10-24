@@ -275,6 +275,17 @@ public static class Idrak.Audio.Plugins.OpenVoice.OpenVoicePlugin
   public static void Register()
   public static void Unregister()
 
+public static class Idrak.Audio.Plugins.RnNoise.RnNoisePlugin
+  public const string ModelOption = "model"
+  public const string ModelVariable = "IDRAK_RNNOISE_MODEL"
+  public const string ProcessorName = "rnnoise"
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
+  public static bool IsRegistered { get; }
+  public static string DefaultModelPath { get; }
+  public static string LocateModel(string? given = null)
+  public static void Register()
+  public static void Unregister()
+
 public sealed class Idrak.Audio.Plugins.Vits.UromanArabicRomanizer : Idrak.Audio.Abstractions.ITextRomanizer
   public UromanArabicRomanizer()
   public bool Covers(System.Text.Rune rune)

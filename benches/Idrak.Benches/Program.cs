@@ -25,6 +25,9 @@
 //   seq2seq        a text encoder-decoder (IDRAK_BENCH_SEQ2SEQ names the folder, default the tiny fixture under tests/):
 //                  the load (cold, warm, host memory allocated), a cached decoding step (ms a token, launches a token)
 //                  and a beam search of 4 beams (ms a step), the best hypothesis hashed so a change shows it kept it
+//   audio-process  every registered audio processor (the library's and the plug-ins', rnnoise when its model file is
+//                  found) alone on 10 s of speech-like sound at 16 kHz mono and 48 kHz stereo: ms cold, the warm median,
+//                  times real time; IDRAK_BENCH_AUDIO (steps such as "lowpass, rnnoise mix=0.8") chooses them instead
 //   memory         stress: the pool over thousands of varied shapes (rule 77: device memory does not grow), long
 //                  sequences, the largest batch the device takes before it runs out
 //
@@ -33,7 +36,8 @@
 // is skipped with the reason), IDRAK_BENCH_REPEATS (timed rounds after the cold one, default 5), IDRAK_BENCH_WARMUP
 // (untimed calls first, default 30), IDRAK_BENCH_CALLS (calls a timed round in the ops section, default 8: one device
 // sync a round, so a driver's submission latency does not stand for a 10 µs kernel), IDRAK_BENCH_SECONDS (the most a
-// stress section runs, default 60), IDRAK_BENCH_OUT, IDRAK_BENCH_MODEL, IDRAK_BENCH_CLIPS, IDRAK_BENCH_SEQ2SEQ.
+// stress section runs, default 60), IDRAK_BENCH_OUT, IDRAK_BENCH_MODEL, IDRAK_BENCH_CLIPS, IDRAK_BENCH_SEQ2SEQ,
+// IDRAK_BENCH_AUDIO (comma-separated steps for audio-process; a bare name takes its defaults).
 
 using Idrak.Benches;
 
@@ -44,7 +48,7 @@ if (args is ["compare", var before, var after])
 
 if (args.Any(a => a is "-h" or "--help" or "help"))
 {
-    Console.WriteLine("sections: ops matmul train-decoder infer-decoder train-speech seq2seq memory (default: all); compare before.json after.json");
+    Console.WriteLine($"sections: {string.Join(" ", Sections.All)} (default: all); compare before.json after.json");
     return 0;
 }
 

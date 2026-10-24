@@ -40,6 +40,15 @@ versions may differ in the last bits of the torch outputs (the WAV files and the
 - `"audio processing: dynamics:"` (plan 31, P2): `dynamics/`, written by `tools/audio/make_audio_dynamics.py` (numpy, scipy,
   pyloudnorm): each live stage's output (gate, compress, limit, agc, loudness-live) within 1e-5 of the script's
   sample-by-sample equations, the integrated loudness within 0.01 LU of pyloudnorm, each whole-recording gain exact.
+- `"audio processing: rnnoise:"` (plan 31, P5): `rnnoise/`, written by `tools/audio/make_rnnoise_reference.py` (numpy, git
+  and a C compiler; not by `make_tiny_audio.py`, not in `manifest.json`): xiph's RNNoise v0.1.1 built from its C sources
+  (`-O2 -ffp-contract=off`) run on `input.npy` (2 s at 48 kHz: digital silence, then three voiced syllables and a
+  fricative over a noise floor, 16-bit samples); its denoised samples aligned with the input (`output.npy`, its first
+  frame left out as its demo does) and each frame's voice probability (`vad.npy`); `rnnoise.rnnn`, RNNoise's classic
+  weights (its `src/rnn_data.c`) in its own model file format, which the C reference reads back with
+  `rnnoise_model_from_file` and checks against its built-in weights bit for bit; `rnnoise.json` with the commit, the
+  compiler, the layers and each file's SHA-256. The plug-in's samples are checked within 1e-4 after its 959-sample
+  delay, the voice probabilities within 1e-4.
 
 ## Regenerate
 
