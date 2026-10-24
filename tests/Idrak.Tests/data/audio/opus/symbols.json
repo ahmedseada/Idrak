@@ -1,0 +1,287 @@
+{
+  "note": "the first symbols of each packet's first frame, decoded with libopus' ec_dec as its SILK or CELT decoder reads them; the state after each: rng, val (RFC 6716 4.1's), tell (ec_tell) and tell_frac (ec_tell_frac, 1/8 bits)",
+  "files": {
+    "silk-nb-10ms-mono.opus": [
+      {
+        "packet": 0,
+        "config": 0,
+        "mode": "silk",
+        "frame_bytes": 7,
+        "frame_hex": "02e8371218a41f",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 2123097206, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 0, "rng": 1073741824, "val": 1049355382, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 512484470, "tell": 3, "tell_frac": 24}
+        ]
+      },
+      {
+        "packet": 1,
+        "config": 0,
+        "mode": "silk",
+        "frame_bytes": 8,
+        "frame_hex": "32f852cbae78d980",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 1719916186, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 0, "rng": 1073741824, "val": 646174362, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 109303450, "tell": 3, "tell_frac": 24}
+        ]
+      },
+      {
+        "packet": 2,
+        "config": 0,
+        "mode": "silk",
+        "frame_bytes": 5,
+        "frame_hex": "34de41f736",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 1703993092, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 0, "rng": 1073741824, "val": 630251268, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 93380356, "tell": 3, "tell_frac": 24}
+        ]
+      },
+      {
+        "packet": 3,
+        "config": 0,
+        "mode": "silk",
+        "frame_bytes": 6,
+        "frame_hex": "34e45c597175",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 1703793107, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 0, "rng": 1073741824, "val": 630051283, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 93180371, "tell": 3, "tell_frac": 24}
+        ]
+      }
+    ],
+    "silk-wb-20ms-stereo.opus": [
+      {
+        "packet": 0,
+        "config": 9,
+        "mode": "silk",
+        "frame_bytes": 29,
+        "frame_hex": "07fcbfd051abd6e2b3e58a12bbfcd74e3b6a8bdf98bc254221c8d96008",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 2080481303, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 0, "rng": 1073741824, "val": 1006739479, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 469868567, "tell": 3, "tell_frac": 24},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame0", "value": 0, "rng": 268435456, "val": 201433111, "tell": 4, "tell_frac": 32},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch1", "value": 0, "rng": 134217728, "val": 67215383, "tell": 5, "tell_frac": 40}
+        ]
+      },
+      {
+        "packet": 1,
+        "config": 9,
+        "mode": "silk",
+        "frame_bytes": 34,
+        "frame_hex": "080086782fa7c0d2de8ac92c411e291d32bae8369ba166df80f6016f25466e36ff19",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 2080357571, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 0, "rng": 1073741824, "val": 1006615747, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 469744835, "tell": 3, "tell_frac": 24},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame0", "value": 0, "rng": 268435456, "val": 201309379, "tell": 4, "tell_frac": 32},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch1", "value": 0, "rng": 134217728, "val": 67091651, "tell": 5, "tell_frac": 40}
+        ]
+      },
+      {
+        "packet": 2,
+        "config": 9,
+        "mode": "silk",
+        "frame_bytes": 54,
+        "frame_hex": "aa72b8f23a9d9c30a58ad984cfa1b1ee934e9564d4c9d5cc375a26af74270cafb29d13090e92f3f55d092bfba8b471551dd13c510a08",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 717661062, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 1, "rng": 1073741824, "val": 717661062, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 180790150, "tell": 3, "tell_frac": 24},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame0", "value": 1, "rng": 268435456, "val": 180790150, "tell": 4, "tell_frac": 32},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch1", "value": 0, "rng": 134217728, "val": 46572422, "tell": 5, "tell_frac": 40}
+        ]
+      },
+      {
+        "packet": 3,
+        "config": 9,
+        "mode": "silk",
+        "frame_bytes": 46,
+        "frame_hex": "8a7547fa8d1f351f91ec2692d0a26963a2f1e20742410fa483d6c6a811f1de308c0e634e12e2d6ffcee22574426d",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 986012674, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 1, "rng": 1073741824, "val": 986012674, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 449141762, "tell": 3, "tell_frac": 24},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame0", "value": 0, "rng": 268435456, "val": 180706306, "tell": 4, "tell_frac": 32},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch1", "value": 0, "rng": 134217728, "val": 46488578, "tell": 5, "tell_frac": 40}
+        ]
+      }
+    ],
+    "silk-wb-60ms-stereo.opus": [
+      {
+        "packet": 0,
+        "config": 11,
+        "mode": "silk",
+        "frame_bytes": 86,
+        "frame_hex": "227fcd5ac8449533d77c85a8cd479fa2b63a2800210e5d80f94174e287c88027020a7c91ade88144b9fbb6a4b9cd4913479073224a178ecae5f902af88702b6a594d1d6858336379a5367d0cd673a31d3037fc03e55c",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 1858083154, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 0, "rng": 1073741824, "val": 784341330, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame1", "value": 0, "rng": 536870912, "val": 247470418, "tell": 3, "tell_frac": 24},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame2", "value": 1, "rng": 268435456, "val": 247470418, "tell": 4, "tell_frac": 32},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 134217728, "val": 113252690, "tell": 5, "tell_frac": 40},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame0", "value": 0, "rng": 67108864, "val": 46143826, "tell": 6, "tell_frac": 48},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame1", "value": 0, "rng": 33554432, "val": 12589394, "tell": 7, "tell_frac": 56},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame2", "value": 1, "rng": 16777216, "val": 12589394, "tell": 8, "tell_frac": 64},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch1", "value": 0, "rng": 2147483648, "val": 1075401371, "tell": 9, "tell_frac": 72}
+        ]
+      },
+      {
+        "packet": 1,
+        "config": 11,
+        "mode": "silk",
+        "frame_bytes": 107,
+        "frame_hex": "e0a7587c65cd9befa9ff9bca2edd24c9b36a6c4eef8f6611636893618f283a97ca6068b34b9ac692d31b9e4e18ffb0e302e4931ce2ae24130083531986303dbafc5740188d0f73946d53f2d95a60794c79930015afdcdc3abf225d65f16f65a03b72999d797681d4c7c290",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 262951873, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 1, "rng": 1073741824, "val": 262951873, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame1", "value": 1, "rng": 536870912, "val": 262951873, "tell": 3, "tell_frac": 24},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame2", "value": 1, "rng": 268435456, "val": 262951873, "tell": 4, "tell_frac": 32},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 134217728, "val": 128734145, "tell": 5, "tell_frac": 40},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame0", "value": 0, "rng": 67108864, "val": 61625281, "tell": 6, "tell_frac": 48},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame1", "value": 0, "rng": 33554432, "val": 28070849, "tell": 7, "tell_frac": 56},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame2", "value": 0, "rng": 16777216, "val": 11293633, "tell": 8, "tell_frac": 64},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch1", "value": 0, "rng": 2147483648, "val": 743686605, "tell": 9, "tell_frac": 72}
+        ]
+      },
+      {
+        "packet": 2,
+        "config": 11,
+        "mode": "silk",
+        "frame_bytes": 176,
+        "frame_hex": "eea0899869f4ba904d85e8ccccd4ff4593ce2129c245e4fc679b9340b4181f72337414fd055692f45ff8815ce566c695cdd7e73dd410bb4e76434b7ea1160d90b6b9c33ea46f6176a774e39076e60d08667c89a83f359dcd1c9b0a05893ad64daf92b53a23bea38536cdb22af8af42c56f365310316a2a9720620c6d6733ce442aa8a32e222c674fe32356a0d8e2a169d6cdf1781c6de9b7f89a0d3153f590325f4bd9e0a66aa9a53812e53bab138b3e",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 145734451, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 1, "rng": 1073741824, "val": 145734451, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame1", "value": 1, "rng": 536870912, "val": 145734451, "tell": 3, "tell_frac": 24},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame2", "value": 1, "rng": 268435456, "val": 145734451, "tell": 4, "tell_frac": 32},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 134217728, "val": 11516723, "tell": 5, "tell_frac": 40},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame0", "value": 1, "rng": 67108864, "val": 11516723, "tell": 6, "tell_frac": 48},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame1", "value": 1, "rng": 33554432, "val": 11516723, "tell": 7, "tell_frac": 56},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame2", "value": 1, "rng": 16777216, "val": 11516723, "tell": 8, "tell_frac": 64},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch1", "value": 0, "rng": 2147483648, "val": 800797643, "tell": 9, "tell_frac": 72}
+        ]
+      },
+      {
+        "packet": 3,
+        "config": 11,
+        "mode": "silk",
+        "frame_bytes": 200,
+        "frame_hex": "ee8c8cad9bb97f89e9baad0bd7b0d5c954c00bd4af8d2d816e1785e05c2484566d2890035e2bc50af5e3ce2a2100913696a413b1497d129b424fca4e6497b8ba0973b974fd63cc9c5386cbf719ff0807edec3963bc8af31e401ae35c777a4e8931916d5b39e92d52842f81383a48aa10d66a419a10f36bc35bbc338a81b65adea7640c842942cd2264e88935f4f0065245ae97017401a66f7f567082f25bf996fada1adef64e78acaaba00724a85e84d1f53392941ca369671d53ca55c6abac5ef531d10007b53e0",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 146389417, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 1, "rng": 1073741824, "val": 146389417, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame1", "value": 1, "rng": 536870912, "val": 146389417, "tell": 3, "tell_frac": 24},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame2", "value": 1, "rng": 268435456, "val": 146389417, "tell": 4, "tell_frac": 32},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 134217728, "val": 12171689, "tell": 5, "tell_frac": 40},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame0", "value": 1, "rng": 67108864, "val": 12171689, "tell": 6, "tell_frac": 48},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame1", "value": 1, "rng": 33554432, "val": 12171689, "tell": 7, "tell_frac": 56},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch1 frame2", "value": 1, "rng": 16777216, "val": 12171689, "tell": 8, "tell_frac": 64},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch1", "value": 0, "rng": 2147483648, "val": 968468786, "tell": 9, "tell_frac": 72}
+        ]
+      }
+    ],
+    "silk-wb-100ms-mono.opus": [
+      {
+        "packet": 0,
+        "config": 9,
+        "mode": "silk",
+        "frame_bytes": 29,
+        "frame_hex": "02e7852d34579d72815fbdee953588ac7645ed8e9aeddd695d9350852a",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 2123119977, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 0, "rng": 1073741824, "val": 1049378153, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 512507241, "tell": 3, "tell_frac": 24}
+        ]
+      },
+      {
+        "packet": 1,
+        "config": 9,
+        "mode": "silk",
+        "frame_bytes": 24,
+        "frame_hex": "b7f0a64024940ffe29712bf87ef51e69697524dff574df50",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 604482783, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 1, "rng": 1073741824, "val": 604482783, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 67611871, "tell": 3, "tell_frac": 24}
+        ]
+      },
+      {
+        "packet": 2,
+        "config": 9,
+        "mode": "silk",
+        "frame_bytes": 21,
+        "frame_hex": "b9a7dc08a80bed5af873714cef9de9f08b95716842",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 590090747, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 1, "rng": 1073741824, "val": 590090747, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 53219835, "tell": 3, "tell_frac": 24}
+        ]
+      },
+      {
+        "packet": 3,
+        "config": 9,
+        "mode": "silk",
+        "frame_bytes": 22,
+        "frame_hex": "3ca180e7036480fb429f2a1c56a76a4ec7d62bc7e918",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 1638875020, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 0, "rng": 1073741824, "val": 565133196, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 28262284, "tell": 3, "tell_frac": 24}
+        ]
+      }
+    ],
+    "voicenote-16k-20ms.opus": [
+      {
+        "packet": 0,
+        "config": 9,
+        "mode": "silk",
+        "frame_bytes": 34,
+        "frame_hex": "01d523267b3f2dfc27b962b6ed1463a27323b89dbb38f033f5ef4269791ef93ebd80",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 2132110956, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 0, "rng": 1073741824, "val": 1058369132, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 521498220, "tell": 3, "tell_frac": 24}
+        ]
+      },
+      {
+        "packet": 1,
+        "config": 9,
+        "mode": "silk",
+        "frame_bytes": 38,
+        "frame_hex": "297f987c5d42c328cb3a1080d4970adcf44b6f2900efffe728e169c3298dbbd856bb8bb41502",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 1799369665, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 0, "rng": 1073741824, "val": 725627841, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 188756929, "tell": 3, "tell_frac": 24}
+        ]
+      },
+      {
+        "packet": 2,
+        "config": 9,
+        "mode": "silk",
+        "frame_bytes": 35,
+        "frame_hex": "80a9bdce4fe43c0a780996c0f1046b2daf4ec823b02764df9968d9760c19c78aa63630",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 1068179736, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 1, "rng": 1073741824, "val": 1068179736, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 531308824, "tell": 3, "tell_frac": 24}
+        ]
+      },
+      {
+        "packet": 3,
+        "config": 9,
+        "mode": "silk",
+        "frame_bytes": 35,
+        "frame_hex": "b24a3c45d4213ca9bb050a2f4c706531341da1b9988baa6a6be06a0de44ebe7c75eb80",
+        "symbols": [
+          {"op": "init", "value": 0, "rng": 2147483648, "val": 651878877, "tell": 1, "tell_frac": 8},
+          {"op": "bit_logp", "logp": 1, "what": "vad ch0 frame0", "value": 1, "rng": 1073741824, "val": 651878877, "tell": 2, "tell_frac": 16},
+          {"op": "bit_logp", "logp": 1, "what": "lbrr ch0", "value": 0, "rng": 536870912, "val": 115007965, "tell": 3, "tell_frac": 24}
+        ]
+      }
+    ]
+  }
+}
