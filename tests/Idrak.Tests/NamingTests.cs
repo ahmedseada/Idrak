@@ -9,7 +9,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] NamingGroup =
     [
-        ("naming: no file in the repository uses the library's former name or its tool names", FormerNamesGone),
+        ("naming: no file in the repository (what git tracks) uses the library's former name or its tool names", FormerNamesGone),
         ("naming: no public type, member or parameter of an Idrak assembly is named after a provider", NoProviderNamesInPublicApi),
         ("naming: no code, project, build file, API dump or test list names a renamed package (Idrak.Text's former name); the plans and the changelog keep their history", RenamedPackagesGone),
     ];
@@ -90,7 +90,7 @@ internal static partial class Tests
         string[] skipped = ["bin", "obj", ".git", ".vs", ".idea", "__pycache__"];
         string[] binary = [".gguf", ".safetensors", ".parquet", ".onnx", ".png", ".jpg", ".bin", ".gz", ".zip", ".ikm", ".ikw"];
         var found = new List<string>();
-        foreach (string path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        foreach (string path in RepositoryFiles(root))
         {
             string relative = Path.GetRelativePath(root, path);
             if (relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Any(skipped.Contains)
@@ -120,7 +120,7 @@ internal static partial class Tests
         string[] checkedKinds = [".cs", ".csproj", ".props", ".targets", ".slnx", ".sln", ".json", ".txt", ".py", ".ps1", ".sh", ".yml", ".yaml", ".jinja"];
         var found = new List<string>();
         int files = 0;
-        foreach (string path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        foreach (string path in RepositoryFiles(root))
         {
             string relative = Path.GetRelativePath(root, path);
             if (relative.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Any(skipped.Contains)
@@ -141,6 +141,37 @@ internal static partial class Tests
     }
 
     // The folder holding Idrak.slnx, found from the build output folder.
+    // The repository's own files: what git tracks (`git ls-files`), so a folder of one's own beside the code (a Python
+    // environment, downloaded models, test output) is not read; every file under the root where git is not there.
+    private static IEnumerable<string> RepositoryFiles(string root)
+    {
+        if (Directory.Exists(Path.Combine(root, ".git")) || File.Exists(Path.Combine(root, ".git")))
+        {
+            try
+            {
+                var start = new System.Diagnostics.ProcessStartInfo("git") { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                foreach (string argument in new[] { "-c", "core.quotepath=off", "ls-files", "-z" })
+                {
+                    start.ArgumentList.Add(argument);
+                }
+
+                using var git = System.Diagnostics.Process.Start(start)!;
+                string listed = git.StandardOutput.ReadToEnd();
+                git.WaitForExit();
+                if (git.ExitCode == 0)
+                {
+                    return [.. listed.Split('\0', StringSplitOptions.RemoveEmptyEntries).Select(f => Path.Combine(root, f)).Where(File.Exists)];
+                }
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                // No git on the machine: every file under the root, below.
+            }
+        }
+
+        return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories);
+    }
+
     private static string RepositoryRoot()
     {
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
