@@ -72,7 +72,7 @@ public static partial class Stft
     }
 
     /// <summary>The power spectra of <paramref name="samples"/> on the host: [frames, bins] into <paramref name="power"/>.</summary>
-    public static void PowerOnHost(ReadOnlySpan<float> samples, AudioFeatureOptions options, Span<float> power)
+    public static unsafe void PowerOnHost(ReadOnlySpan<float> samples, AudioFeatureOptions options, Span<float> power)
     {
         ArgumentNullException.ThrowIfNull(options);
         options.Check();
@@ -85,31 +85,33 @@ public static partial class Stft
         var padded = Padded(samples, options);
         var window = Window(options.Window, size);
         var fft = Fft.For(size);
-        var target = GC.AllocateUninitializedArray<float>(frames * bins);
-        HostParallel.For(frames, 64, (first, last) =>
+        fixed (float* destination = power)
         {
-            var scratch = ArrayPool<double>.Shared.Rent(fft.ScratchLength + 2 * bins);   // once per block of frames
-            try
+            nint target = (nint)destination;                                    // written in place: no copy of the spectra (a span cannot cross into the body)
+            HostParallel.For(frames, 64, (first, last) =>
             {
-                var work = scratch.AsSpan(0, fft.ScratchLength);
-                var re = scratch.AsSpan(fft.ScratchLength, bins);
-                var im = scratch.AsSpan(fft.ScratchLength + bins, bins);
-                for (int f = first; f < last; f++)
+                var scratch = ArrayPool<double>.Shared.Rent(fft.ScratchLength + 2 * bins);   // once per block of frames
+                try
                 {
-                    fft.Forward(padded.AsSpan(f * hop, size), window, re, im, work);   // the window applied as the frame is read (rule 73)
-                    var row = target.AsSpan(f * bins, bins);
-                    for (int k = 0; k < bins; k++)
+                    var work = scratch.AsSpan(0, fft.ScratchLength);
+                    var re = scratch.AsSpan(fft.ScratchLength, bins);
+                    var im = scratch.AsSpan(fft.ScratchLength + bins, bins);
+                    for (int f = first; f < last; f++)
                     {
-                        row[k] = (float)(re[k] * re[k] + im[k] * im[k]);
+                        fft.Forward(padded.AsSpan(f * hop, size), window, re, im, work);   // the window applied as the frame is read (rule 73)
+                        var row = new Span<float>((float*)target + (long)f * bins, bins);
+                        for (int k = 0; k < bins; k++)
+                        {
+                            row[k] = (float)(re[k] * re[k] + im[k] * im[k]);
+                        }
                     }
                 }
-            }
-            finally
-            {
-                ArrayPool<double>.Shared.Return(scratch);
-            }
-        });
-        target.AsSpan().CopyTo(power);
+                finally
+                {
+                    ArrayPool<double>.Shared.Return(scratch);
+                }
+            });
+        }
     }
 
     /// <summary>The power spectra of <paramref name="samples"/> on <paramref name="device"/> by the composed path: [frames, bins].</summary>

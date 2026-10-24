@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Testing;
@@ -16,6 +17,7 @@ internal static partial class Tests
         ("audio features: torchaudio's windowed-sinc resampling of 44.1 and 8 kHz to 16 kHz within 1e-5 on the host and on the device, the two agreeing; a sound at the rate already is itself", AudioResampling),
         ("audio features: the STFT magnitude and the log-mel of pcm16.wav within 1e-4 of torch's on the host path and the composed device path, the two magnitudes within 1e-5; the frame counts, the mel filterbank within 1e-6, preprocessor_config.json to the options", AudioLogMel),
         ("audio features: fft: the library's real FFT (forward and inverse) against a direct DFT in double within 1e-9 of the largest bin at 16, 400, 480, 512, 1024 and 2048 points and at odd and prime-factor sizes; the windowed float frame gives the double frame's bits; the same bits twice; the plan shared per size; a transform allocates nothing once warm", AudioFft),
+        ("audio features: Stft.Inverse (the overlap-add in parallel stretches of the output, the spectra read in place) gives the serial overlap-add's samples bit for bit, centred and not, at 400, 512 and 401 points, cut and padded to a length; a hop the window does not cover is refused naming the sample; ComplexOnHost writes into the caller's spans", AudioInverseStftSerial),
         ("audio features: a ten-minute signal extracted in 30 s segments allocates the same device bytes for every segment after the first; the registry names log-mel and the STFT suite passes on both paths; cold and warm times", AudioFeatureMemoryAndSuite),
     ];
 
@@ -317,5 +319,113 @@ internal static partial class Tests
             long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
             Check(allocated == 0, $"{size}: 256 forward and inverse transforms allocated {allocated} bytes once warm{(allocated == 0 ? "" : $" ({AllocatedTypes(Both)})")}");
         }
+    }
+
+    private static void AudioInverseStftSerial(Device device)
+    {
+        _ = device;
+        var random = new Random(41);
+        foreach (var (size, hop, center, window) in new[] { (400, 160, true, "hann"), (512, 128, false, "hann"), (401, 100, true, "hamming"), (512, 512, false, "hann") })
+        {
+            var options = new AudioFeatureOptions { SampleRate = 16000, WindowSize = size, HopSize = hop, Window = window, Center = center, PadSeconds = null };
+            var sound = new float[16000 * 3 + 37];
+            for (int i = 0; i < sound.Length; i++)
+            {
+                sound[i] = (float)(0.4 * Math.Sin(i * 0.031) + 0.2 * (random.NextDouble() - 0.5));
+            }
+
+            int frames = Stft.FramesFor(sound.Length, options), bins = options.Bins;
+            var real = new float[frames * bins + 5];                             // larger than needed: the rest is left as it is
+            var imaginary = new float[frames * bins + 5];
+            real.AsSpan(frames * bins).Fill(7);
+            Stft.ComplexOnHost(sound, options, real, imaginary);
+            Check(real.AsSpan(frames * bins).ToArray().All(v => v == 7), $"{size}: ComplexOnHost writes only its frames into the caller's span");
+            foreach (int? length in new int?[] { null, sound.Length, sound.Length - 1000, sound.Length + 777 })
+            {
+                bool refused = false;
+                float[]? serial = null;
+                try
+                {
+                    serial = SerialInverse(real.AsSpan(0, frames * bins).ToArray(), imaginary.AsSpan(0, frames * bins).ToArray(), frames, options, length);
+                }
+                catch (ArgumentException)
+                {
+                    refused = true;
+                }
+
+                if (refused)
+                {
+                    ThrowsNaming<ArgumentException>(() => Stft.Inverse(real.AsSpan(0, frames * bins), imaginary.AsSpan(0, frames * bins), frames, options, length),
+                        $"{size} hop {hop}: the serial one refuses", "uncovered");
+                    continue;
+                }
+
+                var parallel = Stft.Inverse(real.AsSpan(0, frames * bins), imaginary.AsSpan(0, frames * bins), frames, options, length);
+                Check(parallel.Length == serial!.Length && ProcessingSame(parallel, serial),
+                    $"{size} hop {hop} {(center ? "centred" : "not centred")} length {length?.ToString(CultureInfo.InvariantCulture) ?? "default"}: the serial overlap-add's {serial.Length} samples bit for bit");
+            }
+        }
+
+        // A hop the window does not cover leaves gaps between covered samples: refused, naming one.
+        var gappy = new AudioFeatureOptions { SampleRate = 16000, WindowSize = 64, HopSize = 100, Window = "hann", Center = false, PadSeconds = null };
+        var spectra = new float[10 * gappy.Bins];
+        ThrowsNaming<ArgumentException>(() => Stft.Inverse(spectra, spectra, 10, gappy), "a hop past the window", "uncovered", "between covered samples");
+    }
+
+    // Stft.Inverse as it was (every frame transformed, then one serial overlap-add through the frames in order): the
+    // reference the parallel one must match bit for bit.
+    private static float[] SerialInverse(float[] real, float[] imaginary, int frames, AudioFeatureOptions options, int? length)
+    {
+        int bins = options.Bins, size = options.WindowSize, hop = options.HopSize;
+        var window = Stft.Window(options.Window, size);
+        var fft = Fft.For(size);
+        var work = new double[fft.ScratchLength];
+        var x = new double[size];
+        var windowed = new float[frames * size];
+        for (int f = 0; f < frames; f++)
+        {
+            fft.Inverse(real.AsSpan(f * bins, bins), imaginary.AsSpan(f * bins, bins), x, work);
+            for (int n = 0; n < size; n++)
+            {
+                windowed[f * size + n] = (float)(x[n] * window[n]);
+            }
+        }
+
+        int full = size + hop * (frames - 1);
+        var sum = new double[full];
+        var envelope = new double[full];
+        for (int f = 0; f < frames; f++)
+        {
+            for (int n = 0; n < size; n++)
+            {
+                sum[f * hop + n] += windowed[f * size + n];
+                envelope[f * hop + n] += (double)window[n] * window[n];
+            }
+        }
+
+        int start = options.Center ? size / 2 : 0, kept = options.Center ? full - 2 * (size / 2) : full, target = length ?? kept, copied = Math.Min(kept, target);
+        int first = 0, last = copied - 1;
+        while (first < copied && envelope[start + first] <= 1e-11)
+        {
+            first++;
+        }
+
+        while (last >= first && envelope[start + last] <= 1e-11)
+        {
+            last--;
+        }
+
+        var samples = new float[target];
+        for (int n = first; n <= last; n++)
+        {
+            if (envelope[start + n] <= 1e-11)
+            {
+                throw new ArgumentException($"sample {n} uncovered");
+            }
+
+            samples[n] = (float)(sum[start + n] / envelope[start + n]);
+        }
+
+        return samples;
     }
 }
