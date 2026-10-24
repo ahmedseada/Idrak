@@ -1,6 +1,7 @@
 # Plan 32: Opus decoding as a plug-in (voice notes in)
 
-**Status:** O0 (the reference) done 2026-10-24 (25d1fbdd); O1 (the codec) next.
+**Status: draft, paused by the owner 2026-10-24.** O0 (the reference and fixtures) is done (25d1fbdd); O1 (the codec)
+is not started. Kept as a draft to pick up when wanted, not a leftover.
 **Scope (the owner, 2026-10-24): the `IAudioCodec` contract and nothing around it, speech only.** One plug-in codec
 (`ReadInfo` and `Decode`); every path that opens a file goes through `AudioCodecs`, so it needs no wiring, and cleaning
 is the processing pipeline's (plan 31). SILK only: CELT-only and hybrid frames (music, wide-band audio) are refused
