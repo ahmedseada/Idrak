@@ -508,6 +508,10 @@ internal sealed class TelemetryAppender(string path) : ITelemetryHook, IDisposab
     private readonly FileStream _stream = new(path, FileMode.Append, FileAccess.Write, FileShare.Read);
     private readonly object _gate = new();
 
+    // The hub's publishers walk the hooks they read before an unsubscribe: on a simulated cluster another rank's thread can
+    // still deliver an event after rank 0 closed its log, and that event is dropped rather than written into a closed file.
+    private bool _closed;
+
     public TelemetryLevel Levels => TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Network | TelemetryLevel.Suggestions;
 
     // Whether transfers over real transports are written (for idrak cluster calibrate --from RUN; IDRAK_CLUSTER_LOG_TRANSFERS).
@@ -551,6 +555,11 @@ internal sealed class TelemetryAppender(string path) : ITelemetryHook, IDisposab
     {
         lock (_gate)
         {
+            if (_closed)
+            {
+                return;
+            }
+
             using (var writer = new Utf8JsonWriter(_stream))
             {
                 TelemetryJson.Write(writer, new TelemetryRecord(DateTimeOffset.Now, e));
@@ -561,7 +570,14 @@ internal sealed class TelemetryAppender(string path) : ITelemetryHook, IDisposab
         }
     }
 
-    public void Dispose() => _stream.Dispose();
+    public void Dispose()
+    {
+        lock (_gate)
+        {
+            _closed = true;
+            _stream.Dispose();
+        }
+    }
 }
 
 /// <summary><c>idrak pretrain init</c>: a commented pretrain.json with two stages to start from.</summary>
