@@ -54,7 +54,9 @@ internal sealed class SpeakCommand : Command
               --decoder-seconds S  the seconds of sound the decoder makes at a time (memory follows the piece, the
                                  samples are the same; 0: one pass; default: the model's)
               --bits B           the samples written: 16 (default), 24, 32, 8 or float
-              --voices DIR       the installed voices' folder (default IDRAK_VOICES, else voices/ under the cache)
+              --audio-clean P    the speech through the audio pipeline P before it is written ("highpass=60,
+                                 presence=2, loudness=-16"; a JSON array or @FILE; idrak audio processors lists them)
+              --voices DIR      the installed voices' folder (default IDRAK_VOICES, else voices/ under the cache)
               --list-voices      list the checkpoint's speakers and the installed voices, then exit
               --no-warm          with -v, report the cold call only (no second, warm call)
               --seed N           the seed of the noise (the same text and seed give the same sound)
@@ -65,12 +67,13 @@ internal sealed class SpeakCommand : Command
           idrak speak ./mms-tts-eng "Hi" --voice ahmed -o ahmed.wav -v
           cat chapter.txt | idrak speak ./mms-tts-eng - --split 400 -o chapter.wav
           idrak speak ./vits-vctk --list-voices
+          idrak speak ./mms-tts-eng "Hello." -o hello.wav --audio-clean "highpass=60, loudness=-16"
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
         "--input", "--out", "--voice", "--voice-conversion", "--tau", "--rate", "--noise", "--duration-noise", "--vocoder", "--sample-rate", "--split",
-        "--decoder-seconds", "--bits", "--voices",
+        "--decoder-seconds", "--bits", "--voices", "--audio-clean",
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--list-voices", "--no-warm"];
@@ -90,6 +93,7 @@ internal sealed class SpeakCommand : Command
         // Everything the command line gives is checked before the model loads: a missing encoder fails at once.
         var encoder = output is null ? null : AudioFiles.EncoderFor(output);
         var bits = AudioFiles.Bits(context.Option("--bits"));
+        var (clean, _) = AudioFiles.AudioClean(context);
         string? text = list ? null : Text(context);
         var speech = Options(context);
         var store = AudioFiles.VoiceStore(context);
@@ -121,6 +125,18 @@ internal sealed class SpeakCommand : Command
                 (_, warm) = Speak(context, voiced, text!, speech, "speaking again (warm)");
             }
 
+            if (!clean.IsEmpty)
+            {
+                try
+                {
+                    audio = clean.Apply(audio);
+                }
+                catch (ArgumentException e)
+                {
+                    throw new UsageException($"--audio-clean: {e.Message}");   // a step that cannot run at the speech's rate
+                }
+            }
+
             AudioFiles.Save(output!, audio, encoder!, bits);
             if (context.Verbose && !context.Json)
             {
@@ -147,6 +163,11 @@ internal sealed class SpeakCommand : Command
                 ["characters"] = text!.Length,
                 ["cold"] = StatsJson(cold),
             };
+            if (!clean.IsEmpty)
+            {
+                json["audio_clean"] = clean.ToString();
+            }
+
             if (warm is not null)
             {
                 json["warm"] = StatsJson(warm);

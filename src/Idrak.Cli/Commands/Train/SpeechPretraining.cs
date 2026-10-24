@@ -95,6 +95,7 @@ internal static class SpeechPretraining
             ["log_every"] = logEvery,
         }.ToJsonString(CommandContext.JsonOutput) + "\n");
         context.Write($"{model.Objective} model {Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(modelFolder)))}: {model.Parameters / 1e6:F2}M parameters on {model.Device}");
+        WriteCleaning(context, options);
         options = WithTeacher(context, model, options);
         return Execute(context, run, options.Steps, logEvery, model.Synthesizer is null, (progress, token, trace) => model.Synthesizer is { } synthesizer
             ? SpeechSynthesisTrainer.Train(synthesizer, train, evaluation, options, run, null, progress, token, trace)
@@ -167,7 +168,7 @@ internal static class SpeechPretraining
             {
                 throw new UsageException($"No config file {config}.");
             }
-            catch (Exception e) when (e is JsonException or InvalidDataException or InvalidOperationException or FormatException or KeyNotFoundException)
+            catch (Exception e) when (e is JsonException or InvalidDataException or InvalidOperationException or FormatException or KeyNotFoundException or ArgumentException)
             {
                 throw new UsageException($"{config}: {e.Message}");
             }
@@ -199,6 +200,7 @@ internal static class SpeechPretraining
         }
 
         bool? Switch(string on, string off) => context.Flag(on) ? true : context.Flag(off) ? false : null;
+        var cleaning = AudioFiles.Cleaning(context, options.Cleaning, options.CleaningOptions, options.Processing);
         options = options with
         {
             Steps = context.IntOption("--steps", options.Steps),
@@ -221,14 +223,24 @@ internal static class SpeechPretraining
             Decoder = context.Option("--decoder") ?? options.Decoder,
             BeamWidth = context.IntOption("--beam", options.BeamWidth),
             Augmentations = context.Option("--augment") is { } augment ? [.. augment.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)] : options.Augmentations,
-            Cleaning = AudioFiles.CleaningStages(context, options.Cleaning),
-            CleaningOptions = AudioFiles.CleaningSettings(context, options.CleaningOptions),
+            Cleaning = cleaning.Stages,
+            CleaningOptions = cleaning.Settings,
+            Processing = cleaning.Processing,
             Seed = context.Seed ?? options.Seed,
             FeatureCache = context.Option("--feature-cache") is { } cache ? cache.Equals("none", StringComparison.OrdinalIgnoreCase) ? null : cache : options.FeatureCache,
             Durations = context.Option("--durations") is { } durations ? Path.GetFullPath(durations) : options.Durations,
             DurationLossWeight = Real(context, "--duration-weight", options.DurationLossWeight),
         };
         return (options, train, evaluation);
+    }
+
+    /// <summary>The line saying which pipeline every recording runs through before its features (nothing without one).</summary>
+    internal static void WriteCleaning(CommandContext context, SpeechTrainingOptions options)
+    {
+        if (!options.Processing.IsEmpty)
+        {
+            context.Write($"processing every recording: {options.Processing}");
+        }
     }
 
     // A source's kind from its paths: folders and zips hold name.wav beside name.txt, files are transcripts.

@@ -72,10 +72,14 @@ internal sealed class VoiceTrainCommand : Command
                                   tell nothing apart for thousands of steps, and the voice trains on the mel loss alone)
               --freeze PARTS      parts kept as the base has them, comma-separated (VITS: decoder keeps its waveform
                                   generator; text_encoder, flow, duration_predictor, posterior_encoder; default none)
-              --clean STAGES      every recording cleaned before its features, comma-separated, in order: highpass (DC
-                                  and rumble out), denoise (the noise floor gated off), trim (silence at the ends cut),
-                                  normalize (speech levelled), or a registered cleaner's name (default none)
-              --clean-settings F  the stages' settings as JSON, a file or inline (default the library's)
+              --clean STAGES|PIPELINE
+                                  every recording cleaned before its features: stages, comma-separated, in order:
+                                  highpass (DC and rumble out), denoise (the noise floor gated off), trim (silence at the
+                                  ends cut), normalize (speech levelled), or a registered cleaner's name; or an audio
+                                  pipeline with values and options ("highpass=80, dehum=50, denoise=1.5, normalize=-20";
+                                  a JSON array or @FILE; idrak audio processors lists them; default none)
+              --clean-settings F  the stages' settings as JSON, a file or inline (default the library's; not with a
+                                  pipeline, which carries its own)
               --schedule NAME     the rate's schedule: constant, cosine, linear, wsd (default constant)
               --warmup F          the share of the steps the rate warms up over (default 0)
               --optimizer NAME    adamw, adam, sgd (default adamw, betas 0.8 and 0.99)
@@ -268,6 +272,7 @@ internal sealed class VoiceTrainCommand : Command
                 ? [.. frozen.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)]
                 : a.Frozen,
         };
+        var cleaning = AudioFiles.Cleaning(context, start.Cleaning, start.CleaningOptions, start.Processing);
         var options = start with
         {
             Steps = resuming ? start.Steps : context.IntOption("--steps", start.Steps),
@@ -282,8 +287,9 @@ internal sealed class VoiceTrainCommand : Command
             KeepCheckpoints = context.IntOption("--keep", start.KeepCheckpoints),
             EvaluateEvery = context.IntOption("--eval-every", start.EvaluateEvery),
             FeatureCache = context.Option("--feature-cache") is { } cache ? cache.Equals("none", StringComparison.OrdinalIgnoreCase) ? null : cache : start.FeatureCache,
-            Cleaning = AudioFiles.CleaningStages(context, start.Cleaning),
-            CleaningOptions = AudioFiles.CleaningSettings(context, start.CleaningOptions),
+            Cleaning = cleaning.Stages,
+            CleaningOptions = cleaning.Settings,
+            Processing = cleaning.Processing,
             Seed = context.Seed ?? start.Seed,
             Adversarial = a,
         };

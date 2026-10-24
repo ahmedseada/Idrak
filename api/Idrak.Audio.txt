@@ -1446,6 +1446,7 @@ public sealed record Idrak.Audio.SpeechTrainingOptions : System.IEquatable<Idrak
   public Idrak.Audio.Abstractions.AdversarialSynthesisOptions? Adversarial { get; init; }
   public Idrak.Audio.Abstractions.AudioAugmentationOptions AugmentationOptions { get; init; }
   public Idrak.Audio.Abstractions.AudioCleaningOptions CleaningOptions { get; init; }
+  public Idrak.Audio.Abstractions.AudioPipeline Processing { get; init; }
   public Idrak.Audio.Abstractions.ICtcSpeechModel? Teacher { get; init; }
   public SpeechTrainingOptions()
   public System.Collections.Generic.IReadOnlyList<string> Augmentations { get; init; }

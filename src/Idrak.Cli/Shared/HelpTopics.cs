@@ -121,8 +121,16 @@ internal static class HelpTopics
               idrak voice add NAME --from CLIPS     install a person's voice, with their consent (voice list, show, ...)
               idrak data audio FILES -o DIR         convert, resample and split into a folder with manifest.jsonl
               idrak data mel FILES -o DIR           a model's log-mel input features as .npy
+              idrak audio process IN -o OUT --pipeline P   sound through an audio pipeline, to hear what it does
+              idrak audio processors                the processors a pipeline names, live or whole recording, options
+
+            An audio pipeline names processors in order: "highpass=80, dehum=50, denoise=1.5 quantile=0.2, normalize=-20".
+            transcribe --audio-clean (IDRAK_AUDIO_CLEAN) and speak --audio-clean run one; --clean on pretrain, voice train
+            and data audio takes one too (a comma list of the cleaning stages alone keeps --clean-settings). --live takes
+            only live processors: a whole-recording one is refused, naming its live alternative.
 
             Registered now (with the -P plug-ins of this command):
+              audio processors: {{{string.Join(", ", Idrak.Audio.Abstractions.AudioProcessors.Names)}}}
               codecs (read): {{{Names(Idrak.Audio.Abstractions.AudioCodecs.Names)}}} ({{{string.Join(" ", Idrak.Audio.Abstractions.AudioCodecs.Extensions)}}})
               encoders (write): {{{Names(Idrak.Audio.Abstractions.AudioEncoders.Names)}}} ({{{string.Join(" ", Idrak.Audio.Abstractions.AudioEncoders.Extensions)}}})
               feature extractors: {{{Names(Idrak.Audio.Abstractions.AudioFeatureExtractors.Names)}}}
@@ -135,7 +143,7 @@ internal static class HelpTopics
             Installed voices live in {{{Idrak.Audio.FolderVoiceStore.DefaultRoot}}} (IDRAK_VOICES; --voices DIR for one command).
             A voice is a person's likeness: voice add records their consent, voice show prints it; the library cannot
             verify it. The library plays no sound: open what speak writes in any player.
-            Variables: IDRAK_VOICES, IDRAK_STFT_PATH, IDRAK_CACHE (idrak help env).
+            Variables: IDRAK_VOICES, IDRAK_STFT_PATH, IDRAK_AUDIO_CLEAN, IDRAK_CACHE (idrak help env).
             """;
     }
 

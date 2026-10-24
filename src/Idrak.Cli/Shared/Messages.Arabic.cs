@@ -33,6 +33,7 @@ internal static partial class Messages
         ["Design"] = "التصميم",
         ["Developers"] = "للمطورين",
         ["Voices"] = "الأصوات",
+        ["Audio"] = "الصوت",
         ["Environment (idrak help env for all):"] = "متغيرات البيئة (اكتب idrak help env لعرضها كلها):",
         ["Every command"] = "كل الأوامر",
         [Help.CommonOptions] =
@@ -274,6 +275,10 @@ internal static partial class Messages
             "كتابة صوت مثبت في ملف zip (البيان والموافقة والتضمين) للأمر idrak voice import",
         ["Train a voice on a person's recordings (fine-tune a synthesizer, with their consent) and install it"] =
             "تدريب صوت على تسجيلات شخص (ضبط نموذج نطق، بموافقته) وتثبيته",
+        ["Run a sound file through an audio pipeline (filters, dynamics, noise) and write the result"] =
+            "تمرير ملف صوت في سلسلة معالجة صوتية (مرشحات وتحكم في المستوى وإزالة ضوضاء) وكتابة الناتج",
+        ["The audio processors a pipeline can name: live or whole recording, and their options"] =
+            "معالجات الصوت التي تسميها سلسلة المعالجة: حية أو للتسجيل كله، وخياراتها",
         ["Install a voice from a zip idrak voice export wrote, or from a voice folder"] = "تثبيت صوت من ملف zip كتبه idrak voice export، أو من مجلد صوت",
         ["Download a voice folder published on the Hugging Face hub and install it"] = "تنزيل مجلد صوت منشور على Hugging Face وتثبيته",
         ["First rows, columns and their types of a data file (Parquet, JSON Lines, CSV)"] = "أول صفوف ملف بيانات وأعمدته وأنواعها (Parquet و JSON Lines و CSV)",

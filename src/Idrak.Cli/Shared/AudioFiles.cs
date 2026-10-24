@@ -16,9 +16,101 @@ namespace Idrak.Cli.Shared;
 /// </summary>
 internal static class AudioFiles
 {
-    /// <summary>--clean STAGES: the cleaning stages named, comma-separated (<see cref="AudioCleaners"/> names, in order), else <paramref name="otherwise"/>.</summary>
-    public static IReadOnlyList<string> CleaningStages(CommandContext context, IReadOnlyList<string> otherwise) =>
-        context.Option("--clean") is { } clean ? [.. clean.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)] : otherwise;
+    /// <summary>The variable whose pipeline <c>idrak transcribe</c> cleans its sound with when <c>--audio-clean</c> is not given.</summary>
+    public const string AudioCleanVariable = "IDRAK_AUDIO_CLEAN";
+
+    /// <summary>What <c>--clean</c> asks for: the cleaning stages with their settings, and the pipeline run after them.</summary>
+    /// <param name="Stages">The <see cref="AudioCleaners"/> stages, in order.</param>
+    /// <param name="Settings">Their settings (<c>--clean-settings</c>).</param>
+    /// <param name="Processing">The audio pipeline run after the stages.</param>
+    public sealed record CleaningChoice(IReadOnlyList<string> Stages, AudioCleaningOptions Settings, AudioPipeline Processing);
+
+    /// <summary>
+    /// --clean VALUE over <paramref name="stages"/>, <paramref name="settings"/> and <paramref name="processing"/> (a
+    /// config's, a checkpoint's). A comma list of bare cleaning stage names (<see cref="AudioCleaners"/>: highpass,
+    /// denoise, trim, normalize, or a plug-in's) is those stages, as before, with --clean-settings; any other value is an
+    /// audio pipeline (<see cref="Pipeline"/>: a value or an option written with '=', or another processor's name), run in
+    /// place of the stages; "none" is neither. Without --clean, the given ones (with --clean-settings over the settings).
+    /// </summary>
+    /// <exception cref="UsageException">The pipeline names an unknown processor or option, or --clean-settings comes with a pipeline.</exception>
+    public static CleaningChoice Cleaning(CommandContext context, IReadOnlyList<string> stages, AudioCleaningOptions settings, AudioPipeline processing)
+    {
+        if (context.Option("--clean") is not { } clean)
+        {
+            return new CleaningChoice(stages, CleaningSettings(context, settings), processing);
+        }
+
+        if (IsStageList(clean))
+        {
+            return new CleaningChoice([.. clean.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)], CleaningSettings(context, settings), AudioPipeline.Empty);
+        }
+
+        if (context.Option("--clean-settings") is not null)
+        {
+            throw new UsageException("--clean-settings sets the cleaning stages' settings (--clean highpass,denoise,trim,normalize); "
+                + $"a pipeline carries its own values and options (--clean \"{clean}\"): give them there, such as \"normalize=-20 peak=0.9\".");
+        }
+
+        return new CleaningChoice([], settings, Pipeline("--clean", clean));
+    }
+
+    /// <summary>
+    /// Whether <paramref name="text"/> is a comma list of bare cleaning stage names (each registered in
+    /// <see cref="AudioCleaners"/>, with no '=' and no space): the stages --clean took before pipelines.
+    /// </summary>
+    public static bool IsStageList(string text)
+    {
+        var items = text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return items.Length > 0 && items.All(item => item.IndexOfAny(['=', ' ', '\t']) < 0 && AudioCleaners.Find(item) is not null);
+    }
+
+    /// <summary>
+    /// An audio pipeline given to <paramref name="option"/>: its text (<c>highpass=80, denoise=1.5 quantile=0.2,
+    /// normalize=-20</c>; <see cref="AudioPipeline.Parse"/>), a JSON array of steps (<c>["highpass=80", {"name":
+    /// "normalize", "value": -20}]</c>), or @FILE holding either; "none" is the empty pipeline.
+    /// </summary>
+    /// <exception cref="UsageException">An unknown processor or option (naming the registered ones), a bad value, a missing file or bad JSON.</exception>
+    public static AudioPipeline Pipeline(string option, string text)
+    {
+        string given = text;
+        try
+        {
+            if (text.StartsWith('@'))
+            {
+                string path = text[1..];
+                text = File.Exists(path) ? File.ReadAllText(path) : throw new UsageException($"{option}: no pipeline file {path}.");
+            }
+
+            string trimmed = text.Trim();
+            return trimmed.StartsWith('[') || trimmed.StartsWith('"') || trimmed.StartsWith('{')
+                ? AudioPipeline.FromJson(System.Text.Json.Nodes.JsonNode.Parse(trimmed))
+                : AudioPipeline.Parse(trimmed);
+        }
+        catch (System.Text.Json.JsonException e)
+        {
+            throw new UsageException($"{option}: {given} is not a pipeline's JSON: {e.Message}");
+        }
+        catch (ArgumentException e)
+        {
+            throw new UsageException($"{option}: {e.Message} ('idrak audio processors' lists them with their options.)");
+        }
+    }
+
+    /// <summary>
+    /// --audio-clean PIPELINE (<see cref="Pipeline"/>), else, when <paramref name="variable"/> is named and set, its
+    /// pipeline; else the empty pipeline. "none" on the command line turns the variable's off.
+    /// </summary>
+    public static (AudioPipeline Pipeline, string Source) AudioClean(CommandContext context, string? variable = null)
+    {
+        if (context.Option("--audio-clean") is { } given)
+        {
+            return (Pipeline("--audio-clean", given), "--audio-clean");
+        }
+
+        return variable is not null && Environment.GetEnvironmentVariable(variable) is { Length: > 0 } set
+            ? (Pipeline(variable, set), variable)
+            : (AudioPipeline.Empty, "--audio-clean");
+    }
 
     /// <summary>--clean-settings F: the stages' settings from a JSON file, or inline JSON, else <paramref name="otherwise"/>.</summary>
     /// <exception cref="UsageException">Neither a file nor a JSON object, or a value out of range.</exception>

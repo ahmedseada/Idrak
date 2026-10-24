@@ -168,6 +168,7 @@ idrak tokenize ./bert-base-uncased "Hello, World!" --pair "Second" --special --o
 idrak agent qwen "Add a test for Parse" --workspace ./src
 idrak transcribe ./whisper-small talk.wav -o talk.srt   # -j: segments and stage times
 idrak transcribe ./whisper-small --live -l ar -o live.srt   # the microphone; --live - a pipe; --list-inputs
+idrak transcribe ./whisper-small --live --audio-clean "highpass=80, dehum=50, presence=3, agc"   # cleaned as it comes
 idrak speak ./mms-tts-eng "Hello." -o hello.wav            # -o hello.mp3 writes MP3
 idrak run -P MyAudioFamily.dll ./audio-model --audio clip.wav "What is said?"      # an audio-language model
 ```
@@ -305,6 +306,39 @@ idrak voice add ahmed --from clips/ --converter ./openvoice-v2 -l ar --consent "
 idrak voice show ahmed                                   # each clip's agreement; a clip far below the others is flagged
 idrak speak ./mms-tts-eng "Hi" --voice ahmed -o ahmed.wav
 idrak voice export ahmed -o ahmed-voice.zip              # idrak voice import ahmed-voice.zip on another machine
+```
+
+### Audio
+
+Sound through an audio pipeline (plan 31): the registered processors (`AudioProcessors`: filters, dynamics, noise and
+repair, and a plug-in's) named in order, comma-separated, each with its value and `KEY=VALUE` options after a space:
+`highpass=80, dehum=50, denoise=1.5 quantile=0.2, normalize=-20 peak=0.9` (after a comma a registered name starts a new
+step, so an option goes after a space). A pipeline is also a JSON array of steps (`["highpass=80", {"name":
+"normalize", "value": -20}]`) or `@FILE` holding either. A processor runs on live sound as it comes, or needs the whole
+recording (`normalize`, `trim`, `denoise`, `loudness`): a live pipeline refuses the latter, naming its live alternative
+(`agc`, `loudness-live`).
+
+| Command | What it does |
+|---|---|
+| `idrak audio process` | Run a sound file through an audio pipeline (filters, dynamics, noise) and write the result |
+| `idrak audio processors` | The audio processors a pipeline can name: live or whole recording, and their options |
+
+The same pipelines go to `idrak transcribe --audio-clean P` (files cleaned whole before they are read; `--live` cleaned as
+the sound comes; `IDRAK_AUDIO_CLEAN` gives one when the option is not given, `none` turns it off), `idrak speak
+--audio-clean P` (the speech before it is written) and `--clean` on `pretrain` (speech), `voice train` and `data audio`.
+There `--clean` keeps its old meaning when it is a comma list of the cleaning stages alone (`highpass,denoise,trim,
+normalize`, or a plug-in's cleaner, with `--clean-settings F`); any other value (a `=`, an option, another processor) is
+a pipeline, run in their place and kept in the training options and checkpoints (`"processing"`), and in the feature
+cache key so processed and unprocessed rows stay apart.
+
+```bash
+idrak audio processors                                                     # -j: the same as JSON
+idrak audio process in.wav -o out.wav --pipeline "denoise=1.5, normalize=-20"
+idrak audio process phone.mp3 -o clear.wav --pipeline "highpass=80, dehum=50, presence=3, agc" -v   # cold and warm
+idrak transcribe ./whisper-small noisy.wav --audio-clean "highpass=80, denoise=1.5, normalize=-20"
+idrak transcribe ./whisper-small --live --audio-clean "highpass=80, dehum=50, presence=3, agc"
+idrak pretrain ./my-ctc --data train.jsonl --clean "highpass=80, dehum=50, normalize=-20" -o runs/clean
+idrak data audio rec/ -o clean --clean "highpass=80, denoise=1.5, normalize=-20"
 ```
 
 ### Train
@@ -678,6 +712,7 @@ stored by `idrak login`, not here. The most used:
 | `IDRAK_CPU_THREADS`, `IDRAK_CPU_MEMORY_LIMIT_MB`, `IDRAK_GPU_MEMORY_LIMIT_MB` | The most CPU threads (default every core) and the most MiB of tensor memory on the CPU and on each GPU (default unlimited) |
 | `IDRAK_GPU_MEMORY_RESERVE_MB`, `IDRAK_OFFLOAD_RETURN_HEADROOM_MB`, `IDRAK_WORKSPACE_SHARE` | MiB kept free on a GPU for the display (default a sixteenth); MiB kept free when offloaded tensors return (an eighth); the share of free memory one operation's working buffers may take (0.5) |
 | `IDRAK_MP3_BITRATE`, `IDRAK_MP3_RATE`, `IDRAK_MP3_CHANNELS`, `IDRAK_MP3_QUALITY`, `IDRAK_MP3_LOWPASS`, `IDRAK_MP3_FRAMES_PER_TASK` | the MP3 encoder `speak -o x.mp3` writes with: the bit rate in kbit/s (128 stereo, 64 mono), the rate (the sound's), joint, stereo or mono, the effort a granule (fast, standard, high), the low-pass in Hz, the frames an encoding task takes |
+| `IDRAK_AUDIO_CLEAN` | The audio pipeline `transcribe` runs the sound through, files and `--live` (`--audio-clean` wins; `none` turns it off) |
 | `HF_TOKEN`, `HF_ENDPOINT`, `HF_HOME` | The Hugging Face token, hub address and folder |
 | `IDRAK_API_KEY` | The key `serve` requires and the client commands send |
 | `IDRAK_PORT` | The port `serve` and `ui` listen on and the client commands call (`--port` wins; default 7317) |

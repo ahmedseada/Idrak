@@ -60,10 +60,14 @@ internal sealed class DataAudioCommand : Command
                                  pieces of S (default 0: no limit)
               --resample-width N the resampler's kernel half-width in zero crossings (default 6)
               --rolloff F        the resampler's cutoff as a share of the lower rate's Nyquist frequency (default 0.99)
-              --clean STAGES     every piece cleaned before it is written, comma-separated, in order: highpass (DC and
-                                 rumble out), denoise (the noise floor gated off), trim (silence at the ends cut),
-                                 normalize (speech levelled), or a registered cleaner's name (default none)
-              --clean-settings F the stages' settings as JSON, a file or inline (default the library's)
+              --clean STAGES|PIPELINE
+                                 every piece cleaned before it is written: stages, comma-separated, in order: highpass
+                                 (DC and rumble out), denoise (the noise floor gated off), trim (silence at the ends
+                                 cut), normalize (speech levelled), or a registered cleaner's name; or an audio pipeline
+                                 with values and options ("highpass=80, dehum=50, denoise=1.5, normalize=-20"; a JSON
+                                 array or @FILE; idrak audio processors lists them; default none)
+              --clean-settings F the stages' settings as JSON, a file or inline (default the library's; not with a
+                                 pipeline, which carries its own)
               --transcripts FILE the texts: JSON Lines rows with "file" (or "audio", "path", "name", "id") and "text"
                                  (or "transcript", "sentence"), or lines of NAME<tab>TEXT or NAME|TEXT; matched by file
                                  name, then by name without extension
@@ -76,6 +80,7 @@ internal sealed class DataAudioCommand : Command
         Examples:
           idrak data audio recordings/ -o clips --rate 16000 --mono
           idrak data audio rec/ -o voice-clips --rate 22050 --mono --split silence --min-seconds 3
+          idrak data audio rec/ -o clean --clean "highpass=80, dehum=50, denoise=1.5, normalize=-20"
           idrak data audio talk.flac -o pieces --split seconds --max-seconds 30 --transcripts texts.jsonl
           idrak data audio podcasts/*.mp3 -o wav --rate 16000 --mono --bits 16
           idrak data audio corpus/ --stats
@@ -179,17 +184,19 @@ internal sealed class DataAudioCommand : Command
             Rolloff = AudioFiles.Number(context, "--rolloff", new ResampleOptions().Rolloff, double.Epsilon, 1),
         };
         var transcripts = context.Option("--transcripts") is { } transcriptFile ? Transcripts(transcriptFile) : null;
+        var choice = AudioFiles.Cleaning(context, [], new AudioCleaningOptions(), AudioPipeline.Empty);
         IAudioCleaner[] cleaners;
         try
         {
-            cleaners = [.. AudioFiles.CleaningStages(context, []).Select(AudioCleaners.Get)];
+            cleaners = [.. choice.Stages.Select(AudioCleaners.Get)];
         }
         catch (NotSupportedException e)
         {
             throw new UsageException($"--clean: {e.Message}");
         }
 
-        var cleaning = AudioFiles.CleaningSettings(context, new AudioCleaningOptions());
+        var cleaning = choice.Settings;
+        var processing = choice.Processing;
 
         var sources = new List<(string Path, double Seconds, int Rate, int Channels)>();
         var pieces = new List<(string Name, double Seconds, int Rate, int Channels)>();
@@ -259,6 +266,18 @@ internal sealed class DataAudioCommand : Command
                     foreach (var cleaner in cleaners)
                     {
                         piece = cleaner.Clean(piece, cleaning);                 // start and end below stay the piece's cut in the source
+                    }
+
+                    if (!processing.IsEmpty)
+                    {
+                        try
+                        {
+                            piece = processing.Apply(piece);
+                        }
+                        catch (ArgumentException e)
+                        {
+                            throw new UsageException($"--clean: {relative}: {e.Message}");   // a step that cannot run at this rate or channel count
+                        }
                     }
 
                     AudioFiles.Save(Path.Combine(output, name), piece, encoder!, bits);
@@ -331,6 +350,10 @@ internal sealed class DataAudioCommand : Command
             json["bits"] = AudioFiles.BitsName(bits);
             json["transcripts_attached"] = attached;
             json["transcripts_unattached"] = unattached;
+            if (!processing.IsEmpty)
+            {
+                json["processing"] = processing.ToString();
+            }
         }
 
         if (stats)

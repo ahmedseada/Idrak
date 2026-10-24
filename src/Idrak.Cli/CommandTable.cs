@@ -19,6 +19,7 @@ internal static class CommandTable
         ("Serve", ServeCommands.All),
         ("Models", ModelCommands.All),
         ("Voices", VoiceCommands.All),
+        ("Audio", AudioCommands.All),
         ("Train", TrainCommands.All),
         ("Cluster", ClusterCommands.All),
         ("Data", DataCommands.All),

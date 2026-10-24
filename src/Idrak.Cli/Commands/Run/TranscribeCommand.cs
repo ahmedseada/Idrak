@@ -43,6 +43,13 @@ internal sealed partial class TranscribeCommand : Command
         segment, ended by a pause, by --window or by the end, is printed as a line with its times. Ctrl+C (or --timeout)
         stops the sound: the last segment is finished, then -o writes the whole transcript and -j prints it.
 
+        --audio-clean PIPELINE runs the sound through an audio pipeline before the model hears it (IDRAK_AUDIO_CLEAN
+        gives one when the option is not given; none turns it off): steps comma-separated, each a processor, its value
+        and KEY=VALUE options after a space ("highpass=80, dehum=50, presence=3, agc"; a JSON array or @FILE too;
+        idrak audio processors lists them). A file is cleaned whole before it is read; --live cleans the sound as it
+        comes, so a step that needs the whole recording (normalize, trim, denoise, loudness) is refused, naming its live
+        alternative (agc, loudness-live).
+
         Arguments:
           MODEL                  a model folder (config.json, weights, tokenizer, preprocessor_config.json), a hub id
                                  in the cache or an alias
@@ -81,6 +88,7 @@ internal sealed partial class TranscribeCommand : Command
           -o, --out FILE|DIR     write the result: FILE for one input, else a folder of NAME.EXT
               --format F         text (default), json, srt or vtt (also taken from -o FILE's extension)
               --no-warm          with -v, report the cold times only (one file is not transcribed again)
+              --audio-clean P    the sound through the audio pipeline P first (default IDRAK_AUDIO_CLEAN, else none)
               --live             transcribe as the sound comes (the microphone; - for standard input; a FILE streamed)
               --capture NAME     the system's audio interface (winmm on Windows, alsa on Linux; default: this machine's)
               --input DEVICE     the input device: a number or name part from --list-inputs (default: the system's)
@@ -107,6 +115,8 @@ internal sealed partial class TranscribeCommand : Command
           idrak transcribe ./whisper-small --live -l ar -o live.srt
           ffmpeg -f dshow -i audio="Microphone" -ac 1 -ar 16000 -f s16le - | idrak transcribe ./whisper-small --live -
           idrak transcribe ./whisper-small --live talk.wav --step 2
+          idrak transcribe ./whisper-small noisy.wav --audio-clean "highpass=80, denoise=1.5, normalize=-20"
+          idrak transcribe ./whisper-small --live --audio-clean "highpass=80, dehum=50, presence=3, agc"
         """;
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
@@ -114,7 +124,7 @@ internal sealed partial class TranscribeCommand : Command
         "--language", "--task", "--beam", "--length-penalty", "--max-tokens", "--chunk-seconds", "--overlap-seconds", "--prompt", "--temperature", "--batch",
         "--memory-fraction", "--weights", "--kv", "--out", "--fallback", "--best-of", "--compression-ratio-threshold", "--logprob-threshold", "--no-speech-threshold",
         "--capture", "--input", "--input-rate", "--input-channels", "--input-format", "--step", "--window", "--silence", "--silence-db", "--silence-floor-db",
-        "--agreement", "--commit", "--min-speech",
+        "--agreement", "--commit", "--min-speech", "--audio-clean",
     ];
 
     public override IReadOnlyCollection<string> Flags { get; } =
@@ -159,6 +169,7 @@ internal sealed partial class TranscribeCommand : Command
         bool toFolder = output is not null && (files.Count > 1 || Directory.Exists(output) || Path.EndsInDirectorySeparator(output) || Path.GetExtension(output).Length == 0);
         string format = Format(context, output, toFolder);
         var options = Options(context, format);
+        var (clean, cleanSource) = AudioFiles.AudioClean(context, AudioFiles.AudioCleanVariable);
         var modelOptions = new SpeechModelOptions { Device = context.Device, Weights = Weights(context.Option("--weights")), Cache = Cache(context.Option("--kv")) };
         var choice = ModelChoices.Choose(context, name);
         string folder = ModelChoices.Resolve(context, choice.Model);
@@ -179,7 +190,7 @@ internal sealed partial class TranscribeCommand : Command
                 for (int i = 0; i < files.Count; i++)
                 {
                     string file = files[i];
-                    var audio = AudioFiles.Decode(file);
+                    var audio = Clean(context, AudioFiles.Decode(file), clean, cleanSource, Display(file));
                     var result = Transcribe(context, recognizer, audio, options, $"{i + 1}/{files.Count} {Display(file)}");
                     if (context.Verbose && !context.Json)
                     {
@@ -223,6 +234,11 @@ internal sealed partial class TranscribeCommand : Command
 
                 context.Log(printed.ToString());
                 var document = new JsonObject { ["model"] = choice.Model, ["device"] = recognizer.Device.ToString(), ["files"] = results };
+                if (!clean.IsEmpty)
+                {
+                    document["audio_clean"] = clean.ToString();
+                }
+
                 if (results.Count == 1)
                 {
                     document["text"] = results[0]!["text"]?.DeepClone();
@@ -331,6 +347,38 @@ internal sealed partial class TranscribeCommand : Command
     };
 
     private static string Display(string file) => file == AudioFiles.StandardInputName ? "standard input" : Path.GetFileName(file);
+
+    // The sound through the --audio-clean pipeline (as it is when there is none), with a progress line while it runs and
+    // its time with -v; a step that cannot run at the sound's rate or channels is a usage error naming where the pipeline came from.
+    private static AudioData Clean(CommandContext context, AudioData audio, AudioPipeline pipeline, string source, string label)
+    {
+        if (pipeline.IsEmpty)
+        {
+            return audio;
+        }
+
+        long start = System.Diagnostics.Stopwatch.GetTimestamp();
+        AudioData cleaned;
+        using (var line = new ProgressLine(context, $"cleaning {label}: {pipeline}", unit: ProgressUnit.Elapsed))
+        {
+            try
+            {
+                cleaned = pipeline.Apply(audio);
+            }
+            catch (ArgumentException e)
+            {
+                line.Erase();
+                throw new UsageException($"{source}: {label}: {e.Message}");
+            }
+
+            line.Clear();
+        }
+
+        var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(start);
+        context.Detail(string.Create(CultureInfo.InvariantCulture,
+            $"cleaned {label} ({AudioFiles.Seconds(audio.Duration.TotalSeconds)}) with {pipeline} in {elapsed.TotalMilliseconds:0} ms, {AudioFiles.Pace(elapsed.TotalSeconds / Math.Max(1e-9, audio.Duration.TotalSeconds))}"));
+        return cleaned;
+    }
 
     // One call with a progress line: the file, the stage, the segments done of all.
     private static Transcription Transcribe(CommandContext context, ISpeechRecognizer recognizer, AudioData audio, TranscriptionOptions options, string label)

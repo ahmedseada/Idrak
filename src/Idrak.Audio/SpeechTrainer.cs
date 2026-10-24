@@ -117,6 +117,14 @@ public sealed record SpeechTrainingOptions
     /// <summary>The cleaning stages' settings.</summary>
     public AudioCleaningOptions CleaningOptions { get; init; } = new();
 
+    /// <summary>
+    /// An audio pipeline (<see cref="AudioPipeline"/>: <c>highpass=80, dehum=50, denoise=1.5, normalize=-20</c>) run over
+    /// every utterance's sound after <see cref="Cleaning"/> and before the augmentations, on one channel at the features'
+    /// rate (a step that changes the rate or the channels is followed by the features' own); empty for none. Its text is
+    /// part of the feature cache key, so processed and unprocessed rows stay apart; as JSON, its text.
+    /// </summary>
+    public AudioPipeline Processing { get; init; } = AudioPipeline.Empty;
+
     /// <summary>The seed of the pass orders, the batches' order and the augmentations.</summary>
     public int Seed { get; init; }
 
@@ -177,7 +185,7 @@ public sealed record SpeechTrainingOptions
         ["save_every"] = SaveEvery, ["keep_checkpoints"] = KeepCheckpoints, ["evaluate_every"] = EvaluateEvery, ["metric"] = Metric,
         ["decoder"] = Decoder, ["beam_width"] = BeamWidth, ["augmentations"] = new JsonArray([.. Augmentations.Select(a => (JsonNode)a)]),
         ["augmentation_options"] = AugmentationOptions.ToJson(), ["cleaning"] = new JsonArray([.. Cleaning.Select(c => (JsonNode)c)]),
-        ["cleaning_options"] = CleaningOptions.ToJson(), ["seed"] = Seed, ["feature_cache"] = FeatureCache,
+        ["cleaning_options"] = CleaningOptions.ToJson(), ["processing"] = Processing.ToJson(), ["seed"] = Seed, ["feature_cache"] = FeatureCache,
         ["feature_cache_folder"] = FeatureCacheFolder, ["workers"] = Workers, ["non_finite_steps"] = NonFiniteSteps,
         ["durations"] = Durations, ["duration_loss_weight"] = DurationLossWeight,
         ["distillation_alpha"] = DistillationAlpha, ["distillation_temperature"] = DistillationTemperature, ["adversarial"] = Adversarial?.ToJson(),
@@ -216,6 +224,7 @@ public sealed record SpeechTrainingOptions
             AugmentationOptions = json["augmentation_options"] is JsonObject augmentation ? AudioAugmentationOptions.FromJson(augmentation) : d.AugmentationOptions,
             Cleaning = json["cleaning"] is JsonArray cleaning ? [.. cleaning.Select(c => (string)c!)] : d.Cleaning,
             CleaningOptions = json["cleaning_options"] is JsonObject cleaningOptions ? AudioCleaningOptions.FromJson(cleaningOptions) : d.CleaningOptions,
+            Processing = json["processing"] is { } processing ? AudioPipeline.FromJson(processing) : d.Processing,
             Seed = (int?)json["seed"] ?? d.Seed,
             FeatureCache = json.ContainsKey("feature_cache") ? (string?)json["feature_cache"] : d.FeatureCache,
             FeatureCacheFolder = (string?)json["feature_cache_folder"],
@@ -265,6 +274,11 @@ public sealed record SpeechTrainingOptions
         }
 
         CleaningOptions.Check();
+        if (Processing is null)
+        {
+            throw new ArgumentException("Speech training: Processing is a pipeline (AudioPipeline.Empty for none), not null.");
+        }
+
         Adversarial?.Check();
         if (FeatureCache is { } cache)
         {
@@ -970,13 +984,36 @@ public static class SpeechTrainer
     {
         private readonly string _options = extractor.Options.ToJson().ToJsonString();
         private readonly IAudioCleaner[] _cleaners = [.. options.Cleaning.Select(AudioCleaners.Get)];
-        private readonly string _cleaning = options.Cleaning.Count == 0 ? ""
-            : new JsonObject { ["cleaning"] = new JsonArray([.. options.Cleaning.Select(c => (JsonNode)c)]), ["options"] = options.CleaningOptions.ToJson() }.ToJsonString();
+        private readonly string _cleaning = CacheKey(options);
         private int _extracted, _cached;
 
         public int Extracted => Volatile.Read(ref _extracted);
 
         public int Cached => Volatile.Read(ref _cached);
+
+        // The cleaning's part of the cache key: "" for none; the stages and their settings, then the pipeline's text when
+        // there is one (a key without a pipeline is the one written before pipelines were, so those rows are still found).
+        private static string CacheKey(SpeechTrainingOptions options)
+        {
+            if (options.Cleaning.Count == 0 && options.Processing.IsEmpty)
+            {
+                return "";
+            }
+
+            var key = new JsonObject();
+            if (options.Cleaning.Count > 0)
+            {
+                key["cleaning"] = new JsonArray([.. options.Cleaning.Select(c => (JsonNode)c)]);
+                key["options"] = options.CleaningOptions.ToJson();
+            }
+
+            if (!options.Processing.IsEmpty)
+            {
+                key["processing"] = options.Processing.ToString();
+            }
+
+            return key.ToJsonString();
+        }
 
         // `epoch` -1: no augmentation (evaluation); `labels` null: the readings' labels are not needed.
         public Prepared[] Batch(ISpeechReader reader, int[] utterances, int[][]? labels, int epoch, IAudioAugmentation[] augmentations)
@@ -1034,6 +1071,11 @@ public static class SpeechTrainer
                     audio = cleaner.Clean(audio, options.CleaningOptions);
                 }
 
+                if (!options.Processing.IsEmpty)
+                {
+                    audio = Processed(audio, options.Processing, extractor.Options.SampleRate);
+                }
+
                 for (int a = 0; a < augmentations.Length; a++)
                 {
                     if (draws[a] is { } random && augmentations[a].Stage == AudioAugmentationStage.Sound)
@@ -1061,6 +1103,20 @@ public static class SpeechTrainer
             }
 
             return new Prepared(utterance, values, frames, labels, reader[utterance].Seconds);
+        }
+
+        // The sound through the pipeline, then back to one channel at the features' rate when a step changed them.
+        private static AudioData Processed(AudioData audio, AudioPipeline pipeline, int rate)
+        {
+            audio = pipeline.Apply(audio);
+            if (audio.Channels > 1)
+            {
+                var mono = new float[audio.Length];
+                audio.ToMono(mono);
+                audio = new AudioData(mono, 1, audio.SampleRate);
+            }
+
+            return audio.SampleRate == rate ? audio : Resampler.Resample(audio, rate);
         }
     }
 }

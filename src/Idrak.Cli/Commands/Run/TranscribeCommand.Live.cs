@@ -74,8 +74,20 @@ internal sealed partial class TranscribeCommand
             throw new UsageException(e.Message);
         }
 
-        using var input = OpenSource(context);
-        live = live with { KeepUp = input is not FileInput && !context.Flag("--every-step") };   // a file, or a recording piped in, at its own pace
+        // The pipeline is checked before the sound opens: a step that needs the whole recording is refused by name.
+        var (clean, cleanSource) = AudioFiles.AudioClean(context, AudioFiles.AudioCleanVariable);
+        try
+        {
+            clean.ThrowIfNotLive();
+        }
+        catch (ArgumentException e)
+        {
+            throw new UsageException($"{cleanSource} with --live: {e.Message}");
+        }
+
+        var source = OpenSource(context);
+        live = live with { KeepUp = source is not FileInput && !context.Flag("--every-step") };   // a file, or a recording piped in, at its own pace
+        using var input = Cleaned(source, clean, cleanSource);
         var modelOptions = new SpeechModelOptions { Device = context.Device, Weights = Weights(context.Option("--weights")), Cache = Cache(context.Option("--kv")) };
         var choice = ModelChoices.Choose(context, name);
         string folder = ModelChoices.Resolve(context, choice.Model);
@@ -96,8 +108,13 @@ internal sealed partial class TranscribeCommand
             var result = new Transcription(text, transcription.Language, segments,
                 new TranscriptionStats(TimeSpan.FromSeconds(seconds), TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero, TimeSpan.Zero,
                     ComputeResources.GetMemoryUsage(recognizer.Device).Peak, segments.Count, 1));
-            var json = TranscriptionJson(input.Description, result);
+            var json = TranscriptionJson(source.Description, result);
             json["live"] = true;
+            if (!clean.IsEmpty)
+            {
+                json["audio_clean"] = clean.ToString();
+            }
+
             if (output is not null)
             {
                 Write(output, Render(format, result, json));
@@ -146,6 +163,26 @@ internal sealed partial class TranscribeCommand
         catch (Exception e) when (e is NotSupportedException or ArgumentException or InvalidOperationException)
         {
             throw new UsageException($"{e.Message} Pipe the sound in instead: {PipeExample()}");
+        }
+    }
+
+    // The live sound through the --audio-clean pipeline as it comes (the source itself without one); the source is
+    // disposed with it, or here when the pipeline cannot run at its rate or channels.
+    private static IAudioInput Cleaned(IAudioInput source, AudioPipeline pipeline, string from)
+    {
+        if (pipeline.IsEmpty)
+        {
+            return source;
+        }
+
+        try
+        {
+            return pipeline.Wrap(source);
+        }
+        catch (ArgumentException e)
+        {
+            source.Dispose();
+            throw new UsageException($"{from} with --live: {e.Message}");
         }
     }
 

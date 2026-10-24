@@ -40,7 +40,8 @@ internal sealed class PretrainCommand : Command
         zip of name.wav beside name.txt) with --audio DIR|ZIP, the step, rate and checkpoint options below, and these:
         --batch-seconds S (audio seconds a step; auto, the default, as many as the device holds), --metric cer|wer (the held-out score), --decoder greedy|beam and
         --beam N (how a CTC model reads the held-out sounds), --augment speed,noise,spec-mask, --clean
-        highpass,denoise,trim,normalize (every recording cleaned before its features; --clean-settings F its JSON),
+        highpass,denoise,trim,normalize (every recording cleaned before its features; --clean-settings F its JSON) or an
+        audio pipeline, --clean "highpass=80, dehum=50, denoise=1.5, normalize=-20" (idrak audio processors lists them),
         --min-seconds and --max-seconds S (utterances left out), --skip-missing (rows whose sound is missing), --source KIND (the speech
         source kind; told from the paths), --feature-cache memory|disk|none (disk); a synthesizer reads --durations
         alignments.jsonl (idrak data audio --align MODEL writes it) and --duration-weight W (1); a CTC recognizer learns
@@ -115,7 +116,7 @@ internal sealed class PretrainCommand : Command
           idrak pretrain my-audio-lm --data talks.jsonl --audio clips.zip --trained audio-encoder,audio-projector
           idrak pretrain my-ctc --data train.jsonl --audio clips --eval dev.jsonl --batch-seconds 120
           idrak pretrain my-tts --data train.jsonl --audio clips --durations alignments.jsonl
-          idrak pretrain openai/whisper-small --data train.jsonl --audio clips --eval dev.jsonl --language ar --steps 500 --lr 1e-5
+          idrak pretrain ./whisper-small --data train.jsonl --audio clips --eval dev.jsonl --language ar --steps 500 --lr 1e-5
           idrak pretrain init -o pretrain.json
           idrak pretrain my-model -C pretrain.json -o run
           idrak pretrain my-model --tokens tokens.bin -o run --cluster lan.json --placement pipeline

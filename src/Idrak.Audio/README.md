@@ -113,8 +113,13 @@ AudioProcessors.Register(new Gain());
 var clean = AudioPipeline.Parse("highpass=80, gain=6").Apply(recording);
 ```
 
-The command line (`idrak help audio`): `idrak transcribe`, `idrak speak`, `idrak voice add|list|show|remove|export|import`,
-`idrak data audio`, `idrak data mel`, and `--audio` on `idrak run` and `idrak chat`. The other phases are in
+`SpeechTrainingOptions.Processing` runs a pipeline over every utterance after the cleaning stages (its text in the
+options' JSON as `"processing"`, in the checkpoints and in the feature cache key, so processed rows stay apart).
+
+The command line (`idrak help audio`): `idrak transcribe` (`--audio-clean PIPELINE` on files and `--live`),
+`idrak speak` (`--audio-clean`), `idrak voice add|list|show|remove|export|import`, `idrak data audio`, `idrak data mel`,
+`idrak audio process IN -o OUT --pipeline P` and `idrak audio processors`, `--clean` taking a pipeline on `pretrain`,
+`voice train` and `data audio`, and `--audio` on `idrak run` and `idrak chat`. The other phases are in
 plans/done/21-audio.md.
 
 ```csharp
