@@ -19,6 +19,7 @@ internal static partial class Tests
         ("generation: ChatML template renders system, tools, turns and think modes", TemplateRendering),
         ("generation: keep-alive durations and model host expiry", KeepAliveAndHost),
         ("generation: num_predict, stop sequences, cache/graph/recompute agree; without a slide a reply ends where the window does", GeneratorBehaviour),
+        ("generation: a batch of prompts of different lengths keeps a bfloat16 cache (IRowStartsLayout) and gives each prompt its text alone, greedy, through prompts and steps", BFloat16RowsBatch),
         ("generation: chat end to end yields a final message and stats", ChatEndToEnd),
         ("generation: a kept KV cache reuses shared prompt prefixes without changing the output", PromptCacheReuse),
         ("generation: a windowed decoder generating far past its window with sliding windows' caches gives the texts of caches holding the whole reply (one row through recorded steps, a batch of two)", SlidingWindowGeneration),
@@ -61,6 +62,26 @@ internal static partial class Tests
             TextGenerator.SlideWindows = true;
             TextGenerator.MinSlidingSteps = least;
         }
+    }
+
+    private static void BFloat16RowsBatch(Device device)
+    {
+        var (tiny, tokenizer) = TinyLanguageModel(device, context: 64);
+        tiny.Dispose();
+        var spec = new DecoderSpec
+        {
+            Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 8, FfDim = 24, MaxPositions = 64,
+            QkNorm = true, Rope = new RopeSettings(500f, null, false, null),
+        };
+        using var model = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 5 });
+        var layout = KeyValueLayouts.For(KeyValueFormat.BFloat16);
+        var generator = new TextGenerator(model, tokenizer, 64) { CacheFormat = KeyValueFormat.BFloat16, KeepCache = false };
+        Check(layout.RowStarts && generator.SupportsBatches, $"bfloat16 attends from per-row starts ({layout.RowStarts}) and the model batches rows ({generator.SupportsBatches})");
+        var options = new GenerationOptions { Temperature = 0f, TopK = 1, RepeatPenalty = 1f, NumPredict = 14, ChunkSize = 3 };
+        string[] prompts = ["abc", "hello there", "a much longer prompt of words"];
+        var alone = prompts.Select(p => generator.Generate(p, options).Text).ToArray();
+        var together = generator.GenerateBatch(prompts, options).Select(r => r.Text).ToArray();
+        Check(together.SequenceEqual(alone), $"a padded batch with a bfloat16 cache: '{string.Join("' '", together)}', alone: '{string.Join("' '", alone)}'");
     }
 
     private static void DecodingReuse(Device device)

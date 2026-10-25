@@ -26,7 +26,7 @@ internal static partial class Tests
         ("reinforcement text: a session's log-probabilities follow its adapters (off: the base model), a checkpoint resumes in a new session and restores into a fresh one, and the generator samples the live adapters", SessionStateAndCheckpoints),
         ("reinforcement text: sampled tokens: off, no chunk carries ids; on, the last chunk of Chat, Stream, ChatBatch and StreamBatch carries the prompt as fed and the ids and log-probabilities the sampler drew, up to the token completing a stop; the texts are the same", SampledTokensRecorded),
         ("reinforcement text: multi-turn: a prefix-stable episode trains as one sequence, its replies alone trained; a template that drops earlier reasoning gives a sequence per turn; auto picks on the ids, episode is refused on unstable ids, and a two-turn run of the policy lays out what its ids say", MultiTurnLayouts),
-        ("reinforcement text: a reply ends where its context window does (no slide, its ids following its prompt as fed) and ends its episode, truncated, alone and in a batch, with room for a token or with the prompt cut to its most recent part; the episode trains", ContextWindowEndsEpisode),
+        ("reinforcement text: a reply ends where its context window does (no slide, its ids following its prompt as fed) and ends its episode, truncated, alone and in a batch (a float32 and a bfloat16 cache), with room for a token or with the prompt cut to its most recent part; the episode trains", ContextWindowEndsEpisode),
         ("reinforcement text: a policy loss through FineTuningLosses.Policy gets the token values, behaviour and reference log-probabilities a step's sequences carry (the reference only when the loss reads it: IPolicyLoss.NeedsReference), and the input gives them all or none", PolicyLossAdapter),
         ("reinforcement text: R2's trainer with grpo (group advantages, a k3 KL to the reference, two epochs a rollout) drives the policy on a prompts task (reward metric, exact) and raises its pass rate on a tiny decoder; the first update's ratios are exactly 1; trained ids are the sampled ids; held device memory does not grow over 40 iterations", PolicyRaisesPassRate),
         ("reinforcement text: R2's trainer with ppo (returns less their mean, mini-batches, no KL so no reference pass) drives the policy on the prompts task and raises its pass rate", PolicyPpoRaisesPassRate),
@@ -447,15 +447,15 @@ internal static partial class Tests
             // kept); an episode alone (the generator's single path) and four together (its batch path).
             foreach (int window in new[] { full.Length + 1, full.Length - 2 })
             {
-                foreach (int episodes in new[] { 1, 4 })
+                foreach (var (episodes, cache) in new[] { (1, "float32"), (4, "float32"), (4, "bfloat16") })
                 {
                     using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
                     using var policy = new LanguageModelPolicy(new FineTuningSession(model, SessionOptions(), totalSteps: 1),
-                        new LanguageModelPolicyOptions { MaxNewTokens = 6, ContextLength = window });
+                        new LanguageModelPolicyOptions { MaxNewTokens = 6, ContextLength = window, CacheFormat = cache });
                     using var collector = new RolloutCollector<ChatObservation, ChatMessage>(new TwoTurnsKind(), environments: 1, parallelSteps: false);
                     using var batch = collector.CollectAsync(policy, [.. Enumerable.Range(0, episodes).Select(k => new EpisodeStart(k, k, k))], new ActionSampling { Seed = 3 })
                         .AsTask().GetAwaiter().GetResult();
-                    string label = $"a {window}-token window, a {full.Length}-token prompt, {episodes} episode{(episodes == 1 ? "" : "s")}";
+                    string label = $"a {window}-token window, a {full.Length}-token prompt, {episodes} episode{(episodes == 1 ? "" : "s")}, a {cache} cache";
                     int[] kept = full.Length < window ? full : full[^(window - 1)..];
                     foreach (var trajectory in batch.Trajectories)
                     {

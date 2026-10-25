@@ -129,8 +129,11 @@ public abstract class KeyValueLayout
     /// <summary>Whether values are stored as bfloat16 pairs (two per element).</summary>
     public virtual bool HalfWords => false;
 
-    /// <summary>Whether rows of different lengths (per-row starts, batched prompts) can attend from this cache.</summary>
-    public virtual bool RowStarts => false;
+    /// <summary>
+    /// Whether rows of different lengths (per-row starts, batched prompts) can attend from this cache: the layout
+    /// implements <see cref="IRowStartsLayout"/>. The built-in float32 and bfloat16 formats do.
+    /// </summary>
+    public bool RowStarts => this is IRowStartsLayout;
 
     /// <summary>
     /// Whether a sliding window's cache may hold only its window (<see cref="DecodingContext.SlidingWindowSteps"/>): the
@@ -149,6 +152,33 @@ public abstract class KeyValueLayout
 
     /// <inheritdoc />
     public override string ToString() => Name;
+}
+
+/// <summary>
+/// The contract of a key/value cache format that decodes rows of different lengths together (prompts of several lengths
+/// padded on the left, <see cref="DecodingContext.RowStarts"/>): a <see cref="KeyValueLayout"/> implements it to take
+/// part in batched generation of such rows (<see cref="KeyValueLayout.RowStarts"/> reports it); a layout that does not is
+/// replaced by float32 for those batches. The rows' keys and values reach the cache through the layout's own
+/// <see cref="KeyValueLayout.Write"/>; this contract reads them back. The built-in float32 and bfloat16 formats
+/// implement it (through <c>Backend.AttentionRows</c> and <c>Backend.AttentionRowsBFloat16</c>).
+/// </summary>
+public interface IRowStartsLayout
+{
+    /// <summary>
+    /// Attention of q [rows·kvHeads, group·steps, headDim] for rows of different lengths decoded together: query i of
+    /// cache row h sees the cached positions from its row's start, <paramref name="starts"/>[(h / <paramref name="headsPerRow"/>)·steps + i % steps],
+    /// to its own, <paramref name="position"/>[0] + i % steps (a row with none, padding, gets zeros). Null when the device
+    /// has no such pass for this head size or variant.
+    /// </summary>
+    /// <param name="q">The queries.</param>
+    /// <param name="cache">The cache, already holding this step's keys and values (<see cref="KeyValueLayout.Write"/>).</param>
+    /// <param name="position">The one-element device tensor of the positions already decoded.</param>
+    /// <param name="steps">New positions in this step.</param>
+    /// <param name="scale">The scale of the scores (1 / √headDim).</param>
+    /// <param name="starts">Each new token's row start, [rows · steps] (<see cref="DecodingContext.TokenStarts"/>).</param>
+    /// <param name="headsPerRow">Cache rows per sequence (the key/value heads).</param>
+    /// <param name="variant">A sliding window or soft-capped scores.</param>
+    Tensor? AttendRows(Tensor q, KeyValueCache cache, Tensor position, int steps, float scale, Tensor starts, int headsPerRow, AttentionVariant variant);
 }
 
 /// <summary>
@@ -211,7 +241,7 @@ public static class KeyValueLayouts
     /// <summary>Who registered the layout <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
 
-    private sealed class Float32Layout : KeyValueLayout
+    private sealed class Float32Layout : KeyValueLayout, IRowStartsLayout
     {
         public override string Name => "float32";
 
@@ -224,8 +254,6 @@ public static class KeyValueLayouts
         public override bool SlidingWindows => true;
 
         public override bool FusedWrite => true;
-
-        public override bool RowStarts => true;
 
         public override void Write(Tensor keys, Tensor values, KeyValueCache cache, Tensor position)
         {
@@ -249,6 +277,10 @@ public static class KeyValueLayouts
 
         public override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
             Kernels(q, cache, context, steps, scale, variant);
+
+        public Tensor? AttendRows(Tensor q, KeyValueCache cache, Tensor position, int steps, float scale, Tensor starts, int headsPerRow,
+            AttentionVariant variant) =>
+            Tensor.AttentionRows(q, cache.Keys, cache.Values, position, steps, scale, starts, headsPerRow, variant);
 
         private static Tensor? Kernels(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant)
         {
@@ -331,7 +363,7 @@ public static class KeyValueLayouts
                 : null;
     }
 
-    private sealed class BFloat16Layout : KeyValueLayout
+    private sealed class BFloat16Layout : KeyValueLayout, IRowStartsLayout
     {
         public override string Name => "bfloat16";
 
@@ -388,6 +420,10 @@ public static class KeyValueLayouts
 
         public override Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
             Tensor.AttentionBFloat16(q, cache, context.PositionOf(cache), steps, scale, tiled: steps >= 8, variant);
+
+        public Tensor? AttendRows(Tensor q, KeyValueCache cache, Tensor position, int steps, float scale, Tensor starts, int headsPerRow,
+            AttentionVariant variant) =>
+            Tensor.AttentionRowsBFloat16(q, cache, position, steps, scale, starts, headsPerRow, variant);
     }
 
 }

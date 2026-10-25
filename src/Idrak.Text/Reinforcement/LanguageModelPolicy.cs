@@ -13,7 +13,7 @@ namespace Idrak.Text.Reinforcement;
 /// Settings of a <see cref="LanguageModelPolicy"/>. The ones a run may need to change without code read an environment
 /// variable when it is set (the value given in code wins): <see cref="EpisodeTurns.EnvironmentVariable"/>,
 /// <see cref="BehaviorVariable"/>, <see cref="TeacherWeightVariable"/>, <see cref="DivergenceVariable"/>,
-/// <see cref="SpreadPassesVariable"/>.
+/// <see cref="SpreadPassesVariable"/>, <see cref="CacheFormatVariable"/>.
 /// </summary>
 public sealed record LanguageModelPolicyOptions
 {
@@ -35,6 +35,9 @@ public sealed record LanguageModelPolicyOptions
     /// <summary>The variable of <see cref="SpreadPasses"/>: on or off.</summary>
     public const string SpreadPassesVariable = "IDRAK_RL_SPREAD_PASSES";
 
+    /// <summary>The variable of <see cref="CacheFormat"/>: a key/value cache format's name.</summary>
+    public const string CacheFormatVariable = "IDRAK_RL_KV";
+
     /// <summary>The most tokens a reply samples.</summary>
     public int MaxNewTokens { get; init; } = 256;
 
@@ -50,6 +53,15 @@ public sealed record LanguageModelPolicyOptions
     /// samples its distribution as it is. Null: the defaults.
     /// </summary>
     public GenerationOptions? Generation { get; init; }
+
+    /// <summary>
+    /// The key/value cache format replies are generated with: a <see cref="KeyValueLayouts"/> name (float32, bfloat16,
+    /// int8 or one registered); float32 by default (<see cref="CacheFormatVariable"/>). bfloat16 takes half the memory
+    /// and still decodes conversations of different lengths together (<see cref="IRowStartsLayout"/>); a format
+    /// that cannot decodes them in float32. The trained log-probabilities are the training forward's either way
+    /// (<see cref="Behavior"/>).
+    /// </summary>
+    public string CacheFormat { get; init; } = Setting(CacheFormatVariable) ?? KeyValueLayouts.For(KeyValueFormat.Float32).Name;
 
     /// <summary>The reasoning mode of observations that give none (null: the template's default).</summary>
     public bool? Think { get; init; }
@@ -169,7 +181,7 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>,
         Session = session;
         Options = options;
         _ownsSession = ownsSession;
-        Chat = session.Generator(options.ContextLength);
+        Chat = session.Generator(KeyValueLayouts.Get(options.CacheFormat), options.ContextLength);
     }
 
     /// <summary>The session the policy samples from and trains.</summary>

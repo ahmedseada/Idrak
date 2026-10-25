@@ -2254,6 +2254,19 @@ public abstract partial class Backend
         return CpuBackend.Instance.AttentionRows(h[q], h[keys], h[values], h[position], h[y], h[starts], heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
+    /// <summary>
+    /// <see cref="AttentionRows"/> over a bfloat16 cache (keys and values [heads, capacity, ⌈dim / 2⌉ words], as
+    /// <see cref="AttentionBFloat16"/> reads them): rows of different lengths decoded together, each row from its own
+    /// start. Returns false when the device has no such pass.
+    /// </summary>
+    public virtual bool AttentionRowsBFloat16Kernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    {
+        using var h = new HostCall(this);
+        return CpuBackend.Instance.AttentionRowsBFloat16(h[q], h[keys], h[values], h[position], h[y], h[starts], heads, headsPerRow, rowsPerHead, steps, capacity, dim,
+            scale, variant);
+    }
+
     /// <summary>Whether <see cref="AttentionSegmented"/> and its gradient run for this head size (with the current <c>MixedPrecision</c>).</summary>
     public virtual bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) => CpuBackend.Instance.SupportsSegmentedAttention(dim, variant);
 

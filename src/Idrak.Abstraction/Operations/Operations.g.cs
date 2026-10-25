@@ -155,19 +155,20 @@ internal static class OperationIndex
     public const int AttentionTiledBackward = 139;
     public const int AttentionSegmented = 140;
     public const int AttentionRows = 141;
-    public const int AttentionSegmentedBackward = 142;
-    public const int AttentionTiled = 143;
-    public const int AttentionSpans = 144;
-    public const int AttentionSpansStrided = 145;
-    public const int AttentionSpansBackward = 146;
-    public const int DecoderMask = 147;
-    public const int KeyValueWrite = 148;
-    public const int SampleRows = 149;
-    public const int PenalizeRows = 150;
-    public const int HistoryPush = 151;
+    public const int AttentionRowsBFloat16 = 142;
+    public const int AttentionSegmentedBackward = 143;
+    public const int AttentionTiled = 144;
+    public const int AttentionSpans = 145;
+    public const int AttentionSpansStrided = 146;
+    public const int AttentionSpansBackward = 147;
+    public const int DecoderMask = 148;
+    public const int KeyValueWrite = 149;
+    public const int SampleRows = 150;
+    public const int PenalizeRows = 151;
+    public const int HistoryPush = 152;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 152;
+    public const int Count = 153;
 }
 
 /// <summary>
@@ -1256,6 +1257,14 @@ public static class OperationKernels
     /// none, padding, gets zeros). Returns false when the device has no such pass.
     /// </summary>
     public delegate bool AttentionRows(Backend backend, Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionRowsBFloat16"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.AttentionRows"/> over a bfloat16 cache (keys and values [heads, capacity, ⌈dim / 2⌉ words], as
+    /// <see cref="Backend.AttentionBFloat16"/> reads them): rows of different lengths decoded together, each row from its own
+    /// start. Returns false when the device has no such pass.
+    /// </summary>
+    public delegate bool AttentionRowsBFloat16(Backend backend, Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant);
 
     /// <summary>
     /// A kernel for <see cref="Ops.AttentionSegmentedBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
@@ -2445,6 +2454,14 @@ public static partial class Ops
         new("AttentionRows", "AttentionRowsKernel", "Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Int32,Single,AttentionVariant", OperationIndex.AttentionRows, typeof(OperationKernels.AttentionRows), KernelSource.Host);
 
     /// <summary>
+    /// <see cref="Backend.AttentionRows"/> over a bfloat16 cache (keys and values [heads, capacity, ⌈dim / 2⌉ words], as
+    /// <see cref="Backend.AttentionBFloat16"/> reads them): rows of different lengths decoded together, each row from its own
+    /// start. Returns false when the device has no such pass.
+    /// </summary>
+    public static readonly Operation AttentionRowsBFloat16 =
+        new("AttentionRowsBFloat16", "AttentionRowsBFloat16Kernel", "Storage,Storage,Storage,Storage,Storage,Storage,Int32,Int32,Int32,Int32,Int32,Int32,Single,AttentionVariant", OperationIndex.AttentionRowsBFloat16, typeof(OperationKernels.AttentionRowsBFloat16), KernelSource.Host);
+
+    /// <summary>
     /// The gradient of <see cref="Backend.AttentionSegmented"/> (as <see cref="Backend.AttentionTiledBackward"/>); false when unsupported.
     /// </summary>
     public static readonly Operation AttentionSegmentedBackward =
@@ -2688,6 +2705,7 @@ public static partial class Ops
         AttentionTiledBackward,
         AttentionSegmented,
         AttentionRows,
+        AttentionRowsBFloat16,
         AttentionSegmentedBackward,
         AttentionTiled,
         AttentionSpans,

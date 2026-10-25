@@ -311,6 +311,7 @@ public static partial class DeviceCases
             // Rows of different lengths decoded together (one head per row here; a row may be all padding).
             var rowStarts = c.Storage([.. Enumerable.Range(0, heads * steps).Select(i => (float)c.Random.Next(0, start + i % steps + 2))]);
             b.AttentionRows(q, keys, values, position, c.Zeros(heads * rows * dim), rowStarts, heads, 1, rows, steps, capacity, dim, scale, variant);
+            b.AttentionRowsBFloat16(q, keys16, values16, position, c.Zeros(heads * rows * dim), rowStarts, heads, 1, rows, steps, capacity, dim, scale, variant);
         }
 
         StridedAttention(c);

@@ -606,6 +606,7 @@ public sealed class Idrak.Text.FineTuningSession : System.IDisposable
   public Idrak.Models.PretrainedModel Model { get; }
   public Idrak.Text.FineTuningOptions Options { get; }
   public Idrak.Text.FineTuningStepStats Step(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, Idrak.Text.FineTuningLoss? loss = null, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Text.Generation.ChatGenerator Generator(Idrak.Abstraction.Generation.KeyValueLayout cacheLayout, int? contextLength = null)
   public Idrak.Text.Generation.ChatGenerator Generator(int? contextLength = null, Idrak.Abstraction.Generation.KeyValueFormat cacheFormat = (Idrak.Abstraction.Generation.KeyValueFormat)0)
   public bool SaveOnce(string folder)
   public float LearningRate { get; }
@@ -1117,6 +1118,7 @@ public sealed record Idrak.Text.Reinforcement.LanguageModelPolicyOptions : Syste
   public bool SpreadPasses { get; init; }
   public bool? Think { get; init; }
   public const string BehaviorVariable = "IDRAK_RL_BEHAVIOR"
+  public const string CacheFormatVariable = "IDRAK_RL_KV"
   public const string DivergenceVariable = "IDRAK_RL_DIVERGENCE"
   public const string Recompute = "recompute"
   public const string Sampler = "sampler"
@@ -1128,6 +1130,7 @@ public sealed record Idrak.Text.Reinforcement.LanguageModelPolicyOptions : Syste
   public int MaxNewTokens { get; init; }
   public int? ContextLength { get; init; }
   public string Behavior { get; init; }
+  public string CacheFormat { get; init; }
   public string Divergence { get; init; }
   public string Turns { get; init; }
 

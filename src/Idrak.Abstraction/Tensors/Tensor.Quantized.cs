@@ -337,6 +337,26 @@ public sealed partial class Tensor
 
 
 
+    /// <summary>
+    /// <see cref="Tensor.AttentionRows"/> over a bfloat16 cache: rows of different lengths, head h's row i over cached
+    /// positions starts[(h / headsPerRow)·steps + i % steps] ≤ c ≤ position[0] + i % steps. Null when the device has no such pass.
+    /// </summary>
+    internal static Tensor? AttentionRowsBFloat16(Tensor q, KeyValueCache cache, Tensor position, int steps, float scale, Tensor starts, int headsPerRow,
+        AttentionVariant variant = default)
+    {
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
+        var y = Tensor.Empty([heads, rowsPerHead, dim], q.Device);
+        if (!q.Backend.AttentionRowsBFloat16(q.Storage, cache.Keys.Storage, cache.Values.Storage, position.Storage, y.Storage, starts.Storage, heads, headsPerRow,
+                rowsPerHead, steps, cache.Keys._shape[1], dim, scale, variant))
+        {
+            y.Dispose();
+            return null;
+        }
+
+        return Tensor.Traced("attention_rows_bf16", y, start);
+    }
+
     /// <summary>Attention of q [heads, rows, dim] over the filled part of a bfloat16 cache.</summary>
     internal static Tensor AttentionBFloat16(Tensor q, KeyValueCache cache, Tensor position, int steps, float scale, bool tiled, AttentionVariant variant = default)
     {

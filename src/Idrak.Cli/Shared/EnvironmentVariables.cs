@@ -405,6 +405,7 @@ internal static class EnvironmentVariables
         new("IDRAK_RL_DISTILL_MIX", Reinforcement, "0", "λ of on-policy distillation: the share of a step's prompts trained on the data's answers instead of the student's samples, in [0, 1]", OnPolicyRun),
         new("IDRAK_RL_ENV", Reinforcement, "prompts", "The environment kind idrak reinforce trains in: an EnvironmentKinds name (prompts, coding, or a plug-in's)", ReinforcementRun),
         new("IDRAK_RL_REWARD", Reinforcement, "the environment's (prompts: exact; coding: tests-passed)", "The reward expression of idrak reinforce's environment: a reward or metric name, or weighted terms such as exact:1,length:0.1", ReinforcementRun),
+        new("IDRAK_RL_KV", Reinforcement, "float32", "The key/value cache format a language-model policy generates its replies with: float32, bfloat16 (half the memory) or int8 (idrak reinforce's --kv)", ReinforcementRun),
         new("IDRAK_RL_MAX_NEW", Reinforcement, "256", "The longest reply a language-model policy samples, in tokens (idrak reinforce's --max-new)", ReinforcementRun),
         new("IDRAK_RL_TEACHER", Reinforcement, "none", "A teacher model for idrak reinforce: its distributions on the model's own replies, a term beside the reward (or alone with --algorithm distill)", ReinforcementRun),
         new("IDRAK_RL_TEACHER_DEVICE", Reinforcement, "the model's device", "The device idrak reinforce loads the teacher on (cpu, cuda:N, vulkan:N)", ReinforcementRun),

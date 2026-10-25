@@ -6713,6 +6713,56 @@ public abstract partial class Backend
         return CpuBackend.Instance.AttentionRows(h[q], h[keys], h[values], h[position], h[y], h[starts], heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
+    /// <summary>
+    /// <see cref="AttentionRows"/> over a bfloat16 cache (keys and values [heads, capacity, ⌈dim / 2⌉ words], as
+    /// <see cref="AttentionBFloat16"/> reads them): rows of different lengths decoded together, each row from its own
+    /// start. Returns false when the device has no such pass.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionRowsBFloat16"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionRowsBFloat16Kernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool AttentionRowsBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    {
+        return _kernels is null && _moves is null ? AttentionRowsBFloat16Kernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsBFloat16Registered(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionRowsBFloat16Registered(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.AttentionRowsBFloat16) is OperationKernels.AttentionRowsBFloat16 kernel)
+        {
+            return kernel(this, q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+
+        if (!RetryOnHost || !OwnsKernel(OperationIndex.AttentionRowsBFloat16))
+        {
+            return AttentionRowsBFloat16Kernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+
+        var retry = new HostRetry(Ops.AttentionRowsBFloat16);
+        try
+        {
+            return AttentionRowsBFloat16Kernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(failure);
+            return AttentionRowsBFloat16OnHost(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // The host fallback of AttentionRowsBFloat16 (the default body of AttentionRowsBFloat16Kernel), for RetryOnHost.
+    private bool AttentionRowsBFloat16OnHost(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, "AttentionRowsBFloat16");
+        return CpuBackend.Instance.AttentionRowsBFloat16(h[q], h[keys], h[values], h[position], h[y], h[starts], heads, headsPerRow, rowsPerHead, steps, capacity, dim,
+            scale, variant);
+    }
+
     /// <summary>The gradient of <see cref="AttentionSegmented"/> (as <see cref="AttentionTiledBackward"/>); false when unsupported.</summary>
     /// <remarks>Runs <see cref="Ops.AttentionSegmentedBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionSegmentedBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

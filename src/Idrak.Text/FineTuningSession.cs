@@ -35,7 +35,7 @@ public sealed record FineTuningStepStats(int Step, float Loss, float LearningRat
 /// (a policy loss through <see cref="FineTuningLosses.Policy"/>, on-policy distillation).</item>
 /// <item><see cref="LogProbabilities"/>: log p of the trained tokens with the adapters on or off, no gradient (behaviour
 /// and reference values).</item>
-/// <item><see cref="Generator"/>: a chat model on the live adapters (no key/value cache kept between replies).</item>
+/// <item><see cref="Generator(int?, KeyValueFormat)"/>: a chat model on the live adapters (no key/value cache kept between replies).</item>
 /// <item><see cref="Save"/>, <see cref="Checkpoint"/> (resumed with <see cref="FineTuningOptions.ResumeFrom"/> or
 /// <see cref="Restore"/>), <see cref="IDisposable.Dispose"/>.</item>
 /// </list>
@@ -398,11 +398,19 @@ public sealed class FineTuningSession : IDisposable
     /// <param name="contextLength">Its context window (the model's, by default).</param>
     /// <param name="cacheFormat">How its key/value cache stores keys and values while a reply is generated.</param>
     /// <exception cref="InvalidOperationException">The model has no chat template.</exception>
-    public ChatGenerator Generator(int? contextLength = null, KeyValueFormat cacheFormat = KeyValueFormat.Float32)
+    public ChatGenerator Generator(int? contextLength = null, KeyValueFormat cacheFormat = KeyValueFormat.Float32) =>
+        Generator(KeyValueLayouts.For(cacheFormat), contextLength);
+
+    /// <summary><see cref="Generator(int?, KeyValueFormat)"/> with a cache format given by its layout (a built-in or one registered with <see cref="KeyValueLayouts.Register"/>).</summary>
+    /// <param name="cacheLayout">How its key/value cache stores keys and values while a reply is generated.</param>
+    /// <param name="contextLength">Its context window (the model's, by default).</param>
+    /// <exception cref="InvalidOperationException">The model has no chat template.</exception>
+    public ChatGenerator Generator(KeyValueLayout cacheLayout, int? contextLength = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(cacheLayout);
         var template = Model.ChatTemplate ?? throw new InvalidOperationException("The model has no chat template: a session's generator chats with the model's own.");
-        var generator = Model.CreateGenerator(cacheFormat, contextLength);
+        var generator = Model.CreateGenerator(cacheLayout, contextLength);
         generator.KeepCache = false;
         _generators.Add(generator);
         return new ChatGenerator(generator, template);

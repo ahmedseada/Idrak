@@ -52,7 +52,7 @@ internal sealed class ReinforceCommand : Command
     [
         "--base", "--env", "--data", "--suite", "--reward", "--rounds", "--env-option", "--sandbox", "--algorithm", "--estimator", "--group", "--episodes", "--kl",
         "--clip", "--epochs", "--minibatch", "--iterations", "--environments", "--temperature", "--max-new", "--save-every", "--evaluate-every", "--teacher",
-        "--teacher-device", "--teacher-weights", "--teacher-weight", "--divergence", "--beta", "--mix", "--out", "--weights", "--shards", "--spread",
+        "--teacher-device", "--teacher-weights", "--teacher-weight", "--divergence", "--beta", "--mix", "--out", "--weights", "--shards", "--spread", "--kv",
     ];
 
     public override string Name => "reinforce";
@@ -104,6 +104,8 @@ internal sealed class ReinforceCommand : Command
               --environments N    environments stepped at once (default: the CPU threads)
               --temperature T     the temperature replies are sampled at (default 1)
               --max-new N         the longest reply in tokens (default 256; IDRAK_RL_MAX_NEW)
+              --kv FORMAT         the key/value cache replies are generated with: float32, bfloat16 (half the memory),
+                                  int8 (default float32; IDRAK_RL_KV)
               --no-think          replies without the template's reasoning
               --save-every N      a checkpoint after every N iterations (default: at the end only)
               --evaluate-every N  greedy evaluation episodes after every N iterations (default: none)
@@ -602,8 +604,15 @@ internal sealed class ReinforceCommand : Command
             throw new UsageException("--beta is between 0 and 1 (both left out).");
         }
 
+        string cacheFormat = context.Option("--kv") ?? o.CacheFormat;
+        if (!KeyValueLayouts.Names.Contains(cacheFormat, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new UsageException($"--kv {cacheFormat}: unknown key/value cache format ({string.Join(", ", KeyValueLayouts.Names)}; IDRAK_RL_KV).");
+        }
+
         return o with
         {
+            CacheFormat = cacheFormat,
             MaxNewTokens = maxNew,
             Think = context.Flag("--no-think") ? false : o.Think,
             TeacherWeight = weight,

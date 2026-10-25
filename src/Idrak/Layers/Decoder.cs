@@ -460,9 +460,9 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         if (context.RowStarts is not null)
         {
             // Rows of different lengths: positions per token, and each row attends from its own start.
-            if (!cache.Layout.RowStarts)
+            if (cache.Layout is not IRowStartsLayout rowLayout)
             {
-                throw new NotSupportedException("Rows of different lengths need a float32 key/value cache.");
+                throw new NotSupportedException($"Rows of different lengths need a key/value cache format that attends from per-row starts (IRowStartsLayout: float32, bfloat16), not {cache.Layout.Name}.");
             }
 
             if (!PlainCausal && !WindowKernels)
@@ -471,9 +471,8 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             }
 
             var (rq, rk, rv) = Project(input, rotary?.Index ?? context.RotaryPositions ?? context.TokenPositions!, packed: true, rotary: rotary);
-            Tensor.WriteKeyValues(rk!, cache.Keys, context.PositionOf(cache));
-            Tensor.WriteKeyValues(rv!, cache.Values, context.PositionOf(cache));
-            var rows = Tensor.AttentionRows(q: rq, cache.Keys, cache.Values, context.PositionOf(cache), t, ScoreScale, context.TokenStarts!, KvHeads, Variant)
+            cache.Layout.Write(rk!, rv!, cache, context.PositionOf(cache));
+            var rows = rowLayout.AttendRows(rq, cache, context.PositionOf(cache), t, ScoreScale, context.TokenStarts!, KvHeads, Variant)
                        ?? throw new NotSupportedException($"Rows of different lengths need attention from per-row starts, which {input.Device} does not provide for head size {HeadDim}{(PlainCausal ? "" : " with a sliding window or soft-capped scores")} (Backend.SupportsAttentionRows).");
             return MergeHeads(rows, n, t);
         }
@@ -510,12 +509,11 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         {
             if (!cache.Layout.RowStarts)
             {
-                throw new NotSupportedException("Rows of different lengths need a float32 key/value cache.");
+                throw new NotSupportedException($"Rows of different lengths need a key/value cache format that attends from per-row starts (IRowStartsLayout: float32, bfloat16), not {cache.Layout.Name}.");
             }
 
             var (rq, rk, rv) = Project(input, rotary?.Index ?? context.RotaryPositions ?? context.TokenPositions!, packed: true, rotary: rotary);
-            Tensor.WriteKeyValues(rk!, cache.Keys, context.PositionOf(cache));
-            Tensor.WriteKeyValues(rv!, cache.Values, context.PositionOf(cache));
+            cache.Layout.Write(rk!, rv!, cache, context.PositionOf(cache));
             q = rq;
         }
         else

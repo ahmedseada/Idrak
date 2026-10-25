@@ -15,7 +15,7 @@ namespace Idrak.Abstraction.Testing.Devices;
 internal static class OperationCalls
 {
     // The operations this file knows; Ops.All.Count when it is current.
-    public const int Count = 152;
+    public const int Count = 153;
 
     // The parameter names of each operation (after the backend), by operation index.
     public static readonly string[][] Parameters =
@@ -161,6 +161,7 @@ internal static class OperationCalls
         ["source", "cache", "position", "heads", "steps", "capacity", "dim"],
         ["q", "keys", "values", "output", "logSumExp", "dOutput", "dq", "dkeys", "dvalues", "heads", "rowsPerHead", "steps", "capacity", "dim", "scale", "variant"],
         ["q", "keys", "values", "y", "logSumExp", "starts", "ends", "heads", "headsPerRow", "rowsPerHead", "steps", "dim", "scale", "variant"],
+        ["q", "keys", "values", "position", "y", "starts", "heads", "headsPerRow", "rowsPerHead", "steps", "capacity", "dim", "scale", "variant"],
         ["q", "keys", "values", "position", "y", "starts", "heads", "headsPerRow", "rowsPerHead", "steps", "capacity", "dim", "scale", "variant"],
         ["q", "keys", "values", "output", "logSumExp", "dOutput", "dq", "dkeys", "dvalues", "starts", "ends", "heads", "headsPerRow", "rowsPerHead", "steps", "dim", "scale", "variant"],
         ["q", "keys", "values", "position", "y", "logSumExp", "heads", "rowsPerHead", "steps", "capacity", "dim", "scale", "variant"],
@@ -2055,6 +2056,20 @@ internal static class OperationCalls
                 recorder.Exit(call);
             }
         })),
+        Kernels.Register(Ops.AttentionRowsBFloat16, kind, (OperationKernels.AttentionRowsBFloat16)((Backend backend, Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant) =>
+        {
+            var call = recorder.Enter(backend, Ops.AttentionRowsBFloat16, [q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant]);
+            try
+            {
+                var result = backend.AttentionRowsBFloat16Kernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+                CallRecorder.Returned(call, result);
+                return result;
+            }
+            finally
+            {
+                recorder.Exit(call);
+            }
+        })),
         Kernels.Register(Ops.AttentionSegmentedBackward, kind, (OperationKernels.AttentionSegmentedBackward)((Backend backend, Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant) =>
         {
             var call = recorder.Enter(backend, Ops.AttentionSegmentedBackward, [q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant]);
@@ -2593,32 +2608,34 @@ internal static class OperationCalls
                 case 141:
                     return backend.AttentionRows((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (int)a[11]!, (float)a[12]!, (AttentionVariant)a[13]!);
                 case 142:
-                    return backend.AttentionSegmentedBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (Storage)a[6]!, (Storage)a[7]!, (Storage)a[8]!, (Storage)a[9]!, (Storage)a[10]!, (int)a[11]!, (int)a[12]!, (int)a[13]!, (int)a[14]!, (int)a[15]!, (float)a[16]!, (AttentionVariant)a[17]!);
+                    return backend.AttentionRowsBFloat16((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (int)a[11]!, (float)a[12]!, (AttentionVariant)a[13]!);
                 case 143:
+                    return backend.AttentionSegmentedBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (Storage)a[6]!, (Storage)a[7]!, (Storage)a[8]!, (Storage)a[9]!, (Storage)a[10]!, (int)a[11]!, (int)a[12]!, (int)a[13]!, (int)a[14]!, (int)a[15]!, (float)a[16]!, (AttentionVariant)a[17]!);
+                case 144:
                     backend.AttentionTiled((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage?)a[5], (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (float)a[11]!, (AttentionVariant)a[12]!);
                     return null;
-                case 144:
+                case 145:
                     backend.AttentionSpans((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (Storage?)a[6], (int)a[7]!, (int)a[8]!, (int)a[9]!, (int)a[10]!, (int)a[11]!, (int)a[12]!, (float)a[13]!, (AttentionVariant)a[14]!);
                     return null;
-                case 145:
+                case 146:
                     backend.AttentionSpansStrided((Storage)a[0]!, (long)a[1]!, (Storage)a[2]!, (long)a[3]!, (Storage)a[4]!, (long)a[5]!, (int)a[6]!, (int)a[7]!, (Storage)a[8]!, (Storage)a[9]!, (Storage)a[10]!, (int)a[11]!, (int)a[12]!, (int)a[13]!, (int)a[14]!, (int)a[15]!, (int)a[16]!, (float)a[17]!);
                     return null;
-                case 146:
+                case 147:
                     backend.AttentionSpansBackward((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (Storage)a[4]!, (Storage)a[5]!, (Storage)a[6]!, (Storage)a[7]!, (Storage)a[8]!, (Storage)a[9]!, (Storage)a[10]!, (int)a[11]!, (int)a[12]!, (int)a[13]!, (int)a[14]!, (int)a[15]!, (int)a[16]!, (float)a[17]!, (AttentionVariant)a[18]!);
                     return null;
-                case 147:
+                case 148:
                     backend.DecoderMask((Storage)a[0]!, (Storage)a[1]!, (int)a[2]!, (int)a[3]!);
                     return null;
-                case 148:
+                case 149:
                     backend.KeyValueWrite((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!);
                     return null;
-                case 149:
+                case 150:
                     backend.SampleRows((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (float)a[8]!, (int)a[9]!, (float)a[10]!, (float)a[11]!, (uint)a[12]!);
                     return null;
-                case 150:
+                case 151:
                     backend.PenalizeRows((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (Storage)a[3]!, (int)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (int)a[9]!, (float)a[10]!, (float)a[11]!, (float)a[12]!);
                     return null;
-                case 151:
+                case 152:
                     backend.HistoryPush((Storage)a[0]!, (Storage)a[1]!, (Storage)a[2]!, (int)a[3]!, (int)a[4]!);
                     return null;
                 default:

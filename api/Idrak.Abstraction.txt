@@ -1416,6 +1416,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public abstract void Synchronize()
   public abstract void Upload(System.ReadOnlySpan<float> source, Idrak.Abstraction.Devices.Storage destination)
   public bool AttentionRows(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
+  public bool AttentionRowsBFloat16(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public bool AttentionSegmented(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public bool AttentionSegmentedBackward(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public bool AttentionStrided(Idrak.Abstraction.Devices.Storage q, long qOffset, Idrak.Abstraction.Devices.Storage k, long kOffset, Idrak.Abstraction.Devices.Storage v, long vOffset, int qRow, int kRow, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
@@ -1458,6 +1459,7 @@ public abstract class Idrak.Abstraction.Devices.Backend
   public virtual System.Collections.Generic.List<Idrak.Abstraction.Devices.Storage> AbortCapture()
   public virtual System.IDisposable? LongLivedAllocations()
   public virtual System.IDisposable? ReuseQuantizedOperands()
+  public virtual bool AttentionRowsBFloat16Kernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public virtual bool AttentionRowsKernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public virtual bool AttentionSegmentedBackwardKernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public virtual bool AttentionSegmentedKernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
@@ -3338,6 +3340,9 @@ public interface Idrak.Abstraction.Generation.IPretrainedTokenizer : Idrak.Abstr
   public void Save(string path)
   public void WriteTo(System.IO.Stream stream)
 
+public interface Idrak.Abstraction.Generation.IRowStartsLayout
+  public Idrak.Abstraction.Tensor? AttendRows(Idrak.Abstraction.Tensor q, Idrak.Abstraction.Generation.KeyValueCache cache, Idrak.Abstraction.Tensor position, int steps, float scale, Idrak.Abstraction.Tensor starts, int headsPerRow, Idrak.Abstraction.Devices.AttentionVariant variant)
+
 public interface Idrak.Abstraction.Generation.ISeq2SeqModel : System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Generation.ISequenceEncoder Encoder { get; }
@@ -3573,6 +3578,7 @@ public abstract class Idrak.Abstraction.Generation.KeyValueLayout
   public abstract int RowWidth(int headDim)
   public abstract string Name { get; }
   public abstract void Write(Idrak.Abstraction.Tensor keys, Idrak.Abstraction.Tensor values, Idrak.Abstraction.Generation.KeyValueCache cache, Idrak.Abstraction.Tensor position)
+  public bool RowStarts { get; }
   public override string ToString()
   public virtual Idrak.Abstraction.Tensor Attend(Idrak.Abstraction.Tensor q, Idrak.Abstraction.Generation.KeyValueCache cache, Idrak.Abstraction.Generation.DecodingContext context, int steps, float scale, bool decoderKernels)
   public virtual Idrak.Abstraction.Tensor ExpandPrefix(Idrak.Abstraction.Generation.KeyValueCache cache, bool keys, int positions)
@@ -3581,7 +3587,6 @@ public abstract class Idrak.Abstraction.Generation.KeyValueLayout
   public virtual bool HalfWords { get; }
   public virtual bool HasScales { get; }
   public virtual bool Recordable { get; }
-  public virtual bool RowStarts { get; }
   public virtual bool SlidingWindows { get; }
 
 public static class Idrak.Abstraction.Generation.KeyValueLayouts
@@ -4203,6 +4208,7 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionDecode (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionInt8 (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionRows (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.AttentionRowsBFloat16 (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionScoresInt8 (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionSegmented (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionSegmentedBackward (below)
@@ -4372,6 +4378,8 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.AttentionDeco
 public delegate void Idrak.Abstraction.Operations.OperationKernels.AttentionInt8(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage keyScales, Idrak.Abstraction.Devices.Storage valueScales, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, Idrak.Abstraction.Devices.AttentionVariant variant)
 
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.AttentionRows(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant)
+
+public delegate bool Idrak.Abstraction.Operations.OperationKernels.AttentionRowsBFloat16(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.AttentionScoresInt8(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage cache, Idrak.Abstraction.Devices.Storage scales, Idrak.Abstraction.Devices.Storage y, int rows, int steps, int capacity, int dim)
 
@@ -4663,6 +4671,7 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation AttentionDecode
   public static readonly Idrak.Abstraction.Operations.Operation AttentionInt8
   public static readonly Idrak.Abstraction.Operations.Operation AttentionRows
+  public static readonly Idrak.Abstraction.Operations.Operation AttentionRowsBFloat16
   public static readonly Idrak.Abstraction.Operations.Operation AttentionScoresInt8
   public static readonly Idrak.Abstraction.Operations.Operation AttentionSegmented
   public static readonly Idrak.Abstraction.Operations.Operation AttentionSegmentedBackward

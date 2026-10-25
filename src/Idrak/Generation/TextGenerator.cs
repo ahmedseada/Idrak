@@ -458,7 +458,8 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 .Select(i => i with { Position = i.Position + starts[r] }))]
             : [];
         using var sampler = CreateSampler(new SamplerRequest(Device, rows, Tokenizer.VocabularySize, limit + 1, 1, options));   // no penalties here
-        // Rows of different lengths need a cache whose format can attend from per-row starts (float32 today).
+        // Rows of different lengths need a cache whose format attends from per-row starts (KeyValueLayout.RowStarts: float32,
+        // bfloat16); another format decodes them in float32.
         var batchLayout = !padded || Layout.RowStarts ? Layout : KeyValueLayouts.For(KeyValueFormat.Float32);
         using var decoding = new DecodingContext(Device, rows, promptLength + limit, batchLayout)
         {
