@@ -707,6 +707,11 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             history.RemoveRange(0, history.Count - (context - 1));          // keep the most recent part of the prompt
         }
 
+        if (!options.SlideContext)
+        {
+            limit = Math.Min(limit, context - history.Count);               // the reply ends where the window does
+        }
+
         // The images whose tokens lie from `start` on, numbered from there; `start` moved past an image it would cut.
         int SafeStart(int start)
         {

@@ -38,7 +38,10 @@ public sealed record LanguageModelPolicyOptions
     /// <summary>The most tokens a reply samples.</summary>
     public int MaxNewTokens { get; init; } = 256;
 
-    /// <summary>The context window replies are generated in; null: the model's.</summary>
+    /// <summary>
+    /// The context window replies are generated in; null: the model's. A reply ends where the window does, and the episode
+    /// whose reply filled it ends there, truncated (<see cref="ActionRecord.EndsEpisode"/>).
+    /// </summary>
     public int? ContextLength { get; init; }
 
     /// <summary>
@@ -217,9 +220,12 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>,
     /// A reply to each conversation, generated together (<see cref="ChatGenerator.ChatBatch"/>): sampled at the call's
     /// temperature from its seed with no top-k, top-p, min-p or penalty (greedy: the most likely token), so the
     /// policy's distribution is what samples. Each record holds the prompt ids, the reply ids and their log-probabilities
-    /// as sampled. Completes synchronously.
+    /// as sampled. A reply ends where the context window does (<see cref="GenerationOptions.SlideContext"/> off), so its ids
+    /// follow its prompt; a reply that filled the window ends its episode (<see cref="ActionRecord.EndsEpisode"/>: the
+    /// rollout truncates it), as does a prompt the window no longer holds (its most recent part kept, a token's reply).
+    /// Completes synchronously.
     /// </summary>
-    /// <exception cref="InvalidOperationException">A reply outgrew the context window (its window slid, so its ids no longer follow its prompt).</exception>
+    /// <exception cref="InvalidOperationException">A reply's window slid all the same (a generator that ignores <see cref="GenerationOptions.SlideContext"/>).</exception>
     public ValueTask<PolicyActions<ChatMessage>> ActAsync(IReadOnlyList<ChatObservation> observations, ActionSampling sampling, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -235,8 +241,9 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>,
             Temperature = sampling.Greedy ? 0f : sampling.Temperature, TopK = sampling.Greedy ? 1 : 0, TopP = 1f, MinP = 0f,
             RepeatPenalty = 1f, PresencePenalty = 0f, FrequencyPenalty = 0f, Seed = sampling.Seed,
             NumPredict = Options.MaxNewTokens, NumCtx = Options.ContextLength ?? Session.Model.MaxPositions,
-            ReturnTokens = true, ReturnLogProbabilities = true,
+            ReturnTokens = true, ReturnLogProbabilities = true, SlideContext = false,
         };
+        int window = Math.Clamp(generation.NumCtx, 2, Chat.Generator.ContextLength);   // the window the generator uses
         var requests = observations.Select(o => new ChatRequest((o ?? throw new ArgumentException("An observation is null.", nameof(observations))).Messages,
             o.Tools is { Count: > 0 } ? o.Tools : null, o.Think ?? Options.Think, generation)).ToList();
         var replies = Chat.ChatBatch(requests, cancellationToken);
@@ -248,13 +255,12 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>,
             var tokens = reply.Tokens ?? throw new InvalidOperationException("The generator gave no token ids (GenerationOptions.ReturnTokens).");
             if (reply.Stats is { ContextResets: > 0 })
             {
-                throw new InvalidOperationException($"Reply {i} outgrew the context window ({generation.NumCtx} tokens) and its window slid: its ids no longer follow its prompt. "
-                                                    + "Give a shorter MaxNewTokens or a larger ContextLength.");
+                throw new InvalidOperationException($"Reply {i} slid its context window ({window} tokens) although GenerationOptions.SlideContext is off: its ids no longer follow its prompt.");
             }
 
             actions[i] = reply.Message ?? new ChatMessage("assistant", "");
             records[i] = new ActionRecord(tokens.Reply, tokens.LogProbabilities ?? throw new InvalidOperationException("The generator gave no log-probabilities."),
-                float.NaN, tokens.Prompt);
+                float.NaN, tokens.Prompt) { EndsEpisode = tokens.Prompt.Length + tokens.Reply.Length >= window };
         }
 
         return ValueTask.FromResult(new PolicyActions<ChatMessage>(actions, records));

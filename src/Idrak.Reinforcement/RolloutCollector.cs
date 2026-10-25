@@ -218,7 +218,7 @@ public sealed class RolloutCollector<TObservation, TAction> : IDisposable
                 slot.Observations.Add(step.Observation);
                 slot.Current = step.Observation;
                 slot.Info = step.Info;
-                bool cut = !step.Done && maxSteps > 0 && slot.Actions.Count >= maxSteps;
+                bool cut = !step.Done && (maxSteps > 0 && slot.Actions.Count >= maxSteps || _records[i].EndsEpisode);
                 if (step.Done || cut)
                 {
                     slot.Terminated = step.Terminated;

@@ -3249,6 +3249,7 @@ public sealed record Idrak.Abstraction.Generation.GenerationOptions : System.IEq
   public bool EarlyStopping { get; init; }
   public bool ReturnLogProbabilities { get; init; }
   public bool ReturnTokens { get; init; }
+  public bool SlideContext { get; init; }
   public bool UseCache { get; init; }
   public bool UseGraph { get; init; }
   public float FrequencyPenalty { get; init; }
@@ -4855,6 +4856,7 @@ public static class Idrak.Abstraction.RandomDraws
 
 public sealed class Idrak.Abstraction.Reinforcement.ActionRecord
   public ActionRecord(int[] tokens, float[] logProbabilities, float value = NaNf, int[]? context = null)
+  public bool EndsEpisode { get; init; }
   public bool HasValue { get; }
   public float Value { get; }
   public float[] LogProbabilities { get; }

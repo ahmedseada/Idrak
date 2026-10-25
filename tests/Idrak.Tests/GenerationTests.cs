@@ -18,7 +18,7 @@ internal static partial class Tests
         ("generation: word tokenizer splits, maps unknown words and decodes piecewise", WordTokenizerBehaviour),
         ("generation: ChatML template renders system, tools, turns and think modes", TemplateRendering),
         ("generation: keep-alive durations and model host expiry", KeepAliveAndHost),
-        ("generation: num_predict, stop sequences, cache/graph/recompute agree", GeneratorBehaviour),
+        ("generation: num_predict, stop sequences, cache/graph/recompute agree; without a slide a reply ends where the window does", GeneratorBehaviour),
         ("generation: chat end to end yields a final message and stats", ChatEndToEnd),
         ("generation: a kept KV cache reuses shared prompt prefixes without changing the output", PromptCacheReuse),
         ("generation: a windowed decoder generating far past its window with sliding windows' caches gives the texts of caches holding the whole reply (one row through recorded steps, a batch of two)", SlidingWindowGeneration),
@@ -310,6 +310,14 @@ internal static partial class Tests
 
         var small = generator.Generate("abcdefghij", baseOptions with { NumCtx = 8, NumPredict = 30 });
         Check(small.Stats.PromptTokens == 7 && small.Text.Length == 30 && small.Stats.ContextResets > 0, "num_ctx truncates the prompt and slides the window");
+        foreach (bool cache in new[] { true, false })
+        {
+            var ended = generator.Generate("abcdefghij", baseOptions with { NumCtx = 8, NumPredict = 30, SlideContext = false, UseCache = cache });
+            var room = generator.Generate("abc", baseOptions with { NumCtx = 8, NumPredict = 30, SlideContext = false, UseCache = cache });
+            Check(ended.Stats.PromptTokens == 7 && ended.Stats.GeneratedTokens == 1 && ended.DoneReason == "length" && ended.Stats.ContextResets == 0
+                  && room.Stats.PromptTokens == 3 && room.Stats.GeneratedTokens == 5 && room.DoneReason == "length" && room.Stats.ContextResets == 0,
+                $"no slide{(cache ? "" : ", no cache")}: the reply ends where the window does ({ended.Stats.GeneratedTokens} and {room.Stats.GeneratedTokens} tokens, {ended.DoneReason} and {room.DoneReason})");
+        }
     }
 
     private static void ChatEndToEnd(Device device)

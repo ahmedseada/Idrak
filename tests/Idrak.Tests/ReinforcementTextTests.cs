@@ -26,6 +26,7 @@ internal static partial class Tests
         ("reinforcement text: a session's log-probabilities follow its adapters (off: the base model), a checkpoint resumes in a new session and restores into a fresh one, and the generator samples the live adapters", SessionStateAndCheckpoints),
         ("reinforcement text: sampled tokens: off, no chunk carries ids; on, the last chunk of Chat, Stream, ChatBatch and StreamBatch carries the prompt as fed and the ids and log-probabilities the sampler drew, up to the token completing a stop; the texts are the same", SampledTokensRecorded),
         ("reinforcement text: multi-turn: a prefix-stable episode trains as one sequence, its replies alone trained; a template that drops earlier reasoning gives a sequence per turn; auto picks on the ids, episode is refused on unstable ids, and a two-turn run of the policy lays out what its ids say", MultiTurnLayouts),
+        ("reinforcement text: a reply ends where its context window does (no slide, its ids following its prompt as fed) and ends its episode, truncated, alone and in a batch, with room for a token or with the prompt cut to its most recent part; the episode trains", ContextWindowEndsEpisode),
         ("reinforcement text: a policy loss through FineTuningLosses.Policy gets the token values, behaviour and reference log-probabilities a step's sequences carry (the reference only when the loss reads it: IPolicyLoss.NeedsReference), and the input gives them all or none", PolicyLossAdapter),
         ("reinforcement text: R2's trainer with grpo (group advantages, a k3 KL to the reference, two epochs a rollout) drives the policy on a prompts task (reward metric, exact) and raises its pass rate on a tiny decoder; the first update's ratios are exactly 1; trained ids are the sampled ids; held device memory does not grow over 40 iterations", PolicyRaisesPassRate),
         ("reinforcement text: R2's trainer with ppo (returns less their mean, mini-batches, no KL so no reference pass) drives the policy on the prompts task and raises its pass rate", PolicyPpoRaisesPassRate),
@@ -406,6 +407,69 @@ internal static partial class Tests
 
             var stats = policy.Update(batch, PolicyLosses.Get("grpo"));
             Check(float.IsFinite(stats.Loss) && stats.Episodes == 4 && stats.Units == batch.Trajectories.Sum(t => t.Units), $"an update over the two-turn episodes: {stats}");
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
+    // TwoTurns as an environment kind, for the rollout collector.
+    private sealed class TwoTurnsKind : IEnvironmentKind
+    {
+        public string Name => "reinforcement-text-test-two-turns";
+
+        public string Summary => "A question, then the same question again; rewarded at the end.";
+
+        public IReadOnlyCollection<string> Keys => [];
+
+        public Type ObservationType => typeof(ChatObservation);
+
+        public Type ActionType => typeof(ChatMessage);
+
+        public IEnvironment Create(IReadOnlyDictionary<string, string>? options = null, int seed = 0) => new TwoTurns();
+    }
+
+    private static void ContextWindowEndsEpisode(Device device)
+    {
+        string folder = WriteChatModelWith(TinyChatSpec(), ChatMlTemplate);
+        try
+        {
+            IReadOnlyList<ChatMessage> question = [new ChatMessage("user", "Q")];
+            int[] full;
+            using (var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device }))
+            using (var probe = new LanguageModelPolicy(new FineTuningSession(model, SessionOptions(), totalSteps: 1), new LanguageModelPolicyOptions()))
+            {
+                full = [.. model.Tokenizer!.Encode(probe.Chat.RenderPrompt(new ChatRequest(question)))];
+            }
+
+            // Room for a token of reply after the first prompt, then a window the prompt no longer fits (its most recent part
+            // kept); an episode alone (the generator's single path) and four together (its batch path).
+            foreach (int window in new[] { full.Length + 1, full.Length - 2 })
+            {
+                foreach (int episodes in new[] { 1, 4 })
+                {
+                    using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
+                    using var policy = new LanguageModelPolicy(new FineTuningSession(model, SessionOptions(), totalSteps: 1),
+                        new LanguageModelPolicyOptions { MaxNewTokens = 6, ContextLength = window });
+                    using var collector = new RolloutCollector<ChatObservation, ChatMessage>(new TwoTurnsKind(), environments: 1, parallelSteps: false);
+                    using var batch = collector.CollectAsync(policy, [.. Enumerable.Range(0, episodes).Select(k => new EpisodeStart(k, k, k))], new ActionSampling { Seed = 3 })
+                        .AsTask().GetAwaiter().GetResult();
+                    string label = $"a {window}-token window, a {full.Length}-token prompt, {episodes} episode{(episodes == 1 ? "" : "s")}";
+                    int[] kept = full.Length < window ? full : full[^(window - 1)..];
+                    foreach (var trajectory in batch.Trajectories)
+                    {
+                        Check(trajectory.Records.Count == 1 && trajectory.Truncated && !trajectory.Terminated,
+                            $"{label}: the reply that filled the window ended its episode, truncated ({trajectory.Records.Count} turns, truncated {trajectory.Truncated}, terminated {trajectory.Terminated})");
+                        var record = trajectory.Records[0];
+                        Check(record.EndsEpisode && record.Tokens.Length == 1 && record.Context!.SequenceEqual(kept),
+                            $"{label}: the prompt as fed ({record.Context!.Length} ids, {kept.Length} expected) and a token's reply ({record.Tokens.Length}) fill the window");
+                    }
+
+                    var stats = policy.Update(batch, PolicyLosses.Get("grpo"));
+                    Check(float.IsFinite(stats.Loss) && stats.Units == batch.Trajectories.Sum(t => t.Units), $"{label}: the truncated episodes train: {stats}");
+                }
+            }
         }
         finally
         {

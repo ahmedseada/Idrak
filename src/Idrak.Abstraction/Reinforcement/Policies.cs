@@ -64,6 +64,12 @@ public sealed class ActionRecord
     /// <summary>The ids the policy conditioned on, or null.</summary>
     public int[]? Context { get; }
 
+    /// <summary>
+    /// Whether the policy can act no further in the episode after this action (a language model's reply filled its context
+    /// window): the rollout ends the episode after the environment's step, truncated unless the environment ended it.
+    /// </summary>
+    public bool EndsEpisode { get; init; }
+
     /// <summary>The units of the action (<see cref="LogProbabilities"/>' count): what a policy loss sums over.</summary>
     public int Units => LogProbabilities.Length;
 

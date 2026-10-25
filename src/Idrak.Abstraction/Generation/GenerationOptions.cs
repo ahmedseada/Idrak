@@ -43,6 +43,14 @@ public sealed record GenerationOptions
     /// <summary>Maximum tokens to generate; -1 means until a stop sequence or the context window is full.</summary>
     public int NumPredict { get; init; } = -1;
 
+    /// <summary>
+    /// What a reply does when it fills the context window (<see cref="NumCtx"/>): true (the default) goes on with the
+    /// window re-read from its last half (<see cref="GenerationStats.ContextResets"/> counts it); false ends the reply
+    /// there (done reason "length"), so its ids follow its prompt as fed, as training on what was sampled needs. A prompt
+    /// longer than the window keeps its most recent part either way.
+    /// </summary>
+    public bool SlideContext { get; init; } = true;
+
     /// <summary>Generation ends when the text contains any of these; the stop text itself is not returned.</summary>
     public IReadOnlyList<string> Stop { get; init; } = [];
 
