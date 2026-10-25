@@ -15,7 +15,7 @@ namespace Idrak.Text.Retrieval;
 /// <see cref="VectorIndex"/>, or any <see cref="IEmbedder"/> with any <see cref="IVectorStore"/>), or both merged with
 /// reciprocal rank fusion. Create one with <see cref="Create"/>.
 /// </summary>
-public sealed class RetrievalIndex : IRetriever
+public sealed class RetrievalIndex : ISearchableRetriever
 {
     private const string Format = "idrak-retrieval/1";
 

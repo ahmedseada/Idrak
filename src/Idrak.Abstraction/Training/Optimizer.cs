@@ -82,6 +82,16 @@ public interface IScaledGradientStep : IOptimizer
 public interface IInPlaceOptimizer : IOptimizer;
 
 /// <summary>
+/// An optimizer made of others, each over its own parameters (the library's <c>GroupedOptimizer</c>): what holds for it
+/// holds when it holds for every group, as whether it updates in place (<see cref="IInPlaceOptimizer"/>) for a recorded step.
+/// </summary>
+public interface IGroupedOptimizer : IOptimizer
+{
+    /// <summary>The optimizers it combines, in order.</summary>
+    IReadOnlyList<IOptimizer> Groups { get; }
+}
+
+/// <summary>
 /// The base of the library's optimizers (<see cref="IOptimizer"/>): the parameters, zeroing, clipping, weight decay and
 /// the helpers a stateful optimizer (<see cref="IStatefulOptimizer"/>) saves and loads its state with. Call
 /// <see cref="ZeroGrad"/>, then <c>loss.Backward()</c>, then <see cref="Step"/>.

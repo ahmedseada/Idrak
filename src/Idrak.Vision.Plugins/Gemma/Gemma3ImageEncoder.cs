@@ -19,7 +19,7 @@ namespace Idrak.Vision.Plugins.Gemma;
 /// as a module, its forward pass takes pixel values [images, channels, size, size]. Every <c>Encode</c> runs without
 /// recording gradients and returns tensors the caller disposes.
 /// </summary>
-public sealed class Gemma3ImageEncoder : Module, IVisionEncoder, IVisionEncoderStages
+public sealed class Gemma3ImageEncoder : Module, ITrainableVisionEncoder, IVisionEncoderStages
 {
     private readonly ImageTokenLayout _layout;
 
@@ -36,6 +36,19 @@ public sealed class Gemma3ImageEncoder : Module, IVisionEncoder, IVisionEncoderS
 
     /// <summary>The vision part this encoder was built from (its configuration and image token ids).</summary>
     public Gemma3Vision Vision { get; }
+
+    // Training (the family's members over this encoder's modules, as ITrainableVisionEncoder).
+    IPretrainedVision ITrainableVisionEncoder.Vision => Vision;
+
+    IReadOnlyList<Tensor> ITrainableVisionEncoder.ParametersOf(string part) => Vision.Parameters(this, part);
+
+    Tensor ITrainableVisionEncoder.FeaturesForTraining(Tensor towerOutput) => Vision.Features(this, towerOutput);
+
+    Tensor ITrainableVisionEncoder.TowerForTraining(Tensor pixelValues) => Vision.Tower(this, pixelValues);
+
+    IReadOnlyDictionary<string, Tensor> ITrainableVisionEncoder.ExportPart(string part) => Vision.Export(this, part);
+
+    IReadOnlyCollection<string> ITrainableVisionEncoder.ImportParts(IReadOnlyDictionary<string, Tensor> tensors) => Vision.Import(this, tensors);
 
     /// <summary>The SigLIP encoder: pixel values to patch outputs [images, patches, vision width].</summary>
     public VisionTransformerEncoder Encoder { get; }

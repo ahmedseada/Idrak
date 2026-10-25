@@ -17,7 +17,7 @@ internal static partial class Tests
     [
         ("audio codecs: mp3 encode: tones, chirps and noise at every rate (MPEG-1 32, 44.1, 48 kHz; MPEG-2 16, 22.05, 24 kHz), mono and stereo, at the lowest, the default and the highest bit rate decode through the library's decoder to whole frames covering the sound and the 1057-sample delay, constant frames of the bit rate, and a tone's SNR after the delay above its floor (128 kbit/s 44.1 kHz stereo and 64 kbit/s 16 kHz mono: 40 dB); the WAV fixture's signals too", d => { if (d == Device.Cpu) Mp3EncodeRoundTrip(); }),
         ("audio codecs: mp3 encode: the ffmpeg-checked fixture (mp3enc: all six rates, joint, plain and mixed-down stereo, 32 to 320 kbit/s, the three qualities) is what the encoder writes now, byte for byte, and the library decodes it to ffmpeg's lengths, SNR and block RMS", d => { if (d == Device.Cpu) Mp3EncodeFixture(); }),
-        ("audio codecs: mp3 encode: AudioEncoders.Save writes .mp3 with the library's encoder; bit rates, sample rates, channels and the lowpass are checked against what MPEG takes (the message names the allowed ones); defaults, resampling, the mono mix and the IDRAK_MP3_* variables", d => { if (d == Device.Cpu) Mp3EncodeRegistryAndOptions(); }),
+        ("audio codecs: mp3 encode: AudioEncoders.Save writes .mp3 with the library's encoder; bit rates, sample rates, channels and the lowpass are checked against what MPEG takes (the message names the allowed ones); defaults, resampling, the mono mix and the IDRAK_MP3_* variables; the encoder's declared parameters set by key (AudioEncodeOptions.Parameters) give the bytes of the same options, an undeclared key refused by name (WAV declares none)", d => { if (d == Device.Cpu) Mp3EncodeRegistryAndOptions(); }),
         ("audio codecs: mp3 encode: the same input gives the same bytes, in parallel and in order for every frames-per-task; three minutes of 44.1 kHz stereo and a minute of 16 kHz mono encode at the speed reported with little memory", d => { if (d == Device.Cpu) Mp3EncodeDeterminismAndSpeed(); }),
     ];
 
@@ -314,6 +314,21 @@ internal static partial class Tests
         ThrowsNaming<NotSupportedException>(() => new Mp3Encoder().Encode(three), "three channels", "one or two channels", "Mono");
         Check(new Mp3Codec().Decode(new Mp3Encoder(new Mp3EncodeOptions { ChannelMode = Mp3ChannelMode.Mono }).Encode(three)).Channels == 1, "three channels mixed down with Mono");
         ThrowsNaming<ArgumentException>(() => Mp3EncodeOptions.Bitrates(8000), "the bit rates of 8 kHz", "not 8000");
+
+        // The encoder's declared parameters (IAudioEncoder.Parameters), set by key over its own options: the same bytes as
+        // the same options given to the constructor; a key it does not declare refused, naming it.
+        var keyed = new Dictionary<string, string>(StringComparer.Ordinal) { ["bitrate"] = "64", ["channels"] = "Mono", ["quality"] = "fast", ["frames_per_task"] = "0" };
+        var given = new Mp3EncodeOptions { Bitrate = 64, ChannelMode = Mp3ChannelMode.Mono, Quality = Mp3Quality.Fast, FramesPerTask = 0 };
+        Check(new Mp3Encoder(new Mp3EncodeOptions()).Encode(tone, new AudioEncodeOptions { Parameters = keyed }).AsSpan().SequenceEqual(new Mp3Encoder(given).Encode(tone)),
+            "parameters by key encode as the same options given");
+        Check(AudioEncoders.Get("mp3").Parameters.Keys.SetEquals(["bitrate", "rate", "channels", "quality", "lowpass", "frames_per_task"]),
+            $"the registered mp3 encoder declares its keys: {string.Join(", ", AudioEncoders.Get("mp3").Parameters.Keys)}");
+        ThrowsNaming<ArgumentException>(() => new Mp3Encoder().Encode(tone, new AudioEncodeOptions { Parameters = new Dictionary<string, string> { ["vbr"] = "1" } }),
+            "an undeclared key", "vbr");
+        ThrowsNaming<ArgumentException>(() => new Mp3Encoder().Encode(tone, new AudioEncodeOptions { Parameters = new Dictionary<string, string> { ["quality"] = "best" } }),
+            "a value the key does not take", "fast, standard, high");
+        ThrowsNaming<ArgumentException>(() => new WavEncoder().Encode(tone, new AudioEncodeOptions { Parameters = new Dictionary<string, string> { ["bitrate"] = "64" } }),
+            "a key WAV does not declare", "bitrate");
 
         // Defaults: 64 kbit/s for 16 kHz mono, 96 for MPEG-2 stereo; the nearest rate MP3 has; the rate asked for.
         Check(Mp3FrameProblem(new Mp3Encoder().Encode(mono16), 16000, 1, 64, out _, out _) is null, "16 kHz mono is 64 kbit/s unless set");

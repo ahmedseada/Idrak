@@ -15,13 +15,26 @@ namespace Idrak.Vision.Plugins.Qwen;
 /// and returns tensors the caller disposes. As stages (<see cref="IVisionEncoderStages"/>), pixel values are
 /// [images, grid rows, grid columns, patch values]: images join a pass only when their grids agree.
 /// </summary>
-public sealed class QwenImageEncoder : Module, IVisionEncoder, IVisionEncoderStages
+public sealed class QwenImageEncoder : Module, ITrainableVisionEncoder, IVisionEncoderStages
 {
     internal QwenImageEncoder(QwenVision vision, QwenVisionTower tower, QwenPatchMerger merger, QwenImageProcessor processor, Device device) =>
         (Vision, VisionTower, Merger, Processor, Device) = (vision, tower, merger, processor, device);
 
     /// <summary>The vision part this encoder was built from.</summary>
     public QwenVision Vision { get; }
+
+    // Training (the family's members over this encoder's modules, as ITrainableVisionEncoder).
+    IPretrainedVision ITrainableVisionEncoder.Vision => Vision;
+
+    IReadOnlyList<Tensor> ITrainableVisionEncoder.ParametersOf(string part) => Vision.Parameters(this, part);
+
+    Tensor ITrainableVisionEncoder.FeaturesForTraining(Tensor towerOutput) => Vision.Features(this, towerOutput);
+
+    Tensor ITrainableVisionEncoder.TowerForTraining(Tensor pixelValues) => Vision.Tower(this, pixelValues);
+
+    IReadOnlyDictionary<string, Tensor> ITrainableVisionEncoder.ExportPart(string part) => Vision.Export(this, part);
+
+    IReadOnlyCollection<string> ITrainableVisionEncoder.ImportParts(IReadOnlyDictionary<string, Tensor> tensors) => Vision.Import(this, tensors);
 
     /// <summary>The vision transformer: pixel patches to patch outputs.</summary>
     public QwenVisionTower VisionTower { get; }

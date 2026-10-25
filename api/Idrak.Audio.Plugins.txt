@@ -108,7 +108,7 @@ public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioFamily : Idrak.Audi
   public const string TtsTask = "tts"
   public string Name { get; }
 
-public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioLanguageEncoder : Idrak.Audio.Abstractions.IAudioLanguageEncoder, System.IDisposable
+public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioLanguageEncoder : Idrak.Audio.Abstractions.IAudioLanguageEncoder, Idrak.Audio.Abstractions.ITrainableAudioEncoder, System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioEncoder Tower { get; }
   public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioProjector Projector { get; }
@@ -131,9 +131,6 @@ public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioLanguageFamily : Id
 public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioLanguagePart : Idrak.Audio.Abstractions.PretrainedAudio, Idrak.Audio.Abstractions.IAudioTuningPart
   public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioConfig Encoder { get; }
   public Idrak.Audio.Plugins.IdrakAudio.IdrakAudioProjectorConfig Projector { get; }
-  public System.Collections.Generic.IReadOnlyList<(string, int[], float[])> Export(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, System.Collections.Generic.IReadOnlyCollection<string> parts)
-  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> EncodeTraining(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioData> audios, bool checkpointing)
-  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Train(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, System.Collections.Generic.IReadOnlyCollection<string> parts)
   public System.Collections.Generic.IReadOnlyList<string> TrainableParts { get; }
   public override Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
   public override Idrak.Abstraction.Generation.IImagePromptFormat PromptFormat { get; }
@@ -142,7 +139,6 @@ public sealed class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioLanguagePart : Idra
   public override System.Collections.Generic.IReadOnlySet<string> StoredTensors { get; }
   public override int Width { get; }
   public override string Family { get; }
-  public void SetTraining(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, bool training)
 
 public static class Idrak.Audio.Plugins.IdrakAudio.IdrakAudioPlugin
   public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }

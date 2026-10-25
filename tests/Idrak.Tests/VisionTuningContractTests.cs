@@ -564,6 +564,8 @@ internal static partial class Tests
         using var encoder = vision.CreateEncoder(new VisionEncoderOptions { Device = device, Weights = EncoderWeights.Float32 });
         var stages = (IVisionEncoderStages)encoder;
         var image = ImageCodecs.Decode(TestData("vlm/image.png"));
+        Check(encoder is ITrainableVisionEncoder trainable && ReferenceEquals(trainable.Vision, vision) && ReferenceEquals(VisionTuningParts.Trainable(vision, encoder), encoder),
+            "the encoder carries the training members (ITrainableVisionEncoder), its vision part the one that built it");
         CheckTrainableProjector(tuning, encoder, stages, image, device, "tiny Gemma 3");
 
         // The tower: its output with gradients equals the stage's, and gradients reach its weights and the pixels.
@@ -595,7 +597,7 @@ internal static partial class Tests
         Idrak.Vision.Plugins.Llava.LlavaPlugin.Register();
         using var llava = PretrainedModel.Load(LlavaData("tiny-llava"), new PretrainedOptions { Device = device });
         using var otherEncoder = llava.Vision!.CreateEncoder(new VisionEncoderOptions { Device = device });
-        Check(Failure<ArgumentException>(() => tuning.Features(otherEncoder, frozen)).Message.Contains("not an encoder of this Gemma 3 vision part", StringComparison.Ordinal), "another family's encoder");
+        Check(Failure<ArgumentException>(() => tuning.Features(otherEncoder, frozen)).Message.Contains("LlavaImageEncoder is not an encoder of this Gemma3ForConditionalGeneration vision part", StringComparison.Ordinal), "another family's encoder");
     }
 
     private static void VisionTuningPartLlava(Device device)

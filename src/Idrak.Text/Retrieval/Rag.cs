@@ -163,6 +163,7 @@ public sealed partial class RagPipeline
     {
         _model = model;
         Retriever = retriever;
+        Index = retriever as ISearchableRetriever;                      // tested once, here (rule 75)
         _top = top;
         _reranker = reranker;
         _keep = keep;
@@ -176,8 +177,8 @@ public sealed partial class RagPipeline
     /// <summary>Where passages come from.</summary>
     public IRetriever Retriever { get; }
 
-    /// <summary>The index passages come from, when the retriever is a <see cref="RetrievalIndex"/> (null for another retriever).</summary>
-    public RetrievalIndex? Index => Retriever as RetrievalIndex;
+    /// <summary>The chunks passages come from, when the retriever holds them (<see cref="ISearchableRetriever"/>, a <see cref="RetrievalIndex"/>; null for another retriever).</summary>
+    public ISearchableRetriever? Index { get; }
 
     /// <summary>The outcome of the most recent <see cref="StreamAsync"/>, once its stream has ended.</summary>
     public RagAnswer? LastAnswer { get; private set; }

@@ -37,7 +37,8 @@ public enum Mp3Quality
 /// <summary>
 /// How <see cref="Mp3Encoder"/> encodes: constant bit rate MPEG-1 Layer III (32, 44.1 and 48 kHz) or MPEG-2 Layer III
 /// (16, 22.05 and 24 kHz). Every value has a default; <see cref="FromEnvironment"/> reads them from IDRAK_MP3_*
-/// variables (what the library's <see cref="Mp3Encoder"/> uses when it is given none).
+/// variables (what the library's <see cref="Mp3Encoder"/> uses when it is given none), and a call sets any of them by key
+/// through <see cref="AudioEncodeOptions.Parameters"/> (<see cref="Schema"/>).
 /// </summary>
 public sealed record Mp3EncodeOptions
 {
@@ -46,6 +47,21 @@ public sealed record Mp3EncodeOptions
 
     private static readonly int[] Mpeg1Bitrates = [32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
     private static readonly int[] Mpeg2Bitrates = [8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+
+    private static readonly OptionSpec<int?> BitrateOption = new("bitrate", null, "a bit rate in kbit/s", "the constant bit rate (Bitrate)", WholeOrNone, null);
+    private static readonly OptionSpec<int?> RateOption = new("rate", null, "a sample rate in Hz", "the output's sample rate (SampleRate)", WholeOrNone, null);
+    private static readonly OptionSpec<string> ChannelsOption = OptionSpec.Choice("channels", "joint", "joint", "jointstereo", "stereo", "mono");
+    private static readonly OptionSpec<string> QualityOption = OptionSpec.Choice("quality", "standard", "fast", "standard", "high");
+    private static readonly OptionSpec<int?> LowpassOption = new("lowpass", null, "a frequency in Hz (0 for none)", "the highest frequency kept (LowpassHz)", WholeOrNone, null);
+    private static readonly OptionSpec<int> FramesPerTaskOption = OptionSpec.Whole("frames_per_task", 32, summary: "frames a worker analyses at a time (FramesPerTask)");
+
+    /// <summary>
+    /// The options <see cref="Mp3Encoder"/> declares (its <see cref="IAudioEncoder.Parameters"/>, the keys of
+    /// <see cref="AudioEncodeOptions.Parameters"/>): bitrate (kbit/s), rate (Hz), channels (joint, stereo or mono), quality
+    /// (fast, standard or high), lowpass (Hz, 0 for none) and frames_per_task, the values the IDRAK_MP3_* variables take
+    /// (<see cref="FromEnvironment"/>). A key given there sets that value over the encoder's own options.
+    /// </summary>
+    public static OptionSchema Schema { get; } = new("mp3 encoder", BitrateOption, RateOption, ChannelsOption, QualityOption, LowpassOption, FramesPerTaskOption);
 
     /// <summary>
     /// The constant bit rate in kbit/s; null: <see cref="DefaultBitrate"/> for the output's rate and channels. It must be
@@ -150,6 +166,67 @@ public sealed record Mp3EncodeOptions
         }
 
         return options;
+    }
+
+    /// <summary>These options with each value <paramref name="values"/> gives (parsed by <see cref="Schema"/>) in place of its own.</summary>
+    internal Mp3EncodeOptions With(OptionValues values)
+    {
+        var options = this;
+        if (values.IsGiven(BitrateOption))
+        {
+            options = options with { Bitrate = values.Get(BitrateOption) };
+        }
+
+        if (values.IsGiven(RateOption))
+        {
+            options = options with { SampleRate = values.Get(RateOption) };
+        }
+
+        if (values.IsGiven(ChannelsOption))
+        {
+            options = options with
+            {
+                ChannelMode = values.Get(ChannelsOption) switch
+                {
+                    "stereo" => Mp3ChannelMode.Stereo,
+                    "mono" => Mp3ChannelMode.Mono,
+                    _ => Mp3ChannelMode.JointStereo,
+                },
+            };
+        }
+
+        if (values.IsGiven(QualityOption))
+        {
+            options = options with
+            {
+                Quality = values.Get(QualityOption) switch
+                {
+                    "fast" => Mp3Quality.Fast,
+                    "high" => Mp3Quality.High,
+                    _ => Mp3Quality.Standard,
+                },
+            };
+        }
+
+        if (values.IsGiven(LowpassOption))
+        {
+            options = options with { LowpassHz = values.Get(LowpassOption) };
+        }
+
+        if (values.IsGiven(FramesPerTaskOption))
+        {
+            options = options with { FramesPerTask = values.Get(FramesPerTaskOption) };
+        }
+
+        return options;
+    }
+
+    // A whole number parsed from the span (rule 29).
+    private static bool WholeOrNone(ReadOnlySpan<char> text, out int? value)
+    {
+        bool parsed = int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n);
+        value = parsed ? n : null;
+        return parsed;
     }
 
     private static string? Read(string name) => Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value.Trim() : null;

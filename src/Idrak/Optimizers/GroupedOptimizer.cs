@@ -16,7 +16,7 @@ namespace Idrak.Optimizers;
 ///     _ => new GroupedOptimizer(new AdamW(body.Parameters(), 1e-4f), new AdamW(head.Parameters(), 1e-3f)));
 /// </code>
 /// </example>
-public sealed class GroupedOptimizer : Optimizer, IStatefulOptimizer
+public sealed class GroupedOptimizer : Optimizer, IStatefulOptimizer, IGroupedOptimizer
 {
     private readonly Optimizer[] _groups;
     private readonly float[] _initialRates;
@@ -101,6 +101,9 @@ public sealed class GroupedOptimizer : Optimizer, IStatefulOptimizer
 
     /// <summary>The combined optimizers, in order.</summary>
     public IReadOnlyList<Optimizer> Groups => _groups;
+
+    /// <inheritdoc />
+    IReadOnlyList<IOptimizer> IGroupedOptimizer.Groups => _groups;
 
     /// <inheritdoc />
     public override void Step()

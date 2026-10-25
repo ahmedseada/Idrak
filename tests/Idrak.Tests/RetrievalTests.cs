@@ -479,6 +479,7 @@ internal static partial class Tests
         var rag = Rag.For(fake).Retrieve(new FixedRetriever("The market is quiet.", "The harbour is busy today.", "Harbour tours leave at nine."), 3)
             .Rerank(new ContainsReranker(), 1).Build();
         var answer = rag.AskAsync("how is the harbour").GetAwaiter().GetResult();
+        Check(ReferenceEquals(Rag.For(fake).Retrieve(hybrid, 2).Build().Index, hybrid), "a retrieval index is the pipeline's searchable index (ISearchableRetriever)");
         Check(rag.Index is null && answer.Passages.Single().Chunk.Text == "The harbour is busy today." && answer.Cited.Single().Number == 1,
             string.Join(" | ", answer.Passages.Select(p => p.Chunk.Text)));
         var tools = ToolRegistry.Create().Add(RetrievalTools.Search(new FixedRetriever("one", "two"), 1, "search_web", "Searches the web.")).Build();

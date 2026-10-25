@@ -245,11 +245,11 @@ public sealed class QwenVision : PretrainedVision, IVisionTuningPart
     /// <summary>The merger (<see cref="VisionTuningParts.Projector"/>) and the tower train; LoRA runs usually train the merger alone or neither.</summary>
     public IReadOnlyList<string> TrainableParts { get; } = [VisionTuningParts.Projector, VisionTuningParts.Tower];
 
-    /// <inheritdoc />
-    public IReadOnlyList<Tensor> Parameters(IVisionEncoder encoder, string part)
+    /// <summary>The parameters of the part <paramref name="part"/> in <paramref name="own"/> (its <see cref="ITrainableVisionEncoder.ParametersOf"/>).</summary>
+    internal IReadOnlyList<Tensor> Parameters(QwenImageEncoder own, string part)
     {
         ArgumentNullException.ThrowIfNull(part);
-        var module = Part(Own(encoder), part);
+        var module = Part(own, part);
         if (module.Buffers().Any())
         {
             throw new InvalidOperationException($"Qwen-VL's {Normalized(part)} holds packed (bfloat16) weights in this encoder, which do not train; "
@@ -260,10 +260,9 @@ public sealed class QwenVision : PretrainedVision, IVisionTuningPart
     }
 
     /// <summary>The image tokens' embeddings [images, tokens, text width] of the tower's output [images, patches, tower width], recording gradients.</summary>
-    public Tensor Features(IVisionEncoder encoder, Tensor towerOutput)
+    internal Tensor Features(QwenImageEncoder own, Tensor towerOutput)
     {
         ArgumentNullException.ThrowIfNull(towerOutput);
-        var own = Own(encoder);
         if (towerOutput.Device != own.Device)
         {
             throw new ArgumentException($"The tower's output is on {towerOutput.Device}, the encoder on {own.Device}: move it first (gradients do not cross a copy).", nameof(towerOutput));
@@ -273,19 +272,17 @@ public sealed class QwenVision : PretrainedVision, IVisionTuningPart
     }
 
     /// <summary>The tower's output [images, patches, tower width] of pixel values [images, grid rows, grid columns, patch values], recording gradients.</summary>
-    public Tensor Tower(IVisionEncoder encoder, Tensor pixelValues)
+    internal Tensor Tower(QwenImageEncoder own, Tensor pixelValues)
     {
         ArgumentNullException.ThrowIfNull(pixelValues);
-        var own = Own(encoder);
         var input = pixelValues.Device == own.Device ? pixelValues : Tensor.From(pixelValues.ToArray(), pixelValues.Shape, own.Device);   // kept: the backward pass reads it
         return own.VisionTower.Forward(input);
     }
 
     /// <summary>The part's tensors under the checkpoint's names, as stored (Linear weights [out, in]; the patch embedding [dim, channels, temporal, patch, patch]).</summary>
-    public IReadOnlyDictionary<string, Tensor> Export(IVisionEncoder encoder, string part)
+    internal IReadOnlyDictionary<string, Tensor> Export(QwenImageEncoder own, string part)
     {
-        _ = Parameters(encoder, part);                                                   // refuses an unknown part and packed weights
-        var own = Own(encoder);
+        _ = Parameters(own, part);                                                      // refuses an unknown part and packed weights
         var tensors = new Dictionary<string, Tensor>(StringComparer.Ordinal);
         foreach (var (name, (tensor, transposed)) in Values(own, Normalized(part)))
         {
@@ -303,10 +300,9 @@ public sealed class QwenVision : PretrainedVision, IVisionTuningPart
     }
 
     /// <summary>Sets the merger's or the tower's tensors from tensors named and laid out as <see cref="Export"/> gives them; returns the names taken.</summary>
-    public IReadOnlyCollection<string> Import(IVisionEncoder encoder, IReadOnlyDictionary<string, Tensor> tensors)
+    internal IReadOnlyCollection<string> Import(QwenImageEncoder own, IReadOnlyDictionary<string, Tensor> tensors)
     {
         ArgumentNullException.ThrowIfNull(tensors);
-        var own = Own(encoder);
         var taken = new List<string>();
         foreach (string part in TrainableParts)
         {
@@ -417,10 +413,6 @@ public sealed class QwenVision : PretrainedVision, IVisionTuningPart
         yield return ("merger.mlp.2.weight", [c.OutDim, m]);
         yield return ("merger.mlp.2.bias", [c.OutDim]);
     }
-
-    private QwenImageEncoder Own(IVisionEncoder encoder) => encoder is QwenImageEncoder own && ReferenceEquals(own.Vision, this)
-        ? own
-        : throw new ArgumentException("The encoder is not one this vision part made (QwenVision.CreateEncoder).", nameof(encoder));
 
     private static string Normalized(string part) => part.Trim().ToLowerInvariant();
 

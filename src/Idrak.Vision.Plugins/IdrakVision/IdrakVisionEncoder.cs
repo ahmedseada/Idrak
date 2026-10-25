@@ -11,7 +11,7 @@ namespace Idrak.Vision.Plugins.IdrakVision;
 /// An IdrakVision image encoder: an image becomes one block of <see cref="IdrakVisionTokens.TokensPerImage"/> tokens
 /// (the pooled grid, row-major), through the preprocessing, the tower and the projector.
 /// </summary>
-public sealed class IdrakVisionEncoder : Module, IVisionEncoder, IVisionEncoderStages
+public sealed class IdrakVisionEncoder : Module, ITrainableVisionEncoder, IVisionEncoderStages
 {
     private readonly ImageTokenLayout _layout;
 
@@ -27,6 +27,19 @@ public sealed class IdrakVisionEncoder : Module, IVisionEncoder, IVisionEncoderS
 
     /// <summary>The vision part that built it.</summary>
     public IdrakVisionPart Vision { get; }
+
+    // Training (the family's members over this encoder's modules, as ITrainableVisionEncoder).
+    IPretrainedVision ITrainableVisionEncoder.Vision => Vision;
+
+    IReadOnlyList<Tensor> ITrainableVisionEncoder.ParametersOf(string part) => Vision.Parameters(this, part);
+
+    Tensor ITrainableVisionEncoder.FeaturesForTraining(Tensor towerOutput) => Vision.Features(this, towerOutput);
+
+    Tensor ITrainableVisionEncoder.TowerForTraining(Tensor pixelValues) => Vision.Tower(this, pixelValues);
+
+    IReadOnlyDictionary<string, Tensor> ITrainableVisionEncoder.ExportPart(string part) => Vision.Export(this, part);
+
+    IReadOnlyCollection<string> ITrainableVisionEncoder.ImportParts(IReadOnlyDictionary<string, Tensor> tensors) => Vision.Import(this, tensors);
 
     /// <summary>The tower.</summary>
     public VisionTransformerEncoder Tower { get; }

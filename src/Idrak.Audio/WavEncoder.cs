@@ -27,6 +27,11 @@ public sealed class WavEncoder : IAudioEncoder
         ArgumentNullException.ThrowIfNull(audio);
         ArgumentNullException.ThrowIfNull(output);
         options ??= new AudioEncodeOptions();
+        if (options.Parameters is { Count: > 0 } parameters)
+        {
+            _ = AudioEncoders.NoParameters.Parse(parameters);                           // WAV takes none: every key refused, by name
+        }
+
         int bits = options.Float ? 32 : options.BitsPerSample;
         if (!options.Float && bits is not (8 or 16 or 24 or 32))
         {

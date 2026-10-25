@@ -162,6 +162,14 @@ public interface IDistillationTeacher : IDisposable
     ITeacherDistributions Distributions(IReadOnlyList<TrainingSequence> sequences);
 
     /// <summary>
+    /// Whether the teacher computes its distributions on any sequence, also one it has never seen (a loaded model, a
+    /// teacher served elsewhere): what on-policy distillation needs, which trains on the student's own new samples. True by
+    /// default; a teacher of stored distributions, which hold only the sequences they were written for, says false (the
+    /// built-in teacher file does), and on-policy distillation refuses it.
+    /// </summary>
+    bool Live => true;
+
+    /// <summary>
     /// Checks that a student with the tokenizer <paramref name="student"/> can learn from this teacher (see
     /// <see cref="TeacherVocabulary.Check"/>). Throws <see cref="InvalidOperationException"/> naming the difference when not.
     /// </summary>

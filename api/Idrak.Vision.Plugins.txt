@@ -60,7 +60,7 @@ public sealed class Idrak.Vision.Plugins.Crnn.MeasuredLineBatches
   public int Largest { get; }
   public void Run(int count, System.Func<int, int> steps, System.Action<int, int> run)
 
-public sealed class Idrak.Vision.Plugins.Gemma.Gemma3ImageEncoder : Idrak.Abstraction.Module, Idrak.Abstraction.Generation.IVisionEncoder, Idrak.Abstraction.Generation.IVisionEncoderStages
+public sealed class Idrak.Vision.Plugins.Gemma.Gemma3ImageEncoder : Idrak.Abstraction.Module, Idrak.Abstraction.Generation.ITrainableVisionEncoder, Idrak.Abstraction.Generation.IVisionEncoder, Idrak.Abstraction.Generation.IVisionEncoderStages
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Generation.ImageTokenLayout BlockLayout { get; }
   public Idrak.Abstraction.Tensor Encode(Idrak.Abstraction.Data.ImageData image)
@@ -119,17 +119,12 @@ public sealed class Idrak.Vision.Plugins.Gemma.Gemma3Projector : Idrak.Abstracti
 
 public sealed class Idrak.Vision.Plugins.Gemma.Gemma3Vision : Idrak.Abstraction.Generation.PretrainedVision, Idrak.Abstraction.Generation.IVisionTuningPart
   public Idrak.Abstraction.Formats.ITensorStore OpenTensors()
-  public Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor towerOutput)
-  public Idrak.Abstraction.Tensor Tower(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor pixelValues)
   public Idrak.Imaging.ImagePreprocessor Preprocessor(bool grayscale = false)
   public Idrak.Vision.Plugins.Gemma.Gemma3ImageEncoder CreateEncoder(Idrak.Abstraction.Device? device, Idrak.Imaging.ImagePreprocessor? preprocessor = null, Idrak.Vision.Plugins.Gemma.Gemma3PanAndScan? panAndScan = null, Idrak.Abstraction.Generation.EncoderWeights weights = (Idrak.Abstraction.Generation.EncoderWeights)0)
   public Idrak.Vision.Plugins.Gemma.Gemma3ImageTokens ImageTokens { get; }
   public Idrak.Vision.Plugins.Gemma.Gemma3PanAndScan PanAndScan { get; }
   public Idrak.Vision.Plugins.Gemma.SiglipVisionConfig Encoder { get; }
-  public System.Collections.Generic.IReadOnlyCollection<string> Import(Idrak.Abstraction.Generation.IVisionEncoder encoder, System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> tensors)
-  public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> Export(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
   public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Vision.Plugins.Gemma.VisionTensor> Tensors { get; }
-  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
   public System.Collections.Generic.IReadOnlyList<string> PartsOf(System.Collections.Generic.IEnumerable<string> names)
   public System.Collections.Generic.IReadOnlyList<string> TrainableParts { get; }
   public float ProjectorNormEpsilon { get; }
@@ -205,7 +200,7 @@ public sealed record Idrak.Vision.Plugins.IdrakVision.IdrakVisionConfig : System
   public string Activation { get; init; }
   public string ProjectorActivation { get; init; }
 
-public sealed class Idrak.Vision.Plugins.IdrakVision.IdrakVisionEncoder : Idrak.Abstraction.Module, Idrak.Abstraction.Generation.IVisionEncoder, Idrak.Abstraction.Generation.IVisionEncoderStages
+public sealed class Idrak.Vision.Plugins.IdrakVision.IdrakVisionEncoder : Idrak.Abstraction.Module, Idrak.Abstraction.Generation.ITrainableVisionEncoder, Idrak.Abstraction.Generation.IVisionEncoder, Idrak.Abstraction.Generation.IVisionEncoderStages
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Tensor Encode(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData> images)
   public Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Tensor pixelValues)
@@ -230,14 +225,9 @@ public sealed class Idrak.Vision.Plugins.IdrakVision.IdrakVisionFamily : Idrak.M
   public string Name { get; }
 
 public sealed class Idrak.Vision.Plugins.IdrakVision.IdrakVisionPart : Idrak.Abstraction.Generation.PretrainedVision, Idrak.Abstraction.Generation.IVisionTuningPart
-  public Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor towerOutput)
-  public Idrak.Abstraction.Tensor Tower(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor pixelValues)
   public Idrak.Imaging.ImagePreprocessor Preprocessor(bool grayscale = false)
   public Idrak.Vision.Plugins.IdrakVision.IdrakVisionConfig Config { get; }
   public Idrak.Vision.Plugins.IdrakVision.IdrakVisionTokens Tokens { get; }
-  public System.Collections.Generic.IReadOnlyCollection<string> Import(Idrak.Abstraction.Generation.IVisionEncoder encoder, System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> tensors)
-  public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> Export(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
-  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
   public System.Collections.Generic.IReadOnlyList<string> PartsOf(System.Collections.Generic.IEnumerable<string> names)
   public System.Collections.Generic.IReadOnlyList<string> TrainableParts { get; }
   public override Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
@@ -290,7 +280,7 @@ public sealed class Idrak.Vision.Plugins.Llava.ClipVisionTower : Idrak.Abstracti
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
   public static Idrak.Vision.Plugins.Llava.ClipVisionTower FromTensors(Idrak.Vision.Plugins.Llava.ClipVisionConfig config, int layers, Idrak.Abstraction.Formats.ITensorStore store, string prefix, Idrak.Abstraction.Device device)
 
-public sealed class Idrak.Vision.Plugins.Llava.LlavaImageEncoder : Idrak.Abstraction.Generation.IVisionEncoder, Idrak.Abstraction.Generation.IVisionEncoderStages, System.IDisposable
+public sealed class Idrak.Vision.Plugins.Llava.LlavaImageEncoder : Idrak.Abstraction.Generation.ITrainableVisionEncoder, Idrak.Abstraction.Generation.IVisionEncoder, Idrak.Abstraction.Generation.IVisionEncoderStages, System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Tensor pixelValues)
   public Idrak.Abstraction.Tensor PixelValues(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Generation.VisionOptions? options = null)
@@ -319,13 +309,8 @@ public sealed class Idrak.Vision.Plugins.Llava.LlavaProjector : Idrak.Abstractio
 
 public sealed class Idrak.Vision.Plugins.Llava.LlavaVision : Idrak.Abstraction.Generation.PretrainedVision, Idrak.Abstraction.Generation.IVisionTuningPart
   public Idrak.Abstraction.Generation.ImageTokenLayout Layout { get; }
-  public Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor towerOutput)
-  public Idrak.Abstraction.Tensor Tower(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor pixelValues)
   public Idrak.Imaging.ImagePreprocessor Preprocessor(bool grayscale = false)
   public Idrak.Vision.Plugins.Llava.ClipVisionConfig Clip { get; }
-  public System.Collections.Generic.IReadOnlyCollection<string> Import(Idrak.Abstraction.Generation.IVisionEncoder encoder, System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> tensors)
-  public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> Export(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
-  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
   public System.Collections.Generic.IReadOnlyList<int> HiddenLayers { get; }
   public System.Collections.Generic.IReadOnlyList<string> TrainableParts { get; }
   public bool Full { get; }
@@ -343,7 +328,7 @@ public sealed class Idrak.Vision.Plugins.Llava.LlavaVisionFamily : Idrak.Models.
   public LlavaVisionFamily()
   public string Name { get; }
 
-public sealed class Idrak.Vision.Plugins.Qwen.QwenImageEncoder : Idrak.Abstraction.Module, Idrak.Abstraction.Generation.IVisionEncoder, Idrak.Abstraction.Generation.IVisionEncoderStages
+public sealed class Idrak.Vision.Plugins.Qwen.QwenImageEncoder : Idrak.Abstraction.Module, Idrak.Abstraction.Generation.ITrainableVisionEncoder, Idrak.Abstraction.Generation.IVisionEncoder, Idrak.Abstraction.Generation.IVisionEncoderStages
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Tensor pixelValues)
   public Idrak.Abstraction.Tensor PixelValues(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Generation.VisionOptions? options = null)
@@ -411,16 +396,11 @@ public static class Idrak.Vision.Plugins.Qwen.QwenTextDecoder
 
 public sealed class Idrak.Vision.Plugins.Qwen.QwenVision : Idrak.Abstraction.Generation.PretrainedVision, Idrak.Abstraction.Generation.IVisionTuningPart
   public Idrak.Abstraction.Formats.ITensorStore OpenTensors()
-  public Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor towerOutput)
-  public Idrak.Abstraction.Tensor Tower(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor pixelValues)
   public Idrak.Vision.Plugins.Qwen.QwenImageProcessor Processor(bool grayscale = false)
   public Idrak.Vision.Plugins.Qwen.QwenImageTokens ImageTokens { get; }
   public Idrak.Vision.Plugins.Qwen.QwenVisionConfig Config { get; }
   public Idrak.Vision.Plugins.Qwen.QwenVlVariant Variant { get; }
-  public System.Collections.Generic.IReadOnlyCollection<string> Import(Idrak.Abstraction.Generation.IVisionEncoder encoder, System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> tensors)
-  public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> Export(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
   public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Vision.Plugins.Qwen.QwenTensor> Tensors { get; }
-  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
   public System.Collections.Generic.IReadOnlyList<string> PartsOf(System.Collections.Generic.IEnumerable<string> names)
   public System.Collections.Generic.IReadOnlyList<string> TrainableParts { get; }
   public int TextDim { get; }

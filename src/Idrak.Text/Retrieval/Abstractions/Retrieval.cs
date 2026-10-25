@@ -28,6 +28,19 @@ public interface IRetriever
 }
 
 /// <summary>
+/// A retriever over chunks it holds (<c>RetrievalIndex</c> is the built-in one): what it searches can be listed and
+/// searched directly, beside retrieving for a pipeline. <c>RagPipeline.Index</c> shows it when the pipeline's retriever is one.
+/// </summary>
+public interface ISearchableRetriever : IRetriever
+{
+    /// <summary>The searched chunks; a chunk's <see cref="Chunk.Id"/> is its position here.</summary>
+    IReadOnlyList<Chunk> Chunks { get; }
+
+    /// <summary>The <paramref name="top"/> best chunks for <paramref name="query"/>, best first.</summary>
+    ValueTask<IReadOnlyList<RetrievedChunk>> SearchAsync(string query, int top, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
 /// Re-orders a first search's candidates by reading each with the query. <c>CrossEncoder</c> is the built-in one;
 /// implement this to use a hosted re-ranking service.
 /// </summary>

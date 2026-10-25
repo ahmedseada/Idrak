@@ -359,11 +359,10 @@ public sealed class LlavaVision : PretrainedVision, IVisionTuningPart
     /// <summary>LLaVA lets its projector (the two-layer MLP) train; its CLIP tower stays frozen.</summary>
     public IReadOnlyList<string> TrainableParts { get; } = [VisionTuningParts.Projector];
 
-    /// <inheritdoc />
-    public IReadOnlyList<Tensor> Parameters(IVisionEncoder encoder, string part)
+    /// <summary>The parameters of the part <paramref name="part"/> in <paramref name="own"/> (its <see cref="ITrainableVisionEncoder.ParametersOf"/>).</summary>
+    internal IReadOnlyList<Tensor> Parameters(LlavaImageEncoder own, string part)
     {
         ArgumentNullException.ThrowIfNull(part);
-        var own = Own(encoder);
         return string.Equals(part.Trim(), VisionTuningParts.Projector, StringComparison.OrdinalIgnoreCase) ? [.. own.Projector.Parameters()]
             : throw new NotSupportedException($"The vision family {Family} does not offer '{part}' for training; it offers: {string.Join(", ", TrainableParts)}.");
     }
@@ -372,10 +371,9 @@ public sealed class LlavaVision : PretrainedVision, IVisionTuningPart
     /// The features [images, tokens, width] of the selected hidden states [images, patches + 1, width · layers] (as the
     /// encoder's <c>Tower</c> gives them): the class token dropped for "default", then the projector, recording gradients.
     /// </summary>
-    public Tensor Features(IVisionEncoder encoder, Tensor towerOutput)
+    internal Tensor Features(LlavaImageEncoder own, Tensor towerOutput)
     {
         ArgumentNullException.ThrowIfNull(towerOutput);
-        var own = Own(encoder);
         if (towerOutput.Rank != 3 || towerOutput.Shape[1] != Clip.Patches + 1)
         {
             throw new ArgumentException($"LLaVA's tower output is [images, {Clip.Patches + 1}, width], got {Tensor.FormatShape(towerOutput.Shape)}.", nameof(towerOutput));
@@ -386,14 +384,13 @@ public sealed class LlavaVision : PretrainedVision, IVisionTuningPart
 
     /// <summary>LLaVA does not offer its tower for training.</summary>
     /// <exception cref="NotSupportedException">Always: the message names the parts offered.</exception>
-    public Tensor Tower(IVisionEncoder encoder, Tensor pixelValues) =>
+    internal Tensor Tower(LlavaImageEncoder own, Tensor pixelValues) =>
         throw new NotSupportedException($"The vision family {Family} does not offer '{VisionTuningParts.Tower}' for training; it offers: {string.Join(", ", TrainableParts)}.");
 
     /// <summary>The projector's linear_1 and linear_2 (weight [out, in] and bias) under the checkpoint's names, as stored.</summary>
-    public IReadOnlyDictionary<string, Tensor> Export(IVisionEncoder encoder, string part)
+    internal IReadOnlyDictionary<string, Tensor> Export(LlavaImageEncoder own, string part)
     {
-        _ = Parameters(encoder, part);                                                   // refuses another part
-        var own = Own(encoder);
+        _ = Parameters(own, part);                                                      // refuses another part
         var tensors = new Dictionary<string, Tensor>(StringComparer.Ordinal);
         foreach (var (name, layer) in ProjectorLayers(own))
         {
@@ -419,10 +416,9 @@ public sealed class LlavaVision : PretrainedVision, IVisionTuningPart
     }
 
     /// <summary>Sets the projector's layers from tensors named and laid out as <see cref="Export"/> gives them; returns the names taken.</summary>
-    public IReadOnlyCollection<string> Import(IVisionEncoder encoder, IReadOnlyDictionary<string, Tensor> tensors)
+    internal IReadOnlyCollection<string> Import(LlavaImageEncoder own, IReadOnlyDictionary<string, Tensor> tensors)
     {
         ArgumentNullException.ThrowIfNull(tensors);
-        var own = Own(encoder);
         var taken = new List<string>();
         foreach (var (name, layer) in ProjectorLayers(own))
         {
@@ -464,13 +460,6 @@ public sealed class LlavaVision : PretrainedVision, IVisionTuningPart
     }
 
     private static (string Name, Linear Layer)[] ProjectorLayers(LlavaImageEncoder own) => [("linear_1", own.Projector.First), ("linear_2", own.Projector.Second)];
-
-    private LlavaImageEncoder Own(IVisionEncoder encoder)
-    {
-        ArgumentNullException.ThrowIfNull(encoder);
-        return encoder is LlavaImageEncoder own && ReferenceEquals(own.Vision, this) ? own
-            : throw new ArgumentException($"{encoder.GetType().Name} is not an encoder of this LLaVA vision part.", nameof(encoder));
-    }
 
     /// <inheritdoc />
     public override IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null)
@@ -604,13 +593,26 @@ public sealed class LlavaProjector : Module
 }
 
 /// <summary>LLaVA's image side as Idrak's <see cref="IVisionEncoder"/>.</summary>
-public sealed class LlavaImageEncoder : IVisionEncoder, IVisionEncoderStages
+public sealed class LlavaImageEncoder : ITrainableVisionEncoder, IVisionEncoderStages
 {
     internal LlavaImageEncoder(LlavaVision vision, ClipVisionTower tower, LlavaProjector projector, ImagePreprocessor preprocessor, Device device) =>
         (Vision, ClipTower, Projector, Preprocessor, Device) = (vision, tower, projector, preprocessor, device);
 
     /// <summary>The vision part it was built from.</summary>
     public LlavaVision Vision { get; }
+
+    // Training (the family's members over this encoder's modules, as ITrainableVisionEncoder).
+    IPretrainedVision ITrainableVisionEncoder.Vision => Vision;
+
+    IReadOnlyList<Tensor> ITrainableVisionEncoder.ParametersOf(string part) => Vision.Parameters(this, part);
+
+    Tensor ITrainableVisionEncoder.FeaturesForTraining(Tensor towerOutput) => Vision.Features(this, towerOutput);
+
+    Tensor ITrainableVisionEncoder.TowerForTraining(Tensor pixelValues) => Vision.Tower(this, pixelValues);
+
+    IReadOnlyDictionary<string, Tensor> ITrainableVisionEncoder.ExportPart(string part) => Vision.Export(this, part);
+
+    IReadOnlyCollection<string> ITrainableVisionEncoder.ImportParts(IReadOnlyDictionary<string, Tensor> tensors) => Vision.Import(this, tensors);
 
     /// <summary>The CLIP tower.</summary>
     public ClipVisionTower ClipTower { get; }

@@ -175,6 +175,7 @@ public sealed class Idrak.Audio.Abstractions.AudioData
 
 public sealed record Idrak.Audio.Abstractions.AudioEncodeOptions : System.IEquatable<Idrak.Audio.Abstractions.AudioEncodeOptions>
   public AudioEncodeOptions()
+  public System.Collections.Generic.IReadOnlyDictionary<string, string>? Parameters { get; init; }
   public bool Float { get; init; }
   public int BitsPerSample { get; init; }
 
@@ -185,6 +186,7 @@ public sealed record Idrak.Audio.Abstractions.AudioEncoderOptions : System.IEqua
   public System.Collections.Generic.IReadOnlyDictionary<string, (int[], float[])>? Trained { get; init; }
 
 public static class Idrak.Audio.Abstractions.AudioEncoders
+  public static Idrak.Abstraction.OptionSchema NoParameters { get; }
   public static Idrak.Audio.Abstractions.IAudioEncoder For(string path)
   public static Idrak.Audio.Abstractions.IAudioEncoder Get(string name)
   public static Idrak.Audio.Abstractions.IAudioEncoder? Default(string name)
@@ -429,6 +431,7 @@ public interface Idrak.Audio.Abstractions.IAudioCodec
   public string Name { get; }
 
 public interface Idrak.Audio.Abstractions.IAudioEncoder
+  public (default) Idrak.Abstraction.OptionSchema Parameters { get; }
   public string Extension { get; }
   public string Name { get; }
   public void Encode(Idrak.Audio.Abstractions.AudioData audio, System.IO.Stream output, Idrak.Audio.Abstractions.AudioEncodeOptions? options = null)
@@ -479,11 +482,7 @@ public interface Idrak.Audio.Abstractions.IAudioStage : System.IDisposable
   public int SampleRate { get; }
 
 public interface Idrak.Audio.Abstractions.IAudioTuningPart
-  public System.Collections.Generic.IReadOnlyList<(string, int[], float[])> Export(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, System.Collections.Generic.IReadOnlyCollection<string> parts)
-  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> EncodeTraining(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioData> audios, bool checkpointing)
-  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Train(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, System.Collections.Generic.IReadOnlyCollection<string> parts)
   public System.Collections.Generic.IReadOnlyList<string> TrainableParts { get; }
-  public void SetTraining(Idrak.Audio.Abstractions.IAudioLanguageEncoder encoder, bool training)
 
 public interface Idrak.Audio.Abstractions.ICheckpointVoiceStore : Idrak.Audio.Abstractions.IVoiceStore
   public Idrak.Audio.Abstractions.VoiceProfile AddCheckpoint(string name, string modelFolder, Idrak.Audio.Abstractions.VoiceCheckpointOptions options)
@@ -606,6 +605,13 @@ public interface Idrak.Audio.Abstractions.ITextRomanizer
   public bool Covers(System.Text.Rune rune)
   public string Name { get; }
   public string Romanize(string text)
+
+public interface Idrak.Audio.Abstractions.ITrainableAudioEncoder : Idrak.Audio.Abstractions.IAudioLanguageEncoder, System.IDisposable
+  public Idrak.Audio.Abstractions.IPretrainedAudio Audio { get; }
+  public System.Collections.Generic.IReadOnlyList<(string, int[], float[])> Export(System.Collections.Generic.IReadOnlyCollection<string> parts)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageFeatures> EncodeTraining(System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.AudioData> audios, bool checkpointing)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Train(System.Collections.Generic.IReadOnlyCollection<string> parts)
+  public void SetTraining(bool training)
 
 public interface Idrak.Audio.Abstractions.ITrainableSpeechModel : Idrak.Audio.Abstractions.ISpeechRecognizer, System.IDisposable
   public Idrak.Abstraction.Module Network { get; }
@@ -1358,12 +1364,14 @@ public sealed record Idrak.Audio.Mp3EncodeOptions : System.IEquatable<Idrak.Audi
   public int? Bitrate { get; init; }
   public int? LowpassHz { get; init; }
   public int? SampleRate { get; init; }
+  public static Idrak.Abstraction.OptionSchema Schema { get; }
   public static Idrak.Audio.Mp3EncodeOptions FromEnvironment()
   public static System.Collections.Generic.IReadOnlyList<int> Bitrates(int sampleRate)
   public static System.Collections.Generic.IReadOnlyList<int> SampleRates { get; }
   public static int DefaultBitrate(int sampleRate, int channels)
 
 public sealed class Idrak.Audio.Mp3Encoder : Idrak.Audio.Abstractions.IAudioEncoder
+  public Idrak.Abstraction.OptionSchema Parameters { get; }
   public Idrak.Audio.Mp3EncodeOptions Options { get; }
   public Mp3Encoder(Idrak.Audio.Mp3EncodeOptions? options = null)
   public const int Delay = 1057

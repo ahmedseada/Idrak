@@ -46,7 +46,8 @@ public sealed class TuningVision : IDisposable
 {
     private readonly ConcurrentDictionary<(string Image, TuningImages Preparation), IReadOnlyList<ImageTokenLayout>> _blocks = new();
     private readonly bool _ownsCache;
-    private readonly IVisionTuningPart? _projector;              // runs each step on the cached tower output, when set
+    private readonly bool _projects;                             // the projector runs each step on the cached tower output
+    private readonly ITrainableVisionEncoder? _trainable;        // the encoder's training members, taken once (rule 75) when a part trains or was trained
     private readonly Lock _family = new();                       // the family's Blocks and Expand, one call at a time
     private readonly string _weights;                            // the encoder's weight formats, for the cache's keys
     private readonly Lazy<bool> _tensorCores;                    // whether the device runs reduced-precision products on tensor cores
@@ -63,7 +64,9 @@ public sealed class TuningVision : IDisposable
     {
         (Model, Vision, Encoder, Images, Parts, Tuning, Parameters, Cache, _ownsCache, Checkpoint) =
             (model, model.Vision!, encoder, images, parts, tuning, parameters, cache, ownsCache, checkpoint);
-        _projector = tuning ?? (model.TrainedVisionTensors.Count > 0 ? Vision as IVisionTuningPart : null);
+        var projector = tuning ?? (model.TrainedVisionTensors.Count > 0 ? Vision as IVisionTuningPart : null);
+        _projects = projector is not null;
+        _trainable = projector is null ? null : VisionTuningParts.Trainable(projector, encoder);
         _weights = WeightFormats(encoder);
         _tensorCores = new Lazy<bool>(() => MixedPrecision.TensorCoresUnavailable(encoder.Device) is null);
     }
@@ -372,7 +375,7 @@ public sealed class TuningVision : IDisposable
     /// the projector trains or the model carries trained vision tensors (the projector then runs in every step); else the
     /// features.
     /// </summary>
-    public string CachedStage => TrainsTower ? FeatureCacheKey.PixelsStage : _projector is not null ? FeatureCacheKey.TowerStage : FeatureCacheKey.FeaturesStage;
+    public string CachedStage => TrainsTower ? FeatureCacheKey.PixelsStage : _projects ? FeatureCacheKey.TowerStage : FeatureCacheKey.FeaturesStage;
 
     /// <summary>
     /// The time the last batch's images took (their cached stage from the cache or computed, then the trained or carried
@@ -421,12 +424,12 @@ public sealed class TuningVision : IDisposable
             if (TrainsTower)
             {
                 using var blocks = checkpointing ? ActivationMemory.CheckpointBlocks() : (ActivationMemory.Scope?)null;
-                features = Joined(kept, x => Tuning!.Tower(Encoder, x), ref passes);
+                features = Joined(kept, x => _trainable!.TowerForTraining(x), ref passes);
             }
 
-            if (_projector is not null)
+            if (_projects)
             {
-                features = Joined(features, x => _projector.Features(Encoder, x), ref passes);   // [blocks, tokens, width] each
+                features = Joined(features, x => _trainable!.FeaturesForTraining(x), ref passes);   // [blocks, tokens, width] each
             }
         }
 
@@ -509,7 +512,7 @@ public sealed class TuningVision : IDisposable
             return [.. pixels.Select(scope.Keep)];
         }
 
-        Func<Tensor, Tensor> pass = _projector is not null ? stages.Tower : stages.Features;
+        Func<Tensor, Tensor> pass = _projects ? stages.Tower : stages.Features;
         IReadOnlyList<Tensor> outputs;
         int counted = passes;
         try
@@ -524,7 +527,7 @@ public sealed class TuningVision : IDisposable
         }
 
         passes = counted;
-        return [.. outputs.Select(o => scope.Keep(_projector is not null || o.Rank != 3 ? o : o.Reshape(o.Shape[0] * o.Shape[1], o.Shape[2])))];
+        return [.. outputs.Select(o => scope.Keep(_projects || o.Rank != 3 ? o : o.Reshape(o.Shape[0] * o.Shape[1], o.Shape[2])))];
     }
 
     // Pixel values on the encoder's device (a family may make them on the host).

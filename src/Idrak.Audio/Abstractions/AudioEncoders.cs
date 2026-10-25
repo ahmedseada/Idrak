@@ -13,6 +13,13 @@ public sealed record AudioEncodeOptions
 
     /// <summary>Whether to store floating-point samples (32-bit) instead of integers.</summary>
     public bool Float { get; init; }
+
+    /// <summary>
+    /// The format's own options by key, each value as text (<see cref="IAudioEncoder.Parameters"/> declares them: MP3's
+    /// bit rate, say), over the encoder's own settings; null or empty: those settings alone. A key the encoder does not
+    /// declare is refused.
+    /// </summary>
+    public IReadOnlyDictionary<string, string>? Parameters { get; init; }
 }
 
 /// <summary>
@@ -27,6 +34,13 @@ public interface IAudioEncoder
     /// <summary>The file extension it writes, with the dot, e.g. ".wav"; <see cref="AudioEncoders.Save"/> picks an encoder by it.</summary>
     string Extension { get; }
 
+    /// <summary>
+    /// The options the format takes beyond the sample format, declared with their types, ranges and defaults: the keys of
+    /// <see cref="AudioEncodeOptions.Parameters"/>, which the encoder parses with it. None by default
+    /// (<see cref="AudioEncoders.NoParameters"/>).
+    /// </summary>
+    OptionSchema Parameters => AudioEncoders.NoParameters;
+
     /// <summary>Writes <paramref name="audio"/> to <paramref name="output"/> (16-bit integers unless <paramref name="options"/> say otherwise).</summary>
     void Encode(AudioData audio, Stream output, AudioEncodeOptions? options = null);
 }
@@ -40,6 +54,9 @@ public interface IAudioEncoder
 public static class AudioEncoders
 {
     private static readonly SlotTable<string, IAudioEncoder> Registry = BuiltIn();
+
+    /// <summary>The options of an encoder that takes none beyond the sample format (<see cref="IAudioEncoder.Parameters"/>'s default): every key refused.</summary>
+    public static OptionSchema NoParameters { get; } = new("audio encoder");
 
     private static SlotTable<string, IAudioEncoder> BuiltIn()
     {
@@ -128,6 +145,8 @@ public static class AudioEncoders
         public string Name => app.Name;
 
         public string Extension => app.Extension;
+
+        public OptionSchema Parameters => app.Parameters;
 
         public void Encode(AudioData audio, Stream output, AudioEncodeOptions? options = null)
         {

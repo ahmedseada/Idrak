@@ -65,13 +65,13 @@ public static class DistillationTeachers
     /// one's own), not stored logits (<see cref="FromFile"/>, which hold only the sequences they were written for); and it
     /// must share the student's vocabulary (<see cref="IDistillationTeacher.Check"/>).
     /// </summary>
-    /// <exception cref="NotSupportedException">A teacher file.</exception>
+    /// <exception cref="NotSupportedException">A teacher that is not live (<see cref="IDistillationTeacher.Live"/>: a teacher file).</exception>
     /// <exception cref="InvalidOperationException">The vocabularies differ: the message names <c>idrak distill --generate</c> (answers the teacher writes, which cross tokenizers).</exception>
     public static void CheckOnPolicy(IDistillationTeacher teacher, ITokenizer student)
     {
         ArgumentNullException.ThrowIfNull(teacher);
         ArgumentNullException.ThrowIfNull(student);
-        if (teacher is StoredTeacher)
+        if (!teacher.Live)
         {
             throw new NotSupportedException("On-policy distillation needs a live teacher (DistillationTeachers.FromModel): a teacher file holds the logits of the "
                                             + "sequences it was written for, and on-policy distillation trains on the student's own new samples, which no file covers.");
@@ -571,6 +571,9 @@ internal sealed class StoredTeacher(TeacherLogitsFile file) : IDistillationTeach
     public int Vocabulary => file.Vocabulary;
 
     public int TopK => file.TopK;
+
+    // Stored logits cover only the sequences they were written for.
+    public bool Live => false;
 
     // The fingerprint the file stores; a file written without one cannot say what its vocabulary is.
     public TeacherVocabulary Identity { get; } = file.VocabularyFingerprint is { } fingerprint ? TeacherVocabulary.Fingerprinted(fingerprint)

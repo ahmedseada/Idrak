@@ -22,6 +22,8 @@ public sealed class ChatAudioParts : ITrainableSoftParts
     private readonly Lock _family = new();                       // the family's Blocks and Encode, one call at a time
     private readonly bool _ownsCache, _ownsEncoder;
     private readonly string _options;
+    private readonly IAudioTuningPart? _tuning;                  // the family's trainable side, taken once (rule 75)
+    private readonly ITrainableAudioEncoder? _trainable;         // the encoder's training members, when the family trains and built it
 
     /// <summary>
     /// A source over <paramref name="audio"/> with <paramref name="encoder"/> (the family's, on the model's device).
@@ -39,6 +41,7 @@ public sealed class ChatAudioParts : ITrainableSoftParts
         Cache = cache ?? FeatureCaches.Create(FeatureCaches.Memory);
         Checkpoint = checkpoint ?? audio.Family;
         _options = audio.Features.Options.ToJson().ToJsonString();
+        (_tuning, _trainable) = Trainable(audio, Encoder);
     }
 
     // A source over a model's part (the "audio" model part's Open): its encoder built with `options`, and the cache
@@ -52,7 +55,18 @@ public sealed class ChatAudioParts : ITrainableSoftParts
         Cache = cache ?? FeatureCaches.Create(FeatureCaches.Memory);
         Checkpoint = audio.Family;
         _options = audio.Features.Options.ToJson().ToJsonString();
+        (_tuning, _trainable) = Trainable(audio, Encoder);
     }
+
+    // The family's trainable side and the encoder's training members (when the family built it): tested once, here.
+    private static (IAudioTuningPart?, ITrainableAudioEncoder?) Trainable(IPretrainedAudio audio, IAudioLanguageEncoder encoder) =>
+        audio is IAudioTuningPart tuning
+            ? (tuning, encoder is ITrainableAudioEncoder trainable && ReferenceEquals(trainable.Audio, audio) ? trainable : null)
+            : (null, null);
+
+    // The encoder's training members; an encoder the family did not build cannot train.
+    private ITrainableAudioEncoder Trains() =>
+        _trainable ?? throw new ArgumentException($"The encoder is not this {Audio.Family} audio part's (make one with its CreateEncoder): it cannot train.");
 
     /// <summary>The model's audio part.</summary>
     public IPretrainedAudio Audio { get; }
@@ -78,7 +92,7 @@ public sealed class ChatAudioParts : ITrainableSoftParts
     public string Kind => ChatParts.Audio;
 
     /// <inheritdoc />
-    public IReadOnlyList<string> TrainableParts => (Audio as IAudioTuningPart)?.TrainableParts ?? [];
+    public IReadOnlyList<string> TrainableParts => _tuning?.TrainableParts ?? [];
 
     /// <inheritdoc />
     public IReadOnlyList<Tensor> Parameters { get; private set; } = [];
@@ -90,14 +104,14 @@ public sealed class ChatAudioParts : ITrainableSoftParts
     public IReadOnlyList<Tensor> Train(IReadOnlyCollection<string> parts)
     {
         ArgumentNullException.ThrowIfNull(parts);
-        if (Audio is not IAudioTuningPart tuning)
+        if (_tuning is null)
         {
             return parts.Count == 0 ? [] : throw new ArgumentException($"Audio family '{Audio.Family}' trains no parts (its audio part is not an IAudioTuningPart); asked for {string.Join(", ", parts)}.", nameof(parts));
         }
 
         lock (_family)
         {
-            Parameters = tuning.Train(Encoder, parts);
+            Parameters = Trains().Train(parts);
             Trained = [.. parts];
         }
 
@@ -107,9 +121,9 @@ public sealed class ChatAudioParts : ITrainableSoftParts
     /// <inheritdoc />
     public void SetTraining(bool training)
     {
-        if (Audio is IAudioTuningPart tuning)
+        if (_tuning is not null)
         {
-            tuning.SetTraining(Encoder, training);
+            Trains().SetTraining(training);
         }
     }
 
@@ -117,10 +131,12 @@ public sealed class ChatAudioParts : ITrainableSoftParts
     public IReadOnlyList<ImageFeatures> EncodeTraining(IReadOnlyList<ChatPart> parts, bool checkpointing)
     {
         ArgumentNullException.ThrowIfNull(parts);
-        if (Audio is not IAudioTuningPart tuning)
+        if (_tuning is null)
         {
             return Encode(parts);
         }
+
+        var trainable = Trains();
 
         var decoded = new List<AudioData>(parts.Count);
         foreach (var part in parts)
@@ -132,7 +148,7 @@ public sealed class ChatAudioParts : ITrainableSoftParts
         IReadOnlyList<ImageFeatures> encoded;
         lock (_family)
         {
-            encoded = tuning.EncodeTraining(Encoder, decoded, checkpointing);
+            encoded = trainable.EncodeTraining(decoded, checkpointing);
         }
 
         Interlocked.Add(ref _encoded, parts.Count);
@@ -149,10 +165,10 @@ public sealed class ChatAudioParts : ITrainableSoftParts
             return [];
         }
 
-        var tuning = Audio as IAudioTuningPart ?? throw new InvalidOperationException($"Audio family '{Audio.Family}' trains no parts.");
+        var trainable = _tuning is null ? throw new InvalidOperationException($"Audio family '{Audio.Family}' trains no parts.") : Trains();
         lock (_family)
         {
-            return tuning.Export(Encoder, parts);
+            return trainable.Export(parts);
         }
     }
 

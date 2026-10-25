@@ -97,6 +97,7 @@ public interface Idrak.Text.Abstractions.ICodingLanguage
   public string Summary { get; }
 
 public interface Idrak.Text.Abstractions.IDistillationTeacher : System.IDisposable
+  public (default) bool Live { get; }
   public (default) void Check(Idrak.Abstraction.Generation.ITokenizer student)
   public Idrak.Text.Abstractions.ITeacherDistributions Distributions(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences)
   public Idrak.Text.Abstractions.TeacherVocabulary Identity { get; }
@@ -1253,6 +1254,10 @@ public interface Idrak.Text.Retrieval.Abstractions.IReranker
 public interface Idrak.Text.Retrieval.Abstractions.IRetriever
   public System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Abstractions.RetrievedChunk>> RetrieveAsync(string query, int top, System.Threading.CancellationToken cancellationToken = default)
 
+public interface Idrak.Text.Retrieval.Abstractions.ISearchableRetriever : Idrak.Text.Retrieval.Abstractions.IRetriever
+  public System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Abstractions.Chunk> Chunks { get; }
+  public System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Abstractions.RetrievedChunk>> SearchAsync(string query, int top, System.Threading.CancellationToken cancellationToken = default)
+
 public sealed record Idrak.Text.Retrieval.Abstractions.RetrievedChunk : System.IEquatable<Idrak.Text.Retrieval.Abstractions.RetrievedChunk>
   public Idrak.Text.Retrieval.Abstractions.Chunk Chunk { get; init; }
   public RetrievedChunk(Idrak.Text.Retrieval.Abstractions.Chunk Chunk, double Score, int? KeywordRank, int? VectorRank)
@@ -1321,8 +1326,8 @@ public sealed class Idrak.Text.Retrieval.RagBuilder
 
 public sealed class Idrak.Text.Retrieval.RagPipeline
   public Idrak.Text.Retrieval.Abstractions.IRetriever Retriever { get; }
+  public Idrak.Text.Retrieval.Abstractions.ISearchableRetriever? Index { get; }
   public Idrak.Text.Retrieval.RagAnswer? LastAnswer { get; }
-  public Idrak.Text.Retrieval.RetrievalIndex? Index { get; }
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.ChatDelta> StreamAsync(string question, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages(string question, System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Citation> passages)
   public System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Citation> Retrieve(string question)
@@ -1330,7 +1335,7 @@ public sealed class Idrak.Text.Retrieval.RagPipeline
   public System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Citation>> RetrieveAsync(string question, System.Threading.CancellationToken cancellationToken = default)
   public static System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Citation> CitedIn(string text, System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Citation> passages)
 
-public sealed class Idrak.Text.Retrieval.RetrievalIndex : Idrak.Text.Retrieval.Abstractions.IRetriever
+public sealed class Idrak.Text.Retrieval.RetrievalIndex : Idrak.Text.Retrieval.Abstractions.IRetriever, Idrak.Text.Retrieval.Abstractions.ISearchableRetriever
   public (int, int)? Fusion { get; }
   public Idrak.Abstraction.Retrieval.IEmbedder? Embedder { get; }
   public Idrak.Abstraction.Retrieval.IVectorStore? Store { get; }

@@ -227,10 +227,9 @@ public sealed class IdrakVisionPart : PretrainedVision, IVisionTuningPart
     /// <summary>The tower and the projector train.</summary>
     public IReadOnlyList<string> TrainableParts { get; } = [VisionTuningParts.Projector, VisionTuningParts.Tower];
 
-    /// <inheritdoc />
-    public IReadOnlyList<Tensor> Parameters(IVisionEncoder encoder, string part)
+    /// <summary>The parameters of the part <paramref name="part"/> in <paramref name="own"/> (its <see cref="ITrainableVisionEncoder.ParametersOf"/>).</summary>
+    internal IReadOnlyList<Tensor> Parameters(IdrakVisionEncoder own, string part)
     {
-        var own = Own(encoder);
         return Part(part) switch
         {
             VisionTuningParts.Projector => [.. own.Projector.Parameters()],
@@ -238,30 +237,27 @@ public sealed class IdrakVisionPart : PretrainedVision, IVisionTuningPart
         };
     }
 
-    /// <inheritdoc />
-    public Tensor Features(IVisionEncoder encoder, Tensor towerOutput) => Own(encoder).Projector.Forward(towerOutput);
+    /// <summary>The features of the tower's output through <paramref name="own"/>'s projector, recording gradients (its <see cref="ITrainableVisionEncoder.FeaturesForTraining"/>).</summary>
+    internal Tensor Features(IdrakVisionEncoder own, Tensor towerOutput) => own.Projector.Forward(towerOutput);
 
-    /// <inheritdoc />
-    public Tensor Tower(IVisionEncoder encoder, Tensor pixelValues)
+    /// <summary>The tower's output of pixel values in <paramref name="own"/>, recording gradients (its <see cref="ITrainableVisionEncoder.TowerForTraining"/>).</summary>
+    internal Tensor Tower(IdrakVisionEncoder own, Tensor pixelValues)
     {
-        var own = Own(encoder);
         var input = pixelValues.Device == own.Device ? pixelValues : Tensor.From(pixelValues.ToArray(), pixelValues.Shape, own.Device);
         return own.Tower.ForwardTraining(input, ActivationMemory.CheckpointsBlocks);
     }
 
-    /// <inheritdoc />
-    public IReadOnlyDictionary<string, Tensor> Export(IVisionEncoder encoder, string part)
+    /// <summary>The part's tensors in <paramref name="own"/> under the checkpoint's names, as stored (its <see cref="ITrainableVisionEncoder.ExportPart"/>).</summary>
+    internal IReadOnlyDictionary<string, Tensor> Export(IdrakVisionEncoder own, string part)
     {
-        var own = Own(encoder);
         var values = Part(part) == VisionTuningParts.Projector ? own.Projector.Tensors(IdrakVisionFamily.ProjectorPrefix) : own.Tower.Tensors(IdrakVisionFamily.TowerPrefix);
         return values.ToDictionary(t => t.Name, t => Tensor.From(t.Values, t.Shape, Device.Cpu), StringComparer.Ordinal);
     }
 
-    /// <inheritdoc />
-    public IReadOnlyCollection<string> Import(IVisionEncoder encoder, IReadOnlyDictionary<string, Tensor> tensors)
+    /// <summary>Sets <paramref name="own"/>'s trainable parts from tensors named and laid out as <see cref="Export"/> gives them (its <see cref="ITrainableVisionEncoder.ImportParts"/>).</summary>
+    internal IReadOnlyCollection<string> Import(IdrakVisionEncoder own, IReadOnlyDictionary<string, Tensor> tensors)
     {
         ArgumentNullException.ThrowIfNull(tensors);
-        var own = Own(encoder);
         var values = tensors.ToDictionary(t => t.Key, t => t.Value.ToArray(), StringComparer.Ordinal);
         return [.. own.Tower.Load(IdrakVisionFamily.TowerPrefix, values), .. own.Projector.Load(IdrakVisionFamily.ProjectorPrefix, values)];
     }
@@ -293,11 +289,4 @@ public sealed class IdrakVisionPart : PretrainedVision, IVisionTuningPart
         VisionTuningParts.Tower => VisionTuningParts.Tower,
         _ => throw new NotSupportedException($"The vision family {Family} does not offer '{part}' for training; it offers: {string.Join(", ", TrainableParts)}."),
     };
-
-    private IdrakVisionEncoder Own(IVisionEncoder encoder)
-    {
-        ArgumentNullException.ThrowIfNull(encoder);
-        return encoder is IdrakVisionEncoder own && ReferenceEquals(own.Vision, this) ? own
-            : throw new ArgumentException($"{encoder.GetType().Name} is not an encoder of this IdrakVision part (make one with its CreateEncoder).", nameof(encoder));
-    }
 }

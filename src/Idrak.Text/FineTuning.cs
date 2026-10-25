@@ -1968,12 +1968,12 @@ public static class FineTuner
         public void Dispose() => DropGraphs();
 
         // Whether the optimizer updates the parameters where they are: one that says so (IInPlaceOptimizer), a group of
-        // such, or one of one's own that does not bring the gradients to the host (IHostGradients: the CPU update, which
+        // such (IGroupedOptimizer), or one of one's own that does not bring the gradients to the host (IHostGradients: the CPU update, which
         // releases them); the gradient buffers of one that does not say so are checked before recording and replaying.
         private static bool Recordable(IOptimizer optimizer) => optimizer switch
         {
             IInPlaceOptimizer => true,
-            GroupedOptimizer grouped => grouped.Groups.All(Recordable),
+            IGroupedOptimizer grouped => grouped.Groups.All(Recordable),
             _ => optimizer is not IHostGradients,
         };
     }

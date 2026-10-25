@@ -33,29 +33,42 @@ public sealed record AudioEncoderOptions
 
 /// <summary>
 /// The trainable side of a family's audio part (implemented by its <see cref="IPretrainedAudio"/> when it trains, as a
-/// from-scratch family's does): which parts it trains, their parameters in its encoder, the features with gradients and
-/// the trained tensors in the checkpoint's names. <c>ChatAudioParts</c> uses it to be a trainable soft-part source.
+/// from-scratch family's does): which parts it trains. The training itself is the encoder's
+/// (<see cref="ITrainableAudioEncoder"/>: the encoders the family builds implement it, so no part casts an encoder to its
+/// own type). <c>ChatAudioParts</c> uses both to be a trainable soft-part source.
 /// </summary>
 public interface IAudioTuningPart
 {
     /// <summary>The parts it can train, by the names a training stage uses ("audio-encoder", "audio-projector").</summary>
     IReadOnlyList<string> TrainableParts { get; }
+}
 
-    /// <summary>Makes the parameters of <paramref name="parts"/> in <paramref name="encoder"/> trainable and every other one frozen; returns them.</summary>
-    /// <exception cref="ArgumentException">A part is not one it offers, or the encoder is not this family's.</exception>
-    IReadOnlyList<Tensor> Train(IAudioLanguageEncoder encoder, IReadOnlyCollection<string> parts);
+/// <summary>
+/// The training side of an encoder a trainable audio family builds (<see cref="IAudioTuningPart"/>): the parameters of
+/// its parts, the features with gradients and the trained tensors in the checkpoint's names. Each member works on this
+/// encoder's own modules, so a source takes the encoder as this interface once, when it is given the encoder, and calls
+/// it every step without a check.
+/// </summary>
+public interface ITrainableAudioEncoder : IAudioLanguageEncoder
+{
+    /// <summary>The audio part that built this encoder (its <see cref="IPretrainedAudio.CreateEncoder"/>).</summary>
+    IPretrainedAudio Audio { get; }
+
+    /// <summary>Makes the parameters of <paramref name="parts"/> trainable and every other one frozen; returns them.</summary>
+    /// <exception cref="ArgumentException">A part is not one the family offers.</exception>
+    IReadOnlyList<Tensor> Train(IReadOnlyCollection<string> parts);
 
     /// <summary>Training or evaluation mode of the encoder's layers (dropout).</summary>
-    void SetTraining(IAudioLanguageEncoder encoder, bool training);
+    void SetTraining(bool training);
 
     /// <summary>
     /// <see cref="IAudioLanguageEncoder.Encode"/> recording gradients to the trained parameters; <paramref name="checkpointing"/>
     /// keeps only each block's output and recomputes the rest in the backward pass.
     /// </summary>
-    IReadOnlyList<ImageFeatures> EncodeTraining(IAudioLanguageEncoder encoder, IReadOnlyList<AudioData> audios, bool checkpointing);
+    IReadOnlyList<ImageFeatures> EncodeTraining(IReadOnlyList<AudioData> audios, bool checkpointing);
 
-    /// <summary>The tensors of <paramref name="parts"/> as they are now in <paramref name="encoder"/>, under the checkpoint's names and layout, on the host.</summary>
-    IReadOnlyList<(string Name, int[] Shape, float[] Values)> Export(IAudioLanguageEncoder encoder, IReadOnlyCollection<string> parts);
+    /// <summary>The tensors of <paramref name="parts"/> as they are now, under the checkpoint's names and layout, on the host.</summary>
+    IReadOnlyList<(string Name, int[] Shape, float[] Values)> Export(IReadOnlyCollection<string> parts);
 }
 
 /// <summary>

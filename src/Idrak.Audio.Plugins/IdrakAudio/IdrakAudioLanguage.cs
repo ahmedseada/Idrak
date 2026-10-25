@@ -297,10 +297,9 @@ public sealed class IdrakAudioLanguagePart : PretrainedAudio, IAudioTuningPart
         }
     }
 
-    /// <inheritdoc />
-    public IReadOnlyList<Tensor> Train(IAudioLanguageEncoder encoder, IReadOnlyCollection<string> parts)
+    /// <summary>Makes the parameters of <paramref name="parts"/> in <paramref name="own"/> trainable and every other one frozen (its <see cref="ITrainableAudioEncoder.Train"/>).</summary>
+    internal IReadOnlyList<Tensor> Train(IdrakAudioLanguageEncoder own, IReadOnlyCollection<string> parts)
     {
-        var own = Own(encoder);
         if (parts.FirstOrDefault(p => !TrainableParts.Contains(p, StringComparer.OrdinalIgnoreCase)) is { } unknown)
         {
             throw new ArgumentException($"The IdrakAudio audio part has no part '{unknown}' ({string.Join(", ", TrainableParts)}).", nameof(parts));
@@ -323,10 +322,9 @@ public sealed class IdrakAudioLanguagePart : PretrainedAudio, IAudioTuningPart
         return chosen;
     }
 
-    /// <inheritdoc />
-    public void SetTraining(IAudioLanguageEncoder encoder, bool training)
+    /// <summary>Training or evaluation mode of <paramref name="own"/>'s layers (its <see cref="ITrainableAudioEncoder.SetTraining"/>).</summary>
+    internal static void SetTraining(IdrakAudioLanguageEncoder own, bool training)
     {
-        var own = Own(encoder);
         foreach (var module in new Module[] { own.Tower, own.Projector })
         {
             if (training)
@@ -340,14 +338,9 @@ public sealed class IdrakAudioLanguagePart : PretrainedAudio, IAudioTuningPart
         }
     }
 
-    /// <inheritdoc />
-    public IReadOnlyList<ImageFeatures> EncodeTraining(IAudioLanguageEncoder encoder, IReadOnlyList<AudioData> audios, bool checkpointing) =>
-        Own(encoder).Run(audios, checkpointing);
-
-    /// <inheritdoc />
-    public IReadOnlyList<(string Name, int[] Shape, float[] Values)> Export(IAudioLanguageEncoder encoder, IReadOnlyCollection<string> parts)
+    /// <summary>The tensors of <paramref name="parts"/> as they are now in <paramref name="own"/>, under the checkpoint's names and layout (its <see cref="ITrainableAudioEncoder.Export"/>).</summary>
+    internal static IReadOnlyList<(string Name, int[] Shape, float[] Values)> Export(IdrakAudioLanguageEncoder own, IReadOnlyCollection<string> parts)
     {
-        var own = Own(encoder);
         var result = new List<(string, int[], float[])>();
         foreach (var (entries, part) in new[] { (own.TowerEntries, IdrakAudioLanguageFamily.EncoderPart), (own.ProjectorEntries, IdrakAudioLanguageFamily.ProjectorPart) })
         {
@@ -362,9 +355,6 @@ public sealed class IdrakAudioLanguagePart : PretrainedAudio, IAudioTuningPart
 
         return result;
     }
-
-    private IdrakAudioLanguageEncoder Own(IAudioLanguageEncoder encoder) => encoder is IdrakAudioLanguageEncoder own && ReferenceEquals(own.Part, this)
-        ? own : throw new ArgumentException("The encoder is not this IdrakAudio audio part's (CreateEncoder).", nameof(encoder));
 }
 
 /// <summary>
@@ -372,7 +362,7 @@ public sealed class IdrakAudioLanguagePart : PretrainedAudio, IAudioTuningPart
 /// encoder (a batch padded, each sound's own steps attended to), every <see cref="IdrakAudioProjectorConfig.Stack"/> steps
 /// joined and projected: one block of soft tokens per sound, the same alone and in a batch.
 /// </summary>
-public sealed class IdrakAudioLanguageEncoder : IAudioLanguageEncoder
+public sealed class IdrakAudioLanguageEncoder : ITrainableAudioEncoder
 {
     internal IdrakAudioLanguageEncoder(IdrakAudioLanguagePart part, IdrakAudioEncoder tower, IdrakAudioProjector projector,
         IReadOnlyList<(string Name, Tensor Tensor, int[] Stored, bool Transposed)> towerEntries,
@@ -384,6 +374,17 @@ public sealed class IdrakAudioLanguageEncoder : IAudioLanguageEncoder
     }
 
     internal IdrakAudioLanguagePart Part { get; }
+
+    // Training (the part's members over this encoder's modules, as ITrainableAudioEncoder).
+    IPretrainedAudio ITrainableAudioEncoder.Audio => Part;
+
+    IReadOnlyList<Tensor> ITrainableAudioEncoder.Train(IReadOnlyCollection<string> parts) => Part.Train(this, parts);
+
+    void ITrainableAudioEncoder.SetTraining(bool training) => IdrakAudioLanguagePart.SetTraining(this, training);
+
+    IReadOnlyList<ImageFeatures> ITrainableAudioEncoder.EncodeTraining(IReadOnlyList<AudioData> audios, bool checkpointing) => Run(audios, checkpointing);
+
+    IReadOnlyList<(string Name, int[] Shape, float[] Values)> ITrainableAudioEncoder.Export(IReadOnlyCollection<string> parts) => IdrakAudioLanguagePart.Export(this, parts);
 
     internal IReadOnlyList<(string Name, Tensor Tensor, int[] Stored, bool Transposed)> TowerEntries { get; }
 

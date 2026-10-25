@@ -149,67 +149,47 @@ public enum EncoderWeights
 /// tower's output to the language model's width) and <see cref="VisionTuningParts.Tower"/> (the vision encoder itself);
 /// a family offers the ones it can train.
 /// <para>
-/// Every method takes an encoder the family built (<see cref="IPretrainedVision.CreateEncoder"/>), whose modules hold the
-/// parameters, and refuses another. The forward passes record gradients (when autograd is on) and give the same values as
-/// the encoder's stages (<see cref="IVisionEncoderStages"/>): <see cref="Tower"/> as <c>Tower</c>, and
+/// The training itself is the encoder's (<see cref="ITrainableVisionEncoder"/>: the encoders the family builds implement
+/// it, so no part casts an encoder to its own type). The members here that take an encoder forward to it, once it is
+/// checked to be one this family built (<see cref="VisionTuningParts.Trainable"/>); a tuner that calls them every step
+/// takes the encoder's members once instead. The forward passes record gradients (when autograd is on) and give the same
+/// values as the encoder's stages (<see cref="IVisionEncoderStages"/>): <see cref="Tower"/> as <c>Tower</c>, and
 /// <see cref="Features"/> of the tower's output as <c>Features</c> of the pixel values. A tuner with a frozen tower keeps
 /// the tower's output (a feature cache) and runs only <see cref="Features"/> each step. A trained part is saved beside the
 /// adapters by the checkpoint's own names and layout (<see cref="Export"/>, as PEFT's <c>modules_to_save</c>) and put
 /// back into a new encoder by <see cref="Import"/>.
 /// </para>
 /// </summary>
-public interface IVisionTuningPart
+public interface IVisionTuningPart : IPretrainedVision
 {
     /// <summary>The parts this family lets train, by name (<see cref="VisionTuningParts.Projector"/>, <see cref="VisionTuningParts.Tower"/>).</summary>
     IReadOnlyList<string> TrainableParts { get; }
 
-    /// <summary>
-    /// The parameters of the part <paramref name="part"/> in <paramref name="encoder"/>: leaf tensors the caller marks to
-    /// receive gradients (<see cref="Tensor.RequiresGrad"/>) and gives its optimizer.
-    /// </summary>
+    /// <summary>The encoder's <see cref="ITrainableVisionEncoder.ParametersOf"/>.</summary>
     /// <exception cref="ArgumentException">The encoder is not one this family built.</exception>
     /// <exception cref="NotSupportedException">The family does not offer <paramref name="part"/> (the message names the parts it offers).</exception>
     /// <exception cref="InvalidOperationException">The part's weights are held fixed in this encoder (packed or bfloat16); the message says how to build one that trains.</exception>
-    IReadOnlyList<Tensor> Parameters(IVisionEncoder encoder, string part);
+    IReadOnlyList<Tensor> Parameters(IVisionEncoder encoder, string part) => VisionTuningParts.Trainable(this, encoder).ParametersOf(part);
 
-    /// <summary>
-    /// The features [images, tokens, width] of the tower's output <paramref name="towerOutput"/> (as
-    /// <see cref="IVisionEncoderStages.Tower"/> or <see cref="Tower"/> gives it, on the encoder's device), through the
-    /// family's projection, recording gradients.
-    /// </summary>
+    /// <summary>The encoder's <see cref="ITrainableVisionEncoder.FeaturesForTraining"/>.</summary>
     /// <exception cref="ArgumentException">The encoder is not one this family built, or the shape is not the tower's output.</exception>
-    Tensor Features(IVisionEncoder encoder, Tensor towerOutput);
+    Tensor Features(IVisionEncoder encoder, Tensor towerOutput) => VisionTuningParts.Trainable(this, encoder).FeaturesForTraining(towerOutput);
 
-    /// <summary>
-    /// The tower's output for pixel values [images, channels, height, width] (as <see cref="IVisionEncoderStages.PixelValues"/>
-    /// gives them, several images' values joined along the first dimension giving each image's output as alone), recording
-    /// gradients: for training <see cref="VisionTuningParts.Tower"/>. While <see cref="ActivationMemory.CheckpointsBlocks"/>
-    /// is on (the tuner checkpoints), the family runs the tower's blocks checkpointed (each block's output kept, the block
-    /// run again in the backward pass), with the same gradients.
-    /// </summary>
+    /// <summary>The encoder's <see cref="ITrainableVisionEncoder.TowerForTraining"/>.</summary>
     /// <exception cref="ArgumentException">The encoder is not one this family built.</exception>
     /// <exception cref="NotSupportedException">The family does not offer <see cref="VisionTuningParts.Tower"/>.</exception>
-    Tensor Tower(IVisionEncoder encoder, Tensor pixelValues);
+    Tensor Tower(IVisionEncoder encoder, Tensor pixelValues) => VisionTuningParts.Trainable(this, encoder).TowerForTraining(pixelValues);
 
-    /// <summary>
-    /// The values of the part <paramref name="part"/> in <paramref name="encoder"/> as the checkpoint stores them: each
-    /// tensor under its name in the checkpoint (one of <see cref="IPretrainedVision.StoredTensors"/>) and in the
-    /// checkpoint's layout, as new tensors on the CPU that the caller disposes. What a fine-tune saves beside its adapters
-    /// (PEFT's <c>modules_to_save</c>), so transformers reads the trained part as it reads the checkpoint's.
-    /// </summary>
+    /// <summary>The encoder's <see cref="ITrainableVisionEncoder.ExportPart"/>.</summary>
     /// <exception cref="ArgumentException">The encoder is not one this family built.</exception>
     /// <exception cref="NotSupportedException">The family does not offer <paramref name="part"/>, or cannot write it yet (the message says).</exception>
     /// <exception cref="InvalidOperationException">The part's weights are held packed in this encoder.</exception>
-    IReadOnlyDictionary<string, Tensor> Export(IVisionEncoder encoder, string part);
+    IReadOnlyDictionary<string, Tensor> Export(IVisionEncoder encoder, string part) => VisionTuningParts.Trainable(this, encoder).ExportPart(part);
 
-    /// <summary>
-    /// Puts <paramref name="tensors"/> (named and laid out as <see cref="Export"/> gives them, on any device) into
-    /// <paramref name="encoder"/>'s trainable parts, and returns the names it took; a name of no part it offers is left
-    /// for the caller to report.
-    /// </summary>
+    /// <summary>The encoder's <see cref="ITrainableVisionEncoder.ImportParts"/>.</summary>
     /// <exception cref="ArgumentException">The encoder is not one this family built, or a tensor's shape is not the part's.</exception>
     /// <exception cref="InvalidOperationException">The part's weights are held packed in this encoder (build it with <see cref="EncoderWeights.Float32"/>).</exception>
-    IReadOnlyCollection<string> Import(IVisionEncoder encoder, IReadOnlyDictionary<string, Tensor> tensors);
+    IReadOnlyCollection<string> Import(IVisionEncoder encoder, IReadOnlyDictionary<string, Tensor> tensors) => VisionTuningParts.Trainable(this, encoder).ImportParts(tensors);
 
     /// <summary>
     /// The parts whose tensors <paramref name="names"/> (checkpoint names, as <see cref="Export"/> gives them) are: the
@@ -218,6 +198,62 @@ public interface IVisionTuningPart
     /// checkpoint's precision.
     /// </summary>
     IReadOnlyList<string> PartsOf(IEnumerable<string> names) => TrainableParts;
+}
+
+/// <summary>
+/// The training side of an encoder a trainable vision family builds (<see cref="IVisionTuningPart"/>): the parameters of
+/// a part, the tower and the projection with gradients, and the trained values in the checkpoint's names. Each member
+/// works on this encoder's own modules, so a tuner takes the encoder as this interface once, when it is given the encoder,
+/// and calls it every step without a check.
+/// </summary>
+public interface ITrainableVisionEncoder : IVisionEncoder
+{
+    /// <summary>The vision part that built this encoder (its <see cref="IPretrainedVision.CreateEncoder"/>).</summary>
+    IPretrainedVision Vision { get; }
+
+    /// <summary>
+    /// The parameters of the part <paramref name="part"/>: leaf tensors the caller marks to receive gradients
+    /// (<see cref="Tensor.RequiresGrad"/>) and gives its optimizer.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The family does not offer <paramref name="part"/> (the message names the parts it offers).</exception>
+    /// <exception cref="InvalidOperationException">The part's weights are held fixed in this encoder (packed or bfloat16); the message says how to build one that trains.</exception>
+    IReadOnlyList<Tensor> ParametersOf(string part);
+
+    /// <summary>
+    /// The features [images, tokens, width] of the tower's output <paramref name="towerOutput"/> (as
+    /// <see cref="IVisionEncoderStages.Tower"/> or <see cref="TowerForTraining"/> gives it, on the encoder's device), through
+    /// the family's projection, recording gradients.
+    /// </summary>
+    /// <exception cref="ArgumentException">The shape is not the tower's output, or it is on another device.</exception>
+    Tensor FeaturesForTraining(Tensor towerOutput);
+
+    /// <summary>
+    /// The tower's output for pixel values [images, channels, height, width] (as <see cref="IVisionEncoderStages.PixelValues"/>
+    /// gives them, several images' values joined along the first dimension giving each image's output as alone), recording
+    /// gradients: for training <see cref="VisionTuningParts.Tower"/>. While <see cref="ActivationMemory.CheckpointsBlocks"/>
+    /// is on (the tuner checkpoints), the family runs the tower's blocks checkpointed (each block's output kept, the block
+    /// run again in the backward pass), with the same gradients.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The family does not offer <see cref="VisionTuningParts.Tower"/>.</exception>
+    Tensor TowerForTraining(Tensor pixelValues);
+
+    /// <summary>
+    /// The values of the part <paramref name="part"/> as the checkpoint stores them: each tensor under its name in the
+    /// checkpoint (one of <see cref="IPretrainedVision.StoredTensors"/>) and in the checkpoint's layout, as new tensors on
+    /// the CPU that the caller disposes. What a fine-tune saves beside its adapters (PEFT's <c>modules_to_save</c>), so
+    /// transformers reads the trained part as it reads the checkpoint's.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The family does not offer <paramref name="part"/>, or cannot write it yet (the message says).</exception>
+    /// <exception cref="InvalidOperationException">The part's weights are held packed in this encoder.</exception>
+    IReadOnlyDictionary<string, Tensor> ExportPart(string part);
+
+    /// <summary>
+    /// Puts <paramref name="tensors"/> (named and laid out as <see cref="ExportPart"/> gives them, on any device) into the
+    /// trainable parts, and returns the names it took; a name of no part the family offers is left for the caller to report.
+    /// </summary>
+    /// <exception cref="ArgumentException">A tensor's shape is not the part's.</exception>
+    /// <exception cref="InvalidOperationException">The part's weights are held packed in this encoder (build it with <see cref="EncoderWeights.Float32"/>).</exception>
+    IReadOnlyCollection<string> ImportParts(IReadOnlyDictionary<string, Tensor> tensors);
 }
 
 /// <summary>
@@ -257,6 +293,19 @@ public static class VisionTuningParts
         }
 
         return scope.Keep(stages.Tower(values));
+    }
+
+    /// <summary>
+    /// <paramref name="encoder"/>'s training members, when <paramref name="vision"/> built it: the one check a tuner makes
+    /// when it is given the encoder, before it calls them every step.
+    /// </summary>
+    /// <exception cref="ArgumentException">The encoder is not one <paramref name="vision"/> built (with its <see cref="IPretrainedVision.CreateEncoder"/>).</exception>
+    public static ITrainableVisionEncoder Trainable(IPretrainedVision vision, IVisionEncoder encoder)
+    {
+        ArgumentNullException.ThrowIfNull(vision);
+        ArgumentNullException.ThrowIfNull(encoder);
+        return encoder is ITrainableVisionEncoder trainable && ReferenceEquals(trainable.Vision, vision) ? trainable
+            : throw new ArgumentException($"{encoder.GetType().Name} is not an encoder of this {vision.Family} vision part (make one with its CreateEncoder).", nameof(encoder));
     }
 
     /// <summary>The parts <paramref name="vision"/>'s family lets train; none for a family that does not implement <see cref="IVisionTuningPart"/>.</summary>

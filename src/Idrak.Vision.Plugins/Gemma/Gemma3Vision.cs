@@ -318,11 +318,10 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
     /// <summary>Gemma 3 lets its projector (the soft-embedding norm and the projection) and its SigLIP tower train.</summary>
     public IReadOnlyList<string> TrainableParts { get; } = [VisionTuningParts.Projector, VisionTuningParts.Tower];
 
-    /// <inheritdoc />
-    public IReadOnlyList<Tensor> Parameters(IVisionEncoder encoder, string part)
+    /// <summary>The parameters of the part <paramref name="part"/> in <paramref name="own"/> (its <see cref="ITrainableVisionEncoder.ParametersOf"/>).</summary>
+    internal IReadOnlyList<Tensor> Parameters(Gemma3ImageEncoder own, string part)
     {
         ArgumentNullException.ThrowIfNull(part);
-        var own = Own(encoder);
         Module module = part.Trim().ToLowerInvariant() switch
         {
             VisionTuningParts.Projector => own.Projector,
@@ -339,10 +338,9 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
     }
 
     /// <summary>The soft-token embeddings [images, tokens per image, text width] of SigLIP's output [images, patches, vision width] through the projector, recording gradients.</summary>
-    public Tensor Features(IVisionEncoder encoder, Tensor towerOutput)
+    internal Tensor Features(Gemma3ImageEncoder own, Tensor towerOutput)
     {
         ArgumentNullException.ThrowIfNull(towerOutput);
-        var own = Own(encoder);
         if (towerOutput.Device != own.Device)
         {
             throw new ArgumentException($"The tower's output is on {towerOutput.Device}, the encoder on {own.Device}: move it first (gradients do not cross a copy).", nameof(towerOutput));
@@ -356,10 +354,9 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
     /// (copied to the encoder's device first when elsewhere); each encoder layer checkpointed while
     /// <see cref="ActivationMemory.CheckpointsBlocks"/> is on.
     /// </summary>
-    public Tensor Tower(IVisionEncoder encoder, Tensor pixelValues)
+    internal Tensor Tower(Gemma3ImageEncoder own, Tensor pixelValues)
     {
         ArgumentNullException.ThrowIfNull(pixelValues);
-        var own = Own(encoder);
         bool checkpointed = ActivationMemory.CheckpointsBlocks;
         if (pixelValues.Device == own.Device)
         {
@@ -377,11 +374,10 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
     /// q, k and v projections split from the fused projection the encoder holds, its output projection and MLP with Linear
     /// weights [out, in], and the final norm).
     /// </summary>
-    public IReadOnlyDictionary<string, Tensor> Export(IVisionEncoder encoder, string part)
+    internal IReadOnlyDictionary<string, Tensor> Export(Gemma3ImageEncoder own, string part)
     {
         ArgumentNullException.ThrowIfNull(part);
-        var own = Own(encoder);
-        _ = Parameters(encoder, part);                                                   // refuses an unknown part and packed weights
+        _ = Parameters(own, part);                                                      // refuses an unknown part and packed weights
         var tensors = new Dictionary<string, Tensor>(StringComparer.Ordinal);
         if (string.Equals(part.Trim(), VisionTuningParts.Projector, StringComparison.OrdinalIgnoreCase))
         {
@@ -408,10 +404,9 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
     /// Sets the projector's or the tower's tensors from tensors named and laid out as <see cref="Export"/> gives them
     /// (q, k and v go into the fused projection, each where it lies); returns the names taken.
     /// </summary>
-    public IReadOnlyCollection<string> Import(IVisionEncoder encoder, IReadOnlyDictionary<string, Tensor> tensors)
+    internal IReadOnlyCollection<string> Import(Gemma3ImageEncoder own, IReadOnlyDictionary<string, Tensor> tensors)
     {
         ArgumentNullException.ThrowIfNull(tensors);
-        var own = Own(encoder);
         var taken = new List<string>();
         foreach (var (name, read) in new (string, Func<Tensor>)[] { (Tensors[NormTensor].Stored, () => own.Projector.Gain), (Tensors[ProjectionTensor].Stored, () => own.Projector.Weight) })
         {
@@ -487,14 +482,6 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
     private static Tensor Host(float[] values, int[] shape) => Tensor.From(values, shape, Device.Cpu);
 
     private const string NormTensor = "projector.mm_soft_emb_norm.weight", ProjectionTensor = "projector.mm_input_projection_weight";
-
-    // The encoder, when this vision part built it.
-    private Gemma3ImageEncoder Own(IVisionEncoder encoder)
-    {
-        ArgumentNullException.ThrowIfNull(encoder);
-        return encoder is Gemma3ImageEncoder own && ReferenceEquals(own.Vision, this) ? own
-            : throw new ArgumentException($"{encoder.GetType().Name} is not an encoder of this Gemma 3 vision part (make one with its CreateEncoder).", nameof(encoder));
-    }
 
     /// <inheritdoc />
     public override string Describe() =>

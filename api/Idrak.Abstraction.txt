@@ -3720,6 +3720,14 @@ public interface Idrak.Abstraction.Generation.ITrainableSoftParts : Idrak.Abstra
   public System.Collections.Generic.IReadOnlyList<string> TrainableParts { get; }
   public void SetTraining(bool training)
 
+public interface Idrak.Abstraction.Generation.ITrainableVisionEncoder : Idrak.Abstraction.Generation.IVisionEncoder, System.IDisposable
+  public Idrak.Abstraction.Generation.IPretrainedVision Vision { get; }
+  public Idrak.Abstraction.Tensor FeaturesForTraining(Idrak.Abstraction.Tensor towerOutput)
+  public Idrak.Abstraction.Tensor TowerForTraining(Idrak.Abstraction.Tensor pixelValues)
+  public System.Collections.Generic.IReadOnlyCollection<string> ImportParts(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> tensors)
+  public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> ExportPart(string part)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> ParametersOf(string part)
+
 public interface Idrak.Abstraction.Generation.ITuningMetric : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
   public Idrak.Abstraction.Generation.TuningScore Score(string answer, string reference, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
   public bool LowerIsBetter { get; }
@@ -3736,13 +3744,13 @@ public interface Idrak.Abstraction.Generation.IVisionEncoderStages
   public Idrak.Abstraction.Tensor PixelValues(Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Generation.VisionOptions? options = null)
   public Idrak.Abstraction.Tensor Tower(Idrak.Abstraction.Tensor pixelValues)
 
-public interface Idrak.Abstraction.Generation.IVisionTuningPart
+public interface Idrak.Abstraction.Generation.IVisionTuningPart : Idrak.Abstraction.Generation.IPretrainedVision
+  public (default) Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor towerOutput)
+  public (default) Idrak.Abstraction.Tensor Tower(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor pixelValues)
+  public (default) System.Collections.Generic.IReadOnlyCollection<string> Import(Idrak.Abstraction.Generation.IVisionEncoder encoder, System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> tensors)
+  public (default) System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> Export(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
+  public (default) System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
   public (default) System.Collections.Generic.IReadOnlyList<string> PartsOf(System.Collections.Generic.IEnumerable<string> names)
-  public Idrak.Abstraction.Tensor Features(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor towerOutput)
-  public Idrak.Abstraction.Tensor Tower(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Tensor pixelValues)
-  public System.Collections.Generic.IReadOnlyCollection<string> Import(Idrak.Abstraction.Generation.IVisionEncoder encoder, System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> tensors)
-  public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Tensor> Export(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
-  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters(Idrak.Abstraction.Generation.IVisionEncoder encoder, string part)
   public System.Collections.Generic.IReadOnlyList<string> TrainableParts { get; }
 
 public static class Idrak.Abstraction.Generation.ImageAttentionRules
@@ -4338,6 +4346,7 @@ public sealed class Idrak.Abstraction.Generation.VisionOptions : System.Collecti
 public static class Idrak.Abstraction.Generation.VisionTuningParts
   public const string Projector = "projector"
   public const string Tower = "tower"
+  public static Idrak.Abstraction.Generation.ITrainableVisionEncoder Trainable(Idrak.Abstraction.Generation.IPretrainedVision vision, Idrak.Abstraction.Generation.IVisionEncoder encoder)
   public static Idrak.Abstraction.Generation.IVisionTuningPart? For(Idrak.Abstraction.Generation.IPretrainedVision vision, System.Collections.Generic.IEnumerable<string> parts)
   public static Idrak.Abstraction.Tensor? FrozenTower(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Generation.VisionOptions? options = null)
   public static System.Collections.Generic.IReadOnlyList<string> Offered(Idrak.Abstraction.Generation.IPretrainedVision vision)
@@ -6037,6 +6046,9 @@ public sealed class Idrak.Abstraction.Training.CosineAnnealing : Idrak.Abstracti
 
 public sealed class Idrak.Abstraction.Training.ExponentialDecay : Idrak.Abstraction.Training.LearningRateScheduler
   public ExponentialDecay(Idrak.Abstraction.Training.IOptimizer optimizer, float gamma)
+
+public interface Idrak.Abstraction.Training.IGroupedOptimizer : Idrak.Abstraction.Training.IOptimizer, System.IDisposable
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Training.IOptimizer> Groups { get; }
 
 public interface Idrak.Abstraction.Training.IInPlaceOptimizer : Idrak.Abstraction.Training.IOptimizer, System.IDisposable
 
