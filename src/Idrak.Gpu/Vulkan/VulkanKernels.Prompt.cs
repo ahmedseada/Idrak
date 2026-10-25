@@ -12,6 +12,11 @@ internal static partial class VulkanKernels
     {
         yield return ("attention_tiled", () => TiledAttention("attention_tiled", logSumExp: false));
         yield return ("attention_tiled_lse", () => TiledAttention("attention_tiled_lse", logSumExp: true));
+
+        // attention_tiled for rows of different lengths (Backend.AttentionRows, AttentionRowsBFloat16): each row from its
+        // own start, over a float32 or a bfloat16 cache.
+        yield return ("attention_tiled_rows_f32", () => TiledAttention("attention_tiled_rows_f32", logSumExp: false, rowStarts: true));
+        yield return ("attention_tiled_rows_bf16", () => TiledAttention("attention_tiled_rows_bf16", logSumExp: false, rowStarts: true, bfloat16: true));
         foreach (var format in new[] { PackedFormat.Int8, PackedFormat.Int4, PackedFormat.BFloat16 })
         {
             string name = PackedGemmName(format);
@@ -53,17 +58,39 @@ internal static partial class VulkanKernels
     //   scores[W]: written by invocation t only (scores, then weights), read by the row's invocations after a barrier;
     //   max[R], alpha[R], total[R]: written by invocation r < R only (max and alpha after a barrier ending the previous
     //   tile's reads of alpha; total read only at the end of the block), read after a barrier.
-    private static SpirvKernel TiledAttention(string name, bool logSumExp)
+    //
+    // With `rowStarts` (attention_tiled_rows_*: rows of different lengths), row i of head h also starts at its own
+    // starts[(h / headsPerRow) · steps + i % steps] (a binding before the position, a push constant after softcap): the
+    // tiles start at the lowest first position of the block's rows that see any (none: no tile), and a row that sees
+    // nothing (padding) keeps a total of 0 and gets zeros. With `bfloat16`, keys and values are [heads, capacity,
+    // ⌈dim / 2⌉ words], dimension d in the low (even d) or high (odd d) half of word d / 2, widened as they are staged.
+    private static SpirvKernel TiledAttention(string name, bool logSumExp, bool rowStarts = false, bool bfloat16 = false)
     {
         int width = Block, rows = TiledAttentionRows(width), tile = TiledAttentionPositions(width);
         const int Depth = TiledAttentionDepth, Stride = Depth + 1;
         int outputs = AttentionMaxDim / tile, perStage = Depth / tile, stages = AttentionMaxDim / Depth;
         var k = new KernelBuilder(name, width);
-        var (q, keys, values, position, y) = (k.Buffer("q"), k.Buffer("keys"), k.Buffer("values"), k.Buffer("position"), k.Buffer("y"));
+        var (q, keys, values) = (k.Buffer("q"), k.Buffer("keys"), k.Buffer("values"));
+        var starts = rowStarts ? k.Buffer("starts") : null;
+        var (position, y) = (k.Buffer("position"), k.Buffer("y"));
         var lse = logSumExp ? k.Buffer("logSumExp") : null;
         var (heads, rowsPerHead, steps, capacity, dim) = (k.PushInt("heads"), k.PushInt("rowsPerHead"), k.PushInt("steps"), k.PushInt("capacity"), k.PushInt("dim"));
         var scale = k.PushFloat("scale");
         var (window, softcap) = (k.PushInt("window"), k.PushFloat("softcap"));
+        Val? headsPerRow = rowStarts ? k.PushInt("headsPerRow") : null;
+        Val? words = bfloat16 ? (dim + 1) / 2 : null;
+
+        // Dimension d0 + e of cached row `slot` (= head · capacity + position).
+        Val Cached(Buf cache, Val slot, Val d0, Val e) => bfloat16
+            ? BFloat16At(k, cache, slot * words!.Value + ((d0 + e) >> 1), d0 + e)
+            : cache[slot * dim + d0 + e];
+
+        // The first position row `row` of head h sees (its window's start, its own start), given its limit.
+        Val RowStart(Val h, Val row, Val limit)
+        {
+            var lo = WindowStart(k, limit, window);
+            return starts is null ? lo : k.Max(lo, starts[h / headsPerRow!.Value * steps + row % steps].ToInt());
+        }
         var queries = k.Shared("queries", rows * Stride);
         var staged = k.Shared("staged", tile * Stride);
         var scores = k.Shared("scores", width);
@@ -87,15 +114,32 @@ internal static partial class VulkanKernels
             var first = h * capacity;                                         // the head's first cached row
             var mine = k.Min(r0 + r, rowsPerHead - 1);                         // this invocation's row within the head
             var limit = k.Min(start + mine % steps, capacity - 1) + 1;         // positions the row sees
-            var lo = WindowStart(k, limit, window);                            // the first of them
+            var lo = RowStart(h, mine, limit);                                 // the first of them
             // Positions the block sees: its rows' largest step (the last row's, unless the block wraps past a step), from
-            // its smallest step's window start (the first row's, unless the block wraps).
+            // its smallest step's window start (the first row's, unless the block wraps); with rows' own starts, from the
+            // lowest first position of its rows that see any (none: from = count, no tile).
             var last = k.Min(r0 + rows, rowsPerHead) - 1;
             var wraps = (last / steps).Ne(r0 / steps);
             var lastStep = k.Select(wraps, steps - 1, last % steps);
             var count = k.Min(start + lastStep, capacity - 1) + 1;
-            var firstStep = k.Select(wraps, k.Int(0), r0 % steps);
-            var from = WindowStart(k, k.Min(start + firstStep, capacity - 1) + 1, window);
+            Val from;
+            if (starts is null)
+            {
+                var firstStep = k.Select(wraps, k.Int(0), r0 % steps);
+                from = WindowStart(k, k.Min(start + firstStep, capacity - 1) + 1, window);
+            }
+            else
+            {
+                var least = k.Local(count);
+                k.For(r0, last + 1, 1, row =>
+                {
+                    var rowLimit = k.Min(start + row % steps, capacity - 1) + 1;
+                    var rowFirst = RowStart(h, row, rowLimit);
+                    k.If(rowFirst < rowLimit, () => least.V = k.Min(least.V, rowFirst));
+                });
+                from = least.V;
+            }
+
             var queryBase = h * rowsPerHead;
             foreach (var v in acc)
             {
@@ -125,7 +169,7 @@ internal static partial class VulkanKernels
                     {
                         var (kc, e) = (i / Depth, i % Depth);
                         var value = k.Local(0f);
-                        k.If((c0 + kc < count) & (d0 + e < dim), () => value.V = keys[(first + c0 + kc) * dim + d0 + e]);
+                        k.If((c0 + kc < count) & (d0 + e < dim), () => value.V = Cached(keys, first + c0 + kc, d0, e));
                         staged[kc * Stride + e] = value.V;
                     });
                     k.Barrier();
@@ -195,7 +239,9 @@ internal static partial class VulkanKernels
                         {
                             var (vc, e) = (i / Depth, i % Depth);
                             var value = k.Local(0f);
-                            k.If((vc < positions) & (stage * Depth + e < dim), () => value.V = values[(first + c0 + vc) * dim + stage * Depth + e]);
+                            k.If((vc < positions) & (stage * Depth + e < dim), () => value.V = bfloat16
+                                ? Cached(values, first + c0 + vc, k.Int(stage * Depth), e)
+                                : values[(first + c0 + vc) * dim + stage * Depth + e]);
                             staged[vc * Depth + e] = value.V;
                         });
                         k.Barrier();
@@ -218,7 +264,13 @@ internal static partial class VulkanKernels
                 }
             });
 
-            // The block's rows: outputs over totals (written before the last tile's final barrier).
+            if (starts is not null)
+            {
+                k.Barrier();                                                  // no tile at all: the resets above are the last writes
+            }
+
+            // The block's rows: outputs over totals (written before the last tile's final barrier); with rows' own starts,
+            // zeros for a row that saw nothing.
             k.If(r0 + r < rowsPerHead, () =>
             {
                 var row = queryBase + r0 + r;
@@ -226,7 +278,7 @@ internal static partial class VulkanKernels
                 for (int j = 0; j < outputs; j++)
                 {
                     var (dd, value) = (j / perStage * Depth + c + j % perStage * tile, acc[j]);
-                    k.If(dd < dim, () => y[row * dim + dd] = value.V / total);
+                    k.If(dd < dim, () => y[row * dim + dd] = starts is null ? value.V / total : k.Select(total.Eq(k.Float(0f)), k.Float(0f), value.V / total));
                 }
 
                 if (lse is { } output)

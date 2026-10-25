@@ -16,6 +16,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] VulkanPromptGroup =
     [
         ("vulkan prompt: tiled attention over many rows matches the CPU as a kernel (head sizes 64, 128, 256 and odd, grouped heads, causal offsets, partial blocks, with and without the log-sum-exp, every width)", VulkanPromptAttention),
+        ("vulkan prompt: attention for rows of different lengths (per-row starts) matches the CPU as kernels (float32 and bfloat16 caches; decode and prompt steps; the decoding kernel, split too, the tiled kernel and the measured choice; padding rows, grouped heads, windows and soft-caps; every width)", VulkanPromptAttentionRows),
         ("vulkan prompt: packed products for many rows (int8, int4, bfloat16) match the CPU as kernels (odd sizes, partial blocks and scale groups; tiled, few-rows, expanded and measured; every width)", VulkanPromptPacked),
         ("vulkan prompt: a decoder's prompt runs without host fallback and matches the CPU (float32, int8, int4, bfloat16 weights; grouped-query attention, head sizes 6 and 64)", VulkanPromptWithoutFallbacks),
     ];
@@ -156,6 +157,88 @@ internal static partial class Tests
         }
 
         VulkanBackend.TiledAttentionKernel = null;
+    });
+
+    // Attention for rows of different lengths (Backend.AttentionRows, AttentionRowsBFloat16) on the device: every kernel
+    // that serves it (forced) and the measured choice agree with the CPU, padding rows get zeros, and nothing takes the
+    // host fallback.
+    private static void VulkanPromptAttentionRows(Device device) => ForEachPromptBackend(device, (backend, label, full) =>
+    {
+        var random = new Random(37);
+        float[] R(int n) => [.. Enumerable.Range(0, n).Select(_ => 2 * random.NextSingle() - 1)];
+
+        // (head size, batch rows, heads per batch row, query heads per key/value head, steps, capacity, position): decode
+        // steps (one query per head and step, grouped heads) and prompt-sized steps, odd sizes, limits clamped at the
+        // capacity, more rows than a block.
+        var shapes = full
+            ? new[] { (64, 2, 2, 1, 1, 80, 50), (128, 3, 1, 4, 1, 300, 250), (33, 2, 3, 2, 3, 40, 11), (64, 4, 1, 1, 20, 64, 0), (7, 4, 1, 3, 40, 100, 50), (256, 2, 1, 1, 13, 30, 17), (1, 1, 2, 2, 5, 6, 0) }
+            : [(64, 2, 2, 1, 1, 80, 50), (33, 2, 3, 2, 3, 40, 11), (64, 4, 1, 1, 20, 64, 0)];
+        var variants = new[] { default(AttentionVariant), new AttentionVariant(5, 30f) };
+        var choices = new List<(string Name, bool? Tiled, int? Splits)> { ("decoding kernel", false, null), ("tiled kernel", true, null) };
+        if (full)
+        {
+            choices.Add(("decoding kernel, 4 splits", false, 4));
+            choices.Add(("measured", null, null));
+        }
+
+        try
+        {
+            foreach (var (dim, batch, headsPerRow, groups, steps, capacity, position) in shapes)
+            {
+                int heads = batch * headsPerRow, rowsPerHead = groups * steps, rows = heads * rowsPerHead, slots = heads * capacity, words = (dim + 1) / 2;
+                float scale = 1f / MathF.Sqrt(dim);
+
+                // Each batch row's start per step: row 0 from position 0, odd rows left-padded (one start), even rows a start
+                // of their own per step (some past the step's limit: padded steps), the last of three or more all padding.
+                var starts = new float[batch * steps];
+                for (int b = 0; b < batch; b++)
+                {
+                    int left = random.Next(0, Math.Min(position, capacity - 1) + 1);
+                    for (int t = 0; t < steps; t++)
+                    {
+                        starts[b * steps + t] = b == 0 ? 0 : b == batch - 1 && batch > 2 ? position + t + 1 : b % 2 == 1 ? left : random.Next(0, position + t + 2);
+                    }
+                }
+
+                float[] q = R(rows * dim), keys = R(slots * dim), values = R(slots * dim);
+                float[] keys16 = OrderBFloat16(random, slots * words), values16 = OrderBFloat16(random, slots * words);
+                float[] filled = [.. Enumerable.Repeat(7f, rows * dim)];          // padding rows must be written (zeros)
+                foreach (var variant in variants)
+                {
+                    Check(backend.SupportsAttentionRows(dim, variant), $"{label}: head size {dim}, window {variant.Window}: rows of different lengths not supported");
+                    foreach (bool bfloat16 in new[] { false, true })
+                    {
+                        foreach (var (choice, tiled, splits) in choices)
+                        {
+                            VulkanBackend.RowsAttentionKernel = tiled;
+                            VulkanBackend.AttentionSplits = splits;
+                            string cache = bfloat16 ? "bfloat16" : "float32";
+                            string kernel = tiled switch
+                            {
+                                true => bfloat16 ? "attention_tiled_rows_bf16" : "attention_tiled_rows_f32",
+                                false => bfloat16 ? "attention_rows_bf16" : "attention_rows_f32",
+                                null => null!,
+                            };
+                            string what = $"{label}: {cache} cache, {(steps == 1 ? "decode" : "prompt")} steps, {choice}, head size {dim}, {batch} rows × {headsPerRow} heads × {groups} groups, "
+                                + $"{steps} steps, capacity {capacity}, position {position}, window {variant.Window}, soft-cap {variant.Softcap}";
+                            float[][] inputs = [q, bfloat16 ? keys16 : keys, bfloat16 ? values16 : values, [position], filled, starts];
+                            PromptCase(backend, what, inputs, [4], (b, s) =>
+                            {
+                                bool ran = bfloat16
+                                    ? b.AttentionRowsBFloat16(s[0], s[1], s[2], s[3], s[4], s[5], heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant)
+                                    : b.AttentionRows(s[0], s[1], s[2], s[3], s[4], s[5], heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+                                Check(ran, $"{what}: the operation refused");
+                            }, tiled is null ? null : kernel);
+                        }
+                    }
+                }
+            }
+        }
+        finally
+        {
+            VulkanBackend.RowsAttentionKernel = null;
+            VulkanBackend.AttentionSplits = null;
+        }
     });
 
     private static void VulkanPromptPacked(Device device) => ForEachPromptBackend(device, (backend, label, full) =>

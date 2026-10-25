@@ -17,7 +17,7 @@ internal static partial class Tests
         ("vulkan product order: fused packed products (three sharing an input, gate and up, the gated down projection, projection + residual + RMS norm) give the same bits for every word variant and split count, at every width, with and without subgroups", VulkanOrderFused),
         ("vulkan product order: float32 products (small, tiled, register-blocked; transposes; beta 0 and 0.5) give the same bits at every width, with and without subgroups", VulkanOrderMatMul),
         ("vulkan product order: prompt-sized packed products (few-rows kernels, expanded weights through each float32 kernel, tiled) give the same bits at every width, with and without subgroups", VulkanOrderPrompt),
-        ("vulkan product order: decoding attention (float32, bfloat16, int8 caches; head sizes 6 to 256; windows and soft-caps) gives the same bits for every split count of the cached positions, at every width, with and without subgroups", VulkanOrderAttention),
+        ("vulkan product order: decoding attention (float32, bfloat16, int8 caches; rows of different lengths over float32 and bfloat16 caches, with padding; head sizes 6 to 256; windows and soft-caps) gives the same bits for every split count of the cached positions, at every width, with and without subgroups", VulkanOrderAttention),
         ("vulkan product order: convolution (forward, input gradient, weight gradient; composed, implicit tiled and register-blocked, unfolded, every split count of the weight gradient, depthwise; 1-D and 2-D, strides, padding, dilation, groups) gives the same bits for every choice, at every width, with and without subgroups", VulkanOrderConvolution),
     ];
 

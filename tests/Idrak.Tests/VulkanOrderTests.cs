@@ -478,9 +478,13 @@ internal static partial class Tests
             var valuesI = OrderBits(random, slots * i8Words);
             var keyScales = OrderValues(random, slots, 0.01f, 0.05f);
             var valueScales = OrderValues(random, slots, 0.01f, 0.05f);
+            // Rows of different lengths (one head per row): each head's own start per step, the last head all padding
+            // where there are several.
+            var starts = Enumerable.Range(0, heads * steps).Select(i => heads > 1 && i / steps == heads - 1
+                ? (float)(position + i % steps + 5) : random.Next(0, position + i % steps + 1)).ToArray();
             var variant = new AttentionVariant(window, window > 0 ? 30f : 0f);
             float scale = 1f / MathF.Sqrt(dim);
-            foreach (string cache in new[] { "float32", "bfloat16", "int8" })
+            foreach (string cache in new[] { "float32", "bfloat16", "int8", "float32 per-row starts", "bfloat16 per-row starts" })
             {
                 foreach (int splits in OrderSplits)
                 {
@@ -490,7 +494,7 @@ internal static partial class Tests
                             var s = new OrderStorages(b);
                             var (qs, pos, y) = (s.Up(q), s.Up([position]), s.Out(rows * dim));
                             Storage keys, values;
-                            Storage? ks = null, vs = null;
+                            Storage? ks = null, vs = null, st = null;
                             switch (cache)
                             {
                                 case "float32":
@@ -498,6 +502,12 @@ internal static partial class Tests
                                     break;
                                 case "bfloat16":
                                     (keys, values) = (s.Up(keysB), s.Up(valuesB));
+                                    break;
+                                case "float32 per-row starts":
+                                    (keys, values, st) = (s.Up(keysF), s.Up(valuesF), s.Up(starts));
+                                    break;
+                                case "bfloat16 per-row starts":
+                                    (keys, values, st) = (s.Up(keysB), s.Up(valuesB), s.Up(starts));
                                     break;
                                 default:
                                     (keys, values, ks, vs) = (s.Up(keysI), s.Up(valuesI), s.Up(keyScales), s.Up(valueScales));
@@ -507,6 +517,7 @@ internal static partial class Tests
                             return new OrderCase(() =>
                             {
                                 VulkanBackend.AttentionSplits = splits;
+                                VulkanBackend.RowsAttentionKernel = false;               // the decoding kernel, whose splits these are
                                 try
                                 {
                                     switch (cache)
@@ -517,6 +528,12 @@ internal static partial class Tests
                                         case "bfloat16":
                                             b.AttentionBFloat16Kernel(qs, keys, values, pos, y, heads, rowsPerHead, steps, capacity, dim, scale, false, variant);
                                             break;
+                                        case "float32 per-row starts":
+                                            b.AttentionRowsKernel(qs, keys, values, pos, y, st!, heads, 1, rowsPerHead, steps, capacity, dim, scale, variant);
+                                            break;
+                                        case "bfloat16 per-row starts":
+                                            b.AttentionRowsBFloat16Kernel(qs, keys, values, pos, y, st!, heads, 1, rowsPerHead, steps, capacity, dim, scale, variant);
+                                            break;
                                         default:
                                             b.AttentionInt8Kernel(qs, keys, values, ks!, vs!, pos, y, heads, rowsPerHead, steps, capacity, dim, scale, false, variant);
                                             break;
@@ -525,6 +542,7 @@ internal static partial class Tests
                                 finally
                                 {
                                     VulkanBackend.AttentionSplits = null;
+                                    VulkanBackend.RowsAttentionKernel = null;
                                 }
                             }, () => [s.Down(y)], s.Dispose);
                         }));

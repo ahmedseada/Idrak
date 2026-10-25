@@ -187,10 +187,17 @@ internal static partial class VulkanKernels
         // per cached row (keyScales, valueScales [heads, capacity]).
         yield return ("attention_int8", () => Attention("attention_int8", CacheFormat.Int8));
 
+        // attention_decode and attention_bf16 for rows of different lengths decoded together (Backend.AttentionRows,
+        // AttentionRowsBFloat16): each row from its own start, starts[(h / headsPerRow) · steps + t] (floats); a row that
+        // sees nothing (padding) gets zeros.
+        yield return ("attention_rows_f32", () => Attention("attention_rows_f32", CacheFormat.Float, rows: true));
+        yield return ("attention_rows_bf16", () => Attention("attention_rows_bf16", CacheFormat.BFloat16, rows: true));
+
         // Merges the splits of a split attention dispatch: part [rows, splits, dim + 2] holds each split's state (its
         // weighted values, then its max and total; total 0: no positions). y[row, d] = weighted values / total of the
         // splits merged in decoding attention's one order (AttentionMerge): the splits taken in bit-reversed order
-        // through a PairwiseStack, which pairs them as the tree of the blocks' indices does. One invocation per output.
+        // through a PairwiseStack, which pairs them as the tree of the blocks' indices does; zeros for a row no split saw
+        // (total 0: padding of attention_rows_*). One invocation per output.
         yield return ("attention_combine", () =>
         {
             var k = new KernelBuilder("attention_combine", Block);
@@ -210,7 +217,7 @@ internal static partial class VulkanKernels
                     stack.Push(j, [part[at + dim], part[at + dim + 1], part[at + d]]);
                 });
                 var state = stack.Total([k.Float(0f), k.Float(0f), k.Float(0f)]);
-                y[i] = state[2] / state[1];
+                y[i] = k.Select(state[1].Eq(k.Float(0f)), k.Float(0f), state[2] / state[1]);
             });
             return k.Build();
         });
@@ -253,7 +260,9 @@ internal static partial class VulkanKernels
     // Attention over a key/value cache [heads, capacity, dim] for query rows q [heads, rowsPerHead, dim]: row i of head h
     // sees positions c = lo … count - 1, count = min(position[0] + i % rowsPerHead % steps, capacity - 1) + 1, lo =
     // max(count - window, 0) with a window (window > 0), else 0. Grid: x = query rows (a group takes rows x, x + groups,
-    // …), y = splits (a power of two).
+    // …), y = splits (a power of two). With `rows` (attention_rows_*: rows of different lengths), lo is also at least the
+    // row's own start, starts[(h / headsPerRow) · steps + t] for t = i % rowsPerHead % steps (a binding before the
+    // position, a push constant after softcap), and a row that sees nothing (lo ≥ count: padding) gets zeros.
     //
     // In decoding attention's one order (VulkanKernels.Order.cs), whatever the width or the splits: the row's positions
     // in blocks of B = the head size rounded up to a power of two (block b: positions lo + b·B …, the last one shorter),
@@ -275,17 +284,19 @@ internal static partial class VulkanKernels
     //   with scores and weights (each level writes, then after a barrier reads, then a barrier);
     //   totals[W]: a block's total by its part's first invocation, read by the part after the tile's last barrier and
     //   written again only after the next tile's barriers.
-    private static SpirvKernel Attention(string name, CacheFormat format)
+    private static SpirvKernel Attention(string name, CacheFormat format, bool rows = false)
     {
         int lanes = Block, dimsPerLane = Math.Max(1, AttentionMaxDim / lanes), widthBits = System.Numerics.BitOperations.Log2((uint)lanes);
         int staged = dimsPerLane * lanes;
         var k = new KernelBuilder(name, lanes);
         var (q, keys, values) = (k.Buffer("q"), k.Buffer("keys"), k.Buffer("values"));
         var (keyScales, valueScales) = format == CacheFormat.Int8 ? (k.Buffer("keyScales"), k.Buffer("valueScales")) : (null, null);
+        var starts = rows ? k.Buffer("starts") : null;
         var (position, y) = (k.Buffer("position"), k.Buffer("y"));
         var (heads, rowsPerHead, steps, capacity, dim) = (k.PushInt("heads"), k.PushInt("rowsPerHead"), k.PushInt("steps"), k.PushInt("capacity"), k.PushInt("dim"));
         var (scale, _) = (k.PushFloat("scale"), k.PushInt("dimShift"));
         var (window, softcap) = (k.PushInt("window"), k.PushFloat("softcap"));
+        Val? headsPerRow = rows ? k.PushInt("headsPerRow") : null;
         var query = k.Shared("query", staged);
         var scores = k.Shared("scores", staged);
         var weights = k.Shared("weights", staged);
@@ -368,8 +379,14 @@ internal static partial class VulkanKernels
         EachRow(k, heads * rowsPerHead, row =>
         {
             var h = row / rowsPerHead;
-            var count = k.Min(start + row % rowsPerHead % steps, capacity - 1) + 1;
+            var t = row % rowsPerHead % steps;
+            var count = k.Min(start + t, capacity - 1) + 1;
             var lo = WindowStart(k, count, window);
+            if (starts is not null)
+            {
+                lo = k.Min(k.Max(lo, starts[h / headsPerRow!.Value * steps + t].ToInt()), count);   // at count: no blocks (padding)
+            }
+
             var first = h * capacity;
             var blocks = (count - lo + block - 1).ShiftRight(blockBits);
             var treeBits = k.Select(blocks > 1, k.FindMsb(blocks - 1) + 1, k.Int(0));
@@ -525,7 +542,8 @@ internal static partial class VulkanKernels
             {
                 var dj = d + jj * lanes;
                 var value = merged[2 + jj].V;
-                k.If(part.Eq(0) & (dj < dim), () => k.If(splits.Eq(1), () => y[row * dim + dj] = value / total, () =>
+                Val Single() => rows ? k.Select(total.Eq(k.Float(0f)), k.Float(0f), value / total) : value / total;   // padding: zeros
+                k.If(part.Eq(0) & (dj < dim), () => k.If(splits.Eq(1), () => y[row * dim + dj] = Single(), () =>
                 {
                     var at = (row * splits + k.GroupY) * (dim + 2);
                     y[at + dj] = value;

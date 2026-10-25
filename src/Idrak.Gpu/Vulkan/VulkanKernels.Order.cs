@@ -25,7 +25,8 @@ namespace Idrak.Gpu.Vulkan;
 //   - decoding attention (Attention): the cached positions a row sees in blocks of the head size rounded up to a power
 //     of two; a block's max, weights exp(score - max), their total and weighted values each in turn; the blocks merged
 //     in the tree of their indices' bits from the lowest (a split takes the blocks of one residue, a part of the
-//     workgroup the next bits, so splits and parts stay balanced), the left operand first (AttentionMerge).
+//     workgroup the next bits, so splits and parts stay balanced), the left operand first (AttentionMerge). Its kernels
+//     for rows of different lengths (attention_rows_*) take the same order from each row's own first position.
 //   - convolution (Convolution, VulkanKernels.Convolution.cs; the implicit products tiled and register-blocked at every
 //     width, the depthwise kernels, the composed path): the forward pass every term of its sum in turn from +0, one fused
 //     multiply-add each, then the bias; the input gradient as the composed path adds (its products, then col2im): dx, then
@@ -37,7 +38,7 @@ namespace Idrak.Gpu.Vulkan;
 //
 // Choices whose order the hardware defines are the exception: the cooperative-matrix products (VulkanTuneOp.MatMul's
 // and PackedPrompt's cooperative-matrix candidates, MixedMatMul, MixedPackedPrompt, and the composed convolution through
-// them) accumulate as the device's matrix units do. The attention paths (AttentionPath, TiledAttention, SpanAttention) are different algorithms, not orders of
+// them) accumulate as the device's matrix units do. The attention paths (AttentionPath, TiledAttention, SpanAttention, RowsAttention) are different algorithms, not orders of
 // one; cluster ranks agree on them by sharing the measured choices.
 internal static partial class VulkanKernels
 {

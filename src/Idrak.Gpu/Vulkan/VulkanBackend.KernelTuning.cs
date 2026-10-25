@@ -66,6 +66,12 @@ internal enum VulkanTuneOp : byte
     /// a width; the weight gradient at a split count) or the depthwise kernels.
     /// </summary>
     Convolution,
+
+    /// <summary>
+    /// Attention for rows of different lengths (Backend.AttentionRows, AttentionRowsBFloat16): the tiled kernel (at a
+    /// width) or the decoding kernel (its splits measured apart, as <see cref="Attention"/>'s).
+    /// </summary>
+    RowsAttention,
 }
 
 /// <summary>What a measured choice is for: the operation, its variant (kernel, format) and its shape.</summary>
