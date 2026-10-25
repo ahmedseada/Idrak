@@ -310,9 +310,9 @@ internal static class HelpTopics
         "lang" (en or ar) and "lang-render" (auto, visual, visual-right or logical; idrak help arabic),
         "tokens" (written by idrak login; never printed), "profile" (the profile in use) and "profiles"
         (NAME: {keys...}): a profile's keys are read before the top-level ones, so one file serves a phone and a
-        desktop. IDRAK_PROFILE chooses the profile for one shell.
+        desktop. IDRAK_CONFIG_PROFILE chooses the profile for one shell.
 
-        Commands: idrak init, idrak config get/set/unset/list (--profile NAME), idrak alias set, idrak login.
+        Commands: idrak init, idrak config get/set/unset/list (--config-profile NAME), idrak alias set, idrak login.
         """;
 
     private const string ExitCodesPage = """

@@ -91,7 +91,7 @@ cleanly: generation after the current token, training after the current batch wi
 with their partial files kept for resuming.
 
 The config file holds defaults for these options (`device`, `cache`, `plugins`), model aliases and named profiles
-(`idrak config set device cpu --profile phone`); options on the command line win. `idrak init` writes one.
+(`idrak config set device cpu --config-profile phone`); options on the command line win. `idrak init` writes one.
 
 ## The commands
 
@@ -433,7 +433,7 @@ idrak tune export adapters/qa -o merged
 - **Speed.** Sequence packing, graph replay of the training step where the backend records graphs, fused LoRA products
   on matrix units (a frozen bfloat16 or 4-bit base read as stored in both directions), the optimizer over every adapter
   matrix in three passes; `--fp8` for the frozen base's forward products (checked against bfloat16 first), `-w int4` /
-  `-w int8` for QLoRA. `train --profile` times a few steps per kernel instead of training.
+  `-w int8` for QLoRA. `train --time-steps` times a few steps per kernel instead of training.
 - **Memory.** Results no backward step reads are released during the forward pass. When a step runs out of device memory
   the tuner steps down, each step at a small cost, and says so: feed-forward activations recomputed in the backward pass
   (`--recompute`), then activations held as bfloat16 between the passes (`--bf16-activations`), then activation
@@ -698,13 +698,13 @@ idrak env unset IDRAK_CUDA_DEBUG
 idrak env reset                        # every saved one back to its default (asks; -y, --dry-run, --all-profiles)
 ```
 
-A variable set in the terminal wins over the saved value; `--profile NAME` saves one for a profile only; tokens are
+A variable set in the terminal wins over the saved value; `--config-profile NAME` saves one for a profile only; tokens are
 stored by `idrak login`, not here. The most used:
 
 | Variable | Meaning |
 |---|---|
 | `IDRAK_CACHE` | The cache folder (`--cache` wins) |
-| `IDRAK_CONFIG`, `IDRAK_PROFILE` | The config file and the profile in use |
+| `IDRAK_CONFIG`, `IDRAK_CONFIG_PROFILE` | The config file and the profile in use |
 | `IDRAK_DISABLE_CUDA`, `IDRAK_DISABLE_VULKAN`, `IDRAK_DISABLE_HIP` | Backends not looked for |
 | `IDRAK_VULKAN_DEFAULT` | A Vulkan GPU may be the default device |
 | `IDRAK_MATMUL`, `IDRAK_OFFLOAD`, `IDRAK_LOOKUP_TABLES` | Matrix product precision; spilling to system memory; where a token table lives (auto, host, device) |

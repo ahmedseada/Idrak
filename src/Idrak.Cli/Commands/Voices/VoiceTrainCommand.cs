@@ -98,7 +98,7 @@ internal sealed class VoiceTrainCommand : Command
               --resume RUN        continue a voice run from its latest checkpoint (--steps N: N more)
           -o, --out RUN           the run folder (default CACHE/runs/DATE-voice-NAME)
               --no-install        train only; install later with --resume RUN --steps 0
-              --profile           time steps instead of training: after a first pass over the recordings, 3 timed and 2
+              --time-steps        time steps instead of training: after a first pass over the recordings, 3 timed and 2
                                   with every GPU kernel timed (wall time, launches, kernel times; nothing installed)
               --overwrite         replace an installed voice of the same name
         """ + "\n" + VoiceText.StoreHelp + "\n" + """
@@ -118,7 +118,7 @@ internal sealed class VoiceTrainCommand : Command
         "--warmup", "--optimizer", "--clip", "--save-every", "--keep", "--eval-every", "--log-every", "--feature-cache", "--resume", "--out", "--voices",
     ];
 
-    public override IReadOnlyCollection<string> Flags { get; } = ["--overwrite", "--no-install", "--profile", "--checkpointing", "--no-checkpointing"];
+    public override IReadOnlyCollection<string> Flags { get; } = ["--overwrite", "--no-install", "--time-steps", "--checkpointing", "--no-checkpointing"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-l"] = "--language", ["-o"] = "--out" };
 
@@ -145,7 +145,7 @@ internal sealed class VoiceTrainCommand : Command
         string baseArgument = context.Option("--base") ?? throw new UsageException("Missing --base MODEL (the synthesizer to fine-tune; its family a registered plug-in's).");
         string baseFolder = Directory.Exists(baseArgument) ? Path.GetFullPath(baseArgument) : ModelChoices.Resolve(context, baseArgument);
         var store = AudioFiles.VoiceStore(context);
-        if (store.Find(name) is { } existing && !context.Flag("--overwrite") && !context.Flag("--no-install") && !context.Flag("--profile"))
+        if (store.Find(name) is { } existing && !context.Flag("--overwrite") && !context.Flag("--no-install") && !context.Flag("--time-steps"))
         {
             throw new UsageException($"Voice '{existing.Name}' is installed already at {existing.Folder}; give --overwrite to replace it, or another NAME.");
         }
@@ -153,7 +153,7 @@ internal sealed class VoiceTrainCommand : Command
         var train = Source(context, context.Option("--from") ?? throw new UsageException("Give the recordings with --from DATA (transcripts, or a folder of name.wav + name.txt)."));
         var evaluation = context.Option("--eval") is { } eval ? Source(context, eval) : null;
         var options = Options(context, Defaults(), resuming: false);
-        if (context.Flag("--profile"))
+        if (context.Flag("--time-steps"))
         {
             using var profiled = Load(context, baseFolder);
             string scratch = Path.Combine(Path.GetTempPath(), $"idrak-voice-profile-{Environment.ProcessId}");
@@ -351,7 +351,7 @@ internal sealed class VoiceTrainCommand : Command
             + "voice train fine-tunes a VITS checkpoint (Idrak.Audio.Plugins' VITS family).");
     }
 
-    // --profile: steps until the second pass over the recordings (the first takes every clip's training rows), then 3 timed
+    // --time-steps: steps until the second pass over the recordings (the first takes every clip's training rows), then 3 timed
     // by the clock and 2 with every GPU kernel timed (slower, so timed apart): what a step takes, in how many launches, and on what.
     private static int Profile(CommandContext context, IAdversarialSpeechSynthesizer model, SpeechSource train, SpeechTrainingOptions options, string scratch)
     {
@@ -399,7 +399,7 @@ internal sealed class VoiceTrainCommand : Command
 
         if (first < 0)
         {
-            throw new UsageException("--profile: the recordings ended before a second pass; give more of them.");
+            throw new UsageException("--time-steps: the recordings ended before a second pass; give more of them.");
         }
 
         if (kernels.Count == 0)

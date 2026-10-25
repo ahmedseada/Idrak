@@ -216,7 +216,7 @@ internal static class EnvironmentVariables
         new("ZENODO_TOKEN", Sources, "not set", "A token for restricted Zenodo records (zenodo: data sources)", Data, Secret: true),
 
         new("IDRAK_CONFIG", Tool, "~/.idrak/config.json", "The config file (--config wins)", [Every]),
-        new("IDRAK_PROFILE", Tool, "the config's \"profile\"", "The config profile to use (a name under \"profiles\" in the config)", [Every]),
+        new("IDRAK_CONFIG_PROFILE", Tool, "the config's \"profile\"", "The config profile to use (a name under \"profiles\" in the config)", [Every]),
         new("IDRAK_PORT", Tool, "the config's serve.port, else 7317", "The port serve and ui listen on and the client commands call when --port is not given", ["serve", "ui", "api", "ping", "server ps", "server stop", "server load", "server unload"]),
         new("IDRAK_API_KEY", Tool, "not set", "The key serve requires and the client commands (api, ping, server ...) send when --api-key is not given", ["serve", "ui", "api", "ping", "server ps", "server stop", "server load", "server unload", "cluster ui", "cluster sim"], Secret: true),
         new("IDRAK_PROGRESS", Tool, "console on a terminal, else none", "The progress reporter: console (one line redrawn in place), plain (a line at intervals), json (a JSON object a line) or quiet; also read by ProgressReporters.Start in the library (an app's choice wins)", [Every]),

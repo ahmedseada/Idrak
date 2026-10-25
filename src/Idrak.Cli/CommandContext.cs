@@ -381,11 +381,11 @@ internal sealed class CliConfig
     public JsonObject Root => _values;
 
     /// <summary>
-    /// The active profile (<c>IDRAK_PROFILE</c>, else the file's "profile" value), or null: a named set of values under
+    /// The active profile (<c>IDRAK_CONFIG_PROFILE</c>, else the file's "profile" value), or null: a named set of values under
     /// "profiles" (e.g. "phone", "desktop") that <see cref="Get"/>, <see cref="Object"/> and <see cref="List"/> read
     /// before the file's top-level values.
     /// </summary>
-    public string? Profile => Environment.GetEnvironmentVariable("IDRAK_PROFILE") is { Length: > 0 } name ? name
+    public string? Profile => Environment.GetEnvironmentVariable("IDRAK_CONFIG_PROFILE") is { Length: > 0 } name ? name
         : _values["profile"] is JsonValue v && v.TryGetValue(out string? s) ? s : null;
 
     // A value: the active profile's, else the top-level one.

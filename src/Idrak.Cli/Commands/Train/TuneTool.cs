@@ -59,7 +59,7 @@ internal sealed class TuneTool(ToolConsole console)
                    default: turned on first when a step runs out of device memory), --bf16-activations (hold the activations
                    as bfloat16 between the passes: half their memory; default: turned on second), --no-packing,
                    --no-graphs, --fp8 (the frozen base's forward products in FP8, checked against bfloat16 first),
-                   --adapter DIR (continue training an adapter), --profile (time a few steps instead of training),
+                   --adapter DIR (continue training an adapter), --time-steps (time a few steps instead of training),
                    --cpu-optimizer (the optimizer's update on the CPU, its state in system memory),
                    --optimizer adamw|adam|adamw8bit|sgd, --weight-decay 0, --momentum 0.9 (sgd),
                    --schedule cosine|linear|constant|wsd, --warmup 0.03 (fraction of the steps), --min-lr 0, --decay 0.2 (wsd),
@@ -109,7 +109,7 @@ internal sealed class TuneTool(ToolConsole console)
     public static readonly string[] Flags =
     [
         "--cuda", "--gpu", "--cpu", "--int8", "--bf16", "--int4", "--kv8", "--kv16", "--no-think", "--no-checkpointing", "--checkpointing",
-        "--recompute", "--bf16-activations", "--no-packing", "--no-graphs", "--fp8", "--profile", "--offload", "--cpu-optimizer",
+        "--recompute", "--bf16-activations", "--no-packing", "--no-graphs", "--fp8", "--time-steps", "--offload", "--cpu-optimizer",
         "--no-shuffle", "--no-dedup", "--mix", "--train-projector", "--grayscale",
     ];
 
@@ -254,7 +254,7 @@ internal sealed class TuneTool(ToolConsole console)
                 case "--no-packing": tuning = tuning with { Packing = false }; break;
                 case "--no-graphs": tuning = tuning with { CudaGraphs = false }; break;
                 case "--fp8": tuning = tuning with { Float8 = true }; break;
-                case "--profile": profileTraining = true; break;
+                case "--time-steps": profileTraining = true; break;
                 case "--offload": offload = true; break;
                 case "--cpu-optimizer": tuning = tuning with { HostOptimizer = true }; break;
                 case "--optimizer": optimizerName = Next().ToLowerInvariant(); break;
@@ -620,7 +620,7 @@ internal sealed class TuneTool(ToolConsole console)
 
         if (preference && (balance > 1 || profileTraining))
         {
-            _error.WriteLine("error: --balance and --profile are for supervised fine-tuning (--loss sft).");
+            _error.WriteLine("error: --balance and --time-steps are for supervised fine-tuning (--loss sft).");
             return 1;
         }
 

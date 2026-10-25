@@ -8,18 +8,18 @@ namespace Idrak.Cli.Commands.Health;
 
 /// <summary>
 /// The config commands (<c>config get/set/unset/list</c>): keys are dotted paths ("device", "aliases.qwen.model"); with
-/// <c>--profile NAME</c> they read and write the named profile under "profiles" (the profile in use is
-/// <c>IDRAK_PROFILE</c> or the file's "profile" value).
+/// <c>--config-profile NAME</c> they read and write the named profile under "profiles" (the profile in use is
+/// <c>IDRAK_CONFIG_PROFILE</c> or the file's "profile" value).
 /// </summary>
 internal abstract class ConfigCommand : Command
 {
-    public override IReadOnlyCollection<string> ValueOptions => ["--profile"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--config-profile"];
 
-    /// <summary>The object keys are read from and written to: the file, or the profile <c>--profile</c> names.</summary>
+    /// <summary>The object keys are read from and written to: the file, or the profile <c>--config-profile</c> names.</summary>
     protected static JsonObject Scope(CommandContext context, bool create)
     {
         var root = context.Config.Root;
-        if (context.Option("--profile") is not { } profile)
+        if (context.Option("--config-profile") is not { } profile)
         {
             return root;
         }
@@ -103,7 +103,7 @@ internal abstract class ConfigCommand : Command
         : node?.DeepClone();
 
     protected static string Where(CommandContext context) =>
-        context.Option("--profile") is { } p ? $"profile {p} in {context.Config.Path}" : context.Config.Path;
+        context.Option("--config-profile") is { } p ? $"profile {p} in {context.Config.Path}" : context.Config.Path;
 }
 
 /// <summary><c>idrak config get KEY</c>.</summary>
@@ -114,14 +114,14 @@ internal sealed class ConfigGetCommand : ConfigCommand
     public override string Summary => "Prints a config value (dotted keys, e.g. aliases.qwen.model)";
 
     public override string Usage => """
-        KEY [--profile NAME]
+        KEY [--config-profile NAME]
 
         Options:
-              --profile NAME  read the named profile (e.g. phone, desktop)
+              --config-profile NAME  read the named profile (e.g. phone, desktop)
 
         Examples:
           idrak config get device
-          idrak config get aliases.qwen --profile phone
+          idrak config get aliases.qwen --config-profile phone
         """;
 
     public override int Run(CommandContext context)
@@ -152,13 +152,13 @@ internal sealed class ConfigSetCommand : ConfigCommand
     public override string Summary => "Sets a config value (JSON values such as [\"a.dll\"] or 4 are kept as JSON)";
 
     public override string Usage => """
-        KEY VALUE [--profile NAME]
+        KEY VALUE [--config-profile NAME]
 
         Arguments:
           VALUE  text, or JSON when it is a number, true/false, null, an array or an object
 
         Options:
-              --profile NAME  write to the named profile (idrak config set profile NAME makes it the one in use)
+              --config-profile NAME  write to the named profile (idrak config set profile NAME makes it the one in use)
 
         Keys the tool reads: device, cache, plugins (a list of paths), aliases (NAME: {model, weights, kv}),
         profile, serve.port (the port of serve and ui, and of the server the client commands call), and any key
@@ -167,7 +167,7 @@ internal sealed class ConfigSetCommand : ConfigCommand
         Examples:
           idrak config set device vulkan:0
           idrak config set plugins '["./MyFormat.dll"]'
-          idrak config set device cpu --profile phone
+          idrak config set device cpu --config-profile phone
           idrak config set aliases.qwen.model Qwen/Qwen3-0.6B
         """;
 
@@ -195,7 +195,7 @@ internal sealed class ConfigSetCommand : ConfigCommand
         parent![last] = value;
         context.Config.SaveChanges();
         context.Write($"{key} = {Shown(key, value)} ({Where(context)})");
-        context.WriteJson(new JsonObject { ["key"] = key, ["value"] = ShownJson(key, value), ["file"] = context.Config.Path, ["profile"] = context.Option("--profile") });
+        context.WriteJson(new JsonObject { ["key"] = key, ["value"] = ShownJson(key, value), ["file"] = context.Config.Path, ["profile"] = context.Option("--config-profile") });
         return ExitCodes.Ok;
     }
 }
@@ -208,15 +208,15 @@ internal sealed class ConfigUnsetCommand : ConfigCommand
     public override string Summary => "Removes a config value";
 
     public override string Usage => """
-        KEY [--profile NAME]
+        KEY [--config-profile NAME]
 
         Options:
-              --profile NAME  remove it from the named profile instead of the top level
+              --config-profile NAME  remove it from the named profile instead of the top level
 
         Examples:
           idrak config unset device
           idrak config unset aliases.qwen
-          idrak config unset device --profile phone
+          idrak config unset device --config-profile phone
         """;
 
     public override int Run(CommandContext context)
@@ -243,21 +243,21 @@ internal sealed class ConfigListCommand : ConfigCommand
     public override string Summary => "Every config value (or a profile's), and the file's path";
 
     public override string Usage => """
-        [--profile NAME]
+        [--config-profile NAME]
 
         Options:
-              --profile NAME  only the named profile's values
+              --config-profile NAME  only the named profile's values
 
         Examples:
           idrak config list
-          idrak config list --profile phone
+          idrak config list --config-profile phone
           idrak config list -j
         """;
 
     public override int Run(CommandContext context)
     {
         var scope = Scope(context, create: false);
-        context.Write($"{Where(context)}{(File.Exists(context.Config.Path) ? "" : " (no file yet)")}{(context.Config.Profile is { } p && context.Option("--profile") is null ? $", profile in use: {p}" : "")}");
+        context.Write($"{Where(context)}{(File.Exists(context.Config.Path) ? "" : " (no file yet)")}{(context.Config.Profile is { } p && context.Option("--config-profile") is null ? $", profile in use: {p}" : "")}");
         var rows = new List<IReadOnlyList<string>>();
         void Walk(JsonObject o, string prefix)
         {
@@ -280,7 +280,7 @@ internal sealed class ConfigListCommand : ConfigCommand
             context.Table(["Key", "Value"], rows);
         }
 
-        context.WriteJson(new JsonObject { ["file"] = context.Config.Path, ["profile"] = context.Option("--profile"), ["values"] = ShownJson("", scope) });
+        context.WriteJson(new JsonObject { ["file"] = context.Config.Path, ["profile"] = context.Option("--config-profile"), ["values"] = ShownJson("", scope) });
         return ExitCodes.Ok;
     }
 }

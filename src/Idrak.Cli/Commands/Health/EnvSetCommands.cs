@@ -15,7 +15,7 @@ namespace Idrak.Cli.Commands.Health;
 /// </summary>
 internal abstract class EnvSaveCommand : Command
 {
-    public override IReadOnlyCollection<string> ValueOptions => ["--profile"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--config-profile"];
 
     public override IReadOnlyCollection<string> Flags => ["--user"];
 
@@ -23,7 +23,7 @@ internal abstract class EnvSaveCommand : Command
     protected static JsonObject Saved(CommandContext context, bool create)
     {
         JsonObject scope = context.Config.Root;
-        if (context.Option("--profile") is { } profile)
+        if (context.Option("--config-profile") is { } profile)
         {
             if (scope["profiles"] is not JsonObject profiles)
             {
@@ -85,7 +85,7 @@ internal abstract class EnvSaveCommand : Command
     }
 
     protected static string Where(CommandContext context) =>
-        context.Option("--profile") is { } profile ? $"{context.Config.Path}, profile {profile}" : context.Config.Path;
+        context.Option("--config-profile") is { } profile ? $"{context.Config.Path}, profile {profile}" : context.Config.Path;
 }
 
 /// <summary><c>idrak env set [NAME [VALUE]]</c>: saves variables, asking for them when NAME or VALUE is left out.</summary>
@@ -103,7 +103,7 @@ internal sealed class EnvSetCommand : EnvSaveCommand
     public override string Summary => "Save environment variables for every idrak run, in any terminal (asks for them, with suggested values)";
 
     public override string Usage => """
-        [NAME [VALUE]] [--user] [--profile NAME]
+        [NAME [VALUE]] [--user] [--config-profile NAME]
 
         Saves variables in the config ("env"). Every idrak command sets them before it starts, and the programs it
         starts (idrak test's test runner, the agent's commands) get them too, the same in PowerShell, cmd, bash,
@@ -118,9 +118,9 @@ internal sealed class EnvSetCommand : EnvSaveCommand
           VALUE  its value; - or an empty value removes it
 
         Options:
-              --user          also set it in the Windows user environment, for programs started without idrak
-                              (other systems: prints the line for the shell's profile)
-              --profile NAME  save it in the named profile (applies when that profile is in use)
+              --user                 also set it in the Windows user environment, for programs started without idrak
+                                     (other systems: prints the line for the shell's profile)
+              --config-profile NAME  save it in the named profile (applies when that profile is in use)
 
         Tokens and keys cannot be saved here (idrak login stores them).
 
@@ -128,7 +128,7 @@ internal sealed class EnvSetCommand : EnvSaveCommand
           idrak env set
           idrak env set IDRAK_DEVICES cuda:0
           idrak env set IDRAK_CUDA_DEBUG
-          idrak env set IDRAK_WINDOW_KERNELS 0 --profile laptop
+          idrak env set IDRAK_WINDOW_KERNELS 0 --config-profile laptop
           idrak env unset IDRAK_CUDA_DEBUG
         """;
 
@@ -178,7 +178,7 @@ internal sealed class EnvSetCommand : EnvSaveCommand
             }
         }
 
-        context.WriteJson(new JsonObject { ["file"] = context.Config.Path, ["profile"] = context.Option("--profile"), ["changes"] = changes });
+        context.WriteJson(new JsonObject { ["file"] = context.Config.Path, ["profile"] = context.Option("--config-profile"), ["changes"] = changes });
         return ExitCodes.Ok;
     }
 
@@ -367,11 +367,11 @@ internal sealed class EnvUnsetCommand : EnvSaveCommand
     public override string Summary => "Remove environment variables saved by idrak env set";
 
     public override string Usage => """
-        NAME... [--user] [--profile NAME]
+        NAME... [--user] [--config-profile NAME]
 
         Options:
-              --user          also remove them from the Windows user environment
-              --profile NAME  remove them from the named profile
+              --user                 also remove them from the Windows user environment
+              --config-profile NAME  remove them from the named profile
 
         Examples:
           idrak env unset IDRAK_CUDA_DEBUG
@@ -425,17 +425,17 @@ internal sealed class EnvResetCommand : EnvSaveCommand
     public override string Summary => "Remove every saved environment variable: all back to their defaults (asks first)";
 
     public override string Usage => """
-        [--all-profiles] [--profile NAME] [--user] [--yes] [--dry-run]
+        [--all-profiles] [--config-profile NAME] [--user] [--yes] [--dry-run]
 
         Removes the variables idrak env set saved, so each one is back to its default (or to the terminal's value).
         Lists them and asks first.
 
         Options:
-              --profile NAME  only the named profile's saved variables
-              --all-profiles  the top-level ones and every profile's
-              --user          also remove them from the Windows user environment
-          -y, --yes           no question
-              --dry-run       list what would be removed, change nothing
+              --config-profile NAME  only the named profile's saved variables
+              --all-profiles         the top-level ones and every profile's
+              --user                 also remove them from the Windows user environment
+          -y, --yes                  no question
+              --dry-run              list what would be removed, change nothing
 
         Examples:
           idrak env reset
@@ -454,15 +454,15 @@ internal sealed class EnvResetCommand : EnvSaveCommand
             throw new UsageException($"env reset takes no NAME (idrak env unset {context.Positional[0]} removes one).");
         }
 
-        if (context.Flag("--all-profiles") && context.Option("--profile") is not null)
+        if (context.Flag("--all-profiles") && context.Option("--config-profile") is not null)
         {
-            throw new UsageException("Give --profile NAME or --all-profiles, not both.");
+            throw new UsageException("Give --config-profile NAME or --all-profiles, not both.");
         }
 
         // Each place variables are saved in: (label, the object holding "env").
         var places = new List<(string Label, JsonObject Holder)>();
         var root = context.Config.Root;
-        if (context.Option("--profile") is { } profile)
+        if (context.Option("--config-profile") is { } profile)
         {
             if (root["profiles"]?[profile] is JsonObject named)
             {

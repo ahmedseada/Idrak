@@ -58,7 +58,7 @@ internal static class ClusterSession
 /// command once per rank of a topology file, every rank a thread of this process on a device carved from the physical
 /// device its entry names, joined by the simulated transport; rank 0 writes the run and prints, and each rank's network
 /// time on the virtual clock is reported beside the wall time. The run's event log goes to its run folder, flushed as it
-/// goes. <c>--profile</c> profiles the run (kernel, network and cluster probes; the predicted step beside the measured).
+/// goes. <c>--check-prediction</c> profiles the run (kernel, network and cluster probes; the predicted step beside the measured).
 /// </summary>
 internal sealed class ClusterSimCommand : Command
 {
@@ -102,7 +102,7 @@ internal sealed class ClusterSimCommand : Command
         time. With --mode localhost every rank is a process of its own,
         joined by the real transports (shared memory inside a node, TCP between nodes) paced to the links' profiles
         (IDRAK_CLUSTER_THROTTLE=0 lets them run free); one line per rank shows its progress; faults are the simulated
-        transport's, so a localhost run has none. With --profile the run is profiled (in-process): cold and warm apart
+        transport's, so a localhost run has none. With --check-prediction the run is profiled (in-process): cold and warm apart
         (IDRAK_PROFILE_WARM warm runs, 1 here; the later runs train into folders of their own, removed after), the
         probes' rows (cpu, memory, the device's kernels where it times them, the network's collectives, transfers and
         gradient buckets, the cluster's simulated links) and the step measured here beside the step predicted for the
@@ -130,7 +130,7 @@ internal sealed class ClusterSimCommand : Command
               --placement P      single or pipeline: the whole model on every rank, or a stage each (pretrain)
               --stages N         a pipeline's stages, dividing the ranks (one per rank)
               --event-log FILE   where the event log goes (the run folder's cluster-events.idrklog)
-              --profile          profile the run: the probes' rows and the predicted step beside the measured
+              --check-prediction profile the run: the probes' rows and the predicted step beside the measured
               --dashboard        show and steer the run in a browser (127.0.0.1, IDRAK_CLUSTER_UI_HOST)
               --port N           the dashboard's port (IDRAK_CLUSTER_UI_PORT; 0: one the system picks)
               --no-browser       print the dashboard's address instead of opening it
@@ -141,7 +141,7 @@ internal sealed class ClusterSimCommand : Command
           idrak cluster sim --topology two.json --mode localhost -- pretrain my-model --tokens tokens.bin -o run
           idrak cluster sim --topology two.json --failures slow-worker --seed 7 -- pretrain my-model --tokens t.bin -o run
           idrak cluster sim --topology two.json --placement pipeline -- pretrain my-model --tokens t.bin -o run
-          idrak cluster sim --topology two.json --profile -- train network.json --data houses.csv --run run
+          idrak cluster sim --topology two.json --check-prediction -- train network.json --data houses.csv --run run
           idrak cluster sim --topology two.json -- tune train my-model chats.jsonl -o adapters/chat
           idrak cluster sim --topology two.json -- reinforce my-model --data prompts.jsonl --algorithm grpo --shards 4 -o rl
           idrak cluster sim --topology two.json -- distill --teacher big --student small --data c.jsonl --on-policy -o op
@@ -151,7 +151,7 @@ internal sealed class ClusterSimCommand : Command
     public override IReadOnlyCollection<string> ValueOptions =>
         ["--topology", "--collective", "--wire", "--local-sgd", "--bucket-bytes", "--topk", "--mode", "--failures", "--placement", "--stages", "--event-log", "--port"];   // --seed: a common option
 
-    public override IReadOnlyCollection<string> Flags => ["--profile", "--dashboard", "--no-browser"];
+    public override IReadOnlyCollection<string> Flags => ["--check-prediction", "--dashboard", "--no-browser"];
 
     /// <summary>
     /// Runs <paramref name="inner"/> once per rank of <paramref name="topology"/> in this process (every rank a thread on its
@@ -240,9 +240,9 @@ internal sealed class ClusterSimCommand : Command
         if (context.Flag("--dashboard"))
         {
             CheckTrainer(inner);
-            if (context.Flag("--profile"))
+            if (context.Flag("--check-prediction"))
             {
-                throw new UsageException("--profile and --dashboard are one at a time: a profile runs the training more than once.");
+                throw new UsageException("--check-prediction and --dashboard are one at a time: a profile runs the training more than once.");
             }
         }
 
@@ -276,9 +276,9 @@ internal sealed class ClusterSimCommand : Command
                                      + "a localhost run joins its processes by the real transports, which inject no faults.");
         }
 
-        if (options.Simulation.Mode == SimulationMode.Localhost && context.Flag("--profile"))
+        if (options.Simulation.Mode == SimulationMode.Localhost && context.Flag("--check-prediction"))
         {
-            throw new UsageException("--profile needs --mode in-process: the probes read this process's telemetry, and a localhost run's ranks are processes of their own.");
+            throw new UsageException("--check-prediction needs --mode in-process: the probes read this process's telemetry, and a localhost run's ranks are processes of their own.");
         }
 
         using var dashboard = context.Flag("--dashboard") ? Dashboard.Open(context, path) : null;
@@ -306,7 +306,7 @@ internal sealed class ClusterSimCommand : Command
         int[] codes;
         ClusterRunResult result;
         JsonNode? profile = null;
-        if (context.Flag("--profile"))
+        if (context.Flag("--check-prediction"))
         {
             (codes, result, profile) = Profiled(context, topology, options, inner);
         }

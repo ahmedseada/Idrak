@@ -18,7 +18,7 @@ using Idrak.Networking.Abstractions;
 // cluster calibrate from a run's log and from a bench's JSON (a shared adapter included), the fitted profile then used by
 // inspect and listed by tuning show; the measured chunk size kept once per transport; the event log readable while a run
 // goes; an address on a link override (a cable on its own subnet) through init, inspect and direct-link; cluster sim for
-// tune and train, with --profile and with --placement pipeline; profile --cluster's hops; runs show's network share;
+// tune and train, with --check-prediction and with --placement pipeline; profile --cluster's hops; runs show's network share;
 // --cluster on the training commands with the rank and world-size rules of decision 3. Every run is in-process or a
 // bounded child process; nothing is left running.
 internal static partial class Tests
@@ -33,7 +33,7 @@ internal static partial class Tests
         ("cluster: cli the measured chunk size is kept once per transport (a second group reads it), a forced ChunkBytes skips it, and tuning show lists it", ClusterCliChunkKept),
         ("cluster: cli the event log is readable while a run goes and the finished file is the in-memory log's bytes", ClusterCliEventLogLive),
         ("cluster: cli replay --seed S --step N reproduces the fault schedule and the clock of a cluster sim run bit for bit; runs show charts the run's network share", ClusterCliReplay),
-        ("cluster: cli cluster sim runs train and tune on two ranks (rank 0 writing the run) and --profile prints the probes' rows with the predicted step beside the measured, also over a link cheaper than the clock's tick", ClusterCliSimTrainTune),
+        ("cluster: cli cluster sim runs train and tune on two ranks (rank 0 writing the run) and --check-prediction prints the probes' rows with the predicted step beside the measured, also over a link cheaper than the clock's tick", ClusterCliSimTrainTune),
         ("cluster: cli cluster sim --placement pipeline runs pretrain as a pipeline; another command with it is a usage error", ClusterCliSimPipeline),
         ("cluster: cli profile --cluster shows a token's hops through a simulated pipeline", ClusterCliProfileHops),
         ("cluster: cli --cluster on the training commands: a one-worker node needs no rank, a two-worker node names the missing --rank (IDRAK_RANK on tune, whose --rank stays the adapter's), a contradicting world size names both, --world-size without --coordinator names it", ClusterCliHandStarted),
@@ -511,10 +511,10 @@ internal static partial class Tests
                   && text.Contains("network time on the virtual clock: rank 0", StringComparison.Ordinal), $"cluster sim runs train on two ranks, rank 0 writing the run: {code} {error}\n{text}");
 
             string profiled = Path.Combine(folder, "profiled");
-            var (pcode, ptext, perror) = ClusterCli(["cluster", "sim", "--topology", topology, "--profile", "--", .. Train(profiled)]);
+            var (pcode, ptext, perror) = ClusterCli(["cluster", "sim", "--topology", topology, "--check-prediction", "--", .. Train(profiled)]);
             Check(pcode == 0 && ptext.Contains("collectives", StringComparison.Ordinal) && ptext.Contains("simulated network", StringComparison.Ordinal)
                   && ptext.Contains("gradient buckets", StringComparison.Ordinal) && ptext.Contains("step: measured", StringComparison.Ordinal) && ptext.Contains("predicted", StringComparison.Ordinal)
-                  && ptext.Contains("cpu", StringComparison.Ordinal), $"--profile prints the probes' rows and the predicted step beside the measured: {pcode} {perror}\n{ptext}");
+                  && ptext.Contains("cpu", StringComparison.Ordinal), $"--check-prediction prints the probes' rows and the predicted step beside the measured: {pcode} {perror}\n{ptext}");
             Check(Directory.Exists(profiled) && !Directory.EnumerateDirectories(folder, "profiled.profile-*").Any(), "the warm run's folder is removed after");
 
             // A link cheaper than the clock's smallest tick (a fast same-device copy on a fast CPU measures that way): every
@@ -523,16 +523,16 @@ internal static partial class Tests
             try
             {
                 string free = Path.Combine(folder, "free");
-                var (fcode, ftext, ferror) = ClusterCli(["cluster", "sim", "--topology", topology, "--profile", "--", .. Train(free)]);
+                var (fcode, ftext, ferror) = ClusterCli(["cluster", "sim", "--topology", topology, "--check-prediction", "--", .. Train(free)]);
                 Check(fcode == 0 && ftext.Contains("step: measured", StringComparison.Ordinal) && ftext.Contains("predicted", StringComparison.Ordinal),
-                    $"--profile over a link that costs nothing on the clock still prints the predicted step: {fcode} {ferror}\n{ftext}");
+                    $"--check-prediction over a link that costs nothing on the clock still prints the predicted step: {fcode} {ferror}\n{ftext}");
             }
             finally
             {
                 LinkProfiles.Unregister(ClusterTopology.SameDevice);
             }
-            var localhost = ClusterCli(["cluster", "sim", "--topology", topology, "--mode", "localhost", "--profile", "--", .. Train(Path.Combine(folder, "x"))]);
-            Check(localhost.Code == ExitCodes.Usage && localhost.Error.Contains("in-process", StringComparison.Ordinal), $"--profile with --mode localhost names why: {localhost.Error}");
+            var localhost = ClusterCli(["cluster", "sim", "--topology", topology, "--mode", "localhost", "--check-prediction", "--", .. Train(Path.Combine(folder, "x"))]);
+            Check(localhost.Code == ExitCodes.Usage && localhost.Error.Contains("in-process", StringComparison.Ordinal), $"--check-prediction with --mode localhost names why: {localhost.Error}");
 
             string data = Path.Combine(folder, "chats.jsonl");
             File.WriteAllLines(data, Enumerable.Range(0, 8).Select(i => new JsonObject { ["question"] = $"What is {i} plus {i}?", ["answer"] = $"{i + i}" }.ToJsonString()));

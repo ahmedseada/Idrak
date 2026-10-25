@@ -139,7 +139,7 @@ internal sealed class CompletionCommand : Command
                 "--color" => ["auto", "always", "never"],
                 "--weights" => Registries.Snapshot().First(c => c.Key == "weights").Names,
                 "--kv" => Registries.Snapshot().First(c => c.Key == "kv").Names,
-                "--profile" => context.Config.Root["profiles"] is JsonObject p ? p.Select(x => x.Key) : [],
+                "--config-profile" => context.Config.Root["profiles"] is JsonObject p ? p.Select(x => x.Key) : [],
                 _ => [],
             };
         }

@@ -18,12 +18,12 @@ internal sealed class InitCommand : Command
     public override string Summary => "Writes the config file: default device, cache folder, model aliases";
 
     public override string Usage => """
-        [--yes] [--dry-run] [--profile NAME]
+        [--yes] [--dry-run] [--config-profile NAME]
 
         Options:
-          -y, --yes           no questions: the default device and the cache folder doctor finds
-              --dry-run       print what would be written, write nothing
-              --profile NAME  write the values into a named profile (e.g. phone) instead of the top level
+          -y, --yes                  no questions: the default device and the cache folder doctor finds
+              --dry-run              print what would be written, write nothing
+              --config-profile NAME  write the values into a named profile (e.g. phone) instead of the top level
 
         Keys already in the file are kept; the ones asked for are replaced. The file is --config, IDRAK_CONFIG or
         ~/.idrak/config.json.
@@ -31,10 +31,10 @@ internal sealed class InitCommand : Command
         Examples:
           idrak init
           idrak init -y
-          idrak init --yes --profile phone -d vulkan:0
+          idrak init --yes --config-profile phone -d vulkan:0
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--profile"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--config-profile"];
 
     public override IReadOnlyCollection<string> Flags => Terminal.ConfirmFlags;
 
@@ -70,7 +70,7 @@ internal sealed class InitCommand : Command
             values["aliases"] = aliases;
         }
 
-        string? profile = context.Option("--profile");
+        string? profile = context.Option("--config-profile");
         string where = profile is null ? context.Config.Path : $"profile {profile} in {context.Config.Path}";
         var json = new JsonObject { ["file"] = context.Config.Path, ["profile"] = profile, ["values"] = values.DeepClone(), ["written"] = false };
         if (Terminal.DryRun(context))

@@ -305,9 +305,9 @@ internal static partial class Tests
             });
 
             // A profile's saved values apply when it is in use.
-            Check(Cli("env", "set", "IDRAK_TRACE", "1", "--profile", "laptop", "-C", config).Exit == 0, "env set --profile");
+            Check(Cli("env", "set", "IDRAK_TRACE", "1", "--config-profile", "laptop", "-C", config).Exit == 0, "env set --config-profile");
             Check(CliJson("env", "IDRAK_TRACE", "-C", config, "-j")["variables"]![0]!["value"] is null, "a profile's variable applied without the profile");
-            WithEnvironment(new Dictionary<string, string?> { ["IDRAK_PROFILE"] = "laptop" }, () =>
+            WithEnvironment(new Dictionary<string, string?> { ["IDRAK_CONFIG_PROFILE"] = "laptop" }, () =>
                 Check((string?)CliJson("env", "IDRAK_TRACE", "-C", config, "-j")["variables"]![0]!["source"] == "saved", "the profile's variable"));
 
             // Refused: tokens, variables read before the tool starts, unknown names, too many arguments; no terminal to ask on.
@@ -405,10 +405,10 @@ internal static partial class Tests
         Check(Cli("config", "set", "device", "cpu", "-C", config).Exit == 0, "config set");
         Check(Cli("config", "set", "sizes", "[1, 2]", "-C", config).Exit == 0, "config set JSON");
         Check(Cli("config", "set", "aliases.qwen.model", "Qwen/Qwen3-0.6B", "-C", config).Exit == 0, "config set dotted");
-        Check(Cli("config", "set", "device", device.ToString(), "--profile", "phone", "-C", config).Exit == 0, "config set --profile");
+        Check(Cli("config", "set", "device", device.ToString(), "--config-profile", "phone", "-C", config).Exit == 0, "config set --config-profile");
         Check(Cli("config", "set", "tokens.hub", "secret-token-42", "-C", config).Exit == 0, "config set token");
         Check(Cli("config", "get", "device", "-C", config).Out.Trim() == "cpu", "config get");
-        Check(Cli("config", "get", "device", "--profile", "phone", "-C", config).Out.Trim() == device.ToString(), "config get --profile");
+        Check(Cli("config", "get", "device", "--config-profile", "phone", "-C", config).Out.Trim() == device.ToString(), "config get --config-profile");
         Check(Cli("config", "get", "aliases.qwen.model", "-C", config).Out.Trim() == "Qwen/Qwen3-0.6B", "config get dotted");
         Check(Cli("config", "get", "nothing", "-C", config).Exit == 1, "config get of an unset key");
         var sizes = CliJson("config", "get", "sizes", "-C", config, "-j");
@@ -416,7 +416,7 @@ internal static partial class Tests
         var (_, list, _) = Cli("config", "list", "-C", config);
         Check(list.Contains("aliases.qwen.model") && list.Contains("tokens") && !list.Contains("secret-token-42"), $"config list: {list}");
         Check(!Cli("config", "list", "-C", config, "-j").Out.Contains("secret-token-42") && !Cli("config", "get", "tokens", "-C", config).Out.Contains("secret-token-42"), "config printed a token");
-        WithEnvironment(new Dictionary<string, string?> { ["IDRAK_PROFILE"] = "phone" }, () =>
+        WithEnvironment(new Dictionary<string, string?> { ["IDRAK_CONFIG_PROFILE"] = "phone" }, () =>
             Check(CliJson("devices", "-C", config, "-j", "-d", device.ToString())["devices"] is not null && CliConfig.Load(config).Get("device") == device.ToString(), "profile in use"));
         Check(Cli("config", "unset", "device", "-C", config).Exit == 0 && Cli("config", "get", "device", "-C", config).Exit == 1, "config unset");
 
@@ -429,7 +429,7 @@ internal static partial class Tests
         Terminal.TestInput = new StringReader($"{device}\n\nq=Org/Model\n\n");
         try
         {
-            Check(Cli("init", "-C", config2, "--profile", "desk").Exit == 0, "init with answers");
+            Check(Cli("init", "-C", config2, "--config-profile", "desk").Exit == 0, "init with answers");
         }
         finally
         {
