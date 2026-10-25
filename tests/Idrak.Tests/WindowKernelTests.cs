@@ -15,7 +15,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] WindowKernelGroup =
     [
-        ("window kernels: tiled, decoding (float32, int8, bfloat16 caches, split positions), per-row and packed attention with windows inside and beyond the keys and soft-caps match a direct reference; a window beyond the keys is plain attention bit for bit", WindowedAttentionKernels),
+        ("window kernels: tiled, decoding (float32, int8, bfloat16 caches, split positions), per-row (float32 and bfloat16 caches, each CUDA path) and packed attention with windows inside and beyond the keys and soft-caps match a direct reference; a window beyond the keys is plain attention bit for bit", WindowedAttentionKernels),
         ("window kernels: gradients with windows and soft-caps (tiled and packed) match finite differences and the CPU", WindowedAttentionGradients),
         ("window kernels: vulkan decoding, tiled and gradient kernels with windows and soft-caps match the CPU as kernels at every width and split count", VulkanWindowedKernels),
         ("window kernels: Mistral, Gemma 2 and Gemma 3 style decoders give the composed path's logits through the kernels (prompt, training and gradients, cached decoding in every cache format, recorded steps, packed sequences, rows of different lengths)", WindowedDecodersMatchComposed),
@@ -156,20 +156,52 @@ internal static partial class Tests
             using var tv = Tensor.From(v, [heads, Capacity, dim], device);
             using var position = Tensor.From([(float)Offset], [1], device);
             using var tStarts = Tensor.From(starts, [Rows * Steps], device);
+            using var zero = Tensor.From([0f], [1], device);
+            using var cache16 = new KeyValueCache(heads, Capacity, dim, device, KeyValueFormat.BFloat16);
+            Tensor.WriteKeyValuesBFloat16(tk, cache16.Keys, zero, dim);
+            Tensor.WriteKeyValuesBFloat16(tv, cache16.Values, zero, dim);
+            float[] k16 = [.. k.Select(Bf)], v16 = [.. v.Select(Bf)];
+            // CUDA: both paths of rows over a bfloat16 cache (the decoding kernel, and the tiled one where it takes the head
+            // size), whichever the device measured; elsewhere the device's own.
+            int?[] paths = device.Backend is Idrak.Gpu.Cuda.CudaBackend ? [0, 1] : [null];
             foreach (var variant in WindowVariants.Prepend(default))
             {
+                (int, int) Seen(int h, int i) => (rowStarts[h / Kv], Math.Min(Offset + i % Steps, Capacity - 1) + 1);
                 var y = Tensor.AttentionRows(tq, tk, tv, position, Steps, scale, tStarts, Kv, variant);
                 bool supported = device.Backend.SupportsAttentionRows(dim, variant);
                 if (y is null)
                 {
                     Check(!supported, $"per-row attention, dim {dim}, window {variant.Window}, cap {variant.Softcap}: refused although supported");
-                    continue;
+                }
+                else
+                {
+                    var expected = DirectAttention(q, k, v, heads, rowsPerHead, Capacity, dim, scale, variant, Seen);
+                    AssertClose(expected, y.ToArray(), 2e-4f, $"per-row attention, dim {dim}, window {variant.Window}, cap {variant.Softcap}");
+                    y.Dispose();
                 }
 
-                var expected = DirectAttention(q, k, v, heads, rowsPerHead, Capacity, dim, scale, variant,
-                    (h, i) => (rowStarts[h / Kv], Math.Min(Offset + i % Steps, Capacity - 1) + 1));
-                AssertClose(expected, y.ToArray(), 2e-4f, $"per-row attention, dim {dim}, window {variant.Window}, cap {variant.Softcap}");
-                y.Dispose();
+                var expected16 = DirectAttention(q, k16, v16, heads, rowsPerHead, Capacity, dim, scale, variant, Seen);
+                foreach (var path in paths)
+                {
+                    string name = $"per-row attention over a bfloat16 cache ({path switch { 0 => "decoding kernel", 1 => "tiled kernel", _ => "the device's path" }}), " +
+                        $"dim {dim}, window {variant.Window}, cap {variant.Softcap}";
+                    Idrak.Gpu.Cuda.CudaBackend.RowsBFloat16Path = path;
+                    try
+                    {
+                        using var y16 = Tensor.AttentionRowsBFloat16(tq, cache16, position, Steps, scale, tStarts, Kv, variant);
+                        if (y16 is null)
+                        {
+                            Check(!supported, $"{name}: refused although supported");
+                            continue;
+                        }
+
+                        AssertClose(expected16, y16.ToArray(), 2e-4f, name);
+                    }
+                    finally
+                    {
+                        Idrak.Gpu.Cuda.CudaBackend.RowsBFloat16Path = null;
+                    }
+                }
             }
 
             int[][] lengths = [[3, 9, 4], [16], [1, 6, 2]];

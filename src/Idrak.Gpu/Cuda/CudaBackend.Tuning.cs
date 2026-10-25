@@ -41,6 +41,7 @@ internal enum TuneOp : byte
     Convolution,
     SpanKernel,
     SpanStrided,
+    RowsPath,
 }
 
 /// <summary>

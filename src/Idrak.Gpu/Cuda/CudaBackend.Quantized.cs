@@ -977,7 +977,8 @@ internal sealed unsafe partial class CudaBackend
 
     // A decoding attention launch but for its split count, least chunk, partial results, counters and position: the
     // cache format (0 float32, 1 int8, 2 bfloat16) and its operands (DecodeSplit).
-    // Format 3: float32 rows of different lengths (attention_rows_f32), each from starts[(head / HeadsPerRow) · steps + step].
+    // Format 3: float32 rows of different lengths (attention_rows_f32), each from starts[(head / HeadsPerRow) · steps + step];
+    // format 4: the same rows over a bfloat16 cache (attention_rows_bf16).
     private readonly record struct DecodeAttention(int Format, Storage Q, Storage Keys, Storage Values, Storage? KeyScales, Storage? ValueScales,
         Storage Y, int RowsPerHead, int Steps, int Capacity, int Dim, float Scale, int Words, AttentionVariant Variant, int Rows, Storage? Starts = null,
         int HeadsPerRow = 1);
@@ -1014,6 +1015,11 @@ internal sealed unsafe partial class CudaBackend
                 Launch(K("attention_rows_f32"), (uint)a.Rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
                     P(a.Q), P(a.Keys), P(a.Values), at, P(a.Y), P(part), P(counters), P(a.Starts!), U(a.RowsPerHead), U(a.Steps), U(a.Capacity), U(a.Dim), F(a.Scale),
                     U(minChunk), U(a.Variant.Window), F(a.Variant.Softcap), U(a.HeadsPerRow), U(a.Rows));
+                break;
+            case 4:
+                Launch(K("attention_rows_bf16"), (uint)a.Rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
+                    P(a.Q), P(a.Keys), P(a.Values), at, P(a.Y), P(part), P(counters), P(a.Starts!), U(a.RowsPerHead), U(a.Steps), U(a.Capacity), U(a.Dim), F(a.Scale),
+                    U(a.Words), U(minChunk), U(a.Variant.Window), F(a.Variant.Softcap), U(a.HeadsPerRow), U(a.Rows));
                 break;
             case 1:
                 Launch(K("attention_decode_int8"), (uint)a.Rows, (uint)splits, 1, PtxKernels.RowThreads, 1,
@@ -1254,9 +1260,11 @@ internal sealed unsafe partial class CudaBackend
     // is refused (fine-tuning then pads).
     public override bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) => variant.IsPlain && FlashTensorCore(dim) is not null;
 
-    // Rows of different lengths: the flash kernels where they serve, else the decoding kernel with per-row starts
-    // (attention_rows_f32: every head size the decoding kernels take, windows and caps).
-    public override bool SupportsAttentionRows(int dim, AttentionVariant variant = default) => SupportsSegmentedAttention(dim, variant) || dim <= PtxKernels.DecodeMaxDim;
+    // Rows of different lengths: float32 caches on the flash kernels where they serve, else on the decoding kernel with
+    // per-row starts (attention_rows_f32); bfloat16 caches on attention_rows_bf16 (and attention_flash_rows_bf16 for
+    // prompt-sized steps). Both decoding kernels take every head size up to DecodeMaxDim, windows and caps, and the
+    // tensor-core flash head sizes lie within it: so the head sizes both cache formats run on the device.
+    public override bool SupportsAttentionRows(int dim, AttentionVariant variant = default) => dim <= PtxKernels.DecodeMaxDim;
 
     public override bool AttentionRowsKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
@@ -1371,6 +1379,74 @@ internal sealed unsafe partial class CudaBackend
 
         DecodeSplit(WindowedTuning(2, variant, capacity),
             new DecodeAttention(2, q, keys, values, null, null, y, rowsPerHead, steps, capacity, dim, scale, words, variant, heads * rowsPerHead), position);
+    }
+
+    /// <summary>Tests and benchmarks: the path of rows over a bfloat16 cache (0 the decoding kernel, 1 the tiled one) instead of the measured one.</summary>
+    internal static int? RowsBFloat16Path { get; set; }
+
+    // Steps from which the bfloat16 cache's own attention takes its tiled kernel (KeyValueLayouts: tiled when steps >= 8);
+    // rows of different lengths start from the same choice until the two paths are measured.
+    private const int TiledSteps = 8;
+
+    // Rows of different lengths over a bfloat16 cache: the decoding kernel with per-row starts (attention_rows_bf16, its
+    // splits measured as a kernel of its own, as attention_rows_f32's), or for several steps a head the tiled kernel with
+    // per-row starts (attention_flash_rows_bf16: each key and value tile read once for 32 query rows), where it takes the
+    // head size. Which of the two serves several steps is measured per shape (RowsPath); the default, also while nothing
+    // can be measured (a graph being recorded), is the bfloat16 cache's own choice: tiled from TiledSteps steps. One step
+    // a row (decoding) always takes the decoding kernel. Both read only the device (the position, the starts), so a
+    // recorded step stays valid as the cache fills.
+    public override bool AttentionRowsBFloat16Kernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    {
+        if (dim > PtxKernels.DecodeMaxDim)
+        {
+            return false;
+        }
+
+        int tuning = WindowedTuning(7, variant, capacity);
+        var attention = new DecodeAttention(4, q, keys, values, null, null, y, rowsPerHead, steps, capacity, dim, scale, (dim + 1) / 2, variant,
+            heads * rowsPerHead, starts, headsPerRow);
+        RowsBFloat16(RowsBFloat16Choice(tuning, attention, position), tuning, attention, position);
+        return true;
+    }
+
+    // The path of AttentionRowsBFloat16Kernel (0 decoding, 1 tiled): forced, the only one, measured or the default.
+    private int RowsBFloat16Choice(int tuning, in DecodeAttention a, Storage position)
+    {
+        bool tiled = a.Dim <= PtxKernels.FlashMaxDim;
+        if (RowsBFloat16Path is int forced)
+        {
+            return tiled ? Math.Clamp(forced, 0, 1) : 0;
+        }
+
+        if (!tiled || a.Steps == 1)
+        {
+            return 0;
+        }
+
+        var key = new TuneKey(TuneOp.RowsPath, tuning, TuneSizes.Class(a.Rows / a.RowsPerHead), TuneSizes.Class(a.RowsPerHead), a.Capacity, a.Dim);
+        int formula = a.Steps >= TiledSteps ? 1 : 0;
+        ReadOnlySpan<int> candidates = [0, 1];
+        if (TryTuned(key, candidates, formula, out int path))
+        {
+            return path;                                                       // known: no closure, no allocation
+        }
+
+        var operands = a;
+        return Tune(key, candidates, formula, c => RowsBFloat16(c, tuning, operands, position));   // each writes y, which the chosen one writes again
+    }
+
+    private void RowsBFloat16(int path, int tuning, in DecodeAttention a, Storage position)
+    {
+        if (path == 0)
+        {
+            DecodeSplit(tuning, a, position);
+            return;
+        }
+
+        Launch(K("attention_flash_rows_bf16"), (uint)((a.RowsPerHead + PtxKernels.FlashTile - 1) / PtxKernels.FlashTile), (uint)(a.Rows / a.RowsPerHead), 1, 128, 1,
+            P(a.Q), P(a.Keys), P(a.Values), P(position), P(a.Y), 0UL, U(a.RowsPerHead), U(a.Steps), U(a.Capacity), U(a.Dim), F(a.Scale), U(a.Words),
+            U(a.Variant.Window), F(a.Variant.Softcap), P(a.Starts!), U(a.HeadsPerRow));
     }
 
     public override void KeyValueWriteBFloat16Kernel(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)

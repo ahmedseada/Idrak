@@ -10,7 +10,7 @@ namespace Idrak.Gpu.Cuda;
 // such as a softmax over a 150k-token vocabulary), and matrix products with few rows (token-by-token decoding).
 internal static partial class PtxKernels
 {
-    public static readonly string[] RowNames = ["gemv_nn_f32", "gemv_nt_f32", "attention_decode_f32", "attention_decode_int8", "attention_rows_f32", "gemm128_f32", "gemm64_f32", "gemv_multi_f32", "attention_flash_f32", "attention_flash_int8", "attn_bwd_d_f32", "attn_bwd_kv_f32", "attn_bwd_q_f32", "attention_decode_bf16", "attention_flash_bf16", "gemm128_int8_f32", "gemm64_int8_f32", "gemm128_int4_f32", "gemm64_int4_f32", "gemm128_bf16_f32", "gemm64_bf16_f32", "adam8_f32", "transpose_f32", "sumsq_f32", "sum_cols_strided_f32", "multi_sumsq_f32", "sum_blocks_f32", "fold_chunks_f32", "multi_adamw_f32", SpanAttentionName, SpanBackwardKeysName, SpanBackwardQueriesName];
+    public static readonly string[] RowNames = ["gemv_nn_f32", "gemv_nt_f32", "attention_decode_f32", "attention_decode_int8", "attention_rows_f32", "gemm128_f32", "gemm64_f32", "gemv_multi_f32", "attention_flash_f32", "attention_flash_int8", "attn_bwd_d_f32", "attn_bwd_kv_f32", "attn_bwd_q_f32", "attention_decode_bf16", "attention_flash_bf16", "attention_rows_bf16", "attention_flash_rows_bf16", "gemm128_int8_f32", "gemm64_int8_f32", "gemm128_int4_f32", "gemm64_int4_f32", "gemm128_bf16_f32", "gemm64_bf16_f32", "adam8_f32", "transpose_f32", "sumsq_f32", "sum_cols_strided_f32", "multi_sumsq_f32", "sum_blocks_f32", "fold_chunks_f32", "multi_adamw_f32", SpanAttentionName, SpanBackwardKeysName, SpanBackwardQueriesName];
 
     /// <summary>Threads of a <c>gemm128_f32</c> / <c>gemm64_f32</c> block.</summary>
     public const int GemmThreads = 256;
@@ -676,9 +676,11 @@ internal static partial class PtxKernels
         AttentionDecode(sb, int8: true);
         AttentionDecode(sb, bf16: true);
         AttentionDecode(sb, rows: true);
+        AttentionDecode(sb, bf16: true, rows: true);
         AttentionFlash(sb);
         AttentionFlash(sb, int8: true);
         AttentionFlash(sb, bf16: true);
+        AttentionFlash(sb, bf16: true, rows: true);
         AttentionBackward(sb);
         AttentionSpans(sb);
         AttentionSpansBackward(sb);
@@ -690,6 +692,35 @@ internal static partial class PtxKernels
             Gemm(sb, $"gemm64_{format}_f32", 64, 4, packed);
         }
     }
+
+    // attention_flash_rows_bf16's registers: the sequence's starts (%rds0), the heads per row and scratch.
+    private const string RowsFlashRegisters = """
+
+            .reg .b32 %rs<6>;
+            .reg .b64 %rds<2>;
+            .reg .f32 %fs<1>;
+            .reg .pred %rp<2>;
+        """;
+
+    // attention_flash_rows_bf16: the block's first tile no earlier than the least start of its rows (%r9 to %r32, the same
+    // for every thread: a few loads once per block), which no row's %lo is below.
+    private const string RowsFlashFirstTile = """
+        mov.u32 %rs3, %r9;
+        mov.u32 %rs4, 0xFFFFFFFF;
+        RS:
+        setp.gt.u32 %rp0, %rs3, %r32;
+        @%rp0 bra RS_END;
+        rem.u32 %rs5, %rs3, %r2;
+        mul.wide.u32 %rds1, %rs5, 4;
+        add.u64 %rds1, %rds1, %rds0;
+        ld.global.f32 %fs0, [%rds1];
+        cvt.rzi.u32.f32 %rs5, %fs0;
+        min.u32 %rs4, %rs4, %rs5;
+        add.u32 %rs3, %rs3, 1;
+        bra RS;
+        RS_END:
+        max.u32 %r39, %r39, %rs4;
+        """;
 
     /// <summary>Largest head size <c>attention_flash_f32</c> handles (4 dimensions per lane).</summary>
     public const int FlashMaxDim = 128;
@@ -742,15 +773,19 @@ internal static partial class PtxKernels
     // int8: keys and values come from an int8 cache (see AttentionDecode) with per-row scales, dequantized as the tiles
     // are loaded into shared memory.
     // bf16: keys and values come from a bfloat16 cache (rows of `words` words, dimension d in half d % 2 of word d / 2).
-    private static void AttentionFlash(StringBuilder sb, bool int8 = false, bool bf16 = false)
+    // rows (attention_flash_rows_bf16, with bf16): rows of different lengths (Backend.AttentionRowsBFloat16): row i of head
+    // h also starts no earlier than starts[(h / hpr) · steps + i % steps] (in its %lo); the block's tiles begin at the least
+    // start of its rows (all of one head, so of one sequence), and a row left with no position (padding) writes zeros.
+    private static void AttentionFlash(StringBuilder sb, bool int8 = false, bool bf16 = false, bool rows = false)
     {
         const int T = FlashTile, D = FlashMaxDim, Rows = 8;
+        string name = int8 ? "attention_flash_int8" : bf16 && rows ? "attention_flash_rows_bf16" : bf16 ? "attention_flash_bf16" : "attention_flash_f32";
         var s = new StringBuilder();
         s.AppendLine(CultureInfo.InvariantCulture, $$"""
-            .visible .entry {{(int8 ? "attention_flash_int8" : bf16 ? "attention_flash_bf16" : "attention_flash_f32")}}(
+            .visible .entry {{name}}(
                 .param .u64 p_q, .param .u64 p_k, .param .u64 p_v, .param .u64 p_pos, .param .u64 p_o, .param .u64 p_lse,
                 .param .u32 p_rph, .param .u32 p_steps, .param .u32 p_cap, .param .u32 p_dim, .param .f32 p_scale{{(int8 ? ",\n    .param .u64 p_ks, .param .u64 p_vs, .param .u32 p_words" : bf16 ? ",\n    .param .u32 p_words" : "")}},
-                .param .u32 p_window, .param .f32 p_softcap
+                .param .u32 p_window, .param .f32 p_softcap{{(rows ? ",\n    .param .u64 p_starts, .param .u32 p_hpr" : "")}}
             )
             {
                 .reg .pred %p<16>;
@@ -769,7 +804,7 @@ internal static partial class PtxKernels
                 .reg .pred %dv<4>;
                 .shared .align 16 .f32 fa_q[{{T * D}}];
                 .shared .align 16 .f32 fa_k[{{T * D}}];
-                .shared .align 16 .f32 fa_v[{{T * D}}];
+                .shared .align 16 .f32 fa_v[{{T * D}}];{{(rows ? RowsFlashRegisters : "")}}
                 ld.param.u64 %rd1, [p_q];
                 ld.param.u64 %rd2, [p_k];
                 ld.param.u64 %rd3, [p_v];
@@ -851,9 +886,32 @@ internal static partial class PtxKernels
                 bra QL;
             QL_END:
             """);
-        // Per-row limits (last position each row may see) and the block's last position.
+        // Per-row limits (last position each row may see) and the block's last position. Rows: the starts of this head's
+        // sequence (starts + 4 · (head / hpr) · steps, %rds0) once; each row's start, from its step (%r22), raises its %lo.
+        if (rows)
+        {
+            s.AppendLine("""
+                    ld.param.u64 %rds0, [p_starts];
+                    cvta.to.global.u64 %rds0, %rds0;
+                    ld.param.u32 %rs0, [p_hpr];
+                    div.u32 %rs1, %r10, %rs0;
+                    mul.lo.u32 %rs1, %rs1, %r2;
+                    mul.wide.u32 %rds1, %rs1, 4;
+                    add.u64 %rds0, %rds0, %rds1;
+                """);
+        }
+
         for (int i = 0; i < Rows; i++)
         {
+            string rowStart = rows
+                ? string.Create(CultureInfo.InvariantCulture, $"""
+                  mul.wide.u32 %rds1, %r22, 4;
+                  add.u64 %rds1, %rds1, %rds0;
+                  ld.global.f32 %fs0, [%rds1];
+                  cvt.rzi.u32.f32 %rs2, %fs0;
+                  max.u32 %lo{i}, %lo{i}, %rs2;
+                  """)
+                : "";
             s.AppendLine(CultureInfo.InvariantCulture, $$"""
                     mad.lo.u32 %r21, %r8, {{Rows}}, {{i}};
                     add.u32 %r21, %r21, %r9;
@@ -863,6 +921,7 @@ internal static partial class PtxKernels
                     min.u32 %r21, %r21, %r{{24 + i}};
                     add.u32 %r21, %r21, 1;
                     {{WindowStartPtx(string.Create(CultureInfo.InvariantCulture, $"%lo{i}"), "%r21", "%window", "%windowed")}}
+                    {{rowStart}}
                     mov.f32 %m{{i}}, 0fFF800000;
                     mov.f32 %l{{i}}, 0f00000000;
                 """);
@@ -901,6 +960,7 @@ internal static partial class PtxKernels
                 min.u32 %r37, %r37, %r38;
                 add.u32 %r37, %r37, 1;
                 {{WindowStartPtx("%r39", "%r37", "%window", "%windowed")}}
+                {{(rows ? RowsFlashFirstTile : "")}}
             TILE:
                 setp.gt.u32 %p4, %r39, %r36;
                 @%p4 bra TILE_END;
@@ -1113,9 +1173,19 @@ internal static partial class PtxKernels
                     mul.wide.u32 %rd18, %r22, 4;
                     add.u64 %rd18, %rd18, %rd11;
                 """);
+            if (rows)
+            {
+                s.AppendLine(CultureInfo.InvariantCulture, $"    setp.eq.f32 %rp1, %l{i}, 0f00000000;");     // saw no position: zeros
+            }
+
             for (int j = 0; j < 4; j++)
             {
                 s.AppendLine(CultureInfo.InvariantCulture, $"    mul.f32 %f14, %o{i * 4 + j}, %f13;");
+                if (rows)
+                {
+                    s.AppendLine("    @%rp1 mov.f32 %f14, 0f00000000;");
+                }
+
                 s.AppendLine(CultureInfo.InvariantCulture, $"    @%dv{j} st.global.f32 [%rd18+{128 * j}], %f14;");
             }
 
@@ -1973,6 +2043,7 @@ internal static partial class PtxKernels
     // rows (attention_rows_f32, a float32 cache): rows of different lengths decoded together (Backend.AttentionRows): row i
     // of head h also starts no earlier than starts[(h / hpr) · steps + i % steps], the start of its sequence; a row left
     // with no position (padding) writes zeros from its first block and returns before any barrier (the whole block alike).
+    // bf16 and rows (attention_rows_bf16): the same rows over a bfloat16 cache (Backend.AttentionRowsBFloat16).
     private static void AttentionDecode(StringBuilder sb, bool int8 = false, bool bf16 = false, bool rows = false)
     {
         const int Stride = (2 + DecodeMaxDim) * 4;
@@ -2317,7 +2388,14 @@ internal static partial class PtxKernels
             bra FD;
             FD_END:
             """);
-        if (bf16)
+        if (bf16 && rows)
+        {
+            RowBlock(sb, "attention_rows_bf16", ["q", "keys", "values", "pos", "y", "part", "counters", "starts"],
+                [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "words"), ("u32", "minchunk"), ("u32", "window"),
+                    ("f32", "softcap"), ("u32", "hpr")],
+                b.ToString(), sharedFloats: RowThreads / 32 * (2 + DecodeMaxDim), registers: registers);
+        }
+        else if (bf16)
         {
             RowBlock(sb, "attention_decode_bf16", ["q", "keys", "values", "pos", "y", "part", "counters"],
                 [("u32", "rph"), ("u32", "steps"), ("u32", "cap"), ("u32", "dim"), ("f32", "scale"), ("u32", "words"), ("u32", "minchunk"), ("u32", "window"), ("f32", "softcap")],
@@ -2345,8 +2423,8 @@ internal static partial class PtxKernels
         }
     }
 
-    // attention_rows_f32: the row's own start (%r22 from starts[(head / hpr) · steps + step]) raises its first position
-    // (%r28); with none left, block 0 of the row writes its zeros and every block returns.
+    // attention_rows_f32 and attention_rows_bf16: the row's own start (%r22 from starts[(head / hpr) · steps + step])
+    // raises its first position (%r28); with none left, block 0 of the row writes its zeros and every block returns.
     private const string RowStartPtx = """
         div.u32 %r22, %r7, %s_hpr;
         mad.lo.u32 %r22, %r22, %s_steps, %r9;
