@@ -33,6 +33,7 @@ internal static partial class Tests
         ("cli health: help topics and pages, group words, setup android", CliHelpTopics),
         ("cli health: @file, --log, --output, --format csv/md, --color, --timeout, --threads, progress", CliFoundation),
         ("cli health: --profile on any command (and IDRAK_PROFILE=1) leaves its output as it is and writes one watched profile to the error stream or IDRAK_PROFILE_OUT, secrets hidden", CliProfileFlag),
+        ("cli health: --verbose prints the library's work as it happens on the error stream (a prompt pass with its rows and pieces, decoding summed before the next pass and at the end, a kernel choice measured, a host fallback), nothing on the output; IDRAK_VERBOSE=1 makes a command verbose, another value is a usage error", CliVerboseLines),
     ];
 
     // --profile, common to every command: the output (JSON included) unchanged, one report of one watched run on the
@@ -185,6 +186,45 @@ internal static partial class Tests
                 Check(!lower.Contains(name, StringComparison.Ordinal), $"{where}: names a provider ('{name}').");
             }
         }
+    }
+
+    private static void CliVerboseLines(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                              // the CLI's own: once
+        }
+
+        var error = new StringWriter();
+        using (var lines = new Idrak.Cli.Shared.VerboseLines(error))
+        {
+            long start = System.Diagnostics.Stopwatch.GetTimestamp();
+            Telemetry.InferenceStage(InferenceStageKind.Prefill, Device.Cpu, start, count: 4 * 2812, rows: 4, pieces: 3, pieceSize: 1024);
+            Telemetry.InferenceStage(InferenceStageKind.DecodeChunk, Device.Cpu, start, count: 32);
+            Telemetry.InferenceStage(InferenceStageKind.DecodeChunk, Device.Cpu, start, count: 32);
+            Telemetry.InferenceStage(InferenceStageKind.Prefill, Device.Cpu, start, count: 100);
+            Telemetry.Tuning(new TuningCompleted("cuda", "RowsPath", 2, TimeSpan.FromMilliseconds(420), false));
+            Telemetry.HostFallback(new HostFallback("vulkan", "Softmax"));
+            Telemetry.InferenceStage(InferenceStageKind.DecodeChunk, Device.Cpu, start, count: 8);
+        }
+
+        string text = error.ToString();
+        string[] got = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Check(got.Length == 6 && got.All(l => l.StartsWith("verbose: ", StringComparison.Ordinal)),
+            $"six lines, each named: {text}");
+        Check(got[0].Contains("4 rows × 2,812 positions in 3 pieces of 1,024", StringComparison.Ordinal), $"the prompt pass: rows, positions, pieces: {got[0]}");
+        Check(got[1].Contains("decoding: 64 tokens in 2 chunks", StringComparison.Ordinal), $"decoding summed before the next pass: {got[1]}");
+        Check(got[2].Contains("100 positions", StringComparison.Ordinal) && !got[2].Contains("pieces", StringComparison.Ordinal), $"a pass of one row in one piece: {got[2]}");
+        Check(got[3].Contains("measured RowsPath on cuda: 2 choices, 420 ms", StringComparison.Ordinal), $"a kernel choice measured: {got[3]}");
+        Check(got[4].Contains("Softmax ran on the host: vulkan", StringComparison.Ordinal), $"a host fallback: {got[4]}");
+        Check(got[5].Contains("decoding: 8 tokens in 1 chunks", StringComparison.Ordinal), $"the decoding left printed when the lines end: {got[5]}");
+
+        (int Exit, string Out, string Err) bad = (0, "", ""), verbose = (0, "", "");
+        WithEnvironment(new Dictionary<string, string?> { ["IDRAK_VERBOSE"] = "maybe" }, () => bad = Cli("version"));
+        Check(bad.Exit == ExitCodes.Usage && bad.Err.Contains("IDRAK_VERBOSE", StringComparison.Ordinal), $"IDRAK_VERBOSE=maybe is a usage error naming it: {bad.Exit} {bad.Err}");
+        WithEnvironment(new Dictionary<string, string?> { ["IDRAK_VERBOSE"] = "1" }, () => verbose = Cli("version"));
+        var plain = Cli("version");
+        Check(verbose.Exit == 0 && verbose.Out == plain.Out, $"IDRAK_VERBOSE=1 leaves version's output as it is: {verbose.Out} / {plain.Out}");
     }
 
     private static void CliEnvironmentTableComplete(Device device)

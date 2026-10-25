@@ -149,6 +149,7 @@ internal static class CommandLine
 
         CommandContext? context = null;
         Shared.CommandProfile? profile = null;
+        Shared.VerboseLines? verbose = null;
         int exit = ExitCodes.Failed;
         string? failure = null;
         try
@@ -162,6 +163,7 @@ internal static class CommandLine
 
             context = new CommandContext(command, positional, options, flags, output, error);
             profile = Shared.CommandProfile.Start(context, args);              // --profile: watched from here to the end
+            verbose = Shared.VerboseLines.Start(context);                      // --verbose: the library's work as it happens
             RegisterPluginPackages();
             command.BeforePlugins(context);
             context.LoadPlugins();
@@ -194,6 +196,7 @@ internal static class CommandLine
         }
         finally
         {
+            verbose?.Dispose();
             profile?.End(exit, failure);                                        // the report, however the command ended
             context?.Dispose();
         }
@@ -410,7 +413,8 @@ internal static class Help
         "  -d, --device NAME   cpu, cuda:0, vulkan:1, hip:0 (default: the default device)\n" +
         "  -P, --plugin PATH   load an assembly that registers formats, families, ... (repeatable)\n" +
         "  -j, --json          machine-readable output\n" +
-        "  -q, --quiet         less output; -v, --verbose: more\n" +
+        "  -q, --quiet         less output; -v, --verbose: more, and the library's work as it happens (prompt passes,\n" +
+        "                      decoding, kernel choices measured, host fallbacks; IDRAK_VERBOSE=1)\n" +
         "      --cache DIR     the cache folder (default IDRAK_CACHE or ~/.cache/idrak)\n" +
         "  -C, --config FILE   the config file (default IDRAK_CONFIG or ~/.idrak/config.json)\n" +
         "      --log FILE      also write every line, verbose ones included, to FILE\n" +

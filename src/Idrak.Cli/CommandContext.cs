@@ -162,7 +162,7 @@ internal sealed class CommandContext : IDisposable
 
     public bool Quiet => Flag("--quiet");
 
-    public bool Verbose => Flag("--verbose");
+    public bool Verbose => Flag("--verbose") || Shared.VerboseLines.Requested();
 
     /// <summary>The cache folder: <c>--cache</c>, the config, <c>IDRAK_CACHE</c>, or <c>~/.cache/idrak</c>.</summary>
     public string CacheFolder => Option("--cache") ?? Config.Get("cache") ?? Environment.GetEnvironmentVariable("IDRAK_CACHE")
