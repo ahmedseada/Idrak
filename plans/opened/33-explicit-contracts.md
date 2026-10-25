@@ -1,6 +1,7 @@
 # Plan 33: every contract an interface
 
-**Status: opened 2026-10-25, not started.** The list below comes from an audit of `src/` (the owner asked: where, no
+**Status: opened 2026-10-25; C0 done (`IKind`, `IConfigurableKind`, `IKind<TRequest, T>`, `KindTable<TKind>`, `OptionKeys`,
+`SlotTable`'s span lookups; the six existing kind interfaces adopt the base), C1-C7 in progress.** The list below comes from an audit of `src/` (the owner asked: where, no
 code yet). Each row was found by reading the code; a sample of the rows was checked against the source.
 
 ## Why
