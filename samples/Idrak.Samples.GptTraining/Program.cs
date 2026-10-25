@@ -37,6 +37,7 @@ using Idrak;
 using Idrak.Diagnostics;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
 using Idrak.Models.Abstractions;
 using Idrak.Optimizers;
 
@@ -210,7 +211,7 @@ int Train()
         var h = x;
         foreach (var module in body)
         {
-            h = training && checkpointing && module is DecoderBlock b ? b.ForwardCheckpointed(h) : module.Forward(h);
+            h = training && checkpointing && module is ICheckpointable ? module.ForwardCheckpointed(h) : module.Forward(h);
         }
 
         return Losses.TokenCrossEntropy(h.Reshape(tokensPerStep, dim), head.Forward, targets, ones, tokensPerStep, chunkRows: 2048);

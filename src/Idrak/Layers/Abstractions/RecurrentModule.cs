@@ -38,37 +38,93 @@ public sealed class RecurrentWeights
 }
 
 /// <summary>
+/// One cell of a recurrent layer, which <see cref="RecurrentModule"/> runs over the time steps, the directions and the
+/// stacked layers: its gates and states, its initial gate biases and one step.
+/// </summary>
+public interface IRecurrentCell
+{
+    /// <summary>Gates of the cell (4 for an LSTM, 3 for a GRU): the weights map to gates · hidden values.</summary>
+    int Gates { get; }
+
+    /// <summary>The states a step carries (the hidden state first), each [N, hidden] and zero at the start: 1 for most cells, 2 for an LSTM (hidden and cell).</summary>
+    int States { get; }
+
+    /// <summary>The initial gate biases, [gates · <paramref name="hiddenSize"/>].</summary>
+    float[] InitialBias(int hiddenSize);
+
+    /// <summary>
+    /// One step: <paramref name="projected"/> is the step's input already through <see cref="RecurrentWeights.InputWeight"/>
+    /// plus <see cref="RecurrentWeights.Bias"/>, [N, gates · hidden]; <paramref name="state"/> the states before the step.
+    /// Returns the states after it, the new hidden state first.
+    /// </summary>
+    Tensor[] Step(Tensor projected, IReadOnlyList<Tensor> state, RecurrentWeights weights);
+}
+
+/// <summary>A cell that also runs a whole time loop as one operation where the device has one (fused sequence, step or cell kernels).</summary>
+public interface IFusedRecurrentCell : IRecurrentCell
+{
+    /// <summary>
+    /// The whole time loop of one layer and direction as one operation, from the projected input [N, T, gates · hidden]
+    /// (every step's input through <see cref="RecurrentWeights.InputWeight"/> plus <see cref="RecurrentWeights.Bias"/>),
+    /// with zero initial states: every step's hidden state, [N, T, hidden] (<paramref name="reverse"/>: the steps are taken
+    /// from the last to the first, each state still at its own step). Null when the device has no such operation: the
+    /// steps are then composed from <see cref="IRecurrentCell.Step"/>. It returns what the composed steps return, to float
+    /// rounding, and their gradients.
+    /// </summary>
+    Tensor? Sequence(Tensor projected, RecurrentWeights weights, bool reverse);
+}
+
+/// <summary>
+/// A cell that scales the last gate's recurrent bias (a GRU's reset gate multiplies its candidate's recurrent term), so
+/// that bias cannot be added to the input bias: the layer keeps it apart (<see cref="RecurrentWeights.HiddenBias"/>) when
+/// the cell asks, and otherwise loads only a zero there.
+/// </summary>
+public interface IScaledHiddenBiasCell : IRecurrentCell
+{
+    /// <summary>Whether the layer keeps the last gate's recurrent bias apart for the cell to add inside its product.</summary>
+    bool KeepsHiddenBias { get; }
+}
+
+/// <summary>
 /// Shared plumbing for recurrent layers over [batch, time, features] input: the time loop, a backward direction
 /// (bidirectional: the sequence read forward and backward, the two hidden states concatenated, as PyTorch's
-/// <c>bidirectional=True</c>), and stacked layers (each reading the previous one's every step). A layer type supplies one
-/// step of its cell (<see cref="Cell"/>).
+/// <c>bidirectional=True</c>), and stacked layers (each reading the previous one's every step). A layer type supplies its
+/// cell (<see cref="IRecurrentCell"/>; <see cref="IFusedRecurrentCell"/> when it also has a fused time loop).
 /// </summary>
 public abstract class RecurrentModule : Module
 {
     private readonly RecurrentWeights[] _weights;
 
+    // The cell's fused time loop, tested once when the layer is made (null: the steps are composed).
+    private readonly IFusedRecurrentCell? _fused;
+
     /// <summary>Creates the layer: one direction, one layer.</summary>
-    protected RecurrentModule(int inputSize, int hiddenSize, int gates, bool returnSequences, Device? device, Random? random)
-        : this(inputSize, hiddenSize, gates, returnSequences, false, 1, false, device, random)
+    protected RecurrentModule(IRecurrentCell cell, int inputSize, int hiddenSize, bool returnSequences, Device? device, Random? random)
+        : this(cell, inputSize, hiddenSize, returnSequences, false, 1, device, random)
     {
     }
 
     /// <summary>Creates the layer.</summary>
+    /// <param name="cell">The cell: its gates, states, initial biases and step, and whether it keeps the last gate's recurrent bias apart (<see cref="IScaledHiddenBiasCell"/>).</param>
     /// <param name="inputSize">Features per step.</param>
     /// <param name="hiddenSize">Hidden state size (per direction).</param>
-    /// <param name="gates">Gates of the cell (4 for an LSTM, 3 for a GRU).</param>
     /// <param name="returnSequences">Output every step or only the last state.</param>
     /// <param name="bidirectional">Also read each sequence backwards.</param>
     /// <param name="layers">Stacked layers.</param>
-    /// <param name="hiddenBias">Keep the last gate's recurrent bias apart (<see cref="RecurrentWeights.HiddenBias"/>).</param>
     /// <param name="device">Where the parameters live.</param>
     /// <param name="random">Seed source for the initial weights.</param>
-    protected RecurrentModule(int inputSize, int hiddenSize, int gates, bool returnSequences, bool bidirectional, int layers, bool hiddenBias, Device? device, Random? random)
+    protected RecurrentModule(IRecurrentCell cell, int inputSize, int hiddenSize, bool returnSequences, bool bidirectional, int layers, Device? device, Random? random)
     {
+        ArgumentNullException.ThrowIfNull(cell);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(inputSize);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(hiddenSize);
-        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(gates);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(cell.Gates, nameof(cell));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(layers);
+        int gates = cell.Gates;
+        bool hiddenBias = cell is IScaledHiddenBiasCell { KeepsHiddenBias: true };
+        Cell = cell;
+        _fused = cell as IFusedRecurrentCell;
+        ScalesLastHiddenBias = cell is IScaledHiddenBiasCell;
         InputSize = inputSize;
         HiddenSize = hiddenSize;
         Gates = gates;
@@ -85,10 +141,13 @@ public abstract class RecurrentModule : Module
             _weights[i] = new RecurrentWeights(
                 CreateParameter(UniformValues(inputs * gates * hiddenSize, bound, random), [inputs, gates * hiddenSize], device),
                 CreateParameter(UniformValues(hiddenSize * gates * hiddenSize, bound, random), [hiddenSize, gates * hiddenSize], device),
-                CreateParameter(InitialBias(gates, hiddenSize), [gates * hiddenSize], device),
+                CreateParameter(cell.InitialBias(hiddenSize), [gates * hiddenSize], device),
                 hiddenBias ? CreateParameter(new float[hiddenSize], [hiddenSize], device) : null);
         }
     }
+
+    /// <summary>The layer's cell.</summary>
+    public IRecurrentCell Cell { get; }
 
     /// <summary>Features per time step.</summary>
     public int InputSize { get; }
@@ -129,30 +188,7 @@ public abstract class RecurrentModule : Module
     /// <summary>Gate biases of the first layer's forward direction, [gates · hidden].</summary>
     public Tensor Bias => _weights[0].Bias;
 
-    /// <summary>The initial bias vector.</summary>
-    protected virtual float[] InitialBias(int gates, int hiddenSize) => new float[gates * hiddenSize];
-
-    /// <summary>The states a step carries (the hidden state first), each [N, hidden] and zero at the start: 1 for most cells, 2 for an LSTM (hidden and cell).</summary>
-    protected abstract int States { get; }
-
-    /// <summary>
-    /// One step of the cell: <paramref name="projected"/> is the step's input already through <see cref="RecurrentWeights.InputWeight"/>
-    /// plus <see cref="RecurrentWeights.Bias"/>, [N, gates · hidden]; <paramref name="state"/> the states before the step. Returns
-    /// the states after it, the new hidden state first.
-    /// </summary>
-    protected abstract Tensor[] Cell(Tensor projected, IReadOnlyList<Tensor> state, RecurrentWeights weights);
-
-    /// <summary>
-    /// The whole time loop of one layer and direction as one operation, from the projected input [N, T, gates · hidden]
-    /// (every step's input through <see cref="RecurrentWeights.InputWeight"/> plus <see cref="RecurrentWeights.Bias"/>),
-    /// with zero initial states: every step's hidden state, [N, T, hidden] (<paramref name="reverse"/>: the steps are taken
-    /// from the last to the first, each state still at its own step). Null (the default) when the layer type or the device
-    /// has no such operation: the steps are then composed from <see cref="Cell"/>. An override returns what the composed
-    /// steps return, to float rounding, and their gradients.
-    /// </summary>
-    protected virtual Tensor? Sequence(Tensor projected, RecurrentWeights weights, bool reverse) => null;
-
-    // Tests: compose the steps from Cell even where Sequence has a fused loop (the reference the fused loop is checked against).
+    // Tests: compose the steps from the cell's Step even where it has a fused loop (the reference the fused loop is checked against).
     internal static bool ComposedOnly { get; set; }
 
     /// <inheritdoc />
@@ -178,7 +214,7 @@ public abstract class RecurrentModule : Module
                 var projected = x.MatMul(weights.InputWeight) + weights.Bias;
 
                 // The whole time loop as one operation where the layer type and the device have one; else step by step.
-                if (!ComposedOnly && Sequence(projected, weights, direction == 1) is { } fused)
+                if (!ComposedOnly && _fused?.Sequence(projected, weights, direction == 1) is { } fused)
                 {
                     if (sequences)
                     {
@@ -193,12 +229,12 @@ public abstract class RecurrentModule : Module
                     continue;
                 }
 
-                Tensor[] state = [.. Enumerable.Range(0, States).Select(_ => Tensor.Zeros([batch, HiddenSize], input.Device))];
+                Tensor[] state = [.. Enumerable.Range(0, Cell.States).Select(_ => Tensor.Zeros([batch, HiddenSize], input.Device))];
                 var hidden = sequences ? new Tensor[steps] : null;
                 for (int i = 0; i < steps; i++)
                 {
                     int t = direction == 0 ? i : steps - 1 - i;
-                    state = Cell(projected.Narrow(1, t, 1).Reshape(batch, projected.Shape[2]), state, weights);
+                    state = Cell.Step(projected.Narrow(1, t, 1).Reshape(batch, projected.Shape[2]), state, weights);
                     if (hidden is not null)
                     {
                         hidden[t] = state[0];
@@ -272,8 +308,11 @@ public abstract class RecurrentModule : Module
         weights.HiddenBias?.Load(apart);
     }
 
-    /// <summary>Whether the cell scales the last gate's recurrent bias (a GRU's reset gate multiplies it), so it cannot be added to the input bias.</summary>
-    protected virtual bool ScalesLastHiddenBias => false;
+    /// <summary>
+    /// Whether the cell scales the last gate's recurrent bias (a GRU's reset gate multiplies it), so it cannot be added to
+    /// the input bias: the cell is an <see cref="IScaledHiddenBiasCell"/>.
+    /// </summary>
+    public bool ScalesLastHiddenBias { get; }
 
     private static float[] Transposed(ReadOnlySpan<float> values, int rows, int columns)
     {

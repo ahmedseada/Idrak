@@ -9,7 +9,7 @@ namespace Idrak.Layers;
 /// RMS normalization over the last dimension: x / sqrt(mean(x²) + eps) · (gain + offset). The offset is 0 for most models
 /// (1 for models that store the gain as a difference from 1).
 /// </summary>
-public sealed partial class RMSNorm : Module
+public sealed partial class RMSNorm : Module, INamedWeights
 {
     /// <summary>Creates the layer with a gain of ones.</summary>
     public RMSNorm(int features, float epsilon = 1e-6f, float offset = 0f, Device? device = null)
@@ -83,6 +83,10 @@ public sealed partial class RMSNorm : Module
     protected override void MoveTo(Device device) => Gain = MoveTensor(Gain, device);
 
     /// <inheritdoc />
+    /// <remarks>"weight", the gain.</remarks>
+    IEnumerable<(string Name, Tensor Tensor)> INamedWeights.NamedWeights() => [("weight", Gain)];
+
+    /// <inheritdoc />
     public override string ToString() => $"RMSNorm({Features})";
 }
 
@@ -101,7 +105,7 @@ public sealed partial class RMSNorm : Module
 /// all cached positions, masked), as before the kernels took a window.
 /// </para>
 /// </summary>
-public sealed class CausalSelfAttention : Module, ICachedModule
+public sealed class CausalSelfAttention : Module, ICachedModule, IAttentionCacheInfo, IPositionLimit
 {
     private Tensor _cos = null!;
     private Tensor _sin = null!;
@@ -224,7 +228,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     /// A bias by the query's and the key's positions, [heads, queries, keys], added to the scaled scores before the causal
     /// mask and the softmax (null, the default: none). The scores are then composed (q · kᵀ over the sequence, or over the
     /// filled cache slots in decoding, each step reading its rows of the bias); packed sequences, images and rows of different
-    /// lengths are refused. When it is a <see cref="Module"/> its parameters are this layer's, unless
+    /// lengths are refused. When it has parameters of its own (<see cref="IOwnedPositionBias"/>) they are this layer's, unless
     /// <see cref="SharesPositionBias"/>.
     /// </summary>
     /// <exception cref="ArgumentException">The bias is for another number of heads.</exception>
@@ -291,6 +295,17 @@ public sealed class CausalSelfAttention : Module, ICachedModule
     /// <summary>Whether rows of different lengths decoded together (per-row starts) can attend through <paramref name="backend"/>'s kernels for this layer.</summary>
     internal bool SupportsRows(Backend backend) => _bias is null && (PlainCausal || WindowKernels) && backend.SupportsAttentionRows(HeadDim, Variant);
 
+    /// <inheritdoc />
+    bool IAttentionCacheInfo.SupportsRows(Backend backend) => SupportsRows(backend);
+
+    /// <inheritdoc />
+    /// <remarks>On CUDA, bfloat16 tensor cores with head size 64 or 128, and no sliding window that can mask or soft-capped scores.</remarks>
+    bool IAttentionCacheInfo.SupportsPacking() => SupportsSegmented(Query.Device.Backend);
+
+    /// <inheritdoc />
+    /// <remarks>A head size the device's span kernels take (<see cref="BackendCapabilities.SpanAttentionHeadDim"/>), windows and caps through those kernels.</remarks>
+    bool IAttentionCacheInfo.SupportsSpans() => (PlainCausal || WindowKernels) && HeadDim <= Query.Device.Backend.Capabilities.SpanAttentionHeadDim;
+
     // Whether attention over keys at positions [0, keys) for queries ending at keys - 1 needs more than plain causal
     // attention (the kernels with Variant, or the composed path): soft-capped scores, or a window some query reaches past.
     private bool Composed(int keys) => _softcap is not null || Windowed && keys > _window!.Value;
@@ -314,9 +329,9 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             yield return KeyNorm;
         }
 
-        if (_bias is Module owned && !SharesPositionBias)
+        if (_bias is IOwnedPositionBias owned && !SharesPositionBias)
         {
-            yield return owned;
+            yield return owned.Module;
         }
     }
 
@@ -774,9 +789,9 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         }
 
         _iota?.Dispose();
-        if (_bias is Module owned && !SharesPositionBias)
+        if (_bias is IOwnedPositionBias owned && !SharesPositionBias)
         {
-            owned.Dispose();                                                     // its kept bias too (its parameters again: a no-op)
+            owned.Module.Dispose();                                                     // its kept bias too (its parameters again: a no-op)
         }
 
         base.Dispose();
@@ -941,7 +956,7 @@ public sealed class FeedForward : Module
 /// any module mapping [batch, time, dim] to itself: a <see cref="Layers.FeedForward"/> (whose fused inference paths the
 /// block uses), a <see cref="MixtureOfExperts"/>, or one of your own.
 /// </summary>
-public sealed class DecoderBlock : Module, ICachedModule
+public sealed class DecoderBlock : Module, ICachedModule, IDecoderBlock
 {
     /// <summary>Creates the block from its parts; the block takes ownership.</summary>
     /// <param name="attentionNorm">Normalization before attention ("attn_norm").</param>
@@ -1043,6 +1058,10 @@ public sealed class DecoderBlock : Module, ICachedModule
 
     /// <summary>True when attention and the feed-forward block read the same normalized input and are added together.</summary>
     public bool Parallel => FeedForwardNorm is null;
+
+    /// <inheritdoc />
+    /// <remarks>The attention's query projection's input features.</remarks>
+    public int Width => Attention.Query.InFeatures;
 
     /// <inheritdoc />
     public override IEnumerable<Module> Children() =>
@@ -1170,7 +1189,7 @@ public sealed class DecoderBlock : Module, ICachedModule
 /// Adds a learned vector per position to [batch, time, dim] embeddings (GPT-2 style absolute positions, "pos.weight"
 /// [maxPositions, dim]). Supports sequences up to <see cref="MaxPositions"/>.
 /// </summary>
-public sealed class PositionEmbedding : Module, ICachedModule
+public sealed class PositionEmbedding : Module, ICachedModule, INamedWeights, IPositionLimit
 {
     /// <summary>Wraps a [maxPositions, dim] table; the layer takes ownership.</summary>
     public PositionEmbedding(Tensor weight)
@@ -1224,6 +1243,10 @@ public sealed class PositionEmbedding : Module, ICachedModule
         Weight.Dispose();
         base.Dispose();
     }
+
+    /// <inheritdoc />
+    /// <remarks>"weight", the [maxPositions, dim] table.</remarks>
+    IEnumerable<(string Name, Tensor Tensor)> INamedWeights.NamedWeights() => [("weight", Weight)];
 
     /// <inheritdoc />
     public override string ToString() => $"PositionEmbedding({MaxPositions} x {Weight.Shape[1]})";

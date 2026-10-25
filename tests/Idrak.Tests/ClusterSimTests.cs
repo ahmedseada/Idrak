@@ -8,6 +8,7 @@ using Idrak.Abstraction.Testing;
 using Idrak.Cli;
 using Idrak.Cli.Shared;
 using Idrak.Cluster;
+using Idrak.Cluster.Abstractions;
 
 // Plan 23, phase C1: Idrak.Cluster (carved devices, the sim transport, the virtual clock, the in-process cluster, the
 // built-in links, the builder, the cluster probe) and Idrak.Network (naive and ring, the fastest selector, the network
@@ -339,8 +340,8 @@ internal static partial class Tests
             "a rate only where the name states it");
         foreach (string name in new[] { "same-device", "shared-memory", "pcie" })
         {
-            var measured = ((MeasuredLink)LinkProfiles.Find(name)!).On(Device.Cpu);
-            Check(measured.BandwidthBytesPerSecond > 0 && measured.Latency >= TimeSpan.Zero && ReferenceEquals(measured, ((MeasuredLink)LinkProfiles.Find(name)!).On(Device.Cpu)),
+            var measured = ((IDeviceMeasuredLink)LinkProfiles.Find(name)!).On(Device.Cpu);
+            Check(measured.BandwidthBytesPerSecond > 0 && measured.Latency >= TimeSpan.Zero && ReferenceEquals(measured, ((IDeviceMeasuredLink)LinkProfiles.Find(name)!).On(Device.Cpu)),
                 $"{name} measured here once: {measured.BandwidthBytesPerSecond / 1e9:F2} GB/s");
             Conformance.CheckLinkProfile(measured).ThrowIfFailed();
         }

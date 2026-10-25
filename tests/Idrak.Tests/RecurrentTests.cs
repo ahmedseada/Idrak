@@ -7,7 +7,7 @@ using Idrak.Layers;
 using Idrak.Layers.Abstractions;
 
 // The fused time loop of LSTM and GRU layers (RecurrentSequence over Backend.LstmCell, GruCell and their gradients) against
-// the composed steps (RecurrentModule.Cell), the cell kernels of each device against the CPU's, and finite differences.
+// the composed steps (the cell's IRecurrentCell.Step), the cell kernels of each device against the CPU's, and finite differences.
 internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] RecurrentGroup =

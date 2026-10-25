@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Layers.Abstractions;
+
 namespace Idrak.Layers;
 
 /// <summary>
@@ -16,7 +18,7 @@ namespace Idrak.Layers;
 /// step through this block fails cleanly and the step runs as it is on every replay.
 /// </para>
 /// </summary>
-public sealed class MixtureOfExperts : Module
+public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
 {
     /// <summary>Creates the block with random weights.</summary>
     /// <param name="dim">Model width.</param>
@@ -288,6 +290,26 @@ public sealed class MixtureOfExperts : Module
         }
 
         return (choices, weights);
+    }
+
+    /// <inheritdoc />
+    IEnumerable<(Module Part, int Times)> IRoutedLayer.PartsPerPosition()
+    {
+        yield return (Router, 1);
+        if (Experts.Count > 0)
+        {
+            yield return (Experts[0], ExpertsPerToken);
+        }
+
+        if (SharedExpert is { } shared)
+        {
+            yield return (shared, 1);
+        }
+
+        if (SharedExpertGate is { } gate)
+        {
+            yield return (gate, 1);
+        }
     }
 
     /// <inheritdoc />

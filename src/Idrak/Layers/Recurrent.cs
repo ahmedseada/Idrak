@@ -19,7 +19,7 @@ public sealed class LSTM : RecurrentModule
     /// <param name="device">Where the parameters live.</param>
     /// <param name="random">Seed source for the initial weights.</param>
     public LSTM(int inputSize, int hiddenSize, bool returnSequences = false, Device? device = null, Random? random = null)
-        : base(inputSize, hiddenSize, 4, returnSequences, device, random)
+        : base(new LstmCell(hiddenSize), inputSize, hiddenSize, returnSequences, device, random)
     {
     }
 
@@ -32,41 +32,44 @@ public sealed class LSTM : RecurrentModule
     /// <param name="device">Where the parameters live.</param>
     /// <param name="random">Seed source for the initial weights.</param>
     public LSTM(int inputSize, int hiddenSize, bool returnSequences, bool bidirectional, int layers = 1, Device? device = null, Random? random = null)
-        : base(inputSize, hiddenSize, 4, returnSequences, bidirectional, layers, false, device, random)
+        : base(new LstmCell(hiddenSize), inputSize, hiddenSize, returnSequences, bidirectional, layers, device, random)
     {
     }
-
-    /// <inheritdoc />
-    protected override float[] InitialBias(int gates, int hiddenSize)
-    {
-        var bias = new float[gates * hiddenSize];
-        Array.Fill(bias, 1f, hiddenSize, hiddenSize);
-        return bias;
-    }
-
-    /// <inheritdoc />
-    protected override int States => 2;
-
-    /// <inheritdoc />
-    protected override Tensor[] Cell(Tensor projected, IReadOnlyList<Tensor> state, RecurrentWeights weights)
-    {
-        int h = HiddenSize;
-        var z = projected + state[0].MatMul(weights.HiddenWeight);
-        var inputGate = z.Narrow(1, 0, h).Sigmoid();
-        var forgetGate = z.Narrow(1, h, h).Sigmoid();
-        var candidate = z.Narrow(1, 2 * h, h).Tanh();
-        var outputGate = z.Narrow(1, 3 * h, h).Sigmoid();
-        var cell = forgetGate * state[1] + inputGate * candidate;
-        return [outputGate * cell.Tanh(), cell];
-    }
-
-    /// <inheritdoc />
-    /// <remarks>On a device with fused LSTM cell kernels (<c>Backend.LstmCell</c>): two launches per step forward and two backward.</remarks>
-    protected override Tensor? Sequence(Tensor projected, RecurrentWeights weights, bool reverse) =>
-        RecurrentSequence.Run(projected, weights, HiddenSize, gru: false, reverse);
 
     /// <inheritdoc />
     public override string ToString() => $"LSTM({InputSize} -> {HiddenSize}{Options})";
+
+    // The LSTM cell: input, forget, cell and output gates, the hidden and cell states.
+    private sealed class LstmCell(int hiddenSize) : IFusedRecurrentCell
+    {
+        public int Gates => 4;
+
+        public int States => 2;
+
+        // The forget gate's bias starts at 1.
+        public float[] InitialBias(int hidden)
+        {
+            var bias = new float[Gates * hidden];
+            Array.Fill(bias, 1f, hidden, hidden);
+            return bias;
+        }
+
+        public Tensor[] Step(Tensor projected, IReadOnlyList<Tensor> state, RecurrentWeights weights)
+        {
+            int h = hiddenSize;
+            var z = projected + state[0].MatMul(weights.HiddenWeight);
+            var inputGate = z.Narrow(1, 0, h).Sigmoid();
+            var forgetGate = z.Narrow(1, h, h).Sigmoid();
+            var candidate = z.Narrow(1, 2 * h, h).Tanh();
+            var outputGate = z.Narrow(1, 3 * h, h).Sigmoid();
+            var cell = forgetGate * state[1] + inputGate * candidate;
+            return [outputGate * cell.Tanh(), cell];
+        }
+
+        // On a device with fused LSTM cell kernels (Backend.LstmCell): two launches per step forward and two backward.
+        public Tensor? Sequence(Tensor projected, RecurrentWeights weights, bool reverse) =>
+            RecurrentSequence.Run(projected, weights, hiddenSize, gru: false, reverse);
+    }
 }
 
 /// <summary>
@@ -85,7 +88,7 @@ public sealed class GRU : RecurrentModule
     /// <param name="device">Where the parameters live.</param>
     /// <param name="random">Seed source for the initial weights.</param>
     public GRU(int inputSize, int hiddenSize, bool returnSequences = false, Device? device = null, Random? random = null)
-        : base(inputSize, hiddenSize, 3, returnSequences, device, random)
+        : base(new GruCell(hiddenSize, candidateBias: false), inputSize, hiddenSize, returnSequences, device, random)
     {
     }
 
@@ -100,7 +103,7 @@ public sealed class GRU : RecurrentModule
     /// <param name="device">Where the parameters live.</param>
     /// <param name="random">Seed source for the initial weights.</param>
     public GRU(int inputSize, int hiddenSize, bool returnSequences, bool bidirectional, int layers = 1, bool candidateBias = false, Device? device = null, Random? random = null)
-        : base(inputSize, hiddenSize, 3, returnSequences, bidirectional, layers, candidateBias, device, random)
+        : base(new GruCell(hiddenSize, candidateBias), inputSize, hiddenSize, returnSequences, bidirectional, layers, device, random)
     {
     }
 
@@ -108,34 +111,39 @@ public sealed class GRU : RecurrentModule
     public bool CandidateBias => Weights[0].HiddenBias is not null;
 
     /// <inheritdoc />
-    protected override int States => 1;
+    public override string ToString() => $"GRU({InputSize} -> {HiddenSize}{Options}{(CandidateBias ? ", candidate bias" : "")})";
 
-    /// <inheritdoc />
-    protected override bool ScalesLastHiddenBias => true;
-
-    /// <inheritdoc />
-    protected override Tensor[] Cell(Tensor projected, IReadOnlyList<Tensor> state, RecurrentWeights weights)
+    // The GRU cell: reset, update and candidate gates, the hidden state; the reset gate scales the candidate's recurrent
+    // term after its product, bias included, so that bias is kept apart when asked (candidateBias) and else loads only a zero.
+    private sealed class GruCell(int hiddenSize, bool candidateBias) : IFusedRecurrentCell, IScaledHiddenBiasCell
     {
-        int h = HiddenSize;
-        var hidden = state[0];
-        var r = hidden.MatMul(weights.HiddenWeight);
-        var reset = (projected.Narrow(1, 0, h) + r.Narrow(1, 0, h)).Sigmoid();
-        var update = (projected.Narrow(1, h, h) + r.Narrow(1, h, h)).Sigmoid();
-        var recurrent = r.Narrow(1, 2 * h, h);
-        if (weights.HiddenBias is { } bias)
+        public int Gates => 3;
+
+        public int States => 1;
+
+        public bool KeepsHiddenBias => candidateBias;
+
+        public float[] InitialBias(int hidden) => new float[Gates * hidden];
+
+        public Tensor[] Step(Tensor projected, IReadOnlyList<Tensor> state, RecurrentWeights weights)
         {
-            recurrent += bias;
+            int h = hiddenSize;
+            var hidden = state[0];
+            var r = hidden.MatMul(weights.HiddenWeight);
+            var reset = (projected.Narrow(1, 0, h) + r.Narrow(1, 0, h)).Sigmoid();
+            var update = (projected.Narrow(1, h, h) + r.Narrow(1, h, h)).Sigmoid();
+            var recurrent = r.Narrow(1, 2 * h, h);
+            if (weights.HiddenBias is { } bias)
+            {
+                recurrent += bias;
+            }
+
+            var candidate = (projected.Narrow(1, 2 * h, h) + reset * recurrent).Tanh();
+            return [(1f - update) * candidate + update * hidden];
         }
 
-        var candidate = (projected.Narrow(1, 2 * h, h) + reset * recurrent).Tanh();
-        return [(1f - update) * candidate + update * hidden];
+        // On a device with fused GRU cell kernels (Backend.GruCell): two launches per step forward and two backward.
+        public Tensor? Sequence(Tensor projected, RecurrentWeights weights, bool reverse) =>
+            RecurrentSequence.Run(projected, weights, hiddenSize, gru: true, reverse);
     }
-
-    /// <inheritdoc />
-    /// <remarks>On a device with fused GRU cell kernels (<c>Backend.GruCell</c>): two launches per step forward and two backward.</remarks>
-    protected override Tensor? Sequence(Tensor projected, RecurrentWeights weights, bool reverse) =>
-        RecurrentSequence.Run(projected, weights, HiddenSize, gru: true, reverse);
-
-    /// <inheritdoc />
-    public override string ToString() => $"GRU({InputSize} -> {HiddenSize}{Options}{(CandidateBias ? ", candidate bias" : "")})";
 }

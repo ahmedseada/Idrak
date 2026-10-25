@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Layers.Abstractions;
 
 namespace Idrak.Layers;
 
@@ -261,7 +262,7 @@ public sealed class ChannelNormalize : Module
 /// Layer normalization over the last dimension: each sample (or token) is normalized on its own, then scaled
 /// and shifted per feature. The standard normalization of transformers; independent of batch size.
 /// </summary>
-public sealed class LayerNorm : Module
+public sealed class LayerNorm : Module, INamedWeights
 {
     /// <summary>Creates the layer for inputs whose last dimension is <paramref name="features"/>.</summary>
     public LayerNorm(int features, float epsilon = 1e-5f, Device? device = null)
@@ -322,6 +323,10 @@ public sealed class LayerNorm : Module
         Gamma = MoveTensor(Gamma, device);
         Beta = MoveTensor(Beta, device);
     }
+
+    /// <inheritdoc />
+    /// <remarks>"weight", the scale, and "bias", the shift.</remarks>
+    IEnumerable<(string Name, Tensor Tensor)> INamedWeights.NamedWeights() => [("weight", Gamma), ("bias", Beta)];
 
     /// <inheritdoc />
     public override string ToString() => $"LayerNorm({Features})";

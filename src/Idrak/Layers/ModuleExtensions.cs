@@ -4,6 +4,7 @@
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
+using Idrak.Layers.Abstractions;
 
 namespace Idrak.Layers;
 
@@ -134,8 +135,8 @@ public static class ModuleExtensions
     // ------------------------------------------------------------------ LoRA
 
     /// <summary>
-    /// Adds a LoRA adapter to every <see cref="Linear"/> inside <paramref name="model"/> for which
-    /// <paramref name="targets"/> returns true (including those inside attention and transformer layers), and returns
+    /// Adds a LoRA adapter to every linear layer that takes one (<see cref="IAdaptableLinear"/>: <see cref="Linear"/>)
+    /// inside <paramref name="model"/> for which <paramref name="targets"/> returns true (including those inside attention and transformer layers), and returns
     /// how many were added. With <paramref name="freezeBase"/>, every parameter the model had before is frozen first,
     /// so only the adapters train. A starts with uniform values in ±1/√in, B with zeros: the outputs are unchanged
     /// until training. Create the optimizer after this call, so it sees the adapters.
@@ -146,12 +147,12 @@ public static class ModuleExtensions
     /// <param name="targets">Which layers get an adapter, e.g. <c>l =&gt; true</c> or <c>l =&gt; l.OutFeatures == 3 * dim</c>.</param>
     /// <param name="freezeBase">Freeze the existing parameters (the usual LoRA setup).</param>
     /// <param name="random">Source of A's initial values; pass a seeded <see cref="Random"/> for reproducible runs.</param>
-    public static int AddLora(this Module model, int rank, float alpha, Func<Linear, bool> targets, bool freezeBase, Random? random = null) =>
+    public static int AddLora(this Module model, int rank, float alpha, Func<IAdaptableLinear, bool> targets, bool freezeBase, Random? random = null) =>
         AddAdapters(model, rank, alpha, targets, freezeBase, random, dora: false);
 
     /// <summary>
     /// Adds a DoRA adapter (<see cref="DoraAdapter"/>: LoRA on the weight's direction and a trainable magnitude per
-    /// output) to every <see cref="Linear"/> inside <paramref name="model"/> for which <paramref name="targets"/> returns
+    /// output) to every linear layer that takes one (<see cref="IAdaptableLinear"/>) inside <paramref name="model"/> for which <paramref name="targets"/> returns
     /// true, as <see cref="AddLora"/> adds LoRA adapters: A uniform in ±1/√in, B zero, the magnitude the weight's norm per
     /// output column, so the outputs are unchanged until training. Returns how many were added.
     /// </summary>
@@ -161,10 +162,10 @@ public static class ModuleExtensions
     /// <param name="targets">Which layers get an adapter.</param>
     /// <param name="freezeBase">Freeze the existing parameters (the usual setup).</param>
     /// <param name="random">Source of A's initial values.</param>
-    public static int AddDora(this Module model, int rank, float alpha, Func<Linear, bool> targets, bool freezeBase, Random? random = null) =>
+    public static int AddDora(this Module model, int rank, float alpha, Func<IAdaptableLinear, bool> targets, bool freezeBase, Random? random = null) =>
         AddAdapters(model, rank, alpha, targets, freezeBase, random, dora: true);
 
-    private static int AddAdapters(Module model, int rank, float alpha, Func<Linear, bool> targets, bool freezeBase, Random? random, bool dora)
+    private static int AddAdapters(Module model, int rank, float alpha, Func<IAdaptableLinear, bool> targets, bool freezeBase, Random? random, bool dora)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(rank);
         ArgumentNullException.ThrowIfNull(targets);
@@ -175,7 +176,7 @@ public static class ModuleExtensions
         }
 
         int added = 0;
-        foreach (var linear in model.Descendants().OfType<Linear>().Where(targets).ToList())
+        foreach (var linear in model.Descendants().OfType<IAdaptableLinear>().Where(targets).ToList())
         {
             if (linear.Adapter is not null)
             {
@@ -203,7 +204,8 @@ public static class ModuleExtensions
     }
 
     /// <summary>
-    /// Replaces the float weights of the <see cref="Linear"/> layers chosen by <paramref name="targets"/> (all when null)
+    /// Replaces the float weights of the linear layers that can hold packed weights (<see cref="IPackableLinear"/>:
+    /// <see cref="Linear"/>) chosen by <paramref name="targets"/> (all when null)
     /// with int8 weights: one signed byte per weight and one float scale per output column (symmetric, max |w| / 127).
     /// Those weights take a quarter of the memory and are read 4× faster when generating token by token; the outputs
     /// change slightly (see the tests and the Quantization sample for measured differences). Biases, LoRA adapters,
@@ -212,17 +214,7 @@ public static class ModuleExtensions
     /// Save and load the model as usual (quantize a freshly built model before loading a quantized file). Returns the
     /// number of layers quantized.
     /// </summary>
-    public static int QuantizeInt8(this Module model, Func<Linear, bool>? targets = null)
-    {
-        int count = 0;
-        foreach (var linear in model.Descendants().OfType<Linear>().Where(l => l.Int8 is null && (targets?.Invoke(l) ?? true)).ToList())
-        {
-            linear.QuantizeInt8();
-            count++;
-        }
-
-        return count;
-    }
+    public static int QuantizeInt8(this Module model, Func<IPackableLinear, bool>? targets = null) => Pack(model, PackedFormat.Int8, targets);
 
     /// <summary>
     /// Turns int8 weights back into float32 weights (the rounding done by <see cref="QuantizeInt8"/> is not undone), for
@@ -231,9 +223,9 @@ public static class ModuleExtensions
     public static int DequantizeInt8(this Module model, bool trainable = true)
     {
         int count = 0;
-        foreach (var linear in model.Descendants().OfType<Linear>().Where(l => l.Int8 is not null).ToList())
+        foreach (var linear in model.Descendants().OfType<IPackableLinear>().Where(l => Holds(l, PackedFormat.Int8)).ToList())
         {
-            linear.DequantizeInt8(trainable);
+            linear.Unpack(trainable);
             count++;
         }
 
@@ -241,39 +233,37 @@ public static class ModuleExtensions
     }
 
     /// <summary>
-    /// Stores the weights of every <see cref="Linear"/> layer (or those <paramref name="targets"/> selects) as bfloat16:
+    /// Stores the weights of every linear layer that can hold packed weights (<see cref="IPackableLinear"/>), or those
+    /// <paramref name="targets"/> selects, as bfloat16:
     /// half the memory, and token-by-token decoding reads half the bytes; values keep about 3 significant digits. The
     /// weights become fixed (LoRA adapters on them still train). Returns how many layers changed.
     /// </summary>
-    public static int ToBFloat16(this Module model, Func<Linear, bool>? targets = null)
-    {
-        int count = 0;
-        foreach (var linear in model.Descendants().OfType<Linear>().Where(l => l.BFloat16 is null && (targets?.Invoke(l) ?? true)).ToList())
-        {
-            linear.ToBFloat16();
-            count++;
-        }
-
-        return count;
-    }
+    public static int ToBFloat16(this Module model, Func<IPackableLinear, bool>? targets = null) => Pack(model, PackedFormat.BFloat16, targets);
 
     /// <summary>
-    /// Stores the weights of every <see cref="Linear"/> layer (or those <paramref name="targets"/> selects) as 4-bit values
+    /// Stores the weights of every linear layer that can hold packed weights (<see cref="IPackableLinear"/>), or those
+    /// <paramref name="targets"/> selects, as 4-bit values
     /// with one scale per 32 rows and column (see <see cref="Int4Weight"/>): about 5 bits per weight, and token-by-token
     /// decoding reads 8× less than float32. The weights become fixed; LoRA adapters on them still train (QLoRA). Returns
     /// how many layers changed.
     /// </summary>
-    public static int QuantizeInt4(this Module model, Func<Linear, bool>? targets = null)
+    public static int QuantizeInt4(this Module model, Func<IPackableLinear, bool>? targets = null) => Pack(model, PackedFormat.Int4, targets);
+
+    // Packs the chosen layers that do not hold `format` already; returns how many changed.
+    private static int Pack(Module model, PackedFormat format, Func<IPackableLinear, bool>? targets)
     {
         int count = 0;
-        foreach (var linear in model.Descendants().OfType<Linear>().Where(l => l.Int4 is null && (targets?.Invoke(l) ?? true)).ToList())
+        foreach (var linear in model.Descendants().OfType<IPackableLinear>().Where(l => !Holds(l, format) && (targets?.Invoke(l) ?? true)).ToList())
         {
-            linear.QuantizeInt4();
+            linear.Pack(format);
             count++;
         }
 
         return count;
     }
+
+    // Whether the layer holds its weights in the built-in `format`.
+    private static bool Holds(IPackableLinear layer, PackedFormat format) => layer.PackedWeight is IKernelPackedWeight kernel && kernel.Format == format;
 
     /// <summary>
     /// Turns bfloat16, 4-bit and other packed weights (formats of one's own, <see cref="IPackedWeight"/>) back
@@ -282,9 +272,9 @@ public static class ModuleExtensions
     public static int ToFloat32(this Module model, bool trainable = true)
     {
         int count = 0;
-        foreach (var linear in model.Descendants().OfType<Linear>().Where(l => l.PackedWeight is { } packed && packed is not Int8Weight).ToList())
+        foreach (var linear in model.Descendants().OfType<IPackableLinear>().Where(l => l.PackedWeight is not null && !Holds(l, PackedFormat.Int8)).ToList())
         {
-            linear.ToFloat32(trainable);
+            linear.Unpack(trainable);
             count++;
         }
 
@@ -301,7 +291,7 @@ public static class ModuleExtensions
     public static int MergeLora(this Module model)
     {
         int merged = 0;
-        foreach (var linear in model.Descendants().OfType<Linear>().Where(l => l.Adapter is not null).ToList())
+        foreach (var linear in model.Descendants().OfType<IAdaptableLinear>().Where(l => l.Adapter is not null).ToList())
         {
             linear.MergeAdapter();
             merged++;
@@ -318,7 +308,7 @@ public static class ModuleExtensions
     public static IDisposable DisableAdapters(this Module model)
     {
         ArgumentNullException.ThrowIfNull(model);
-        var detached = model.Descendants().OfType<Linear>().Where(l => l.Adapter is not null).Select(l => (l, l.Adapter)).ToList();
+        var detached = model.Descendants().OfType<IAdaptableLinear>().Where(l => l.Adapter is not null).Select(l => (l, l.Adapter)).ToList();
         foreach (var (linear, _) in detached)
         {
             linear.Adapter = null;
@@ -327,7 +317,7 @@ public static class ModuleExtensions
         return new AdapterRestore(detached);
     }
 
-    private sealed class AdapterRestore(List<(Linear Layer, ILinearAdapter? Adapter)> detached) : IDisposable
+    private sealed class AdapterRestore(List<(IAdaptableLinear Layer, ILinearAdapter? Adapter)> detached) : IDisposable
     {
         public void Dispose()
         {

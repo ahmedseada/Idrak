@@ -23,6 +23,39 @@ public interface ILinearLayer
 }
 
 /// <summary>
+/// An adapter in peft's layout (<c>adapter_model.safetensors</c> and <c>adapter_config.json</c>, which transformers,
+/// peft and vLLM load): its type, rank and scale, and its tensors, A [in, rank] and B [rank, out] (stored transposed, as
+/// lora_A [rank, in] and lora_B [out, rank]) and DoRA's magnitude per output. <see cref="LoraAdapter"/> and
+/// <see cref="DoraAdapter"/> are the built-in ones.
+/// </summary>
+public interface IPeftAdapter : ILinearAdapter
+{
+    /// <summary>adapter_config.json's peft_type ("LORA"; a DoRA adapter is LoRA with <c>use_dora</c>).</summary>
+    string PeftType { get; }
+
+    /// <summary>The rank r.</summary>
+    int Rank { get; }
+
+    /// <summary>The scale of the low-rank term: alpha / r (alpha / √r with rank-stabilized scaling).</summary>
+    float Scale { get; }
+
+    /// <summary>[inFeatures, rank].</summary>
+    Tensor A { get; }
+
+    /// <summary>[rank, outFeatures].</summary>
+    Tensor B { get; }
+
+    /// <summary>The magnitude per output column, [outFeatures], of a DoRA adapter (<c>use_dora</c>); null for plain LoRA.</summary>
+    Tensor? Magnitude { get; }
+
+    /// <summary>
+    /// The adapter with the same tensors and <paramref name="scale"/> (a loaded config's alpha / r); this one lets go of
+    /// what it keeps besides the tensors (DoRA's cached norms) and is not used again.
+    /// </summary>
+    IPeftAdapter WithScale(float scale);
+}
+
+/// <summary>
 /// A LoRA adapter: two small trainable matrices A [in, rank] and B [rank, out] whose product, times
 /// <see cref="Scale"/> = alpha / rank, is added to a <c>Linear</c> layer's weight. B starts at zero, so adding
 /// an adapter does not change the model's outputs until it is trained.
@@ -31,10 +64,19 @@ public interface ILinearLayer
 /// <param name="B">[rank, outFeatures], zeros at creation.</param>
 /// <param name="Rank">The rank r.</param>
 /// <param name="Scale">alpha / r.</param>
-public sealed record LoraAdapter(Tensor A, Tensor B, int Rank, float Scale) : ILinearAdapter
+public sealed record LoraAdapter(Tensor A, Tensor B, int Rank, float Scale) : IPeftAdapter
 {
     /// <inheritdoc />
     public IReadOnlyList<Tensor> Parameters => [A, B];
+
+    /// <inheritdoc />
+    public string PeftType => "LORA";
+
+    /// <inheritdoc />
+    Tensor? IPeftAdapter.Magnitude => null;
+
+    /// <inheritdoc />
+    IPeftAdapter IPeftAdapter.WithScale(float scale) => this with { Scale = scale };
 
     /// <inheritdoc />
     public Tensor Forward(ILinearLayer layer, Tensor input, Tensor product) => Tensor.AddLowRank(product, input, A, B, Scale);
@@ -80,7 +122,7 @@ public interface ILinearAdapter
 /// s²·Σ_r B ⊙ (AᵀA·B), so a packed (QLoRA) base is read through its own product, never expanded. The magnitude starts as
 /// ‖W‖ and B at zero, so adding the adapter does not change the outputs.
 /// </summary>
-public sealed class DoraAdapter : ILinearAdapter, IDisposable
+public sealed class DoraAdapter : IPeftAdapter, IDisposable
 {
     private Tensor? _squaredNorms;
 
@@ -116,6 +158,20 @@ public sealed class DoraAdapter : ILinearAdapter, IDisposable
 
     /// <inheritdoc />
     public IReadOnlyList<Tensor> Parameters => [A, B, Magnitude];
+
+    /// <inheritdoc />
+    public string PeftType => "LORA";
+
+    /// <inheritdoc />
+    Tensor? IPeftAdapter.Magnitude => Magnitude;
+
+    /// <inheritdoc />
+    IPeftAdapter IPeftAdapter.WithScale(float scale)
+    {
+        var scaled = new DoraAdapter(A, B, Magnitude, Rank, scale);
+        Dispose();
+        return scaled;
+    }
 
     /// <inheritdoc />
     public Tensor Forward(ILinearLayer layer, Tensor input, Tensor product)

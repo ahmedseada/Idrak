@@ -613,8 +613,7 @@ internal sealed class DashboardRuns : IDisposable
             }
 
             var run = new DashboardRun(this, NewId(), kind, topologyPath, command, ClusterSimCommand.RunFolder(command), topology.WorldSize,
-                options.Simulation.Seed ?? (topology is ClusterTopology file ? file.Simulation.Seed : 1),
-                options.Simulation.Failures ?? (topology is ClusterTopology named ? named.Simulation.Failures : "none"));
+                options.Simulation.Seed ?? topology.Simulation.Seed, options.Simulation.Failures ?? topology.Simulation.Failures);
             _runs.Add(run);
             return run;
         }

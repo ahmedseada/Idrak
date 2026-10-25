@@ -4,6 +4,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Globalization;
+using Idrak.Cluster.Abstractions;
 
 namespace Idrak.Cluster;
 
@@ -375,7 +376,7 @@ internal sealed class InProcessSteering(ClusterRunControl control, int rank, Dev
 /// its own model's faults and this model's beside them, so the two compose; named on its own ("live") a run has the queued
 /// faults alone. Its draws take nothing from the seeded generator, so the run's own model draws what it would unsteered.
 /// </summary>
-public sealed class LiveFailures : IFailureModel
+public sealed class LiveFailures : ILiveFailureModel
 {
     private readonly Lock _gate = new();
     private readonly Queue<Fault> _queued = new();

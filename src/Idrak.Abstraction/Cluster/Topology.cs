@@ -74,10 +74,30 @@ public interface IClusterTopology
 }
 
 /// <summary>
+/// A topology with links of its own between pairs of nodes (a cable on a subnet of its own), besides its intra- and
+/// inter-node links: the inspection lists which pairs they join.
+/// </summary>
+public interface IOverridingTopology : IClusterTopology
+{
+    /// <summary>The pairs of nodes with a link of their own.</summary>
+    IReadOnlyList<ClusterLinkOverride> Overrides { get; }
+}
+
+/// <summary>
+/// A topology that writes itself as a topology file's JSON (<see cref="ClusterTopology.Format"/>), which
+/// <see cref="ClusterTopology.Parse(string)"/> reads back as the same topology.
+/// </summary>
+public interface ISavableTopology : IClusterTopology
+{
+    /// <summary>The topology as JSON, in the file's layout.</summary>
+    string ToJson();
+}
+
+/// <summary>
 /// The topology file (<c>idrak cluster init</c> writes it): JSON with comments and trailing commas allowed. Memory sizes
 /// take B, KB/KiB, MB/MiB, GB/GiB, TB/TiB, all powers of 1,024 (decision 7), so "16GB" is a whole card's memory.
 /// </summary>
-public sealed class ClusterTopology : IClusterTopology
+public sealed class ClusterTopology : IOverridingTopology, ISavableTopology
 {
     /// <summary>The format this version writes and reads.</summary>
     public const string Format = "idrak-topology/1";

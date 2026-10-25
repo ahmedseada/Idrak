@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Cluster.Abstractions;
+
 namespace Idrak.Cluster;
 
 /// <summary>One kind of link a topology uses, as this machine resolves it.</summary>
@@ -82,7 +84,7 @@ public static class TopologyInspection
                 string source = ClusterCache.Calibrated(declared.Name) is { } calibrated
                     ? string.Create(System.Globalization.CultureInfo.InvariantCulture,
                         $"calibrated {calibrated.Calibrated:yyyy-MM-dd} ({calibrated.Samples} transfers, residual {calibrated.Residual * 1e6:F1} us{(calibrated.AdapterBytesPerSecond > 0 ? ", one adapter shared by a machine's ranks" : "")})")
-                    : declared is MeasuredLink ? $"measured on {deviceA}" : link.BandwidthBytesPerSecond > 0 ? "the name's rate or a registered profile" : "none: give a rate";
+                    : declared is IDeviceMeasuredLink ? $"measured on {deviceA}" : link.BandwidthBytesPerSecond > 0 ? "the name's rate or a registered profile" : "none: give a rate";
                 links.Add(new TopologyLink(between, a, b, link.Name, link.BandwidthBytesPerSecond, link.Latency, source));
             }
         }
@@ -97,7 +99,7 @@ public static class TopologyInspection
     public static IReadOnlyList<TopologyPair> Pairs(IClusterTopology topology)
     {
         ArgumentNullException.ThrowIfNull(topology);
-        var overrides = topology is ClusterTopology file ? file.Overrides : [];
+        var overrides = topology is IOverridingTopology overriding ? overriding.Overrides : [];
         var pairs = new List<TopologyPair>(topology.WorldSize * (topology.WorldSize - 1) / 2);
         for (int a = 0; a < topology.WorldSize; a++)
         {

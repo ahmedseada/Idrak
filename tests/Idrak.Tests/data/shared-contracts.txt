@@ -14,7 +14,6 @@ Idrak.Abstraction.Data.ITextShaper | how text becomes positioned glyphs, per scr
 Idrak.Abstraction.Data.TextShapers | the shapers by script, overridable once for every package that draws text
 Idrak.Abstraction.Cluster.IFailureModel | which faults a run injects (slow, dropped, lost links, partitions, late joins), for every package that runs ranks: the simulator (Idrak.Cluster) and, from C5, Idrak.Network's real transports under test, so a seeded fault plan replays the same on both
 Idrak.Abstraction.Cluster.FailureModels | the failure models by name, overridable once (IDRAK_CLUSTER_FAILURES) for every package that runs ranks
-Idrak.Abstraction.Generation.IAttentionPositionBias | how an attention layer adds a bias by the query's and the key's positions, for any package's attention (core's text encoders and decoders, vision and audio towers, a family plug-in's own layers); a kind is registered once (AttentionPositionBiases) for all of them
 Idrak.Abstraction.Diagnostics.IProgressReporter | the live progress of any long work (a download, a load, a training run, a rollout), shown the same way by every package that reports it; made through ProgressReporters
 Idrak.Abstraction.Reinforcement.AdvantageEstimators | the estimators by name, overridable once for every package that trains a policy
 Idrak.Abstraction.Reinforcement.PolicyLosses | the policy losses by name, overridable once for every package whose policy trains with them
@@ -28,3 +27,5 @@ Idrak.Abstraction.Generation.PackedWeightFormats | the packed weight formats by 
 Idrak.Abstraction.Generation.ToolCallFormats | the tool-call formats by name, beside ChatTemplates: a family plug-in registers its own once for every package that parses a chat model's output
 Idrak.Abstraction.Formats.IOnnxRuntimeLoader | how a host runs an ONNX model outside Idrak's own import (the tool's onnx check, an app comparing outputs) without referencing the runtime's package; Idrak.Onnx.Runtime registers ONNX Runtime, and any package may register another runtime
 Idrak.Abstraction.Formats.OnnxRuntimeLoaders | the ONNX runtimes by name, filled through LibraryDefaults when Idrak.Onnx.Runtime ships (or a host loads it with -P), so a host finds one with no reference to it
+Idrak.Abstraction.Modules.IPeftAdapter | an adapter in peft's layout beside ILinearAdapter: the built-in LoRA and DoRA adapters (Idrak.Abstraction) implement it, and any package's adapter kind (a plug-in's own) is saved and loaded through it by every package that writes PEFT folders
+Idrak.Abstraction.Generation.IOwnedPositionBias | a position bias with parameters of its own, beside IAttentionPositionBias: AttentionPositionBias (Idrak.Abstraction) implements it, and any package's attention layer that owns a bias lists its module as a child

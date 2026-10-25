@@ -108,13 +108,10 @@ public sealed class ModelPackageWriter
     public ModelPackageWriter Architecture(string name, JsonObject description) =>
         Add(PackageEntryKind.Architecture, name, s => WriteJson(s, description));
 
-    /// <summary>A <see cref="Datasets.StandardScaler"/> or <see cref="Datasets.MinMaxScaler"/> in its text format.</summary>
-    public ModelPackageWriter Scaler(string name, IScaler scaler) => scaler switch
-    {
-        StandardScaler standard => Add(PackageEntryKind.StandardScaler, name, s => WriteText(s, standard.Save)),
-        MinMaxScaler minMax => Add(PackageEntryKind.MinMaxScaler, name, s => WriteText(s, minMax.Save)),
-        _ => throw new NotSupportedException($"{scaler.GetType().Name} cannot be stored; StandardScaler and MinMaxScaler can."),
-    };
+    /// <summary>A scaler that saves itself (<see cref="ISavableScaler"/>: <see cref="Datasets.StandardScaler"/>, <see cref="Datasets.MinMaxScaler"/>) in its text format.</summary>
+    public ModelPackageWriter Scaler(string name, IScaler scaler) => scaler is ISavableScaler savable
+        ? Add(savable.EntryKind, name, s => WriteText(s, savable.Save))
+        : throw new NotSupportedException($"{scaler.GetType().Name} cannot be stored; a scaler that saves itself (ISavableScaler: StandardScaler, MinMaxScaler) can.");
 
     /// <summary>A tokenizer that saves itself (<see cref="ISavableTokenizer"/>: <see cref="CharTokenizer"/>, <see cref="WordTokenizer"/>, one of one's own with its reader registered).</summary>
     public ModelPackageWriter Tokenizer(string name, ITokenizer tokenizer)

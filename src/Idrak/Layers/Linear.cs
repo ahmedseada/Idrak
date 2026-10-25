@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Layers.Abstractions;
+
 namespace Idrak.Layers;
 
 /// <summary>
@@ -8,7 +10,7 @@ namespace Idrak.Layers;
 /// (any leading dimensions, e.g. [batch, time, features] for sequences).
 /// Weights start Xavier/Glorot-uniform and the bias starts at zero.
 /// </summary>
-public sealed partial class Linear : Module, ILinearLayer, ITiedWeights
+public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, ITiedWeights, INamedWeights, IOffloadableLayer
 {
     /// <summary>Creates the layer on <paramref name="device"/> (default: <see cref="Device.Default"/>).</summary>
     /// <param name="inFeatures">Size of each input row.</param>
@@ -376,6 +378,75 @@ public sealed partial class Linear : Module, ILinearLayer, ITiedWeights
 
     /// <inheritdoc cref="ILinearLayer.WeightValues"/>
     float[] ILinearLayer.WeightValues() => WeightValues();
+
+    /// <inheritdoc />
+    Device IAdaptableLinear.Device => Device;
+
+    /// <inheritdoc />
+    void IAdaptableLinear.MergeAdapter() => MergeAdapter();
+
+    /// <inheritdoc />
+    void IPackableLinear.Pack(PackedFormat format)
+    {
+        switch (format)
+        {
+            case PackedFormat.Int8:
+                QuantizeInt8();
+                break;
+            case PackedFormat.Int4:
+                QuantizeInt4();
+                break;
+            case PackedFormat.BFloat16:
+                ToBFloat16();
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(format), format, "Not a packed format.");
+        }
+    }
+
+    /// <inheritdoc />
+    void IPackableLinear.Unpack(bool trainable)
+    {
+        if (Int8 is not null)
+        {
+            DequantizeInt8(trainable);
+        }
+        else
+        {
+            ToFloat32(trainable);
+        }
+    }
+
+    /// <inheritdoc />
+    void IPackableLinear.Reserve(PackedFormat format)
+    {
+        switch (format)
+        {
+            case PackedFormat.Int8:
+                LoadAsInt8();
+                break;
+            case PackedFormat.Int4:
+                LoadAsInt4();
+                break;
+            case PackedFormat.BFloat16:
+                LoadAsBFloat16();
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(format), format, "Not a packed format.");
+        }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>"weight" [in, out] and "bias" when the layer has one; nothing for a tied layer (the embedding stores the table).</remarks>
+    IEnumerable<(string Name, Tensor Tensor)> INamedWeights.NamedWeights() =>
+        _tiedTo is not null ? [] : Bias is { } bias ? [("weight", Weight), ("bias", bias)] : [("weight", Weight)];
+
+    /// <inheritdoc />
+    IEnumerable<Tensor> IOffloadableLayer.StagedParameters() => Parameters();
+
+    /// <inheritdoc />
+    /// <remarks>The int8, int4, bfloat16 or other packed weights.</remarks>
+    IEnumerable<Tensor> IOffloadableLayer.StagedBuffers() => Buffers();
 
     internal Tensor BaseProduct(Tensor input) =>
         _packed is { } packed ? PackedProduct(packed, input) : _tiedTo is { } e ? TiedProduct(input, e.Weight) : input.MatMul(Weight);

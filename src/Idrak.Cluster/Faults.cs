@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
+using Idrak.Cluster.Abstractions;
 
 namespace Idrak.Cluster;
 
@@ -17,6 +18,7 @@ namespace Idrak.Cluster;
 internal sealed class FaultInjector
 {
     private readonly IFailureModel _model;
+    private readonly bool _ownLive;                  // the run's own model is a live one: every fault it draws is live
     private readonly IClusterTopology _topology;
     private readonly TimeSpan _timeout;
     private readonly EventLogWriter _log;
@@ -32,6 +34,7 @@ internal sealed class FaultInjector
         ClusterRunControl? control = null)
     {
         _model = model;
+        _ownLive = model is ILiveFailureModel;
         _control = control;
         _topology = topology;
         Seed = seed;
@@ -70,7 +73,6 @@ internal sealed class FaultInjector
                 // The run's own model draws from (seed, s) as it would unsteered; the live faults (a steered run's, phase C9)
                 // follow, taking nothing from the generator, so the two compose.
                 var drawn = DrawStep(_model, _topology, Seed, s);
-                bool ownLive = _model is LiveFailures;
                 Fault[] live = _control is null ? [] : Checked(_control.Live, _topology, s, _control.Live.Draw(s, _topology, Random.Shared));
                 Fault[] faults = live.Length == 0 ? drawn : [.. drawn, .. live];
                 if (faults.Length > 0)
@@ -86,7 +88,7 @@ internal sealed class FaultInjector
                         _lateJoins.Add(fault);
                     }
 
-                    bool isLive = ownLive || i >= drawn.Length;
+                    bool isLive = _ownLive || i >= drawn.Length;
                     _log.Fault(fault, isLive);
                     if (Telemetry.IsEnabled(TelemetryLevel.Network))
                     {

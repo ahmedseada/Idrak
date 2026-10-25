@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Layers.Abstractions;
+
 namespace Idrak.Layers;
 
 /// <summary>
@@ -270,24 +272,18 @@ public static class ImagePrefill
         return (new ImageBlocks(ids.Shape[0], ids.Shape[1], dim, images, attention, segments), first);
     }
 
-    // The decoder's first decoder block (the module whose input takes the images) and the decoder's width.
+    // The decoder's first decoder block (IDecoderBlock: the module whose input takes the images) and the decoder's width.
     internal static (int First, int Dim) FirstBlock(Sequential decoder)
     {
-        int first = -1;
-        for (int i = 0; i < decoder.Count && first < 0; i++)
+        for (int i = 0; i < decoder.Count; i++)
         {
-            if (decoder[i] is DecoderBlock)
+            if (decoder[i] is IDecoderBlock block)
             {
-                first = i;
+                return (i, block.Width);
             }
         }
 
-        if (first < 0)
-        {
-            throw new ArgumentException("Images go into a decoder's embeddings before its first decoder block; this network has none.", nameof(decoder));
-        }
-
-        return (first, ((DecoderBlock)decoder[first]).Attention.Query.InFeatures);
+        throw new ArgumentException("Images go into a decoder's embeddings before its first decoder block; this network has none.", nameof(decoder));
     }
 
     // Images with axis positions need a decoder whose rotary embedding has sections (M-RoPE).

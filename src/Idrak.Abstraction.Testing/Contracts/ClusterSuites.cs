@@ -751,15 +751,16 @@ public sealed class TopologySuite : ContractSuite<IClusterTopology>
         }
 
         checks.Check("a rank outside the group is refused", refused, $"Place({t.WorldSize}) answered for a group of {t.WorldSize}");
-        if (t is ClusterTopology file)
+        if (t is ISavableTopology file)
         {
-            var back = ClusterTopology.Parse(file.ToJson());
-            checks.Check("written to JSON it reads back the same", back.ToJson() == file.ToJson() && back.WorldSize == file.WorldSize,
+            string json = file.ToJson();
+            var back = ClusterTopology.Parse(json);
+            checks.Check("written to JSON it reads back the same", back.ToJson() == json && back.WorldSize == file.WorldSize,
                 "the JSON read back differs from the topology written");
         }
         else
         {
-            checks.Skip("written to JSON it reads back the same", "not a ClusterTopology");
+            checks.Skip("written to JSON it reads back the same", "the topology does not write itself as JSON (ISavableTopology)");
         }
     }
 }

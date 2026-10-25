@@ -5,13 +5,14 @@ using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Text;
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
 using Idrak.Models.Abstractions;
 
 namespace Idrak;
 
 /// <summary>
 /// Weights files of modules (.ikw): <see cref="Save(Module, string)"/> writes every parameter and buffer, with the packed
-/// weights of <see cref="Linear"/> and <see cref="Embedding"/> layers as they are; <see cref="Load(Module, string)"/> reads
+/// weights of linear layers (<see cref="IPackableLinear"/>: <see cref="Linear"/>) and <see cref="Embedding"/> layers as they are; <see cref="Load(Module, string)"/> reads
 /// them back into a module of the same architecture.
 /// </summary>
 public static class ModuleFiles
@@ -41,16 +42,16 @@ public static class ModuleFiles
     /// <summary>Writes all parameter values to <paramref name="stream"/> in <paramref name="format"/>; the stream stays open.</summary>
     public static void Save(this Module module, Stream stream, WeightFormat format)
     {
-        // IKW3: the int8 layers (by position among the Linear layers), then each tensor with its element type.
-        var linears = module.Descendants().OfType<Linear>().ToList();
-        var int8 = linears.Select((l, i) => (l, i)).Where(p => p.l.Int8 is not null).ToList();
-        var half = linears.Select((l, i) => (l, i)).Where(p => p.l.BFloat16 is not null).ToList();
-        var int4 = linears.Select((l, i) => (l, i)).Where(p => p.l.Int4 is not null).ToList();
+        // IKW3: the int8 layers (by position among the packable linear layers), then each tensor with its element type.
+        var linears = module.Descendants().OfType<IPackableLinear>().ToList();
+        var int8 = Holding(linears, PackedFormat.Int8);
+        var half = Holding(linears, PackedFormat.BFloat16);
+        var int4 = Holding(linears, PackedFormat.Int4);
         var tables = module.Descendants().OfType<Embedding>().Select((e, i) => (e, i)).Where(p => p.e.BFloat16 is not null).ToList();
-        var exact = int8.SelectMany(p => new[] { p.l.Int8!.Packed, p.l.Int8.Scales }).Concat(half.Select(p => p.l.BFloat16!.Packed))
-            .Concat(int4.SelectMany(p => new[] { p.l.Int4!.Packed, p.l.Int4.Scales }))
+        var exact = int8.SelectMany(p => new[] { p.Weight.PackedValues, p.Weight.ScaleValues! }).Concat(half.Select(p => p.Weight.PackedValues))
+            .Concat(int4.SelectMany(p => new[] { p.Weight.PackedValues, p.Weight.ScaleValues! }))
             .Concat(tables.Select(p => p.e.BFloat16!.Packed))
-            .Concat(linears.Where(l => l.PackedWeight is not null && l.KernelWeight is null).SelectMany(l => l.PackedWeight!.Buffers()))   // formats of one's own
+            .Concat(linears.Where(l => l.PackedWeight is { } packed && packed is not IKernelPackedWeight).SelectMany(l => l.PackedWeight!.Buffers()))   // formats of one's own
             .ToHashSet(ReferenceEqualityComparer.Instance);
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
         var parameters = module.Parameters().Concat(module.Buffers()).ToList();
@@ -109,6 +110,21 @@ public static class ModuleFiles
         }
     }
 
+    // The layers holding weights in the built-in `format`, each with its position among `linears` (what the file records).
+    private static List<(IKernelPackedWeight Weight, int Index)> Holding(List<IPackableLinear> linears, PackedFormat format)
+    {
+        var holding = new List<(IKernelPackedWeight, int)>();
+        for (int i = 0; i < linears.Count; i++)
+        {
+            if (linears[i].PackedWeight is IKernelPackedWeight weight && weight.Format == format)
+            {
+                holding.Add((weight, i));
+            }
+        }
+
+        return holding;
+    }
+
     /// <summary>Reads parameter values written by <see cref="Save(Module, string)"/> into this module. The architecture must match.</summary>
     public static void Load(this Module module, string path)
     {
@@ -132,7 +148,7 @@ public static class ModuleFiles
         {
             // Layers stored as int8, int4 or bfloat16 get room for their packed weights first (allocated, not computed: the
             // file's values replace them).
-            var linears = module.Descendants().OfType<Linear>().ToList();
+            var linears = module.Descendants().OfType<IPackableLinear>().ToList();
             int quantized = reader.ReadInt32();
             for (int i = 0; i < quantized; i++)
             {
@@ -142,7 +158,7 @@ public static class ModuleFiles
                     throw new InvalidDataException($"The file quantizes Linear layer {index}, but the model has {linears.Count}.");
                 }
 
-                linears[index].LoadAsInt8();
+                linears[index].Reserve(PackedFormat.Int8);
             }
 
             int halves = magic is FileMagic4 or FileMagic5 ? reader.ReadInt32() : 0;
@@ -154,7 +170,7 @@ public static class ModuleFiles
                     throw new InvalidDataException($"The file stores Linear layer {index} as bfloat16, but the model has {linears.Count}.");
                 }
 
-                linears[index].LoadAsBFloat16();
+                linears[index].Reserve(PackedFormat.BFloat16);
             }
 
             int nibbles = magic == FileMagic5 ? reader.ReadInt32() : 0;
@@ -166,7 +182,7 @@ public static class ModuleFiles
                     throw new InvalidDataException($"The file stores Linear layer {index} as int4, but the model has {linears.Count}.");
                 }
 
-                linears[index].LoadAsInt4();
+                linears[index].Reserve(PackedFormat.Int4);
             }
 
             var embeddings = module.Descendants().OfType<Embedding>().ToList();

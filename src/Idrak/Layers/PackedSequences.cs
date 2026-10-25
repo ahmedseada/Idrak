@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Layers.Abstractions;
+
 namespace Idrak.Layers;
 
 /// <summary>
@@ -155,18 +157,17 @@ public sealed partial class PackedSequences : IDisposable
     }
 
     /// <summary>
-    /// Whether <paramref name="network"/> can run packed batches on its device: its attention layers are
-    /// <see cref="CausalSelfAttention"/> with a head size the device's packed attention supports (on CUDA, bfloat16 tensor cores with
-    /// head size 64 or 128, and no sliding window that can mask or soft-capped scores), and no layer with positions of its own
-    /// that ignores the packing.
+    /// Whether <paramref name="network"/> can run packed batches on its device: it has attention layers
+    /// (<see cref="IAttentionCacheInfo"/>) and each runs over packed sequences on its device (<see cref="CausalSelfAttention"/>:
+    /// a head size the device's packed attention supports, on CUDA bfloat16 tensor cores with head size 64 or 128, and no
+    /// sliding window that can mask or soft-capped scores), and no layer numbers positions of its own that ignores the
+    /// packing (<see cref="IPositionAware"/>).
     /// </summary>
     public static bool Supports(Module network)
     {
         ArgumentNullException.ThrowIfNull(network);
-        var modules = network.Descendants().ToList();
-        var attention = modules.OfType<CausalSelfAttention>().ToList();
-        return attention.Count > 0 && !modules.Any(m => m is MultiHeadAttention or PositionalEncoding)
-            && attention.All(a => a.SupportsSegmented(a.Query.Device.Backend));
+        var (attention, positionAware) = AttentionLayers(network);
+        return attention.Count > 0 && !positionAware && attention.All(a => a.SupportsPacking());
     }
 
     /// <summary>
@@ -180,10 +181,26 @@ public sealed partial class PackedSequences : IDisposable
     public static bool SupportsImages(Module network)
     {
         ArgumentNullException.ThrowIfNull(network);
-        var modules = network.Descendants().ToList();
-        var attention = modules.OfType<CausalSelfAttention>().ToList();
-        return attention.Count > 0 && !modules.Any(m => m is MultiHeadAttention or PositionalEncoding)
-            && attention.All(a => (a.PlainCausal || CausalSelfAttention.WindowKernels) && a.HeadDim <= a.Query.Device.Backend.Capabilities.SpanAttentionHeadDim);
+        var (attention, positionAware) = AttentionLayers(network);
+        return attention.Count > 0 && !positionAware && attention.All(a => a.SupportsSpans());
+    }
+
+    // The network's attention layers, and whether a layer numbers positions of its own: one walk over its modules.
+    internal static (List<IAttentionCacheInfo> Attention, bool PositionAware) AttentionLayers(Module network)
+    {
+        var attention = new List<IAttentionCacheInfo>();
+        bool positionAware = false;
+        foreach (var module in network.Descendants())
+        {
+            if (module is IAttentionCacheInfo layer)
+            {
+                attention.Add(layer);
+            }
+
+            positionAware |= module is IPositionAware;
+        }
+
+        return (attention, positionAware);
     }
 
     /// <summary>Restores the previous packing when disposed.</summary>

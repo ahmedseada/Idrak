@@ -11,15 +11,15 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 164 | 18 | 56 | 238 | 0 |
-| `Idrak` | 42 | 5 | 19 | 66 | 0 |
+| `Idrak.Abstraction` | 168 | 18 | 56 | 242 | 0 |
+| `Idrak` | 57 | 5 | 19 | 81 | 0 |
 | `Idrak.Gpu` | 3 | 0 | 0 | 3 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Text` | 22 | 0 | 11 | 33 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 13 | 0 | 6 | 19 | 0 |
 | `Idrak.Audio` | 48 | 2 | 20 | 70 | 0 |
-| `Idrak.Cluster` | 0 | 0 | 0 | 0 | 0 |
+| `Idrak.Cluster` | 2 | 0 | 0 | 2 | 0 |
 | `Idrak.Network` | 2 | 4 | 1 | 7 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
@@ -59,9 +59,11 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Cluster.IHostGradients` | interface | public | — | HostOptimizer |  | Idrak, Network, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IHostValueCollectives` | interface | public | — | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Abstraction, Cluster, Network, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.ILinkProfile` | interface | public | — | LinkProfile, MeasuredLink |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.IOverridingTopology` | interface | public | — | ClusterTopology |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IPipelineSchedule` | interface | public | — | GPipeSchedule |  | Abstraction, Idrak, Network, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IRunSteering` | interface | public | — | ControlFileSteering, InProcessSteering |  | Abstraction, Cluster, Network, Reinforcement | Abstraction |
 | `Idrak.Abstraction.Cluster.IRunSteeringProvider` | interface | public | — | ControlFileSteeringProvider, InProcessSteeringProvider |  | Abstraction, Cluster, Network, Reinforcement | Abstraction |
+| `Idrak.Abstraction.Cluster.ISavableTopology` | interface | public | — | ClusterTopology |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IShardedGradientSync` | interface | public | Tensor | ShardedGradientReduction |  | Idrak, Network, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IShardedHostValueCollectives` | interface | public | — | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.IStepGroup` | interface | public | — | SimStepper |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
@@ -164,7 +166,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.CtcDecoders` | registry | public | Tensor |  | beam, greedy | Audio, Audio.Plugins, Vision | Abstraction |
 | `Idrak.Abstraction.Generation.DistancePositionBias` | abstract class | public | Device, Tensor | BucketedPositionBias, RelativePositionBias |  | Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.FeatureCaches` | registry | public | — |  | disk, memory | Audio, Text | Abstraction |
-| `Idrak.Abstraction.Generation.IAttentionPositionBias` | interface | public | Device, Tensor | BucketedPositionBias, RelativePositionBias |  | Idrak, Text.Plugins | Abstraction |
+| `Idrak.Abstraction.Generation.IAttentionPositionBias` | interface | public | Device, Tensor | BucketedPositionBias, RelativePositionBias |  | Abstraction, Idrak, Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IBinaryPartKind` | interface | public | — | AudioPartKind, ChatParts.GuardedBinaryKind |  | Abstraction, AspNetCore, Audio, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatEngineModel, ChatGenerator, ChatTools.ToolRunningChatModel, FakeChatModel |  | Abstraction, AspNetCore, Audio, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IChatPartKind` | interface | public | — | AudioPartKind, ChatParts.GuardedBinaryKind, ChatParts.GuardedKind, ChatParts.ImageKind, ChatParts.TextKind |  | Abstraction, AspNetCore, Audio, Mcp, Text | Abstraction |
@@ -183,6 +185,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.IKernelPackedWeight` | interface | public | Storage, Tensor | BFloat16Weight, Int4Weight, Int8Weight |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IKeyValueLayout` | interface | public | Tensor | KeyValueLayouts.BFloat16Layout, KeyValueLayouts.Float32Layout, KeyValueLayouts.Int8Layout |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IModelPart` | interface | public | — | AudioModelPart |  | Abstraction, Audio, Idrak | Abstraction |
+| `Idrak.Abstraction.Generation.IOwnedPositionBias` | interface | public | Module | BucketedPositionBias, RelativePositionBias |  | Idrak, Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IPackedFormat` | interface | public | — | PackedWeightFormats.BuiltInFormat, PackedWeightFormats.GuardedFormat |  | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.IPackedWeight` | interface | public | Device, Storage, Tensor | BFloat16Weight, Float16Weight, Int4Weight, Int8Weight |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IPositionBiasKind` | interface | public | — | AttentionPositionBiases.BuiltInKind |  | Text.Plugins | Abstraction |
@@ -241,6 +244,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +75 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Audio.Plugins, Idrak, Text, Vision | Abstraction |
+| `Idrak.Abstraction.Modules.IPeftAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak | Abstraction |
 | `Idrak.Abstraction.Modules.ITensorOwner` | interface | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +75 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Operations.PluginOperations` | registry | public | — |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
@@ -289,18 +293,33 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
 | `Idrak.Datasets.Abstractions.IBatchSource` | interface | public | — | DataLoader |  | Idrak | Idrak |
+| `Idrak.Datasets.Abstractions.ISavableScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | Idrak | Idrak |
 | `Idrak.Datasets.Abstractions.IScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | Idrak | Idrak |
 | `Idrak.Datasets.Abstractions.IShardableBatchSource` | interface | public | Device | DataLoader |  | Idrak | Idrak |
 | `Idrak.Datasets.Abstractions.IStepShares` | interface | public | — | DataLoader |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.IAdaptableLinear` | interface | public | Device | Linear |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.IAttentionCacheInfo` | interface | public | Backend | CausalSelfAttention, MultiHeadAttention |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.ICachedModule` | interface | public | Tensor | CausalSelfAttention, CrossAttention, DecoderBlock, MultiHeadAttention, PipelineBoundary, PositionEmbedding, +3 |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.ICheckpointable` | interface | public | — | DecoderBlock |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.IDecoderBlock` | interface | public | — | DecoderBlock |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.IFusedRecurrentCell` | interface | public | Tensor | GRU.GruCell, LSTM.LstmCell |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.IGraphOp` | interface | public | Tensor | GraphOps.FunctionOp, GraphOps.GuardedOp |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.IHostRoundTrip` | interface | public | — | MixtureOfExperts, PipelineBoundary |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.ILayerType` | interface | public | Device, Module | LayerTypes.FunctionType<T>, LayerTypes.GuardedType |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.ILayerType<T>` | interface | public | Device | LayerTypes.FunctionType<T> |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.INamedLambda` | interface | public | — | Lambda |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.INamedWeights` | interface | public | Tensor | Embedding, LayerNorm, Linear, PositionEmbedding, RMSNorm |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.INetworkBuilder` | interface | public | Device, Module, Tensor | NetworkBuilder |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.INetworkOp` | interface | public | — | NetworkOps.FunctionOp |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.INetworkRecipe` | interface | public | — | NetworkRecipes.GuardedRecipe, NetworkRecipes.LibraryRecipe |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.IOffloadableLayer` | interface | public | Tensor | Embedding, Linear |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.IPackableLinear` | interface | public | — | Linear |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.IPositionAware` | interface | public | — | PositionalEncoding |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.IPositionLimit` | interface | public | — | CausalSelfAttention, PositionEmbedding |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.IRecurrentCell` | interface | public | Tensor | GRU.GruCell, LSTM.LstmCell |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.IRoutedLayer` | interface | public | Module | MixtureOfExperts |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.IScaledHiddenBiasCell` | interface | public | — | GRU.GruCell |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.LayerTypes` | registry | public | Device, Module |  | adaptiveavgpool2d, adaptivemaxpool2d, attention, avgpool2d, batchnorm, conv2d, convtranspose2d, dropout, +20 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.NetworkOps` | registry | public | — |  | adaptiveavgpool2d, adaptivemaxpool2d, attention, avgpool2d, batchnorm, columnsToSequence, conv2d, convtranspose2d, +23 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.NetworkRecipes` | registry | public | — |  | cnn, gpt, mlp, rnn, transformer-classifier | — | Idrak |
@@ -514,6 +533,13 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.Vocoders` | registry | public | — |  | griffin-lim | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.VoiceConverters` | registry | public | — |  | — | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.VoiceStores` | registry | public | — |  | folder | Audio | Audio |
+
+### Idrak.Cluster
+
+| Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
+|---|---|---|---|---|---|---|---|
+| `Idrak.Cluster.Abstractions.IDeviceMeasuredLink` | interface | public | Device | MeasuredLink |  | Cluster | Cluster |
+| `Idrak.Cluster.Abstractions.ILiveFailureModel` | interface | public | — | LiveFailures |  | Cluster | Cluster |
 
 ### Idrak.Network
 

@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Idrak.Abstraction.Cluster;
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
 
 namespace Idrak.Training;
 
@@ -674,7 +675,7 @@ public sealed class PipelineStage : IDisposable
     {
         for (int i = 0; i < count; i++)
         {
-            x = checkpointing && Autograd.IsEnabled && Modules[i] is DecoderBlock ? Modules[i].ForwardCheckpointed(x) : Modules[i].Forward(x);
+            x = checkpointing && Autograd.IsEnabled && Modules[i] is ICheckpointable ? Modules[i].ForwardCheckpointed(x) : Modules[i].Forward(x);
         }
 
         return x;

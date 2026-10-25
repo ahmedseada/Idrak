@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Layers.Abstractions;
+
 namespace Idrak.Layers;
 
 /// <summary>
@@ -8,7 +10,7 @@ namespace Idrak.Layers;
 /// (exact up to 16,777,216) and must lie in [0, vocabulary). On the CPU an invalid id throws; on the GPU
 /// it is clamped to the valid range, so validate ids when loading data.
 /// </summary>
-public sealed class Embedding : Module
+public sealed class Embedding : Module, INamedWeights, IOffloadableLayer
 {
     /// <summary>Creates a table of <paramref name="vocabulary"/> vectors of size <paramref name="dim"/>, initialized N(0, 1).</summary>
     public Embedding(int vocabulary, int dim, Device? device = null, Random? random = null)
@@ -195,6 +197,17 @@ public sealed class Embedding : Module
         _weight = _weight is null ? null : MoveTensor(_weight, device);
         BFloat16?.MoveWeights(device, MoveTensor);
     }
+
+    /// <inheritdoc />
+    /// <remarks>"weight", the [vocabulary, dim] table.</remarks>
+    IEnumerable<(string Name, Tensor Tensor)> INamedWeights.NamedWeights() => [("weight", Weight)];
+
+    /// <inheritdoc />
+    /// <remarks>None: a lookup reads only the rows it needs, which system memory serves without copying the whole table.</remarks>
+    IEnumerable<Tensor> IOffloadableLayer.StagedParameters() => [];
+
+    /// <inheritdoc />
+    IEnumerable<Tensor> IOffloadableLayer.StagedBuffers() => [];
 
     /// <inheritdoc />
     public override string ToString() => $"Embedding({Vocabulary} -> {Dim}{(_head is not null ? ", bf16, the head's columns" : BFloat16 is null ? "" : ", bf16")})";

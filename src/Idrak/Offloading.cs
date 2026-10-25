@@ -3,6 +3,7 @@
 
 using System.Runtime.CompilerServices;
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
 
 namespace Idrak;
 
@@ -194,8 +195,9 @@ internal static class Offloading
     }
 
     // The tensors a layer only reads while it computes: its parameters (changed by optimizer steps, between passes) and a
-    // linear layer's int8 / int4 / bfloat16 weights. Embedding tables are left out: a lookup reads only the rows it needs,
-    // which system memory serves without copying the whole table. With `mark`, frozen ones are marked cold.
+    // linear layer's int8 / int4 / bfloat16 weights, as the layer says (IOffloadableLayer; else its parameters). Embedding
+    // tables are left out: a lookup reads only the rows it needs, which system memory serves without copying the whole
+    // table. With `mark`, frozen ones are marked cold.
     private static List<Storage> ReadOnlyStorages(object layer, bool mark)
     {
         var storages = new List<Storage>();
@@ -210,12 +212,8 @@ internal static class Offloading
         }
 
         var module = (Module)layer;
-        if (module is Embedding)
-        {
-            return storages;
-        }
-
-        foreach (var p in module.Parameters())
+        var offloadable = module as IOffloadableLayer;
+        foreach (var p in offloadable?.StagedParameters() ?? module.Parameters())
         {
             storages.Add(p.Storage);
             if (mark && !p.RequiresGrad)
@@ -224,15 +222,12 @@ internal static class Offloading
             }
         }
 
-        if (module is Linear)
+        foreach (var b in offloadable?.StagedBuffers() ?? [])
         {
-            foreach (var b in module.Buffers())
+            storages.Add(b.Storage);
+            if (mark)
             {
-                storages.Add(b.Storage);
-                if (mark)
-                {
-                    MarkCold(b.Storage, OffloadPriority.Frozen);
-                }
+                MarkCold(b.Storage, OffloadPriority.Frozen);
             }
         }
 
@@ -245,7 +240,7 @@ internal static class Offloading
     {
         foreach (var module in root.Descendants().Prepend(root))
         {
-            if (module is Linear || !module.Children().Any())
+            if (module is IOffloadableLayer || !module.Children().Any())
             {
                 ReadOnlyStorages(module, mark: true);
             }

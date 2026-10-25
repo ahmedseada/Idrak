@@ -239,7 +239,7 @@ public sealed record Idrak.Abstraction.Cluster.ClusterStepMeasure : System.IEqua
   public string Compression { get; init; }
   public string Sync { get; init; }
 
-public sealed class Idrak.Abstraction.Cluster.ClusterTopology : Idrak.Abstraction.Cluster.IClusterTopology
+public sealed class Idrak.Abstraction.Cluster.ClusterTopology : Idrak.Abstraction.Cluster.IClusterTopology, Idrak.Abstraction.Cluster.IOverridingTopology, Idrak.Abstraction.Cluster.ISavableTopology
   public (int, int) Place(int rank)
   public Idrak.Abstraction.Cluster.ClusterSimulationSpec Simulation { get; }
   public Idrak.Abstraction.Cluster.ILinkProfile Link(int rankA, int rankB)
@@ -416,6 +416,9 @@ public interface Idrak.Abstraction.Cluster.ILinkProfile
   public double LossRate { get; }
   public string Name { get; }
 
+public interface Idrak.Abstraction.Cluster.IOverridingTopology : Idrak.Abstraction.Cluster.IClusterTopology
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.ClusterLinkOverride> Overrides { get; }
+
 public interface Idrak.Abstraction.Cluster.IPipelineSchedule
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Cluster.PipelineWork> Order(int stage, int stages, int microBatches)
   public double IdealBubble(int stages, int microBatches)
@@ -431,6 +434,9 @@ public interface Idrak.Abstraction.Cluster.IRunSteeringProvider
   public Idrak.Abstraction.Cluster.IRunSteering? Create(Idrak.Abstraction.Cluster.ICollectives? collectives, Idrak.Abstraction.Cluster.ClusterOptions options)
   public string Name { get; }
   public string Summary { get; }
+
+public interface Idrak.Abstraction.Cluster.ISavableTopology : Idrak.Abstraction.Cluster.IClusterTopology
+  public string ToJson()
 
 public interface Idrak.Abstraction.Cluster.IShardedGradientSync : Idrak.Abstraction.Cluster.IGradientSync, System.IDisposable
   public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue>? SaveOptimizerState()
@@ -2968,7 +2974,7 @@ public static class Idrak.Abstraction.ForwardHooks
   public static System.IDisposable? Enter(Idrak.Abstraction.Module module)
   public static bool Listening { get; }
 
-public abstract class Idrak.Abstraction.Generation.AttentionPositionBias : Idrak.Abstraction.Module, Idrak.Abstraction.Generation.IAttentionPositionBias
+public abstract class Idrak.Abstraction.Generation.AttentionPositionBias : Idrak.Abstraction.Module, Idrak.Abstraction.Generation.IAttentionPositionBias, Idrak.Abstraction.Generation.IOwnedPositionBias
   protected AttentionPositionBias(int heads)
   protected abstract Idrak.Abstraction.Tensor Compute(int queries, int keys, int queryStart, Idrak.Abstraction.Device device)
   protected override Idrak.Abstraction.Tensor ForwardCore(Idrak.Abstraction.Tensor input)
@@ -3560,6 +3566,9 @@ public interface Idrak.Abstraction.Generation.IModelPart
   public System.Collections.Generic.IReadOnlySet<string> StoredTensors(Idrak.Abstraction.Generation.ModelPartCheckpoint checkpoint)
   public bool In(System.Text.Json.Nodes.JsonObject config)
   public string Kind { get; }
+
+public interface Idrak.Abstraction.Generation.IOwnedPositionBias : Idrak.Abstraction.Generation.IAttentionPositionBias
+  public Idrak.Abstraction.Module Module { get; }
 
 public interface Idrak.Abstraction.Generation.IPackedFormat : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Generation.PackRequest, Idrak.Abstraction.Generation.IPackedWeight>
 
@@ -4479,7 +4488,7 @@ public abstract class Idrak.Abstraction.Module : Idrak.Abstraction.Modules.ITens
   public void Eval()
   public void Train(bool training = true)
 
-public sealed class Idrak.Abstraction.Modules.DoraAdapter : Idrak.Abstraction.Modules.ILinearAdapter, System.IDisposable
+public sealed class Idrak.Abstraction.Modules.DoraAdapter : Idrak.Abstraction.Modules.ILinearAdapter, Idrak.Abstraction.Modules.IPeftAdapter, System.IDisposable
   public DoraAdapter(Idrak.Abstraction.Tensor a, Idrak.Abstraction.Tensor b, Idrak.Abstraction.Tensor magnitude, int rank, float scale)
   public Idrak.Abstraction.Modules.ILinearAdapter MoveTo(System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> move)
   public Idrak.Abstraction.Tensor A { get; }
@@ -4491,6 +4500,7 @@ public sealed class Idrak.Abstraction.Modules.DoraAdapter : Idrak.Abstraction.Mo
   public float Scale { get; }
   public int Rank { get; }
   public static float[] SquaredNorms(Idrak.Abstraction.Modules.ILinearLayer layer)
+  public string PeftType { get; }
   public void Dispose()
 
 public interface Idrak.Abstraction.Modules.ILinearAdapter
@@ -4505,12 +4515,21 @@ public interface Idrak.Abstraction.Modules.ILinearLayer
   public int InFeatures { get; }
   public int OutFeatures { get; }
 
+public interface Idrak.Abstraction.Modules.IPeftAdapter : Idrak.Abstraction.Modules.ILinearAdapter
+  public Idrak.Abstraction.Modules.IPeftAdapter WithScale(float scale)
+  public Idrak.Abstraction.Tensor A { get; }
+  public Idrak.Abstraction.Tensor B { get; }
+  public Idrak.Abstraction.Tensor? Magnitude { get; }
+  public float Scale { get; }
+  public int Rank { get; }
+  public string PeftType { get; }
+
 public interface Idrak.Abstraction.Modules.ITensorOwner : System.IDisposable
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Parameters()
   public void MoveTo(Idrak.Abstraction.Device device)
 
-public sealed record Idrak.Abstraction.Modules.LoraAdapter : Idrak.Abstraction.Modules.ILinearAdapter, System.IEquatable<Idrak.Abstraction.Modules.LoraAdapter>
+public sealed record Idrak.Abstraction.Modules.LoraAdapter : Idrak.Abstraction.Modules.ILinearAdapter, Idrak.Abstraction.Modules.IPeftAdapter, System.IEquatable<Idrak.Abstraction.Modules.LoraAdapter>
   public Idrak.Abstraction.Modules.ILinearAdapter MoveTo(System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> move)
   public Idrak.Abstraction.Tensor A { get; init; }
   public Idrak.Abstraction.Tensor B { get; init; }
@@ -4520,6 +4539,7 @@ public sealed record Idrak.Abstraction.Modules.LoraAdapter : Idrak.Abstraction.M
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters { get; }
   public float Scale { get; init; }
   public int Rank { get; init; }
+  public string PeftType { get; }
 
 public sealed class Idrak.Abstraction.NotRegisteredException : System.NotSupportedException
   public NotRegisteredException(string registry, string name, System.Collections.Generic.IEnumerable<string> registered, string message)

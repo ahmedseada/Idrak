@@ -34,13 +34,23 @@ public interface IAttentionPositionBias
 }
 
 /// <summary>
+/// A position bias with parameters of its own, held by a module: the attention layer that owns it (not one that shares
+/// it) lists that module among its children, so its parameters train, load and move with the layer, and disposes it.
+/// </summary>
+public interface IOwnedPositionBias : IAttentionPositionBias
+{
+    /// <summary>The module holding the bias's parameters.</summary>
+    Module Module { get; }
+}
+
+/// <summary>
 /// A position bias that is a module (its parameters train and load with the attention layer that owns it) and computes
 /// its bias once per shape: while nothing records gradients for its parameters, the bias of the last
 /// (queries, keys, start, device) asked is kept, so the layers sharing one provider, and the batches of one length,
 /// compute it once; while its parameters train, it is computed for every pass (and the kept one dropped). A kind derives
 /// from it and implements <see cref="Compute"/>.
 /// </summary>
-public abstract class AttentionPositionBias : Module, IAttentionPositionBias
+public abstract class AttentionPositionBias : Module, IOwnedPositionBias
 {
     private (int Queries, int Keys, int Start, Device Device, Tensor Bias)? _kept;
 
@@ -54,6 +64,9 @@ public abstract class AttentionPositionBias : Module, IAttentionPositionBias
 
     /// <inheritdoc />
     public int Heads { get; }
+
+    /// <inheritdoc />
+    Module IOwnedPositionBias.Module => this;
 
     /// <inheritdoc />
     /// <exception cref="ArgumentOutOfRangeException">A count is not positive or the start is negative.</exception>

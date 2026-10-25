@@ -22,7 +22,7 @@ namespace Idrak.Layers;
 /// or device to device over a transport that hands device memory over (<see cref="IDeviceTransport"/>, plan 23 C8b: the
 /// shape still travels as bytes, the values are copied by the receiver straight from the sender's storage).
 /// </summary>
-public sealed class PipelineBoundary : Module, ICachedModule
+public sealed class PipelineBoundary : Module, ICachedModule, IHostRoundTrip
 {
     // Tags: each kind of message a range of its own; a micro-batch m takes two tags (its header, then its values).
     internal const int ActivationTag = 1 << 20, GradientTag = 2 << 20, InferenceTag = 3 << 20, ReturnTag = (3 << 20) + 8;

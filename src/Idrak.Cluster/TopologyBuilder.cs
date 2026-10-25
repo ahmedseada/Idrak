@@ -6,6 +6,7 @@ using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using Idrak.Cluster.Abstractions;
 
 namespace Idrak.Cluster;
 
@@ -599,7 +600,7 @@ public sealed class TopologyBuilder
         var profile = LinkProfiles.Find(n);
         return profile is null ? n
             : profile.BandwidthBytesPerSecond > 0 ? string.Create(CultureInfo.InvariantCulture, $"{n} {profile.BandwidthBytesPerSecond / 1e6:0.#} MB/s")
-            : profile is MeasuredLink ? $"{n} measured here" : $"{n} (give a rate)";
+            : profile is IDeviceMeasuredLink ? $"{n} measured here" : $"{n} (give a rate)";
     }));
 
     // A JSON string, non-ASCII names kept readable.

@@ -3,6 +3,7 @@
 
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using Idrak.Cluster.Abstractions;
 
 namespace Idrak.Cluster;
 
@@ -156,7 +157,7 @@ public static class BuiltInLinks
 /// A link measured on this machine at first use, once per physical device (the simulator asks for the device a rank is
 /// carved from). Unmeasured it has no bandwidth, so predicting from it refuses rather than guesses.
 /// </summary>
-internal sealed class MeasuredLink(string name, string summary, Func<Device, (double Bandwidth, TimeSpan Latency)> measure) : ILinkProfile
+internal sealed class MeasuredLink(string name, string summary, Func<Device, (double Bandwidth, TimeSpan Latency)> measure) : IDeviceMeasuredLink
 {
     private readonly ConcurrentDictionary<string, Lazy<ILinkProfile>> _measured = new(StringComparer.OrdinalIgnoreCase);
 
@@ -189,5 +190,5 @@ internal sealed class MeasuredLink(string name, string summary, Func<Device, (do
     })).Value;
 
     // `link` for a rank on `device` (a name: "cuda:0"): measured there when it is a measured link.
-    public static ILinkProfile Resolve(ILinkProfile link, string device) => link is MeasuredLink measured ? measured.On(Device.Parse(device)) : link;
+    public static ILinkProfile Resolve(ILinkProfile link, string device) => link is IDeviceMeasuredLink measured ? measured.On(Device.Parse(device)) : link;
 }

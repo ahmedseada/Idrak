@@ -4,6 +4,7 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Diagnostics;
+using Idrak.Cluster.Abstractions;
 
 namespace Idrak.Cluster;
 
@@ -107,7 +108,7 @@ internal sealed class ThrottledTransport : ITransport
             }
 
             var link = context.Topology.Link(context.Rank, peer);
-            if (link is MeasuredLink || link.BandwidthBytesPerSecond <= 0)
+            if (link is IDeviceMeasuredLink || link.BandwidthBytesPerSecond <= 0)
             {
                 continue;                                      // this machine's own speed, or no rate declared: nothing to imitate
             }

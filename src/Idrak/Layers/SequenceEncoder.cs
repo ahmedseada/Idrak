@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Layers.Abstractions;
+
 namespace Idrak.Layers;
 
 /// <summary>
@@ -49,7 +51,7 @@ public sealed class SequenceEncoder : Module, ISequenceEncoder
         TokenTypes = tokenTypes;
         EmbeddingNorm = embeddingNorm;
         FinalNorm = finalNorm;
-        _maxPositions = maxPositions ?? (positions as PositionEmbedding)?.MaxPositions ?? int.MaxValue;
+        _maxPositions = maxPositions ?? (positions as IPositionLimit)?.MaxPositions ?? int.MaxValue;
         words.Name = "words";
         positions?.Name = "positions";
         tokenTypes?.Name = "types";

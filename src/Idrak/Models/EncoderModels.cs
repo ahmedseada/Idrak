@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Generation;
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
 using Idrak.Models.Abstractions;
 
 namespace Idrak.Models;
@@ -220,9 +221,9 @@ public sealed class Seq2SeqNetwork : ISeq2SeqModel
             throw new ArgumentException("An encoder-decoder's decoder attends to the encoder: it holds no CrossAttention (build its blocks with one).", nameof(decoder));
         }
 
-        if (decoder.Count() == 0 || decoder.Last() is not Linear head)
+        if (decoder.Count() == 0 || decoder.Last() is not ILinearLayer head)
         {
-            throw new ArgumentException("The decoder's last layer is its output head (a Linear giving the logits).", nameof(decoder));
+            throw new ArgumentException("The decoder's last layer is its output head (a linear layer, ILinearLayer, giving the logits).", nameof(decoder));
         }
 
         Vocabulary = head.OutFeatures;
@@ -231,12 +232,7 @@ public sealed class Seq2SeqNetwork : ISeq2SeqModel
             throw new ArgumentException($"The start token {decoderStartToken} and end token {endToken} are tokens of the decoder's {Vocabulary}.");
         }
 
-        int? limit = maxTargetPositions ?? decoder.Descendants().Select(m => m switch
-        {
-            PositionEmbedding p => p.MaxPositions,
-            CausalSelfAttention a => a.MaxPositions,
-            _ => (int?)null,
-        }).Where(l => l is not null).Min();
+        int? limit = maxTargetPositions ?? decoder.Descendants().OfType<IPositionLimit>().Select(l => (int?)l.MaxPositions).Min();
         MaxTargetPositions = limit is > 0 ? limit.Value
             : throw new ArgumentException("The longest target is not known from the decoder's layers: pass maxTargetPositions.", nameof(maxTargetPositions));
         Encoder = encoder;

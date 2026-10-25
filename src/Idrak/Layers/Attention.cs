@@ -19,7 +19,7 @@ namespace Idrak.Layers;
 /// (<see cref="FromWeights"/>: [dim, 3 · heads · headDim]).
 /// </para>
 /// </summary>
-public sealed class MultiHeadAttention : Module, ICachedModule
+public sealed class MultiHeadAttention : Module, ICachedModule, IAttentionCacheInfo
 {
     private readonly Linear _qkv;
     private readonly Linear _output;
@@ -109,6 +109,24 @@ public sealed class MultiHeadAttention : Module, ICachedModule
     /// <summary>Whether future positions are masked.</summary>
     public bool Causal { get; }
 
+    /// <inheritdoc />
+    /// <remarks>Every head keeps its own keys and values: <see cref="Heads"/>.</remarks>
+    int IAttentionCacheInfo.KvHeads => Heads;
+
+    /// <inheritdoc />
+    int? IAttentionCacheInfo.SlidingWindow => null;
+
+    /// <inheritdoc />
+    /// <remarks>False: the layer numbers its cache from each row's first position.</remarks>
+    bool IAttentionCacheInfo.SupportsRows(Backend backend) => false;
+
+    /// <inheritdoc />
+    /// <remarks>False: the layer attends over the whole row.</remarks>
+    bool IAttentionCacheInfo.SupportsPacking() => false;
+
+    /// <inheritdoc />
+    bool IAttentionCacheInfo.SupportsSpans() => false;
+
     /// <summary>
     /// The factor on each query·key product before the softmax: 1 / √<see cref="HeadDim"/> unless set (a family that
     /// scales nothing sets 1).
@@ -124,8 +142,8 @@ public sealed class MultiHeadAttention : Module, ICachedModule
     /// <summary>
     /// A bias by the query's and the key's positions, [heads, queries, keys], added to the scaled scores before the softmax
     /// (null, the default: none). The scores are then composed whole ([batch · heads, time, time]); in cached decoding each
-    /// step scores the filled cache slots and reads its rows of the bias over them. When it is a <see cref="Module"/> its parameters are this
-    /// layer's, unless <see cref="SharesPositionBias"/>.
+    /// step scores the filled cache slots and reads its rows of the bias over them. When it has parameters of its own
+    /// (<see cref="IOwnedPositionBias"/>) they are this layer's, unless <see cref="SharesPositionBias"/>.
     /// </summary>
     /// <exception cref="ArgumentException">The bias is for another number of heads.</exception>
     public IAttentionPositionBias? PositionBias
@@ -409,9 +427,9 @@ public sealed class MultiHeadAttention : Module, ICachedModule
             yield return _dropout;
         }
 
-        if (_bias is Module owned && !SharesPositionBias)
+        if (_bias is IOwnedPositionBias owned && !SharesPositionBias)
         {
-            yield return owned;
+            yield return owned.Module;
         }
     }
 
@@ -423,9 +441,9 @@ public sealed class MultiHeadAttention : Module, ICachedModule
         _spans?.Ends.Dispose();
         _paddedSpans?.Starts.Dispose();
         _paddedSpans?.Ends.Dispose();
-        if (_bias is Module owned && !SharesPositionBias)
+        if (_bias is IOwnedPositionBias owned && !SharesPositionBias)
         {
-            owned.Dispose();                                               // its kept bias too (its parameters again: a no-op)
+            owned.Module.Dispose();                                               // its kept bias too (its parameters again: a no-op)
         }
 
         base.Dispose();
@@ -763,7 +781,7 @@ public sealed class TransformerEncoderLayer : Module, ICachedModule
 /// Adds fixed sinusoidal position information to [batch, time, dim] embeddings, so attention can tell
 /// positions apart. Supports sequences up to <see cref="MaxLength"/>.
 /// </summary>
-public sealed class PositionalEncoding : Module, ICachedModule
+public sealed class PositionalEncoding : Module, ICachedModule, IPositionAware
 {
     private Tensor _table;
 

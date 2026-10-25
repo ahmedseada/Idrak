@@ -7,7 +7,7 @@ using Idrak.Datasets.Abstractions;
 namespace Idrak.Datasets;
 
 /// <summary>Scales each column to zero mean and unit variance: (x - mean) / std.</summary>
-public sealed class StandardScaler : IScaler
+public sealed class StandardScaler : ISavableScaler
 {
     private readonly float[] _mean, _std;
 
@@ -88,6 +88,9 @@ public sealed class StandardScaler : IScaler
         }
     }
 
+    /// <inheritdoc />
+    Inference.PackageEntryKind ISavableScaler.EntryKind => Inference.PackageEntryKind.StandardScaler;
+
     /// <summary>Saves the statistics as text (one "mean std" pair per line).</summary>
     public void Save(string path) =>
         File.WriteAllLines(path, Lines());
@@ -135,7 +138,7 @@ public sealed class StandardScaler : IScaler
 }
 
 /// <summary>Scales each column linearly into [0, 1] using the fitted minimum and maximum.</summary>
-public sealed class MinMaxScaler : IScaler
+public sealed class MinMaxScaler : ISavableScaler
 {
     private readonly float[] _min, _range;
 
@@ -211,6 +214,9 @@ public sealed class MinMaxScaler : IScaler
             }
         }
     }
+
+    /// <inheritdoc />
+    Inference.PackageEntryKind ISavableScaler.EntryKind => Inference.PackageEntryKind.MinMaxScaler;
 
     /// <summary>Saves the ranges as text (one "min range" pair per line), like <see cref="StandardScaler.Save(string)"/>.</summary>
     public void Save(string path) => File.WriteAllLines(path, Lines());

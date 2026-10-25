@@ -6,6 +6,7 @@ using System.Text.Json.Nodes;
 using Idrak.Abstraction.Devices;
 using Idrak.Abstraction.Formats;
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
 using Idrak.Models.Abstractions;
 
 namespace Idrak.Models;
@@ -809,7 +810,7 @@ public sealed class PretrainedModel : IDisposable
     public int AddAdapters(int rank, float alpha, IEnumerable<string>? targets, int seed = 0, bool dora = false)
     {
         var names = (targets ?? NetworkParts.AdapterTargets).ToHashSet(StringComparer.Ordinal);
-        Func<Linear, bool> chosen = l => l.Name is { } name && names.Contains(name) && l.TiedTo is null;
+        Func<IAdaptableLinear, bool> chosen = l => l.Name is { } name && names.Contains(name) && l is not ITiedWeights { WeightsOf: not null };
         return dora ? Network.AddDora(rank, alpha, chosen, freezeBase: true, new Random(seed))
             : Network.AddLora(rank, alpha, chosen, freezeBase: true, new Random(seed));
     }
@@ -874,31 +875,12 @@ public sealed class PretrainedModel : IDisposable
 
         foreach (var (path, module) in NamedModules())
         {
-            switch (module)
+            if (module is INamedWeights named)
             {
-                case Linear { TiedTo: not null }:
-                    break;
-                case Linear linear:
-                    Add($"{path}.weight", linear.Weight);
-                    if (linear.Bias is { } bias)
-                    {
-                        Add($"{path}.bias", bias);
-                    }
-
-                    break;
-                case Embedding embedding:
-                    Add($"{path}.weight", embedding.Weight);
-                    break;
-                case PositionEmbedding positions:
-                    Add($"{path}.weight", positions.Weight);
-                    break;
-                case RMSNorm norm:
-                    Add($"{path}.weight", norm.Gain);
-                    break;
-                case LayerNorm norm:
-                    Add($"{path}.weight", norm.Gamma);
-                    Add($"{path}.bias", norm.Beta);
-                    break;
+                foreach (var (name, tensor) in named.NamedWeights())
+                {
+                    Add($"{path}.{name}", tensor);
+                }
             }
         }
 
@@ -955,19 +937,26 @@ public sealed class PretrainedModel : IDisposable
         int rank = 0;
         float alpha = 0f;
         bool? dora = null;
+        string? peftType = null;
         foreach (var (path, module) in NamedModules())
         {
-            if (module is not Linear { Adapter: { } any } linear)
+            if (module is not IAdaptableLinear { Adapter: { } any } linear)
             {
                 continue;
             }
 
-            var (a, b, magnitude, adapterRank, scale) = any switch
+            if (any is not IPeftAdapter peft)
             {
-                LoraAdapter l => (l.A, l.B, (Tensor?)null, l.Rank, l.Scale),
-                DoraAdapter d => (d.A, d.B, d.Magnitude, d.Rank, d.Scale),
-                _ => throw new InvalidOperationException($"{linear}: a {any.GetType().Name} has no PEFT layout; only LoRA and DoRA adapters are saved."),
-            };
+                throw new InvalidOperationException($"{linear}: a {any.GetType().Name} has no PEFT layout; only adapters in peft's layout (IPeftAdapter: LoRA, DoRA) are saved.");
+            }
+
+            var (a, b, magnitude, adapterRank, scale) = (peft.A, peft.B, peft.Magnitude, peft.Rank, peft.Scale);
+            if (peftType is not null && !string.Equals(peftType, peft.PeftType, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException($"The model has {peftType} and {peft.PeftType} adapters; PEFT stores one type per folder.");
+            }
+
+            peftType = peft.PeftType;
             if (dora is { } kind && kind != magnitude is not null)
             {
                 throw new InvalidOperationException("The model has both LoRA and DoRA adapters; PEFT stores one kind per folder.");
@@ -1001,7 +990,7 @@ public sealed class PretrainedModel : IDisposable
             new Dictionary<string, string> { ["format"] = "pt" });
         var config = new JsonObject
         {
-            ["peft_type"] = "LORA", ["task_type"] = "CAUSAL_LM", ["r"] = rank, ["lora_alpha"] = alpha, ["lora_dropout"] = 0.0,
+            ["peft_type"] = peftType, ["task_type"] = "CAUSAL_LM", ["r"] = rank, ["lora_alpha"] = alpha, ["lora_dropout"] = 0.0,
             ["bias"] = "none", ["fan_in_fan_out"] = false, ["inference_mode"] = true, ["use_dora"] = dora == true,
             ["target_modules"] = new JsonArray([.. modules.Select(m => (JsonNode)m)]),
             ["base_model_name_or_path"] = (string?)Config["_name_or_path"] ?? Path.GetFileName(Path.TrimEndingDirectorySeparator(Folder)),
@@ -1044,7 +1033,7 @@ public sealed class PretrainedModel : IDisposable
         var partStored = _partTensors.Values.SelectMany(t => t).ToHashSet(StringComparer.Ordinal);
         config.CheckModulesToSave((Vision?.StoredTensors ?? Enumerable.Empty<string>()).Concat(partStored).ToHashSet(StringComparer.Ordinal));
         using var reader = SafeTensorsReader.Open(Path.Combine(folder, "adapter_model.safetensors"));
-        var found = new List<(Linear Layer, string A, string B, string? Magnitude)>();
+        var found = new List<(Module Module, IAdaptableLinear Layer, string A, string B, string? Magnitude)>();
         var used = new HashSet<string>(StringComparer.Ordinal);
         var vision = PeftAdapterConfig.VisionTensors(reader, Vision?.StoredTensors, used);
         foreach (var (name, value) in PeftAdapterConfig.VisionTensors(reader, partStored, used))
@@ -1053,23 +1042,22 @@ public sealed class PretrainedModel : IDisposable
         }
         foreach (var (path, module) in NamedModules())
         {
-            if (module is Linear linear && Architecture.TensorName($"{path}.weight") is { } weight
+            if (module is IAdaptableLinear linear && Architecture.TensorName($"{path}.weight") is { } weight
                 && config.Names(reader, weight[..^".weight".Length]) is var (a, b, magnitude))
             {
-                found.Add((linear, a, b, magnitude));
+                found.Add((module, linear, a, b, magnitude));
                 used.UnionWith(new[] { a, b, magnitude }.OfType<string>());
             }
         }
 
         PeftAdapterConfig.CheckAllUsed(reader, used, folder);                   // before any layer changes
-        foreach (var (linear, a, b, magnitude) in found)
+        foreach (var (module, linear, a, b, magnitude) in found)
         {
             int rank = reader.Tensors[a].Shape[0];
             bool fits = linear.Adapter switch
             {
                 null => true,
-                LoraAdapter l => magnitude is null && l.Rank == rank,
-                DoraAdapter d => magnitude is not null && d.Rank == rank,
+                IPeftAdapter p => (p.Magnitude is null) == (magnitude is null) && p.Rank == rank,
                 _ => false,
             };
             if (!fits)
@@ -1081,31 +1069,22 @@ public sealed class PretrainedModel : IDisposable
             {
                 if (magnitude is null)
                 {
-                    linear.AddLora(rank, config.Alpha, l => ReferenceEquals(l, linear), freezeBase: false);
+                    module.AddLora(rank, config.Alpha, l => ReferenceEquals(l, linear), freezeBase: false);
                 }
                 else
                 {
-                    linear.AddDora(rank, config.Alpha, l => ReferenceEquals(l, linear), freezeBase: false);
+                    module.AddDora(rank, config.Alpha, l => ReferenceEquals(l, linear), freezeBase: false);
                 }
             }
 
-            (Tensor down, Tensor up) = linear.Adapter switch
+            var peft = linear.Adapter as IPeftAdapter ?? throw new InvalidOperationException($"{linear} has no adapter in peft's layout (IPeftAdapter: LoRA, DoRA).");
+            var (down, up) = (peft.A, peft.B);
+            if (peft.Magnitude is { } stored)
             {
-                LoraAdapter l => (l.A, l.B),
-                DoraAdapter d => (d.A, d.B),
-                _ => throw new InvalidOperationException($"{linear} has no LoRA or DoRA adapter."),
-            };
-            if (linear.Adapter is LoraAdapter lora)
-            {
-                linear.Adapter = lora with { Scale = config.Scale };
-            }
-            else if (linear.Adapter is DoraAdapter old)
-            {
-                old.Magnitude.Load(reader.Read(magnitude!));
-                linear.Adapter = new DoraAdapter(old.A, old.B, old.Magnitude, old.Rank, config.Scale);
-                old.Dispose();
+                stored.Load(reader.Read(magnitude!));
             }
 
+            linear.Adapter = peft.WithScale(config.Scale);
             down.Load(HostParallel.Transpose(reader.Read(a), rank, linear.InFeatures));
             up.Load(HostParallel.Transpose(reader.Read(b), linear.OutFeatures, rank));
         }
@@ -1171,7 +1150,7 @@ public sealed class PretrainedModel : IDisposable
     private void WriteTensors(string folder, SafeTensorType type, IEnumerable<(string Name, int[] Shape, Func<float[]> Values)>? extra = null,
         Func<StoredTensor, float[]>? values = null)
     {
-        if (Network.Descendants().OfType<Linear>().Any(l => l.Packed) || Network.Descendants().OfType<Embedding>().Any(e => e.BFloat16 is not null))
+        if (Network.Descendants().OfType<IPackableLinear>().Any(l => l.PackedWeight is not null) || Network.Descendants().OfType<Embedding>().Any(e => e.BFloat16 is not null))
         {
             throw new InvalidOperationException("Exporting needs float32 weights: load the model without Int8, Int4 or BFloat16 (then LoadAdapter) to merge and save.");
         }

@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
 
 namespace Idrak.Diagnostics;
 
@@ -39,12 +40,12 @@ public static class ModelMemory
         var counted = new HashSet<Storage>(ReferenceEqualityComparer.Instance);
         var packed = new HashSet<IPackedWeight>(ReferenceEqualityComparer.Instance);
         long total = 0;
-        foreach (var linear in module.Descendants().Prepend(module).OfType<Linear>())
+        foreach (var linear in module.Descendants().Prepend(module).OfType<IPackableLinear>())
         {
             if (linear.PackedWeight is { } weight && packed.Add(weight))
             {
                 total += (long)weight.Rows * weight.Columns;
-                foreach (var buffer in linear.Buffers())
+                foreach (var buffer in weight.Buffers())
                 {
                     counted.Add(buffer.Storage);                                 // the packed values and their scales
                 }
@@ -73,7 +74,7 @@ public static class ModelMemory
         var counted = new HashSet<Storage>(ReferenceEqualityComparer.Instance);
         var children = decoder.Children().ToList();
         var embedding = children.OfType<Embedding>().FirstOrDefault();
-        var head = children.OfType<Linear>().LastOrDefault(l => l.Name == "head") ?? (children.Count > 0 ? children[^1] as Linear : null);
+        var head = children.OfType<IPackableLinear>().LastOrDefault(l => l.Name == "head") ?? (children.Count > 0 ? children[^1] as IPackableLinear : null);
         var parts = new List<MemoryPart>();
         if (embedding is not null)
         {
@@ -84,10 +85,10 @@ public static class ModelMemory
 
         if (head is not null)
         {
-            long bytes = Bytes(head, counted);
+            long bytes = Bytes((Module)head, counted);
             string format = head.PackedWeight?.Name ?? "float32";
-            parts.Add(new MemoryPart("head", bytes, head.TiedTo is not null ? "reads the embedding's table: no weights of its own"
-                : head.SharedTable is not null ? $"{format}, also the embedding's table" : format));
+            parts.Add(new MemoryPart("head", bytes, head is ITiedWeights { WeightsOf: not null } ? "reads the embedding's table: no weights of its own"
+                : head is Linear { SharedTable: not null } ? $"{format}, also the embedding's table" : format));   // the library's own head and embedding share bfloat16 storage
         }
 
         long rest = children.Where(c => !ReferenceEquals(c, embedding) && !ReferenceEquals(c, head)).Sum(c => Bytes(c, counted));

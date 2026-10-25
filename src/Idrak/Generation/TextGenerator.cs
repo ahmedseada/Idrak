@@ -112,10 +112,14 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     private static long Outputs(Module module) => module switch
     {
         ILinearLayer linear => linear.OutFeatures,
-        MixtureOfExperts moe => moe.Router.OutFeatures + (moe.Experts.Count > 0 ? moe.ExpertsPerToken * Outputs(moe.Experts[0]) : 0)
-                                + (moe.SharedExpert is { } shared ? Outputs(shared) : 0) + (moe.SharedExpertGate?.OutFeatures ?? 0),
+        IRoutedLayer routed => routed.PartsPerPosition().Sum(p => p.Times * Outputs(p.Part)),
         _ => module.Children().Sum(Outputs),
     };
+
+    // The model's attention layers and whether a layer numbers positions of its own, found once per generator.
+    private (List<IAttentionCacheInfo> Layers, bool PositionAware) Attention => _attention ??= PackedSequences.AttentionLayers(Model);
+
+    private (List<IAttentionCacheInfo> Layers, bool PositionAware)? _attention;
 
     // Bytes the attention layers' key/value caches take once `decoding` makes them at its first step (none once made): what
     // the device's free memory holds besides the prompt's pass.
@@ -129,18 +133,11 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         var layout = decoding.Layout;
         long Bytes(long rows, int headDim) => rows * (2L * layout.RowWidth(headDim) + (layout is IScaledLayout ? 2 : 0)) * sizeof(float);
         long bytes = 0;
-        foreach (var module in Model.Descendants())
+        foreach (var attention in Attention.Layers)
         {
-            if (module is CausalSelfAttention attention)
-            {
-                int slots = decoding.SlidingWindowSteps > 0 && attention.SlidingWindow is { } window
-                    ? Math.Min(decoding.Capacity, window - 1 + decoding.SlidingWindowSteps) : decoding.Capacity;
-                bytes += Bytes((long)decoding.Batch * attention.KvHeads * slots, attention.HeadDim);
-            }
-            else if (module is MultiHeadAttention heads)
-            {
-                bytes += Bytes((long)decoding.Batch * heads.Heads * decoding.Capacity, heads.HeadDim);
-            }
+            int slots = decoding.SlidingWindowSteps > 0 && attention.SlidingWindow is { } window
+                ? Math.Min(decoding.Capacity, window - 1 + decoding.SlidingWindowSteps) : decoding.Capacity;
+            bytes += Bytes((long)decoding.Batch * attention.KvHeads * slots, attention.HeadDim);
         }
 
         return bytes;
@@ -255,7 +252,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
     // Whether a decoding step can be recorded: not with experts, whose routing is read back to the host on every step.
     // A pipeline's boundary sends each step to the other stages (plan 23, C7): a recorded step would replay without them.
-    private bool StepsRecordable => _stepsRecordable ??= !Model.Descendants().Any(m => m is MixtureOfExperts or PipelineBoundary);
+    private bool StepsRecordable => _stepsRecordable ??= !Model.Descendants().Any(m => m is IHostRoundTrip);
 
     private bool? _stepsRecordable;
 
@@ -432,9 +429,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     /// <c>Backend.SupportsAttentionRows</c>); otherwise prompts of one length still decode together and the others alone.
     /// </summary>
     public bool SupportsBatches =>
-        Model.Descendants().OfType<CausalSelfAttention>().ToList() is { Count: > 0 } attention
-        && !Model.Descendants().Any(m => m is MultiHeadAttention or PositionalEncoding)
-        && attention.All(a => a.SupportsRows(Device.Backend));
+        Attention is ({ Count: > 0 } attention, false) && attention.All(a => a.SupportsRows(Device.Backend));
 
     /// <summary>
     /// Generates the continuations of several prompts together (one batch through the model per token, so the GPU
