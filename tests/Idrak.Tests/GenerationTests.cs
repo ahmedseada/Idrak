@@ -24,7 +24,101 @@ internal static partial class Tests
         ("generation: a kept KV cache reuses shared prompt prefixes without changing the output", PromptCacheReuse),
         ("generation: a windowed decoder generating far past its window with sliding windows' caches gives the texts of caches holding the whole reply (one row through recorded steps, a batch of two)", SlidingWindowGeneration),
         ("generation: ReuseDecoding keeps the decoding context, sampler and recorded step between generations (the same objects while the size and sampling match, new ones otherwise, no sampler without a seed) and every text is a fresh generator's; ReleaseCache frees them", DecodingReuse),
+        ("generation: a long prompt's pass in pieces (PrefillChunk) gives one pass's last logits within float rounding, its cache length and its greedy tokens: one row, after a kept cache's prefix, with sliding windows' caches, and rows of different lengths padded on the left (row starts)", PrefillInPieces),
     ];
+
+    // A long prompt's pass in pieces (PrefillChunk, ForwardPieces): each piece cached before the next attends to it, so
+    // the last position's logits are one pass's within float rounding, the cache as long, and greedy generation gives the
+    // same tokens, one row (fresh, after a kept cache's shared prefix, with sliding windows' caches) and a batch (rows of
+    // different lengths padded on the left where the model attends from row starts, rows of one length elsewhere).
+    private static void PrefillInPieces(Device device)
+    {
+        var (tiny, tokenizer) = TinyLanguageModel(device, context: 64);
+        using var _ = tiny;
+        var plainSpec = new DecoderSpec
+        {
+            Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 64,
+            QkNorm = true, Rope = new RopeSettings(500f, null, false, null),
+        };
+        using var decoder = plainSpec.Build(null, new DecoderBuildOptions { Device = device, Seed = 3 });
+        using var windowed = (plainSpec with { SlidingWindow = 6, SlidingWindowLayers = [true, false] }).Build(null, new DecoderBuildOptions { Device = device, Seed = 8 });
+        string[] texts = ["the quick brown fox jumps over the lazy dog", "a short one", "pack my box with five dozen jugs"];
+        var greedy = new GenerationOptions { Seed = 0, NumPredict = 12, Temperature = 1f, TopK = 1, RepeatPenalty = 1f, ChunkSize = 4, NumCtx = 64 };
+        int least = TextGenerator.MinSlidingSteps;
+        try
+        {
+            TextGenerator.MinSlidingSteps = 4;                                 // the windowed layers' caches hold their window
+            foreach (var (model, name) in new[] { (tiny, "encoder layers"), (decoder, "decoder"), (windowed, "windowed decoder") })
+            {
+                var generator = new TextGenerator(model, tokenizer, 64) { KeepCache = false };
+                bool rowStarts = model != tiny && generator.SupportsBatches;
+                Check(model != decoder || rowStarts, $"{name}: rows of different lengths decode together on {device}");
+
+                // The last position's logits and the cache's length after the prompt's pass, one pass or in pieces.
+                (float[] Logits, int Length) Pass(int[] rows, int piece)
+                {
+                    var ids = rows.Select(r => tokenizer.Encode(texts[r]).ToArray()).ToArray();
+                    int length = ids.Max(x => x.Length);
+                    var starts = ids.Select(x => length - x.Length).ToArray();
+                    var input = new float[ids.Length * length];
+                    for (int r = 0; r < ids.Length; r++)
+                    {
+                        for (int i = 0; i < ids[r].Length; i++)
+                        {
+                            input[r * length + starts[r] + i] = ids[r][i];
+                        }
+                    }
+
+                    using var decoding = new DecodingContext(device, ids.Length, length + 4) { LastPositionOnly = true };
+                    if (starts.Any(s => s > 0))
+                    {
+                        decoding.SetRowStarts(starts);
+                    }
+
+                    using var noGrad = Autograd.NoGrad();
+                    using var scope = new TensorScope();
+                    var logits = piece >= length ? model.ForwardCached(Tensor.From(input, [ids.Length, length], device), decoding)
+                        : generator.ForwardPieces(input, ids.Length, length, decoding, piece);
+                    return (logits.ToArray(), decoding.Length);
+                }
+
+                int[][] sets = rowStarts ? [[0], [0, 1, 2]] : [[0]];
+                foreach (int[] rows in sets)
+                {
+                    var (one, length) = Pass(rows, int.MaxValue);
+                    foreach (int piece in new[] { 5, 4 })
+                    {
+                        var (pieced, piecedLength) = Pass(rows, piece);
+                        float worst = MaxDifference(one, pieced), peak = one.Max(MathF.Abs);
+                        Check(piecedLength == length && worst <= 1e-4f * Math.Max(1f, peak),
+                            $"{name}, {rows.Length} row(s) in pieces of {piece}: the last logits {worst} from one pass's (largest {peak}), cache length {piecedLength} for {length}");
+                    }
+                }
+
+                var pieces = greedy with { PrefillChunk = 5 };
+                string expected = generator.Generate(texts[0], greedy).Text, actual = generator.Generate(texts[0], pieces).Text;
+                Check(actual == expected, $"{name}: '{actual}' with the prompt in pieces, '{expected}' in one pass");
+
+                // A kept cache: the second prompt shares the first's start, the rest fed in pieces after it.
+                var keeping = new TextGenerator(model, tokenizer, 64);
+                keeping.Generate(texts[1], pieces);
+                string extended = texts[1] + " and then " + texts[2];
+                expected = generator.Generate(extended, greedy).Text;
+                actual = keeping.Generate(extended, pieces).Text;
+                Check(actual == expected, $"{name}: '{actual}' after a kept cache's prefix with the rest in pieces, '{expected}' in one pass");
+                keeping.ReleaseCache();
+
+                string[] prompts = rowStarts ? texts : ["one two three", "four five six"];
+                var batch = generator.GenerateBatch(prompts, greedy).Select(r => r.Text).ToArray();
+                var batchPieces = generator.GenerateBatch(prompts, greedy with { PrefillChunk = 3 }).Select(r => r.Text).ToArray();
+                Check(batchPieces.SequenceEqual(batch), $"{name}, a batch: '{string.Join("' '", batchPieces)}' in pieces, '{string.Join("' '", batch)}' in one pass");
+            }
+        }
+        finally
+        {
+            TextGenerator.MinSlidingSteps = least;
+        }
+    }
 
     // A windowed decoder generating far past its window: the windowed layers' caches hold the window (moved as they fill,
     // also between recorded steps), every text as with caches of the whole reply, one row and a batch of two.

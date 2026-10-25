@@ -3254,6 +3254,7 @@ public sealed record Idrak.Abstraction.Generation.GenerationOptions : System.IEq
   public bool SlideContext { get; init; }
   public bool UseCache { get; init; }
   public bool UseGraph { get; init; }
+  public const string PrefillChunkVariable = "IDRAK_PREFILL_CHUNK"
   public float FrequencyPenalty { get; init; }
   public float LengthPenalty { get; init; }
   public float MinP { get; init; }
@@ -3265,6 +3266,7 @@ public sealed record Idrak.Abstraction.Generation.GenerationOptions : System.IEq
   public int NumBeams { get; init; }
   public int NumCtx { get; init; }
   public int NumPredict { get; init; }
+  public int PrefillChunk { get; init; }
   public int RepeatLastN { get; init; }
   public int RepeatStop { get; init; }
   public int RepeatStopMinTokens { get; init; }

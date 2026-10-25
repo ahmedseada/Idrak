@@ -63,6 +63,28 @@ public sealed record GenerationOptions
     /// <summary>Tokens generated between host synchronizations while streaming.</summary>
     public int ChunkSize { get; init; } = 8;
 
+    /// <summary>The variable <see cref="PrefillChunk"/> falls back to when it is 0: "IDRAK_PREFILL_CHUNK".</summary>
+    public const string PrefillChunkVariable = "IDRAK_PREFILL_CHUNK";
+
+    /// <summary>
+    /// The positions a prompt's pass feeds the model at a time: a long prompt goes through the key/value cache in pieces of
+    /// this many positions, each piece's keys and values cached before the next attends to them, so the pass holds one
+    /// piece's activations at once instead of the whole prompt's (rows × positions × the widest layer's width), with the same
+    /// output within float rounding. 0 (the default) takes IDRAK_PREFILL_CHUNK when set, else measures it at run time: as
+    /// many positions as <see cref="Idrak.Abstraction.ComputeResources.WorkspaceShare"/> of the memory the device reports
+    /// available holds (the whole prompt in one pass on a device that reports none). A prompt that fits one piece, and a
+    /// prompt with images, take one pass.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Negative.</exception>
+    public int PrefillChunk
+    {
+        get => _prefillChunk;
+        init => _prefillChunk = value >= 0 ? value
+            : throw new ArgumentOutOfRangeException(nameof(PrefillChunk), value, "The generation setting PrefillChunk is 0 (automatic) or a number of positions.");
+    }
+
+    private readonly int _prefillChunk;
+
     /// <summary>
     /// Give the token ids on the final chunk (<see cref="ChatChunk.Tokens"/>, <see cref="GenerationChunk.Tokens"/>): the
     /// prompt as fed and the ids sampled, for training on exactly what was generated (reinforcement learning, on-policy

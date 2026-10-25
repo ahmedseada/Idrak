@@ -91,6 +91,145 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     // The scope a prompt's pass runs in (PrefillPrecision), or none.
     private MixedPrecision.Scope? PrefillScope() => PrefillPrecision is { } precision ? MixedPrecision.Use(precision) : null;
 
+    // The modules a prompt's pieces before the last run through (ForwardPieces): up to the last cached (attention) layer,
+    // the norm and head after it skipped, their logits never sampled; 0 when the model has no cached layer (one pass).
+    private int CachedLayers => _cachedLayers ??= Model.ToList().FindLastIndex(m => m is ICachedModule) + 1;
+
+    private int? _cachedLayers;
+
+    // Floats one row's position holds at once in a prompt's pass, from the model's own dimensions: the widest module up to
+    // the last cached layer, each linear output in it (a block's query, key and value, its attention output, its
+    // feed-forward's hidden and output; a mixture's routed experts only) and its input twice (the residual and its
+    // normalization). 0 when there is no linear layer to measure (one pass).
+    private long PositionWidth => _positionWidth ??= Widest(Model.Take(CachedLayers));
+
+    private long? _positionWidth;
+
+    private static long Widest(IEnumerable<Module> modules) =>
+        modules.Select(m => m is Sequential inner ? Widest(inner) : Outputs(m) + 2L * (m.Descendants().OfType<ILinearLayer>().FirstOrDefault()?.InFeatures ?? 0))
+            .DefaultIfEmpty(0).Max();
+
+    private static long Outputs(Module module) => module switch
+    {
+        ILinearLayer linear => linear.OutFeatures,
+        MixtureOfExperts moe => moe.Router.OutFeatures + (moe.Experts.Count > 0 ? moe.ExpertsPerToken * Outputs(moe.Experts[0]) : 0)
+                                + (moe.SharedExpert is { } shared ? Outputs(shared) : 0) + (moe.SharedExpertGate?.OutFeatures ?? 0),
+        _ => module.Children().Sum(Outputs),
+    };
+
+    // Bytes the attention layers' key/value caches take once `decoding` makes them at its first step (none once made): what
+    // the device's free memory holds besides the prompt's pass.
+    private long CachesToCome(DecodingContext decoding)
+    {
+        if (decoding.CacheBytes > 0)
+        {
+            return 0;
+        }
+
+        var layout = decoding.Layout;
+        long Bytes(long rows, int headDim) => rows * (2L * layout.RowWidth(headDim) + (layout.HasScales ? 2 : 0)) * sizeof(float);
+        long bytes = 0;
+        foreach (var module in Model.Descendants())
+        {
+            if (module is CausalSelfAttention attention)
+            {
+                int slots = decoding.SlidingWindowSteps > 0 && attention.SlidingWindow is { } window
+                    ? Math.Min(decoding.Capacity, window - 1 + decoding.SlidingWindowSteps) : decoding.Capacity;
+                bytes += Bytes((long)decoding.Batch * attention.KvHeads * slots, attention.HeadDim);
+            }
+            else if (module is MultiHeadAttention heads)
+            {
+                bytes += Bytes((long)decoding.Batch * heads.Heads * decoding.Capacity, heads.HeadDim);
+            }
+        }
+
+        return bytes;
+    }
+
+    // The positions per piece of a prompt's pass of `length` positions over `decoding`'s rows (ForwardPieces): the setting
+    // (GenerationOptions.PrefillChunk, else IDRAK_PREFILL_CHUNK), else measured: as many positions as the workspace share
+    // (ComputeResources.WorkspaceShare) of the memory the device reports available, less the caches still to be made,
+    // holds at the model's width per position (PositionWidth); `length` (one pass) on a device that reports none or a
+    // model without a width to measure.
+    private int PrefillPiece(GenerationOptions options, DecodingContext decoding, int length)
+    {
+        int set = options.PrefillChunk > 0 ? options.PrefillChunk : PrefillChunkVariable();
+        if (CachedLayers == 0)
+        {
+            return length;
+        }
+
+        if (set > 0)
+        {
+            return Math.Min(set, length);
+        }
+
+        if (length <= 1 || PositionWidth <= 0 || Device.Backend.AvailableMemory() is not { } free)
+        {
+            return length;
+        }
+
+        var usage = Device.Backend.GetMemoryUsage();
+        if (usage.Limit is { } limit)
+        {
+            free = Math.Min(free, limit - usage.InUse);
+        }
+
+        long room = (long)((free - CachesToCome(decoding)) * ComputeResources.WorkspaceShare);
+        return (int)Math.Clamp(room / (decoding.Batch * PositionWidth * sizeof(float)), 1, length);
+    }
+
+    // IDRAK_PREFILL_CHUNK (GenerationOptions.PrefillChunk when that is 0): 0 when unset.
+    private static int PrefillChunkVariable()
+    {
+        if (Environment.GetEnvironmentVariable(GenerationOptions.PrefillChunkVariable) is not { Length: > 0 } text)
+        {
+            return 0;
+        }
+
+        return int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int value) && value >= 0
+            ? value
+            : throw new InvalidOperationException($"{GenerationOptions.PrefillChunkVariable} is '{text}': give 0 (measured) or the positions a prompt's pass feeds at a time.");
+    }
+
+    // A prompt's pass through the cached model in pieces of at most `piece` positions (as equal as they can be: few
+    // shapes), the rows' ids [rows, length] read from the host: each piece's keys and values are cached before the next
+    // piece attends to them, so the pass holds one piece's activations at a time instead of the whole prompt's. The pieces
+    // before the last stop at the last cached layer (their logits are never sampled); the last one's logits are returned
+    // as one pass returns them. The caller's arithmetic (PrefillScope) and gradient mode apply.
+    internal Tensor ForwardPieces(ReadOnlySpan<float> ids, int rows, int length, DecodingContext decoding, int piece)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(piece);
+        int layers = CachedLayers;
+        piece = layers == 0 ? length : piece;                             // nothing cached between pieces: one pass
+        int pieces = (length + piece - 1) / piece, size = (length + pieces - 1) / pieces;
+        float[] buffer = ArrayPool<float>.Shared.Rent(rows * size);
+        try
+        {
+            for (int from = 0; ; from += size)
+            {
+                int count = Math.Min(size, length - from);
+                for (int r = 0; r < rows; r++)
+                {
+                    ids.Slice(r * length + from, count).CopyTo(buffer.AsSpan(r * count, count));
+                }
+
+                using var part = Tensor.From(buffer.AsSpan(0, rows * count), [rows, count], Device);
+                if (from + count >= length)
+                {
+                    return Model.ForwardCached(part, decoding);
+                }
+
+                using var scope = new TensorScope();
+                Model.ForwardCached(part, decoding, layers);
+            }
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(buffer);
+        }
+    }
+
     // Whether a decoding step can be recorded: not with experts, whose routing is read back to the host on every step.
     // A pipeline's boundary sends each step to the other stages (plan 23, C7): a recorded step would replay without them.
     private bool StepsRecordable => _stepsRecordable ??= !Model.Descendants().Any(m => m is MixtureOfExperts or PipelineBoundary);
@@ -482,14 +621,23 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         Model.Eval();
         TensorOffloading.BeforeInference(Device, Model);                          // with offloading: room for the pass on the device
         TimeSpan promptDuration;
+        // A long prompt goes through in pieces (PrefillChunk); one with images in one pass, never cut inside an image.
+        int prefillPiece = images.Count == 0 ? PrefillPiece(options, decoding, promptLength) : promptLength;
         using (Autograd.NoGrad())
         using (var scope = new TensorScope())
         {
             Tensor logits;
             using (PrefillScope())
             {
-                using var ids = Tensor.From(input, [rows, promptLength], Device);
-                logits = images.Count == 0 ? Model.ForwardCached(ids, decoding) : Model.ForwardCached(ids, images, imageInput!.Value.Attention, decoding);
+                if (prefillPiece < promptLength)
+                {
+                    logits = ForwardPieces(input, rows, promptLength, decoding, prefillPiece);
+                }
+                else
+                {
+                    using var ids = Tensor.From(input, [rows, promptLength], Device);
+                    logits = images.Count == 0 ? Model.ForwardCached(ids, decoding) : Model.ForwardCached(ids, images, imageInput!.Value.Attention, decoding);
+                }
             }
 
             sampler.Sample(logits);
@@ -904,10 +1052,12 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             (held.Context, held.Graph) = (null, null);
             decoding.LastPositionOnly = true;                                   // the sampler reads the last position only
             decoding.Cancellation = cancellationToken;                          // the prompt's pass stops between layers
+            // A long prompt goes through the cache in pieces (PrefillChunk); one with images in one pass, never cut inside an image.
+            int prefillPiece = options.UseCache && images.Count == 0 ? PrefillPiece(options, decoding, history.Count) : int.MaxValue;
             bool keep = false, steppedOnce = false;
             try
             {
-                Tensor Window(int keep)
+                float[] WindowValues(int keep)
                 {
                     var values = new float[keep];
                     var ids = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(history)[^keep..];
@@ -916,7 +1066,23 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                         values[i] = ids[i];
                     }
 
-                    return Tensor.From(values, [1, keep], Device);
+                    return values;
+                }
+
+                Tensor Window(int keep) => Tensor.From(WindowValues(keep), [1, keep], Device);
+
+                // The cached pass over the last `keep` ids (from position `start`): in pieces when they are more than one.
+                Tensor Feed(int keep, int start)
+                {
+                    if (keep <= prefillPiece)
+                    {
+                        return WithImages(Window(keep), ImagesFrom(start), decoding);
+                    }
+
+                    using (PrefillScope())
+                    {
+                        return ForwardPieces(WindowValues(keep), 1, keep, decoding, prefillPiece);
+                    }
                 }
 
                 void Prefill(int keep)
@@ -928,7 +1094,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     if (options.UseCache)
                     {
                         decoding.Reset();
-                        sampler.Sample(WithImages(Window(keep), ImagesFrom(start), decoding));
+                        sampler.Sample(Feed(keep, start));
                     }
                     else
                     {
@@ -960,7 +1126,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     using var noGrad = Autograd.NoGrad();
                     using var scope = new TensorScope();
                     decoding.Truncate(shared);
-                    sampler.Sample(WithImages(Window(history.Count - shared), ImagesFrom(shared), decoding));
+                    sampler.Sample(Feed(history.Count - shared, shared));
                 }
                 else
                 {
