@@ -11,8 +11,9 @@ lookups left as is: keyed by name across hundreds of call sites); C3 done (`IOpt
 `ITool`, `IPretrainedVision`, `IDescribedModel`, `IDecodingStep`, `ISavableTokenizer`, `IPretrainedArchitecture`, the GGUF
 contracts with `IGgufType.Dequantize` on spans, and a kind for every `Func` registry; `IGraphValue` not done: a tensor in
 Idrak.Abstraction cannot implement a core contract and wrapping each value would allocate per node); C4 done (`ILibraryRegistrations` and `IIdrakPluginPackage` found by assembly attributes read once per assembly,
-`RegisterIdrakPlugin` removed, one `IToolProvider` loader, `IOnnxRuntimeLoader`, `NotRegisteredException`); C5-C7 in
-progress.** The list below comes from an audit of `src/` (the owner asked: where, no
+`RegisterIdrakPlugin` removed, one `IToolProvider` loader, `IOnnxRuntimeLoader`, `NotRegisteredException`); C5 done
+(`EpisodeInfoKey<T>`, `IOptionSchema`, `ISettingAdvisor<TSubject>`, `IBinaryPartKind.RecordKeys`, the Text, Vision, Audio,
+Reinforcement and Data rows; open: the low Mp3 encoder parameters row); C6, C7 in progress.** The list below comes from an audit of `src/` (the owner asked: where, no
 code yet). Each row was found by reading the code; a sample of the rows was checked against the source.
 
 ## Why
