@@ -3,7 +3,10 @@
 **Status: opened 2026-10-25; C0 done (`IKind`, `IConfigurableKind`, `IKind<TRequest, T>`, `KindTable<TKind>`, `OptionKeys`,
 `SlotTable`'s span lookups; the six existing kind interfaces adopt the base); C1 done (`IDeviceBackend` and the capability interfaces, read once per
 backend; `OwnKernels`; typed `Operation<TKernel>`; `IDeviceProvider : IKind`; `IDeviceKernel`; the string-named kernel
-lookups left as is: keyed by name across hundreds of call sites); C2-C7 in progress.** The list below comes from an audit of `src/` (the owner asked: where, no
+lookups left as is: keyed by name across hundreds of call sites); C3 done (`IOptimizer`, `IStatefulOptimizer`,
+`IScaledGradientStep`, `Adam.Step` sealed, `ILearningRateScheduler`, `IEngineModel<TCopy>`, `ITensorOwner`,
+`IShardedGradientSync`, `IShardedHostValueCollectives`, `ICarriedStopAgreement`, `ILoss`, `IMetric`,
+`IShardableBatchSource`); C2, C4-C7 in progress.** The list below comes from an audit of `src/` (the owner asked: where, no
 code yet). Each row was found by reading the code; a sample of the rows was checked against the source.
 
 ## Why
