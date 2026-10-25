@@ -15,8 +15,8 @@ internal static partial class Tests
         ("packed plugins: the built-in formats are registered; an unknown name lists them; a format of one's own registers, packs by name and has no built-in Format", PackedPluginRegistry),
         ("packed plugins: the PackedFormat overload makes the built-in weights from the same table the registry starts from, even with a built-in name replaced; weight file formats encode and decode through their codecs (float32 exact, float16 and bfloat16 rounding, NaN, unknown format bytes)", PackedBuiltInsAndWeightCodecs),
         ("packed plugins: a Linear layer holding a format of one's own (expanded default product, and its own product) matches the float product at 1 and 70 rows, with the input's gradient; ToFloat32, Save/Load and moving between devices", PackedPluginLinear),
-        ("packed plugins: float16 weights: every one of the 65536 halves widens exactly (Float16Dequantize on the device, as .NET's Half); the product at 1, 3 and 70 rows and the input's gradient equal a float32 layer holding the same values bit for bit; a float16 checkpoint loads as float16 (half the bytes) under AsStored and as float32 under Float32", PackedFloat16),
-        ("packed plugins: float16 widening on the host: HalfFloats widens every one of the 65536 halves as .NET's Half does (a NaN keeping its payload, not quieted) at every length of a vector's tail, its scalar ToSingle the same, and the checkpoint readers' float16 (StoredFloats, the float16 weight codec) widen through it", d => { if (d == Device.Cpu) HalfFloatsWidening(); }),
+        ("packed plugins: float16 weights: each of the 65536 halves, as .NET's Half gives it and packing rounds it back (a signalling NaN arrives quieted), widens on the device (Float16Dequantize) to .NET's value bit for bit; the product at 1, 3 and 70 rows and the input's gradient equal a float32 layer holding the same values bit for bit; a float16 checkpoint loads as float16 (half the bytes) under AsStored and as float32 under Float32", PackedFloat16),
+        ("packed plugins: float16 and bfloat16 widening on the host: HalfFloats widens every one of the 65536 halves exactly (.NET's Half for every half but a NaN, which keeps its payload as the devices' kernels keep it, where .NET's quiets a signalling one) and every bfloat16 pattern as the float32's high half, at every length of a vector's tail, Float16ToSingle the same, and the checkpoint readers (StoredFloats, the float16 and bfloat16 weight codecs) widen through it", d => { if (d == Device.Cpu) HalfFloatsWidening(); }),
         ("packed plugins: a decoder built with a format of one's own decodes token by token (and through a recorded step) like the built-in bfloat16 decoder, and trains a LoRA adapter", PackedPluginDecoder),
     ];
 
@@ -35,7 +35,7 @@ internal static partial class Tests
         }
 
         var widened = new float[halves.Length];
-        HalfFloats.Widen(halves, widened);
+        HalfFloats.WidenFloat16(halves, widened);
         int wrong = 0, scalar = 0, first = -1;
         for (int h = 0; h < halves.Length; h++)
         {
@@ -45,10 +45,10 @@ internal static partial class Tests
                 first = first < 0 ? h : first;
             }
 
-            scalar += BitConverter.SingleToUInt32Bits(HalfFloats.ToSingle((ushort)h)) == Expected((ushort)h) ? 0 : 1;
+            scalar += BitConverter.SingleToUInt32Bits(HalfFloats.Float16ToSingle((ushort)h)) == Expected((ushort)h) ? 0 : 1;
         }
 
-        Check(wrong == 0 && scalar == 0, $"HalfFloats: {wrong} of 65536 halves widen wrongly (first 0x{first:X4}), {scalar} by ToSingle");
+        Check(wrong == 0 && scalar == 0, $"HalfFloats: {wrong} of 65536 halves widen wrongly (first 0x{first:X4}), {scalar} by Float16ToSingle");
 
         // Every length up to four vectors and a few more, from shuffled halves at many offsets: the vector body and the
         // scalar tail agree, nothing past the span is written, and the stored bytes widen to the same values.
@@ -62,7 +62,7 @@ internal static partial class Tests
                 var source = shuffled.AsSpan(start, length);
                 var values = new float[length + 1];
                 values[^1] = 42f;
-                HalfFloats.Widen(source, values.AsSpan(0, length));
+                HalfFloats.WidenFloat16(source, values.AsSpan(0, length));
                 var stored = new float[length];
                 Idrak.Models.StoredFloats.WidenFloat16(System.Runtime.InteropServices.MemoryMarshal.AsBytes(source), stored);
                 var decoded = new float[length];
@@ -80,12 +80,49 @@ internal static partial class Tests
         }
 
         Check(differ == 0, $"HalfFloats, StoredFloats and the float16 codec over {spans} spans of 0 to {longest} halves: {differ} values differ or were written past the span");
-        Check(Throws<ArgumentException>(() => HalfFloats.Widen(halves.AsSpan(0, 3), new float[2])), "values shorter than the halves are refused");
+
+        // bfloat16: every pattern is the float32's high half (NaNs as they are), the same through StoredFloats and the codec.
+        HalfFloats.WidenBFloat16(halves, widened);
+        wrong = 0;
+        for (int h = 0; h < halves.Length; h++)
+        {
+            wrong += BitConverter.SingleToUInt32Bits(widened[h]) == (uint)h << 16 ? 0 : 1;
+        }
+
+        Check(wrong == 0, $"HalfFloats.WidenBFloat16: {wrong} of 65536 patterns widen wrongly");
+        differ = 0;
+        for (int start = 0; start + longest < shuffled.Length; start += 997)
+        {
+            for (int length = 0; length <= longest; length++)
+            {
+                var source = shuffled.AsSpan(start, length);
+                var values = new float[length + 1];
+                values[^1] = 42f;
+                HalfFloats.WidenBFloat16(source, values.AsSpan(0, length));
+                var stored = new float[length];
+                Idrak.Models.StoredFloats.WidenBFloat16(System.Runtime.InteropServices.MemoryMarshal.AsBytes(source), stored);
+                var decoded = new float[length];
+                WeightCodec.For(WeightFormat.BFloat16).Decode(System.Runtime.InteropServices.MemoryMarshal.AsBytes(source), decoded);
+                for (int i = 0; i < length; i++)
+                {
+                    uint expected = (uint)source[i] << 16;
+                    differ += BitConverter.SingleToUInt32Bits(values[i]) == expected && BitConverter.SingleToUInt32Bits(stored[i]) == expected
+                              && BitConverter.SingleToUInt32Bits(decoded[i]) == expected ? 0 : 1;
+                }
+
+                differ += values[^1] == 42f ? 0 : 1;
+            }
+        }
+
+        Check(differ == 0, $"bfloat16 through HalfFloats, StoredFloats and the codec over {spans} spans: {differ} values differ or were written past the span");
+        Check(Throws<ArgumentException>(() => HalfFloats.WidenBFloat16(halves.AsSpan(0, 3), new float[2])), "values shorter than the bfloat16 values are refused");
+        Check(Throws<ArgumentException>(() => HalfFloats.WidenFloat16(halves.AsSpan(0, 3), new float[2])), "values shorter than the halves are refused");
     }
 
     private static void PackedFloat16(Device device)
     {
-        // Every bit pattern, widened by the device kernel, against .NET's own conversion (NaNs: NaN with the same payload).
+        // Every half as .NET converts it, packed back to a half (exact, but a signalling NaN comes back quieted, as .NET's
+        // conversion made it) and widened by the device kernel, against .NET's value bit for bit.
         var all = new float[65536];
         for (int h = 0; h < all.Length; h++)
         {

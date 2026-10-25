@@ -625,9 +625,9 @@ public static class SafeTensorsWriter
 }
 
 // Stored little-endian floats read into float32 (the checkpoint readers and the weight codecs): on a little-endian machine
-// float32 bytes are copied as they are, and bfloat16 and float16 are widened whole vectors at a time (bfloat16's bits are
-// the high half of a float32; float16 by HalfFloats, as the CPU device widens float16 weights) with a scalar tail;
-// elsewhere value by value. The same values either way.
+// float32 bytes are copied as they are, and bfloat16 and float16 are widened whole vectors at a time by HalfFloats (as
+// the CPU device widens its bfloat16 and float16 weights) with a scalar tail; elsewhere value by value. The same values
+// either way.
 internal static class StoredFloats
 {
     public static void ReadFloat32(ReadOnlySpan<byte> bytes, Span<float> values)
@@ -644,22 +644,17 @@ internal static class StoredFloats
         }
     }
 
+    // bfloat16 stored little-endian, widened by HalfFloats (whole vectors at a time); on a big-endian machine value by
+    // value, the same values.
     public static void WidenBFloat16(ReadOnlySpan<byte> bytes, Span<float> values)
     {
-        int i = 0;
-        if (BitConverter.IsLittleEndian && System.Numerics.Vector.IsHardwareAccelerated)
+        if (BitConverter.IsLittleEndian)
         {
-            var halves = MemoryMarshal.Cast<byte, ushort>(bytes[..(values.Length * 2)]);
-            var bits = MemoryMarshal.Cast<float, uint>(values);
-            for (; i <= values.Length - System.Numerics.Vector<ushort>.Count; i += System.Numerics.Vector<ushort>.Count)
-            {
-                System.Numerics.Vector.Widen(new System.Numerics.Vector<ushort>(halves[i..]), out var low, out var high);
-                (low << 16).CopyTo(bits[i..]);
-                (high << 16).CopyTo(bits[(i + System.Numerics.Vector<uint>.Count)..]);
-            }
+            HalfFloats.WidenBFloat16(MemoryMarshal.Cast<byte, ushort>(bytes[..(values.Length * 2)]), values);
+            return;
         }
 
-        for (; i < values.Length; i++)
+        for (int i = 0; i < values.Length; i++)
         {
             values[i] = BitConverter.UInt32BitsToSingle((uint)BinaryPrimitives.ReadUInt16LittleEndian(bytes[(i * 2)..]) << 16);
         }
@@ -671,13 +666,13 @@ internal static class StoredFloats
     {
         if (BitConverter.IsLittleEndian)
         {
-            HalfFloats.Widen(MemoryMarshal.Cast<byte, ushort>(bytes[..(values.Length * 2)]), values);
+            HalfFloats.WidenFloat16(MemoryMarshal.Cast<byte, ushort>(bytes[..(values.Length * 2)]), values);
             return;
         }
 
         for (int i = 0; i < values.Length; i++)
         {
-            values[i] = HalfFloats.ToSingle(BinaryPrimitives.ReadUInt16LittleEndian(bytes[(i * 2)..]));
+            values[i] = HalfFloats.Float16ToSingle(BinaryPrimitives.ReadUInt16LittleEndian(bytes[(i * 2)..]));
         }
     }
 }

@@ -250,11 +250,7 @@ internal sealed class OnnxTensor
     private static float[] BFloat16s(ReadOnlySpan<byte> raw, int count)
     {
         var values = new float[count];
-        for (int i = 0; i < values.Length; i++)
-        {
-            values[i] = BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadUInt16LittleEndian(raw.Slice(i * 2, 2)) << 16);
-        }
-
+        Idrak.Models.StoredFloats.WidenBFloat16(raw, values);
         return values;
     }
 

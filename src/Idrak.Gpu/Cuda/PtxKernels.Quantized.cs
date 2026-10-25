@@ -95,8 +95,9 @@ internal static partial class PtxKernels
             """);
 
         // w[r, 2c], w[r, 2c + 1] = the IEEE half pair in packed word (r, c) widened (cvt.f32.f16: exact, subnormals kept).
-        // A NaN half widens to the float NaN with its payload (sign | 0x7F800000 | mantissa << 13), as .NET's (float)Half and
-        // the CPU's widening: cvt.f32.f16 gives one canonical NaN for all of them.
+        // A NaN half widens to the float NaN with its payload as it is (sign | 0x7F800000 | mantissa << 13), as the CPU's
+        // widening (HalfFloats) and Vulkan's do, so every device agrees: cvt.f32.f16 gives one canonical NaN for all of them,
+        // and .NET's (float)Half quiets a signalling one (sets the mantissa's top bit), so neither is followed.
         static string KeepNaN(string f) => $"""
             and.b32 %r13, %r12, 0x7C00;
             and.b32 %r14, %r12, 0x3FF;

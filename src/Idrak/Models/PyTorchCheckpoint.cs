@@ -283,7 +283,7 @@ public sealed class PyTorchCheckpointReader : ITensorStore
                 for (int i = 0; i < destination.Length; i++) destination[i] = (float)BinaryPrimitives.ReadHalfLittleEndian(source[(2 * i)..]);
                 break;
             case StorageType.BFloat16:
-                for (int i = 0; i < destination.Length; i++) destination[i] = BitConverter.Int32BitsToSingle(BinaryPrimitives.ReadUInt16LittleEndian(source[(2 * i)..]) << 16);
+                StoredFloats.WidenBFloat16(source, destination);
                 break;
             case StorageType.Float64:
                 for (int i = 0; i < destination.Length; i++) destination[i] = (float)BinaryPrimitives.ReadDoubleLittleEndian(source[(8 * i)..]);

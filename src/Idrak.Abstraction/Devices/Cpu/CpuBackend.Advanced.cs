@@ -721,11 +721,7 @@ internal sealed partial class CpuBackend
         for (int i = 0; i < count; i++)
         {
             var row = halves.Slice(CheckIndex(iv[i], vocabulary) * stride, dim);
-            var target = yv.AsSpan(i * dim, dim);
-            for (int j = 0; j < dim; j++)
-            {
-                target[j] = BitConverter.Int32BitsToSingle(row[j] << 16);
-            }
+            HalfFloats.WidenBFloat16(row, yv.AsSpan(i * dim, dim));
         }
     }
 

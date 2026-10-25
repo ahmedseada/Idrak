@@ -265,7 +265,7 @@ internal sealed partial class CpuBackend
             var halves = MemoryMarshal.Cast<float, ushort>(D(packed).AsSpan());
             for (int r = first; r < last; r++)
             {
-                WidenBFloat16(halves.Slice(r * stride, n), wv.AsSpan(r * n, n));
+                HalfFloats.WidenBFloat16(halves.Slice(r * stride, n), wv.AsSpan(r * n, n));
             }
         });
     }
@@ -279,30 +279,9 @@ internal sealed partial class CpuBackend
             var halves = MemoryMarshal.Cast<float, ushort>(D(packed).AsSpan());
             for (int r = first; r < last; r++)
             {
-                HalfFloats.Widen(halves.Slice(r * stride, n), wv.AsSpan(r * n, n));
+                HalfFloats.WidenFloat16(halves.Slice(r * stride, n), wv.AsSpan(r * n, n));
             }
         });
-    }
-
-    // target[j] = the float32 value of bfloat16 source[j] (its bits in the high half), whole vectors at a time.
-    private static void WidenBFloat16(ReadOnlySpan<ushort> source, Span<float> target)
-    {
-        int j = 0;
-        if (Vector.IsHardwareAccelerated)
-        {
-            var bits = MemoryMarshal.Cast<float, uint>(target);
-            for (; j <= source.Length - Vector<ushort>.Count; j += Vector<ushort>.Count)
-            {
-                Vector.Widen(new Vector<ushort>(source[j..]), out var low, out var high);
-                (low << 16).CopyTo(bits[j..]);
-                (high << 16).CopyTo(bits[(j + Vector<uint>.Count)..]);
-            }
-        }
-
-        for (; j < source.Length; j++)
-        {
-            target[j] = BitConverter.Int32BitsToSingle(source[j] << 16);
-        }
     }
 
     public override void Int8DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)

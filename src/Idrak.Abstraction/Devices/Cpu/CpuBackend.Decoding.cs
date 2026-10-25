@@ -309,7 +309,7 @@ internal sealed partial class CpuBackend
                     float max = float.NegativeInfinity;
                     for (int c = 0; c < count; c++)
                     {
-                        WidenBFloat16(kh.Slice((int)(((long)h * capacity + begin + c) * stride), dim), row);
+                        HalfFloats.WidenBFloat16(kh.Slice((int)(((long)h * capacity + begin + c) * stride), dim), row);
                         scores[c] = variant.Cap(Dot(query, row) * scale);
                         max = MathF.Max(max, scores[c]);
                     }
@@ -317,7 +317,7 @@ internal sealed partial class CpuBackend
                     float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
                     for (int c = 0; c < count; c++)
                     {
-                        WidenBFloat16(vh.Slice((int)(((long)h * capacity + begin + c) * stride), dim), row);
+                        HalfFloats.WidenBFloat16(vh.Slice((int)(((long)h * capacity + begin + c) * stride), dim), row);
                         AddScaled(output, row, scores[c] / sum);
                     }
                 }
@@ -355,7 +355,7 @@ internal sealed partial class CpuBackend
                     float max = float.NegativeInfinity;
                     for (int c = 0; c < count; c++)
                     {
-                        WidenBFloat16(kh.Slice((h * capacity + begin + c) * stride, dim), row);
+                        HalfFloats.WidenBFloat16(kh.Slice((h * capacity + begin + c) * stride, dim), row);
                         scores[c] = variant.Cap(Dot(query, row) * scale);
                         max = MathF.Max(max, scores[c]);
                     }
@@ -365,7 +365,7 @@ internal sealed partial class CpuBackend
                     output.Clear();
                     for (int c = 0; c < count; c++)
                     {
-                        WidenBFloat16(vh.Slice((h * capacity + begin + c) * stride, dim), row);
+                        HalfFloats.WidenBFloat16(vh.Slice((h * capacity + begin + c) * stride, dim), row);
 
                         AddScaled(output, row, scores[c] / sum);
                     }
