@@ -32,6 +32,7 @@ internal static partial class Tests
         ("fine-tuning: checkpointing is off by default and turns on (the step run again) when a step runs out of memory; a lighter setting that fits is timed against checkpointing and the faster kept", AutomaticCheckpointing),
         ("fine-tuning: when the first step's bytes per position say the largest batch will not fit, recomputed feed-forward activations are on before any step fails; with room nothing changes", FirstRungFromMeasuredBytes),
         ("fine-tuning: the activation estimate per rung grows with rows × positions and falls down the ladder (held, recomputed feed-forward, also bfloat16, checkpointing); a rung round-trips through the stop state", ActivationEstimatePerRung),
+        ("fine-tuning: the activation estimate of each rung is not short of a step's measured peak (a decoder with query and key norms, activations above the loss's logits; the CPU counts every byte)", ActivationEstimateAgainstPeak),
         ("fine-tuning: with the activation estimate the first step starts at the rung that fits a small device (no out-of-memory step-down); with it off the ladder steps down; a resumed session starts at the saved rung", ActivationEstimateFirstRung),
         ("models: a Hugging Face model id is downloaded (only the files the library reads, sharded weights) into the cache, loads, and works offline", ModelDownload),
         ("fine-tuning: agent transcripts through the chat template, assistant-only tokens, LoRA and QLoRA training, PEFT adapters, merged export", AgentFineTuning),
@@ -673,6 +674,52 @@ internal static partial class Tests
         }
     }
 
+    // A decoder shaped as Qwen3 (queries twice the width, keys as wide, a feed-forward three times, query and key norms)
+    // with its activations well above the loss's chunk of logits: one step on each rung, its peak above the loaded model
+    // (the CPU counts every tensor) against the rung's estimate, which may be a little short (5%) or above (25%; checkpointing,
+    // the last rung, any amount above).
+    private static void ActivationEstimateAgainstPeak(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                              // the CPU's count is exact; a GPU's caches blocks
+        }
+
+        var spec = new DecoderSpec
+        {
+            Vocabulary = 4096, Dim = 256, Layers = 12, Heads = 4, KvHeads = 2, HeadDim = 128, FfDim = 768, MaxPositions = 4096,
+            Rope = new RopeSettings(10000f), NormEpsilon = 1e-6f, QkNorm = true, TieEmbeddings = true,
+        };
+        string folder = WriteChatModel(spec);
+        var random = new Random(73);
+        var sequences = new List<TrainingSequence> { new([.. Enumerable.Range(0, 2049).Select(_ => random.Next(256))], [.. Enumerable.Range(0, 2049).Select(i => i > 300)]) };
+        ActivationRung[] ladder = [new(false, false, false), new(true, false, false), new(true, true, false), new(true, true, true)];
+        try
+        {
+            foreach (var rung in ladder)
+            {
+                using var pretrained = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
+                var options = new FineTuningOptions
+                {
+                    Rank = 16, Alpha = 32, BatchTokens = 2048, Seed = 1, Packing = false, EstimateActivations = false,
+                    RecomputeFeedForward = rung.Recompute, BFloat16Activations = rung.BFloat16, Checkpointing = rung.Checkpointing,
+                };
+                GC.Collect();
+                long before = ComputeResources.GetMemoryUsage(device).InUse;
+                ComputeResources.ResetPeakMemoryUsage(device);
+                FineTuner.Train(pretrained, sequences, null, options);
+                long peak = ComputeResources.GetMemoryUsage(device).Peak - before;
+                long estimate = ActivationEstimate.Bytes(spec, device.Backend.Capabilities, 1, 2048, rung, options.LossChunkRows);
+                Check(estimate >= peak * 0.95 && (rung.Checkpointing || estimate <= peak * 1.25),   // the last rung: taken when nothing lighter fits
+                    $"{rung}: estimated {estimate >> 20} MiB, the step's peak {peak >> 20} MiB above the loaded model");
+            }
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
     private static void ActivationEstimatePerRung(Device device)
     {
         var spec = new DecoderSpec
@@ -1096,7 +1143,7 @@ internal static partial class Tests
             Check(!encoder.EncodeRow(new JsonObject { ["label"] = 3 }, 100).Any(), "rows without text or messages give nothing");
 
             // LoRA: the transcripts are learned (loss falls), and the adapters round-trip through the PEFT files.
-            var options = new FineTuningOptions { Rank = 4, Alpha = 8, LearningRate = 1e-2f, Epochs = 40, BatchTokens = 1024, WarmupFraction = 0f, Seed = 5 };
+            var options = new FineTuningOptions { Rank = 4, Alpha = 8, LearningRate = 1e-2f, Epochs = 40, BatchTokens = 2048, WarmupFraction = 0f, Seed = 5 };
             float before = FineTuner.Evaluate(model, sequences);
             var progress = new List<FineTuningProgress>();
             FineTuner.Train(model, sequences, null, options, adapter, new Progress<FineTuningProgress>(progress.Add));

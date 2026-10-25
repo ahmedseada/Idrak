@@ -41,7 +41,8 @@ internal readonly record struct ActivationRung(bool Recompute, bool BFloat16, bo
 /// model's own dimensions (<see cref="DecoderSpec"/>) and the batch's rows × positions: what each layer keeps between
 /// the passes (the normalized inputs of the projections, queries, keys, values, the attention's output before and after
 /// its heads are merged, the feed-forward gate, up and activation; float32, or bfloat16 where the rung compresses them,
-/// the activation dropped where it is recomputed; only each block's input with checkpointing, plus one block run again),
+/// the activation dropped where it is recomputed; each norm's normalized values, float32 on every rung; only each
+/// block's input with checkpointing, plus one block run again),
 /// one block's gradients while the backward pass runs through it, the residual stream and its gradient, the loss's
 /// chunk of logits and their gradient, the score matrices where the device composes attention instead of tiling it, and
 /// the gradients of trained parameters that have none yet. Card-agnostic: the room it is compared with is what the
@@ -76,9 +77,13 @@ internal static class ActivationEstimate
         // statistics stay float32.
         long compressible = 2 * d + 3 * queries + 2 * keys + projected;
         long statistics = 2 + spec.Heads;
-        long full = (compressible + ff + statistics) * sizeof(float);       // a block's every result, float32
+        // Each RMS norm of a block also keeps its normalized values beside its scaled output (the normalization's result,
+        // which the gain's backward reads), float32 on every rung: the block's norms, the norms after attention and the
+        // feed-forward where the family has them, and each head's query and key norms.
+        long normalized = d * ((spec.ParallelBlocks ? 1 : 2) + (spec.PostNorms ? 2 : 0)) + (spec.QkNorm ? queries + keys : 0);
+        long full = (compressible + ff + statistics + normalized) * sizeof(float);   // a block's every result, float32
         long kept = rung.Checkpointing ? d * sizeof(float)
-            : (compressible + (rung.Recompute ? 0 : ff)) * (rung.BFloat16 ? 2 : sizeof(float)) + statistics * sizeof(float);
+            : (compressible + (rung.Recompute ? 0 : ff)) * (rung.BFloat16 ? 2 : sizeof(float)) + (statistics + normalized) * sizeof(float);
 
         // Attention composed from score matrices (the head size above what the device tiles): each layer keeps its
         // weights, and the backward pass holds the scores' gradient beside them.
