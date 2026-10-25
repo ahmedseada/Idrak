@@ -19,6 +19,25 @@ internal static partial class VulkanKernels
         yield return ("attention_spans_delta", SpanDelta);
         yield return ("attention_spans_backward_dq", SpanBackwardQueries);
         yield return ("attention_spans_backward_dkv", SpanBackwardKeys);
+        yield return ("segment_spans", SegmentSpans);
+    }
+
+    // The ranges of causal attention over packed sequences (Backend.AttentionSegmented), for the kernels above: row i of
+    // table b (t = i % steps) sees the keys from its sequence's start, starts[b·steps + t], raised to t + 1 - window under
+    // a window, up to itself: spanStarts[b·rows + i] and spanEnds[b·rows + i] = t + 1, as floats.
+    private static SpirvKernel SegmentSpans()
+    {
+        var k = new KernelBuilder("segment_spans", Block);
+        var (starts, spanStarts, spanEnds) = (k.Buffer("starts"), k.Buffer("spanStarts"), k.Buffer("spanEnds"));
+        var (tables, rows, steps, window) = (k.PushInt("tables"), k.PushInt("rows"), k.PushInt("steps"), k.PushInt("window"));
+        Grid(k, tables * rows, idx =>
+        {
+            var (b, t) = (idx / rows, idx % rows % steps);
+            var first = k.Select(window > 0, k.Max(t + 1 - window, k.Int(0)), k.Int(0)).ToFloat();
+            spanStarts[idx] = k.Max(starts[b * steps + t], first);
+            spanEnds[idx] = (t + 1).ToFloat();
+        });
+        return k.Build();
     }
 
     // y[h, i] = Σ_c softmax(cap(scale · q[h, i] · keys[g, c])) · values[g, c] over starts[t·rows + i] ≤ c < ends[t·rows + i]

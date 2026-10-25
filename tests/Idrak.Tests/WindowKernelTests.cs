@@ -16,7 +16,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] WindowKernelGroup =
     [
         ("window kernels: tiled, decoding (float32, int8, bfloat16 caches, split positions), per-row (float32 and bfloat16 caches, each CUDA path) and packed attention with windows inside and beyond the keys and soft-caps match a direct reference; a window beyond the keys is plain attention bit for bit", WindowedAttentionKernels),
-        ("window kernels: gradients with windows and soft-caps (tiled and packed) match finite differences and the CPU", WindowedAttentionGradients),
+        ("window kernels: gradients with windows and soft-caps (tiled and packed) match finite differences and the CPU; packed attention on a device with its own pass (Vulkan's span kernels) runs nothing on the host", WindowedAttentionGradients),
         ("window kernels: vulkan decoding, tiled and gradient kernels with windows and soft-caps match the CPU as kernels at every width and split count", VulkanWindowedKernels),
         ("window kernels: Mistral, Gemma 2 and Gemma 3 style decoders give the composed path's logits through the kernels (prompt, training and gradients, cached decoding in every cache format, recorded steps, packed sequences, rows of different lengths)", WindowedDecodersMatchComposed),
     ];
@@ -217,6 +217,7 @@ internal static partial class Tests
             {
                 using (Autograd.NoGrad())
                 {
+                    long host = Idrak.Abstraction.Operations.Kernels.HostCalls(device.Backend);
                     var y = PackedSequences.CausalAttentionSegmented(tpq, tpk, tpv, packing, Kv, scale, variant);
                     bool supported = device.Backend.SupportsSegmentedAttention(dim, variant);
                     if (y is null)
@@ -224,6 +225,12 @@ internal static partial class Tests
                         Check(!supported, $"packed attention, window {variant.Window}, cap {variant.Softcap}: refused although supported");
                         continue;
                     }
+
+                    // A device with a pass of its own (Vulkan: the span kernels) runs it there: nothing is read back, so a
+                    // training step with packed sequences records as a graph.
+                    long hosted = Idrak.Abstraction.Operations.Kernels.HostCalls(device.Backend) - host;
+                    Check(device.Backend is not ISegmentedAttentionBackend || hosted == 0,
+                        $"packed attention, window {variant.Window}, cap {variant.Softcap}: {hosted} operations ran on the host");
 
                     var expected = DirectAttention(pq, pk, pv, heads, packedRows, Length, dim, scale, variant,
                         (h, i) => ((int)packedStarts[h / Kv * Length + i % Length], i % Length + 1));
@@ -282,7 +289,10 @@ internal static partial class Tests
                 {
                     string what = $"{(packed ? "packed" : "tiled")}, window {variant.Window}, cap {variant.Softcap}";
                     var cpu = Gradients(Device.Cpu, packed)!.Value;
+                    long host = Idrak.Abstraction.Operations.Kernels.HostCalls(device.Backend);
                     var mine = Gradients(device, packed);
+                    long hosted = Idrak.Abstraction.Operations.Kernels.HostCalls(device.Backend) - host;
+                    Check(!packed || device.Backend is not ISegmentedAttentionBackend || hosted == 0, $"{what}: {hosted} operations ran on the host");
                     if (mine is null)
                     {
                         Check(packed && !device.Backend.SupportsSegmentedAttention(E, variant), $"{what}: no gradient");

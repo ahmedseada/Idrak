@@ -219,7 +219,29 @@ internal static partial class Tests
                 var (aloneNames, aloneValues) = Adapter(alone);
                 var (ranksNames, ranksValues) = Adapter(ranks);
                 Check(ranksNames.SequenceEqual(aloneNames) && aloneNames.Length > 0, $"{what}: the same tensors: {string.Join(", ", ranksNames)}");
-                AssertClose(aloneValues, ranksValues, 1e-4f, $"{what}: the 2-rank adapter against one process's");
+                if (Gap(aloneValues, ranksValues) > 1e-4f)
+                {
+                    // Where they part: each tensor's gap, and both runs' lines per iteration (a rollout that went another way
+                    // shows in its rewards, a gradient that differs only in the adapters).
+                    var gaps = new List<string>();
+                    using (var a = SafeTensorsReader.Open(Path.Combine(alone, "adapter_model.safetensors")))
+                    using (var b = SafeTensorsReader.Open(Path.Combine(ranks, "adapter_model.safetensors")))
+                    {
+                        foreach (string name in aloneNames)
+                        {
+                            float[] x = a.Read(name), y = b.Read(name);
+                            int differ = x.Zip(y).Count(p => MathF.Abs(p.First - p.Second) > 1e-4f);
+                            if (differ > 0)
+                            {
+                                gaps.Add($"{name}: {differ} of {x.Length} differ, by up to {Gap(x, y):E2}");
+                            }
+                        }
+                    }
+
+                    AssertClose(aloneValues, ranksValues, 1e-4f, $"{what}: the 2-rank adapter against one process's ({string.Join("; ", gaps)})\n"
+                        + $"one process's log:\n{File.ReadAllText(aloneLog).TrimEnd()}\nthe 2 ranks' log:\n{File.ReadAllText(ranksLog).TrimEnd()}");
+                }
+
                 Console.WriteLine($"    {what}: the adapter's largest gap to one process {Gap(aloneValues, ranksValues):E2}");
             }
 
