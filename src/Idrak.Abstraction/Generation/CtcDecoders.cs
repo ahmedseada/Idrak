@@ -87,7 +87,8 @@ public static class CtcDecoders
     /// <summary>The decoder <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     public static ICtcDecoder Get(ReadOnlySpan<char> name) =>
         Registry.TryGet(name, out var decoder) ? decoder
-            : throw new NotSupportedException($"No CTC decoder '{name}' is registered ({string.Join(", ", Registry.Names)}); add it with CtcDecoders.Register.");
+            : throw new NotRegisteredException(nameof(CtcDecoders), name.ToString(), Registry.Names,
+                $"No CTC decoder '{name}' is registered ({string.Join(", ", Registry.Names)}); add it with CtcDecoders.Register.");
 
     /// <summary>The library's decoder <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static ICtcDecoder? Default(string name) => Registry.Default(name);

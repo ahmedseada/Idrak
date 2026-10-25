@@ -288,7 +288,8 @@ public static class KeyValueLayouts
 
     /// <summary>The layout registered as <paramref name="name"/> (any case).</summary>
     public static IKeyValueLayout Get(ReadOnlySpan<char> name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No key/value cache format '{name}' is registered ({string.Join(", ", Registry.Names)}); add it with KeyValueLayouts.Register.");
+        ?? throw new NotRegisteredException(nameof(KeyValueLayouts), name.ToString(), Registry.Names,
+            $"No key/value cache format '{name}' is registered ({string.Join(", ", Registry.Names)}); add it with KeyValueLayouts.Register.");
 
     /// <summary>The library's layout <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IKeyValueLayout? Default(string name) => Registry.Default(name);

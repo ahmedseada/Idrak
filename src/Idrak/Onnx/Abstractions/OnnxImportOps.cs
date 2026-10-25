@@ -145,7 +145,8 @@ public static class OnnxImportOps
 
     /// <summary>The translator registered for <paramref name="opType"/>.</summary>
     public static IOnnxImportOp Get(ReadOnlySpan<char> opType) =>
-        Find(opType) ?? throw new NotSupportedException($"No ONNX import op '{opType}' is registered ({string.Join(", ", Names)}); add it with OnnxImportOps.Register.");
+        Find(opType) ?? throw new NotRegisteredException(nameof(OnnxImportOps), opType.ToString(), Names,
+            $"No ONNX import op '{opType}' is registered ({string.Join(", ", Names)}); add it with OnnxImportOps.Register.");
 
     /// <summary>The translator registered for <paramref name="opType"/>, or null.</summary>
     public static IOnnxImportOp? Find(ReadOnlySpan<char> opType) => Registry.Find(opType);

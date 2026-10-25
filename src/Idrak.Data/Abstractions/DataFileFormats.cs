@@ -57,7 +57,8 @@ public static class DataFileFormats
 
     /// <summary>The format registered as <paramref name="name"/> (ignoring case).</summary>
     public static IDataFileFormat Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No data file format '{name}' is registered ({string.Join(", ", Names)}); add it with DataFileFormats.Register.");
+        ?? throw new NotRegisteredException(nameof(DataFileFormats), name, Names,
+            $"No data file format '{name}' is registered ({string.Join(", ", Names)}); add it with DataFileFormats.Register.");
 
     /// <summary>The library's format <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IDataFileFormat? Default(string name) => Registry.Default(name);

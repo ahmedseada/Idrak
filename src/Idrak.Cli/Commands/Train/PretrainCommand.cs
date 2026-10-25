@@ -231,7 +231,7 @@ internal sealed class PretrainCommand : Command
             bool part = rank?.Context.Options is { OwnTensorsOnly: true } cluster && (cluster.Pipelined || cluster.Shard == ShardMode.Parameters);
             model = PretrainedModel.Load(modelFolder, new PretrainedOptions { Device = device, Deferred = part });
         }
-        catch (NotSupportedException e) when (ImageModelFiles.NotRegistered(e))
+        catch (NotRegisteredException e)
         {
             return ImageModelFiles.Refuse(context, e);
         }
@@ -305,7 +305,7 @@ internal sealed class PretrainCommand : Command
                     line.Erase();
                     throw new UsageException(e.Message);
                 }
-                catch (NotSupportedException e) when (ImageModelFiles.NotRegistered(e))
+                catch (NotRegisteredException e)
                 {
                     line.Erase();
                     return ImageModelFiles.Refuse(context, e);

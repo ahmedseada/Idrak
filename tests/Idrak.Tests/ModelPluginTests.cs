@@ -333,9 +333,10 @@ internal static partial class Tests
                 GgufModel.Prepare(renamed, cache);
                 Check(false, "an unregistered GGUF architecture should fail");
             }
-            catch (NotSupportedException ex)
+            catch (NotRegisteredException ex)
             {
-                Check(ex.Message.Contains("GgufArchitectures.Register", StringComparison.Ordinal) && ex.Message.Contains("Idrak.Text.Plugins", StringComparison.Ordinal), ex.Message);
+                Check(ex.Registry == "GgufArchitectures" && ex.Name == "testllama" && ex.Message.Contains("GgufArchitectures.Register", StringComparison.Ordinal)
+                      && ex.Message.Contains("Idrak.Text.Plugins", StringComparison.Ordinal), $"refused as not registered in GgufArchitectures: {ex.Registry} {ex.Name}: {ex.Message}");
             }
 
             GgufArchitectures.Register("testllama", new GgufArchitecture { HuggingFace = "LlamaForCausalLM", InterleavedQueryKeys = true });
@@ -557,10 +558,11 @@ internal static partial class Tests
                 GgufModel.Prepare(renamed, Path.Combine(folder, "refused"));
                 Check(false, "an unregistered pre-tokenizer without a fallback should be refused");
             }
-            catch (NotSupportedException ex)
+            catch (NotRegisteredException ex)
             {
-                Check(ex.Message.Contains("'testsplit' is not registered", StringComparison.Ordinal) && ex.Message.Contains("GgufPreTokenizers", StringComparison.Ordinal)
-                      && ex.Message.Contains("Idrak.Text.Plugins", StringComparison.Ordinal), ex.Message);
+                Check(ex.Registry == "GgufPreTokenizers" && ex.Name == "testsplit" && ex.Message.Contains("'testsplit' is not registered", StringComparison.Ordinal)
+                      && ex.Message.Contains("GgufPreTokenizers", StringComparison.Ordinal) && ex.Message.Contains("Idrak.Text.Plugins", StringComparison.Ordinal),
+                    $"refused as not registered in GgufPreTokenizers: {ex.Registry} {ex.Name}: {ex.Message}");
             }
             finally
             {

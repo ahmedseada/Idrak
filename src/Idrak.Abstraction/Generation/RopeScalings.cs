@@ -166,7 +166,8 @@ public static class RopeScalings
     /// <summary>The method registered as <paramref name="type"/> (any case); an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     public static IRopeScaling Get(ReadOnlySpan<char> type) =>
         Table.TryGet(type, out var method) ? method
-            : throw new NotSupportedException($"No RoPE scaling '{type}' is registered ({string.Join(", ", Table.Names)}); add it with RopeScalings.Register, "
+            : throw new NotRegisteredException(nameof(RopeScalings), type.ToString(), Table.Names,
+                $"No RoPE scaling '{type}' is registered ({string.Join(", ", Table.Names)}); add it with RopeScalings.Register, "
                 + "or reference Idrak.Text.Plugins (a family's own scaling) and call TextPlugins.RegisterAll().");
 
     /// <summary>The library's method <paramref name="type"/>, whatever an app registered over it (for an app's method to delegate to); null when the library has none.</summary>

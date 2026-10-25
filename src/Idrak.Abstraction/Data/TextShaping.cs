@@ -95,7 +95,8 @@ public static class TextShapers
     /// <summary>The shaper of <paramref name="script"/>, else the one for <see cref="AnyScript"/>.</summary>
     /// <exception cref="NotSupportedException">Neither is registered.</exception>
     public static ITextShaper Get(string script) => Registry.Find(script) ?? Registry.Find(AnyScript)
-        ?? throw new NotSupportedException($"No text shaper is registered for '{script}' or for every script ('{AnyScript}'); add one with TextShapers.Register.");
+        ?? throw new NotRegisteredException(nameof(TextShapers), script, Scripts,
+            $"No text shaper is registered for '{script}' or for every script ('{AnyScript}'); add one with TextShapers.Register.");
 
     /// <summary>The library's shaper registered for <paramref name="script"/>, or null.</summary>
     public static ITextShaper? Default(string script) => Registry.Default(script);

@@ -176,7 +176,7 @@ internal sealed class SpeakCommand : Command
             context.WriteJson(json);
             return ExitCodes.Ok;
         }
-        catch (NotSupportedException e) when (ImageModelFiles.NotRegistered(e))
+        catch (NotRegisteredException e)
         {
             return ImageModelFiles.Refuse(context, e);
         }

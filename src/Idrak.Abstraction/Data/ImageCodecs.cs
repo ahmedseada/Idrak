@@ -82,7 +82,8 @@ public static class ImageCodecs
 
     /// <summary>The codec registered as <paramref name="name"/> (any case).</summary>
     public static IImageCodec Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No image codec '{name}' is registered ({string.Join(", ", Names)}); add it with ImageCodecs.Register.");
+        ?? throw new NotRegisteredException(nameof(ImageCodecs), name, Names,
+            $"No image codec '{name}' is registered ({string.Join(", ", Names)}); add it with ImageCodecs.Register.");
 
     /// <summary>The library's codec <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IImageCodec? Default(string name) => Registry.Default(name);

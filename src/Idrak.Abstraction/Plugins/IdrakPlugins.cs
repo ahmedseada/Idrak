@@ -177,9 +177,10 @@ public static class IdrakPlugins
     /// <summary>The plug-in recorded as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is; the message names the plug-in packages.</exception>
     public static IIdrakPlugin Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No plug-in '{name}' is registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
-                                           + "add it with IdrakPlugins.Register, or reference Idrak.Text.Plugins, Idrak.Vision.Plugins, Idrak.Audio.Plugins or "
-                                           + "Idrak.Reinforcement.Plugins and call its RegisterAll() (TextPlugins, VisionPlugins, AudioPlugins, ReinforcementPlugins).");
+        ?? throw new NotRegisteredException(nameof(IdrakPlugins), name, Registry.Keys,
+            $"No plug-in '{name}' is registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
+            + "add it with IdrakPlugins.Register, or reference Idrak.Text.Plugins, Idrak.Vision.Plugins, Idrak.Audio.Plugins or "
+            + "Idrak.Reinforcement.Plugins and call its RegisterAll() (TextPlugins, VisionPlugins, AudioPlugins, ReinforcementPlugins).");
 
     /// <summary>The assembly that brings the plug-in <paramref name="name"/>; null when none is recorded.</summary>
     public static string? Origin(string name) => Registry.Origin(name);

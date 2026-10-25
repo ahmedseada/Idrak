@@ -107,7 +107,8 @@ public static class NetworkOps
 
     /// <summary>The step registered as <paramref name="name"/>.</summary>
     public static INetworkOp Get(ReadOnlySpan<char> name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No network step '{name}' is registered ({string.Join(", ", Names)}); add it with NetworkOps.Register.");
+        ?? throw new NotRegisteredException(nameof(NetworkOps), name.ToString(), Names,
+            $"No network step '{name}' is registered ({string.Join(", ", Names)}); add it with NetworkOps.Register.");
 
     /// <summary>Whether a step is registered as <paramref name="name"/>.</summary>
     public static bool Contains(ReadOnlySpan<char> name) => Registry.Contains(name);

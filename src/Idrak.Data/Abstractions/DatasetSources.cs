@@ -76,7 +76,8 @@ public static class DatasetSources
 
     /// <summary>The source registered as <paramref name="name"/> (ignoring case).</summary>
     public static IDatasetSource Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No dataset source '{name}' is registered ({string.Join(", ", Names)}); add it with DatasetSources.Register.");
+        ?? throw new NotRegisteredException(nameof(DatasetSources), name, Names,
+            $"No dataset source '{name}' is registered ({string.Join(", ", Names)}); add it with DatasetSources.Register.");
 
     /// <summary>The first registered source that opens <paramref name="source"/>, or null.</summary>
     public static IDatasetSource? Find(string source) => Registry.Values.FirstOrDefault(s => s.CanOpen(source));

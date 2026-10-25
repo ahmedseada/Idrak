@@ -181,7 +181,7 @@ public sealed class OnnxExporter
 
         // A lambda module of one's own (any INamedLambda): its name's translator.
         return named is not null && OnnxExportOps.FindLambda(named.Name) is { } lambda ? lambda.Export(g, module, x, shape)
-            : throw new NotSupportedException(
+            : throw new NotRegisteredException("OnnxExportOps.Modules", module.GetType().Name, OnnxExportOps.Types.Select(t => t.Name).Order(),
                 $"{module.GetType().Name} ({module.DisplayName}) cannot be exported (registered: {string.Join(", ", OnnxExportOps.Types.Select(t => t.Name).Order())}): "
                 + $"register a translator with OnnxExportOps.Register<{module.GetType().Name}>(...) or the exporter's Module<{module.GetType().Name}>(...).");
     }

@@ -61,7 +61,8 @@ internal static class OnnxBuiltIns
         OnnxExportOps.Register<Sequential>((g, sequential, x, _) => sequential.Aggregate(x, (value, child) => g.Module(child, value)));
         OnnxExportOps.Register<GraphModule>(Graph);
         OnnxExportOps.Register<Layers.Lambda>((g, lambda, x, shape) => (OnnxExportOps.FindLambda(((INamedLambda)lambda).Name)
-            ?? throw new NotSupportedException($"The lambda '{lambda}' cannot be exported (registered: {string.Join(", ", OnnxExportOps.LambdaNames)}): "
+            ?? throw new NotRegisteredException("OnnxExportOps.Lambdas", ((INamedLambda)lambda).Name, OnnxExportOps.LambdaNames,
+                $"The lambda '{lambda}' cannot be exported (registered: {string.Join(", ", OnnxExportOps.LambdaNames)}): "
                 + $"register a translator with OnnxExportOps.RegisterLambda(\"{lambda}\", ...) or the exporter's Lambda(\"{lambda}\", ...).")).Export(g, lambda, x, shape));
 
         OnnxExportOps.RegisterLambda("MeanOverTime", OnnxExport.MeanOverTime);
@@ -120,7 +121,7 @@ internal static class OnnxBuiltIns
             else
             {
                 var shape = trace[node.Output] is Tensor t ? (IReadOnlyList<int>)[-1, .. t.Shape[1..].ToArray()] : null;
-                var translate = exporter.FindGraphOp(node.Op) ?? throw new NotSupportedException(
+                var translate = exporter.FindGraphOp(node.Op) ?? throw new NotRegisteredException("OnnxExportOps.GraphOps", node.Op, OnnxExportOps.GraphOpNames,
                     $"The graph operation '{node.Op}' cannot be exported (registered: {string.Join(", ", OnnxExportOps.GraphOpNames)}): "
                     + $"register a translator with OnnxExportOps.RegisterGraphOp(\"{node.Op}\", ...) or the exporter's GraphOp(\"{node.Op}\", ...).");
                 output = translate(new OnnxGraphOpContext(g, node, inputs, shape, i => i < node.Inputs.Count && node.Inputs[i].Length > 0 ? Integers(node.Inputs[i]) : null));

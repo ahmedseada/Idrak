@@ -80,8 +80,9 @@ public static class PretrainedEncoders
     /// <summary>Who registered the family <paramref name="name"/>; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
 
-    internal static NotSupportedException NotRegistered(string name) =>
-        new($"Encoder family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
+    internal static NotRegisteredException NotRegistered(string name) =>
+        new(nameof(PretrainedEncoders), name, Registry.Keys,
+            $"Encoder family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
             + "reference the plug-in package that brings the family (for example Idrak.Text.Plugins) and call its registration, or register it with "
             + "PretrainedEncoders.Register (the library registers none).");
 }
@@ -146,8 +147,9 @@ public static class PretrainedSeq2Seq
     /// <summary>Who registered the family <paramref name="name"/>; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
 
-    internal static NotSupportedException NotRegistered(string name) =>
-        new($"Encoder-decoder family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
+    internal static NotRegisteredException NotRegistered(string name) =>
+        new(nameof(PretrainedSeq2Seq), name, Registry.Keys,
+            $"Encoder-decoder family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
             + "reference the plug-in package that brings the family (for example Idrak.Text.Plugins) and call its registration, or register it with "
             + "PretrainedSeq2Seq.Register (the library registers none).");
 }
@@ -240,9 +242,8 @@ public static class EncoderHeads
     public static IReadOnlyCollection<string> Names => Registry.Names;
 
     /// <summary>The head kind <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name; the message lists the registered ones.</exception>
-    public static IEncoderHeadKind Get(ReadOnlySpan<char> name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"Encoder head '{name}' is not registered (registered: {string.Join(", ", Registry.Names)}); add it with EncoderHeads.Register.");
+    /// <exception cref="NotRegisteredException">None is registered under that name; the message lists the registered ones.</exception>
+    public static IEncoderHeadKind Get(ReadOnlySpan<char> name) => Registry.Get(name);
 
     /// <summary>A head of the kind <paramref name="name"/> for <paramref name="request"/>.</summary>
     /// <exception cref="NotSupportedException">The kind is not registered.</exception>

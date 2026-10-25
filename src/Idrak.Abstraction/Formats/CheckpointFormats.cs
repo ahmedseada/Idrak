@@ -68,7 +68,8 @@ public static class CheckpointFormats
 
     /// <summary>The format registered as <paramref name="name"/>.</summary>
     public static ICheckpointFormat Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No checkpoint format '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with CheckpointFormats.Register.");
+        ?? throw new NotRegisteredException(nameof(CheckpointFormats), name, Registry.Keys,
+            $"No checkpoint format '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with CheckpointFormats.Register.");
 
     /// <summary>The library's format <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static ICheckpointFormat? Default(string name) => Registry.Default(name);

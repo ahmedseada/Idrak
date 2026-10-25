@@ -114,10 +114,14 @@ public static class GgufTypes
 
     /// <summary>The type registered with id <paramref name="id"/>.</summary>
     public static IGgufType Get(int id) => Find(id)
-        ?? throw new NotSupportedException($"No ggml type #{id} is registered ({string.Join(", ", Ids.Select(i => $"{Find(i)?.Name} ({i})"))}); add it with GgufTypes.Register.");
+        ?? throw new NotRegisteredException(nameof(GgufTypes), Text(id), Ids.Select(Text),
+            $"No ggml type #{id} is registered ({string.Join(", ", Ids.Select(i => $"{Find(i)?.Name} ({i})"))}); add it with GgufTypes.Register.");
 
     /// <summary>The type registered with id <paramref name="id"/>, or null when there is none.</summary>
     public static IGgufType? Find(int id) => Registry.Find(id);
+
+    // An id as a refusal names it (NotRegisteredException.Name and Registered).
+    internal static string Text(int id) => id.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>The library's type with id <paramref name="id"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IGgufType? Default(int id) => Registry.Default(id);

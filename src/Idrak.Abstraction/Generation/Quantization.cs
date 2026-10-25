@@ -306,7 +306,8 @@ public static class PackedWeightFormats
     /// <exception cref="NotSupportedException">No format of that name is registered.</exception>
     public static IPackedFormat Get(ReadOnlySpan<char> format) =>
         Registry.TryGet(format, out var found) ? found
-            : throw new NotSupportedException($"No packed format '{format}' is registered ({string.Join(", ", Registry.Names)}); add it with PackedWeightFormats.Register.");
+            : throw new NotRegisteredException(nameof(PackedWeightFormats), format.ToString(), Registry.Names,
+                $"No packed format '{format}' is registered ({string.Join(", ", Registry.Names)}); add it with PackedWeightFormats.Register.");
 
     /// <summary>The library's format <paramref name="format"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IPackedFormat? Default(string format) => Registry.Default(format);

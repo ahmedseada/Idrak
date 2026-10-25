@@ -466,7 +466,8 @@ public static class AttentionPositionBiases
 
     private static KindTable<IPositionBiasKind> BuiltIn()
     {
-        var table = new KindTable<IPositionBiasKind>(nameof(AttentionPositionBiases), "Attention position bias", "register it with AttentionPositionBiases.Register",
+        var table = new KindTable<IPositionBiasKind>(nameof(AttentionPositionBiases), "Attention position bias",
+            "register it with AttentionPositionBiases.Register (the plug-in that brings the kind does)",
             comparer: StringComparer.Ordinal,
             unguarded: "a bias is made once per model and its tensors trained with it, so an app's kind and the library's cannot be mixed in one model");
         table.RegisterDefault(new BuiltInKind(RelativePositionBias.KindName, "a learned bias per head for each distance up to max_distance (max_distance, bidirectional)",
@@ -487,10 +488,8 @@ public static class AttentionPositionBiases
     public static IReadOnlyCollection<string> Names => Registry.Names;
 
     /// <summary>The kind <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is registered under that name; the message lists the registered ones.</exception>
-    public static IPositionBiasKind Get(ReadOnlySpan<char> name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"Attention position bias '{name}' is not registered (registered: {string.Join(", ", Registry.Names)}); "
-                                           + "register it with AttentionPositionBiases.Register (the plug-in that brings the kind does).");
+    /// <exception cref="NotRegisteredException">None is registered under that name; the message lists the registered ones.</exception>
+    public static IPositionBiasKind Get(ReadOnlySpan<char> name) => Registry.Get(name);
 
     /// <summary>A bias of the kind <paramref name="name"/> for <paramref name="request"/>.</summary>
     /// <exception cref="NotSupportedException">The kind is not registered.</exception>

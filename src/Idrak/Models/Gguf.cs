@@ -163,8 +163,9 @@ public sealed class GgufFile : IDisposable
         34 => "TQ1_0", 35 => "TQ2_0", 39 => "MXFP4", _ => $"#{type}",
     };
 
-    private static NotSupportedException NotSupported(int type, string? name) =>
-        new($"{(name is null ? "" : name + ": ")}ggml type {TypeName(type)} is not supported yet "
+    private static NotRegisteredException NotSupported(int type, string? name) =>
+        new(nameof(GgufTypes), GgufTypes.Text(type), GgufTypes.Ids.Select(GgufTypes.Text),
+            $"{(name is null ? "" : name + ": ")}ggml type {TypeName(type)} is not supported yet "
             + $"(supported: {string.Join(", ", GgufTypes.Ids.Select(TypeName))}); add it with GgufTypes.Register.");
 
     /// <summary>

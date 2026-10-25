@@ -249,7 +249,7 @@ internal sealed partial class TranscribeCommand : Command
                 return ExitCodes.Ok;
             }
         }
-        catch (NotSupportedException e) when (ImageModelFiles.NotRegistered(e))
+        catch (NotRegisteredException e)
         {
             return ImageModelFiles.Refuse(context, e);
         }

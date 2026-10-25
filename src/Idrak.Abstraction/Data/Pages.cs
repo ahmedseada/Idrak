@@ -168,7 +168,8 @@ public static class PageLayouts
     /// <summary>The layout of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IPageLayout Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No page layout '{name}' is registered ({string.Join(", ", Names)}); add it with PageLayouts.Register.");
+        ?? throw new NotRegisteredException(nameof(PageLayouts), name, Names,
+            $"No page layout '{name}' is registered ({string.Join(", ", Names)}); add it with PageLayouts.Register.");
 
     /// <summary>The library's layout of that name, or null.</summary>
     public static IPageLayout? Default(string name) => Registry.Default(name);

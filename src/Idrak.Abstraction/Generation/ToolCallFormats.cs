@@ -148,7 +148,8 @@ public static class ToolCallFormats
     /// <summary>The format registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
     public static IToolCallFormat Get(ReadOnlySpan<char> name) => Table.Find(name)
-        ?? throw new NotSupportedException($"No tool-call format '{name}' is registered ({string.Join(", ", Table.Names)}); add it with ToolCallFormats.Register, or reference Idrak.Text.Plugins and call TextPlugins.RegisterAll().");
+        ?? throw new NotRegisteredException(nameof(ToolCallFormats), name.ToString(), Table.Names,
+            $"No tool-call format '{name}' is registered ({string.Join(", ", Table.Names)}); add it with ToolCallFormats.Register, or reference Idrak.Text.Plugins and call TextPlugins.RegisterAll().");
 
     /// <summary>One reply's parser in the format registered as <paramref name="name"/>.</summary>
     public static IToolCallParser Create(ReadOnlySpan<char> name, ToolCallContext context)

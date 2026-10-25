@@ -159,7 +159,8 @@ public static class GgufArchitectures
 
     /// <summary>The architecture registered as <paramref name="name"/>.</summary>
     public static IGgufArchitecture Get(ReadOnlySpan<char> name) => Find(name)
-        ?? throw new NotSupportedException($"No GGUF architecture '{name}' is registered ({string.Join(", ", Names)}); add it with GgufArchitectures.Register, or reference Idrak.Text.Plugins and call TextPlugins.RegisterAll().");
+        ?? throw new NotRegisteredException(nameof(GgufArchitectures), name.ToString(), Names,
+            $"No GGUF architecture '{name}' is registered ({string.Join(", ", Names)}); add it with GgufArchitectures.Register, or reference Idrak.Text.Plugins and call TextPlugins.RegisterAll().");
 
     /// <summary>The architecture registered as <paramref name="name"/>, or null when there is none.</summary>
     public static IGgufArchitecture? Find(ReadOnlySpan<char> name) => Registry.Find(name);

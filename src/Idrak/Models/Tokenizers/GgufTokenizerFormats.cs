@@ -51,7 +51,8 @@ internal static class GgufTokenizerFormats
         {
             if (GgufPreTokenizers.Fallback is not { } fallback || !GgufPreTokenizers.TryGet(fallback, out pattern))
             {
-                throw new NotSupportedException($"{file.Path}: GGUF pre-tokenizer '{pre}' is not registered (registered: {string.Join(", ", GgufPreTokenizers.Names)}), "
+                throw new NotRegisteredException(nameof(GgufPreTokenizers), pre, GgufPreTokenizers.Names,
+                    $"{file.Path}: GGUF pre-tokenizer '{pre}' is not registered (registered: {string.Join(", ", GgufPreTokenizers.Names)}), "
                     + "and no registered fallback is set (GgufPreTokenizers.Fallback); register the family's pattern with GgufPreTokenizers.Register, "
                     + "or reference Idrak.Text.Plugins and call TextPlugins.RegisterAll().");
             }

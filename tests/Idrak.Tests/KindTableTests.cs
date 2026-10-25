@@ -14,6 +14,7 @@ internal static partial class Tests
         ("slot table span lookup: a comparer that cannot take spans still finds the same entries (through a string), and a table of value-type keys refuses a span", SlotTableSpanFallback),
         ("kind table: kinds register by their name (one or several at once), are found by span, list names and summaries in order, and an unknown name is refused as every registry words it, with a NotRegisteredException naming the registry, the name and the registered ones", KindTableRegistry),
         ("kind table: option keys keep their declared order for listings and are checked by span; a kind's request may be a ref struct; the library's kind registries find their kinds by span", KindTableKeysAndRegistries),
+        ("kind table: not registered: every registry of the library and its packages refuses a name nobody registered with a NotRegisteredException naming the registry, the name and its registered names, its message worded as before (the kind tables' word for word)", NotRegisteredRefusals),
     ];
 
     private static void SlotTableSpanLookup(Device device)
@@ -135,6 +136,106 @@ internal static partial class Tests
         ThrowsNaming<ArgumentException>(() => table.Register(new Greeting(" ", "nameless")), "a kind without a name", "kind");
         var empty = new KindTable<Greeting>("TestEmpty", "Test kind", "add one", unguarded: "test");
         Check(empty.Listed() == "none" && empty.NotRegistered("x") == "Test kind 'x' is not registered (registered: none); add one.", empty.NotRegistered("x"));
+    }
+
+    private static void NotRegisteredRefusals(Device device)
+    {
+        _ = device;
+        const string None = "KindTestNobody";
+        static string Listed(IEnumerable<string> names) => string.Join(", ", names);
+        static string Id(int id) => id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        static string Typed(Type t) => t.Name;
+
+        // Each registry, the name it is asked for, the names it holds, the start of its message (the whole message for the
+        // kind tables, which word it through KindTable.NotRegistered) and the lookup that refuses.
+        (string Registry, string Name, IEnumerable<string> Registered, string Message, Action Get)[] refusals =
+        [
+            ("PretrainedArchitectures", None, Idrak.Models.Abstractions.PretrainedArchitectures.Names, $"No architecture '{None}' is registered (",
+                () => Idrak.Models.Abstractions.PretrainedArchitectures.Get(None)),
+            ("PretrainedEncoders", None, Idrak.Models.Abstractions.PretrainedEncoders.Names, $"Encoder family '{None}' is not registered (registered: ",
+                () => Idrak.Models.Abstractions.PretrainedEncoders.Get(None)),
+            ("PretrainedSeq2Seq", None, Idrak.Models.Abstractions.PretrainedSeq2Seq.Names, $"Encoder-decoder family '{None}' is not registered (registered: ",
+                () => Idrak.Models.Abstractions.PretrainedSeq2Seq.Get(None)),
+            ("EncoderHeads", None, Idrak.Models.Abstractions.EncoderHeads.Names,
+                $"Encoder head '{None}' is not registered (registered: {Listed(Idrak.Models.Abstractions.EncoderHeads.Names)}); add it with EncoderHeads.Register.",
+                () => Idrak.Models.Abstractions.EncoderHeads.Get(None)),
+            ("AttentionPositionBiases", None, AttentionPositionBiases.Names,
+                $"Attention position bias '{None}' is not registered (registered: {Listed(AttentionPositionBiases.Names)}); "
+                + "register it with AttentionPositionBiases.Register (the plug-in that brings the kind does).",
+                () => AttentionPositionBiases.Get(None)),
+            ("FeatureCaches", None, FeatureCaches.Names,
+                $"Feature cache '{None}' is not registered (registered: {Listed(FeatureCaches.Names)}); add it with FeatureCaches.Register.", () => FeatureCaches.Get(None)),
+            ("ProgressReporters", None, ProgressReporters.Names,
+                $"Progress reporter '{None}' is not registered (registered: {Listed(ProgressReporters.Names)}); add it with ProgressReporters.Register.",
+                () => ProgressReporters.Get(None)),
+            ("TokenizerModels", None, Idrak.Models.Abstractions.TokenizerModels.Names,
+                $"Tokenizer model '{None}' is not registered (registered: {Listed(Idrak.Models.Abstractions.TokenizerModels.Names)}); add it with TokenizerModels.Register.",
+                () => Idrak.Models.Abstractions.TokenizerModels.Get(None)),
+            ("GgufTokenizers", None, Idrak.Models.Abstractions.GgufTokenizers.Names,
+                $"GGUF tokenizer '{None}' is not registered (registered: {Listed(Idrak.Models.Abstractions.GgufTokenizers.Names)}); add it with GgufTokenizers.Register.",
+                () => Idrak.Models.Abstractions.GgufTokenizers.Get(None)),
+            ("GgufChatTemplates", None, Idrak.Models.Abstractions.GgufChatTemplates.Names, $"GGUF chat template '{None}' is not registered (registered: ",
+                () => Idrak.Models.Abstractions.GgufChatTemplates.Get(None)),
+            ("GgufArchitectures", None, Idrak.Models.Abstractions.GgufArchitectures.Names, $"No GGUF architecture '{None}' is registered (",
+                () => Idrak.Models.Abstractions.GgufArchitectures.Get(None)),
+            ("GgufTypes", "999", Idrak.Models.Abstractions.GgufTypes.Ids.Select(Id), "No ggml type #999 is registered (", () => Idrak.Models.Abstractions.GgufTypes.Get(999)),
+            ("GgufTypes", "999", Idrak.Models.Abstractions.GgufTypes.Ids.Select(Id), "ggml type #999 is not supported yet (supported: ",
+                () => Idrak.Models.GgufFile.Dequantize(999, [], [])),
+            ("ToolCallFormats", None, Idrak.Abstraction.Generation.ToolCallFormats.Names, $"No tool-call format '{None}' is registered (",
+                () => Idrak.Abstraction.Generation.ToolCallFormats.Get(None)),
+            ("RopeScalings", None, RopeScalings.Names, $"No RoPE scaling '{None}' is registered (", () => RopeScalings.Get(None)),
+            ("TokenSamplers", None, TokenSamplers.Names, $"No token sampler '{None}' is registered (", () => TokenSamplers.Get(None)),
+            ("PackedWeightFormats", None, PackedWeightFormats.Names, $"No packed format '{None}' is registered (", () => PackedWeightFormats.Get(None)),
+            ("CtcDecoders", None, CtcDecoders.Names, $"No CTC decoder '{None}' is registered (", () => CtcDecoders.Get(None)),
+            ("KeyValueLayouts", None, KeyValueLayouts.Names, $"No key/value cache format '{None}' is registered (", () => KeyValueLayouts.Get(None)),
+            ("ImageAttentionRules", None, ImageAttentionRules.Names, $"No image attention rule '{None}' is registered (", () => ImageAttentionRules.Get(None)),
+            ("ImagePositionRules", None, ImagePositionRules.Names, $"No image position rule '{None}' is registered (", () => ImagePositionRules.Get(None)),
+            ("CheckpointFormats", None, Idrak.Abstraction.Formats.CheckpointFormats.Names, $"No checkpoint format '{None}' is registered (",
+                () => Idrak.Abstraction.Formats.CheckpointFormats.Get(None)),
+            ("ModelSources", None, Idrak.Abstraction.Formats.ModelSources.Names, $"No model source '{None}' is registered (", () => Idrak.Abstraction.Formats.ModelSources.Get(None)),
+            ("SampleSources", None, SampleSources.Names, $"No sample source '{None}' is registered (", () => SampleSources.Get(None)),
+            ("ScanProfiles", None, ScanProfiles.Names, $"No scan profile '{None}' is registered (", () => ScanProfiles.Get(None)),
+            ("ImageCodecs", None, ImageCodecs.Names, $"No image codec '{None}' is registered (", () => ImageCodecs.Get(None)),
+            ("PageLayouts", None, PageLayouts.Names, $"No page layout '{None}' is registered (", () => PageLayouts.Get(None)),
+            ("ImageEncoders", None, ImageEncoders.Names, $"No image encoder '{None}' is registered (", () => ImageEncoders.Get(None)),
+            ("FontFormats", None, FontFormats.Names, $"No font format '{None}' is registered (", () => FontFormats.Get(None)),
+            ("OutlineRasterizers", None, OutlineRasterizers.Names, $"No outline rasterizer '{None}' is registered (", () => OutlineRasterizers.Get(None)),
+            ("IdrakPlugins", None, Idrak.Abstraction.Plugins.IdrakPlugins.Names, $"No plug-in '{None}' is registered (registered: ",
+                () => Idrak.Abstraction.Plugins.IdrakPlugins.Get(None)),
+            ("GraphOps", None, Idrak.Layers.Abstractions.GraphOps.Names, $"No graph operation '{None}' is registered (", () => Idrak.Layers.Abstractions.GraphOps.Get(None)),
+            ("NetworkOps", None, Idrak.Layers.Abstractions.NetworkOps.Names, $"No network step '{None}' is registered (", () => Idrak.Layers.Abstractions.NetworkOps.Get(None)),
+            ("OnnxImportOps", None, Idrak.Onnx.Abstractions.OnnxImportOps.Names, $"No ONNX import op '{None}' is registered (", () => Idrak.Onnx.Abstractions.OnnxImportOps.Get(None)),
+            ("OnnxExportOps.GraphOps", None, Idrak.Onnx.Abstractions.OnnxExportOps.GraphOpNames, $"No ONNX export translator for the graph operation '{None}' is registered (",
+                () => Idrak.Onnx.Abstractions.OnnxExportOps.GetGraphOp(None)),
+            ("OnnxExportOps.Modules", nameof(NotRegisteredModule), Idrak.Onnx.Abstractions.OnnxExportOps.Types.Select(Typed).Order(),
+                $"No ONNX export translator for {nameof(NotRegisteredModule)} is registered (", () => Idrak.Onnx.Abstractions.OnnxExportOps.Get<NotRegisteredModule>()),
+            ("AudioCodecs", None, Idrak.Audio.Abstractions.AudioCodecs.Names, $"No audio codec '{None}' is registered (", () => Idrak.Audio.Abstractions.AudioCodecs.Get(None)),
+            ("DataFileFormats", None, Idrak.Data.Abstractions.DataFileFormats.Names, $"No data file format '{None}' is registered (",
+                () => Idrak.Data.Abstractions.DataFileFormats.Get(None)),
+            ("DatasetSources", None, Idrak.Data.Abstractions.DatasetSources.Names, $"No dataset source '{None}' is registered (", () => Idrak.Data.Abstractions.DatasetSources.Get(None)),
+            ("AnnotationFormats", None, Idrak.Data.Abstractions.AnnotationFormats.Names, $"No annotation format '{None}' is registered (",
+                () => Idrak.Data.Abstractions.AnnotationFormats.Get(None)),
+        ];
+        foreach (var (registry, name, registered, message, get) in refusals)
+        {
+            try
+            {
+                get();
+                Check(false, $"{registry}: '{name}' is refused");
+            }
+            catch (NotRegisteredException e)
+            {
+                Check(e.Registry == registry && e.Name == name && e.Registered.SequenceEqual(registered) && e.Message.StartsWith(message, StringComparison.Ordinal),
+                    $"{registry}: the refusal of '{name}' is a NotRegisteredException naming the registry, the name and the registered ones, its message as before: "
+                    + $"{e.Registry} {e.Name} [{string.Join(", ", e.Registered)}]: {e.Message}");
+            }
+        }
+    }
+
+    // A module type no ONNX export translator is registered for.
+    private sealed class NotRegisteredModule : Module
+    {
+        protected override Tensor ForwardCore(Tensor input) => input;
     }
 
     private static void KindTableKeysAndRegistries(Device device)

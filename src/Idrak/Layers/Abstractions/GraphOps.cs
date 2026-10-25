@@ -126,7 +126,8 @@ public static class GraphOps
 
     /// <summary>The operation registered as <paramref name="name"/>.</summary>
     public static IGraphOp Get(ReadOnlySpan<char> name) =>
-        TryGet(name) ?? throw new NotSupportedException($"No graph operation '{name}' is registered ({string.Join(", ", Names)}); add it with GraphOps.Register.");
+        TryGet(name) ?? throw new NotRegisteredException(nameof(GraphOps), name.ToString(), Names,
+            $"No graph operation '{name}' is registered ({string.Join(", ", Names)}); add it with GraphOps.Register.");
 
     /// <summary>The operation registered as <paramref name="name"/>, or null.</summary>
     public static IGraphOp? TryGet(ReadOnlySpan<char> name) => Registry.Find(name);

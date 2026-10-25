@@ -71,8 +71,9 @@ public static class GgufChatTemplates
     /// <summary>The template registered as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">No template is registered under that name.</exception>
     public static IGgufChatTemplate Get(ReadOnlySpan<char> name) => Find(name)
-        ?? throw new NotSupportedException($"GGUF chat template '{name}' is not registered (registered: {string.Join(", ", Names)}); add it with GgufChatTemplates.Register, "
-                                          + "or reference Idrak.Text.Plugins (the families' templates) and call TextPlugins.RegisterAll().");
+        ?? throw new NotRegisteredException(nameof(GgufChatTemplates), name.ToString(), Names,
+            $"GGUF chat template '{name}' is not registered (registered: {string.Join(", ", Names)}); add it with GgufChatTemplates.Register, "
+            + "or reference Idrak.Text.Plugins (the families' templates) and call TextPlugins.RegisterAll().");
 
     /// <summary>The template registered as <paramref name="name"/>, or null when there is none.</summary>
     public static IGgufChatTemplate? Find(ReadOnlySpan<char> name) => Registry.Find(name);

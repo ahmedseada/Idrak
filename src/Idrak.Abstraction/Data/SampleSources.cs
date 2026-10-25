@@ -47,7 +47,8 @@ public static class SampleSources
     /// <summary>The source kind registered as <paramref name="name"/> (any case).</summary>
     public static ISampleSourceKind Get(ReadOnlySpan<char> name) =>
         Registry.TryGet(name, out var kind) ? kind
-            : throw new NotSupportedException($"No sample source '{name}' is registered ({string.Join(", ", Registry.Names)}); add it with SampleSources.Register.");
+            : throw new NotRegisteredException(nameof(SampleSources), name.ToString(), Registry.Names,
+                $"No sample source '{name}' is registered ({string.Join(", ", Registry.Names)}); add it with SampleSources.Register.");
 
     /// <summary>The library's source kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static ISampleSourceKind? Default(string name) => Registry.Default(name);

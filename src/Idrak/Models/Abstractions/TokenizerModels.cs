@@ -62,9 +62,8 @@ public static class TokenizerModels
     public static ITokenizerModelKind? Find(ReadOnlySpan<char> type) => Table.Find(type);
 
     /// <summary>The model type <paramref name="type"/>.</summary>
-    /// <exception cref="NotSupportedException">No model of that type is registered.</exception>
-    public static ITokenizerModelKind Get(ReadOnlySpan<char> type) => Table.Find(type)
-        ?? throw new NotSupportedException($"Tokenizer model '{type}' is not registered (registered: {string.Join(", ", Table.Names)}); add it with TokenizerModels.Register.");
+    /// <exception cref="NotRegisteredException">No model of that type is registered.</exception>
+    public static ITokenizerModelKind Get(ReadOnlySpan<char> type) => Table.Get(type);
 
     /// <summary>The library's model type <paramref name="type"/>, or null when it is not built in.</summary>
     public static ITokenizerModelKind? Default(string type) => Table.Default(type);

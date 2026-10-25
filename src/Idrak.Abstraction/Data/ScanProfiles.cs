@@ -258,7 +258,8 @@ public static class ScanProfiles
     /// <summary>The profile of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IScanProfile Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No scan profile '{name}' is registered ({string.Join(", ", Names)}); add it with ScanProfiles.Register, or write one as text (ScanProfile).");
+        ?? throw new NotRegisteredException(nameof(ScanProfiles), name, Names,
+            $"No scan profile '{name}' is registered ({string.Join(", ", Names)}); add it with ScanProfiles.Register, or write one as text (ScanProfile).");
 
     /// <summary>
     /// The profile <paramref name="nameOrText"/> names; profiles joined with '+' ("damaged+marked"), each drawing its

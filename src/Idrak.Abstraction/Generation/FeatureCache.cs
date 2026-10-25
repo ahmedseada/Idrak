@@ -154,7 +154,8 @@ public static class FeatureCaches
     /// <summary>The cache kind <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name: the message names the registered ones.</exception>
     public static IFeatureCacheKind Get(ReadOnlySpan<char> name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Feature cache '{name}' is not registered (registered: {string.Join(", ", Table.Names)}); add it with FeatureCaches.Register.");
+        ?? throw new NotRegisteredException(nameof(FeatureCaches), name.ToString(), Table.Names,
+            $"Feature cache '{name}' is not registered (registered: {string.Join(", ", Table.Names)}); add it with FeatureCaches.Register.");
 
     /// <summary>A new cache of the kind <paramref name="name"/>, made with <paramref name="options"/> (the kind's defaults when null). Dispose it when done.</summary>
     public static IFeatureCache Create(ReadOnlySpan<char> name, FeatureCacheOptions? options = null) => Get(name).Create(options ?? new FeatureCacheOptions());

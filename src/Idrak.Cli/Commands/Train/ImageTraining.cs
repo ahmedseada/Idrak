@@ -151,7 +151,7 @@ internal static class ImageTraining
         {
             return Train(context, settings, folder, resume, epochsDone, epochs);
         }
-        catch (Exception e) when (ImageModelFiles.NotRegistered(e))
+        catch (NotRegisteredException e)
         {
             return ImageModelFiles.Refuse(context, e);
         }

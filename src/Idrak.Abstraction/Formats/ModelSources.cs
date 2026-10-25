@@ -74,7 +74,8 @@ public static class ModelSources
 
     /// <summary>The source registered as <paramref name="name"/>.</summary>
     public static IModelSource Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"No model source '{name}' is registered ({string.Join(", ", Table.Keys)}); add it with ModelSources.Register.");
+        ?? throw new NotRegisteredException(nameof(ModelSources), name, Table.Keys,
+            $"No model source '{name}' is registered ({string.Join(", ", Table.Keys)}); add it with ModelSources.Register.");
 
     /// <summary>The first source that resolves <paramref name="model"/> (the most recently registered first), or null.</summary>
     public static IModelSource? For(string model) => Table.Values.FirstOrDefault(s => s.CanResolve(model));   // sources look at the disk

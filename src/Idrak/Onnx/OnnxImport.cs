@@ -343,8 +343,9 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
 
     private static string UnsupportedText(OnnxNode node, string what) => $"Cannot import {node}: {what} has no Idrak layer.";
 
-    private static NotSupportedException UnknownOperator(OnnxNode node) =>
-        new($"Cannot import {node}: the {node.Op} operator has no Idrak layer (registered: {string.Join(", ", OnnxImportOps.Names)}); "
+    private static NotRegisteredException UnknownOperator(OnnxNode node) =>
+        new(nameof(OnnxImportOps), node.Op, OnnxImportOps.Names,
+            $"Cannot import {node}: the {node.Op} operator has no Idrak layer (registered: {string.Join(", ", OnnxImportOps.Names)}); "
             + $"add a translator with OnnxImportOps.Register(\"{node.Op}\", ...).");
 
     // The other input of a binary node whose one input is `x`.

@@ -89,7 +89,8 @@ public static class AudioCodecs
     /// <summary>The codec registered as <paramref name="name"/> (any case).</summary>
     /// <exception cref="NotSupportedException">None is; the message names those that are.</exception>
     public static IAudioCodec Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No audio codec '{name}' is registered ({string.Join(", ", Names)}); add it with AudioCodecs.Register.");
+        ?? throw new NotRegisteredException(nameof(AudioCodecs), name, Names,
+            $"No audio codec '{name}' is registered ({string.Join(", ", Names)}); add it with AudioCodecs.Register.");
 
     /// <summary>The library's codec <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IAudioCodec? Default(string name) => Registry.Default(name);

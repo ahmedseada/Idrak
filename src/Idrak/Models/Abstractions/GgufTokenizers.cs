@@ -45,9 +45,8 @@ public static class GgufTokenizers
     public static IGgufTokenizer? Find(ReadOnlySpan<char> name) => Registry.Find(name);
 
     /// <summary>The converter of <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">No converter is registered under that name.</exception>
-    public static IGgufTokenizer Get(ReadOnlySpan<char> name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"GGUF tokenizer '{name}' is not registered (registered: {string.Join(", ", Registry.Names)}); add it with GgufTokenizers.Register.");
+    /// <exception cref="NotRegisteredException">No converter is registered under that name.</exception>
+    public static IGgufTokenizer Get(ReadOnlySpan<char> name) => Registry.Get(name);
 
     /// <summary>The library's converter of <paramref name="name"/>, or null.</summary>
     public static IGgufTokenizer? Default(string name) => Registry.Default(name);

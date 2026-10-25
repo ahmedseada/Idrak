@@ -69,7 +69,8 @@ public static class AnnotationFormats
     /// <summary>The format registered as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names those that are.</exception>
     public static IAnnotationFormat Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No annotation format '{name}' is registered ({string.Join(", ", Names)}); add it with AnnotationFormats.Register.");
+        ?? throw new NotRegisteredException(nameof(AnnotationFormats), name, Names,
+            $"No annotation format '{name}' is registered ({string.Join(", ", Names)}); add it with AnnotationFormats.Register.");
 
     /// <summary>The first registered format that reads <paramref name="path"/>, or null.</summary>
     public static IAnnotationFormat? Find(string path) => Registry.Values.FirstOrDefault(f => f.CanRead(path));

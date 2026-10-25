@@ -62,7 +62,8 @@ public static class TokenSamplers
     /// <exception cref="NotSupportedException">None is registered under that name: the message names the registered ones.</exception>
     public static ITokenSamplerKind Get(ReadOnlySpan<char> name) =>
         Registry.TryGet(name, out var kind) ? kind
-            : throw new NotSupportedException($"No token sampler '{name}' is registered ({string.Join(", ", Registry.Names)}); add it with TokenSamplers.Register.");
+            : throw new NotRegisteredException(nameof(TokenSamplers), name.ToString(), Registry.Names,
+                $"No token sampler '{name}' is registered ({string.Join(", ", Registry.Names)}); add it with TokenSamplers.Register.");
 
     /// <summary>The sampler for <paramref name="request"/>: the one registered as <see cref="DefaultName"/>.</summary>
     public static ITokenSampler Create(SamplerRequest request) => Get(DefaultName).Create(request);

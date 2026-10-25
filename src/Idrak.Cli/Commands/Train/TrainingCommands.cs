@@ -650,7 +650,7 @@ internal sealed class PredictCommand : Command
                 using var imageModel = ImageModelFiles.Load(context, modelPath, context.Option("--weights"), trainable: false);
                 return ImagePredict.Run(context, modelPath, imageModel, images);
             }
-            catch (Exception e) when (ImageModelFiles.NotRegistered(e))
+            catch (NotRegisteredException e)
             {
                 return ImageModelFiles.Refuse(context, e);
             }
@@ -678,7 +678,7 @@ internal sealed class PredictCommand : Command
                 using var imageModel = ImageModelFiles.FromPackage(package, meta!, context.Device);
                 return ImagePredict.Run(context, modelPath, imageModel, [.. context.Positional.Skip(1), .. context.Options("--input")]);
             }
-            catch (Exception e) when (ImageModelFiles.NotRegistered(e))
+            catch (NotRegisteredException e)
             {
                 return ImageModelFiles.Refuse(context, e);
             }

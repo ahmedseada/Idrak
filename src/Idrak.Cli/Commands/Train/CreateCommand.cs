@@ -162,7 +162,7 @@ internal sealed class CreateCommand : Command
                 Decoder = PathOf("--decoder", "decoder"),
             });
         }
-        catch (NotSupportedException e) when (ImageModelFiles.NotRegistered(e))
+        catch (NotRegisteredException e)
         {
             return ImageModelFiles.Refuse(context, e);
         }
@@ -225,7 +225,7 @@ internal sealed class CreateCommand : Command
                 }
             }
         }
-        catch (NotSupportedException e) when (ImageModelFiles.NotRegistered(e))
+        catch (NotRegisteredException e)
         {
             return ImageModelFiles.Refuse(context, e);
         }

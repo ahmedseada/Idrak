@@ -174,7 +174,8 @@ public static class OnnxExportOps
     /// <summary>The translator registered for modules of exactly the type <typeparamref name="T"/>.</summary>
     public static IOnnxExportOp Get<T>() where T : Module =>
         Modules.TryGet(typeof(T), out var op) ? op
-            : throw new NotSupportedException($"No ONNX export translator for {typeof(T).Name} is registered ({string.Join(", ", Types.Select(t => t.Name).Order())}); add it with OnnxExportOps.Register<{typeof(T).Name}>.");
+            : throw new NotRegisteredException(Modules.Registry, typeof(T).Name, Types.Select(t => t.Name).Order(),
+                $"No ONNX export translator for {typeof(T).Name} is registered ({string.Join(", ", Types.Select(t => t.Name).Order())}); add it with OnnxExportOps.Register<{typeof(T).Name}>.");
 
     /// <summary>The library's translator of modules of type <typeparamref name="T"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IOnnxExportOp? Default<T>() where T : Module => Modules.HasDefault(typeof(T)) ? Modules.Default(typeof(T)) : null;
@@ -228,7 +229,8 @@ public static class OnnxExportOps
 
     /// <summary>The translator registered for the graph operation <paramref name="op"/>.</summary>
     public static IOnnxGraphOpExport GetGraphOp(ReadOnlySpan<char> op) => FindGraphOp(op)
-        ?? throw new NotSupportedException($"No ONNX export translator for the graph operation '{op}' is registered ({string.Join(", ", GraphOpNames)}); add it with OnnxExportOps.RegisterGraphOp.");
+        ?? throw new NotRegisteredException(GraphOpTranslators.Registry, op.ToString(), GraphOpNames,
+            $"No ONNX export translator for the graph operation '{op}' is registered ({string.Join(", ", GraphOpNames)}); add it with OnnxExportOps.RegisterGraphOp.");
 
     /// <summary>The library's translator of the graph operation <paramref name="op"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IOnnxGraphOpExport? DefaultGraphOp(string op) => GraphOpTranslators.Default(op);

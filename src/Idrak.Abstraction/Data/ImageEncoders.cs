@@ -58,7 +58,8 @@ public static class ImageEncoders
     /// <summary>The encoder registered as <paramref name="name"/> (any case).</summary>
     /// <exception cref="NotSupportedException">None is; the message names those that are.</exception>
     public static IImageEncoder Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No image encoder '{name}' is registered ({string.Join(", ", Names)}); add it with ImageEncoders.Register.");
+        ?? throw new NotRegisteredException(nameof(ImageEncoders), name, Names,
+            $"No image encoder '{name}' is registered ({string.Join(", ", Names)}); add it with ImageEncoders.Register.");
 
     /// <summary>The encoder that writes files named like <paramref name="path"/> (by its extension).</summary>
     /// <exception cref="NotSupportedException">No registered encoder lists the extension; the message names the extensions there are.</exception>

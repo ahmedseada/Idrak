@@ -398,7 +398,8 @@ public static class ImageAttentionRules
     /// <summary>The rule <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name; the message names <see cref="Register"/>.</exception>
     public static IImageAttentionRule Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"No image attention rule '{name}' is registered ({string.Join(", ", Table.Keys)}); add it with ImageAttentionRules.Register.");
+        ?? throw new NotRegisteredException(nameof(ImageAttentionRules), name, Table.Keys,
+            $"No image attention rule '{name}' is registered ({string.Join(", ", Table.Keys)}); add it with ImageAttentionRules.Register.");
 
     /// <summary>The library's rule <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IImageAttentionRule? Default(string name) => Table.Default(name);
@@ -517,7 +518,8 @@ public static class ImagePositionRules
     /// <summary>The rule <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name; the message names <see cref="Register"/>.</exception>
     public static IImagePositionRule Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"No image position rule '{name}' is registered ({string.Join(", ", Table.Keys)}); add it with ImagePositionRules.Register.");
+        ?? throw new NotRegisteredException(nameof(ImagePositionRules), name, Table.Keys,
+            $"No image position rule '{name}' is registered ({string.Join(", ", Table.Keys)}); add it with ImagePositionRules.Register.");
 
     /// <summary>The library's rule <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IImagePositionRule? Default(string name) => Table.Default(name);

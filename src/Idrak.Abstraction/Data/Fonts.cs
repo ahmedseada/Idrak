@@ -186,7 +186,8 @@ public static class FontFormats
     /// <summary>The format registered as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IFontFormat Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No font format '{name}' is registered ({string.Join(", ", Names)}); add it with FontFormats.Register.");
+        ?? throw new NotRegisteredException(nameof(FontFormats), name, Names,
+            $"No font format '{name}' is registered ({string.Join(", ", Names)}); add it with FontFormats.Register.");
 
     /// <summary>The library's format <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IFontFormat? Default(string name) => Registry.Default(name);
@@ -343,7 +344,8 @@ public static class OutlineRasterizers
     /// <summary>The rasterizer of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IOutlineRasterizer Get(string name = Coverage) => Registry.Find(name)
-        ?? throw new NotSupportedException($"No outline rasterizer '{name}' is registered ({string.Join(", ", Names)}); add it with OutlineRasterizers.Register.");
+        ?? throw new NotRegisteredException(nameof(OutlineRasterizers), name, Names,
+            $"No outline rasterizer '{name}' is registered ({string.Join(", ", Names)}); add it with OutlineRasterizers.Register.");
 
     /// <summary>The library's rasterizer of that name, or null.</summary>
     public static IOutlineRasterizer? Default(string name) => Registry.Default(name);

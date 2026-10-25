@@ -176,9 +176,8 @@ public static class ProgressReporters
     public static IProgressReporterKind? Find(ReadOnlySpan<char> name) => Table.Find(name);
 
     /// <summary>The reporter kind registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
-    public static IProgressReporterKind Get(ReadOnlySpan<char> name) => Find(name)
-        ?? throw new NotSupportedException($"Progress reporter '{name}' is not registered (registered: {string.Join(", ", Table.Names)}); add it with ProgressReporters.Register.");
+    /// <exception cref="NotRegisteredException">None is: the message names the registered ones.</exception>
+    public static IProgressReporterKind Get(ReadOnlySpan<char> name) => Table.Get(name);
 
     /// <summary>The library's reporter kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IProgressReporterKind? Default(string name) => Table.Default(name);

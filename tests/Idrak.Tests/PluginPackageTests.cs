@@ -27,7 +27,7 @@ internal static partial class Tests
         ("plugins: packages: the tool registers the four packages at startup (text first, reinforcement last), and -P on each package's DLL loads it through the tool's loader (its IdrakPluginPackage attribute) adding nothing twice; -P on an assembly that declares no package is refused naming the attribute, and on a library assembly registers its built-ins", PluginPackagesCli),
         ("plugins: packages: IDRAK_PLUGIN_PACKAGES chooses the packages the tool registers at startup (all four when unset, none, or a list taken in the tool's order) and is refused naming the variable when it names no package", PluginPackagesSetting),
         ("plugins: packages: no library assembly nor the tool grants a plug-in package its internals, the plug-in packages grant none but the test runner (as every library package does), and they are not library defaults", PluginPackagesNoInternals),
-        ("plugins: packages: the not-registered messages of VisionFamilies, SpeechFamilies, SpeechSynthesisFamilies, VoiceConverters, GgufArchitectures, ToolCallFormats, EnvironmentKinds and RewardFunctions name the plug-in package to reference and its RegisterAll (the families', kinds' and rewards' as a NotRegisteredException)", PluginPackagesMessages),
+        ("plugins: packages: the not-registered messages of VisionFamilies, SpeechFamilies, SpeechSynthesisFamilies, VoiceConverters, GgufArchitectures, ToolCallFormats, EnvironmentKinds and RewardFunctions name the plug-in package to reference and its RegisterAll, each as a NotRegisteredException", PluginPackagesMessages),
     ];
 
     private sealed record PluginPackage(string Name, Type Root, IIdrakPluginPackage Package, IReadOnlyList<IIdrakPlugin> All, Action RegisterAll, Action UnregisterAll);
@@ -324,8 +324,8 @@ internal static partial class Tests
         ThrowsNaming<NotRegisteredException>(() => SpeechFamilies.Get(None), "SpeechFamilies", [$"'{None}' is not registered", "SpeechFamilies.Register", .. audio]);
         ThrowsNaming<NotRegisteredException>(() => SpeechSynthesisFamilies.Get(None), "SpeechSynthesisFamilies", [$"'{None}' is not registered", "SpeechSynthesisFamilies.Register", .. audio]);
         ThrowsNaming<NotRegisteredException>(() => VoiceConverters.Get(None), "VoiceConverters", [$"'{None}' is not registered", "VoiceConverters.Register", .. audio]);
-        ThrowsNaming<NotSupportedException>(() => GgufArchitectures.Get(None), "GgufArchitectures", [$"'{None}' is registered", "GgufArchitectures.Register", .. text]);
-        ThrowsNaming<NotSupportedException>(() => Idrak.Abstraction.Generation.ToolCallFormats.Create(None, new ToolCallContext(new ChatMLTemplate(), [], null)), "ToolCallFormats",
+        ThrowsNaming<NotRegisteredException>(() => GgufArchitectures.Get(None), "GgufArchitectures", [$"'{None}' is registered", "GgufArchitectures.Register", .. text]);
+        ThrowsNaming<NotRegisteredException>(() => Idrak.Abstraction.Generation.ToolCallFormats.Create(None, new ToolCallContext(new ChatMLTemplate(), [], null)), "ToolCallFormats",
             [$"'{None}' is registered", "ToolCallFormats.Register", .. text]);
         ThrowsNaming<NotRegisteredException>(() => Idrak.Abstraction.Reinforcement.EnvironmentKinds.Get(None), "EnvironmentKinds",
             [$"'{None}' is not registered", "EnvironmentKinds.Register", .. reinforcement]);
