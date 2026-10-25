@@ -66,8 +66,8 @@ These are the owner's standing rules. They hold in every session, after every co
   ```powershell
   cd D:\Projects\Idrak; git checkout <the session's branch>; git pull origin <the session's branch>
   ```
-  Every test run in them shows the live progress line and saves only the failed lines (each FAIL line with its message lines,
-  the device headers and the summary) into `test-output\fails.txt` for the owner to paste:
+  Every test run in them shows the live progress line and saves only the failed lines (each FAIL line with its message
+  lines, the device headers and the summary) into `test-output\fails.txt` for the owner to paste:
   ```powershell
   dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails.txt
   ```
