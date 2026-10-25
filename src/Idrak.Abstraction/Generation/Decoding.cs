@@ -850,7 +850,7 @@ public sealed class DecodingContext : IDisposable
 
         Slide(1);                                     // a sliding window moves now: the recording cannot
         int length = Length;
-        var graph = ComputeGraph.Capture(Device, step);
+        var graph = ComputeGraph.Capture(Device, step, "a decoding step");
         Length = length;   // recording does not execute the step
         ClearStep();
         return graph;

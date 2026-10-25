@@ -33,7 +33,7 @@ internal static partial class Tests
         ("cli health: help topics and pages, group words, setup android", CliHelpTopics),
         ("cli health: @file, --log, --output, --format csv/md, --color, --timeout, --threads, progress", CliFoundation),
         ("cli health: --profile on any command (and IDRAK_PROFILE=1) leaves its output as it is and writes one watched profile to the error stream or IDRAK_PROFILE_OUT, secrets hidden", CliProfileFlag),
-        ("cli health: --verbose prints the library's work as it happens on the error stream (a prompt pass with its rows and pieces, decoding summed before the next pass and at the end, a kernel choice measured, a host fallback), nothing on the output; IDRAK_VERBOSE=1 makes a command verbose, another value is a usage error", CliVerboseLines),
+        ("cli health: --verbose prints the library's work as it happens on the error stream (a prompt pass with its rows and pieces, decoding summed before the next pass and at the end, a kernel choice measured, a host fallback, a graph recording that failed with its reason), nothing on the output; IDRAK_VERBOSE=1 makes a command verbose, another value is a usage error", CliVerboseLines),
     ];
 
     // --profile, common to every command: the output (JSON included) unchanged, one report of one watched run on the
@@ -205,19 +205,22 @@ internal static partial class Tests
             Telemetry.InferenceStage(InferenceStageKind.Prefill, Device.Cpu, start, count: 100);
             Telemetry.Tuning(new TuningCompleted("cuda", "RowsPath", 2, TimeSpan.FromMilliseconds(420), false));
             Telemetry.HostFallback(new HostFallback("vulkan", "Softmax"));
+            Telemetry.GraphRecordingFailed(new GraphRecordingFailed("vulkan", "a training step", "Reading device memory while a graph is recorded"));
             Telemetry.InferenceStage(InferenceStageKind.DecodeChunk, Device.Cpu, start, count: 8);
         }
 
         string text = error.ToString();
         string[] got = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        Check(got.Length == 6 && got.All(l => l.StartsWith("verbose: ", StringComparison.Ordinal)),
-            $"six lines, each named: {text}");
+        Check(got.Length == 7 && got.All(l => l.StartsWith("verbose: ", StringComparison.Ordinal)),
+            $"seven lines, each named: {text}");
         Check(got[0].Contains("4 rows × 2,812 positions in 3 pieces of 1,024", StringComparison.Ordinal), $"the prompt pass: rows, positions, pieces: {got[0]}");
         Check(got[1].Contains("decoding: 64 tokens in 2 chunks", StringComparison.Ordinal), $"decoding summed before the next pass: {got[1]}");
         Check(got[2].Contains("100 positions", StringComparison.Ordinal) && !got[2].Contains("pieces", StringComparison.Ordinal), $"a pass of one row in one piece: {got[2]}");
         Check(got[3].Contains("measured RowsPath on cuda: 2 choices, 420 ms", StringComparison.Ordinal), $"a kernel choice measured: {got[3]}");
         Check(got[4].Contains("Softmax ran on the host: vulkan", StringComparison.Ordinal), $"a host fallback: {got[4]}");
-        Check(got[5].Contains("decoding: 8 tokens in 1 chunks", StringComparison.Ordinal), $"the decoding left printed when the lines end: {got[5]}");
+        Check(got[5].Contains("vulkan could not record a training step as a graph: Reading device memory while a graph is recorded; it runs as ordinary steps", StringComparison.Ordinal),
+            $"a graph recording that failed, with its reason: {got[5]}");
+        Check(got[6].Contains("decoding: 8 tokens in 1 chunks", StringComparison.Ordinal), $"the decoding left printed when the lines end: {got[6]}");
 
         (int Exit, string Out, string Err) bad = (0, "", ""), verbose = (0, "", "");
         WithEnvironment(new Dictionary<string, string?> { ["IDRAK_VERBOSE"] = "maybe" }, () => bad = Cli("version"));

@@ -110,7 +110,11 @@ internal static partial class Tests
                             var input = RandomArray(new Random(seed), batch * steps * inputs, 2f);
                             var composed = RecurrentPass(module, input, shape, composed: true, device);
                             var fused = RecurrentPass(module, input, shape, composed: false, device);
-                            Check(composed.CellCalls == 0 && (fused.CellCalls > 0) == fusedHere, $"{what}: cell kernel calls {composed.CellCalls} composed, {fused.CellCalls} fused");
+                            // Without the kernels the fused pass only asks for them (batch 0): the sequence, step and cell kernels, once a
+                            // layer and direction; those asks are calls too.
+                            int asks = 3 * layers * (bidirectional ? 2 : 1);
+                            Check(composed.CellCalls == 0 && (fusedHere ? fused.CellCalls > asks : fused.CellCalls == asks),
+                                $"{what}: cell kernel calls {composed.CellCalls} composed, {fused.CellCalls} fused (the device {(fusedHere ? "has" : "lacks")} the cell kernels; {asks} asks with batch 0)");
                             AssertClose(composed.Output, fused.Output, 1e-5f, $"{device}: {what}: output");
                             AssertClose(composed.InputGrad, fused.InputGrad, 1e-4f, $"{device}: {what}: input gradient");
                             for (int i = 0; i < composed.Grads.Length; i++)

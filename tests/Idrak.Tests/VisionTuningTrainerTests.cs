@@ -111,7 +111,7 @@ internal static partial class Tests
 
             // Two distinct images: the tower runs once for each; every later step (epoch) takes them from the cache.
             Check(vision.Encoded == 2 && vision.CacheHits == 2 * (expected.Length - 1),
-                $"{what}: {vision.Encoded} images encoded, {vision.CacheHits} cache hits (expected 2 and {2 * (expected.Length - 1)})");
+                $"{what}: {vision.Encoded} images encoded, {vision.CacheHits} cache hits (expected 2 and {2 * (expected.Length - 1)}); the run's trace:\n{string.Join("\n", lines)}");
             // "packed with the others" where the device packs this model's sequences; padded rows elsewhere (CUDA today).
             Check(lines.Any(l => l.Contains("images (", StringComparison.Ordinal) && l.Contains(" image tokens", StringComparison.Ordinal))
                   && lines.Any(l => l.Contains($"image features: 2 from the cache, 0 encoded, 2 images in {(run == "projector" ? "1 pass," : "0 passes,")}", StringComparison.Ordinal)),

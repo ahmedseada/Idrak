@@ -10,9 +10,10 @@ namespace Idrak.Cli.Shared;
 /// <c>--verbose</c> (or <c>IDRAK_VERBOSE=1</c>), common to every command: what the library does, printed as it happens,
 /// besides the lines a command prints with it: each prompt pass (rows, positions, pieces, time), decoding summed every
 /// few seconds and before the next prompt pass, the vision encoder and sound features, each kernel choice a device
-/// measured, and the first host fallback of each operation. On the error output, over the progress line (which redraws
-/// under them); the main output and <c>--json</c> stay as they are. Stages are read at <c>TelemetryLevel.Stages</c>,
-/// which waits for nothing, so the run's timing is the run's. <c>--profile</c> is the report at the end; both can be on.
+/// measured, the first host fallback of each operation, and each graph recording that failed (with its reason). On the
+/// error output, over the progress line (which redraws under it); the main output and <c>--json</c> stay as they are.
+/// Stages are read at <c>TelemetryLevel.Stages</c>, which waits for nothing, so the run's timing is the run's.
+/// <c>--profile</c> is the report at the end; both can be on. The test runner takes both too.
 /// </summary>
 internal sealed class VerboseLines : ITelemetryHook, IDisposable
 {
@@ -96,6 +97,14 @@ internal sealed class VerboseLines : ITelemetryHook, IDisposable
         lock (_lock)
         {
             Line($"{e.Operation} ran on the host: {e.Device} has no kernel for it (its later calls are counted in the report)");
+        }
+    }
+
+    public void OnGraphRecordingFailed(in GraphRecordingFailed e)
+    {
+        lock (_lock)
+        {
+            Line($"{e.Device} could not record {e.Work} as a graph: {e.Reason}; it runs as ordinary steps");
         }
     }
 

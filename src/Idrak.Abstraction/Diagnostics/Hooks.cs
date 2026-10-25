@@ -131,6 +131,10 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
         _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Device {e.Device} tuned {e.Operation}: {e.Candidates} candidates in {e.Duration.TotalMilliseconds:F0} ms (once per shape class{(e.Nested ? ", inside another tuning" : "")})"));
 
     /// <inheritdoc />
+    public void OnGraphRecordingFailed(in GraphRecordingFailed e) =>
+        _out.WriteLine($"Device {e.Device} could not record {e.Work} as a graph: {e.Reason}; it runs as ordinary steps");
+
+    /// <inheritdoc />
     public void OnOverrideFailed(in OverrideFailed e) =>
         _out.WriteLine($"Override {e.Registry}/{e.Slot} ({e.Implementation}, {e.Origin}) threw {e.Exception.GetType().Name}: {e.Exception.Message}; "
             + (e.FellBack ? "the library default answered" : "the error reached the caller") + (e.Hint is { } hint ? Environment.NewLine + "  " + hint : ""));
@@ -428,6 +432,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnTuning(in TuningCompleted e) => Write(e);
 
     /// <inheritdoc />
+    public void OnGraphRecordingFailed(in GraphRecordingFailed e) => Write(e);
+
+    /// <inheritdoc />
     public void OnOverrideFailed(in OverrideFailed e) => Write(e);
 
     /// <inheritdoc />
@@ -526,6 +533,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnTuning(in TuningCompleted e) => _channel.OnTuning(in e);
+
+    /// <inheritdoc />
+    public void OnGraphRecordingFailed(in GraphRecordingFailed e) => _channel.OnGraphRecordingFailed(in e);
 
     /// <inheritdoc />
     public void OnOverrideFailed(in OverrideFailed e) => _channel.OnOverrideFailed(in e);
@@ -731,6 +741,12 @@ public static class TelemetryJson
                 w.WriteNumber("candidates", e.Candidates);
                 w.WriteNumber("duration_ms", e.Duration.TotalMilliseconds);
                 w.WriteBoolean("nested", e.Nested);
+                break;
+            case GraphRecordingFailed e:
+                w.WriteString("event", "graph_recording_failed");
+                w.WriteString("device", e.Device);
+                w.WriteString("work", e.Work);
+                w.WriteString("reason", e.Reason);
                 break;
             case OverrideFailed e:
                 w.WriteString("event", "override_failed");

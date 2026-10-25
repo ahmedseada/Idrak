@@ -662,6 +662,9 @@ public sealed class ProfileSession : IDisposable
 /// CPU and back): "fallback calls" (calls) and "fallback operations", with the table "host fallbacks" by operation (the
 /// device's counts by operation while the probe listens at <see cref="TelemetryLevel.Devices"/>, and the first fallback of
 /// an operation on another device from <see cref="HostFallback"/>).</item>
+/// <item>"graphs": the graph recordings that failed during the run (<see cref="GraphRecordingFailed"/>: the work ran as
+/// ordinary steps instead, and ran again what the recording did before it failed): "graph recordings failed" (count), with
+/// the table "graph recordings failed" by device, work and reason.</item>
 /// <item>"inference": the stages of reading an answer (<see cref="InferenceStage"/>) listened to at
 /// <see cref="TelemetryLevel.Stages"/>, which waits for nothing: for each stage seen "{stage} time" (ms), "{stage} events"
 /// and "{stage} count" (what it counts: tokens for the prompt's pass and decoding), "prefill pieces", "prompt rate" and
@@ -699,7 +702,7 @@ public static class ProfileProbes
         // The bandwidth first: its one measurement (before the first run) is done before the other probes start theirs.
         foreach (var probe in new IProfileProbe[]
                  {
-                     new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new MemoryProbe(), new TuningProbe(), new FallbacksProbe(), new InferenceProbe(),
+                     new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new MemoryProbe(), new TuningProbe(), new FallbacksProbe(), new GraphsProbe(), new InferenceProbe(),
                      new OperationsProbe(), new KernelsProbe(), new StagesProbe(), new TimingsProbe(),
                  })
         {
@@ -943,6 +946,54 @@ public static class ProfileProbes
                 lock (this)
                 {
                     Seen.Add((e.Device, e.Operation));
+                }
+            }
+        }
+    }
+
+    // The graph recordings that failed in a run (GraphRecordingFailed, at TelemetryLevel.Devices): count by device, work and
+    // reason. Not intrusive: the event is published where a recording fails, nothing is traced.
+    private sealed class GraphsProbe : IProfileProbe
+    {
+        public string Name => "graphs";
+
+        public string Summary => "the graph recordings that failed (the work ran as ordinary steps instead): count by device, work and reason";
+
+        public bool Intrusive => false;
+
+        public bool Supports(Device device) => true;
+
+        public Action Begin(ProfileRun run)
+        {
+            var hook = new FailedRecordings();
+            var subscription = Telemetry.Subscribe(hook);
+            return () =>
+            {
+                subscription.Dispose();
+                lock (hook)
+                {
+                    var rows = hook.Counts.OrderByDescending(f => f.Value).ThenBy(f => f.Key.Reason, StringComparer.Ordinal).ToList();
+                    run.Record("graph recordings failed", rows.Sum(f => f.Value));
+                    if (rows.Count > 0)
+                    {
+                        run.Add(new ProfileTable("graph recordings failed", ["device", "work", "times", "reason"],
+                            [.. rows.Select(f => (IReadOnlyList<string>)[f.Key.Device, f.Key.Work, Text(f.Value), f.Key.Reason])]));
+                    }
+                }
+            };
+        }
+
+        private sealed class FailedRecordings : ITelemetryHook
+        {
+            public TelemetryLevel Levels => TelemetryLevel.Devices;
+
+            public Dictionary<(string Device, string Work, string Reason), long> Counts { get; } = [];
+
+            public void OnGraphRecordingFailed(in GraphRecordingFailed e)
+            {
+                lock (this)
+                {
+                    Counts[(e.Device, e.Work, e.Reason)] = Counts.GetValueOrDefault((e.Device, e.Work, e.Reason)) + 1;
                 }
             }
         }

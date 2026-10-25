@@ -199,6 +199,14 @@ var selected = Tests.All.Where(t => filters is null || filters.Any(f => t.Name.C
 bool progress = args.Contains("--progress") || Tests.RunnerFlag("IDRAK_TEST_PROGRESS");
 bool failuresOnly = args.Contains("--failures-only") || Tests.RunnerFlag("IDRAK_TEST_FAILURES_ONLY");
 
+// --verbose and --profile, as the CLI's: the library's work as it happens (kernel choices measured, host fallbacks, graph
+// recordings that failed, prompt passes, decoding) and one profile report per test (IDRAK_PROFILE_PROBES and the other
+// IDRAK_PROFILE_* settings apply), both written as the runner's own lines after a "test:" line naming the test, so they
+// reach the failures file beside its result. Flags only: IDRAK_VERBOSE and IDRAK_PROFILE would also turn on the CLI
+// commands the tests run, whose output they check.
+bool verbose = args.Contains("--verbose");
+var profileOptions = args.Contains("--profile") ? ProfileOptions.FromEnvironment() : null;
+
 // --failures-file PATH (IDRAK_TEST_FAILURES_FILE): the header, the device headers, the failures and the summary written by
 // the runner itself as they happen, so the console keeps the progress line and the lines in order (a pipe to another
 // program prints them late, onto the progress line).
@@ -252,6 +260,10 @@ void Report(string line, bool pass = false)
     }
 }
 
+// The verbose lines name the thread they came from (work two threads do at once tells apart); the reports are the runner's.
+var runnerLines = new Tests.LineWriter(line => Report("    " + line));
+using var verboseLines = verbose ? new Idrak.Cli.Shared.VerboseLines(new Tests.LineWriter(line => Report($"    [thread {Environment.CurrentManagedThreadId}] {line}"))) : null;
+
 // The counts so far: passed and failed, and the skipped tests when there are any.
 string Counts() => skipped == 0 ? $"{passed} passed, {failed} failed" : $"{passed} passed, {failed} failed, {skipped} skipped";
 
@@ -301,6 +313,12 @@ foreach (var device in devices)
         var sw = Stopwatch.StartNew();
         runningSince.Restart();
         Volatile.Write(ref running, $"[{device}] {name}");
+        if (verbose || profileOptions is not null)
+        {
+            Report($"  test: {name}");
+        }
+
+        var watch = profileOptions is null ? null : Profiler.Watch(name, device, profileOptions);
         try
         {
             using (new TensorScope())
@@ -336,6 +354,7 @@ foreach (var device in devices)
             }
         }
 
+        watch?.End().Write(runnerLines);
         Ended();
     }
 }

@@ -13,7 +13,7 @@ internal static partial class Tests
     [
         ("profiler: a workload's stages and values, the cold run apart, the statistic over the warm runs; cpu, heap and memory around each timed run; the intrusive probes in runs of their own (operations and host fallbacks counted, kernels only where the device times them); an unknown probe refused naming the registered ones", ProfilerRuns),
         ("profiler: the table, markdown, csv and json writers; an app's probe and writer registered, used and removed; the criteria from IDRAK_PROFILE_*", ProfilerWritersAndCriteria),
-        ("profiler: a watched run (Profiler.Watch) is one run with the probes that do not change it, the intrusive ones only when named (with a note), ended once from any thread, written with its notes; the tuning, fallbacks and inference probes record from telemetry", ProfilerWatch),
+        ("profiler: a watched run (Profiler.Watch) is one run with the probes that do not change it, the intrusive ones only when named (with a note), ended once from any thread, written with its notes; the tuning, fallbacks, graphs and inference probes record from telemetry", ProfilerWatch),
     ];
 
     // One run of work watched as it runs: the watched probes around it, the kernel choices, host fallbacks and inference
@@ -28,6 +28,9 @@ internal static partial class Tests
         Telemetry.InferenceStage(InferenceStageKind.Prefill, device, Telemetry.StartStage(), 24, 0, 2, 3, 4);
         Telemetry.InferenceStage(InferenceStageKind.DecodeChunk, device, Telemetry.StartStage(), 8, 0, 2);
         Telemetry.InferenceStage(InferenceStageKind.DecodeChunk, device, Telemetry.StartStage(), 8, 0, 2);
+        Telemetry.GraphRecordingFailed(new GraphRecordingFailed(device.Backend.Kind, "a training step", "Reading device memory while a graph is recorded"));
+        Telemetry.GraphRecordingFailed(new GraphRecordingFailed(device.Backend.Kind, "a training step", "Reading device memory while a graph is recorded"));
+        Telemetry.GraphRecordingFailed(new GraphRecordingFailed(device.Backend.Kind, "a decoding step", "out of device memory"));
         ProfileReport? other = null;
         var thread = new Thread(() => other = watch.End());                     // as Ctrl+C ends it
         thread.Start();
@@ -36,7 +39,7 @@ internal static partial class Tests
         Check(ReferenceEquals(report, other) && watch.Ended && report.Watched && report.Runs is [{ Kind: ProfileRunKind.Once, Index: 0 }],
             $"one run, ended once: {string.Join(", ", report.Runs.Select(r => r.Kind))}");
         Check(report.Probes.All(p => ProfileProbes.Get(p).Watched) && !report.Probes.Contains("bandwidth") && !report.Probes.Contains("operations")
-              && report.Probes.Contains("tuning") && report.Probes.Contains("fallbacks") && report.Probes.Contains("inference"),
+              && report.Probes.Contains("tuning") && report.Probes.Contains("fallbacks") && report.Probes.Contains("graphs") && report.Probes.Contains("inference"),
             $"the watched probes: {string.Join(", ", report.Probes)}");
         Check(report.Notes.Any(n => n.Contains("operations", StringComparison.Ordinal) && n.Contains("IDRAK_PROFILE_PROBES", StringComparison.Ordinal)),
             $"the probes left out are named: {string.Join(" | ", report.Notes)}");
@@ -51,6 +54,9 @@ internal static partial class Tests
               && report.Runs[0].Tables.Single(t => t.Name == "inference stages").Rows.Single(r => r[0] == "prefill") is [_, "1", "24", "2", "3", "4", ..],
             $"the inference stages, without waiting for the device: {string.Join("; ", report.Summary.Where(s => s.Source == "inference").Select(s => $"{s.Name} {s.Value}"))}");
         Check(report["fallback calls"] is { Unit: "calls" } && report["Prefill time"] is null, "the fallbacks recorded; the intrusive stages probe not run");
+        Check(report["graph recordings failed"]?.Value == 3
+              && report.Runs[0].Tables.Single(t => t.Name == "graph recordings failed") is { Rows: [[_, "a training step", "2", "Reading device memory while a graph is recorded"], [_, "a decoding step", "1", "out of device memory"]] },
+            $"the failed graph recordings by work and reason, most first: {report["graph recordings failed"]}");
 
         var text = new StringWriter();
         report.Write(text);
@@ -255,7 +261,7 @@ internal static partial class Tests
         }
 
         Check(ProfileProbes.Find("runs counted") is null && ProfileWriters.Find("names") is null, "unregistered");
-        Check(ProfileProbes.Names.SequenceEqual(["bandwidth", "cpu", "heap", "memory", "tuning", "fallbacks", "inference", "operations", "kernels", "stages", "timings", "cluster", "network"]) && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
+        Check(ProfileProbes.Names.SequenceEqual(["bandwidth", "cpu", "heap", "memory", "tuning", "fallbacks", "graphs", "inference", "operations", "kernels", "stages", "timings", "cluster", "network"]) && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
             $"the library's: {string.Join(", ", ProfileProbes.Names)}; {string.Join(", ", ProfileWriters.Names)}");
 
         // The criteria from the environment.

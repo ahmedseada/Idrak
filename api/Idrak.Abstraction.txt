@@ -825,6 +825,7 @@ public readonly struct Idrak.Abstraction.CompressAfter : System.IDisposable
 public sealed class Idrak.Abstraction.ComputeGraph : System.IDisposable
   public bool IsRecorded { get; }
   public static Idrak.Abstraction.ComputeGraph Capture(Idrak.Abstraction.Device device, System.Action step)
+  public static Idrak.Abstraction.ComputeGraph Capture(Idrak.Abstraction.Device device, System.Action step, string work)
   public static System.IDisposable RunStepsDirectly()
   public static bool IsCapturing { get; }
   public string? FailureReason { get; }
@@ -2179,6 +2180,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public void OnFault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
   public void OnGradientSync(in Idrak.Abstraction.Diagnostics.GradientsSynced e)
+  public void OnGraphRecordingFailed(in Idrak.Abstraction.Diagnostics.GraphRecordingFailed e)
   public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
@@ -2222,6 +2224,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstract
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public void OnFault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
   public void OnGradientSync(in Idrak.Abstraction.Diagnostics.GradientsSynced e)
+  public void OnGraphRecordingFailed(in Idrak.Abstraction.Diagnostics.GraphRecordingFailed e)
   public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
@@ -2301,6 +2304,12 @@ public readonly record struct Idrak.Abstraction.Diagnostics.GradientsSynced : Sy
   public string Sync { get; init; }
   public string? Lost { get; init; }
 
+public readonly record struct Idrak.Abstraction.Diagnostics.GraphRecordingFailed : System.IEquatable<Idrak.Abstraction.Diagnostics.GraphRecordingFailed>
+  public GraphRecordingFailed(string Device, string Work, string Reason)
+  public string Device { get; init; }
+  public string Reason { get; init; }
+  public string Work { get; init; }
+
 public readonly record struct Idrak.Abstraction.Diagnostics.HostFallback : System.IEquatable<Idrak.Abstraction.Diagnostics.HostFallback>
   public HostFallback(string Device, string Operation)
   public string Device { get; init; }
@@ -2353,6 +2362,7 @@ public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public (default) void OnFault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
   public (default) void OnGradientSync(in Idrak.Abstraction.Diagnostics.GradientsSynced e)
+  public (default) void OnGraphRecordingFailed(in Idrak.Abstraction.Diagnostics.GraphRecordingFailed e)
   public (default) void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public (default) void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public (default) void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
@@ -2418,6 +2428,7 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public void OnFault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
   public void OnGradientSync(in Idrak.Abstraction.Diagnostics.GradientsSynced e)
+  public void OnGraphRecordingFailed(in Idrak.Abstraction.Diagnostics.GraphRecordingFailed e)
   public void OnHostFallback(in Idrak.Abstraction.Diagnostics.HostFallback e)
   public void OnInference(in Idrak.Abstraction.Diagnostics.InferenceCompleted e)
   public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
@@ -2736,6 +2747,7 @@ public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static void EpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public static void Fault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
   public static void GradientSync(in Idrak.Abstraction.Diagnostics.GradientsSynced e)
+  public static void GraphRecordingFailed(in Idrak.Abstraction.Diagnostics.GraphRecordingFailed e)
   public static void InferenceStage(Idrak.Abstraction.Diagnostics.InferenceStageKind stage, Idrak.Abstraction.Device? device, long start, long count = 0, long bytes = 0, int rows = 1, int pieces = 1, int pieceSize = 0)
   public static void PipelineStep(in Idrak.Abstraction.Diagnostics.PipelineStepped e)
   public static void RankState(in Idrak.Abstraction.Diagnostics.RankStateChanged e)

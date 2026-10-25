@@ -84,8 +84,16 @@ public sealed class ComputeGraph : IDisposable
     /// Records <paramref name="step"/> on <paramref name="device"/>. The step is executed once as part of recording
     /// only on devices without graph support; on CUDA, recording does not run it (call <see cref="Replay"/>).
     /// </summary>
-    public static ComputeGraph Capture(Device device, Action step)
+    public static ComputeGraph Capture(Device device, Action step) => Capture(device, step, "a step");
+
+    /// <summary>
+    /// Records <paramref name="step"/> on <paramref name="device"/>, as <see cref="Capture(Device, Action)"/>;
+    /// <paramref name="work"/> names it ("a decoding step") where a failed recording is reported
+    /// (<see cref="GraphRecordingFailed"/>, with <see cref="FailureReason"/>).
+    /// </summary>
+    public static ComputeGraph Capture(Device device, Action step, string work)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(work);
         var backend = device.Backend;
         if (!backend.SupportsGraphs || Volatile.Read(ref s_direct) > 0)
         {
@@ -131,6 +139,7 @@ public sealed class ComputeGraph : IDisposable
             }
 
             scope.Dispose();
+            Telemetry.GraphRecordingFailed(new GraphRecordingFailed(backend.Kind, work, ex.Message));
             return new ComputeGraph(device, step, IntPtr.Zero, IntPtr.Zero, [], [], ex.Message);
         }
     }

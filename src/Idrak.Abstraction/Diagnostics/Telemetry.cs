@@ -158,6 +158,11 @@ public interface ITelemetryHook
     {
     }
 
+    /// <summary>A device that records graphs could not record a piece of work, which then runs as ordinary steps (<see cref="TelemetryLevel.Devices"/>).</summary>
+    void OnGraphRecordingFailed(in GraphRecordingFailed e)
+    {
+    }
+
     /// <summary>An app's implementation of a slot threw: the error reached the caller, or the library default answered (<see cref="TelemetryLevel.Overrides"/>).</summary>
     void OnOverrideFailed(in OverrideFailed e)
     {
@@ -556,6 +561,18 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Devices) != 0)
             {
                 h.OnTuning(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports a graph recording that failed (the work runs as ordinary steps), to the hooks listening at <see cref="TelemetryLevel.Devices"/>.</summary>
+    public static void GraphRecordingFailed(in GraphRecordingFailed e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Devices) != 0)
+            {
+                h.OnGraphRecordingFailed(in e);
             }
         }
     }

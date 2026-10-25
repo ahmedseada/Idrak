@@ -281,6 +281,18 @@ public readonly record struct HostFallback(string Device, string Operation);
 public readonly record struct TuningCompleted(string Device, string Operation, int Candidates, TimeSpan Duration, bool Nested);
 
 /// <summary>
+/// A device that records graphs could not record a piece of work (<c>TelemetryLevel.Devices</c>): the work runs as
+/// ordinary steps instead, which costs launches on every step and runs again whatever the recording did before it failed
+/// (a training step's image features are taken from the cache once more). The reason is the error that stopped the
+/// recording: a read of device memory (a host fallback inside the step, or a value read back), memory, or a call the
+/// device cannot record.
+/// </summary>
+/// <param name="Device">The kind of device ("cuda", "vulkan", "hip", …).</param>
+/// <param name="Work">What was being recorded ("a decoding step", "a training step").</param>
+/// <param name="Reason">Why the recording failed.</param>
+public readonly record struct GraphRecordingFailed(string Device, string Work, string Reason);
+
+/// <summary>
 /// Published when an app's implementation of a slot threw, when <c>TelemetryLevel.Overrides</c> is enabled: under
 /// <see cref="SlotPolicy.Throw"/> (the default) the error went on to the caller, under <see cref="SlotPolicy.FallBack"/>
 /// the call was answered by the library default.

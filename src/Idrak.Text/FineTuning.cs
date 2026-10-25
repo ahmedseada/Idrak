@@ -3028,7 +3028,7 @@ public static class FineTuner
                 catch (Exception ex) when (ex is not (OutOfMemoryException or ResourceLimitExceededException))
                 {
                     graph.Dispose();
-                    trace?.Invoke($"graph not used ({ex.Message}); ordinary steps continue");
+                    Failed(model, ex, trace);
                     return null;
                 }
             }
@@ -3053,7 +3053,7 @@ public static class FineTuner
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
                     graph.Dispose();
-                    trace?.Invoke($"graph not used ({ex.Message}); ordinary steps continue");
+                    Failed(model, ex, trace);
                     return null;
                 }
 
@@ -3092,10 +3092,17 @@ public static class FineTuner
                 {
                     graph._owned = graphs.AbortCapture();
                     graph.Dispose();
-                    trace?.Invoke($"graph not used ({ex.Message}); ordinary steps continue");
+                    Failed(model, ex, trace);
                     return null;
                 }
             }
+        }
+
+        // A recording that failed: traced, and published (GraphRecordingFailed) so --verbose and --profile show it with its reason.
+        private static void Failed(PretrainedModel model, Exception ex, Action<string>? trace)
+        {
+            trace?.Invoke($"graph not used ({ex.Message}); ordinary steps continue");
+            Telemetry.GraphRecordingFailed(new GraphRecordingFailed(model.Device.Backend.Kind, "a training step", ex.Message));
         }
 
         // Same shape, trained positions within the recorded capacity, and images (or none) as recorded, their tokens within

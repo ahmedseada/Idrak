@@ -67,4 +67,41 @@ internal static partial class Tests
 
         public override void Flush() => inner.Flush();
     }
+
+    // Text written to it as whole lines, each handed to `line` (the runner's --verbose lines and --profile reports, so they
+    // go where the runner's own lines go: the console and the failures file, beside the test they belong to).
+    internal sealed class LineWriter(Action<string> line) : TextWriter
+    {
+        private readonly StringBuilder _pending = new();
+
+        public override Encoding Encoding => Encoding.UTF8;
+
+        public override void Write(char value)
+        {
+            lock (_pending)
+            {
+                if (value == '\n')
+                {
+                    line(_pending.ToString().TrimEnd('\r'));
+                    _pending.Clear();
+                }
+                else
+                {
+                    _pending.Append(value);
+                }
+            }
+        }
+
+        public override void Write(string? value)
+        {
+            foreach (char c in value ?? "")
+            {
+                Write(c);
+            }
+        }
+
+        public override void WriteLine(string? value) => Write(value + "\n");
+
+        public override void WriteLine() => Write('\n');
+    }
 }
