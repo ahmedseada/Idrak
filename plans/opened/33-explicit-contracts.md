@@ -6,7 +6,11 @@ backend; `OwnKernels`; typed `Operation<TKernel>`; `IDeviceProvider : IKind`; `I
 lookups left as is: keyed by name across hundreds of call sites); C3 done (`IOptimizer`, `IStatefulOptimizer`,
 `IScaledGradientStep`, `Adam.Step` sealed, `ILearningRateScheduler`, `IEngineModel<TCopy>`, `ITensorOwner`,
 `IShardedGradientSync`, `IShardedHostValueCollectives`, `ICarriedStopAgreement`, `ILoss`, `IMetric`,
-`IShardableBatchSource`); C2, C4-C7 in progress.** The list below comes from an audit of `src/` (the owner asked: where, no
+`IShardableBatchSource`); C2 done (`IKeyValueLayout` and its capability interfaces, `IPackedWeight`, `IKernelPackedWeight`,
+`IRecordable`, `IPackedFormat`, `IChatTemplate` rendering into the caller's builder, `IChatTemplateReader`, `IToolCallFormat`,
+`ITool`, `IPretrainedVision`, `IDescribedModel`, `IDecodingStep`, `ISavableTokenizer`, `IPretrainedArchitecture`, the GGUF
+contracts with `IGgufType.Dequantize` on spans, and a kind for every `Func` registry; `IGraphValue` not done: a tensor in
+Idrak.Abstraction cannot implement a core contract and wrapping each value would allocate per node); C4-C7 in progress.** The list below comes from an audit of `src/` (the owner asked: where, no
 code yet). Each row was found by reading the code; a sample of the rows was checked against the source.
 
 ## Why
