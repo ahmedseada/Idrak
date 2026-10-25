@@ -126,7 +126,7 @@ public sealed class FineTuningSession : IDisposable
             }
 
             var network = model.Network;
-            if (!network.Descendants().OfType<Linear>().Any(l => l.Adapter is not null))
+            if (!network.Descendants().OfType<IAdaptableLinear>().Any(l => l.Adapter is not null))
             {
                 model.AddAdapters(options.Rank, options.Alpha, options.Targets, options.Seed, options.Dora);
             }

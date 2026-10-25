@@ -73,14 +73,14 @@ internal sealed class ImageReaderAdvisor : ISettingAdvisor<ImageReader>
 
         // The weights' format: bfloat16 (the checkpoint's own values for most) where the device has room for it, int8 where
         // the next page would not fit beside it.
-        var projections = model.Network.Descendants().OfType<Linear>().Where(l => l.Name != "head").ToList();
+        var projections = model.Network.Descendants().OfType<IPackableLinear>().Where(l => l.Name != "head").ToList();
         long weights = projections.Sum(l => (long)l.InFeatures * l.OutFeatures);
         if (weights == 0)
         {
             yield break;
         }
 
-        long held = projections.SelectMany(l => l.Parameters().Concat(l.Buffers())).Select(t => t.Storage).Distinct().Sum(s => 4L * s.Length);
+        long held = projections.OfType<Module>().SelectMany(l => l.Parameters().Concat(l.Buffers())).Select(t => t.Storage).Distinct().Sum(s => 4L * s.Length);
         string? format = projections.GroupBy(l => l.PackedWeight?.Name).MaxBy(g => g.Count())?.Key;
         if (format is "int8" or "int4")
         {

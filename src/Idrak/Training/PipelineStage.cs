@@ -201,7 +201,7 @@ public sealed class PipelineStage : IDisposable
             for (int i = r.Start; i < r.End; i++)
             {
                 held.Add(top[i]);
-                foreach (var tied in top[i].Descendants().OfType<Linear>().Select(l => l.TiedTo).OfType<Module>())
+                foreach (var tied in top[i].Descendants().OfType<ITiedWeights>().Select(l => l.WeightsOf).OfType<Module>())
                 {
                     held.Add(tied);
                 }
@@ -328,7 +328,7 @@ public sealed class PipelineStage : IDisposable
     // The tensors a module holds or reads: its parameters and buffers, and the tables its tied layers read.
     private static IEnumerable<Tensor> Reads(Module module) =>
         module.Parameters().Concat(module.Buffers())
-            .Concat(module.Descendants().OfType<Linear>().Select(l => l.TiedTo).OfType<Module>().SelectMany(t => t.Parameters().Concat(t.Buffers())))
+            .Concat(module.Descendants().OfType<ITiedWeights>().Select(l => l.WeightsOf).OfType<Module>().SelectMany(t => t.Parameters().Concat(t.Buffers())))
             .Distinct(ReferenceEqualityComparer.Instance).Cast<Tensor>();
 
     /// <summary>

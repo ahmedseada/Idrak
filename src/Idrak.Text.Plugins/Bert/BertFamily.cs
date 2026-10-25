@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Devices;
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
 
@@ -131,7 +132,7 @@ internal sealed class BertFamily(string architecture) : IPretrainedEncoderFamily
     {
         var store = checkpoint.Tensors;
         bool tied = checkpoint.Config["tie_word_embeddings"] is not { } tie || tie.GetValueKind() != JsonValueKind.False;
-        var words = tied ? (encoder as SequenceEncoder)?.Words : null;
+        var words = tied ? (encoder as IWordEmbeddings)?.Words : null;              // tested once, when the head is built
         string bias = store.Contains("cls.predictions.bias") ? "cls.predictions.bias" : "cls.predictions.decoder.bias";
         string decoder = tied && words is null ? $"{Prefix(store)}embeddings.word_embeddings" : "cls.predictions.decoder";
         var settings = new JsonObject { ["transform"] = true, ["activation"] = HeadActivation(sizes.Activation), ["norm_epsilon"] = sizes.Epsilon };

@@ -49,9 +49,9 @@ public static partial class Pretrainer
         var started = Stopwatch.StartNew();
         bool lead = collectives.Rank == 0;
         using var pipe = PipelineStage.Place(model.Network, collectives, cluster, keepOthers: lead);
-        if (pipe.IsLast && pipe.Head is not Linear)
+        if (pipe.IsLast && pipe.Head is not ILinearLayer)
         {
-            throw new InvalidOperationException("The network does not end with its output head (a Linear layer): the last stage's loss runs it.");
+            throw new InvalidOperationException("The network does not end with its output head (a linear layer, ILinearLayer): the last stage's loss runs it.");
         }
 
         if (resume is not null && ReadPipeline(resume.Folder) is { } saved && !saved.SequenceEqual(pipe.Plan.Stages.Select(s => s.Start)))

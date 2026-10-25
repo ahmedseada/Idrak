@@ -4512,6 +4512,22 @@ public sealed class Idrak.Abstraction.Modules.DoraAdapter : Idrak.Abstraction.Mo
   public string PeftType { get; }
   public void Dispose()
 
+public interface Idrak.Abstraction.Modules.IAdaptableLinear : Idrak.Abstraction.Modules.ILinearLayer
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Modules.ILinearAdapter? Adapter { get; set; }
+  public string? Name { get; }
+  public void MergeAdapter()
+
+public interface Idrak.Abstraction.Modules.IAttentionCacheInfo
+  public bool SupportsPacking()
+  public bool SupportsRows(Idrak.Abstraction.Devices.Backend backend)
+  public bool SupportsSpans()
+  public int HeadDim { get; }
+  public int KvHeads { get; }
+  public int? SlidingWindow { get; }
+
+public interface Idrak.Abstraction.Modules.ICheckpointable
+
 public interface Idrak.Abstraction.Modules.ILinearAdapter
   public Idrak.Abstraction.Modules.ILinearAdapter MoveTo(System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> move)
   public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Modules.ILinearLayer layer, Idrak.Abstraction.Tensor input, Idrak.Abstraction.Tensor product)
@@ -4524,6 +4540,13 @@ public interface Idrak.Abstraction.Modules.ILinearLayer
   public int InFeatures { get; }
   public int OutFeatures { get; }
 
+public interface Idrak.Abstraction.Modules.IPackableLinear : Idrak.Abstraction.Modules.ILinearLayer
+  public Idrak.Abstraction.Generation.IPackedWeight? PackedWeight { get; }
+  public string? Name { get; }
+  public void Pack(Idrak.Abstraction.PackedFormat format)
+  public void Reserve(Idrak.Abstraction.PackedFormat format)
+  public void Unpack(bool trainable)
+
 public interface Idrak.Abstraction.Modules.IPeftAdapter : Idrak.Abstraction.Modules.ILinearAdapter
   public Idrak.Abstraction.Modules.IPeftAdapter WithScale(float scale)
   public Idrak.Abstraction.Tensor A { get; }
@@ -4532,6 +4555,9 @@ public interface Idrak.Abstraction.Modules.IPeftAdapter : Idrak.Abstraction.Modu
   public float Scale { get; }
   public int Rank { get; }
   public string PeftType { get; }
+
+public interface Idrak.Abstraction.Modules.IPositionLimit
+  public int MaxPositions { get; }
 
 public interface Idrak.Abstraction.Modules.ITensorOwner : System.IDisposable
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()

@@ -224,9 +224,9 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
     private Tensor Hidden(IReadOnlyList<TrainingSequence> sequences)
     {
         var modules = model.Network.ToList();
-        if (modules[^1] is not Linear)
+        if (modules[^1] is not ILinearLayer)
         {
-            throw new InvalidOperationException("The teacher's network does not end with its output head (a Linear layer).");
+            throw new InvalidOperationException("The teacher's network does not end with its output head (a linear layer, ILinearLayer).");
         }
 
         var parts = new List<Tensor>();

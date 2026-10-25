@@ -11,14 +11,14 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 168 | 18 | 56 | 242 | 0 |
-| `Idrak` | 57 | 5 | 19 | 81 | 0 |
+| `Idrak.Abstraction` | 175 | 18 | 56 | 249 | 0 |
+| `Idrak` | 53 | 5 | 19 | 77 | 0 |
 | `Idrak.Gpu` | 3 | 0 | 0 | 3 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Text` | 22 | 0 | 11 | 33 | 0 |
+| `Idrak.Text` | 23 | 0 | 11 | 34 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 13 | 0 | 6 | 19 | 0 |
-| `Idrak.Audio` | 48 | 2 | 20 | 70 | 0 |
+| `Idrak.Audio` | 49 | 2 | 20 | 71 | 0 |
 | `Idrak.Cluster` | 2 | 0 | 0 | 2 | 0 |
 | `Idrak.Network` | 2 | 4 | 1 | 7 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
@@ -214,6 +214,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.IToolProvider` | interface | public | — | — |  | — | Abstraction |
 | `Idrak.Abstraction.Generation.IToolRegistry` | interface | public | — | ToolRegistry |  | Abstraction, AspNetCore, Mcp, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ITrainableSoftParts` | interface | public | Tensor | ChatAudioParts |  | Abstraction, Audio, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Generation.ITrainableVisionEncoder` | interface | public | Tensor | Gemma3ImageEncoder, IdrakVisionEncoder, LlavaImageEncoder, QwenImageEncoder |  | Abstraction, Idrak, Text, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.ITuningMetric` | interface | public | — | AnswerMatchMetric, ErrorRateMetric, TuningMetrics.GuardedMetric |  | Abstraction, Audio, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionEncoder` | interface | public | Device | Gemma3ImageEncoder, IdrakVisionEncoder, LlavaImageEncoder, ModelImages.LazyEncoder, QwenImageEncoder |  | Abstraction, Idrak, Text, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IVisionEncoderStages` | interface | public | Tensor | Gemma3ImageEncoder, IdrakVisionEncoder, LlavaImageEncoder, QwenImageEncoder |  | Abstraction, Idrak, Text, Vision.Plugins | Abstraction |
@@ -242,13 +243,18 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.IRecordable` | interface | public | — | BFloat16Weight, Float16Weight, Int4Weight, Int8Weight, KeyValueLayouts.BFloat16Layout, KeyValueLayouts.Float32Layout, +1 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.ITiedWeights` | interface | public | Module | Linear |  | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +75 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Modules.IAdaptableLinear` | interface | public | Device | Linear |  | Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Modules.IAttentionCacheInfo` | interface | public | Backend | CausalSelfAttention, MultiHeadAttention |  | Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Modules.ICheckpointable` | interface | public | — | DecoderBlock |  | Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Audio.Plugins, Idrak, Text, Vision | Abstraction |
+| `Idrak.Abstraction.Modules.IPackableLinear` | interface | public | — | Linear |  | Audio.Plugins, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Modules.IPeftAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak | Abstraction |
+| `Idrak.Abstraction.Modules.IPositionLimit` | interface | public | — | CausalSelfAttention, PositionEmbedding |  | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Modules.ITensorOwner` | interface | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +75 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Operations.PluginOperations` | registry | public | — |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.OptionSpec` | abstract class | public | — | OptionSpec<T> |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
+| `Idrak.Abstraction.OptionSpec` | abstract class | public | — | OptionSpec<T> |  | Abstraction, Audio, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Plugins.IIdrakPlugin` | interface | public | — | BertPlugin.BertRegistration, CSharpCodingPlugin.CSharpCodingRegistration, CSharpLanguagePlugin.CSharpLanguageRegistration, ClassicControlPlugin.ClassicRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, +19 |  | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Plugins.IIdrakPluginPackage` | interface | public | — | AudioPluginsPackage, ReinforcementPluginsPackage, TextPluginsPackage, VisionPluginsPackage |  | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Plugins.IdrakPlugin` | abstract class | public | — | BertPlugin.BertRegistration, CSharpCodingPlugin.CSharpCodingRegistration, CSharpLanguagePlugin.CSharpLanguageRegistration, ClassicControlPlugin.ClassicRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, +19 |  | Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
@@ -276,6 +282,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Serving.IEngineModel<TCopy>` | interface | public | — | ChatEngineModel, PredictorModel<TIn, TOut>, Seq2SeqEngineModel, TextEngineModel |  | Abstraction, AspNetCore, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Serving.IModelCatalog` | interface | public | — | InferenceEngine |  | Idrak, Mcp | Abstraction |
 | `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` | interface | public | — | IdrakBuilder.EnginePredictor<TIn, TOut>, Predictor<TIn, TOut>, PredictorModel<TIn, TOut> |  | AspNetCore, Idrak | Abstraction |
+| `Idrak.Abstraction.Training.IGroupedOptimizer` | interface | public | — | GroupedOptimizer |  | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Training.IInPlaceOptimizer` | interface | public | — | Adam, AdamW, AdamW8Bit, Sgd |  | Abstraction, Audio, Idrak, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Training.ILearningRateSchedule` | interface | public | — | LearningRateSchedules.BuiltInSchedule |  | Abstraction, Audio, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Training.ILearningRateScheduler` | interface | public | — | CosineAnnealing, ExponentialDecay, LambdaSchedule, StepDecay |  | Abstraction, Audio, Idrak, Reinforcement, Text | Abstraction |
@@ -298,10 +305,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Datasets.Abstractions.IShardableBatchSource` | interface | public | Device | DataLoader |  | Idrak | Idrak |
 | `Idrak.Datasets.Abstractions.IStepShares` | interface | public | — | DataLoader |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | Idrak | Idrak |
-| `Idrak.Layers.Abstractions.IAdaptableLinear` | interface | public | Device | Linear |  | Idrak | Idrak |
-| `Idrak.Layers.Abstractions.IAttentionCacheInfo` | interface | public | Backend | CausalSelfAttention, MultiHeadAttention |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.ICachedModule` | interface | public | Tensor | CausalSelfAttention, CrossAttention, DecoderBlock, MultiHeadAttention, PipelineBoundary, PositionEmbedding, +3 |  | Idrak | Idrak |
-| `Idrak.Layers.Abstractions.ICheckpointable` | interface | public | — | DecoderBlock |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.IDecoderBlock` | interface | public | — | DecoderBlock |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.IFusedRecurrentCell` | interface | public | Tensor | GRU.GruCell, LSTM.LstmCell |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.IGraphOp` | interface | public | Tensor | GraphOps.FunctionOp, GraphOps.GuardedOp |  | Idrak | Idrak |
@@ -314,12 +318,11 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Layers.Abstractions.INetworkOp` | interface | public | — | NetworkOps.FunctionOp |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.INetworkRecipe` | interface | public | — | NetworkRecipes.GuardedRecipe, NetworkRecipes.LibraryRecipe |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.IOffloadableLayer` | interface | public | Tensor | Embedding, Linear |  | Idrak | Idrak |
-| `Idrak.Layers.Abstractions.IPackableLinear` | interface | public | — | Linear |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.IPositionAware` | interface | public | — | PositionalEncoding |  | Idrak | Idrak |
-| `Idrak.Layers.Abstractions.IPositionLimit` | interface | public | — | CausalSelfAttention, PositionEmbedding |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.IRecurrentCell` | interface | public | Tensor | GRU.GruCell, LSTM.LstmCell |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.IRoutedLayer` | interface | public | Module | MixtureOfExperts |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.IScaledHiddenBiasCell` | interface | public | — | GRU.GruCell |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.IWordEmbeddings` | interface | public | — | SequenceEncoder |  | Idrak, Text.Plugins | Idrak |
 | `Idrak.Layers.Abstractions.LayerTypes` | registry | public | Device, Module |  | adaptiveavgpool2d, adaptivemaxpool2d, attention, avgpool2d, batchnorm, conv2d, convtranspose2d, dropout, +20 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.NetworkOps` | registry | public | — |  | adaptiveavgpool2d, adaptivemaxpool2d, attention, avgpool2d, batchnorm, columnsToSequence, conv2d, convtranspose2d, +23 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.NetworkRecipes` | registry | public | — |  | cnn, gpt, mlp, rnn, transformer-classifier | — | Idrak |
@@ -419,6 +422,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Text.Retrieval.Abstractions.IPairEncoder` | interface | public | — | FunctionPairEncoder |  | Text | Text |
 | `Idrak.Text.Retrieval.Abstractions.IReranker` | interface | public | — | CrossEncoder |  | Text | Text |
 | `Idrak.Text.Retrieval.Abstractions.IRetriever` | interface | public | — | RetrievalIndex |  | Text | Text |
+| `Idrak.Text.Retrieval.Abstractions.ISearchableRetriever` | interface | public | — | RetrievalIndex |  | Text | Text |
 
 ### Idrak.Data
 
@@ -467,7 +471,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.AudioCaptures` | registry | public | — |  | alsa, winmm | — | Audio |
 | `Idrak.Audio.Abstractions.AudioCleaners` | registry | public | — |  | denoise, highpass, normalize, trim | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioCodecs` | registry | public | — |  | flac, mp3, wav | Audio | Audio |
-| `Idrak.Audio.Abstractions.AudioEncoders` | registry | public | — |  | mp3, wav | — | Audio |
+| `Idrak.Audio.Abstractions.AudioEncoders` | registry | public | — |  | mp3, wav | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioFamilies` | registry | public | — |  | — | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.AudioFeatureExtractors` | registry | public | — |  | log-mel | Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.AudioProcessors` | registry | public | — |  | agc, bandpass, compress, dc, declick, declip, deess, dehum, +22 | Audio, Audio.Plugins | Audio |
@@ -487,7 +491,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.IAudioProcessor` | interface | public | — | AgcProcessor, BandPassProcessor, CompressProcessor, DcProcessor, DeclickProcessor, DeclipProcessor, +24 |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IAudioSplitter` | interface | public | — | SecondsSplitter, SilenceSplitter |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioStage` | interface | public | — | AgcProcessor.Stage, AudioPipeline.PipelineStage, BiquadStage, BufferedStage, CompressProcessor.Stage, DeclickProcessor.Stage, +13 |  | Audio, Audio.Plugins | Audio |
-| `Idrak.Audio.Abstractions.IAudioTuningPart` | interface | public | Tensor | IdrakAudioLanguagePart |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.IAudioTuningPart` | interface | public | — | IdrakAudioLanguagePart |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ICheckpointVoiceStore` | interface | public | — | FolderVoiceStore |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ICreatableAudioFamily` | interface | public | — | IdrakAudioLanguageFamily |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ICreatableSpeechFamily` | interface | public | — | IdrakAudioFamily |  | Audio, Audio.Plugins | Audio |
@@ -512,6 +516,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.ISpeechTrainingObjective` | interface | public | Tensor | CtcObjective, Seq2SeqObjective |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ITextPhonemizer` | interface | public | — | EspeakNgPhonemizer |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ITextRomanizer` | interface | public | — | UromanArabicRomanizer |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.ITrainableAudioEncoder` | interface | public | Tensor | IdrakAudioLanguageEncoder |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ITrainableSpeechModel` | interface | public | Module | IdrakAudioCtcModel, IdrakAudioSeq2SeqModel, WhisperRecognizer |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ITrainableSpeechSynthesisFamily` | interface | public | — | VitsSpeechFamily |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ITrainableSpeechSynthesizer` | interface | public | Module, Tensor | IdrakAudioTtsModel |  | Audio, Audio.Plugins | Audio |

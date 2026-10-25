@@ -15,7 +15,7 @@ namespace Idrak.Layers;
 /// and in the batch. A family plug-in assembles one from its checkpoint's tensors; the encoder takes ownership of the
 /// layers.
 /// </summary>
-public sealed class SequenceEncoder : Module, ISequenceEncoder
+public sealed class SequenceEncoder : Module, ISequenceEncoder, IWordEmbeddings
 {
     private readonly Module[] _blocks;
     private readonly int _maxPositions;

@@ -2153,7 +2153,7 @@ public static class FineTuner
         var (vision, ownedVision) = VisionFor(model, train, options.Vision);
         using var disposeVision = ownedVision;
         options = options with { Vision = vision };
-        if (!model.Network.Descendants().OfType<Linear>().Any(l => l.Adapter is not null))
+        if (!model.Network.Descendants().OfType<IAdaptableLinear>().Any(l => l.Adapter is not null))
         {
             model.AddAdapters(options.Rank, options.Alpha, options.Targets, options.Seed, options.Dora);
         }
@@ -2333,7 +2333,7 @@ public static class FineTuner
             return !loss.NeedsTeacher || teacher is not null ? loss : throw new InvalidOperationException(FineTuningLossInput.NoTeacher);
         }
 
-        public Tensor BatchLoss(PretrainedModel model, Tensor tokens, Tensor hidden, Linear head, IReadOnlyList<TrainingSequence> sequences, BatchData data,
+        public Tensor BatchLoss(PretrainedModel model, Tensor tokens, Tensor hidden, OutputHead head, IReadOnlyList<TrainingSequence> sequences, BatchData data,
             int stepTokens, int stepSequences, int chunkRows, StepImages? images = null)
         {
             int[] targets = [.. data.Targets.Select(t => (int)t)];
@@ -2504,7 +2504,7 @@ public static class FineTuner
         if (options.Packing && (PackedSequences.Supports(model.Network) || spans))
         {
             int longest = train.Max(s => s.Tokens.Length - 1);
-            int context = model.Network.Descendants().OfType<CausalSelfAttention>().Min(a => a.MaxPositions);
+            int context = model.Network.Descendants().Where(m => m is IAttentionCacheInfo).OfType<IPositionLimit>().Min(a => a.MaxPositions);   // the attention layers' (not a position table's)
             int length = Math.Max(longest, Math.Min(options.BatchTokens, context));
             int rows = Math.Max(1, options.BatchTokens / length);
             return [.. PackedBatches(train, length, rows, random).Select(b => new Batch(b, length, true))];
@@ -2874,17 +2874,28 @@ public static class FineTuner
         }
     }
 
+    // The network's output head as the losses read it: the module (its forward pass) and its sizes (ILinearLayer), found
+    // once a pass by NetworkLoss.
+    internal readonly record struct OutputHead(Module Module, ILinearLayer Linear)
+    {
+        public Tensor Forward(Tensor hidden) => Module.Forward(hidden);
+
+        public int OutFeatures => Linear.OutFeatures;
+    }
+
     // The network up to its final normalization on tokens [rows, length], then `loss` of the hidden states [rows · length,
     // dim] with the output head (which the loss runs itself, on the rows it needs). With images, the decoder attends by the
     // family's rule and the first decoder block reads the embeddings with the images' features in (checkpointed blocks
     // recompute with the same image blocks in the backward pass).
-    private static T NetworkLoss<T>(PretrainedModel model, Tensor tokens, Func<Tensor, Linear, T> loss, bool checkpointing, StepImages? images = null)
+    private static T NetworkLoss<T>(PretrainedModel model, Tensor tokens, Func<Tensor, OutputHead, T> loss, bool checkpointing, StepImages? images = null)
     {
         var modules = model.Network.ToList();
-        if (modules[^1] is not Linear head)
+        if (modules[^1] is not ILinearLayer linear)
         {
-            throw new InvalidOperationException("The network does not end with its output head (a Linear layer).");
+            throw new InvalidOperationException("The network does not end with its output head (a linear layer, ILinearLayer).");
         }
+
+        var head = new OutputHead(modules[^1], linear);
 
         using var imageScope = images is null ? null : images.Inputs is { } inputs ? inputs.Begin() : model.Network.Begin(tokens, images.Images, images.Attention);
         var hidden = tokens;
@@ -2901,7 +2912,7 @@ public static class FineTuner
                 hidden = substituted;
             }
 
-            if (checkpointing && modules[i] is DecoderBlock && Autograd.IsEnabled)
+            if (checkpointing && modules[i] is ICheckpointable && Autograd.IsEnabled)
             {
                 hidden = modules[i].ForwardCheckpointed(hidden);                // keeps only the block's output
             }

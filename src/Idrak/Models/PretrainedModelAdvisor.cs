@@ -26,7 +26,7 @@ internal sealed class PretrainedModelAdvisor : ISettingAdvisor<PretrainedModel>
     {
         ArgumentNullException.ThrowIfNull(situation);
         ArgumentNullException.ThrowIfNull(model);
-        var projections = model.Network.Descendants().OfType<Linear>().Where(l => l.Name != "head").ToList();
+        var projections = model.Network.Descendants().OfType<IPackableLinear>().Where(l => l.Name != "head").ToList();
         long weights = projections.Sum(l => (long)l.InFeatures * l.OutFeatures);
         if (weights == 0)
         {
@@ -34,7 +34,7 @@ internal sealed class PretrainedModelAdvisor : ISettingAdvisor<PretrainedModel>
         }
 
         string device = situation.Device.ToString();
-        long held = projections.SelectMany(l => l.Parameters().Concat(l.Buffers())).Select(t => t.Storage).Distinct().Sum(s => 4L * s.Length);
+        long held = projections.OfType<Module>().SelectMany(l => l.Parameters().Concat(l.Buffers())).Select(t => t.Storage).Distinct().Sum(s => 4L * s.Length);
         string format = projections.GroupBy(l => l.PackedWeight?.Name ?? "float32").MaxBy(g => g.Count())!.Key;
         if (format == "float32" && model.CheckpointFormat == WeightFormat.BFloat16)
         {

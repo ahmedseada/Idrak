@@ -33,7 +33,7 @@ public sealed class WhisperRecognizer : ISequenceSpeechModel
 {
     private readonly CrossAttention[] _crosses;
     private readonly Module[] _body;
-    private readonly Linear _head;
+    private readonly Module _head;
     private readonly WhisperNetwork _network;
     private readonly WhisperSource? _source;
     private int[]? _prefix;
@@ -54,7 +54,7 @@ public sealed class WhisperRecognizer : ISequenceSpeechModel
         _crosses = [.. decoder.Descendants().OfType<CrossAttention>()];
         var modules = decoder.ToList();
         _body = [.. modules.Take(modules.Count - 1)];
-        _head = modules[^1] as Linear ?? throw new InvalidDataException("A Whisper decoder ends with its head.");
+        _head = modules[^1] is ILinearLayer ? modules[^1] : throw new InvalidDataException("A Whisper decoder ends with its head.");
         _network = new WhisperNetwork(encoder, decoder);
         _source = source;
         Language = language is { Length: > 0 } given ? given.Trim().TrimStart('<', '|').TrimEnd('>', '|').ToLowerInvariant() : config.Language;
@@ -622,7 +622,7 @@ public sealed class WhisperRecognizer : ISequenceSpeechModel
         get
         {
             ThrowIfDisposed();
-            if (Encoder.Descendants().Concat(Decoder.Descendants()).OfType<Linear>().FirstOrDefault(l => l.PackedWeight is not null) is { } packed)
+            if (Encoder.Descendants().Concat(Decoder.Descendants()).OfType<IPackableLinear>().FirstOrDefault(l => l.PackedWeight is not null) is { } packed)
             {
                 throw new InvalidOperationException($"This Whisper model holds its projections as the checkpoint stores them ({packed.PackedWeight!.Description}), which do not train: "
                     + "load it with SpeechModelOptions.Weights = EncoderWeights.Float32 to fine-tune it.");

@@ -559,26 +559,10 @@ public sealed record Idrak.Layers.Abstractions.GraphValues.HostValue : System.IE
   public int[] Dims { get; init; }
   public long[] Values { get; init; }
 
-public interface Idrak.Layers.Abstractions.IAdaptableLinear : Idrak.Abstraction.Modules.ILinearLayer
-  public Idrak.Abstraction.Device Device { get; }
-  public Idrak.Abstraction.Modules.ILinearAdapter? Adapter { get; set; }
-  public string? Name { get; }
-  public void MergeAdapter()
-
-public interface Idrak.Layers.Abstractions.IAttentionCacheInfo
-  public bool SupportsPacking()
-  public bool SupportsRows(Idrak.Abstraction.Devices.Backend backend)
-  public bool SupportsSpans()
-  public int HeadDim { get; }
-  public int KvHeads { get; }
-  public int? SlidingWindow { get; }
-
 public interface Idrak.Layers.Abstractions.ICachedModule
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
 
-public interface Idrak.Layers.Abstractions.ICheckpointable
-
-public interface Idrak.Layers.Abstractions.IDecoderBlock : Idrak.Layers.Abstractions.ICheckpointable
+public interface Idrak.Layers.Abstractions.IDecoderBlock : Idrak.Abstraction.Modules.ICheckpointable
   public int Width { get; }
 
 public interface Idrak.Layers.Abstractions.IFusedRecurrentCell : Idrak.Layers.Abstractions.IRecurrentCell
@@ -623,17 +607,7 @@ public interface Idrak.Layers.Abstractions.IOffloadableLayer
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> StagedBuffers()
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> StagedParameters()
 
-public interface Idrak.Layers.Abstractions.IPackableLinear : Idrak.Abstraction.Modules.ILinearLayer
-  public Idrak.Abstraction.Generation.IPackedWeight? PackedWeight { get; }
-  public string? Name { get; }
-  public void Pack(Idrak.Abstraction.PackedFormat format)
-  public void Reserve(Idrak.Abstraction.PackedFormat format)
-  public void Unpack(bool trainable)
-
 public interface Idrak.Layers.Abstractions.IPositionAware
-
-public interface Idrak.Layers.Abstractions.IPositionLimit
-  public int MaxPositions { get; }
 
 public interface Idrak.Layers.Abstractions.IRecurrentCell
   public Idrak.Abstraction.Tensor[] Step(Idrak.Abstraction.Tensor projected, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> state, Idrak.Layers.Abstractions.RecurrentWeights weights)
@@ -646,6 +620,9 @@ public interface Idrak.Layers.Abstractions.IRoutedLayer
 
 public interface Idrak.Layers.Abstractions.IScaledHiddenBiasCell : Idrak.Layers.Abstractions.IRecurrentCell
   public bool KeepsHiddenBias { get; }
+
+public interface Idrak.Layers.Abstractions.IWordEmbeddings
+  public Idrak.Layers.Embedding Words { get; }
 
 public static class Idrak.Layers.Abstractions.LayerTypes
   public static Idrak.Abstraction.Module Create(System.Text.Json.Nodes.JsonObject description, Idrak.Abstraction.Device? device = null)
@@ -807,7 +784,7 @@ public static class Idrak.Layers.Blocks
   public static Idrak.Layers.Sequential Repeat(int count, System.Func<Idrak.Abstraction.Module> factory)
   public static Idrak.Layers.Sequential Repeat(int count, System.Func<int, Idrak.Abstraction.Module> factory)
 
-public sealed class Idrak.Layers.CausalSelfAttention : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.IAttentionCacheInfo, Idrak.Layers.Abstractions.ICachedModule, Idrak.Layers.Abstractions.IPositionLimit
+public sealed class Idrak.Layers.CausalSelfAttention : Idrak.Abstraction.Module, Idrak.Abstraction.Modules.IAttentionCacheInfo, Idrak.Abstraction.Modules.IPositionLimit, Idrak.Layers.Abstractions.ICachedModule
   public CausalSelfAttention(Idrak.Layers.Linear query, Idrak.Layers.Linear key, Idrak.Layers.Linear value, Idrak.Layers.Linear output, Idrak.Layers.RMSNorm? queryNorm, Idrak.Layers.RMSNorm? keyNorm, int heads, int kvHeads, int headDim, Idrak.Abstraction.Generation.RopeSettings? rope, int maxPositions)
   public CausalSelfAttention(int dim, int heads, int kvHeads, int headDim, Idrak.Abstraction.Generation.RopeSettings? rope, int maxPositions, bool qkvBias = false, bool outputBias = false, float? qkNormEpsilon = null, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public Idrak.Abstraction.Generation.IAttentionPositionBias? PositionBias { get; init; }
@@ -970,7 +947,7 @@ public sealed class Idrak.Layers.CrossAttention : Idrak.Abstraction.Module, Idra
   public void SetMemory(Idrak.Abstraction.Tensor memory, Idrak.Abstraction.Generation.DecodingContext context)
   public void SetMemory(Idrak.Abstraction.Tensor memory, Idrak.Abstraction.Generation.DecodingContext context, System.Collections.Generic.IReadOnlyList<int>? lengths)
 
-public sealed class Idrak.Layers.DecoderBlock : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule, Idrak.Layers.Abstractions.ICheckpointable, Idrak.Layers.Abstractions.IDecoderBlock
+public sealed class Idrak.Layers.DecoderBlock : Idrak.Abstraction.Module, Idrak.Abstraction.Modules.ICheckpointable, Idrak.Layers.Abstractions.ICachedModule, Idrak.Layers.Abstractions.IDecoderBlock
   public DecoderBlock(Idrak.Abstraction.Module attentionNorm, Idrak.Layers.CausalSelfAttention attention, Idrak.Abstraction.Module crossNorm, Idrak.Layers.CrossAttention cross, Idrak.Abstraction.Module feedForwardNorm, Idrak.Abstraction.Module feedForward, Idrak.Layers.Dropout? residualDropout = null)
   public DecoderBlock(Idrak.Abstraction.Module attentionNorm, Idrak.Layers.CausalSelfAttention attention, Idrak.Abstraction.Module? feedForwardNorm, Idrak.Abstraction.Module feedForward, Idrak.Abstraction.Module? postAttentionNorm = null, Idrak.Abstraction.Module? postFeedForwardNorm = null, Idrak.Layers.Dropout? residualDropout = null)
   public Idrak.Abstraction.Module AttentionNorm { get; }
@@ -1148,7 +1125,7 @@ public sealed class Idrak.Layers.LayerNorm : Idrak.Abstraction.Module, Idrak.Lay
   public override string ToString()
   public static Idrak.Layers.LayerNorm FromWeights(Idrak.Abstraction.Tensor gamma, Idrak.Abstraction.Tensor beta, float epsilon)
 
-public sealed class Idrak.Layers.Linear : Idrak.Abstraction.Module, Idrak.Abstraction.ITiedWeights, Idrak.Abstraction.Modules.ILinearLayer, Idrak.Layers.Abstractions.IAdaptableLinear, Idrak.Layers.Abstractions.INamedWeights, Idrak.Layers.Abstractions.IOffloadableLayer, Idrak.Layers.Abstractions.IPackableLinear
+public sealed class Idrak.Layers.Linear : Idrak.Abstraction.Module, Idrak.Abstraction.ITiedWeights, Idrak.Abstraction.Modules.IAdaptableLinear, Idrak.Abstraction.Modules.ILinearLayer, Idrak.Abstraction.Modules.IPackableLinear, Idrak.Layers.Abstractions.INamedWeights, Idrak.Layers.Abstractions.IOffloadableLayer
   public Idrak.Abstraction.Generation.BFloat16Weight? BFloat16 { get; }
   public Idrak.Abstraction.Generation.IKernelPackedWeight? KernelWeight { get; }
   public Idrak.Abstraction.Generation.IPackedWeight? PackedWeight { get; }
@@ -1216,20 +1193,20 @@ public static class Idrak.Layers.ModuleExtensions
   public static System.IDisposable DisableAdapters(this Idrak.Abstraction.Module model)
   public static T Freeze<T>(this T module) where T : Idrak.Abstraction.Module
   public static T Unfreeze<T>(this T module) where T : Idrak.Abstraction.Module
-  public static int AddDora(this Idrak.Abstraction.Module model, int rank, float alpha, System.Func<Idrak.Layers.Abstractions.IAdaptableLinear, bool> targets, bool freezeBase, System.Random? random = null)
-  public static int AddLora(this Idrak.Abstraction.Module model, int rank, float alpha, System.Func<Idrak.Layers.Abstractions.IAdaptableLinear, bool> targets, bool freezeBase, System.Random? random = null)
+  public static int AddDora(this Idrak.Abstraction.Module model, int rank, float alpha, System.Func<Idrak.Abstraction.Modules.IAdaptableLinear, bool> targets, bool freezeBase, System.Random? random = null)
+  public static int AddLora(this Idrak.Abstraction.Module model, int rank, float alpha, System.Func<Idrak.Abstraction.Modules.IAdaptableLinear, bool> targets, bool freezeBase, System.Random? random = null)
   public static int DequantizeInt8(this Idrak.Abstraction.Module model, bool trainable = true)
   public static int MergeLora(this Idrak.Abstraction.Module model)
-  public static int QuantizeInt4(this Idrak.Abstraction.Module model, System.Func<Idrak.Layers.Abstractions.IPackableLinear, bool>? targets = null)
-  public static int QuantizeInt8(this Idrak.Abstraction.Module model, System.Func<Idrak.Layers.Abstractions.IPackableLinear, bool>? targets = null)
-  public static int ToBFloat16(this Idrak.Abstraction.Module model, System.Func<Idrak.Layers.Abstractions.IPackableLinear, bool>? targets = null)
+  public static int QuantizeInt4(this Idrak.Abstraction.Module model, System.Func<Idrak.Abstraction.Modules.IPackableLinear, bool>? targets = null)
+  public static int QuantizeInt8(this Idrak.Abstraction.Module model, System.Func<Idrak.Abstraction.Modules.IPackableLinear, bool>? targets = null)
+  public static int ToBFloat16(this Idrak.Abstraction.Module model, System.Func<Idrak.Abstraction.Modules.IPackableLinear, bool>? targets = null)
   public static int ToFloat32(this Idrak.Abstraction.Module model, bool trainable = true)
   public static void LoadTrainable(this Idrak.Abstraction.Module module, System.IO.Stream stream)
   public static void LoadTrainable(this Idrak.Abstraction.Module module, string path)
   public static void SaveTrainable(this Idrak.Abstraction.Module module, System.IO.Stream stream)
   public static void SaveTrainable(this Idrak.Abstraction.Module module, string path)
 
-public sealed class Idrak.Layers.MultiHeadAttention : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.IAttentionCacheInfo, Idrak.Layers.Abstractions.ICachedModule
+public sealed class Idrak.Layers.MultiHeadAttention : Idrak.Abstraction.Module, Idrak.Abstraction.Modules.IAttentionCacheInfo, Idrak.Layers.Abstractions.ICachedModule
   public Idrak.Abstraction.Generation.IAttentionPositionBias? PositionBias { get; init; }
   public Idrak.Abstraction.Tensor Forward(Idrak.Abstraction.Tensor input, Idrak.Layers.PaddedSequences? padding)
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
@@ -1373,7 +1350,7 @@ public sealed class Idrak.Layers.PipelineBoundary : Idrak.Abstraction.Module, Id
   public void Flush()
   public void ResetCounters()
 
-public sealed class Idrak.Layers.PositionEmbedding : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule, Idrak.Layers.Abstractions.INamedWeights, Idrak.Layers.Abstractions.IPositionLimit
+public sealed class Idrak.Layers.PositionEmbedding : Idrak.Abstraction.Module, Idrak.Abstraction.Modules.IPositionLimit, Idrak.Layers.Abstractions.ICachedModule, Idrak.Layers.Abstractions.INamedWeights
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
   public Idrak.Abstraction.Tensor Weight { get; }
   public PositionEmbedding(Idrak.Abstraction.Tensor weight)
@@ -1441,7 +1418,7 @@ public sealed class Idrak.Layers.Scale : Idrak.Abstraction.Module
   public float Factor { get; }
   public override string ToString()
 
-public sealed class Idrak.Layers.SequenceEncoder : Idrak.Abstraction.Module, Idrak.Abstraction.Generation.ISequenceEncoder
+public sealed class Idrak.Layers.SequenceEncoder : Idrak.Abstraction.Module, Idrak.Abstraction.Generation.ISequenceEncoder, Idrak.Layers.Abstractions.IWordEmbeddings
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Module Network { get; }
   public Idrak.Abstraction.Module? EmbeddingNorm { get; }
