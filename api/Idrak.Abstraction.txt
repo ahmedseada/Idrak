@@ -2853,6 +2853,10 @@ public static class Idrak.Abstraction.Formats.CheckpointFormats
   public static void Register(Idrak.Abstraction.Formats.ICheckpointFormat format)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public static class Idrak.Abstraction.Formats.HalfFloats
+  public static float ToSingle(ushort half)
+  public static void Widen(System.ReadOnlySpan<ushort> halves, System.Span<float> values)
+
 public interface Idrak.Abstraction.Formats.IBFloat16TensorStore : Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
   public bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
 

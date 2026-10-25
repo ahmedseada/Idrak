@@ -26,7 +26,7 @@ internal static partial class Tests
         ("gguf: gemma2: a Gemma 2 file written by llama.cpp's converter reads as its Hugging Face folder (post-norms under llama.cpp's names, GELU, soft-capping and window from the file, the query scalar llama.cpp takes): spec, tokens, chat template, logits over more positions than the window, greedy tokens", device => GgufGemma(device, "tiny-gemma2", "Gemma2ForCausalLM")),
         ("gguf: gemma3: a Gemma 3 file written by llama.cpp's converter reads as its Hugging Face folder (q/k norms, five windowed layers in six as llama.cpp assumes, the windowed layers' RoPE base from the file and the global one scaled): spec, tokens, chat template, logits over more positions than the window, greedy tokens", device => GgufGemma(device, "tiny-gemma3", "Gemma3ForCausalLM")),
         ("gguf: chat templates: a file without one gets the first registered fallback for its tokens (the library's ChatML, then Llama 3's from Idrak.Text.Plugins), an app's too; with none for its tokens it has no template, as a folder without one, and the note names GgufChatTemplates; a name nobody registered is refused as not registered", GgufChatTemplateFallbacks),
-        ("gguf: F16 widened whole vectors at a time (IGgufType.Dequantize) gives .NET's own conversion bit for bit for every half (zeros, subnormals, infinities, NaNs), at a vector boundary and in the scalar tail", GgufHalfWidening),
+        ("gguf: F16 widened whole vectors at a time (IGgufType.Dequantize, through HalfFloats) gives .NET's own conversion bit for bit for every half (zeros, subnormals, infinities) and a NaN with its payload kept as the devices' float16 kernels keep it (not quieted), at a vector boundary and in the scalar tail", GgufHalfWidening),
     ];
 
     private static void GgufHalfWidening(Device device)
@@ -47,7 +47,9 @@ internal static partial class Tests
             for (int i = 0; i < count; i++)
             {
                 ushort h = (ushort)(start + i);
-                uint expected = BitConverter.SingleToUInt32Bits((float)BitConverter.UInt16BitsToHalf(h)), actual = BitConverter.SingleToUInt32Bits(values[i]);
+                uint expected = (h & 0x7C00) == 0x7C00 && (h & 0x3FF) != 0 ? ((uint)(h & 0x8000) << 16) | 0x7F800000u | ((uint)(h & 0x3FF) << 13)
+                    : BitConverter.SingleToUInt32Bits((float)BitConverter.UInt16BitsToHalf(h));
+                uint actual = BitConverter.SingleToUInt32Bits(values[i]);
                 if (expected != actual)
                 {
                     Check(false, $"half 0x{h:X4} from {start}: 0x{actual:X8}, expected 0x{expected:X8}");

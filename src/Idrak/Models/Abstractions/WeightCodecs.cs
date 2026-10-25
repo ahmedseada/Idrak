@@ -65,13 +65,7 @@ public abstract class WeightCodec
             }
         }
 
-        public override void Decode(ReadOnlySpan<byte> bytes, Span<float> values)
-        {
-            for (int i = 0; i < values.Length; i++)
-            {
-                values[i] = (float)BinaryPrimitives.ReadHalfLittleEndian(bytes[(i * 2)..]);
-            }
-        }
+        public override void Decode(ReadOnlySpan<byte> bytes, Span<float> values) => StoredFloats.WidenFloat16(bytes, values);
     }
 
     // Rounds to nearest even; NaN stays NaN.

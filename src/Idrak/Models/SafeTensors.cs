@@ -481,12 +481,7 @@ public sealed class SafeTensorsReader : IDisposable, IBFloat16TensorStore
                 break;
             case SafeTensorType.F16:
                 Idrak.Abstraction.Devices.HostParallel.For(count, 1 << 16, (first, last) =>
-                {
-                    for (int i = first; i < last; i++)
-                    {
-                        values[offset + i] = (float)BinaryPrimitives.ReadHalfLittleEndian(bytes.AsSpan(i * 2));
-                    }
-                });
+                    StoredFloats.WidenFloat16(bytes.AsSpan(first * 2, (last - first) * 2), values.AsSpan(offset + first, last - first)));
                 break;
             default:
                 // bfloat16 is the top half of a float32.
@@ -631,8 +626,8 @@ public static class SafeTensorsWriter
 
 // Stored little-endian floats read into float32 (the checkpoint readers and the weight codecs): on a little-endian machine
 // float32 bytes are copied as they are, and bfloat16 and float16 are widened whole vectors at a time (bfloat16's bits are
-// the high half of a float32; float16 by .NET's own branch-free rebias) with a scalar tail; elsewhere value by value. The
-// same values either way.
+// the high half of a float32; float16 by HalfFloats, as the CPU device widens float16 weights) with a scalar tail;
+// elsewhere value by value. The same values either way.
 internal static class StoredFloats
 {
     public static void ReadFloat32(ReadOnlySpan<byte> bytes, Span<float> values)
@@ -670,41 +665,19 @@ internal static class StoredFloats
         }
     }
 
-    // IEEE halves widened exactly as .NET's (float)Half widens one (every bit pattern: subnormals, infinities and NaNs with
-    // their payload), a vector at a time, the rest value by value.
+    // IEEE halves stored little-endian, widened by HalfFloats (whole vectors at a time); on a big-endian machine value by
+    // value, the same values.
     public static void WidenFloat16(ReadOnlySpan<byte> bytes, Span<float> values)
     {
-        int i = 0;
-        if (BitConverter.IsLittleEndian && System.Numerics.Vector.IsHardwareAccelerated)
+        if (BitConverter.IsLittleEndian)
         {
-            var halves = MemoryMarshal.Cast<byte, ushort>(bytes[..(values.Length * 2)]);
-            var bits = MemoryMarshal.Cast<float, uint>(values);
-            for (; i <= values.Length - System.Numerics.Vector<ushort>.Count; i += System.Numerics.Vector<ushort>.Count)
-            {
-                System.Numerics.Vector.Widen(new System.Numerics.Vector<ushort>(halves[i..]), out var low, out var high);
-                Widen(low).CopyTo(bits[i..]);
-                Widen(high).CopyTo(bits[(i + System.Numerics.Vector<uint>.Count)..]);
-            }
+            HalfFloats.Widen(MemoryMarshal.Cast<byte, ushort>(bytes[..(values.Length * 2)]), values);
+            return;
         }
 
-        for (; i < values.Length; i++)
+        for (int i = 0; i < values.Length; i++)
         {
-            values[i] = (float)BinaryPrimitives.ReadHalfLittleEndian(bytes[(i * 2)..]);
-        }
-
-        // The bits of each half (in the low 16 bits of a lane) as a float32's: the exponent rebiased, a subnormal through
-        // one subtraction of the smallest normal, an infinity or NaN given the top exponent, the sign put back.
-        static System.Numerics.Vector<uint> Widen(System.Numerics.Vector<uint> half)
-        {
-            var exponent = half & new System.Numerics.Vector<uint>(0x7C00u);
-            var subnormal = System.Numerics.Vector.Equals(exponent, System.Numerics.Vector<uint>.Zero);
-            var special = System.Numerics.Vector.Equals(exponent, new System.Numerics.Vector<uint>(0x7C00u));
-            var lowerBound = subnormal & new System.Numerics.Vector<uint>(0x3880_0000u);   // the smallest normal half, as a float32
-            var offset = new System.Numerics.Vector<uint>(0x3800_0000u) | lowerBound;
-            offset = System.Numerics.Vector.ConditionalSelect(special, offset << 1, offset);
-            var value = ((half << 13) & new System.Numerics.Vector<uint>(0x0FFF_E000u)) + offset;
-            var magnitude = System.Numerics.Vector.AsVectorUInt32(System.Numerics.Vector.AsVectorSingle(value) - System.Numerics.Vector.AsVectorSingle(lowerBound));
-            return magnitude | ((half & new System.Numerics.Vector<uint>(0x8000u)) << 16);
+            values[i] = HalfFloats.ToSingle(BinaryPrimitives.ReadUInt16LittleEndian(bytes[(i * 2)..]));
         }
     }
 }
