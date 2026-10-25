@@ -427,30 +427,32 @@ internal sealed unsafe partial class HipBackend : Backend
 /// HIP devices: listed (a plain test run covers them), never the default unless IDRAK_HIP_DEFAULT=1 opts in, and then
 /// after CUDA (registered first, ranked higher) and before Vulkan, discrete GPUs before integrated ones as reported.
 /// </summary>
-internal sealed class HipProvider : DeviceProvider
+internal sealed class HipProvider : ISeparableDeviceProvider
 {
-    public override string Kind => "hip";
+    public string Name => "hip";
 
-    public override string Display => "HIP";
+    public string Summary => "GPUs through the HIP runtime (kernels compiled with hipRTC)";
 
-    public override DeviceType Type => DeviceType.Hip;
+    public string Display => "HIP";
 
-    public override int Count => HipBackend.DeviceCount;
+    public DeviceType Type => DeviceType.Hip;
 
-    public override string? UnavailableReason => HipBackend.UnavailableReason;
+    public int Count => HipBackend.DeviceCount;
 
-    public override Backend Create(int ordinal) => HipBackend.Get(ordinal);
+    public string? UnavailableReason => HipBackend.UnavailableReason;
 
-    public override Backend? CreateSeparate(int ordinal, SeparateBackendOptions options) => HipBackend.CreateSeparate(ordinal, options);
+    public Backend Create(int ordinal) => HipBackend.Get(ordinal);
 
-    public override bool IsStarted(int ordinal) => HipBackend.IsInitialized(ordinal);
+    public Backend CreateSeparate(int ordinal, SeparateBackendOptions options) => HipBackend.CreateSeparate(ordinal, options);
 
-    public override Guid? DeviceUuid(int ordinal) => (uint)ordinal < (uint)Count ? HipBackend.Limits(ordinal).Uuid : null;
+    public bool IsStarted(int ordinal) => HipBackend.IsInitialized(ordinal);
+
+    public Guid? DeviceUuid(int ordinal) => (uint)ordinal < (uint)Count ? HipBackend.Limits(ordinal).Uuid : null;
 
     // Untested on real hardware so far, and most operations still take the host fallback: by name or by opting in.
-    public override int? DefaultRank(int ordinal) => Environment.GetEnvironmentVariable("IDRAK_HIP_DEFAULT") != "1" ? null
+    public int? DefaultRank(int ordinal) => Environment.GetEnvironmentVariable("IDRAK_HIP_DEFAULT") != "1" ? null
         : HipBackend.Limits(ordinal).Integrated ? 45 : 60;
 
-    public override string? Note(int ordinal) =>
+    public string? Note(int ordinal) =>
         DefaultRank(ordinal) is null ? "not the default device (IDRAK_HIP_DEFAULT=1 to prefer it)" : null;
 }

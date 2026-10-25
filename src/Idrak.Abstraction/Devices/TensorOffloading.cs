@@ -6,13 +6,26 @@ namespace Idrak.Abstraction.Devices;
 /// <summary>
 /// Weight offloading as tensors and modules see it (see <see cref="IMemoryOffload"/>, which devices implement). The library
 /// that ships the layers (Idrak) stages their weights between device and system memory; tensors only record which layer
-/// produced them, and modules and tensors call these hooks, which that library sets when the device registry fills. Each
-/// hook is null until then (always, without Idrak), and costs a field read.
+/// produced them, and modules and tensors call the hooks (<see cref="ITensorOffloadingHooks"/>) that library registers
+/// when the device registry fills (<see cref="Register"/>). <see cref="Hooks"/> is null until then (always, without
+/// Idrak), and costs a field read.
 /// </summary>
 public static class TensorOffloading
 {
     [ThreadStatic]
     private static object? t_layer;
+
+    private static ITensorOffloadingHooks? s_hooks;
+
+    /// <summary>The registered hooks, or null when none are (nothing stages weights).</summary>
+    public static ITensorOffloadingHooks? Hooks => s_hooks;
+
+    /// <summary>Registers the hooks modules and tensors call (one set: a later registration replaces it).</summary>
+    public static void Register(ITensorOffloadingHooks hooks)
+    {
+        ArgumentNullException.ThrowIfNull(hooks);
+        Volatile.Write(ref s_hooks, hooks);
+    }
 
     /// <summary>
     /// The layer (an opaque group: a module, or modules one fused pass computes) whose forward runs on this thread with
@@ -23,19 +36,6 @@ public static class TensorOffloading
         get => t_layer;
         set => t_layer = value;
     }
-
-    /// <summary>Stages a module's offloaded weights before its forward; the result (if any) is disposed after it.</summary>
-    public static Func<Module, Tensor, IDisposable?>? EnterForward { get; set; }
-
-    /// <summary>A parameter's trainability changed on a device that offloads (frozen weights may move to system memory).</summary>
-    public static Action<Tensor, bool>? TrainableChanged { get; set; }
-
-    /// <summary>
-    /// Stages offloaded weights back during a backward pass on a device with offloaded storages, given the layer each
-    /// node of the backward order was recorded under (<see cref="CurrentLayer"/>, null for none); null when there is
-    /// nothing to stage.
-    /// </summary>
-    public static Func<Device, IReadOnlyList<object?>, IBackwardStaging?>? ForBackward { get; set; }
 
     /// <summary>Whether offloading is on for a device's offload support: asked for, or something is offloaded already.</summary>
     public static bool Active(IMemoryOffload offload) => ComputeResources.OffloadToHostMemory || offload.OffloadedCount > 0;
@@ -49,9 +49,6 @@ public static class TensorOffloading
         }
     }
 
-    /// <summary>Marks a model's frozen weights cold (set by Idrak: the weights its layers only read while they compute).</summary>
-    public static Action<Module>? MarkFrozen { get; set; }
-
     /// <summary>
     /// Before an inference pass of <paramref name="model"/> (a generation's prompt, an image encoder's images): with
     /// offloading active, the model's frozen weights are marked cold (they are, before any layer has run), the device
@@ -62,7 +59,7 @@ public static class TensorOffloading
     {
         if (device.Backend.Offload is { } offload && Active(offload))
         {
-            MarkFrozen?.Invoke(model);
+            Hooks?.MarkFrozen(model);
             offload.Rebalance();
             offload.KeepFree();
         }
@@ -78,7 +75,30 @@ public static class TensorOffloading
     }
 }
 
-/// <summary>Brings offloaded weights back group by group during a backward pass (<see cref="TensorOffloading.ForBackward"/>).</summary>
+/// <summary>
+/// What modules and tensors call to offload weights (<see cref="TensorOffloading.Register"/>): the library that ships the
+/// layers implements it.
+/// </summary>
+public interface ITensorOffloadingHooks
+{
+    /// <summary>Stages a module's offloaded weights before its forward; the result (if any) is disposed after it.</summary>
+    IDisposable? EnterForward(Module module, Tensor input);
+
+    /// <summary>A parameter's trainability changed on a device that offloads (frozen weights may move to system memory).</summary>
+    void TrainableChanged(Tensor parameter, bool trainable);
+
+    /// <summary>
+    /// Stages offloaded weights back during a backward pass on a device with offloaded storages, given the layer each
+    /// node of the backward order was recorded under (<see cref="TensorOffloading.CurrentLayer"/>, null for none); null
+    /// when there is nothing to stage.
+    /// </summary>
+    IBackwardStaging? ForBackward(Device device, IReadOnlyList<object?> layers);
+
+    /// <summary>Marks a model's frozen weights cold (the weights its layers only read while they compute).</summary>
+    void MarkFrozen(Module model);
+}
+
+/// <summary>Brings offloaded weights back group by group during a backward pass (<see cref="ITensorOffloadingHooks.ForBackward"/>).</summary>
 public interface IBackwardStaging : IDisposable
 {
     /// <summary>Before the node at <paramref name="index"/> of the backward order runs.</summary>

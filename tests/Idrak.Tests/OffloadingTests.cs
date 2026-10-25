@@ -1076,7 +1076,7 @@ internal static partial class Tests
         }
     }
 
-    // Backend.GuardMoves' gate, with threads and timeouts (a failure ends the wait instead of hanging the run).
+    // The move guard's gate (a device that offloads), with threads and timeouts (a failure ends the wait instead of hanging the run).
     private static void MoveGateOrder(Device device)
     {
         var gate = new MoveGate();

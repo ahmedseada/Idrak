@@ -7,12 +7,12 @@ using System.Runtime.InteropServices;
 
 namespace Idrak.Abstraction.Devices.Cpu;
 
-internal sealed class CpuStorage(CpuBackend backend, float[] data, int length) : Storage(backend, length)
+internal sealed class CpuStorage(CpuBackend backend, float[] data, int length) : Storage(backend, length), IHostStorage
 {
     public float[] Data = data;                                         // null while evicted (Backend.Evict)
 
     /// <inheritdoc />
-    public override Span<float> HostMemory => Data.AsSpan(0, Length);
+    public Span<float> HostMemory => Data.AsSpan(0, Length);
 }
 
 /// <summary>
@@ -20,7 +20,7 @@ internal sealed class CpuStorage(CpuBackend backend, float[] data, int length) :
 /// <see cref="Parallel"/> for large tensors. Small tensors stay on the calling thread so
 /// tiny networks are not dominated by scheduling overhead.
 /// </summary>
-internal sealed partial class CpuBackend : Backend
+internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, IRowAttentionBackend, IRecurrentKernels, IMemoryReport
 {
     public static readonly CpuBackend Instance = new();
 
@@ -55,10 +55,6 @@ internal sealed partial class CpuBackend : Backend
         FewRows = CpuTuning.FewRows,
         DecodeAttentionHeadDim = CpuTuning.DecodeAttentionHeads,
         TiledAttentionHeadDim = CpuTuning.TiledAttentionHeads,
-        MatrixUnits = false,
-        MatrixUnitAttentionHeadDim = static _ => false,
-        FusedKernels = false,
-        Profiling = false,
     };
 
     public override string Kind => "cpu";
@@ -134,11 +130,14 @@ internal sealed partial class CpuBackend : Backend
     public override void ResetPeakMemoryUsage() => _memory.ResetPeak();
 
     // System memory not in use, as the runtime reads it (the machine's or the container's limit less what is loaded).
-    public override long? AvailableMemory()
+    long? IMemoryReport.AvailableMemory()
     {
         var info = GC.GetGCMemoryInfo();
         return Math.Max(0, info.TotalAvailableMemoryBytes - info.MemoryLoadBytes);
     }
+
+    // The driver's free memory: the CPU has no driver of its own (AvailableMemory is what the runtime reads).
+    long? IMemoryReport.FreeMemory() => null;
 
     public override void ReleaseCachedMemory()
     {

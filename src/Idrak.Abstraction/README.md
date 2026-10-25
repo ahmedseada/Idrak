@@ -16,7 +16,7 @@ its README lists it.
 | Area | What is there |
 |------|---------------|
 | Root (`Idrak.Abstraction`) | `Device`, `DeviceType`, `ComputeResources`, `Tensor`, `TensorScope`, autograd, `Module`; the CPU device (SIMD, multi-threaded), which is also every other device's host fallback |
-| Device API (`Idrak.Abstraction.Devices`) | `Backend` (memory, copies and a `NameKernel` per operation; `RetryOnHost`, off by default, runs an operation whose kernel fails on the CPU instead), `Storage`, `BackendCapabilities`, `DeviceProvider` and `DeviceProviders` (where a new kind of device registers), `DeviceException` (the base of every GPU error, reported to telemetry when raised), `IMemoryOffload`, `IHostStaging`, `IBackwardStaging` |
+| Device API (`Idrak.Abstraction.Devices`) | `Backend` (memory, copies and a `NameKernel` per operation; `RetryOnHost`, off by default, runs an operation whose kernel fails on the CPU instead) and `IDeviceBackend` (what every device provides), the capability interfaces a device adds (`IGraphCaptureBackend`, `IKernelProfiler`, `IFloat8Backend`, `IRowAttentionBackend`, `ISegmentedAttentionBackend`, `IFusedPackedKernels`, `IMatrixUnitBackend`, `IRecurrentKernels`, `IOffloadingBackend`, `IPeerCopyBackend`, `IMemoryReport`, `ILongLivedAllocations`), `Storage` and `IHostStorage`, `BackendCapabilities`, `IDeviceProvider`, `ISeparableDeviceProvider` and `DeviceProviders` (where a new kind of device registers), `DeviceException` (the base of every GPU error, reported to telemetry when raised), `IMemoryOffload`, `IHostStaging` and `ISlotStaging`, `ITensorOffloadingHooks`, `IBackwardStaging` |
 | Operations (`Idrak.Abstraction.Operations`) | `Ops` (a descriptor per operation), `PluginOperations` and `PluginOperation<TKernel>` (operations a plug-in declares, with a default kernel), `Kernels.Register` (a kernel for an operation on a kind of device), `Kernels.Chain` (which kernel each operation runs on a device), `Kernels.Trace` (calls and host fallbacks) |
 | Modules (`Idrak.Abstraction.Modules`) | `ILinearAdapter` with LoRA and DoRA, `ILinearLayer` |
 | Training (`Idrak.Abstraction.Training`) | `Optimizer` with SGD, Adam and AdamW; `LearningRateScheduler` with the step, exponential, cosine and lambda schedules |
@@ -53,7 +53,7 @@ OperationKernels.Softmax mine = (backend, x, y, rows, cols, log) =>
 
     // ... my kernel
 };
-using var registration = Kernels.Register(Ops.Softmax, "vulkan", mine, requirement: b => b.Capabilities.FusedKernels);
+using var registration = Kernels.Register(Ops.Softmax, "vulkan", mine, requirement: b => b.FusedKernels);
 ```
 
 A plug-in (a packed weight format, a key/value cache layout, a graph operation, an `Autograd.Function`) declares the
@@ -70,7 +70,7 @@ static readonly PluginOperation<ScaleRows> Scale = PluginOperations.Register<Sca
     KernelSource.Composed);
 
 // A faster kernel for one kind of device (Idrak.Gpu's VulkanKernel, CudaKernel and HipKernel run SPIR-V, PTX and HIP C++ of one's own).
-Kernels.Register(Scale, "cpu", (b, rows, scales, output, n, width) => { /* loops over rows.HostMemory, ... */ });
+Kernels.Register(Scale, "cpu", (b, rows, scales, output, n, width) => { /* loops over ((IHostStorage)rows).HostMemory, ... */ });
 
 // Where the plug-in runs it (KeyValueLayout.Expand, say): the kernel for this device, cached per device.
 Scale.KernelFor(backend)(backend, rows.Storage, scales.Storage, output.Storage, rows.Size, width);

@@ -15,7 +15,7 @@ namespace Idrak.Gpu.Cuda;
 // - Cold first: allocations that found the GPU full and went to system memory are counted; at the next step boundary
 //   (Rebalance, called by Optimizer.ZeroGrad) that many bytes of cold storages (optimizer state, then frozen weights,
 //   largest first) move out instead, so the next step's activations fit on the GPU. Moving happens at step boundaries;
-//   with other threads computing on the device, a move waits until none is inside an operation (Backend.GuardMoves:
+//   with other threads computing on the device, a move waits until none is inside an operation (the move guard of a device that offloads:
 //   every operation reads its addresses and queues its work inside one), and an allocation's placement of lookup tables
 //   runs only while none is.
 // - Staging: before a layer computes, its offloaded weights get a GPU copy (Pointer on the copy, Home on the system
@@ -24,9 +24,9 @@ namespace Idrak.Gpu.Cuda;
 //   first pass staging allocates nothing.
 // - Returning: when the GPU has room again (beyond the return headroom (ComputeResources.OffloadReturnHeadroom), not counting the cache, so a
 //   step's own activations are never pushed out), offloaded storages come back, hottest first.
-internal sealed unsafe partial class CudaBackend : IMemoryOffload
+internal sealed unsafe partial class CudaBackend : IOffloadingBackend, IMemoryOffload
 {
-    public override IMemoryOffload? Offload => this;
+    IMemoryOffload IOffloadingBackend.Offload => this;
 
     /// <summary>Recorded graphs not yet destroyed: they hold raw addresses, so nothing moves while any exists.</summary>
     private int _liveGraphs;
@@ -150,7 +150,7 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
             return false;
         }
 
-        using var move = Move(wait: true);                                 // after other threads' operations (GuardMoves)
+        using var move = Move(wait: true);                                 // after other threads' operations (the move guard)
         if (!move.Began)
         {
             return false;
@@ -183,7 +183,7 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
             return false;
         }
 
-        using var move = Move(wait: true);                                 // after other threads' operations (GuardMoves)
+        using var move = Move(wait: true);                                 // after other threads' operations (the move guard)
         if (!move.Began)
         {
             return false;
@@ -213,7 +213,7 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
             }
         }
 
-        using var move = Move(wait: true);                                 // after other threads' operations (GuardMoves)
+        using var move = Move(wait: true);                                 // after other threads' operations (the move guard)
         if (!move.Began)
         {
             return 0;
@@ -318,7 +318,7 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
             return 0;                                                      // the model fits: nothing to make room for
         }
 
-        using var move = Move(wait: true);                                 // after other threads' operations (GuardMoves)
+        using var move = Move(wait: true);                                 // after other threads' operations (the move guard)
         if (!move.Began)
         {
             return 0;
@@ -380,7 +380,7 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
         }
 
         // A move's scope: the system blocks it copies from stay theirs while another thread's move could give them up.
-        using var move = Move(wait: true);                                 // after other threads' operations (GuardMoves)
+        using var move = Move(wait: true);                                 // after other threads' operations (the move guard)
         if (!move.Began)
         {
             return;
@@ -459,7 +459,7 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
             return null;
         }
 
-        using var move = Move(wait: true);                                 // after other threads' operations (GuardMoves)
+        using var move = Move(wait: true);                                 // after other threads' operations (the move guard)
         if (!move.Began)
         {
             return null;
@@ -639,7 +639,7 @@ internal sealed unsafe partial class CudaBackend : IMemoryOffload
             return false;
         }
 
-        using var move = Move(wait: true);                                 // after other threads' operations (GuardMoves)
+        using var move = Move(wait: true);                                 // after other threads' operations (the move guard)
         if (!move.Began)
         {
             return false;

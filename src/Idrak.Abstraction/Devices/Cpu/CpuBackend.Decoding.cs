@@ -279,8 +279,8 @@ internal sealed partial class CpuBackend
         }
     }
 
-    public override bool AttentionRowsBFloat16Kernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
-        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    bool IRowAttentionBackend.AttentionRowsBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         // AttentionRowsKernel's loop over a bfloat16 cache: each cached row widened into a small buffer as it is used.
         float[] qv = D(q), yv = D(y), sv = D(starts);

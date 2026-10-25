@@ -12,7 +12,7 @@ internal sealed unsafe partial class CudaBackend
 {
     public override IHostStaging? CreateHostStaging(int slots, int slotFloats) => new HostStaging(this, slots, slotFloats);
 
-    private sealed class HostStaging : IHostStaging
+    private sealed class HostStaging : ISlotStaging
     {
         private readonly CudaBackend _backend;
         private readonly IntPtr[] _buffers;
@@ -49,8 +49,6 @@ internal sealed unsafe partial class CudaBackend
         public void Download(Storage source, int offset, int slot, int floats) => Download(source, offset, slot, 0, floats);
 
         // Any place in the slot: a gradient bucket's pieces queued into one slot (plan 23, phase C6).
-        public bool PlacesCopies => true;
-
         public void Download(Storage source, int offset, int slot, int slotOffset, int floats)
         {
             if ((uint)slotOffset > (uint)SlotFloats || floats > SlotFloats - slotOffset)
@@ -58,7 +56,7 @@ internal sealed unsafe partial class CudaBackend
                 throw new ArgumentOutOfRangeException(nameof(slotOffset), slotOffset, $"{floats} floats at {slotOffset} do not fit a slot of {SlotFloats}");
             }
 
-            using var operation = _backend.EnterOperation();                   // addresses read until the copy is queued (GuardMoves)
+            using var operation = _backend.EnterOperation();                   // addresses read until the copy is queued (the move guard)
             _backend.MakeCurrent();
             using var use = _backend.UseStream();
             Check(cuMemcpyDtoHAsync((float*)_buffers[slot] + slotOffset, P(source) + (ulong)offset * sizeof(float), (nuint)floats * sizeof(float), _backend._stream),
@@ -68,7 +66,7 @@ internal sealed unsafe partial class CudaBackend
 
         public void Upload(int slot, Storage destination, int offset, int floats)
         {
-            using var operation = _backend.EnterOperation();                   // addresses read until the copy is queued (GuardMoves)
+            using var operation = _backend.EnterOperation();                   // addresses read until the copy is queued (the move guard)
             _backend.MakeCurrent();
             using var use = _backend.UseStream();
             Check(cuMemcpyHtoDAsync(P(destination) + (ulong)offset * sizeof(float), (void*)_buffers[slot], (nuint)floats * sizeof(float), _backend._stream),

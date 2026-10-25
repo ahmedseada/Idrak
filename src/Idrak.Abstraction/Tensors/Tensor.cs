@@ -72,7 +72,7 @@ public sealed partial class Tensor : IDisposable
 
             if (field != value && Storage is { } storage && storage.Backend.Offload is not null)
             {
-                TensorOffloading.TrainableChanged?.Invoke(this, value);                 // frozen weights move to system memory first
+                TensorOffloading.Hooks?.TrainableChanged(this, value);                  // frozen weights move to system memory first
             }
 
             field = value;
@@ -603,8 +603,8 @@ public sealed partial class Tensor : IDisposable
     private void BackwardNodes(List<Storage> reads, List<Storage> held)
     {
         var order = TopologicalOrder();
-        using var staging = TensorOffloading.ForBackward is { } stage && Device.Backend.Offload is { OffloadedCount: > 0 }
-            ? stage(Device, order.ConvertAll(n => n._stage))                              // the layer each node was recorded under
+        using var staging = TensorOffloading.Hooks is { } hooks && Device.Backend.Offload is { OffloadedCount: > 0 }
+            ? hooks.ForBackward(Device, order.ConvertAll(n => n._stage))                  // the layer each node was recorded under
             : null;
         // Someone listens for finished gradients (a data-parallel overlap): each parameter is told right after the last step
         // of this pass that reads it, so the last layers' are told first.

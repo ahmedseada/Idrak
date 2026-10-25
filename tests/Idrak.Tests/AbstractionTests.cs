@@ -21,7 +21,7 @@ internal static partial class Tests
     private static void LibraryDevicesFirst(Device device)
     {
         _ = device;
-        string[] kinds = [.. DeviceProviders.All.Select(p => p.Kind)];
+        string[] kinds = [.. DeviceProviders.All.Select(p => p.Name)];
         Check(kinds.Length >= 3 && kinds[..3].SequenceEqual(["cuda", "vulkan", "hip"]), $"providers: {string.Join(", ", kinds)}");
         var gpu = System.Reflection.Assembly.Load("Idrak.Gpu");
         Check(DeviceProviders.All.Take(3).All(p => p.GetType().Assembly == gpu), "the GPU providers come from Idrak.Gpu");

@@ -21,21 +21,23 @@ internal static partial class Tests
     ];
 
     // A provider whose devices report the UUIDs given.
-    private sealed class FakeUuidProvider(string kind, params Guid?[] uuids) : DeviceProvider
+    private sealed class FakeUuidProvider(string kind, params Guid?[] uuids) : IDeviceProvider
     {
-        public override string Kind => kind;
+        public string Name => kind;
 
-        public override string Display => kind.ToUpperInvariant();
+        public string Summary => "a test provider whose devices report the UUIDs given";
 
-        public override DeviceType Type => DeviceType.Cpu;
+        public string Display => kind.ToUpperInvariant();
 
-        public override int Count => uuids.Length;
+        public DeviceType Type => DeviceType.Cpu;
 
-        public override Backend Create(int ordinal) => throw new NotSupportedException();
+        public int Count => uuids.Length;
 
-        public override bool IsStarted(int ordinal) => false;
+        public Backend Create(int ordinal) => throw new NotSupportedException();
 
-        public override Guid? DeviceUuid(int ordinal) => uuids[ordinal];
+        public bool IsStarted(int ordinal) => false;
+
+        public Guid? DeviceUuid(int ordinal) => uuids[ordinal];
     }
 
     private static void VulkanSameGpuByUuid(Device device)
@@ -46,7 +48,7 @@ internal static partial class Tests
         }
 
         Guid a = Guid.NewGuid(), b = Guid.NewGuid(), c = Guid.NewGuid();
-        DeviceProvider[] others = [new FakeUuidProvider("first", a, null, b), new FakeUuidProvider("second", c, b)];
+        IDeviceProvider[] others = [new FakeUuidProvider("first", a, null, b), new FakeUuidProvider("second", c, b)];
         Check(VulkanProvider.DrivenBy(b, others) == ("FIRST", "first:2"), "the first provider reaching the GPU names it");
         Check(VulkanProvider.DrivenBy(c, others) == ("SECOND", "second:0"), "a later provider's device");
         Check(VulkanProvider.DrivenBy(Guid.NewGuid(), others) is null, "an unknown UUID: driven by nobody else");

@@ -780,8 +780,9 @@ public sealed class BFloat16Weight : PackedWeight
         var packed = Tensor.Empty([count / 2], device, track: false);   // every value is written below: not zeroed first
         try
         {
-            ushort[]? staged = device.Backend is Abstraction.Devices.Cpu.CpuBackend ? null : GC.AllocateUninitializedArray<ushort>(count);
-            var bits = staged is null ? MemoryMarshal.Cast<float, ushort>(packed.Storage.HostMemory) : staged.AsSpan();
+            var host = packed.Storage as IHostStorage;                       // in host memory: the words are written in place
+            ushort[]? staged = host is null ? GC.AllocateUninitializedArray<ushort>(count) : null;
+            var bits = host is not null ? MemoryMarshal.Cast<float, ushort>(host.HostMemory) : staged.AsSpan();
             if (!write(bits, stride))
             {
                 packed.Dispose();

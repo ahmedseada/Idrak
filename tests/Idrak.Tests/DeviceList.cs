@@ -19,13 +19,13 @@ internal static partial class Tests
         {
             if (provider.Count == 0)
             {
-                rows.Add(($"{provider.Kind}:-", provider.Display, $"none found: {provider.UnavailableReason}", "-", ""));
+                rows.Add(($"{provider.Name}:-", provider.Display, $"none found: {provider.UnavailableReason}", "-", ""));
                 continue;
             }
 
             for (int i = 0; i < provider.Count; i++)
             {
-                var device = Device.Get(provider.Kind, i);
+                var device = Device.Get(provider.Name, i);
                 string note = device == Device.Default ? "default device" : provider.Note(i) ?? "";
                 rows.Add((device.ToString(), provider.Display, Describe(device), provider.Listed(i) ? "yes" : "by name", note));
             }

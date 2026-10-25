@@ -151,7 +151,7 @@ internal static partial class Tests
 
         var provider = DeviceProviders.Find("vulkan");
         Check(provider is not null && provider.Type == DeviceType.Vulkan && provider.Display == "Vulkan", "the Vulkan provider is registered");
-        Check(DeviceProviders.All[0].Kind == "cuda" && DeviceProviders.All[1].Kind == "vulkan", "registered after CUDA");
+        Check(DeviceProviders.All[0].Name == "cuda" && DeviceProviders.All[1].Name == "vulkan", "registered after CUDA");
         if (VulkanBackend.DeviceCount == 0)
         {
             Check(VulkanBackend.UnavailableReason.Length > 0, "a reason when there is no device");
@@ -172,7 +172,7 @@ internal static partial class Tests
             Check(Device.Parse($"vulkan:{i}") == d && d.Type == DeviceType.Vulkan && d.IsGpu && d.ToString() == $"vulkan:{i}", $"vulkan:{i} by name");
             var backend = (VulkanBackend)d.Backend;
             Check(provider.IsStarted(i) && d.Name.Contains("Vulkan", StringComparison.Ordinal), $"vulkan:{i} started, named");
-            Check(!backend.Capabilities.MatrixUnits && backend.Capabilities.FusedKernels && !backend.Capabilities.Profiling, "fused kernels; no matrix units or profiling yet");
+            Check(!backend.MatrixUnits && backend.FusedKernels && ((Backend)backend) is not IKernelProfiler, "fused kernels; no matrix units or profiling yet");
             Check(backend.MaxStorageBytes >= 1 << 27, $"maxStorageBufferRange {backend.MaxStorageBytes} (at least 128 MiB)");
             Console.WriteLine($"    vulkan:{i}: {d.Name}; type {type}, uuid {uuid}, {(backend.UnifiedMemory ? "mapped" : "staging")} copies, " +
                 $"storages up to {backend.MaxStorageBytes >> 20} MiB{(provider.Listed(i) ? "" : ", not listed")}");
@@ -468,7 +468,7 @@ internal static partial class Tests
 
             // The host fallback (download, CPU kernel, upload) between dispatches.
             QueueAxpb(backend, b, b, y, N, 1f);                            // y = 2b
-            using (var host = new HostCall(backend))
+            using (var host = new HostCall(backend, nameof(Backend.Copy)))
             {
                 Idrak.Abstraction.Devices.Cpu.CpuBackend.Instance.Copy(host[y], host[a], N);  // a = y, through the host
             }

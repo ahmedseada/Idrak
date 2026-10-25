@@ -24,7 +24,7 @@ public sealed class ReferenceDevice : Backend
     }
 
     /// <inheritdoc />
-    public override string Kind => ReferenceProvider.Name;
+    public override string Kind => ReferenceProvider.Kind;
 
     /// <inheritdoc />
     public override string Name => "reference device (plain loops, host fallbacks)";
@@ -35,10 +35,6 @@ public sealed class ReferenceDevice : Backend
         FewRows = 4,
         DecodeAttentionHeadDim = 256,
         TiledAttentionHeadDim = 256,
-        MatrixUnits = false,
-        MatrixUnitAttentionHeadDim = static _ => false,
-        FusedKernels = false,
-        Profiling = false,
     };
 
     /// <summary>The operations run by this device's own loops so far.</summary>
@@ -240,29 +236,32 @@ public sealed class ReferenceDevice : Backend
 }
 
 /// <summary>Starts <see cref="ReferenceDevice"/>: one device, listed only when asked for by name.</summary>
-public sealed class ReferenceProvider : DeviceProvider
+public sealed class ReferenceProvider : IDeviceProvider
 {
     /// <summary>The device kind, "reference".</summary>
-    public const string Name = "reference";
+    public const string Kind = "reference";
 
     /// <inheritdoc />
-    public override string Kind => Name;
+    public string Name => Kind;
 
     /// <inheritdoc />
-    public override DeviceType Type => DeviceType.Other;
+    public string Summary => "a device written outside the library on the public device API alone (plain loops, host fallbacks)";
 
     /// <inheritdoc />
-    public override int Count => 1;
+    public DeviceType Type => DeviceType.Other;
 
     /// <inheritdoc />
-    public override Backend Create(int ordinal) => ReferenceDevice.Instance;
+    public int Count => 1;
 
     /// <inheritdoc />
-    public override bool IsStarted(int ordinal) => true;
+    public Backend Create(int ordinal) => ReferenceDevice.Instance;
 
     /// <inheritdoc />
-    public override bool Listed(int ordinal) => false;
+    public bool IsStarted(int ordinal) => true;
 
     /// <inheritdoc />
-    public override string? Note(int ordinal) => "a device written outside the library (tests/Idrak.PluginTests): by name only";
+    public bool Listed(int ordinal) => false;
+
+    /// <inheritdoc />
+    public string? Note(int ordinal) => "a device written outside the library (tests/Idrak.PluginTests): by name only";
 }

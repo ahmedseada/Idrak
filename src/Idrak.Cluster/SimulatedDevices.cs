@@ -120,29 +120,31 @@ public static class SimulatedDevices
     }
 
     // The "sim" kind in DeviceProviders: one device per carving, never listed or chosen by default.
-    internal sealed class Provider : DeviceProvider
+    internal sealed class Provider : IDeviceProvider
     {
-        public override string Kind => SimulatedDevices.Kind;
+        public string Name => SimulatedDevices.Kind;
 
-        public override string Display => "Simulated";
+        public string Summary => "devices carved out of a physical one, each with its own memory pool and cap (a simulated cluster)";
 
-        public override DeviceType Type => DeviceType.Other;
+        public string Display => "Simulated";
 
-        public override DeviceType TypeOf(int ordinal) => (uint)ordinal < (uint)Count ? Get(ordinal).Physical.Type : Type;
+        public DeviceType Type => DeviceType.Other;
 
-        public override int Count => SimulatedDevices.Count;
+        public DeviceType TypeOf(int ordinal) => (uint)ordinal < (uint)Count ? Get(ordinal).Physical.Type : Type;
 
-        public override string? UnavailableReason => "no device has been carved yet (SimulatedDevices.Carve, or a simulated cluster run)";
+        public int Count => SimulatedDevices.Count;
 
-        public override Backend Create(int ordinal) => Get(ordinal).Start();
+        public string? UnavailableReason => "no device has been carved yet (SimulatedDevices.Carve, or a simulated cluster run)";
 
-        public override bool IsStarted(int ordinal) => (uint)ordinal < (uint)Count && Get(ordinal).Backend is not null;
+        public Backend Create(int ordinal) => Get(ordinal).Start();
 
-        public override bool Listed(int ordinal) => false;
+        public bool IsStarted(int ordinal) => (uint)ordinal < (uint)Count && Get(ordinal).Backend is not null;
 
-        public override string? Note(int ordinal) => $"carved: {Get(ordinal).Name}";
+        public bool Listed(int ordinal) => false;
 
-        public override Guid? DeviceUuid(int ordinal)
+        public string? Note(int ordinal) => $"carved: {Get(ordinal).Name}";
+
+        public Guid? DeviceUuid(int ordinal)
         {
             var physical = Get(ordinal).Physical;
             return physical.Type == DeviceType.Cpu ? null : DeviceProviders.Find(physical.Kind)?.DeviceUuid(physical.Ordinal);

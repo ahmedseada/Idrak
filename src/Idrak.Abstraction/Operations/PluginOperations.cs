@@ -31,13 +31,13 @@ namespace Idrak.Abstraction.Operations;
 /// Scale.KernelFor(backend)(backend, rows, scales, output, n, width);
 /// </code>
 /// </example>
-public sealed class PluginOperation<TKernel> : Operation
+public sealed class PluginOperation<TKernel> : Operation<TKernel>
     where TKernel : Delegate
 {
     private readonly int _slot;
 
     internal PluginOperation(string name, int index, TKernel defaultKernel, KernelSource fallback)
-        : base(name, "", "", index, typeof(TKernel), fallback)
+        : base(name, index, fallback)
     {
         _slot = index - OperationIndex.Count;
         DefaultKernel = defaultKernel;
@@ -100,7 +100,7 @@ public static class PluginOperations
     /// <summary>
     /// Declares the operation <paramref name="name"/> with kernels of type <typeparamref name="TKernel"/> and
     /// <paramref name="defaultKernel"/> where none is registered (what it does: <paramref name="fallback"/>). Register a
-    /// kernel per kind of device with <see cref="Kernels.Register{TKernel}(PluginOperation{TKernel}, string, TKernel, Func{Backend, bool})"/>.
+    /// kernel per kind of device with <see cref="Kernels.Register{TKernel}(Operation{TKernel}, string, TKernel, Func{Backend, bool})"/>.
     /// </summary>
     /// <param name="name">A name no other operation has (the library's included); prefix it with the plug-in's ("MyFormat.Unpack").</param>
     /// <param name="defaultKernel">The kernel that runs on every device where none is registered.</param>

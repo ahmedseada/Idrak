@@ -96,7 +96,7 @@ public static class PluginKernels
     {
         IDisposable[] handles =
         [
-            Kernels.Register(Unpack, "cpu", static (_, packed, values, n) => UnpackOnHost(packed.HostMemory, values.HostMemory, n)),
+            Kernels.Register(Unpack, "cpu", static (_, packed, values, n) => UnpackOnHost(Host(packed), Host(values), n)),
             Kernels.Register(Unpack, "vulkan", static (b, packed, values, n) =>
                 UnpackShader.Dispatch(b, Groups(n), 1, 1, [packed, values], MemoryMarshal.AsBytes<int>([n]))),
             Kernels.Register(Unpack, "cuda", static (b, packed, values, n) => UnpackPtx.Launch(b, Blocks(n), 1, 1, Threads, 1, 1, [packed, values, n])),
@@ -104,7 +104,7 @@ public static class PluginKernels
                 static b => HipKernel.UnavailableReason(b) is null),
             Kernels.Register(Scale, "cpu", static (_, rows, scales, output, n, width) =>
             {
-                Span<float> r = rows.HostMemory, s = scales.HostMemory, o = output.HostMemory;
+                Span<float> r = Host(rows), s = Host(scales), o = Host(output);
                 for (int i = 0; i < n; i++)
                 {
                     o[i] = r[i] * s[i / width];
@@ -118,7 +118,7 @@ public static class PluginKernels
                 ScaleHip.Launch(b, Blocks(n), 1, 1, Threads, 1, 1, [rows, scales, output, n, width]), static b => HipKernel.UnavailableReason(b) is null),
             Kernels.Register(SoftplusOp, "cpu", static (_, x, y, n) =>
             {
-                Span<float> xs = x.HostMemory, ys = y.HostMemory;
+                Span<float> xs = Host(x), ys = Host(y);
                 for (int i = 0; i < n; i++)
                 {
                     ys[i] = MathF.Max(xs[i], 0f) + MathF.Log(1f + MathF.Exp(-MathF.Abs(xs[i])));   // stable for large |x|
@@ -126,7 +126,7 @@ public static class PluginKernels
             }),
             Kernels.Register(ScaledTanhOp, "cpu", static (_, x, y, n, scale) =>
             {
-                Span<float> xs = x.HostMemory, ys = y.HostMemory;
+                Span<float> xs = Host(x), ys = Host(y);
                 for (int i = 0; i < n; i++)
                 {
                     ys[i] = scale * MathF.Tanh(xs[i]);
@@ -170,6 +170,9 @@ public static class PluginKernels
             values[i] = BitConverter.UInt32BitsToSingle((i & 1) == 0 ? word << 16 : word & 0xFFFF0000u);
         }
     }
+
+    // A CPU storage's values, read in place (IHostStorage).
+    private static Span<float> Host(Storage storage) => ((IHostStorage)storage).HostMemory;
 
     // Workgroups for n elements: one per 64, at most 65535 (the shaders loop with a grid stride past that).
     private static uint Groups(int n) => (uint)Math.Clamp((n + Width - 1) / Width, 1, 65535);

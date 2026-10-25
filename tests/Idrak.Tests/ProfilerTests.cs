@@ -135,7 +135,7 @@ internal static partial class Tests
             $"the operations' pass counts the calls: {report["operations"]}, {report["operation kinds"]}");
         var pass = report.Runs.Single(r => r.Probe == "operations");
         Check(pass.Tables.Any(t => t.Name == "operations" && t.Rows.Any(r => r[0] == "Softmax")), "the operations by count name Softmax");
-        bool times = device.Backend.Capabilities.Profiling;
+        bool times = device.Backend is IKernelProfiler;
         Check(times ? report["kernel time"] is { Value: > 0 } && report.Probes.Contains("kernels") : report.Skipped.Contains("kernels") && report["kernel time"] is null,
             times ? "the device times its kernels" : $"kernels skipped on {device}: {string.Join(", ", report.Skipped)}");
 

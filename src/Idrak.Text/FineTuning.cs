@@ -2935,6 +2935,7 @@ public static class FineTuner
         private TuningVision? _vision;
         private Batch? _imagesOf;                                         // the batch whose features _images holds
         private IntPtr _executable, _graph;
+        private Idrak.Abstraction.Devices.IGraphCaptureBackend? _graphs;      // the device's recording, once recorded
         private List<Idrak.Abstraction.Devices.Storage> _owned = [];
 
         private TrainingGraph(PretrainedModel model, Batch batch, IReadOnlyList<TrainingSequence> train, int lossRows)
@@ -2996,6 +2997,13 @@ public static class FineTuner
                 }
             }
 
+            if (backend is not Idrak.Abstraction.Devices.IGraphCaptureBackend graphs)
+            {
+                graph.Dispose();
+                trace?.Invoke($"graph not used ({backend.Name} records no graphs); ordinary steps continue");
+                return null;
+            }
+
             model.Device.Synchronize();
             model.Network.Train();
             // Nothing may be freed while a graph records, so blocks the library keeps cached cannot make room for it: a
@@ -3004,7 +3012,7 @@ public static class FineTuner
             {
                 try
                 {
-                    backend.BeginCapture();
+                    graphs.BeginCapture();
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
@@ -3027,14 +3035,15 @@ public static class FineTuner
                         backend.Copy(loss.Storage, graph._loss.Storage, 1);
                     }
 
-                    (graph._executable, graph._graph, graph._owned) = backend.EndCapture();
+                    (graph._executable, graph._graph, graph._owned) = graphs.EndCapture();
+                    graph._graphs = graphs;
                     trace?.Invoke($"recorded one training step as a graph ({batch.Rows.Length} × {batch.Length} positions, up to {lossRows} trained"
                                   + (graph._images is { } inputs ? $", up to {inputs.ImageTokens} image tokens" : "") + $", {graph.Bytes / 1048576.0:F0} MB); later steps of that shape replay it");
                     return graph;
                 }
                 catch (ResourceLimitExceededException) when (attempt == 0 && backend.GetMemoryUsage().Cached is long cached && cached > 0)
                 {
-                    foreach (var block in backend.AbortCapture())
+                    foreach (var block in graphs.AbortCapture())
                     {
                         block.Release();
                     }
@@ -3045,7 +3054,7 @@ public static class FineTuner
                 }
                 catch (Exception ex) when (ex is not OutOfMemoryException)
                 {
-                    graph._owned = backend.AbortCapture();
+                    graph._owned = graphs.AbortCapture();
                     graph.Dispose();
                     trace?.Invoke($"graph not used ({ex.Message}); ordinary steps continue");
                     return null;
@@ -3094,7 +3103,7 @@ public static class FineTuner
                 _imagesOf = batch;
             }
 
-            _model.Device.Backend.ReplayGraph(_executable);
+            _graphs!.ReplayGraph(_executable);
             return (_loss.Item(), data.Tokens);
         }
 
@@ -3103,7 +3112,7 @@ public static class FineTuner
             if (_executable != IntPtr.Zero)
             {
                 _model.Device.Synchronize();
-                _model.Device.Backend.DestroyGraph(_executable, _graph);
+                _graphs!.DestroyGraph(_executable, _graph);
                 _executable = IntPtr.Zero;
             }
 

@@ -13,8 +13,8 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] OperationGroup =
     [
-        ("operations: every compute method of Backend is an operation (a virtual NameKernel, the dispatching Name with the same parameters, a descriptor with the matching kernel delegate); the rest is device plumbing (python3 tools/operations/generate.py)", OperationsMatchBackend),
-        ("operations: a registered kernel runs instead of the device's own on its device kind where its requirement holds, not elsewhere; removing it restores the device's kernel; a kernel of the wrong delegate is refused", RegisteredKernelRuns),
+        ("operations: every compute method of Backend is an operation (a NameKernel, virtual or forwarding to its capability interface, the dispatching Name with the same parameters, a descriptor with the matching kernel delegate); the rest is device plumbing (python3 tools/operations/generate.py)", OperationsMatchBackend),
+        ("operations: a registered kernel runs instead of the device's own on its device kind where its requirement holds, not elsewhere; removing it restores the device's kernel; only a kernel of the operation's delegate type compiles", RegisteredKernelRuns),
         ("operations: Kernels.Chain names the kernel each operation runs (registered, the device's own, composed, host fallback or none): the CPU runs its own, a device with memory and copies only falls back", ChainNamesKernels),
         ("operations: a trace counts the calls of each operation and the host fallbacks by operation, read from the dispatcher; it ends when disposed", TraceCountsCalls),
         ("operations: a plug-in operation is declared once by name with a default kernel; it runs a kernel registered for the device's kind where its requirement holds, else its default (a host default counted as a host fallback off the CPU); Kernels.Chain and a trace show it after the library's operations", PluginOperationsDispatch),
@@ -128,17 +128,7 @@ internal static partial class Tests
                     Check(ReferenceEquals(host.KernelFor(minimal), plusOne), "a requirement that does not hold");
                 }
 
-                bool refused = false;
-                try
-                {
-                    Kernels.Register((Operation)host, "minimal", (OperationKernels.Unary)((_, _, _, _, _) => { })).Dispose();
-                }
-                catch (ArgumentException)
-                {
-                    refused = true;
-                }
-
-                Check(refused, "a kernel of another delegate type is refused");
+                Check(host is Operation<OperationKernels.Fill> && KernelsRegisterTyped(), "a kernel of another delegate type does not compile: Register takes the operation's own");
             }
 
             Check(ReferenceEquals(host.KernelFor(minimal), host.DefaultKernel) && Kernels.Chain(minimal)[host.Index].Source == KernelSource.Host, "removed");
@@ -149,14 +139,13 @@ internal static partial class Tests
         }
     }
 
-    // Backend's public virtual members that are not operations: memory, copies, graph capture, profiling and the
-    // questions a caller asks before choosing a path (plan 9: Backend keeps these).
+    // Backend's public virtual members that are not operations: memory, copies and the questions a caller asks before
+    // choosing a path (plan 9: Backend keeps these). Graph capture, profiling, FP8, peer copies and the memory report are
+    // capability interfaces (plan 33), not virtual members.
     private static readonly string[] DevicePlumbing =
     [
-        "AbortCapture", "BeginCapture", "EndCapture", "DestroyGraph", "ReplayGraph", "CreateHostStaging", "StartProfile", "StopProfile",
-        "TensorCoresUnavailable", "ReuseQuantizedOperands", "Float8PaddedK", "SupportsSegmentedAttention", "SupportsAttentionRows", "PrefersPackedMatMul", "PrefersComposedAttention", "Copy", "Copy2D",
-        "AvailableMemory", "FreeMemory", "ResetPeakMemoryUsage", "LongLivedAllocations", "LiveStorages",
-        "CopyTo", "CopiesDirectlyTo", "UploadRange",
+        "CreateHostStaging", "TensorCoresUnavailable", "ReuseQuantizedOperands", "PrefersComposedAttention", "Copy", "Copy2D",
+        "ResetPeakMemoryUsage", "LiveStorages", "UploadRange",
     ];
 
     private static void OperationsMatchBackend(Device device)
@@ -164,7 +153,7 @@ internal static partial class Tests
         _ = device;
         const BindingFlags Declared = BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly;
         var methods = typeof(Backend).GetMethods(Declared).Where(m => !m.IsSpecialName).ToList();
-        var kernels = methods.Where(m => m.IsVirtual && !m.IsAbstract && m.Name.EndsWith("Kernel", StringComparison.Ordinal)).ToList();
+        var kernels = methods.Where(m => !m.IsAbstract && m.Name.EndsWith("Kernel", StringComparison.Ordinal)).ToList();
         var other = methods.Where(m => m.IsVirtual && !m.IsAbstract && !kernels.Contains(m) && !DevicePlumbing.Contains(m.Name)).Select(m => m.Name).Distinct().ToList();
         Check(other.Count == 0, $"public virtual methods of Backend that are neither operations (NameKernel) nor device plumbing: {string.Join(", ", other)}");
         Check(kernels.Count == OperationIndex.Count && Ops.All.Count == OperationIndex.Count,
@@ -188,6 +177,12 @@ internal static partial class Tests
                 $"the delegate of {operation.Name} does not match {kernel.Name}");
         }
     }
+
+    // Whether every Kernels.Register takes a typed operation and a kernel of its type (no untyped Delegate overload).
+    private static bool KernelsRegisterTyped() =>
+        typeof(Kernels).GetMethods(BindingFlags.Public | BindingFlags.Static).Where(m => m.Name == nameof(Kernels.Register)).All(m =>
+            m.IsGenericMethodDefinition && m.GetParameters() is [var operation, _, var kernel, _]
+            && operation.ParameterType.GetGenericTypeDefinition() == typeof(Operation<>) && kernel.ParameterType == m.GetGenericArguments()[0]);
 
     private static void RegisteredKernelRuns(Device device)
     {
@@ -230,17 +225,8 @@ internal static partial class Tests
             backend.Fill(y, 4, 1f);
             Check(calls == 2 && Values().All(v => v == 1f), $"after removal: {calls} calls, {string.Join(", ", Values())}");
 
-            bool refused = false;
-            try
-            {
-                Kernels.Register(Ops.Fill, backend.Kind, (OperationKernels.Unary)((_, _, _, _, _) => { })).Dispose();
-            }
-            catch (ArgumentException)
-            {
-                refused = true;
-            }
-
-            Check(refused, "a Unary kernel registered for Fill");
+            Check(Ops.Fill is Operation<OperationKernels.Fill> && Ops.All.All(o => o.GetType() == typeof(Operation<>).MakeGenericType(o.KernelType)) && KernelsRegisterTyped(),
+                "every operation is typed by its kernel, and Register takes only kernels of the operation's type (a Unary kernel for Fill does not compile)");
         }
         finally
         {

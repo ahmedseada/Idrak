@@ -366,8 +366,8 @@ public sealed class CausalSelfAttention : Module, ICachedModule
             return Merge(attendedImages, n, t);
         }
 
-        if (packing is null && !composed && Rope is null && QueryNorm is null && KeyNorm is null && FusedTraining.Enabled && input.Backend.Capabilities.MatrixUnitAttentionHeadDim(HeadDim)
-            && input.Backend.Capabilities.MatrixUnits && MixedPrecision.UsesTensorCores
+        if (packing is null && !composed && Rope is null && QueryNorm is null && KeyNorm is null && FusedTraining.Enabled && input.Backend.MatrixUnitAttention(HeadDim)
+            && MixedPrecision.UsesTensorCores
             && Linear.PlainFloat(Query) && Linear.PlainFloat(Key) && Linear.PlainFloat(Value)
             && Linear.ProjectPacked(input, _projections) is { } packed)
         {
@@ -838,7 +838,7 @@ public sealed class FeedForward : Module
     {
         Tensor hidden;
         if (Gate is null && Activation == FeedForwardActivation.Gelu && FusedTraining.Enabled && Linear.PlainFloat(Up) && Linear.PlainFloat(Down)
-            && input.Backend.Capabilities.MatrixUnits && MixedPrecision.UsesTensorCores
+            && input.Backend.MatrixUnits && MixedPrecision.UsesTensorCores
             && Linear.FeedForwardGelu(input, Up, Down) is { } geluBlock)
         {
             return geluBlock;                                       // GELU inside the products (tensor cores)

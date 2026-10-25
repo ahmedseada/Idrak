@@ -389,7 +389,7 @@ internal static partial class Tests
     // AxpyAt through the base class's host fallback (download, CPU, upload), for comparison with a dispatch.
     private static void FallbackAxpyAt(VulkanBackend backend, Storage storage)
     {
-        using var call = new HostCall(backend);
+        using var call = new HostCall(backend, nameof(Backend.AxpyAt));
         Idrak.Abstraction.Devices.Cpu.CpuBackend.Instance.AxpyAt(call[storage], call[storage], 1, 0.5f);
     }
 }

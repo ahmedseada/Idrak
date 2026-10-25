@@ -12,9 +12,9 @@ namespace Idrak.Gpu.Cuda;
 // 32-bit indices return false, and callers run the cell kernels after a product. The sequence kernels run every step of
 // the step kernels in one cooperative launch, a grid barrier between steps; while a graph is captured they return false
 // and callers take the step kernels.
-internal sealed unsafe partial class CudaBackend
+internal sealed unsafe partial class CudaBackend : IRecurrentKernels
 {
-    public override bool LstmCellKernel(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells,
+    bool IRecurrentKernels.LstmCell(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells,
         int step, int steps, int batch, int hiddenSize)
     {
         if (TooLarge(batch, steps, 4 * hiddenSize))
@@ -28,7 +28,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool LstmCellBackwardKernel(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep,
+    bool IRecurrentKernels.LstmCellBackward(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep,
         int step, int previous, int steps, int batch, int hiddenSize)
     {
         if (TooLarge(batch, steps, 4 * hiddenSize))
@@ -42,7 +42,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool GruCellKernel(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates,
+    bool IRecurrentKernels.GruCell(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates,
         int step, int steps, int batch, int hiddenSize)
     {
         if (TooLarge(batch, steps, 4 * hiddenSize))
@@ -56,7 +56,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool GruCellBackwardKernel(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep,
+    bool IRecurrentKernels.GruCellBackward(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep,
         int step, int previous, int steps, int batch, int hiddenSize)
     {
         if (TooLarge(batch, steps, 4 * hiddenSize))
@@ -70,7 +70,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool LstmStepKernel(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step,
+    bool IRecurrentKernels.LstmStep(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step,
         int previous, int steps, int batch, int hiddenSize)
     {
         if (!StepRuns(batch, steps, hiddenSize, 4))
@@ -84,7 +84,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool LstmStepBackwardKernel(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step,
+    bool IRecurrentKernels.LstmStepBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step,
         int next, int previous, int steps, int batch, int hiddenSize)
     {
         if (!StepRuns(batch, steps, hiddenSize, 4))
@@ -98,7 +98,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool GruStepKernel(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous,
+    bool IRecurrentKernels.GruStep(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous,
         int steps, int batch, int hiddenSize)
     {
         if (!StepRuns(batch, steps, hiddenSize, 4))
@@ -112,7 +112,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool GruStepBackwardKernel(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates,
+    bool IRecurrentKernels.GruStepBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates,
         Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
     {
         if (!StepRuns(batch, steps, hiddenSize, 4))
@@ -126,7 +126,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool LstmSequenceKernel(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps,
+    bool IRecurrentKernels.LstmSequence(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps,
         int batch, int hiddenSize, bool reverse)
     {
         if (!SequenceRuns("lstm_seq_f32", batch, steps, hiddenSize))
@@ -140,7 +140,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool LstmSequenceBackwardKernel(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps,
+    bool IRecurrentKernels.LstmSequenceBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps,
         int batch, int hiddenSize, bool reverse)
     {
         if (!SequenceRuns("lstm_seq_bwd_f32", batch, steps, hiddenSize))
@@ -154,7 +154,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool GruSequenceKernel(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch,
+    bool IRecurrentKernels.GruSequence(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch,
         int hiddenSize, bool reverse)
     {
         if (!SequenceRuns("gru_seq_f32", batch, steps, hiddenSize))
@@ -168,7 +168,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool GruSequenceBackwardKernel(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates,
+    bool IRecurrentKernels.GruSequenceBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates,
         Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse)
     {
         if (!SequenceRuns("gru_seq_bwd_f32", batch, steps, hiddenSize))

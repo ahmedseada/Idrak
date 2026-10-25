@@ -1,9 +1,11 @@
 """Generates the operation table (plan 9) from the device contract.
 
-Every operation of the device contract is a virtual method `NameKernel` on `Backend`
-(src/Idrak.Abstraction/Devices/Backend.cs): the device's own kernel, whose default body is the host fallback, a
-composition of other operations, or none (it returns false). From those declarations and their documentation this
-script writes
+Every operation of the device contract is a method `NameKernel` on `Backend`
+(src/Idrak.Abstraction/Devices/Backend.cs): the device's own kernel. Most are virtual, with a default body that is the
+host fallback, a composition of other operations, or none (it returns false). The operations of a capability interface
+(plan 33: IFloat8Backend, IRecurrentKernels, ...) are not virtual: their body starts by forwarding to the interface,
+`=> _field is { } own && own.Name(...);` (no kernel otherwise) or `if (_field is { } own) { return own.Name(...); }`
+followed by the default. From those declarations and their documentation this script writes
 
   src/Idrak.Abstraction/Operations/Operations.g.cs    a descriptor per operation (Ops), its index and its kernel
                                                       delegate (OperationKernels), with what its default body does
@@ -83,23 +85,6 @@ def argument(parameter):
     return f"{modifier} {name}" if modifier else name
 
 
-PRIMITIVES = {"int": "Int32", "float": "Single", "uint": "UInt32", "long": "Int64", "bool": "Boolean", "double": "Double",
-              "byte": "Byte", "nint": "IntPtr"}
-
-
-def clr_name(parameter):
-    """The .NET Type.Name of a parameter's type (Int32, Storage, ConvGeometry&, ReadOnlySpan`1), to find its method."""
-    words = strip_default(parameter).split()
-    byref = any(w in ("ref", "out", "in") for w in words[:-1])
-    declared = " ".join(w for w in words[:-1] if w not in ("ref", "out", "in", "params", "scoped")).rstrip("?")
-    if "<" in declared:
-        arguments = split_top(declared[declared.index("<") + 1:-1])
-        name = f"{declared[:declared.index('<')]}`{len(arguments)}"
-    else:
-        name = PRIMITIVES.get(declared, declared)
-    return name + ("&" if byref else "")
-
-
 def parts(parameter):
     """(modifier, type, name) of a parameter: modifier is ref, out, in or None."""
     words = strip_default(parameter).split()
@@ -169,18 +154,35 @@ def body(source, end):
     return rest[:i]
 
 
-def fallback(source, end):
-    """What the default body after the parameter list at `end` does: KernelSource.None, Host or Composed."""
-    text = body(source, end)
+# The forward of a capability interface's operation: `=> _field is { } own && own.Name(...);` (nothing else: no kernel
+# without the interface), or a block starting with `if (_field is { } own) { return own.Name(...); }` (or a void call and
+# `return;`) followed by the default.
+FORWARD_NONE = re.compile(r"=>\s*(_\w+) is \{ \} own && own\.\w+\(.*\);\Z", re.S)
+FORWARD_BLOCK = re.compile(r"\{\s*if \((_\w+) is \{ \} own\)\s*\{\s*(?:return )?own\.\w+\([^;]*\);\s*(?:return;\s*)?\}\s*", re.S)
+
+
+def capability(text):
+    """(field, default body) of a capability forward, or (None, the body) for an operation of the device itself."""
+    match = FORWARD_NONE.match(text)
+    if match:
+        return match.group(1), "=> false;"
+    match = FORWARD_BLOCK.match(text)
+    if match:
+        return match.group(1), "{\n        " + text[match.end():]
+    return None, text
+
+
+def fallback(text):
+    """What a default body does: KernelSource.None, Host or Composed."""
     if text.startswith("=>"):
         return "None" if re.fullmatch(r"=>\s*(false|0)\s*;", text) else "Composed"
     return "Host" if "new HostCall(" in text else "Composed"
 
 
 def operations(source):
-    """(name, return type, parameter list, doc lines, fallback, body) of every `public virtual ... NameKernel(...)` in order."""
+    """(name, return type, parameter list, doc lines, fallback, default body, capability field) of every `public [virtual] ... NameKernel(...)` in order."""
     found = []
-    for match in re.finditer(r"^    public virtual (.+?) (\w+)Kernel\(", source, re.M):
+    for match in re.finditer(r"^    public (virtual )?(.+?) (\w+)Kernel\(", source, re.M):
         start = match.end()
         depth, i = 1, start
         while depth:
@@ -188,9 +190,13 @@ def operations(source):
             i += 1
         parameters = " ".join(source[start:i - 1].split())
         docs = documentation(source, match.start())
+        name = match.group(3)
         if not any(line.startswith("<summary>") for line in docs):
-            sys.exit(f"{match.group(2)}Kernel in {BACKEND} has no <summary>: the generated descriptor needs one")
-        found.append((match.group(2), match.group(1), parameters, docs, fallback(source, i), body(source, i)))
+            sys.exit(f"{name}Kernel in {BACKEND} has no <summary>: the generated descriptor needs one")
+        field, default = capability(body(source, i))
+        if (field is None) != (match.group(1) is not None):
+            sys.exit(f"{name}Kernel in {BACKEND}: a device's own operation is virtual, a capability's forwards to its interface")
+        found.append((name, match.group(2), parameters, docs, fallback(default), default, field))
     return found
 
 
@@ -224,12 +230,14 @@ def generate():
     members |= {name for name, *_ in ops}
 
     # Overloads share the method name; their descriptors and delegates are numbered (MaxPoolBackward, MaxPoolBackward2).
-    seen, named, bodies = {}, [], {}
-    for name, returns, parameters, docs, default, text in ops:
+    seen, named, bodies, fields = {}, [], {}, {}
+    for name, returns, parameters, docs, default, text, field in ops:
         seen[name] = seen.get(name, 0) + 1
         op = name if seen[name] == 1 else f"{name}{seen[name]}"
         named.append((name, op, returns, parameters, docs, default))
         bodies[op] = text
+        fields[op] = field
+    overloaded = {name for name, count in seen.items() if count > 1}
 
     o = [HEADER, "using Idrak.Abstraction.Devices;", "", "namespace Idrak.Abstraction.Operations;", ""]
     o.append("/// <summary>The index of each operation in a device's kernel slots (see <see cref=\"Ops\"/>).</summary>")
@@ -244,7 +252,7 @@ def generate():
     o.append("")
     o.append("/// <summary>")
     o.append("/// The kernel delegate of each operation (<see cref=\"Operation.KernelType\"/>): the device's backend, then the operation's")
-    o.append("/// arguments. A kernel registered with <see cref=\"Kernels.Register\"/> has its operation's type.")
+    o.append("/// arguments. A kernel registered with <see cref=\"Kernels.Register\"/> has its operation's type, checked by the compiler.")
     o.append("/// </summary>")
     o.append("public static class OperationKernels")
     o.append("{")
@@ -269,9 +277,7 @@ def generate():
         o.append("    /// <summary>")
         o.extend(f"    /// {line}".rstrip() for line in as_code(outside_backend(summary(docs), members)))
         o.append("    /// </summary>")
-        signature = ",".join(clr_name(p) for p in split_top(_parameters))
-        o.append(f"    public static readonly Operation {op} =")
-        o.append(f"        new(\"{op}\", \"{method}Kernel\", \"{signature}\", OperationIndex.{op}, typeof(OperationKernels.{op}), KernelSource.{default});")
+        o.append(f"    public static readonly Operation<OperationKernels.{op}> {op} = new(\"{op}\", OperationIndex.{op}, KernelSource.{default});")
         o.append("")
     o.append("    /// <summary>Every operation, by <see cref=\"Operation.Index\"/>.</summary>")
     o.append("    public static IReadOnlyList<Operation> All { get; } =")
@@ -304,7 +310,7 @@ def generate():
     d.append("// itself and pass others to the device's kernel or elsewhere), so the dispatcher can't tell which host computation")
     d.append("// matches it or whether its error came from the device at all; its errors reach the caller. An operation the device")
     d.append("// has no kernel of its own for already runs its host fallback: it is not retried (it would only run twice).")
-    d.append("// On a device that guards its moves (Backend.GuardMoves) every call takes the second path, inside an operation scope.")
+    d.append("// On a device that guards its moves (an IOffloadingBackend) every call takes the second path, inside an operation scope.")
     d.append("public abstract partial class Backend")
     d.append("{")
     for i, (method, op, returns, parameters, docs, default) in enumerate(named):
@@ -342,7 +348,7 @@ def generate():
         d.append("    [MethodImpl(MethodImplOptions.NoInlining)]")
         d.append(f"    private {returns} {op}Registered({plain})")
         d.append("    {")
-        # On a device that guards its moves (GuardMoves), the call is an operation: no move runs between reading the
+        # On a device that guards its moves (an IOffloadingBackend), the call is an operation: no move runs between reading the
         # storages' addresses and queuing the work that uses them.
         d.append("        using var operation = EnterOperation();")
         if default == "Host":
@@ -390,13 +396,45 @@ def generate():
             d.append(f"        return Kernel(OperationIndex.{op}) is OperationKernels.{op} kernel ? {call} : {own};")
         d.append("    }")
         if default == "Host":
-            # The default body of NameKernel, not virtual: the host fallback whatever the device overrides, counted as
-            # a host call of the operation.
-            text = bodies[op].replace("new HostCall(this)", f"new HostCall(this, \"{method}\")")
+            # The default body of NameKernel, not virtual: the host fallback whatever the device overrides (or whichever
+            # capability it implements), counted as a host call of the operation.
+            text = bodies[op]
             d.append("")
-            d.append(f"    // The host fallback of {op} (the default body of {method}Kernel), for RetryOnHost.")
-            d.append(f"    private {returns} {op}OnHost({plain})")
+            if fields[op] is None:
+                d.append(f"    // The host fallback of {op} (the default body of {method}Kernel), for RetryOnHost.")
+                d.append(f"    private {returns} {op}OnHost({plain})")
+            else:
+                # A capability's operation: the device's own kernel (its interface) runs it on the host for what it has
+                # no pass for.
+                d.append(f"    /// <summary>")
+                d.append(f"    /// The host fallback of <see cref=\"{method}\"/> (what runs on a device without its capability interface), for")
+                d.append(f"    /// <see cref=\"RetryOnHost\"/> and for a device's own kernel to run the cases it has no pass for.")
+                d.append(f"    /// </summary>")
+                d.append(f"    protected {returns} {op}OnHost({plain})")
             d.extend(f"    {line}" if j == 0 else line.rstrip() for j, line in enumerate(text.split("\n")))
+
+    # Which operations a device has a kernel of its own for: its NameKernel overrides Backend's (a delegate bound to the
+    # device's method says which type declares it: no method is looked up by name), or it implements the operation's
+    # capability interface. An overloaded method needs a delegate type to pick its overload.
+    d.append("")
+    for method, op, returns, parameters, _docs, _default in named:
+        if method in overloaded and fields[op] is None:
+            plain = ", ".join(strip_default(p) for p in split_top(parameters))
+            d.append(f"    private delegate {returns} {op}Own({plain});")
+            d.append("")
+    d.append("    // Which operations `b` has a kernel of its own for, by operation index (Kernels.OwnKernels keeps it per device type).")
+    d.append("    internal static bool[] OwnKernelsOf(Backend b)")
+    d.append("    {")
+    d.append("        var own = new bool[OperationIndex.Count];")
+    for method, op, *_rest in named:
+        if fields[op] is not None:
+            d.append(f"        own[OperationIndex.{op}] = b.{fields[op]} is not null;")
+        elif method in overloaded:
+            d.append(f"        own[OperationIndex.{op}] = Overrides(({op}Own)b.{method}Kernel);")
+        else:
+            d.append(f"        own[OperationIndex.{op}] = Overrides(b.{method}Kernel);")
+    d.append("        return own;")
+    d.append("    }")
     d.append("}")
 
     c = [HEADER, "using Idrak.Abstraction.Devices;", "using Idrak.Abstraction.Operations;", "",

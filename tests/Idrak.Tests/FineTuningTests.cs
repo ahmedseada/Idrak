@@ -1379,7 +1379,7 @@ internal static partial class Tests
             }
         }
 
-        bool fp8Available = device.Backend.Float8PaddedK(In) > 0;
+        bool fp8Available = device.Backend is IFloat8Backend float8 && float8.PaddedK(In) > 0;
         foreach (string format in new[] { "float32", "bfloat16", "int4", "bfloat16 + fp8", "float32 + fp8" })
         {
             bool fp8 = format.EndsWith("fp8", StringComparison.Ordinal);

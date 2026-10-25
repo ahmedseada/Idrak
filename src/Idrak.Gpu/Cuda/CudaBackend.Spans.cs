@@ -512,7 +512,7 @@ internal sealed unsafe partial class CudaBackend
     public override bool PrefersComposedAttention(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage? mask, int heads, int rows,
         int keyRows, int dim, float scale, bool training = false)
     {
-        using var operation = EnterOperation();                            // addresses read until the work is queued (GuardMoves)
+        using var operation = EnterOperation();                            // addresses read until the work is queued (the move guard)
         // Candidates: 0 = AttentionSpans (the default, also while nothing can be measured), 1 = composed. Keyed by the
         // precision too (each path's kernels change with it) and by whether the gradient is timed with the forward pass.
         var key = new TuneKey(TuneOp.AttentionPath, (int)MixedPrecision.Current, heads, TuneSizes.Class(rows), TuneSizes.Class(keyRows), dim,
@@ -637,13 +637,13 @@ internal sealed unsafe partial class CudaBackend
         return null;
     }
 
-    public override long? FreeMemory()
+    long? IMemoryReport.FreeMemory()
     {
         MakeCurrent();
         return cuMemGetInfo(out nuint free, out _) == 0 ? (long)free : null;
     }
 
-    public override long? AvailableMemory()
+    long? IMemoryReport.AvailableMemory()
     {
         MakeCurrent();
         if (cuMemGetInfo(out nuint free, out _) != 0)

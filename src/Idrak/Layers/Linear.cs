@@ -190,8 +190,9 @@ public sealed partial class Linear : Module, ILinearLayer
         using var offload = Offloading.EnterMany(layers, input);       // offloaded weights of all the layers staged together
         int k = input.Shape[^1], rows = input.Size / Math.Max(1, k);
         var capabilities = input.Backend.Capabilities;
+        bool fusedKernels = input.Backend.FusedKernels;
         // The checks are plain loops: no closure or delegate is allocated per call (this runs per block and decoding step).
-        bool fused = !Autograd.IsEnabled && layers.Length is > 1 and <= 3 && rows <= capabilities.FewRows && capabilities.FusedKernels
+        bool fused = !Autograd.IsEnabled && layers.Length is > 1 and <= 3 && rows <= capabilities.FewRows && fusedKernels
             && AllPlainFloat(layers, k);
         if (fused)
         {
@@ -225,7 +226,7 @@ public sealed partial class Linear : Module, ILinearLayer
 
         // Training over frozen packed layers (LoRA / QLoRA): the base products still run as one pass, recorded, and each
         // layer's adapter adds its low-rank term into its output.
-        bool training = format is not null && Autograd.IsEnabled && layers.Length is > 1 and <= 3 && capabilities.FusedKernels
+        bool training = format is not null && Autograd.IsEnabled && layers.Length is > 1 and <= 3 && fusedKernels
             && AllWithoutBias(layers) && AllPacked(layers, k, format, withoutAdapters: false);
         if (training && Linear.MatMulPackedManyRecorded(input, format!.Value, layers) is { } products)
         {
@@ -374,7 +375,7 @@ public sealed partial class Linear : Module, ILinearLayer
     private Tensor TiedProduct(Tensor input, Tensor table)
     {
         int rows = input.Size / Math.Max(1, InFeatures);
-        if (table.RequiresGrad || rows < 64 || !table.Backend.Capabilities.MatrixUnits || !MixedPrecision.UsesTensorCores)
+        if (table.RequiresGrad || rows < 64 || !table.Backend.MatrixUnits || !MixedPrecision.UsesTensorCores)
         {
             _tiedTransposed?.Dispose();
             _tiedTransposed = null;

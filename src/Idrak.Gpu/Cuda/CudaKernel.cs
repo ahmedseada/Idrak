@@ -3,6 +3,7 @@
 
 using System.Text;
 using Idrak.Abstraction.Operations;
+using Idrak.Gpu.Abstractions;
 
 namespace Idrak.Gpu.Cuda;
 
@@ -16,8 +17,9 @@ namespace Idrak.Gpu.Cuda;
 /// the device's stream, in order with its other work, and into a CUDA graph while one records. The library's own kernels
 /// are generated in C#; a plug-in ships the PTX of its own (from <c>nvcc -ptx</c>, say: target the oldest
 /// architecture it supports, the driver compiles it for newer ones) and launches it from a kernel it registers for the
-/// "cuda" kind (<see cref="Kernels.Register(Operation, string, Delegate, Func{Backend, bool})"/>). Driver errors (a PTX
-/// the JIT compiler refuses, a failed launch) raise <see cref="CudaException"/>.
+/// "cuda" kind (<see cref="Kernels.Register{TKernel}(Operation{TKernel}, string, TKernel, Func{Backend, bool})"/>). It
+/// launches on any backend that launches CUDA kernels (<see cref="IKernelLauncher{TKernel}"/>). Driver errors (a PTX the
+/// JIT compiler refuses, a failed launch) raise <see cref="CudaException"/>.
 /// </summary>
 /// <example>
 /// <code>
@@ -27,7 +29,7 @@ namespace Idrak.Gpu.Cuda;
 ///     Scale.Launch(b, (uint)Math.Clamp((n + 255) / 256, 1, 65535), 1, 1, 256, 1, 1, [rows, scales, output, n, width]));
 /// </code>
 /// </example>
-public sealed class CudaKernel
+public sealed class CudaKernel : IDeviceKernel
 {
     /// <summary>A kernel from PTX text and the name of its <c>.entry</c>; <paramref name="name"/> is for messages and the profiler (the entry's when null).</summary>
     /// <exception cref="ArgumentException">The text declares no <c>.entry</c> named <paramref name="entry"/>.</exception>
@@ -67,14 +69,15 @@ public sealed class CudaKernel
     /// module is large: the JIT compilation is not part of the graph either way).
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// <paramref name="backend"/> is not a CUDA device, a storage is not on it, or the arguments do not match the parameters.
+    /// <paramref name="backend"/> does not launch CUDA kernels, a storage is not on it, or the arguments do not match the
+    /// parameters.
     /// </exception>
     /// <exception cref="ArgumentOutOfRangeException">The grid, the block or the shared memory exceed the device's limits.</exception>
     /// <exception cref="CudaException">The driver refused the PTX or the launch.</exception>
     public void Launch(Backend backend, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ, ReadOnlySpan<KernelArgument> arguments, uint sharedBytes = 0)
     {
         ArgumentNullException.ThrowIfNull(backend);
-        if (backend is not CudaBackend cuda)
+        if (backend is not IKernelLauncher<CudaKernel> cuda)
         {
             throw new ArgumentException($"CUDA kernel '{Name}' runs on a CUDA device, not on {backend.Name} ({backend.Kind}).", nameof(backend));
         }

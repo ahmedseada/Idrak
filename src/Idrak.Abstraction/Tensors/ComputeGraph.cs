@@ -21,6 +21,7 @@ namespace Idrak.Abstraction;
 public sealed class ComputeGraph : IDisposable
 {
     private readonly Device _device;
+    private readonly IGraphCaptureBackend? _graphs;                   // the device's recording, when the step was recorded
     private readonly Action? _fallback;
     private readonly IntPtr _executable;
     private readonly IntPtr _graph;
@@ -31,6 +32,7 @@ public sealed class ComputeGraph : IDisposable
     private ComputeGraph(Device device, Action? fallback, IntPtr executable, IntPtr graph, List<Tensor> tensors, List<Storage> owned, string? failure)
     {
         _device = device;
+        _graphs = executable != IntPtr.Zero ? (IGraphCaptureBackend)device.Backend : null;
         _fallback = fallback;
         _executable = executable;
         _graph = graph;
@@ -90,9 +92,10 @@ public sealed class ComputeGraph : IDisposable
             return new ComputeGraph(device, step, IntPtr.Zero, IntPtr.Zero, [], [], null);
         }
 
+        var graphs = (IGraphCaptureBackend)backend;                       // SupportsGraphs: the device records
         long started = Telemetry.StartStage();
         var scope = new TensorScope();
-        backend.BeginCapture();
+        graphs.BeginCapture();
         try
         {
             using (Autograd.NoGrad())
@@ -108,7 +111,7 @@ public sealed class ComputeGraph : IDisposable
                 }
             }
 
-            var (executable, graph, owned) = backend.EndCapture();
+            var (executable, graph, owned) = graphs.EndCapture();
             var kept = scope.Detach();
             if (started != 0)
             {
@@ -122,7 +125,7 @@ public sealed class ComputeGraph : IDisposable
         }
         catch (Exception ex)
         {
-            foreach (var storage in backend.AbortCapture())
+            foreach (var storage in graphs.AbortCapture())
             {
                 storage.Release();
             }
@@ -136,9 +139,9 @@ public sealed class ComputeGraph : IDisposable
     public void Replay()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_executable != IntPtr.Zero)
+        if (_graphs is { } graphs)
         {
-            _device.Backend.ReplayGraph(_executable);
+            graphs.ReplayGraph(_executable);
             return;
         }
 
@@ -158,10 +161,10 @@ public sealed class ComputeGraph : IDisposable
         }
 
         _disposed = true;
-        if (_executable != IntPtr.Zero)
+        if (_graphs is { } graphs)
         {
             _device.Backend.Synchronize();
-            _device.Backend.DestroyGraph(_executable, _graph);
+            graphs.DestroyGraph(_executable, _graph);
         }
 
         _tensors.ForEach(t => t.Dispose());

@@ -490,10 +490,12 @@ internal sealed partial class CpuBackend
         });
     }
 
-    public override bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) => true;
+    bool ISegmentedAttentionBackend.SupportsSegmented(int dim, AttentionVariant variant) => true;
 
-    public override bool AttentionRowsKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
-        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    bool IRowAttentionBackend.SupportsRows(int dim, AttentionVariant variant) => true;
+
+    bool IRowAttentionBackend.AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         float[] qv = D(q), kv = D(keys), vv = D(values), yv = D(y), sv = D(starts);
         int position0 = (int)D(position)[0];
@@ -539,8 +541,8 @@ internal sealed partial class CpuBackend
         return true;
     }
 
-    public override bool AttentionSegmentedKernel(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends,
-        int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
+    bool ISegmentedAttentionBackend.AttentionSegmented(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends,
+        int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
     {
         float[] qv = D(q), kv = D(keys), vv = D(values), yv = D(y), sv = D(starts);
         float[]? lv = logSumExp is null ? null : D(logSumExp);
@@ -586,9 +588,9 @@ internal sealed partial class CpuBackend
         return true;
     }
 
-    public override bool AttentionSegmentedBackwardKernel(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
+    bool ISegmentedAttentionBackend.AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
         Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale,
-        AttentionVariant variant = default)
+        AttentionVariant variant)
     {
         float[] qv = D(q), kv = D(keys), vv = D(values), ov = D(output), lv = D(logSumExp), gv = D(dOutput), sv = D(starts);
         float[] dqv = D(dq), dkv = D(dkeys), dvv = D(dvalues);

@@ -33,7 +33,7 @@ internal sealed class CudaStorage(CudaBackend backend, ulong pointer, int length
 /// and reused, so a training loop stops calling cuMemAlloc after its first iteration), and all
 /// kernels are the PTX from <see cref="PtxKernels"/>, launched on the default stream.
 /// </summary>
-internal sealed unsafe partial class CudaBackend : Backend
+internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFloat8Backend, IMatrixUnitBackend, IMemoryReport
 {
     private static readonly Lazy<(int Count, string Reason)> Probe = new(ProbeDriver);
     private static readonly Lazy<CudaBackend>[] Instances = CreateInstances();
@@ -150,9 +150,9 @@ internal sealed unsafe partial class CudaBackend : Backend
     [ThreadStatic]
     private static double _profileFlops;
 
-    public override void StartProfile() => _profile = [];
+    void IKernelProfiler.StartProfile() => _profile = [];
 
-    public override Dictionary<string, (long Calls, long Ticks, double Flops)> StopProfile()
+    Dictionary<string, (long Calls, long Ticks, double Flops)> IKernelProfiler.StopProfile()
     {
         var profile = _profile ?? [];
         _profile = null;
@@ -168,13 +168,11 @@ internal sealed unsafe partial class CudaBackend : Backend
         DecodeAttentionHeadDim = PtxKernels.DecodeMaxDim,
         TiledAttentionHeadDim = PtxKernels.FlashMaxDim,
         SpanAttentionHeadDim = PtxKernels.FlashMaxDim,                     // set from the device's limits (SpanHeadDim) once they are read
-        MatrixUnits = true,
-        MatrixUnitAttentionHeadDim = PtxKernels.FlashTensorDim,
-        FusedKernels = true,
-        Profiling = true,
     };
 
-    public override string? TensorCoresUnavailable()
+    bool IMatrixUnitBackend.AttentionHeadDim(int dim) => PtxKernels.FlashTensorDim(dim);
+
+    string? IMatrixUnitBackend.TensorCoresUnavailable()
     {
         lock (_signatures)
         {
@@ -292,7 +290,6 @@ internal sealed unsafe partial class CudaBackend : Backend
         // driver refuses leaves its own.
         cuCtxSetLimit(LimitStackSize, (nuint)Math.Max(0, ComputeResources.GpuStackBytes ?? 0));
         Check(cuStreamCreate(out _stream, 0), nameof(cuStreamCreate));
-        GuardMoves();                                                      // offloading moves live storages (CudaBackend.Offload.cs)
 
         byte* name = stackalloc byte[256];
         Check(cuDeviceGetName(name, 256, device), nameof(cuDeviceGetName));
@@ -498,7 +495,7 @@ internal sealed unsafe partial class CudaBackend : Backend
             }
 
             // The device is full with lookup tables on it: they leave it for good, then the allocation again. Outside the
-            // stream gate, so the placement waits for other threads' operations (GuardMoves); while this thread still holds
+            // stream gate, so the placement waits for other threads' operations (the move guard); while this thread still holds
             // the gate or measures, it runs only if no other thread is inside an operation.
             placed = true;
             PlaceLookupTables(wait: !_streamGate.IsReadLockHeld && !_streamGate.IsWriteLockHeld && !_measuring.IsHeldByCurrentThread);
@@ -922,7 +919,7 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     public override void Upload(ReadOnlySpan<float> source, Storage destination)
     {
-        using var operation = EnterOperation();                            // addresses read until the work is queued (GuardMoves)
+        using var operation = EnterOperation();                            // addresses read until the work is queued (the move guard)
         MakeCurrent();
         using var use = UseStream();
         if (TryUploadAsync(source, destination))
@@ -951,7 +948,7 @@ internal sealed unsafe partial class CudaBackend : Backend
             return;
         }
 
-        using var operation = EnterOperation();                            // addresses read until the work is queued (GuardMoves)
+        using var operation = EnterOperation();                            // addresses read until the work is queued (the move guard)
         MakeCurrent();
         using var use = UseStream();
         if (TryUploadAsync(source, destination, offset))
@@ -969,7 +966,7 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     public override void DownloadRange(Storage source, int offset, Span<float> destination)
     {
-        using var operation = EnterOperation();                            // addresses read until the work is queued (GuardMoves)
+        using var operation = EnterOperation();                            // addresses read until the work is queued (the move guard)
         MakeCurrent();
         using var use = UseStream();
         fixed (float* p = destination)
@@ -982,7 +979,7 @@ internal sealed unsafe partial class CudaBackend : Backend
 
     public override void Copy(Storage x, Storage y, int n)
     {
-        using var operation = EnterOperation();                            // addresses read until the work is queued (GuardMoves)
+        using var operation = EnterOperation();                            // addresses read until the work is queued (the move guard)
         MakeCurrent();
         using var use = UseStream();
         Check(cuMemcpyDtoDAsync(P(y), P(x), (nuint)n * sizeof(float), _stream), nameof(cuMemcpyDtoDAsync));
@@ -1397,7 +1394,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         return true;
     }
 
-    public override bool MatMulLowRankKernel(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
+    bool IMatrixUnitBackend.MatMulLowRank(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
     {
         if (m == 0 || n == 0 || k < 16 || rank is < 1 or > 32 || !MixedPrecision.UsesTensorCores || MixedPrecision.Current == MatMulPrecision.Float8
             || TensorCoreKernels() is not { } tensorCore || !tensorCore.TryGetValue(transB ? "gemm_tc_nt_lr_f32" : "gemm_tc_nn_lr_f32", out var function))
@@ -1420,7 +1417,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         return true;
     }
 
-    public override bool BFloat16TransposedMatMulKernel(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank)
+    bool IMatrixUnitBackend.BFloat16TransposedMatMul(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank)
     {
         if (m == 0 || n == 0 || k < 16 || u is not null && rank is < 1 or > 32 || !MixedPrecision.UsesTensorCores
             || MixedPrecision.Current == MatMulPrecision.Float8 || TensorCoreKernels() is not { } tensorCore
@@ -1444,9 +1441,9 @@ internal sealed unsafe partial class CudaBackend : Backend
         return true;
     }
 
-    public override bool GemmStridedKernel(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB,
-        Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias = null, GemmEpilogue epilogue = GemmEpilogue.None,
-        Storage? aux = null, long auxOffset = 0)
+    bool IMatrixUnitBackend.GemmStrided(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB,
+        Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias, GemmEpilogue epilogue,
+        Storage? aux, long auxOffset)
     {
         if (m == 0 || n == 0 || TensorCoreKernels() is not { } tensorCore)
         {
@@ -1632,9 +1629,9 @@ internal sealed unsafe partial class CudaBackend : Backend
         }
     }
 
-    public override int Float8PaddedK(int k) => EightBitReady(fp8: true) ? PtxKernels.EightBitPaddedK(k) : 0;
+    int IFloat8Backend.PaddedK(int k) => EightBitReady(fp8: true) ? PtxKernels.EightBitPaddedK(k) : 0;
 
-    public override bool Float8QuantizeWeightKernel(Storage w, int k, int n, Storage values, Storage scales)
+    bool IFloat8Backend.Float8QuantizeWeight(Storage w, int k, int n, Storage values, Storage scales)
     {
         if (!EightBitReady(fp8: true))
         {
@@ -1656,7 +1653,7 @@ internal sealed unsafe partial class CudaBackend : Backend
         return true;
     }
 
-    public override bool Float8MatMulKernel(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta)
+    bool IFloat8Backend.Float8MatMul(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta)
     {
         if (m == 0 || n == 0 || !EightBitReady(fp8: true))
         {
@@ -2193,7 +2190,7 @@ internal sealed unsafe partial class CudaBackend : Backend
     }
 
     /// <summary>
-    /// Tests: every address read must come from inside an operation or a move (Backend.GuardMoves), else it throws, naming
+    /// Tests: every address read must come from inside an operation or a move (the move guard), else it throws, naming
     /// the path that misses its scope.
     /// </summary>
     internal static bool CheckAddressReads;

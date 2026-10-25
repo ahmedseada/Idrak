@@ -7,7 +7,7 @@ using Idrak.Gpu.Vulkan;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
 
-// The fused decoding kernels on Vulkan (BackendCapabilities.FusedKernels): each fused operation against the unfused steps
+// The fused decoding kernels on Vulkan (Backend.FusedKernels): each fused operation against the unfused steps
 // it replaces on the same device and against the CPU, without host fallback and with the same bits run after run; and
 // decoders running fewer dispatches per token with them. Run on a Vulkan device; elsewhere they do nothing.
 internal static partial class Tests
@@ -35,7 +35,7 @@ internal static partial class Tests
         }
 
         backend = (VulkanBackend)device.Backend;
-        Check(backend.Capabilities.FusedKernels, "Vulkan reports fused kernels");
+        Check(backend.FusedKernels, "Vulkan reports fused kernels");
         return true;
     }
 

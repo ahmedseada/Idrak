@@ -380,15 +380,15 @@ internal static partial class Tests
             if (graphs)
             {
                 device.Synchronize();
-                backend.BeginCapture();
+                ((IGraphCaptureBackend)backend).BeginCapture();
                 try
                 {
                     Pass();
-                    (executable, graph, kept) = backend.EndCapture();
+                    (executable, graph, kept) = ((IGraphCaptureBackend)backend).EndCapture();
                 }
                 catch
                 {
-                    foreach (var storage in backend.AbortCapture())
+                    foreach (var storage in ((IGraphCaptureBackend)backend).AbortCapture())
                     {
                         storage.Release();
                     }
@@ -403,7 +403,7 @@ internal static partial class Tests
                 {
                     if (graphs)
                     {
-                        backend.ReplayGraph(executable);
+                        ((IGraphCaptureBackend)backend).ReplayGraph(executable);
                     }
                     else
                     {
@@ -428,7 +428,7 @@ internal static partial class Tests
                 if (graphs)
                 {
                     device.Synchronize();
-                    backend.DestroyGraph(executable, graph);
+                    ((IGraphCaptureBackend)backend).DestroyGraph(executable, graph);
                     kept.ForEach(storage => storage.Release());
                 }
             }

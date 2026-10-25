@@ -14,15 +14,21 @@ namespace Idrak;
 /// </summary>
 internal static class Offloading
 {
-    // Tensors live in Idrak.Abstraction and reach the offloading of Idrak's layers through these hooks, set when the device
-    // registry fills (LibraryRegistrations, which runs before Idrak.Gpu's): only devices offload, so the hooks are in place
-    // before anything is.
-    internal static void ConnectTensors()
+    // Tensors live in Idrak.Abstraction and reach the offloading of Idrak's layers through these hooks, registered when the
+    // device registry fills (LibraryRegistrations, which runs before Idrak.Gpu's): only devices offload, so the hooks are in
+    // place before anything is.
+    internal static void ConnectTensors() => TensorOffloading.Register(new TensorHooks());
+
+    // The hooks tensors and modules call (ITensorOffloadingHooks), Idrak's staging behind each.
+    private sealed class TensorHooks : ITensorOffloadingHooks
     {
-        TensorOffloading.TrainableChanged = TrainableChanged;
-        TensorOffloading.ForBackward = ForBackward;
-        TensorOffloading.EnterForward = EnterForward;
-        TensorOffloading.MarkFrozen = MarkFrozen;
+        public IDisposable? EnterForward(Module module, Tensor input) => Offloading.EnterForward(module, input);
+
+        public void TrainableChanged(Tensor parameter, bool trainable) => Offloading.TrainableChanged(parameter, trainable);
+
+        public IBackwardStaging? ForBackward(Device device, IReadOnlyList<object?> layers) => Offloading.ForBackward(device, layers);
+
+        public void MarkFrozen(Module model) => Offloading.MarkFrozen(model);
     }
 
     // Module.Forward's hook: a scope only when the layer was entered (boxed then; nothing is allocated otherwise).

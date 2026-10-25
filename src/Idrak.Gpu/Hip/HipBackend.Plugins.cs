@@ -2,13 +2,14 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text;
+using Idrak.Gpu.Abstractions;
 using static Idrak.Gpu.Hip.HipRuntime;
 
 namespace Idrak.Gpu.Hip;
 
 // Plug-ins' own kernels (HipKernel): each source compiled once on this device with hipRTC (or read from the kernel
 // cache, keyed like the library's own kernels), each function looked up once, then launched on the stream.
-internal sealed unsafe partial class HipBackend
+internal sealed unsafe partial class HipBackend : IKernelLauncher<HipKernel>
 {
     private readonly object _pluginGate = new();
 
@@ -16,8 +17,8 @@ internal sealed unsafe partial class HipBackend
     private readonly Dictionary<string, IntPtr> _pluginModules = new(StringComparer.Ordinal);
     private readonly Dictionary<HipKernel, IntPtr> _pluginFunctions = new(ReferenceEqualityComparer.Instance);
 
-    /// <summary>Queues a plug-in's kernel (its arguments already checked against its parameters).</summary>
-    internal void Launch(HipKernel kernel, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ,
+    // Queues a plug-in's kernel (its arguments already checked against its parameters).
+    void IKernelLauncher<HipKernel>.Launch(HipKernel kernel, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ,
         ReadOnlySpan<KernelArgument> arguments, uint sharedBytes)
     {
         var limits = _device.Limits;

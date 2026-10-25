@@ -11,9 +11,9 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 98 | 17 | 53 | 167 | 0 |
+| `Idrak.Abstraction` | 113 | 16 | 54 | 182 | 0 |
 | `Idrak` | 17 | 4 | 20 | 41 | 0 |
-| `Idrak.Gpu` | 0 | 0 | 0 | 0 | 0 |
+| `Idrak.Gpu` | 3 | 0 | 0 | 3 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Text` | 14 | 2 | 11 | 27 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
@@ -104,14 +104,32 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Data.TextShapers` | registry | public | — |  | — | Imaging | Abstraction |
 | `Idrak.Abstraction.Devices.Backend` | abstract class | public | Storage | CpuBackend, CudaBackend, DeferredBackend, HipBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.Cpu.CpuBackend.IRangeKernel` | interface | internal | — | CpuBackend.AbsBackwardLoop, CpuBackend.AbsLoop, CpuBackend.AdamLoop, CpuBackend.AddLoop, CpuBackend.AffineLoop, CpuBackend.AxpyLoop, +35 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Devices.DeviceProvider` | abstract class | public | Backend | DeferredProvider, HipProvider, LibraryRegistrations.CudaProvider, SimulatedDevices.Provider, VulkanProvider |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.DeviceProviders` | registry | public | — |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IBackwardStaging` | interface | public | — | Offloading.BackwardStaging |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IDeviceBackend` | interface | public | Storage | CpuBackend, CudaBackend, DeferredBackend, HipBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IDeviceProvider` | interface | public | Backend | DeferredProvider, HipProvider, LibraryRegistrations.CudaProvider, SimulatedDevices.Provider, VulkanProvider |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IFloat8Backend` | interface | public | Storage | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IFusedPackedKernels` | interface | public | Storage | CudaBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IGraphCaptureBackend` | interface | public | Storage | CudaBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IHostStaging` | interface | public | Storage | CudaBackend.HostStaging |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IHostStorage` | interface | public | — | CpuStorage |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IKernelProfiler` | interface | public | — | CudaBackend |  | Abstraction, Cluster, Gpu, Idrak, Network | Abstraction |
+| `Idrak.Abstraction.Devices.ILongLivedAllocations` | interface | public | — | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IMatrixUnitBackend` | interface | public | Storage | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IMeasuredChoicesProvider` | interface | public | Backend | CudaMeasuredChoices, VulkanMeasuredChoices |  | Abstraction, Cluster, Gpu | Abstraction |
 | `Idrak.Abstraction.Devices.IMemoryOffload` | interface | public | Storage | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IMemoryReport` | interface | public | — | CpuBackend, CudaBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IOffloadingBackend` | interface | public | — | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IPeerCopyBackend` | interface | public | Backend, Storage | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IRecurrentKernels` | interface | public | Storage | CpuBackend, CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IRowAttentionBackend` | interface | public | Storage | CpuBackend, CudaBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.ISegmentedAttentionBackend` | interface | public | Storage | CpuBackend, CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.ISeparableDeviceProvider` | interface | public | Backend | HipProvider, LibraryRegistrations.CudaProvider, VulkanProvider |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.ISlotStaging` | interface | public | Storage | CudaBackend.HostStaging |  | Gpu, Network | Abstraction |
+| `Idrak.Abstraction.Devices.ITensorOffloadingHooks` | interface | public | Device, Module, Tensor | Offloading.TensorHooks |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.MeasuredChoiceProviders` | registry | public | Backend |  | cuda, vulkan | Cluster, Gpu | Abstraction |
 | `Idrak.Abstraction.Devices.Storage` | abstract class | public | Backend | CpuStorage, CudaStorage, DeferredStorage, HipStorage, VulkanBackend.VulkanStorage |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.TensorOffloading` | registry | public | Device, Module, Storage |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Diagnostics.IProfileProbe` | interface | public | Device | ClusterProbe, NetworkProbe, ProfileProbes.BandwidthProbe, ProfileProbes.CpuProbe, ProfileProbes.FallbacksProbe, ProfileProbes.HeapProbe, +7 |  | Abstraction, Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Diagnostics.IProfileWriter` | interface | public | — | ProfileWriters.CsvWriter, ProfileWriters.JsonWriter, ProfileWriters.TableWriter |  | — | Abstraction |
 | `Idrak.Abstraction.Diagnostics.IProgressReporter` | interface | public | — | JsonProgressReporter, LineProgressReporter, QuietProgressReporter |  | Reinforcement | Abstraction |
@@ -175,9 +193,6 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | json, pythonic | Abstraction, Idrak, Text, Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.TuningMetrics` | registry | public | — |  | cer, contains, exact, f1, number, wer | Abstraction, Audio, Text | Abstraction |
 | `Idrak.Abstraction.ICommandSandbox` | interface | public | — | ContainerSandbox, ProcessCommandSandbox |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
-| `Idrak.Abstraction.IConfigurableKind` | interface | public | — | AdvantageEstimators.GuardedEstimator, ClassicControlPlugin.ClassicKind, ClippedRatioLoss, CodingEnvironmentKind, GeneralizedAdvantageEstimator, GroupAdvantageEstimator, +5 |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
-| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AudioPartKind, ChatParts.GuardedKind, ChatParts.ImageKind, ChatParts.TextKind, +12 |  | Abstraction, AspNetCore, Audio, Idrak, Mcp, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins | Abstraction |
-| `Idrak.Abstraction.IKind<TRequest, T>` | interface | public | — | ClassicControlPlugin.ClassicKind, CodingEnvironmentKind, PromptsEnvironmentKind |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +75 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Audio.Plugins, Idrak, Text, Vision | Abstraction |
@@ -207,7 +222,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Serving.IModelCatalog` | interface | public | — | InferenceEngine |  | Idrak, Mcp | Abstraction |
 | `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` | interface | public | — | IdrakBuilder.EnginePredictor<TIn, TOut>, Predictor<TIn, TOut>, PredictorModel<TIn, TOut> |  | AspNetCore, Idrak | Abstraction |
 | `Idrak.Abstraction.Training.ILearningRateSchedule` | interface | public | — | LearningRateSchedules.BuiltInSchedule |  | Abstraction, Audio, Reinforcement, Text | Abstraction |
-| `Idrak.Abstraction.Training.IOptimizerKind` | interface | public | — | AdamW8BitKind, OptimizerKinds.BuiltInKind |  | Abstraction, Audio, Idrak, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Training.IOptimizerKind` | interface | public | Tensor | AdamW8BitKind, OptimizerKinds.BuiltInKind |  | Abstraction, Audio, Idrak, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Training.LearningRateScheduler` | abstract class | public | — | CosineAnnealing, ExponentialDecay, LambdaSchedule, StepDecay |  | Abstraction, Audio, Idrak, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Training.LearningRateSchedules` | registry | public | — |  | constant, cosine, linear, wsd | Audio, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Training.Optimizer` | abstract class | public | Device, Tensor | Adam, AdamW, AdamW8Bit, GroupedOptimizer, HostOptimizer, Sgd |  | Abstraction, Audio, Idrak, Network, Reinforcement, Text | Abstraction |
@@ -258,6 +273,14 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Onnx.Abstractions.OnnxImportContext` | abstract class | public | Module | ImportContext |  | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.OnnxImportOps` | registry | public | — |  | Add, AveragePool, BatchNormalization, Cast, Conv, ConvTranspose, Dropout, Flatten, +15 | Idrak | Idrak |
 | `Idrak.Training.Abstractions.ITrainerCallback` | interface | public | — | Checkpoint, CsvLog, EarlyStopping |  | Idrak | Idrak |
+
+### Idrak.Gpu
+
+| Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
+|---|---|---|---|---|---|---|---|
+| `Idrak.Gpu.Abstractions.IDeviceKernel` | interface | public | Backend | CudaKernel, HipKernel, VulkanKernel |  | Gpu | Gpu |
+| `Idrak.Gpu.Abstractions.IKernelLauncher<TKernel>` | interface | public | — | CudaBackend, HipBackend |  | Gpu | Gpu |
+| `Idrak.Gpu.Abstractions.IVulkanKernelDispatcher` | interface | public | Storage | VulkanBackend |  | Gpu | Gpu |
 
 ### Idrak.Text
 
@@ -422,21 +445,20 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 178 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `DeferredBackend`, `HipBackend`, `VulkanBackend`. Each
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 133 virtual methods, 4 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `DeferredBackend`, `HipBackend`, `VulkanBackend`. Each
 operation (153, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 138 of 188 |
-| `CudaBackend` | 182 of 188 |
-| `DeferredBackend` | 11 of 188 |
-| `HipBackend` | 23 of 188 |
-| `VulkanBackend` | 137 of 188 |
+| `CpuBackend` | 128 of 143 |
+| `CudaBackend` | 136 of 143 |
+| `DeferredBackend` | 11 of 143 |
+| `HipBackend` | 23 of 143 |
+| `VulkanBackend` | 123 of 143 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
 |---|---|---|---|---|---|---|
-| `AbortCapture(0)` | virtual |  | ✓ |  |  | ✓ |
 | `AdamStep8BitKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AdamStepKernel(9)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AdaptiveAvgPoolBackwardKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
@@ -455,28 +477,19 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `AttentionContextInt8Kernel(8)` | virtual | ✓ | ✓ |  |  |  |
 | `AttentionDecodeKernel(12)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AttentionInt8Kernel(15)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AttentionRowsBFloat16Kernel(14)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AttentionRowsKernel(14)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AttentionScoresInt8Kernel(8)` | virtual | ✓ | ✓ |  |  |  |
-| `AttentionSegmentedBackwardKernel(18)` | virtual | ✓ | ✓ |  |  |  |
-| `AttentionSegmentedKernel(14)` | virtual | ✓ | ✓ |  |  |  |
 | `AttentionSpansBackwardKernel(19)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AttentionSpansKernel(15)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AttentionSpansStridedKernel(18)` | virtual |  | ✓ |  |  |  |
-| `AttentionStridedBackwardKernel(23)` | virtual |  | ✓ |  |  |  |
-| `AttentionStridedKernel(16)` | virtual |  | ✓ |  |  |  |
 | `AttentionTiledBackwardKernel(16)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AttentionTiledKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AvailableMemory(0)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AvgPoolBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AvgPoolKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AxpyAtKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AxpyKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `BFloat16DequantizeKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `BFloat16MatMulKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `BFloat16TransposedMatMulKernel(10)` | virtual |  | ✓ |  |  |  |
 | `BatchedMatMulKernel(10)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `BeginCapture(0)` | virtual |  | ✓ |  |  | ✓ |
 | `BiasGeluKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `BinaryKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `BoxIouLossBackwardKernel(7)` | virtual | ✓ |  |  |  |  |
@@ -490,29 +503,21 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `ConvolutionBackwardInputKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `ConvolutionBackwardWeightKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `ConvolutionKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `CopiesDirectlyTo(1)` | virtual |  | ✓ |  |  |  |
 | `Copy(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Copy2D(9)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `CopyTo(3)` | virtual |  | ✓ |  |  |  |
 | `CreateHostStaging(2)` | virtual |  | ✓ |  |  |  |
 | `CtcLossBackwardKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `CtcLossKernel(12)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `DecoderMaskKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `DestroyGraph(2)` | virtual |  | ✓ |  |  | ✓ |
 | `Detach(1)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `Download(2)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `DownloadRange(3)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `DropoutBackwardKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `DropoutKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `EndCapture(0)` | virtual |  | ✓ |  |  | ✓ |
 | `ExtremumBackwardKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `FillKernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Float16DequantizeKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `Float16MatMulKernel(6)` | virtual |  |  |  |  |  |
-| `Float8MatMulKernel(8)` | virtual |  | ✓ |  |  |  |
-| `Float8PaddedK(1)` | virtual |  | ✓ |  |  |  |
-| `Float8QuantizeWeightKernel(5)` | virtual |  | ✓ |  |  |  |
-| `FreeMemory(0)` | virtual |  | ✓ |  |  |  |
 | `FusedAdamWKernel(9)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `GatedActivationBackwardKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `GatedActivationBackwardPackedKernel(8)` | virtual | ✓ | ✓ |  |  |  |
@@ -521,16 +526,9 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `GatherBFloat16ColumnsKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `GatherBFloat16Kernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `GatherKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `GemmStridedKernel(19)` | virtual |  | ✓ |  |  |  |
 | `GetMemoryUsage(0)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `GroupReduceKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `GroupScaleShiftKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `GruCellBackwardKernel(12)` | virtual | ✓ | ✓ |  |  |  |
-| `GruCellKernel(10)` | virtual | ✓ | ✓ |  |  |  |
-| `GruSequenceBackwardKernel(11)` | virtual |  | ✓ |  |  |  |
-| `GruSequenceKernel(9)` | virtual |  | ✓ |  |  |  |
-| `GruStepBackwardKernel(13)` | virtual |  | ✓ |  |  |  |
-| `GruStepKernel(10)` | virtual |  | ✓ |  |  |  |
 | `HistoryPushKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `Im2ColKernel(3)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `Int4DequantizeKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
@@ -550,15 +548,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `LeakyReluKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `LiveStorages(1)` | virtual |  |  |  |  |  |
 | `LogSoftmaxTopKKernel(6)` | virtual | ✓ | ✓ |  |  |  |
-| `LongLivedAllocations(0)` | virtual |  | ✓ |  |  |  |
-| `LstmCellBackwardKernel(12)` | virtual | ✓ | ✓ |  |  |  |
-| `LstmCellKernel(11)` | virtual | ✓ | ✓ |  |  |  |
-| `LstmSequenceBackwardKernel(10)` | virtual |  | ✓ |  |  |  |
-| `LstmSequenceKernel(10)` | virtual |  | ✓ |  |  |  |
-| `LstmStepBackwardKernel(12)` | virtual |  | ✓ |  |  |  |
-| `LstmStepKernel(11)` | virtual |  | ✓ |  |  |  |
 | `MatMulBiasKernel(7)` | virtual |  | ✓ |  |  | ✓ |
-| `MatMulLowRankKernel(11)` | virtual |  | ✓ |  |  |  |
 | `MatMulManyKernel(4)` | virtual |  | ✓ |  |  |  |
 | `MaxPoolBackwardKernel(4)` | virtual | ✓ | ✓ |  |  |  |
 | `MaxPoolBackwardKernel(4)` | virtual |  | ✓ |  |  | ✓ |
@@ -570,22 +560,14 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `NormStatsKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `OneHotKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `PackBFloat16Kernel(3)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `PackedMatMulAddRmsNormKernel(14)` | virtual |  | ✓ |  |  | ✓ |
 | `PackedMatMulEpilogueKernel(11)` | virtual |  | ✓ |  |  |  |
-| `PackedMatMulGatedKernel(10)` | virtual |  | ✓ |  |  | ✓ |
-| `PackedMatMulGatedPairKernel(7)` | virtual |  | ✓ |  |  | ✓ |
-| `PackedMatMulLargeKernel(8)` | virtual |  | ✓ |  |  | ✓ |
-| `PackedMatMulLowRankKernel(6)` | virtual |  | ✓ |  |  |  |
-| `PackedMatMulManyKernel(5)` | virtual |  | ✓ |  |  | ✓ |
 | `PackedMatMulNormAddRmsNormKernel(17)` | virtual |  | ✓ |  |  |  |
 | `PenalizeRowsKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `PermuteKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `PowBackwardKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `PowKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `PrefersComposedAttention(12)` | virtual |  | ✓ |  |  | ✓ |
-| `PrefersPackedMatMul(8)` | virtual |  | ✓ |  |  |  |
 | `ReleaseCachedMemory(0)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `ReplayGraph(1)` | virtual |  | ✓ |  |  | ✓ |
 | `ResetPeakMemoryUsage(0)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ResizeNormalizeKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `Return(1)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -605,17 +587,13 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `SoftmaxBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SoftmaxCrossEntropyRowsKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SoftmaxKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `StartProfile(0)` | virtual |  | ✓ |  |  |  |
-| `StopProfile(0)` | virtual |  | ✓ |  |  |  |
 | `SumAxisKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SumColumnsKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SumKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SumRowsKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SumSquaresKernel(3)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `SupportsAttentionRows(2)` | virtual |  | ✓ |  |  | ✓ |
-| `SupportsSegmentedAttention(2)` | virtual | ✓ | ✓ |  |  |  |
 | `Synchronize(0)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `TensorCoresUnavailable(0)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `TensorCoresUnavailable(0)` | virtual | ✓ |  |  |  | ✓ |
 | `UnaryBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `UnaryKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Upload(2)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |

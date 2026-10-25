@@ -65,7 +65,7 @@ internal static partial class Tests
             long inUse = backend.GetMemoryUsage().InUse;
 
             // Reading while recording fails, and the recording is abandoned.
-            backend.BeginCapture();
+            ((IGraphCaptureBackend)backend).BeginCapture();
             try
             {
                 backend.Download(a, values);
@@ -76,7 +76,7 @@ internal static partial class Tests
             }
             finally
             {
-                foreach (var s in backend.AbortCapture())
+                foreach (var s in ((IGraphCaptureBackend)backend).AbortCapture())
                 {
                     s.Release();
                 }
@@ -84,7 +84,7 @@ internal static partial class Tests
 
             Check(!backend.Capturing, $"{label}: the aborted recording ended");
             long dispatches = backend.Dispatches;
-            backend.BeginCapture();
+            ((IGraphCaptureBackend)backend).BeginCapture();
             List<Storage> owned;
             IntPtr executable;
             try
@@ -102,11 +102,11 @@ internal static partial class Tests
                 backend.Binary(BinaryOp.Add, acc, y, acc, N);
                 y.Release();                                                   // the graph owns them now
                 k.Release();
-                (executable, _, owned) = backend.EndCapture();
+                (executable, _, owned) = ((IGraphCaptureBackend)backend).EndCapture();
             }
             catch
             {
-                foreach (var s in backend.AbortCapture())
+                foreach (var s in ((IGraphCaptureBackend)backend).AbortCapture())
                 {
                     s.Release();
                 }
@@ -128,8 +128,8 @@ internal static partial class Tests
                 long replayDispatches = backend.Dispatches;
                 for (int r = 0; r < 5; r++)
                 {
-                    backend.ReplayGraph(executable);
-                    backend.ReplayGraph(executable);                            // twice in one batch
+                    ((IGraphCaptureBackend)backend).ReplayGraph(executable);
+                    ((IGraphCaptureBackend)backend).ReplayGraph(executable);                            // twice in one batch
                     for (int i = 0; i < N; i++)
                     {
                         expected[i] += 2 * (i % 7 + r + 10 + additions);
@@ -148,7 +148,7 @@ internal static partial class Tests
             finally
             {
                 backend.Synchronize();
-                backend.DestroyGraph(executable, IntPtr.Zero);
+                ((IGraphCaptureBackend)backend).DestroyGraph(executable, IntPtr.Zero);
                 owned.ForEach(s => s.Release());
             }
 

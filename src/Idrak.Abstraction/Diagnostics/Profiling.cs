@@ -1321,18 +1321,19 @@ public static class ProfileProbes
 
         public bool Intrusive => true;
 
-        public bool Supports(Device device) => device.Backend.Capabilities.Profiling;
+        public bool Supports(Device device) => device.Backend is IKernelProfiler;
 
         public Action Begin(ProfileRun run)
         {
+            var profiler = (IKernelProfiler)run.Device.Backend;                   // Supports said it times its kernels
             var direct = ComputeGraph.RunStepsDirectly();                         // a graph's kernels are timed one by one too
             run.Device.Synchronize();
-            run.Device.Backend.StartProfile();
+            profiler.StartProfile();
             return () =>
             {
                 run.Device.Synchronize();
                 direct.Dispose();
-                var kernels = run.Device.Backend.StopProfile()
+                var kernels = profiler.StopProfile()
                     .Select(e => (e.Key, e.Value.Calls, Ms: e.Value.Ticks * 1000.0 / Stopwatch.Frequency, e.Value.Flops))
                     .OrderByDescending(k => k.Ms).ToList();
                 double total = kernels.Sum(k => k.Ms), productMs = kernels.Where(k => k.Flops > 0).Sum(k => k.Ms), flops = kernels.Sum(k => k.Flops);

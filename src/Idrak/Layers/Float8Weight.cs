@@ -33,7 +33,7 @@ internal sealed class Float8Weight : IDisposable
     {
         int rows = weight.Shape[0], columns = weight.Shape[1];
         var backend = weight.Device.Backend;
-        int padded = backend.Float8PaddedK(rows);
+        int padded = backend is IFloat8Backend float8 ? float8.PaddedK(rows) : 0;
         if (padded == 0)
         {
             return null;

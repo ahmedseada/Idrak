@@ -25,7 +25,7 @@ internal static partial class Tests
         public float[] Data = data;
     }
 
-    internal sealed class MinimalBackend : Backend
+    internal sealed class MinimalBackend : Backend, IMemoryReport
     {
         public static readonly MinimalBackend Instance = new();
         private readonly MemoryAccountant _memory = new(() => ComputeResources.GpuMemoryLimit, "minimal:0");
@@ -36,8 +36,10 @@ internal static partial class Tests
 
         public override string Kind => "minimal";
 
-        // Its memory is the process's: what the CPU reports available.
-        public override long? AvailableMemory() => CpuBackend.Instance.AvailableMemory();
+        // Its memory is the process's: what the CPU reports available, and no driver of its own.
+        long? IMemoryReport.AvailableMemory() => CpuBackend.Instance.AvailableMemory();
+
+        long? IMemoryReport.FreeMemory() => null;
 
         public override string Name => "minimal (memory and copies only)";
 
@@ -86,21 +88,23 @@ internal static partial class Tests
         }
     }
 
-    internal sealed class MinimalProvider : DeviceProvider
+    internal sealed class MinimalProvider : IDeviceProvider
     {
-        public override string Kind => "minimal";
+        public string Name => "minimal";
 
-        public override DeviceType Type => DeviceType.Other;
+        public string Summary => "a test device with memory and copies only: every operation takes the host fallback";
 
-        public override int Count => 1;
+        public DeviceType Type => DeviceType.Other;
 
-        public override Backend Create(int ordinal) => MinimalBackend.Instance;
+        public int Count => 1;
 
-        public override bool IsStarted(int ordinal) => false;
+        public Backend Create(int ordinal) => MinimalBackend.Instance;
 
-        public override bool Listed(int ordinal) => false;                 // only by name
+        public bool IsStarted(int ordinal) => false;
 
-        public override string? Note(int ordinal) => "test backend (memory and copies only): by name only";
+        public bool Listed(int ordinal) => false;                 // only by name
+
+        public string? Note(int ordinal) => "test backend (memory and copies only): by name only";
     }
 
     private static void MinimalBackendMatches(Device device)

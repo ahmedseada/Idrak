@@ -70,7 +70,7 @@ public static class DeviceListing
 {
     /// <summary>The registered device kinds beyond the CPU, in registration order, with their device counts.</summary>
     public static IReadOnlyList<BackendInfo> Backends =>
-        [.. DeviceProviders.All.Select(p => new BackendInfo(p.Kind, p.Display, p.Count, p.Count == 0 ? p.UnavailableReason : null))];
+        [.. DeviceProviders.All.Select(p => new BackendInfo(p.Name, p.Display, p.Count, p.Count == 0 ? p.UnavailableReason : null))];
 
     /// <summary>
     /// The CPU and every device of every backend, listed or reached by name only (starting each one's backend; one that
@@ -83,7 +83,7 @@ public static class DeviceListing
         {
             for (int i = 0; i < provider.Count; i++)
             {
-                devices.Add(Describe(Device.Get(provider.Kind, i)));
+                devices.Add(Describe(Device.Get(provider.Name, i)));
             }
         }
 
@@ -121,7 +121,7 @@ public static class DeviceListing
         return info with
         {
             Name = backend.Name,
-            MatrixUnits = backend.Capabilities.MatrixUnits,
+            MatrixUnits = backend.MatrixUnits,
             MemoryBytes = hardware.MemoryBytes,
             ComputeUnits = hardware.ComputeUnits,
             SubgroupSize = hardware.SubgroupSize,

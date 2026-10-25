@@ -965,7 +965,7 @@ internal static partial class Tests
 
             // A down projection that reads the activation itself (int4) keeps its own product, its norm and the addition.
             bool downFuses = model.Descendants().OfType<FeedForward>().First().DownFusable;
-            int expected = device.Backend.Capabilities.FusedKernels ? (downFuses ? 2 : 1) * spec.Layers : 0;
+            int expected = device.Backend.FusedKernels ? (downFuses ? 2 : 1) * spec.Layers : 0;
             Check(fused == expected, $"{label}: {fused} projections with their norm, addition and next norm in a step (expected {expected})");
             if (device.Type == DeviceType.Cuda)
             {

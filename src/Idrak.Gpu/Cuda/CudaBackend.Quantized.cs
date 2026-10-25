@@ -6,7 +6,7 @@ using static Idrak.Gpu.Cuda.CudaDriver;
 namespace Idrak.Gpu.Cuda;
 
 // Int8 weight-only quantization kernels (see PtxKernels.Quantized.cs).
-internal sealed unsafe partial class CudaBackend
+internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegmentedAttentionBackend, IRowAttentionBackend
 {
     public override void Int8MatMulKernel(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
@@ -294,9 +294,9 @@ internal sealed unsafe partial class CudaBackend
     // but a mostly empty row tile): where they cross depends on the card (on compute 12.0 cards the product won from 4 rows
     // through large layers, on 8.6 it lost), so both run once per shape and the faster is kept. Until then, and when
     // nothing can be measured, the GEMV.
-    public override bool PrefersPackedMatMul(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
+    bool IFusedPackedKernels.PrefersPackedMatMul(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
-        using var operation = EnterOperation();                            // addresses read until the work is queued (GuardMoves)
+        using var operation = EnterOperation();                            // addresses read until the work is queued (the move guard)
         if (format != PackedFormat.Int8 || m < 2 || n < 64 || k < 32 || !MixedPrecision.UsesTensorCores)
         {
             return false;
@@ -366,7 +366,7 @@ internal sealed unsafe partial class CudaBackend
     // MaxSplits.
     private int ForcedSplits(int forced, int k, int tiles) => Math.Clamp(forced, 1, Math.Max(1, Math.Min(k / 32, MaxSplits(tiles))));
 
-    public override bool PackedMatMulLargeKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
+    bool IFusedPackedKernels.PackedMatMulLarge(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
         // Any row count the caller sends (above the GEMV kernels' limit, or fewer rows when PrefersPackedMatMul): short
         // prompts fill part of one row tile, which the kernels bound-check, instead of expanding the whole weight to float32
@@ -526,7 +526,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool PackedMatMulLowRankKernel(PackedFormat format, Storage x, int m, int k,
+    bool IFusedPackedKernels.PackedMatMulLowRank(PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank)
     {
         if (products.Length is < 1 or > 3 || format is not (PackedFormat.Int4 or PackedFormat.BFloat16) || m < 64 || k < 32 || rank is < 1 or > 32 || !MixedPrecision.UsesTensorCores
@@ -596,7 +596,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool PackedMatMulGatedKernel(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
+    bool IFusedPackedKernels.PackedMatMulGated(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
         int m, int n, int k)
     {
         if (m > PtxKernels.GemvRows || k == 0 || activation is not (0 or 1))
@@ -647,7 +647,7 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    public override bool PackedMatMulAddRmsNormKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
+    bool IFusedPackedKernels.PackedMatMulAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
         Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
         if (m > PtxKernels.GemvRows || k == 0)
@@ -679,11 +679,11 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool PackedMatMulManyKernel(PackedFormat format, Storage x, int m, int k,
+    bool IFusedPackedKernels.PackedMatMulMany(PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products) =>
         PackedMany(format, x, m, k, products, -1, null);
 
-    public override bool PackedMatMulGatedPairKernel(PackedFormat format, int activation, Storage x, int m, int k,
+    bool IFusedPackedKernels.PackedMatMulGatedPair(PackedFormat format, int activation, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden) =>
         products.Length == 2 && products[0].Columns == products[1].Columns && activation is >= 0 and <= 2
         && PackedMany(format, x, m, k, products, activation, hidden);
@@ -1135,7 +1135,7 @@ internal sealed unsafe partial class CudaBackend
 
     private Storage? _zeroPosition;
 
-    public override bool AttentionStridedKernel(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
+    bool IMatrixUnitBackend.AttentionStrided(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
         Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
         if (!PtxKernels.FlashTensorDim(dim) || !FlashKernelsLoaded(dim))
@@ -1151,7 +1151,7 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool AttentionStridedBackwardKernel(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
+    bool IMatrixUnitBackend.AttentionStridedBackward(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
         Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset,
         int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
@@ -1261,16 +1261,16 @@ internal sealed unsafe partial class CudaBackend
 
     // Packed sequences run on the tensor-core flash kernels, which compute plain causal attention only: a window or a cap
     // is refused (fine-tuning then pads).
-    public override bool SupportsSegmentedAttention(int dim, AttentionVariant variant = default) => variant.IsPlain && FlashTensorCore(dim) is not null;
+    bool ISegmentedAttentionBackend.SupportsSegmented(int dim, AttentionVariant variant) => variant.IsPlain && FlashTensorCore(dim) is not null;
 
     // Rows of different lengths: float32 caches on the flash kernels where they serve, else on the decoding kernel with
     // per-row starts (attention_rows_f32); bfloat16 caches on attention_rows_bf16 (and attention_flash_rows_bf16 for
     // prompt-sized steps). Both decoding kernels take every head size up to DecodeMaxDim, windows and caps, and the
     // tensor-core flash head sizes lie within it: so the head sizes both cache formats run on the device.
-    public override bool SupportsAttentionRows(int dim, AttentionVariant variant = default) => dim <= PtxKernels.DecodeMaxDim;
+    bool IRowAttentionBackend.SupportsRows(int dim, AttentionVariant variant) => dim <= PtxKernels.DecodeMaxDim;
 
-    public override bool AttentionRowsKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
-        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    bool IRowAttentionBackend.AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         if (!variant.IsPlain || FlashTensorCore(dim) is not { } tc)
         {
@@ -1292,8 +1292,8 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool AttentionSegmentedKernel(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends,
-        int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
+    bool ISegmentedAttentionBackend.AttentionSegmented(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends,
+        int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
     {
         if (!variant.IsPlain || FlashTensorCore(dim) is not { } tc)
         {
@@ -1306,9 +1306,9 @@ internal sealed unsafe partial class CudaBackend
         return true;
     }
 
-    public override bool AttentionSegmentedBackwardKernel(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
+    bool ISegmentedAttentionBackend.AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
         Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale,
-        AttentionVariant variant = default)
+        AttentionVariant variant)
     {
         if (!variant.IsPlain || FlashTensorCore(dim) is not { } tc)
         {
@@ -1398,8 +1398,8 @@ internal sealed unsafe partial class CudaBackend
     // can be measured (a graph being recorded), is the bfloat16 cache's own choice: tiled from TiledSteps steps. One step
     // a row (decoding) always takes the decoding kernel. Both read only the device (the position, the starts), so a
     // recorded step stays valid as the cache fills.
-    public override bool AttentionRowsBFloat16Kernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
-        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    bool IRowAttentionBackend.AttentionRowsBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         if (dim > PtxKernels.DecodeMaxDim)
         {

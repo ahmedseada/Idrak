@@ -8,34 +8,21 @@ namespace Idrak.Gpu.Cuda;
 
 // Copies between the devices of two ranks (plan 23, phase C5: the "nvlink" transport): device to device inside one card
 // (two backends carved from it share its memory), a peer copy between two cards the driver lets reach each other (peer
-// access enabled once per pair, remembered), and through host memory otherwise (the default of Backend.CopyTo).
-internal sealed unsafe partial class CudaBackend
+// access enabled once per pair, remembered), and through host memory otherwise (Backend.CopyTo's own path).
+internal sealed unsafe partial class CudaBackend : IPeerCopyBackend
 {
     // (from device, to device) -> whether the first reaches the second's memory, asked and enabled once per pair.
     private static readonly ConcurrentDictionary<(int From, int To), bool> PeerAccess = new();
 
-    public override bool CopiesDirectlyTo(Backend destination) =>
+    bool IPeerCopyBackend.CopiesDirectlyTo(Backend destination) =>
         destination is CudaBackend other && (other._deviceHandle == _deviceHandle || Peer(other));
 
-    public override void CopyTo(Storage source, Storage destination, int count)
+    // Backend.CopyTo has checked the arguments and found the destination on another CUDA backend this one reaches.
+    void IPeerCopyBackend.CopyTo(Storage source, Storage destination, int count)
     {
-        ArgumentNullException.ThrowIfNull(source);
-        ArgumentNullException.ThrowIfNull(destination);
-        if (destination.Backend is not CudaBackend other || ReferenceEquals(other, this) || count == 0
-            || (other._deviceHandle != _deviceHandle && !Peer(other)))
-        {
-            base.CopyTo(source, destination, count);             // inside this backend, or through host memory
-            return;
-        }
-
-        if (!ReferenceEquals(source.Backend, this) || count < 0 || count > source.Length || count > destination.Length)
-        {
-            base.CopyTo(source, destination, count);             // its checks name what is wrong
-            return;
-        }
-
+        var other = (CudaBackend)destination.Backend;
         other.Synchronize();                                       // the destination's queued work finishes before the copy writes
-        using var operation = EnterOperation();                    // addresses read until the work is queued (GuardMoves)
+        using var operation = EnterOperation();                    // addresses read until the work is queued (the move guard)
         using var theirs = other.EnterOperation();
         MakeCurrent();
         using var use = UseStream();

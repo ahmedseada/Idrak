@@ -10,15 +10,14 @@ namespace Idrak.Abstraction.Operations;
 /// kernels have and what runs when a device has no kernel for it. The library's operations are in <see cref="Ops"/>,
 /// generated from <see cref="Backend"/> by tools/operations/generate.py, with their delegates in
 /// <see cref="OperationKernels"/>; a plug-in declares its own with <see cref="PluginOperations.Register"/> (a
-/// <see cref="PluginOperation{TKernel}"/>).
+/// <see cref="PluginOperation{TKernel}"/>). Each is an <see cref="Operation{TKernel}"/> of its kernel's delegate type, so
+/// a kernel registered for it (<see cref="Kernels.Register"/>) is checked by the compiler.
 /// </summary>
 public class Operation
 {
-    internal Operation(string name, string kernelMethod, string signature, int index, Type kernelType, KernelSource fallback)
+    private protected Operation(string name, int index, Type kernelType, KernelSource fallback)
     {
         Name = name;
-        KernelMethod = kernelMethod;
-        Signature = signature;
         Index = index;
         KernelType = kernelType;
         Fallback = fallback;
@@ -51,17 +50,22 @@ public class Operation
     /// </summary>
     public KernelSource Fallback { get; }
 
-    /// <summary>The device's own kernel on <see cref="Backend"/> (MaxPoolBackwardKernel); empty for a plug-in operation.</summary>
-    internal string KernelMethod { get; }
-
-    /// <summary>The kernel method's parameter types by .NET name (Storage,Int32,ConvGeometry&amp;), which tell overloads apart.</summary>
-    internal string Signature { get; }
-
     /// <summary>A plug-in operation's default kernel; null for the library's operations (the device's own runs).</summary>
     internal virtual Delegate? Default => null;
 
     /// <inheritdoc />
     public override string ToString() => Name;
+}
+
+/// <summary>An operation whose kernels are <typeparamref name="TKernel"/>s (<see cref="Operation.KernelType"/>).</summary>
+/// <typeparam name="TKernel">The kernel's delegate type: the device's backend first, then the operation's arguments.</typeparam>
+public class Operation<TKernel> : Operation
+    where TKernel : Delegate
+{
+    internal Operation(string name, int index, KernelSource fallback)
+        : base(name, index, typeof(TKernel), fallback)
+    {
+    }
 }
 
 /// <summary>Which kernel runs an operation on a device, in the order the dispatcher looks for one (<see cref="Kernels.Chain"/>).</summary>

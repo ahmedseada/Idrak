@@ -4,6 +4,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using Idrak.Abstraction.Operations;
+using Idrak.Gpu.Abstractions;
 
 namespace Idrak.Gpu.Hip;
 
@@ -17,8 +18,9 @@ namespace Idrak.Gpu.Hip;
 /// <c>size_t</c>, <c>int64_t</c>: a 64-bit integer) and every launch is checked against them. A launch goes on the
 /// device's stream, in order with its other work. The library's own HIP kernels are HIP C compiled the same way; a
 /// plug-in ships the source of its own and launches it from a kernel it registers for the "hip" kind
-/// (<see cref="Kernels.Register(Operation, string, Delegate, Func{Backend, bool})"/>). A compiler error, no hipRTC on the
-/// machine or a failed launch raise <see cref="HipException"/>.
+/// (<see cref="Kernels.Register{TKernel}(Operation{TKernel}, string, TKernel, Func{Backend, bool})"/>); it launches on any
+/// backend that launches HIP kernels (<see cref="IKernelLauncher{TKernel}"/>). A compiler error, no hipRTC on the machine
+/// or a failed launch raise <see cref="HipException"/>.
 /// </summary>
 /// <example>
 /// <code>
@@ -35,7 +37,7 @@ namespace Idrak.Gpu.Hip;
 ///     Scale.Launch(b, (uint)Math.Clamp((n + 255) / 256, 1, 65535), 1, 1, 256, 1, 1, [rows, scales, output, n, width]));
 /// </code>
 /// </example>
-public sealed class HipKernel
+public sealed class HipKernel : IDeviceKernel
 {
     /// <summary>
     /// A kernel from HIP C++ source and the name of its <c>extern "C" __global__</c> function; <paramref name="options"/>
@@ -82,14 +84,15 @@ public sealed class HipKernel
     /// dimension launches nothing. The first launch on a device compiles the source there (or reads it from the cache).
     /// </summary>
     /// <exception cref="ArgumentException">
-    /// <paramref name="backend"/> is not a HIP device, a storage is not on it, or the arguments do not match the parameters.
+    /// <paramref name="backend"/> does not launch HIP kernels, a storage is not on it, or the arguments do not match the
+    /// parameters.
     /// </exception>
     /// <exception cref="ArgumentOutOfRangeException">The grid, the block or the shared memory exceed the device's limits.</exception>
     /// <exception cref="HipException">hipRTC is missing or refused the source, or the runtime refused the launch.</exception>
     public void Launch(Backend backend, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ, ReadOnlySpan<KernelArgument> arguments, uint sharedBytes = 0)
     {
         ArgumentNullException.ThrowIfNull(backend);
-        if (backend is not HipBackend hip)
+        if (backend is not IKernelLauncher<HipKernel> hip)
         {
             throw new ArgumentException($"HIP kernel '{Name}' runs on a HIP device, not on {backend.Name} ({backend.Kind}).", nameof(backend));
         }
@@ -99,15 +102,15 @@ public sealed class HipKernel
     }
 
     /// <summary>
-    /// Why plug-in kernels cannot be compiled for <paramref name="backend"/> (null when they can): it is not a HIP
-    /// device, or hipRTC is not on the machine (the HIP runtime alone runs code objects but does not compile them). A
+    /// Why plug-in kernels cannot be compiled for <paramref name="backend"/> (null when they can): it does not launch HIP
+    /// kernels, or hipRTC is not on the machine (the HIP runtime alone runs code objects but does not compile them). A
     /// plug-in registers its kernel with the requirement <c>b =&gt; HipKernel.UnavailableReason(b) is null</c>, so such a
     /// machine runs the operation's default kernel instead of failing.
     /// </summary>
     public static string? UnavailableReason(Backend backend)
     {
         ArgumentNullException.ThrowIfNull(backend);
-        return backend is not HipBackend ? $"{backend.Name} ({backend.Kind}) is not a HIP device"
+        return backend is not IKernelLauncher<HipKernel> ? $"{backend.Name} ({backend.Kind}) is not a HIP device"
             : HipRtc.UnavailableReason is { Length: > 0 } missing ? missing
             : null;
     }

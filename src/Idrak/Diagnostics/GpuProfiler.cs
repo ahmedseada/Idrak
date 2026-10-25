@@ -20,23 +20,23 @@ public static class GpuProfiler
     /// <summary>Starts timing the kernels of <paramref name="device"/> (ignored on a device without kernel timing, such as the CPU).</summary>
     public static void Start(Device device)
     {
-        if (device.Backend.Capabilities.Profiling)
+        if (device.Backend is IKernelProfiler profiler)
         {
             device.Synchronize();
-            device.Backend.StartProfile();
+            profiler.StartProfile();
         }
     }
 
     /// <summary>Stops timing and returns the kernels, most time first.</summary>
     public static IReadOnlyList<GpuProfileEntry> Stop(Device device)
     {
-        if (!device.Backend.Capabilities.Profiling)
+        if (device.Backend is not IKernelProfiler profiler)
         {
             return [];
         }
 
         device.Synchronize();
-        return [.. device.Backend.StopProfile()
+        return [.. profiler.StopProfile()
             .Select(e =>
             {
                 double ms = e.Value.Ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;

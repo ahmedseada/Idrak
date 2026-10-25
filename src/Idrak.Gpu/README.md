@@ -12,7 +12,7 @@ dotnet add package Idrak.Gpu   # the GPU devices alone, on Idrak.Abstraction
 ```
 
 The package depends on `Idrak.Abstraction` only and is built on its public device API (`Backend`, `Storage`,
-`DeviceProvider`, `Kernels`), the same surface an outside device package would use. Once an application ships it,
+`IDeviceProvider`, `Kernels`), the same surface an outside device package would use. Once an application ships it,
 `Device.Available` lists its devices and `Device.Parse("vulkan:0")` reaches them; no call is needed to turn them on.
 
 ## What is in the package

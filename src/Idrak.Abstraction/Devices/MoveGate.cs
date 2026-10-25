@@ -4,9 +4,10 @@
 namespace Idrak.Abstraction.Devices;
 
 // Moves of live storages between memories (offloading, lookup tables placed in system memory) against the operations that
-// read their addresses (Backend.GuardMoves). An operation reads a storage's address and queues work that uses it; a move
-// copies the storage and points it at the new block, and the old block goes back to a pool. A move between another
-// thread's read and its queued work would leave that work reading (or writing) a block that is someone else's by then.
+// read their addresses (a device that offloads, IOffloadingBackend). An operation reads a storage's address and queues
+// work that uses it; a move copies the storage and points it at the new block, and the old block goes back to a pool. A
+// move between another thread's read and its queued work would leave that work reading (or writing) a block that is
+// someone else's by then.
 //
 // - Operations: each thread counts once while inside any operation of the device (nested operations, and an operation
 //   inside a move by the same thread, do not count again or wait). A thread starting an operation while a move runs or

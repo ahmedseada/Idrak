@@ -41,26 +41,28 @@ internal static class LibraryRegistrations
         DeviceProviders.Register(new HipProvider());
     }
 
-    private sealed class CudaProvider : DeviceProvider
+    private sealed class CudaProvider : ISeparableDeviceProvider
     {
-        public override string Kind => "cuda";
+        public string Name => "cuda";
 
-        public override string Display => "CUDA";
+        public string Summary => "GPUs through the CUDA driver (PTX kernels generated in C#)";
 
-        public override DeviceType Type => DeviceType.Cuda;
+        public string Display => "CUDA";
 
-        public override int Count => CudaBackend.DeviceCount;
+        public DeviceType Type => DeviceType.Cuda;
 
-        public override string? UnavailableReason => CudaBackend.UnavailableReason;
+        public int Count => CudaBackend.DeviceCount;
 
-        public override Backend Create(int ordinal) => CudaBackend.Get(ordinal);
+        public string? UnavailableReason => CudaBackend.UnavailableReason;
 
-        public override bool IsStarted(int ordinal) => CudaBackend.IsInitialized(ordinal);
+        public Backend Create(int ordinal) => CudaBackend.Get(ordinal);
 
-        public override Backend? CreateSeparate(int ordinal, SeparateBackendOptions options) => CudaBackend.CreateSeparate(ordinal, options);
+        public bool IsStarted(int ordinal) => CudaBackend.IsInitialized(ordinal);
 
-        public override int? DefaultRank(int ordinal) => ordinal == 0 ? 100 : 99;   // the first GPU, as before
+        public Backend CreateSeparate(int ordinal, SeparateBackendOptions options) => CudaBackend.CreateSeparate(ordinal, options);
 
-        public override Guid? DeviceUuid(int ordinal) => CudaBackend.DeviceUuid(ordinal);
+        public int? DefaultRank(int ordinal) => ordinal == 0 ? 100 : 99;   // the first GPU, as before
+
+        public Guid? DeviceUuid(int ordinal) => CudaBackend.DeviceUuid(ordinal);
     }
 }

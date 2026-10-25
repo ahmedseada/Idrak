@@ -19,7 +19,7 @@ namespace Idrak.Gpu.Cuda;
 // - Accounting: a new chunk counts as cached; a block taken from it moves its bytes to in use, as a cached block reused.
 // - Never while a graph is recorded (the recording owns the blocks freed meanwhile), and never for a host block.
 // - A full device: any block may take a chunk's free room (ChunkRoom) before the allocation fails.
-internal sealed unsafe partial class CudaBackend
+internal sealed unsafe partial class CudaBackend : ILongLivedAllocations
 {
     private sealed class Chunk(ulong address, long bytes)
     {
@@ -56,7 +56,7 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    public override IDisposable? LongLivedAllocations()
+    IDisposable ILongLivedAllocations.LongLivedAllocations()
     {
         t_longLived++;
         return new LongLived();

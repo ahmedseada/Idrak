@@ -273,25 +273,27 @@ internal sealed class DeferredBackend : Backend
 }
 
 /// <summary>The provider of the deferred device (by name only: never listed, never the default).</summary>
-internal sealed class DeferredProvider : DeviceProvider
+internal sealed class DeferredProvider : IDeviceProvider
 {
     private volatile bool _started;
 
-    public override string Kind => DeferredTensors.Kind;
+    public string Name => DeferredTensors.Kind;
 
-    public override DeviceType Type => DeviceType.Other;
+    public string Summary => "a model's tensors before they are read (a pipeline stage's or a shard's load), each read from its source when it moves to a device";
 
-    public override int Count => 1;
+    public DeviceType Type => DeviceType.Other;
 
-    public override Backend Create(int ordinal)
+    public int Count => 1;
+
+    public Backend Create(int ordinal)
     {
         _started = true;
         return DeferredBackend.Instance;
     }
 
-    public override bool IsStarted(int ordinal) => _started;
+    public bool IsStarted(int ordinal) => _started;
 
-    public override bool Listed(int ordinal) => false;
+    public bool Listed(int ordinal) => false;
 
-    public override string? Note(int ordinal) => "a model's tensors before they are read (a pipeline stage's or a shard's load): by name only";
+    public string? Note(int ordinal) => "a model's tensors before they are read (a pipeline stage's or a shard's load): by name only";
 }

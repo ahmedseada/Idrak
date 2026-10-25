@@ -20,30 +20,23 @@ public interface IHostStaging : IDisposable
     /// <summary>Queues a copy of <paramref name="floats"/> values of <paramref name="source"/> from <paramref name="offset"/> into the slot.</summary>
     void Download(Storage source, int offset, int slot, int floats);
 
-    /// <summary>
-    /// Whether <see cref="Download(Storage, int, int, int, int)"/> places a copy anywhere in its slot, so several pieces
-    /// (a gradient bucket's, plan 23 phase C6) share one slot; false (the default): only at the slot's start.
-    /// </summary>
-    bool PlacesCopies => false;
-
-    /// <summary>
-    /// Queues a copy of <paramref name="floats"/> values of <paramref name="source"/> from <paramref name="offset"/> into
-    /// the slot at <paramref name="slotOffset"/>. By default only at the slot's start (<see cref="PlacesCopies"/> false).
-    /// </summary>
-    /// <exception cref="NotSupportedException">A <paramref name="slotOffset"/> other than 0 where the staging does not place copies.</exception>
-    void Download(Storage source, int offset, int slot, int slotOffset, int floats)
-    {
-        if (slotOffset != 0)
-        {
-            throw new NotSupportedException($"{GetType().Name} copies to the start of a slot only (PlacesCopies is false).");
-        }
-
-        Download(source, offset, slot, floats);
-    }
-
     /// <summary>Queues a copy of the slot's first <paramref name="floats"/> values into <paramref name="destination"/> at <paramref name="offset"/>.</summary>
     void Upload(int slot, Storage destination, int offset, int floats);
 
     /// <summary>Waits until the slot's last queued copy has finished (no wait when there is none).</summary>
     void Wait(int slot);
+}
+
+/// <summary>
+/// Pinned slots that take a copy anywhere in a slot, not only at its start, so several pieces (a gradient bucket's, plan
+/// 23 phase C6) share one slot. A staging without it copies to the start of a slot only.
+/// </summary>
+public interface ISlotStaging : IHostStaging
+{
+    /// <summary>
+    /// Queues a copy of <paramref name="floats"/> values of <paramref name="source"/> from <paramref name="offset"/> into
+    /// the slot at <paramref name="slotOffset"/>.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">The copy does not fit the slot.</exception>
+    void Download(Storage source, int offset, int slot, int slotOffset, int floats);
 }

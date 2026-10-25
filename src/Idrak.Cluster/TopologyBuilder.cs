@@ -73,7 +73,7 @@ public sealed record MachineFacts(string HostName, string? Address, string? Adap
 
         // A device a backend does not list because another backend drives its card (vulkan:0 beside cuda:0) is still a
         // device a rank can name: it is listed with its twin's memory (the same UUID), without starting a backend for it.
-        foreach (var provider in DeviceProviders.All.Where(p => p.Kind != SimulatedDevices.Kind))
+        foreach (var provider in DeviceProviders.All.Where(p => p.Name != SimulatedDevices.Kind))
         {
             for (int i = 0; i < provider.Count; i++)
             {
@@ -85,7 +85,7 @@ public sealed record MachineFacts(string HostName, string? Address, string? Adap
                 var uuid = provider.DeviceUuid(i);
                 var twin = uuid is null ? null : Device.Available.FirstOrDefault(d => d.Type != DeviceType.Cpu && DeviceProviders.Find(d.Kind)?.DeviceUuid(d.Ordinal) == uuid);
                 var listed = twin is null ? null : devices.FirstOrDefault(d => d.Device == twin.ToString());
-                devices.Add(new MachineDevice($"{provider.Kind}:{i}", provider.TypeOf(i), listed?.MemoryBytes,
+                devices.Add(new MachineDevice($"{provider.Name}:{i}", provider.TypeOf(i), listed?.MemoryBytes,
                     twin is null ? $"{provider.Display} device {i}" : $"{twin.Name} (the card {twin} drives)", listed?.Device));
             }
         }

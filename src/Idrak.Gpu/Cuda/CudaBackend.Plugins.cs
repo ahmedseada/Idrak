@@ -2,13 +2,14 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text;
+using Idrak.Gpu.Abstractions;
 using static Idrak.Gpu.Cuda.CudaDriver;
 
 namespace Idrak.Gpu.Cuda;
 
 // Plug-ins' own kernels (CudaKernel): each PTX text JIT-compiled once on this device, each entry looked up once, then
 // launched like the library's kernels (on the stream, through the stream gate, profiled under the kernel's name).
-internal sealed unsafe partial class CudaBackend
+internal sealed unsafe partial class CudaBackend : IKernelLauncher<CudaKernel>
 {
     private readonly object _pluginGate = new();
 
@@ -16,11 +17,11 @@ internal sealed unsafe partial class CudaBackend
     private readonly Dictionary<string, IntPtr> _pluginModules = new(StringComparer.Ordinal);
     private readonly Dictionary<CudaKernel, IntPtr> _pluginFunctions = new(ReferenceEqualityComparer.Instance);
 
-    /// <summary>Queues a plug-in's kernel (its arguments already checked against its parameters).</summary>
-    internal void Launch(CudaKernel kernel, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ,
+    // Queues a plug-in's kernel (its arguments already checked against its parameters).
+    void IKernelLauncher<CudaKernel>.Launch(CudaKernel kernel, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ,
         ReadOnlySpan<KernelArgument> arguments, uint sharedBytes)
     {
-        using var operation = EnterOperation();                            // addresses read until the work is queued (GuardMoves)
+        using var operation = EnterOperation();                            // addresses read until the work is queued (the move guard)
         long threads = (long)blockX * blockY * blockZ;
         if (threads > _limits.MaxThreadsPerBlock || (threads == 0 && gridX * (ulong)gridY * gridZ != 0))
         {

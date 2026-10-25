@@ -10,13 +10,14 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // of the batch in one fused pass over its hidden units (a row's gate values are contiguous, so every load is a vector
 // along the row), with the activations of the element-wise kernels (σ(x) = 1 / (1 + e^-x), tanh(x) = 1 - 2 / (e^2x + 1)
 // in the vector lanes, MathF in the scalar tail), so the step agrees with the composed operations. Rows split across
-// cores only when the step is large enough to pay for it.
+// cores only when the step is large enough to pay for it. The step and sequence kernels (the recurrent product inside)
+// are the GPU's: here they return false and the layers compose them from the cell kernel and a product.
 internal sealed partial class CpuBackend
 {
     // Element operations a hidden unit of a step costs (the activations and the products), to decide whether rows split.
     private const int CellWork = 24;
 
-    public override bool LstmCellKernel(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells,
+    bool IRecurrentKernels.LstmCell(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells,
         int step, int steps, int batch, int hiddenSize)
     {
         if (batch > 0 && hiddenSize > 0)
@@ -28,7 +29,7 @@ internal sealed partial class CpuBackend
         return true;
     }
 
-    public override bool LstmCellBackwardKernel(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep,
+    bool IRecurrentKernels.LstmCellBackward(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep,
         int step, int previous, int steps, int batch, int hiddenSize)
     {
         if (batch > 0 && hiddenSize > 0)
@@ -40,7 +41,7 @@ internal sealed partial class CpuBackend
         return true;
     }
 
-    public override bool GruCellKernel(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates,
+    bool IRecurrentKernels.GruCell(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates,
         int step, int steps, int batch, int hiddenSize)
     {
         if (batch > 0 && hiddenSize > 0)
@@ -52,7 +53,7 @@ internal sealed partial class CpuBackend
         return true;
     }
 
-    public override bool GruCellBackwardKernel(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep,
+    bool IRecurrentKernels.GruCellBackward(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep,
         int step, int previous, int steps, int batch, int hiddenSize)
     {
         if (batch > 0 && hiddenSize > 0)
@@ -63,6 +64,30 @@ internal sealed partial class CpuBackend
 
         return true;
     }
+
+    bool IRecurrentKernels.LstmStep(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step, int previous,
+        int steps, int batch, int hiddenSize) => false;
+
+    bool IRecurrentKernels.LstmStepBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step, int next,
+        int previous, int steps, int batch, int hiddenSize) => false;
+
+    bool IRecurrentKernels.GruStep(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous, int steps,
+        int batch, int hiddenSize) => false;
+
+    bool IRecurrentKernels.GruStepBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent,
+        int step, int next, int previous, int steps, int batch, int hiddenSize) => false;
+
+    bool IRecurrentKernels.LstmSequence(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps, int batch,
+        int hiddenSize, bool reverse) => false;
+
+    bool IRecurrentKernels.LstmSequenceBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps,
+        int batch, int hiddenSize, bool reverse) => false;
+
+    bool IRecurrentKernels.GruSequence(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch,
+        int hiddenSize, bool reverse) => false;
+
+    bool IRecurrentKernels.GruSequenceBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates,
+        Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse) => false;
 
     // Runs rows [0, rows) of a kernel inline, or in chunks of rows across cores when the work pays for it.
     private static void RunRows<TKernel>(TKernel kernel, int rows, long work)

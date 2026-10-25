@@ -101,7 +101,7 @@ internal sealed partial class GradientReduction : SyncCore
 
     // Background staging of finished buckets (phase C6): pinned slots, which slot each launched bucket's copy went to, and
     // the pieces of it that had no gradient (zeros, written on the host).
-    private IHostStaging? _staging;
+    private ISlotStaging? _staging;
     private bool _stagingTried;
     private int _stagingSlots;
     private int[] _slotOf = [];
@@ -238,9 +238,9 @@ internal sealed partial class GradientReduction : SyncCore
             _stagingTried = true;
             _stagingSlots = buckets;
             var staging = CreateStaging(Collectives.Device.Backend, buckets, _layout.BucketValues);
-            if (staging is { PlacesCopies: true })
+            if (staging is ISlotStaging slots)
             {
-                _staging = staging;
+                _staging = slots;
             }
             else
             {

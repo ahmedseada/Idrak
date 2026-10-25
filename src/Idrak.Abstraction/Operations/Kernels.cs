@@ -1,9 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Collections;
 using System.Collections.Concurrent;
-using System.Diagnostics.CodeAnalysis;
-using System.Reflection;
 using Idrak.Abstraction.Devices;
 
 namespace Idrak.Abstraction.Operations;
@@ -28,30 +27,28 @@ public static class Kernels
 
     private static readonly List<WeakReference<Backend>> Devices = [];
 
-    // Per backend type, which operations it overrides (its own kernel), by index.
-    private static readonly ConcurrentDictionary<Type, bool[]> Overrides = new();
+    // Per backend type, which operations it has a kernel of its own for.
+    private static readonly ConcurrentDictionary<Type, OwnKernelSet> Overrides = new();
 
     /// <summary>
-    /// Registers <paramref name="kernel"/> for <paramref name="operation"/> on devices of <paramref name="deviceKind"/>
-    /// (any case); it runs instead of the device's own kernel wherever <paramref name="requirement"/> holds (always when
-    /// null). A later registration for the same operation and kind takes precedence. Returns a handle that removes it.
+    /// Registers <paramref name="kernel"/> for <paramref name="operation"/> (one of <see cref="Ops"/>, or a plug-in's
+    /// <see cref="PluginOperation{TKernel}"/>) on devices of <paramref name="deviceKind"/> (any case); it runs instead of
+    /// the device's own kernel wherever <paramref name="requirement"/> holds (always when null). A later registration for
+    /// the same operation and kind takes precedence. Returns a handle that removes it. The kernel's type is the
+    /// operation's (<see cref="Operation.KernelType"/>), checked by the compiler.
     /// </summary>
     /// <remarks>
     /// A kernel receives the device's backend first, so it can run the device's own kernel for the cases it does not
     /// handle (<c>backend.SoftmaxKernel(...)</c>). A requirement reads what the device reports
-    /// (<see cref="Backend.Capabilities"/>), never a card's name.
+    /// (<see cref="Backend.Capabilities"/>), never a card's name. For a plug-in operation,
+    /// <see cref="PluginOperation{TKernel}.KernelFor"/> returns it on such devices instead of the operation's default kernel.
     /// </remarks>
-    /// <exception cref="ArgumentException">The kernel is not of the operation's <see cref="Operation.KernelType"/>.</exception>
-    public static IDisposable Register(Operation operation, string deviceKind, Delegate kernel, Func<Backend, bool>? requirement = null)
+    public static IDisposable Register<TKernel>(Operation<TKernel> operation, string deviceKind, TKernel kernel, Func<Backend, bool>? requirement = null)
+        where TKernel : Delegate
     {
         ArgumentNullException.ThrowIfNull(operation);
         ArgumentException.ThrowIfNullOrWhiteSpace(deviceKind);
         ArgumentNullException.ThrowIfNull(kernel);
-        if (kernel.GetType() != operation.KernelType)
-        {
-            throw new ArgumentException($"A kernel for {operation} is an {operation.KernelType.Name}, not a {kernel.GetType().Name}.", nameof(kernel));
-        }
-
         var registration = new Registration(operation, deviceKind, kernel, requirement);
         lock (Registry)
         {
@@ -63,15 +60,6 @@ public static class Kernels
     }
 
     /// <summary>
-    /// Registers <paramref name="kernel"/> for the plug-in operation <paramref name="operation"/> on devices of
-    /// <paramref name="deviceKind"/>, as <see cref="Register(Operation, string, Delegate, Func{Backend, bool})"/> does
-    /// (the kernel's type checked by the compiler): <see cref="PluginOperation{TKernel}.KernelFor"/> returns it there
-    /// instead of the operation's default kernel wherever <paramref name="requirement"/> holds.
-    /// </summary>
-    public static IDisposable Register<TKernel>(PluginOperation<TKernel> operation, string deviceKind, TKernel kernel, Func<Backend, bool>? requirement = null)
-        where TKernel : Delegate => Register((Operation)operation, deviceKind, kernel, requirement);
-
-    /// <summary>
     /// Which kernel each operation runs on <paramref name="backend"/> now, in <see cref="Operation.Index"/> order (the
     /// library's operations, <see cref="Ops.All"/>, then the plug-ins', <see cref="PluginOperations.All"/>): a registered
     /// one, the device's own, the composed default, the host fallback, or none.
@@ -80,13 +68,13 @@ public static class Kernels
     {
         ArgumentNullException.ThrowIfNull(backend);
         var registered = Resolve(backend);
-        var own = OwnKernels(backend);
+        var own = backend.OwnKernels;
         var plugins = ResolvePlugins(backend, out var pluginRegistered);
         var chain = new KernelChoice[Ops.All.Count + plugins.Length];
         foreach (var operation in Ops.All)
         {
             var source = registered[operation.Index] is not null ? KernelSource.Registered
-                : own[operation.Index] ? KernelSource.Device
+                : own.Contains(operation) ? KernelSource.Device
                 : operation.Fallback;
             chain[operation.Index] = new KernelChoice(operation, source);
         }
@@ -272,48 +260,10 @@ public static class Kernels
         }
     }
 
-    // Whether the backend has a kernel of its own for the operation (its NameKernel overrides Backend's), by type, cached.
-    internal static bool[] OwnKernels(Backend backend)
-    {
-        if (!Overrides.TryGetValue(backend.GetType(), out var own))
-        {
-            own = OwnKernels(backend.GetType());
-            Overrides[backend.GetType()] = own;
-        }
-
-        return own;
-    }
-
-    // Which operations a backend type overrides: its NameKernel is declared below Backend.
-    private static bool[] OwnKernels([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)] Type type)
-    {
-        var own = new bool[Ops.All.Count];
-        foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Instance))
-        {
-            if (method.DeclaringType != typeof(Backend) && method.IsVirtual && method.GetBaseDefinition().DeclaringType == typeof(Backend)
-                && Find(method) is { } operation)
-            {
-                own[operation.Index] = true;
-            }
-        }
-
-        return own;
-    }
-
-    // The operation whose kernel method this is (by name and parameter types), or null.
-    private static Operation? Find(MethodInfo method)
-    {
-        string signature = string.Join(",", Array.ConvertAll(method.GetParameters(), p => p.ParameterType.Name));
-        foreach (var operation in Ops.All)
-        {
-            if (operation.KernelMethod == method.Name && operation.Signature == signature)
-            {
-                return operation;
-            }
-        }
-
-        return null;
-    }
+    // Which operations the backend has a kernel of its own for (Backend.OwnKernels), built once per device type: the
+    // capabilities a device implements and the kernels it overrides belong to its type.
+    internal static OwnKernelSet OwnKernels(Backend backend) =>
+        Overrides.GetOrAdd(backend.GetType(), static (_, b) => new OwnKernelSet(Backend.OwnKernelsOf(b)), backend);
 
     private static void Remove(Registration registration)
     {
@@ -341,6 +291,47 @@ public static class Kernels
 
         public void Dispose() => Remove(this);
     }
+}
+
+/// <summary>The library's operations a device has a kernel of its own for (<see cref="Backend.OwnKernels"/>), by index.</summary>
+internal sealed class OwnKernelSet(bool[] own) : IReadOnlySet<Operation>
+{
+    private readonly bool[] _own = own;
+    private readonly int _count = own.Count(static o => o);
+
+    public int Count => _count;
+
+    // Whether the device has a kernel of its own for the operation at `index` (a library operation's).
+    public bool Has(int index) => _own[index];
+
+    public bool Contains(Operation item) => item is { IsPlugin: false } && _own[item.Index];
+
+    public IEnumerator<Operation> GetEnumerator()
+    {
+        foreach (var operation in Ops.All)
+        {
+            if (_own[operation.Index])
+            {
+                yield return operation;
+            }
+        }
+    }
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+
+    public bool IsProperSubsetOf(IEnumerable<Operation> other) => Others(other) is var set && set.Count > _count && IsSubsetOf(set);
+
+    public bool IsProperSupersetOf(IEnumerable<Operation> other) => Others(other) is var set && set.Count < _count && IsSupersetOf(set);
+
+    public bool IsSubsetOf(IEnumerable<Operation> other) => Others(other) is var set && this.All(set.Contains);
+
+    public bool IsSupersetOf(IEnumerable<Operation> other) => other.All(Contains);
+
+    public bool Overlaps(IEnumerable<Operation> other) => other.Any(Contains);
+
+    public bool SetEquals(IEnumerable<Operation> other) => Others(other) is var set && set.Count == _count && set.All(Contains);
+
+    private static HashSet<Operation> Others(IEnumerable<Operation> other) => other as HashSet<Operation> ?? [.. other];
 }
 
 /// <summary>Which kernel runs an operation on a device (<see cref="Kernels.Chain"/>).</summary>

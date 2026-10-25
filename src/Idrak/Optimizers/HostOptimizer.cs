@@ -110,7 +110,7 @@ public sealed class HostOptimizer : Optimizer, IHostGradients
             _copies[i].GradientTarget(out _);
             if (staging is null)
             {
-                g.Backend.Download(g.Storage, _copies[i].Grad!.Storage.HostMemory[.._copies[i].Size]);
+                g.Backend.Download(g.Storage, Values(_copies[i].Grad!.Storage)[.._copies[i].Size]);
                 continue;
             }
 
@@ -142,7 +142,7 @@ public sealed class HostOptimizer : Optimizer, IHostGradients
                 int slot = j % DownSlots;                                  // pieces are issued to the slots in turn
                 var (i, offset, count) = pieces[j];
                 slots.Wait(slot);
-                slots.Slot(slot)[..count].CopyTo(_copies[i].Grad!.Storage.HostMemory.Slice(offset, count));
+                slots.Slot(slot)[..count].CopyTo(Values(_copies[i].Grad!.Storage).Slice(offset, count));
                 Issue(slot);
             }
         }
@@ -152,17 +152,20 @@ public sealed class HostOptimizer : Optimizer, IHostGradients
 
     /// <inheritdoc />
     public Span<float> HostGradient(int parameter) =>
-        _downloaded && _copies[parameter].Grad is { } g ? g.Storage.HostMemory[.._copies[parameter].Size] : [];
+        _downloaded && _copies[parameter].Grad is { } g ? Values(g.Storage)[.._copies[parameter].Size] : [];
 
     /// <inheritdoc />
-    public Span<float> CreateHostGradient(int parameter) => _copies[parameter].GradStorage().HostMemory[.._copies[parameter].Size];
+    public Span<float> CreateHostGradient(int parameter) => Values(_copies[parameter].GradStorage())[.._copies[parameter].Size];
+
+    // The values of a host copy (a CPU tensor's storage, in host memory: IHostStorage).
+    private static Span<float> Values(Storage host) => ((IHostStorage)host).HostMemory;
 
     /// <inheritdoc />
     public void ReloadParameters()
     {
         for (int i = 0; i < _copies.Length; i++)
         {
-            Parameters[i].Backend.Download(Parameters[i].Storage, _copies[i].Storage.HostMemory[.._copies[i].Size]);
+            Parameters[i].Backend.Download(Parameters[i].Storage, Values(_copies[i].Storage)[.._copies[i].Size]);
         }
     }
 
@@ -191,7 +194,7 @@ public sealed class HostOptimizer : Optimizer, IHostGradients
             }
 
             Step(i);
-            var values = _copies[i].Storage.HostMemory;
+            var values = Values(_copies[i].Storage);
             if (staging is null)
             {
                 Parameters[i].Backend.Upload(values[.._copies[i].Size], Parameters[i].Storage);
@@ -250,14 +253,14 @@ public sealed class HostOptimizer : Optimizer, IHostGradients
             }
 
             copy.GradientTarget(out _);
-            g.Backend.Download(g.Storage, copy.Grad!.Storage.HostMemory[..copy.Size]);
+            g.Backend.Download(g.Storage, Values(copy.Grad!.Storage)[..copy.Size]);
             if (release)
             {
                 p.ReleaseGrad();
             }
 
             Step(i);
-            p.Backend.Upload(copy.Storage.HostMemory[..copy.Size], p.Storage);
+            p.Backend.Upload(Values(copy.Storage)[..copy.Size], p.Storage);
         }
     }
 
@@ -302,7 +305,7 @@ public sealed class HostOptimizer : Optimizer, IHostGradients
             int slot = j % DownSlots;                                      // pieces are issued to the slots in turn
             var (i, offset, count) = pieces[j];
             staging.Wait(slot);
-            staging.Slot(slot)[..count].CopyTo(_copies[i].Grad!.Storage.HostMemory.Slice(offset, count));
+            staging.Slot(slot)[..count].CopyTo(Values(_copies[i].Grad!.Storage).Slice(offset, count));
             Issue(slot);
             if (j + 1 < pieces.Count && pieces[j + 1].Parameter == i)
             {
@@ -315,7 +318,7 @@ public sealed class HostOptimizer : Optimizer, IHostGradients
             }
 
             Step(i);
-            var values = _copies[i].Storage.HostMemory;
+            var values = Values(_copies[i].Storage);
             for (int start = 0; start < _copies[i].Size; start += SlotFloats)
             {
                 int n = Math.Min(SlotFloats, _copies[i].Size - start);

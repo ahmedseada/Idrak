@@ -24,7 +24,7 @@ namespace Idrak.Gpu.Vulkan;
 // upload during the recording happens at once (as on CUDA): into mapped memory by the host, else through the staging
 // buffer on the queue, outside the graph. Reading device memory during the recording fails (nothing recorded has run),
 // which also turns a host fallback into a failed recording: ComputeGraph then re-runs the step instead.
-internal sealed unsafe partial class VulkanBackend
+internal sealed unsafe partial class VulkanBackend : IGraphCaptureBackend
 {
     // The recording in progress (null when none).
     private Capture? _capture;
@@ -66,9 +66,9 @@ internal sealed unsafe partial class VulkanBackend
 
     // IDRAK_VULKAN_GRAPHS=0: no recorded graphs; callers run their steps directly (diagnostics). IDRAK_VULKAN_CHECK_NAN
     // records none either: a recorded command has not run, so its output could not be checked.
-    public override bool SupportsGraphs => !CheckNan && Environment.GetEnvironmentVariable("IDRAK_VULKAN_GRAPHS") is not ("0" or "false");
+    bool IGraphCaptureBackend.CaptureEnabled => !CheckNan && Environment.GetEnvironmentVariable("IDRAK_VULKAN_GRAPHS") is not ("0" or "false");
 
-    public override void BeginCapture()
+    void IGraphCaptureBackend.BeginCapture()
     {
         _gate.Enter();                                                     // held until EndCapture or AbortCapture
         try
@@ -97,7 +97,7 @@ internal sealed unsafe partial class VulkanBackend
         }
     }
 
-    public override (IntPtr Executable, IntPtr Graph, List<Storage> Owned) EndCapture()
+    (IntPtr Executable, IntPtr Graph, List<Storage> Owned) IGraphCaptureBackend.EndCapture()
     {
         if (_capture is null || !_gate.IsHeldByCurrentThread)
         {
@@ -136,7 +136,7 @@ internal sealed unsafe partial class VulkanBackend
         }
     }
 
-    public override List<Storage> AbortCapture()
+    List<Storage> IGraphCaptureBackend.AbortCapture()
     {
         if (_capture is not { } capture || !_gate.IsHeldByCurrentThread)
         {
@@ -156,7 +156,7 @@ internal sealed unsafe partial class VulkanBackend
         }
     }
 
-    public override void ReplayGraph(IntPtr executable)
+    void IGraphCaptureBackend.ReplayGraph(IntPtr executable)
     {
         var graph = GraphOf(executable);
         lock (_gate)
@@ -190,7 +190,7 @@ internal sealed unsafe partial class VulkanBackend
         }
     }
 
-    public override void DestroyGraph(IntPtr executable, IntPtr graph)
+    void IGraphCaptureBackend.DestroyGraph(IntPtr executable, IntPtr graph)
     {
         var handle = GCHandle.FromIntPtr(executable);
         var recorded = (Graph)handle.Target!;

@@ -26,7 +26,7 @@ public sealed partial class RMSNorm
         k.ThrowIfDisposed();
         v.ThrowIfDisposed();
         if ((queryNorm is null) != (keyNorm is null) || (cos is null) != (sin is null) || (cache is null) != (position is null)
-            || cache is { Layout.FusedWrite: false } || !q.Backend.Capabilities.FusedKernels)
+            || cache is { Layout.FusedWrite: false } || !q.Backend.FusedKernels)
         {
             return null;
         }

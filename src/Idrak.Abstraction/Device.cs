@@ -35,10 +35,10 @@ public sealed class Device
 {
     private static readonly ConcurrentDictionary<(string Kind, int Ordinal), Device> Devices = new();
 
-    private readonly DeviceProvider? _provider;
+    private readonly IDeviceProvider? _provider;
     private string? _text;
 
-    private Device(DeviceType type, int ordinal, DeviceProvider? provider)
+    private Device(DeviceType type, int ordinal, IDeviceProvider? provider)
     {
         Type = type;
         Ordinal = ordinal;
@@ -83,7 +83,7 @@ public sealed class Device
                 {
                     if (provider.Listed(i))
                     {
-                        devices.Add(Get(provider.Kind, i));
+                        devices.Add(Get(provider.Name, i));
                     }
                 }
             }
@@ -103,7 +103,7 @@ public sealed class Device
         }
 
         var provider = DeviceProviders.Find(kind) ?? throw new InvalidOperationException(
-            $"No device kind '{kind}' (known: cpu, {string.Join(", ", DeviceProviders.All.Select(p => p.Kind))}).");
+            $"No device kind '{kind}' (known: cpu, {string.Join(", ", DeviceProviders.All.Select(p => p.Name))}).");
         if ((uint)ordinal >= (uint)provider.Count)
         {
             throw new InvalidOperationException(provider.Count == 0
@@ -111,7 +111,7 @@ public sealed class Device
                 : $"{provider.Display} device {ordinal} does not exist; {provider.Count} device(s) found.");
         }
 
-        return Devices.GetOrAdd((provider.Kind, ordinal), static (key, p) => new Device(p.TypeOf(key.Ordinal), key.Ordinal, p), provider);
+        return Devices.GetOrAdd((provider.Name, ordinal), static (key, p) => new Device(p.TypeOf(key.Ordinal), key.Ordinal, p), provider);
     }
 
     /// <summary>The device a name such as "cpu", "cuda", "cuda:1" or "vulkan:0" stands for (no ordinal: 0).</summary>
@@ -130,7 +130,7 @@ public sealed class Device
     public int Ordinal { get; }
 
     /// <summary>The kind of backend driving the device: "cpu", "cuda", "vulkan", ….</summary>
-    public string Kind => _provider?.Kind ?? "cpu";
+    public string Kind => _provider?.Name ?? "cpu";
 
     /// <summary>A human-readable name, such as the GPU model.</summary>
     public string Name => Backend.Name;
@@ -151,7 +151,7 @@ public sealed class Device
             {
                 if (provider.IsStarted(i))
                 {
-                    yield return Get(provider.Kind, i);
+                    yield return Get(provider.Name, i);
                 }
             }
         }
@@ -170,7 +170,9 @@ public sealed class Device
         ArgumentNullException.ThrowIfNull(options);
         return _provider is null
             ? CpuBackend.CreateSeparate(options)
-            : _provider.CreateSeparate(Ordinal, options) ?? throw new NotSupportedException($"{_provider.Display} devices cannot be carved into separate backends yet.");
+            : _provider is ISeparableDeviceProvider separable
+                ? separable.CreateSeparate(Ordinal, options)
+                : throw new NotSupportedException($"{_provider.Display} devices cannot be carved into separate backends yet.");
     }
 
     /// <summary>Waits until all queued work on this device has finished.</summary>
@@ -178,7 +180,7 @@ public sealed class Device
 
     /// <inheritdoc />
     public override string ToString() =>
-        _text ??= _provider is null ? "cpu" : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{_provider.Kind}:{Ordinal}");   // made once: telemetry events name it each time
+        _text ??= _provider is null ? "cpu" : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{_provider.Name}:{Ordinal}");   // made once: telemetry events name it each time
 
     // The listed device ranked highest by its backend (CUDA before Vulkan), else the CPU.
     private static Device Best()
@@ -191,7 +193,7 @@ public sealed class Device
             {
                 if (provider.Listed(i) && provider.DefaultRank(i) is int rank && rank > bestRank)
                 {
-                    (best, bestRank) = (Get(provider.Kind, i), rank);
+                    (best, bestRank) = (Get(provider.Name, i), rank);
                 }
             }
         }

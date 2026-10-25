@@ -6,7 +6,7 @@ using static Idrak.Gpu.Cuda.CudaDriver;
 namespace Idrak.Gpu.Cuda;
 
 // Fused inference kernels, incremental-decoding kernels and CUDA Graph capture/replay.
-internal sealed unsafe partial class CudaBackend
+internal sealed unsafe partial class CudaBackend : IGraphCaptureBackend
 {
     public override void ScaleMaskSoftmaxKernel(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale) =>
         LaunchRows(K("scale_mask_softmax_f32"), rows, P(x), mask is null ? P(x) : P(mask), P(y),
@@ -131,13 +131,11 @@ internal sealed unsafe partial class CudaBackend
     public override void HistoryPushKernel(Storage ids, Storage history, Storage length, int rows, int capacity) =>
         Launch1D(K("history_push_f32"), rows, P(ids), P(history), P(length), U(capacity), U(rows), U(rows));
 
-    public override bool SupportsGraphs => true;
-
-    // The recording's operation scope (GuardMoves), from BeginCapture to its end: no move while it records, and its own
+    // The recording's operation scope (the move guard), from BeginCapture to its end: no move while it records, and its own
     // operations never wait for one.
     private OperationScope _recording;
 
-    public override void BeginCapture()
+    void IGraphCaptureBackend.BeginCapture()
     {
         var operation = EnterOperation();                          // before the stream gate, as every operation
         MakeCurrent();
@@ -186,7 +184,7 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    public override (IntPtr Executable, IntPtr Graph, List<Storage> Owned) EndCapture()
+    (IntPtr Executable, IntPtr Graph, List<Storage> Owned) IGraphCaptureBackend.EndCapture()
     {
         MakeCurrent();
         try
@@ -210,7 +208,7 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    public override List<Storage> AbortCapture()
+    List<Storage> IGraphCaptureBackend.AbortCapture()
     {
         MakeCurrent();
         try
@@ -270,14 +268,14 @@ internal sealed unsafe partial class CudaBackend
         }
     }
 
-    public override void ReplayGraph(IntPtr executable)
+    void IGraphCaptureBackend.ReplayGraph(IntPtr executable)
     {
         MakeCurrent();
         using var use = UseStream();
         Check(cuGraphLaunch(executable, _stream), nameof(cuGraphLaunch));
     }
 
-    public override void DestroyGraph(IntPtr executable, IntPtr graph)
+    void IGraphCaptureBackend.DestroyGraph(IntPtr executable, IntPtr graph)
     {
         MakeCurrent();
         cuGraphExecDestroy(executable);

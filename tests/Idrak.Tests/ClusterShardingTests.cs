@@ -306,7 +306,7 @@ internal static partial class Tests
 
     // Pinned slots as a device has them, here host arrays whose copies complete only after a delay (a device's copy queued
     // behind its work), so the background path runs without a GPU.
-    private sealed class SlowStaging(int slots, int floats, TimeSpan delay) : IHostStaging
+    private sealed class SlowStaging(int slots, int floats, TimeSpan delay) : ISlotStaging
     {
         private readonly float[][] _slots = [.. Enumerable.Range(0, slots).Select(_ => new float[floats])];
         private readonly long[] _ready = new long[slots];
@@ -314,8 +314,6 @@ internal static partial class Tests
         public int Downloads;
 
         public int SlotFloats => floats;
-
-        public bool PlacesCopies => true;
 
         public Span<float> Slot(int slot) => _slots[slot];
 

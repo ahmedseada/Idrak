@@ -20,7 +20,7 @@ namespace Idrak.Abstraction.Devices;
 // itself and pass others to the device's kernel or elsewhere), so the dispatcher can't tell which host computation
 // matches it or whether its error came from the device at all; its errors reach the caller. An operation the device
 // has no kernel of its own for already runs its host fallback: it is not retried (it would only run twice).
-// On a device that guards its moves (Backend.GuardMoves) every call takes the second path, inside an operation scope.
+// On a device that guards its moves (an IOffloadingBackend) every call takes the second path, inside an operation scope.
 public abstract partial class Backend
 {
     /// <summary>y[i] = value for i &lt; n.</summary>
@@ -73,7 +73,7 @@ public abstract partial class Backend
     // The host fallback of Fill (the default body of FillKernel), for RetryOnHost.
     private void FillOnHost(Storage y, int n, float value)
     {
-        using var h = new HostCall(this, "Fill");
+        using var h = new HostCall(this, nameof(Fill));
         CpuBackend.Instance.Fill(h[y], n, value);
     }
 
@@ -127,7 +127,7 @@ public abstract partial class Backend
     // The host fallback of Unary (the default body of UnaryKernel), for RetryOnHost.
     private void UnaryOnHost(UnaryOp op, Storage x, Storage y, int n)
     {
-        using var h = new HostCall(this, "Unary");
+        using var h = new HostCall(this, nameof(Unary));
         CpuBackend.Instance.Unary(op, h[x], h[y], n);
     }
 
@@ -181,7 +181,7 @@ public abstract partial class Backend
     // The host fallback of UnaryBackward (the default body of UnaryBackwardKernel), for RetryOnHost.
     private void UnaryBackwardOnHost(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
     {
-        using var h = new HostCall(this, "UnaryBackward");
+        using var h = new HostCall(this, nameof(UnaryBackward));
         CpuBackend.Instance.UnaryBackward(op, h[x], h[y], h[dy], h[dx], n);
     }
 
@@ -235,7 +235,7 @@ public abstract partial class Backend
     // The host fallback of Binary (the default body of BinaryKernel), for RetryOnHost.
     private void BinaryOnHost(BinaryOp op, Storage a, Storage b, Storage c, int n)
     {
-        using var h = new HostCall(this, "Binary");
+        using var h = new HostCall(this, nameof(Binary));
         CpuBackend.Instance.Binary(op, h[a], h[b], h[c], n);
     }
 
@@ -292,7 +292,7 @@ public abstract partial class Backend
     // The host fallback of ExtremumBackward (the default body of ExtremumBackwardKernel), for RetryOnHost.
     private void ExtremumBackwardOnHost(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
     {
-        using var h = new HostCall(this, "ExtremumBackward");
+        using var h = new HostCall(this, nameof(ExtremumBackward));
         CpuBackend.Instance.ExtremumBackward(op, h[a], h[b], h[dy], h.Maybe(da), h.Maybe(db), n);
     }
 
@@ -346,7 +346,7 @@ public abstract partial class Backend
     // The host fallback of Pow (the default body of PowKernel), for RetryOnHost.
     private void PowOnHost(Storage x, Storage y, int n, float exponent)
     {
-        using var h = new HostCall(this, "Pow");
+        using var h = new HostCall(this, nameof(Pow));
         CpuBackend.Instance.Pow(h[x], h[y], n, exponent);
     }
 
@@ -400,7 +400,7 @@ public abstract partial class Backend
     // The host fallback of PowBackward (the default body of PowBackwardKernel), for RetryOnHost.
     private void PowBackwardOnHost(Storage x, Storage dy, Storage dx, int n, float exponent)
     {
-        using var h = new HostCall(this, "PowBackward");
+        using var h = new HostCall(this, nameof(PowBackward));
         CpuBackend.Instance.PowBackward(h[x], h[dy], h[dx], n, exponent);
     }
 
@@ -454,7 +454,7 @@ public abstract partial class Backend
     // The host fallback of Clamp (the default body of ClampKernel), for RetryOnHost.
     private void ClampOnHost(Storage x, Storage y, int n, float min, float max)
     {
-        using var h = new HostCall(this, "Clamp");
+        using var h = new HostCall(this, nameof(Clamp));
         CpuBackend.Instance.Clamp(h[x], h[y], n, min, max);
     }
 
@@ -508,7 +508,7 @@ public abstract partial class Backend
     // The host fallback of ClampBackward (the default body of ClampBackwardKernel), for RetryOnHost.
     private void ClampBackwardOnHost(Storage x, Storage dy, Storage dx, int n, float min, float max)
     {
-        using var h = new HostCall(this, "ClampBackward");
+        using var h = new HostCall(this, nameof(ClampBackward));
         CpuBackend.Instance.ClampBackward(h[x], h[dy], h[dx], n, min, max);
     }
 
@@ -562,7 +562,7 @@ public abstract partial class Backend
     // The host fallback of LeakyRelu (the default body of LeakyReluKernel), for RetryOnHost.
     private void LeakyReluOnHost(Storage x, Storage y, int n, float slope)
     {
-        using var h = new HostCall(this, "LeakyRelu");
+        using var h = new HostCall(this, nameof(LeakyRelu));
         CpuBackend.Instance.LeakyRelu(h[x], h[y], n, slope);
     }
 
@@ -616,7 +616,7 @@ public abstract partial class Backend
     // The host fallback of LeakyReluBackward (the default body of LeakyReluBackwardKernel), for RetryOnHost.
     private void LeakyReluBackwardOnHost(Storage x, Storage dy, Storage dx, int n, float slope)
     {
-        using var h = new HostCall(this, "LeakyReluBackward");
+        using var h = new HostCall(this, nameof(LeakyReluBackward));
         CpuBackend.Instance.LeakyReluBackward(h[x], h[dy], h[dx], n, slope);
     }
 
@@ -670,7 +670,7 @@ public abstract partial class Backend
     // The host fallback of Where (the default body of WhereKernel), for RetryOnHost.
     private void WhereOnHost(Storage condition, Storage a, Storage b, Storage y, int n)
     {
-        using var h = new HostCall(this, "Where");
+        using var h = new HostCall(this, nameof(Where));
         CpuBackend.Instance.Where(h[condition], h[a], h[b], h[y], n);
     }
 
@@ -724,7 +724,7 @@ public abstract partial class Backend
     // The host fallback of WhereBackward (the default body of WhereBackwardKernel), for RetryOnHost.
     private void WhereBackwardOnHost(Storage condition, Storage dy, Storage? da, Storage? db, int n)
     {
-        using var h = new HostCall(this, "WhereBackward");
+        using var h = new HostCall(this, nameof(WhereBackward));
         CpuBackend.Instance.WhereBackward(h[condition], h[dy], h.Maybe(da), h.Maybe(db), n);
     }
 
@@ -778,7 +778,7 @@ public abstract partial class Backend
     // The host fallback of Affine (the default body of AffineKernel), for RetryOnHost.
     private void AffineOnHost(Storage x, Storage y, int n, float alpha, float beta)
     {
-        using var h = new HostCall(this, "Affine");
+        using var h = new HostCall(this, nameof(Affine));
         CpuBackend.Instance.Affine(h[x], h[y], n, alpha, beta);
     }
 
@@ -832,7 +832,7 @@ public abstract partial class Backend
     // The host fallback of Axpy (the default body of AxpyKernel), for RetryOnHost.
     private void AxpyOnHost(Storage x, Storage y, int n, float alpha)
     {
-        using var h = new HostCall(this, "Axpy");
+        using var h = new HostCall(this, nameof(Axpy));
         CpuBackend.Instance.Axpy(h[x], h[y], n, alpha);
     }
 
@@ -886,7 +886,7 @@ public abstract partial class Backend
     // The host fallback of MulAdd (the default body of MulAddKernel), for RetryOnHost.
     private void MulAddOnHost(Storage a, Storage b, Storage c, int n)
     {
-        using var h = new HostCall(this, "MulAdd");
+        using var h = new HostCall(this, nameof(MulAdd));
         CpuBackend.Instance.MulAdd(h[a], h[b], h[c], n);
     }
 
@@ -940,7 +940,7 @@ public abstract partial class Backend
     // The host fallback of AddRowVector (the default body of AddRowVectorKernel), for RetryOnHost.
     private void AddRowVectorOnHost(Storage a, Storage v, Storage c, int rows, int cols)
     {
-        using var h = new HostCall(this, "AddRowVector");
+        using var h = new HostCall(this, nameof(AddRowVector));
         CpuBackend.Instance.AddRowVector(h[a], h[v], h[c], rows, cols);
     }
 
@@ -994,7 +994,7 @@ public abstract partial class Backend
     // The host fallback of SumRows (the default body of SumRowsKernel), for RetryOnHost.
     private void SumRowsOnHost(Storage x, Storage y, int rows, int cols)
     {
-        using var h = new HostCall(this, "SumRows");
+        using var h = new HostCall(this, nameof(SumRows));
         CpuBackend.Instance.SumRows(h[x], h[y], rows, cols);
     }
 
@@ -1048,7 +1048,7 @@ public abstract partial class Backend
     // The host fallback of Sum (the default body of SumKernel), for RetryOnHost.
     private void SumOnHost(Storage x, Storage result, int n, float scale)
     {
-        using var h = new HostCall(this, "Sum");
+        using var h = new HostCall(this, nameof(Sum));
         CpuBackend.Instance.Sum(h[x], h[result], n, scale);
     }
 
@@ -1102,7 +1102,7 @@ public abstract partial class Backend
     // The host fallback of AxpyAt (the default body of AxpyAtKernel), for RetryOnHost.
     private void AxpyAtOnHost(Storage x, Storage y, int offset, float alpha)
     {
-        using var h = new HostCall(this, "AxpyAt");
+        using var h = new HostCall(this, nameof(AxpyAt));
         CpuBackend.Instance.AxpyAt(h[x], h[y], offset, alpha);
     }
 
@@ -1156,7 +1156,7 @@ public abstract partial class Backend
     // The host fallback of AddBroadcastScalar (the default body of AddBroadcastScalarKernel), for RetryOnHost.
     private void AddBroadcastScalarOnHost(Storage s, Storage y, int n, float scale)
     {
-        using var h = new HostCall(this, "AddBroadcastScalar");
+        using var h = new HostCall(this, nameof(AddBroadcastScalar));
         CpuBackend.Instance.AddBroadcastScalar(h[s], h[y], n, scale);
     }
 
@@ -1409,7 +1409,7 @@ public abstract partial class Backend
     /// scales[j]) (the division, the reciprocal and the product each a float32 operation rounded to nearest), rounded to
     /// nearest with ties to even and saturated to ±448, the sign kept (-0 included). e4m3: a sign, 4 exponent bits with
     /// bias 7 and 3 mantissa bits; no infinities, 0x7F and 0xFF are NaN, 0x7E is 448, codes 1-7 are the subnormals
-    /// m · 2⁻⁹. The codes are bytes k-major per column: byte j · paddedK + r (paddedK = <see cref="Float8PaddedK"/>(k),
+    /// m · 2⁻⁹. The codes are bytes k-major per column: byte j · paddedK + r (paddedK = <see cref="IFloat8Backend.PaddedK"/>(k),
     /// four bytes per float of <paramref name="values"/>, the first in the low byte), 0 for r ≥ k. Fixed to the bit:
     /// the conformance kit compares the bytes exactly. Returns false when unsupported.
     /// </summary>
@@ -1429,7 +1429,7 @@ public abstract partial class Backend
 
     /// <summary>
     /// y = beta·y + x · w on FP8 matrix units for x [m, k] and a weight quantized by <see cref="Float8QuantizeWeight"/>
-    /// (its values and scales, paddedK = <see cref="Float8PaddedK"/>(k)): each row of x is quantized as it is read the way
+    /// (its values and scales, paddedK = <see cref="IFloat8Backend.PaddedK"/>(k)): each row of x is quantized as it is read the way
     /// <see cref="Float8QuantizeWeight"/> quantizes a column (sx[i] = max over p of |x[i, p]| / 448, or 1; the e4m3 codes
     /// of x[i, p] · (1 / sx[i])), then y[i, j] = beta·y[i, j] + sx[i] · scales[j] · Σ_p x8[i, p] · w8[j, p], the
     /// products of codes summed in float32 (y is not read when beta is 0). Returns false when unsupported.
@@ -1586,7 +1586,7 @@ public abstract partial class Backend
     // The host fallback of SumColumns (the default body of SumColumnsKernel), for RetryOnHost.
     private void SumColumnsOnHost(Storage x, long offset, int ld, Storage y, int rows, int cols)
     {
-        using var h = new HostCall(this, "SumColumns");
+        using var h = new HostCall(this, nameof(SumColumns));
         CpuBackend.Instance.SumColumns(h[x], offset, ld, h[y], rows, cols);
     }
 
@@ -1669,7 +1669,7 @@ public abstract partial class Backend
     // The host fallback of BatchedMatMul (the default body of BatchedMatMulKernel), for RetryOnHost.
     private void BatchedMatMulOnHost(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
-        using var h = new HostCall(this, "BatchedMatMul");
+        using var h = new HostCall(this, nameof(BatchedMatMul));
         CpuBackend.Instance.BatchedMatMul(h[a], h[b], h[c], batch, m, n, k, transA, transB, beta);
     }
 
@@ -1723,7 +1723,7 @@ public abstract partial class Backend
     // The host fallback of Softmax (the default body of SoftmaxKernel), for RetryOnHost.
     private void SoftmaxOnHost(Storage x, Storage y, int rows, int cols, bool log)
     {
-        using var h = new HostCall(this, "Softmax");
+        using var h = new HostCall(this, nameof(Softmax));
         CpuBackend.Instance.Softmax(h[x], h[y], rows, cols, log);
     }
 
@@ -1779,7 +1779,7 @@ public abstract partial class Backend
     // The host fallback of SoftmaxBackward (the default body of SoftmaxBackwardKernel), for RetryOnHost.
     private void SoftmaxBackwardOnHost(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
     {
-        using var h = new HostCall(this, "SoftmaxBackward");
+        using var h = new HostCall(this, nameof(SoftmaxBackward));
         CpuBackend.Instance.SoftmaxBackward(h[y], h[dy], h[dx], rows, cols, log);
     }
 
@@ -1833,7 +1833,7 @@ public abstract partial class Backend
     // The host fallback of ArgMax (the default body of ArgMaxKernel), for RetryOnHost.
     private void ArgMaxOnHost(Storage x, Storage y, int rows, int cols)
     {
-        using var h = new HostCall(this, "ArgMax");
+        using var h = new HostCall(this, nameof(ArgMax));
         CpuBackend.Instance.ArgMax(h[x], h[y], rows, cols);
     }
 
@@ -1895,7 +1895,7 @@ public abstract partial class Backend
     // The host fallback of LogSoftmaxTopK (the default body of LogSoftmaxTopKKernel), for RetryOnHost.
     private void LogSoftmaxTopKOnHost(Storage x, Storage values, Storage indices, int rows, int cols, int k)
     {
-        using var h = new HostCall(this, "LogSoftmaxTopK");
+        using var h = new HostCall(this, nameof(LogSoftmaxTopK));
         CpuBackend.Instance.LogSoftmaxTopK(h[x], h[values], h[indices], rows, cols, k);
     }
 
@@ -1952,7 +1952,7 @@ public abstract partial class Backend
     // The host fallback of ClassMatch (the default body of ClassMatchKernel), for RetryOnHost.
     private void ClassMatchOnHost(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
     {
-        using var h = new HostCall(this, "ClassMatch");
+        using var h = new HostCall(this, nameof(ClassMatch));
         CpuBackend.Instance.ClassMatch(h[predictions], h[targets], h[y], rows, cols, threshold);
     }
 
@@ -2006,7 +2006,7 @@ public abstract partial class Backend
     // The host fallback of NormStats (the default body of NormStatsKernel), for RetryOnHost.
     private void NormStatsOnHost(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
     {
-        using var h = new HostCall(this, "NormStats");
+        using var h = new HostCall(this, nameof(NormStats));
         CpuBackend.Instance.NormStats(h[x], h[mean], h[variance], h[invStd], outer, groups, inner, eps);
     }
 
@@ -2060,7 +2060,7 @@ public abstract partial class Backend
     // The host fallback of NormApply (the default body of NormApplyKernel), for RetryOnHost.
     private void NormApplyOnHost(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
     {
-        using var h = new HostCall(this, "NormApply");
+        using var h = new HostCall(this, nameof(NormApply));
         CpuBackend.Instance.NormApply(h[x], h[mean], h[invStd], h[y], outer, groups, inner);
     }
 
@@ -2114,7 +2114,7 @@ public abstract partial class Backend
     // The host fallback of NormBackward (the default body of NormBackwardKernel), for RetryOnHost.
     private void NormBackwardOnHost(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
     {
-        using var h = new HostCall(this, "NormBackward");
+        using var h = new HostCall(this, nameof(NormBackward));
         CpuBackend.Instance.NormBackward(h[dxhat], h[xhat], h[sum1], h[sum2], h[invStd], h[dx], outer, groups, inner);
     }
 
@@ -2170,7 +2170,7 @@ public abstract partial class Backend
     // The host fallback of GroupScaleShift (the default body of GroupScaleShiftKernel), for RetryOnHost.
     private void GroupScaleShiftOnHost(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
     {
-        using var h = new HostCall(this, "GroupScaleShift");
+        using var h = new HostCall(this, nameof(GroupScaleShift));
         CpuBackend.Instance.GroupScaleShift(h[x], h.Maybe(scale), h.Maybe(shift), h[y], n, groups, inner, accumulate);
     }
 
@@ -2224,7 +2224,7 @@ public abstract partial class Backend
     // The host fallback of GroupReduce (the default body of GroupReduceKernel), for RetryOnHost.
     private void GroupReduceOnHost(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
     {
-        using var h = new HostCall(this, "GroupReduce");
+        using var h = new HostCall(this, nameof(GroupReduce));
         CpuBackend.Instance.GroupReduce(h[a], h.Maybe(b), h[sumA], h.Maybe(sumAB), outer, groups, inner);
     }
 
@@ -2281,7 +2281,7 @@ public abstract partial class Backend
     // The host fallback of WeightNorm (the default body of WeightNormKernel), for RetryOnHost.
     private void WeightNormOnHost(Storage gain, Storage direction, Storage weight, int rows, int columns)
     {
-        using var h = new HostCall(this, "WeightNorm");
+        using var h = new HostCall(this, nameof(WeightNorm));
         CpuBackend.Instance.WeightNorm(h[gain], h[direction], h[weight], rows, columns);
     }
 
@@ -2338,7 +2338,7 @@ public abstract partial class Backend
     // The host fallback of WeightNormBackward (the default body of WeightNormBackwardKernel), for RetryOnHost.
     private void WeightNormBackwardOnHost(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
     {
-        using var h = new HostCall(this, "WeightNormBackward");
+        using var h = new HostCall(this, nameof(WeightNormBackward));
         CpuBackend.Instance.WeightNormBackward(h[gain], h[direction], h[dweight], h.Maybe(dgain), h.Maybe(ddirection), rows, columns);
     }
 
@@ -2392,7 +2392,7 @@ public abstract partial class Backend
     // The host fallback of InvSqrt (the default body of InvSqrtKernel), for RetryOnHost.
     private void InvSqrtOnHost(Storage x, Storage y, int n, float eps)
     {
-        using var h = new HostCall(this, "InvSqrt");
+        using var h = new HostCall(this, nameof(InvSqrt));
         CpuBackend.Instance.InvSqrt(h[x], h[y], n, eps);
     }
 
@@ -2446,7 +2446,7 @@ public abstract partial class Backend
     // The host fallback of Gather (the default body of GatherKernel), for RetryOnHost.
     private void GatherOnHost(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
-        using var h = new HostCall(this, "Gather");
+        using var h = new HostCall(this, nameof(Gather));
         CpuBackend.Instance.Gather(h[table], h[indices], h[y], count, dim, vocabulary);
     }
 
@@ -2500,7 +2500,7 @@ public abstract partial class Backend
     // The host fallback of GatherBFloat16 (the default body of GatherBFloat16Kernel), for RetryOnHost.
     private void GatherBFloat16OnHost(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
-        using var h = new HostCall(this, "GatherBFloat16");
+        using var h = new HostCall(this, nameof(GatherBFloat16));
         CpuBackend.Instance.GatherBFloat16(h[packed], h[indices], h[y], count, dim, vocabulary);
     }
 
@@ -2558,7 +2558,7 @@ public abstract partial class Backend
     // The host fallback of GatherBFloat16Columns (the default body of GatherBFloat16ColumnsKernel), for RetryOnHost.
     private void GatherBFloat16ColumnsOnHost(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
     {
-        using var h = new HostCall(this, "GatherBFloat16Columns");
+        using var h = new HostCall(this, nameof(GatherBFloat16Columns));
         CpuBackend.Instance.GatherBFloat16Columns(h[packed], h[indices], h[y], count, dim, vocabulary);
     }
 
@@ -2612,7 +2612,7 @@ public abstract partial class Backend
     // The host fallback of OneHot (the default body of OneHotKernel), for RetryOnHost.
     private void OneHotOnHost(Storage indices, Storage y, int count, int classes)
     {
-        using var h = new HostCall(this, "OneHot");
+        using var h = new HostCall(this, nameof(OneHot));
         CpuBackend.Instance.OneHot(h[indices], h[y], count, classes);
     }
 
@@ -2666,7 +2666,7 @@ public abstract partial class Backend
     // The host fallback of ScatterAdd (the default body of ScatterAddKernel), for RetryOnHost.
     private void ScatterAddOnHost(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
     {
-        using var h = new HostCall(this, "ScatterAdd");
+        using var h = new HostCall(this, nameof(ScatterAdd));
         CpuBackend.Instance.ScatterAdd(h[dy], h[indices], h[dtable], count, dim, vocabulary);
     }
 
@@ -2720,7 +2720,7 @@ public abstract partial class Backend
     // The host fallback of Im2Col (the default body of Im2ColKernel), for RetryOnHost.
     private void Im2ColOnHost(Storage x, Storage cols, in ConvGeometry g)
     {
-        using var h = new HostCall(this, "Im2Col");
+        using var h = new HostCall(this, nameof(Im2Col));
         CpuBackend.Instance.Im2Col(h[x], h[cols], in g);
     }
 
@@ -2774,7 +2774,7 @@ public abstract partial class Backend
     // The host fallback of Col2Im (the default body of Col2ImKernel), for RetryOnHost.
     private void Col2ImOnHost(Storage dcols, Storage dx, in ConvGeometry g)
     {
-        using var h = new HostCall(this, "Col2Im");
+        using var h = new HostCall(this, nameof(Col2Im));
         CpuBackend.Instance.Col2Im(h[dcols], h[dx], in g);
     }
 
@@ -2828,7 +2828,7 @@ public abstract partial class Backend
     // The host fallback of MaxPool (the default body of MaxPoolKernel), for RetryOnHost.
     private void MaxPoolOnHost(Storage x, Storage y, Storage argmax, in ConvGeometry g)
     {
-        using var h = new HostCall(this, "MaxPool");
+        using var h = new HostCall(this, nameof(MaxPool));
         CpuBackend.Instance.MaxPool(h[x], h[y], h[argmax], in g);
     }
 
@@ -2882,7 +2882,7 @@ public abstract partial class Backend
     // The host fallback of MaxPoolBackward (the default body of MaxPoolBackwardKernel), for RetryOnHost.
     private void MaxPoolBackwardOnHost(Storage dy, Storage argmax, Storage dx, int count)
     {
-        using var h = new HostCall(this, "MaxPoolBackward");
+        using var h = new HostCall(this, nameof(MaxPoolBackward));
         CpuBackend.Instance.MaxPoolBackward(h[dy], h[argmax], h[dx], count);
     }
 
@@ -3074,7 +3074,7 @@ public abstract partial class Backend
     // The host fallback of AvgPool (the default body of AvgPoolKernel), for RetryOnHost.
     private void AvgPoolOnHost(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
-        using var h = new HostCall(this, "AvgPool");
+        using var h = new HostCall(this, nameof(AvgPool));
         CpuBackend.Instance.AvgPool(h[x], h[y], in g, countIncludePad, padBottom, padRight);
     }
 
@@ -3131,7 +3131,7 @@ public abstract partial class Backend
     // The host fallback of AvgPoolBackward (the default body of AvgPoolBackwardKernel), for RetryOnHost.
     private void AvgPoolBackwardOnHost(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
     {
-        using var h = new HostCall(this, "AvgPoolBackward");
+        using var h = new HostCall(this, nameof(AvgPoolBackward));
         CpuBackend.Instance.AvgPoolBackward(h[dy], h[dx], in g, countIncludePad, padBottom, padRight);
     }
 
@@ -3196,7 +3196,7 @@ public abstract partial class Backend
     // The host fallback of ResizeNormalize (the default body of ResizeNormalizeKernel), for RetryOnHost.
     private void ResizeNormalizeOnHost(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
     {
-        using var h = new HostCall(this, "ResizeNormalize");
+        using var h = new HostCall(this, nameof(ResizeNormalize));
         CpuBackend.Instance.ResizeNormalize(h[x], h[coefficients], h[values], h[y], planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
     }
 
@@ -3256,7 +3256,7 @@ public abstract partial class Backend
     // The host fallback of Interpolate2d (the default body of Interpolate2dKernel), for RetryOnHost.
     private void Interpolate2dOnHost(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
     {
-        using var h = new HostCall(this, "Interpolate2d");
+        using var h = new HostCall(this, nameof(Interpolate2d));
         CpuBackend.Instance.Interpolate2d(h[x], h[y], planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
     }
 
@@ -3310,7 +3310,7 @@ public abstract partial class Backend
     // The host fallback of Interpolate2dBackward (the default body of Interpolate2dBackwardKernel), for RetryOnHost.
     private void Interpolate2dBackwardOnHost(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
     {
-        using var h = new HostCall(this, "Interpolate2dBackward");
+        using var h = new HostCall(this, nameof(Interpolate2dBackward));
         CpuBackend.Instance.Interpolate2dBackward(h[dy], h[dx], planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
     }
 
@@ -3368,7 +3368,7 @@ public abstract partial class Backend
     // The host fallback of AdaptiveAvgPool (the default body of AdaptiveAvgPoolKernel), for RetryOnHost.
     private void AdaptiveAvgPoolOnHost(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
     {
-        using var h = new HostCall(this, "AdaptiveAvgPool");
+        using var h = new HostCall(this, nameof(AdaptiveAvgPool));
         CpuBackend.Instance.AdaptiveAvgPool(h[x], h[y], planes, height, width, outHeight, outWidth);
     }
 
@@ -3422,7 +3422,7 @@ public abstract partial class Backend
     // The host fallback of AdaptiveAvgPoolBackward (the default body of AdaptiveAvgPoolBackwardKernel), for RetryOnHost.
     private void AdaptiveAvgPoolBackwardOnHost(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
     {
-        using var h = new HostCall(this, "AdaptiveAvgPoolBackward");
+        using var h = new HostCall(this, nameof(AdaptiveAvgPoolBackward));
         CpuBackend.Instance.AdaptiveAvgPoolBackward(h[dy], h[dx], planes, height, width, outHeight, outWidth);
     }
 
@@ -3479,7 +3479,7 @@ public abstract partial class Backend
     // The host fallback of AdaptiveMaxPool (the default body of AdaptiveMaxPoolKernel), for RetryOnHost.
     private void AdaptiveMaxPoolOnHost(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
     {
-        using var h = new HostCall(this, "AdaptiveMaxPool");
+        using var h = new HostCall(this, nameof(AdaptiveMaxPool));
         CpuBackend.Instance.AdaptiveMaxPool(h[x], h[y], h[argmax], planes, height, width, outHeight, outWidth);
     }
 
@@ -3573,7 +3573,7 @@ public abstract partial class Backend
     // The host fallback of CtcLoss (the default body of CtcLossKernel), for RetryOnHost.
     private void CtcLossOnHost(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
     {
-        using var h = new HostCall(this, "CtcLoss");
+        using var h = new HostCall(this, nameof(CtcLoss));
         CpuBackend.Instance.CtcLoss(h[logProbs], h[targets], h[losses], inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
     }
 
@@ -3631,7 +3631,7 @@ public abstract partial class Backend
     // The host fallback of CtcLossBackward (the default body of CtcLossBackwardKernel), for RetryOnHost.
     private void CtcLossBackwardOnHost(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
     {
-        using var h = new HostCall(this, "CtcLossBackward");
+        using var h = new HostCall(this, nameof(CtcLossBackward));
         CpuBackend.Instance.CtcLossBackward(h[logProbs], h[targets], h[lossGrads], h[dLogProbs], inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank,
             batchFirst, zeroInfinity);
     }
@@ -3959,7 +3959,7 @@ public abstract partial class Backend
     // The host fallback of BoxIouLoss (the default body of BoxIouLossKernel), for RetryOnHost.
     private void BoxIouLossOnHost(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
     {
-        using var h = new HostCall(this, "BoxIouLoss");
+        using var h = new HostCall(this, nameof(BoxIouLoss));
         CpuBackend.Instance.BoxIouLoss(h[predicted], h[target], h[losses], count, overlap, eps);
     }
 
@@ -4017,7 +4017,7 @@ public abstract partial class Backend
     // The host fallback of BoxIouLossBackward (the default body of BoxIouLossBackwardKernel), for RetryOnHost.
     private void BoxIouLossBackwardOnHost(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
     {
-        using var h = new HostCall(this, "BoxIouLossBackward");
+        using var h = new HostCall(this, nameof(BoxIouLossBackward));
         CpuBackend.Instance.BoxIouLossBackward(h[predicted], h[target], h[lossGrads], h[dPredicted], count, overlap, eps);
     }
 
@@ -4075,7 +4075,7 @@ public abstract partial class Backend
     // The host fallback of SigmoidFocalLoss (the default body of SigmoidFocalLossKernel), for RetryOnHost.
     private void SigmoidFocalLossOnHost(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
     {
-        using var h = new HostCall(this, "SigmoidFocalLoss");
+        using var h = new HostCall(this, nameof(SigmoidFocalLoss));
         CpuBackend.Instance.SigmoidFocalLoss(h[logits], h[targets], h[losses], count, alpha, gamma);
     }
 
@@ -4129,7 +4129,7 @@ public abstract partial class Backend
     // The host fallback of SigmoidFocalLossBackward (the default body of SigmoidFocalLossBackwardKernel), for RetryOnHost.
     private void SigmoidFocalLossBackwardOnHost(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
     {
-        using var h = new HostCall(this, "SigmoidFocalLossBackward");
+        using var h = new HostCall(this, nameof(SigmoidFocalLossBackward));
         CpuBackend.Instance.SigmoidFocalLossBackward(h[logits], h[targets], h[lossGrads], h[dLogits], count, alpha, gamma);
     }
 
@@ -4186,7 +4186,7 @@ public abstract partial class Backend
     // The host fallback of Permute (the default body of PermuteKernel), for RetryOnHost.
     private void PermuteOnHost(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
     {
-        using var h = new HostCall(this, "Permute");
+        using var h = new HostCall(this, nameof(Permute));
         CpuBackend.Instance.Permute(h[x], h[y], outShape, inStrides, accumulate);
     }
 
@@ -4240,7 +4240,7 @@ public abstract partial class Backend
     // The host fallback of SumAxis (the default body of SumAxisKernel), for RetryOnHost.
     private void SumAxisOnHost(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
     {
-        using var h = new HostCall(this, "SumAxis");
+        using var h = new HostCall(this, nameof(SumAxis));
         CpuBackend.Instance.SumAxis(h[x], h[y], outer, dim, inner, scale, accumulate);
     }
 
@@ -4294,7 +4294,7 @@ public abstract partial class Backend
     // The host fallback of BroadcastAxis (the default body of BroadcastAxisKernel), for RetryOnHost.
     private void BroadcastAxisOnHost(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
     {
-        using var h = new HostCall(this, "BroadcastAxis");
+        using var h = new HostCall(this, nameof(BroadcastAxis));
         CpuBackend.Instance.BroadcastAxis(h[dy], h[dx], outer, dim, inner, scale);
     }
 
@@ -4348,7 +4348,7 @@ public abstract partial class Backend
     // The host fallback of SgdStep (the default body of SgdStepKernel), for RetryOnHost.
     private void SgdStepOnHost(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
     {
-        using var h = new HostCall(this, "SgdStep");
+        using var h = new HostCall(this, nameof(SgdStep));
         CpuBackend.Instance.SgdStep(h[p], h[g], h.Maybe(v), n, lr, momentum);
     }
 
@@ -4402,7 +4402,7 @@ public abstract partial class Backend
     // The host fallback of AdamStep (the default body of AdamStepKernel), for RetryOnHost.
     private void AdamStepOnHost(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
     {
-        using var h = new HostCall(this, "AdamStep");
+        using var h = new HostCall(this, nameof(AdamStep));
         CpuBackend.Instance.AdamStep(h[p], h[g], h[m], h[v], n, lr, beta1, beta2, eps);
     }
 
@@ -4463,7 +4463,7 @@ public abstract partial class Backend
     // The host fallback of AdamStep8Bit (the default body of AdamStep8BitKernel), for RetryOnHost.
     private void AdamStep8BitOnHost(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps, float gradientScale, float decay)
     {
-        using var h = new HostCall(this, "AdamStep8Bit");
+        using var h = new HostCall(this, nameof(AdamStep8Bit));
         CpuBackend.Instance.AdamStep8Bit(h[p], h[g], h[m], h[v], h[absMax], h[map], n, lr, beta1, beta2, eps, gradientScale, decay);
     }
 
@@ -4517,7 +4517,7 @@ public abstract partial class Backend
     // The host fallback of SumSquares (the default body of SumSquaresKernel), for RetryOnHost.
     private void SumSquaresOnHost(Storage x, Storage total, int n)
     {
-        using var h = new HostCall(this, "SumSquares");
+        using var h = new HostCall(this, nameof(SumSquares));
         CpuBackend.Instance.SumSquares(h[x], h[total], n);
     }
 
@@ -4568,7 +4568,7 @@ public abstract partial class Backend
     // The host fallback of FusedAdamW (the default body of FusedAdamWKernel), for RetryOnHost.
     private bool FusedAdamWOnHost(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm, float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
     {
-        using var h = new HostCall(this, "FusedAdamW");
+        using var h = new HostCall(this, nameof(FusedAdamW));
         var mirrors = new (Storage P, Storage G, Storage M, Storage V, int N)[tensors.Length];
         for (int i = 0; i < tensors.Length; i++)
         {
@@ -4633,7 +4633,7 @@ public abstract partial class Backend
     // The host fallback of ClipFactor (the default body of ClipFactorKernel), for RetryOnHost.
     private void ClipFactorOnHost(Storage sumSquares, Storage factor, float maxNorm)
     {
-        using var h = new HostCall(this, "ClipFactor");
+        using var h = new HostCall(this, nameof(ClipFactor));
         CpuBackend.Instance.ClipFactor(h[sumSquares], h[factor], maxNorm);
     }
 
@@ -4687,7 +4687,7 @@ public abstract partial class Backend
     // The host fallback of Dropout (the default body of DropoutKernel), for RetryOnHost.
     private void DropoutOnHost(Storage x, Storage y, int n, float p, uint seed)
     {
-        using var h = new HostCall(this, "Dropout");
+        using var h = new HostCall(this, nameof(Dropout));
         CpuBackend.Instance.Dropout(h[x], h[y], n, p, seed);
     }
 
@@ -4741,7 +4741,7 @@ public abstract partial class Backend
     // The host fallback of DropoutBackward (the default body of DropoutBackwardKernel), for RetryOnHost.
     private void DropoutBackwardOnHost(Storage dy, Storage dx, int n, float p, uint seed)
     {
-        using var h = new HostCall(this, "DropoutBackward");
+        using var h = new HostCall(this, nameof(DropoutBackward));
         CpuBackend.Instance.DropoutBackward(h[dy], h[dx], n, p, seed);
     }
 
@@ -4795,7 +4795,7 @@ public abstract partial class Backend
     // The host fallback of ScaleMaskSoftmax (the default body of ScaleMaskSoftmaxKernel), for RetryOnHost.
     private void ScaleMaskSoftmaxOnHost(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
     {
-        using var h = new HostCall(this, "ScaleMaskSoftmax");
+        using var h = new HostCall(this, nameof(ScaleMaskSoftmax));
         CpuBackend.Instance.ScaleMaskSoftmax(h[x], h.Maybe(mask), h[y], rows, cols, maskRows, scale);
     }
 
@@ -4849,7 +4849,7 @@ public abstract partial class Backend
     // The host fallback of LayerNormFused (the default body of LayerNormFusedKernel), for RetryOnHost.
     private void LayerNormFusedOnHost(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
     {
-        using var h = new HostCall(this, "LayerNormFused");
+        using var h = new HostCall(this, nameof(LayerNormFused));
         CpuBackend.Instance.LayerNormFused(h[x], h[gamma], h[beta], h[y], rows, cols, eps);
     }
 
@@ -4903,7 +4903,7 @@ public abstract partial class Backend
     // The host fallback of LayerNormTrain (the default body of LayerNormTrainKernel), for RetryOnHost.
     private void LayerNormTrainOnHost(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
     {
-        using var h = new HostCall(this, "LayerNormTrain");
+        using var h = new HostCall(this, nameof(LayerNormTrain));
         CpuBackend.Instance.LayerNormTrain(h[x], h[gamma], h[beta], h[y], h[stats], rows, cols, eps);
     }
 
@@ -4959,7 +4959,7 @@ public abstract partial class Backend
     // The host fallback of LayerNormBackward (the default body of LayerNormBackwardKernel), for RetryOnHost.
     private void LayerNormBackwardOnHost(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
     {
-        using var h = new HostCall(this, "LayerNormBackward");
+        using var h = new HostCall(this, nameof(LayerNormBackward));
         CpuBackend.Instance.LayerNormBackward(h[x], h[gamma], h[dy], h[stats], h.Maybe(dx), h.Maybe(dgamma), h.Maybe(dbeta), rows, cols);
     }
 
@@ -5013,7 +5013,7 @@ public abstract partial class Backend
     // The host fallback of BiasGelu (the default body of BiasGeluKernel), for RetryOnHost.
     private void BiasGeluOnHost(Storage x, Storage bias, Storage y, int n, int cols)
     {
-        using var h = new HostCall(this, "BiasGelu");
+        using var h = new HostCall(this, nameof(BiasGelu));
         CpuBackend.Instance.BiasGelu(h[x], h[bias], h[y], n, cols);
     }
 
@@ -5070,7 +5070,7 @@ public abstract partial class Backend
     // The host fallback of Int8MatMul (the default body of Int8MatMulKernel), for RetryOnHost.
     private void Int8MatMulOnHost(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
-        using var h = new HostCall(this, "Int8MatMul");
+        using var h = new HostCall(this, nameof(Int8MatMul));
         CpuBackend.Instance.Int8MatMul(h[x], h[q], h[scales], h[y], m, n, k);
     }
 
@@ -5127,7 +5127,7 @@ public abstract partial class Backend
     // The host fallback of BFloat16MatMul (the default body of BFloat16MatMulKernel), for RetryOnHost.
     private void BFloat16MatMulOnHost(Storage x, Storage packed, Storage y, int m, int n, int k)
     {
-        using var h = new HostCall(this, "BFloat16MatMul");
+        using var h = new HostCall(this, nameof(BFloat16MatMul));
         CpuBackend.Instance.BFloat16MatMul(h[x], h[packed], h[y], m, n, k);
     }
 
@@ -5181,7 +5181,7 @@ public abstract partial class Backend
     // The host fallback of BFloat16Dequantize (the default body of BFloat16DequantizeKernel), for RetryOnHost.
     private void BFloat16DequantizeOnHost(Storage packed, Storage w, int k, int n)
     {
-        using var h = new HostCall(this, "BFloat16Dequantize");
+        using var h = new HostCall(this, nameof(BFloat16Dequantize));
         CpuBackend.Instance.BFloat16Dequantize(h[packed], h[w], k, n);
     }
 
@@ -5272,7 +5272,7 @@ public abstract partial class Backend
     // The host fallback of Float16Dequantize (the default body of Float16DequantizeKernel), for RetryOnHost.
     private void Float16DequantizeOnHost(Storage packed, Storage w, int k, int n)
     {
-        using var h = new HostCall(this, "Float16Dequantize");
+        using var h = new HostCall(this, nameof(Float16Dequantize));
         CpuBackend.Instance.Float16Dequantize(h[packed], h[w], k, n);
     }
 
@@ -5329,7 +5329,7 @@ public abstract partial class Backend
     // The host fallback of PackBFloat16 (the default body of PackBFloat16Kernel), for RetryOnHost.
     private void PackBFloat16OnHost(Storage x, Storage packed, int n)
     {
-        using var h = new HostCall(this, "PackBFloat16");
+        using var h = new HostCall(this, nameof(PackBFloat16));
         CpuBackend.Instance.PackBFloat16(h[x], h[packed], n);
     }
 
@@ -5383,7 +5383,7 @@ public abstract partial class Backend
     // The host fallback of Int8Dequantize (the default body of Int8DequantizeKernel), for RetryOnHost.
     private void Int8DequantizeOnHost(Storage q, Storage scales, Storage w, int k, int n)
     {
-        using var h = new HostCall(this, "Int8Dequantize");
+        using var h = new HostCall(this, nameof(Int8Dequantize));
         CpuBackend.Instance.Int8Dequantize(h[q], h[scales], h[w], k, n);
     }
 
@@ -5441,7 +5441,7 @@ public abstract partial class Backend
     // The host fallback of Int4MatMul (the default body of Int4MatMulKernel), for RetryOnHost.
     private void Int4MatMulOnHost(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
     {
-        using var h = new HostCall(this, "Int4MatMul");
+        using var h = new HostCall(this, nameof(Int4MatMul));
         CpuBackend.Instance.Int4MatMul(h[x], h[q], h[scales], h[y], m, n, k);
     }
 
@@ -5495,7 +5495,7 @@ public abstract partial class Backend
     // The host fallback of Int4Dequantize (the default body of Int4DequantizeKernel), for RetryOnHost.
     private void Int4DequantizeOnHost(Storage q, Storage scales, Storage w, int k, int n)
     {
-        using var h = new HostCall(this, "Int4Dequantize");
+        using var h = new HostCall(this, nameof(Int4Dequantize));
         CpuBackend.Instance.Int4Dequantize(h[q], h[scales], h[w], k, n);
     }
 
@@ -5549,7 +5549,7 @@ public abstract partial class Backend
     // The host fallback of RmsNorm (the default body of RmsNormKernel), for RetryOnHost.
     private void RmsNormOnHost(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
     {
-        using var h = new HostCall(this, "RmsNorm");
+        using var h = new HostCall(this, nameof(RmsNorm));
         CpuBackend.Instance.RmsNorm(h[x], h[y], h[inv], rows, cols, eps);
     }
 
@@ -5603,7 +5603,7 @@ public abstract partial class Backend
     // The host fallback of RmsNormBackward (the default body of RmsNormBackwardKernel), for RetryOnHost.
     private void RmsNormBackwardOnHost(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
     {
-        using var h = new HostCall(this, "RmsNormBackward");
+        using var h = new HostCall(this, nameof(RmsNormBackward));
         CpuBackend.Instance.RmsNormBackward(h[dy], h[y], h[inv], h[dx], rows, cols);
     }
 
@@ -5661,7 +5661,7 @@ public abstract partial class Backend
     // The host fallback of Rope (the default body of RopeKernel), for RetryOnHost.
     private void RopeOnHost(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
     {
-        using var h = new HostCall(this, "Rope");
+        using var h = new HostCall(this, nameof(Rope));
         CpuBackend.Instance.Rope(h[x], h[y], h[cos], h[sin], h[positions], rows, heads, steps, dim, half, interleaved, sign);
     }
 
@@ -5715,7 +5715,7 @@ public abstract partial class Backend
     // The host fallback of RmsNormAffine (the default body of RmsNormAffineKernel), for RetryOnHost.
     private void RmsNormAffineOnHost(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
-        using var h = new HostCall(this, "RmsNormAffine");
+        using var h = new HostCall(this, nameof(RmsNormAffine));
         CpuBackend.Instance.RmsNormAffine(h[x], h[gain], h[y], rows, cols, eps, offset);
     }
 
@@ -5769,7 +5769,7 @@ public abstract partial class Backend
     // The host fallback of AddRmsNormAffine (the default body of AddRmsNormAffineKernel), for RetryOnHost.
     private void AddRmsNormAffineOnHost(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
     {
-        using var h = new HostCall(this, "AddRmsNormAffine");
+        using var h = new HostCall(this, nameof(AddRmsNormAffine));
         CpuBackend.Instance.AddRmsNormAffine(h[a], h[b], h[sum], h[gain], h[y], rows, cols, eps, offset);
     }
 
@@ -5826,7 +5826,7 @@ public abstract partial class Backend
     // The host fallback of RmsNormRope (the default body of RmsNormRopeKernel), for RetryOnHost.
     private void RmsNormRopeOnHost(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols, float eps, float offset, int heads, int steps, int half, bool interleaved)
     {
-        using var h = new HostCall(this, "RmsNormRope");
+        using var h = new HostCall(this, nameof(RmsNormRope));
         CpuBackend.Instance.RmsNormRope(h[x], h[gain], h[cos], h[sin], h[positions], h[y], rows, cols, eps, offset, heads, steps, half, interleaved);
     }
 
@@ -5938,7 +5938,7 @@ public abstract partial class Backend
     // The host fallback of SoftmaxCrossEntropyRows (the default body of SoftmaxCrossEntropyRowsKernel), for RetryOnHost.
     private void SoftmaxCrossEntropyRowsOnHost(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
     {
-        using var h = new HostCall(this, "SoftmaxCrossEntropyRows");
+        using var h = new HostCall(this, nameof(SoftmaxCrossEntropyRows));
         CpuBackend.Instance.SoftmaxCrossEntropyRows(h[logits], h[targets], h[weights], h[losses], rows, vocabulary, scale);
     }
 
@@ -5992,7 +5992,7 @@ public abstract partial class Backend
     // The host fallback of GatedActivation (the default body of GatedActivationKernel), for RetryOnHost.
     private void GatedActivationOnHost(Storage gate, Storage up, Storage y, int n, int kind)
     {
-        using var h = new HostCall(this, "GatedActivation");
+        using var h = new HostCall(this, nameof(GatedActivation));
         CpuBackend.Instance.GatedActivation(h[gate], h[up], h[y], n, kind);
     }
 
@@ -6046,7 +6046,7 @@ public abstract partial class Backend
     // The host fallback of GatedActivationBackward (the default body of GatedActivationBackwardKernel), for RetryOnHost.
     private void GatedActivationBackwardOnHost(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
-        using var h = new HostCall(this, "GatedActivationBackward");
+        using var h = new HostCall(this, nameof(GatedActivationBackward));
         CpuBackend.Instance.GatedActivationBackward(h[gate], h[up], h[dy], h[dgate], h[dup], n, kind, flags);
     }
 
@@ -6105,7 +6105,7 @@ public abstract partial class Backend
     // The host fallback of GatedActivationPacked (the default body of GatedActivationPackedKernel), for RetryOnHost.
     private void GatedActivationPackedOnHost(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags)
     {
-        using var h = new HostCall(this, "GatedActivationPacked");
+        using var h = new HostCall(this, nameof(GatedActivationPacked));
         CpuBackend.Instance.GatedActivationPacked(h[gate], h[up], h[packedGate], h[packedUp], h[y], h[packedY], n, kind, flags);
     }
 
@@ -6159,7 +6159,7 @@ public abstract partial class Backend
     // The host fallback of GatedActivationBackwardPacked (the default body of GatedActivationBackwardPackedKernel), for RetryOnHost.
     private void GatedActivationBackwardPackedOnHost(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
     {
-        using var h = new HostCall(this, "GatedActivationBackwardPacked");
+        using var h = new HostCall(this, nameof(GatedActivationBackwardPacked));
         CpuBackend.Instance.GatedActivationBackwardPacked(h[packedGate], h[packedUp], h[dy], h[dgate], h[dup], n, kind, flags);
     }
 
@@ -6213,7 +6213,7 @@ public abstract partial class Backend
     // The host fallback of KeyValueWriteInt8 (the default body of KeyValueWriteInt8Kernel), for RetryOnHost.
     private void KeyValueWriteInt8OnHost(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
     {
-        using var h = new HostCall(this, "KeyValueWriteInt8");
+        using var h = new HostCall(this, nameof(KeyValueWriteInt8));
         CpuBackend.Instance.KeyValueWriteInt8(h[source], h[cache], h[scales], h[position], heads, steps, capacity, dim);
     }
 
@@ -6267,7 +6267,7 @@ public abstract partial class Backend
     // The host fallback of AttentionScoresInt8 (the default body of AttentionScoresInt8Kernel), for RetryOnHost.
     private void AttentionScoresInt8OnHost(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
-        using var h = new HostCall(this, "AttentionScoresInt8");
+        using var h = new HostCall(this, nameof(AttentionScoresInt8));
         CpuBackend.Instance.AttentionScoresInt8(h[q], h[cache], h[scales], h[y], rows, steps, capacity, dim);
     }
 
@@ -6321,7 +6321,7 @@ public abstract partial class Backend
     // The host fallback of AttentionContextInt8 (the default body of AttentionContextInt8Kernel), for RetryOnHost.
     private void AttentionContextInt8OnHost(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
-        using var h = new HostCall(this, "AttentionContextInt8");
+        using var h = new HostCall(this, nameof(AttentionContextInt8));
         CpuBackend.Instance.AttentionContextInt8(h[weights], h[cache], h[scales], h[y], rows, steps, capacity, dim);
     }
 
@@ -6382,7 +6382,7 @@ public abstract partial class Backend
     // The host fallback of AttentionDecode (the default body of AttentionDecodeKernel), for RetryOnHost.
     private void AttentionDecodeOnHost(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
-        using var h = new HostCall(this, "AttentionDecode");
+        using var h = new HostCall(this, nameof(AttentionDecode));
         CpuBackend.Instance.AttentionDecode(h[q], h[keys], h[values], h[position], h[y], heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
@@ -6440,7 +6440,7 @@ public abstract partial class Backend
     // The host fallback of AttentionInt8 (the default body of AttentionInt8Kernel), for RetryOnHost.
     private void AttentionInt8OnHost(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant)
     {
-        using var h = new HostCall(this, "AttentionInt8");
+        using var h = new HostCall(this, nameof(AttentionInt8));
         CpuBackend.Instance.AttentionInt8(h[q], h[keys], h[values], h[keyScales], h[valueScales], h[position], h[y], heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
     }
 
@@ -6497,7 +6497,7 @@ public abstract partial class Backend
     // The host fallback of AttentionBFloat16 (the default body of AttentionBFloat16Kernel), for RetryOnHost.
     private void AttentionBFloat16OnHost(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant)
     {
-        using var h = new HostCall(this, "AttentionBFloat16");
+        using var h = new HostCall(this, nameof(AttentionBFloat16));
         CpuBackend.Instance.AttentionBFloat16(h[q], h[keys], h[values], h[position], h[y], heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
     }
 
@@ -6551,7 +6551,7 @@ public abstract partial class Backend
     // The host fallback of KeyValueWriteBFloat16 (the default body of KeyValueWriteBFloat16Kernel), for RetryOnHost.
     private void KeyValueWriteBFloat16OnHost(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
-        using var h = new HostCall(this, "KeyValueWriteBFloat16");
+        using var h = new HostCall(this, nameof(KeyValueWriteBFloat16));
         CpuBackend.Instance.KeyValueWriteBFloat16(h[source], h[cache], h[position], heads, steps, capacity, dim);
     }
 
@@ -6609,7 +6609,7 @@ public abstract partial class Backend
     // The host fallback of AttentionTiledBackward (the default body of AttentionTiledBackwardKernel), for RetryOnHost.
     private void AttentionTiledBackwardOnHost(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
-        using var h = new HostCall(this, "AttentionTiledBackward");
+        using var h = new HostCall(this, nameof(AttentionTiledBackward));
         CpuBackend.Instance.AttentionTiledBackward(h[q], h[keys], h[values], h[output], h[logSumExp], h[dOutput], h[dq], h[dkeys], h[dvalues], heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
@@ -6657,10 +6657,13 @@ public abstract partial class Backend
         }
     }
 
-    // The host fallback of AttentionSegmented (the default body of AttentionSegmentedKernel), for RetryOnHost.
-    private bool AttentionSegmentedOnHost(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
+    /// <summary>
+    /// The host fallback of <see cref="AttentionSegmented"/> (what runs on a device without its capability interface), for
+    /// <see cref="RetryOnHost"/> and for a device's own kernel to run the cases it has no pass for.
+    /// </summary>
+    protected bool AttentionSegmentedOnHost(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
     {
-        using var h = new HostCall(this, "AttentionSegmented");
+        using var h = new HostCall(this, nameof(AttentionSegmented));
         return CpuBackend.Instance.AttentionSegmented(h[q], h[keys], h[values], h[y], h.Maybe(logSumExp), h[starts], h[ends], heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
@@ -6706,10 +6709,13 @@ public abstract partial class Backend
         }
     }
 
-    // The host fallback of AttentionRows (the default body of AttentionRowsKernel), for RetryOnHost.
-    private bool AttentionRowsOnHost(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    /// <summary>
+    /// The host fallback of <see cref="AttentionRows"/> (what runs on a device without its capability interface), for
+    /// <see cref="RetryOnHost"/> and for a device's own kernel to run the cases it has no pass for.
+    /// </summary>
+    protected bool AttentionRowsOnHost(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
-        using var h = new HostCall(this, "AttentionRows");
+        using var h = new HostCall(this, nameof(AttentionRows));
         return CpuBackend.Instance.AttentionRows(h[q], h[keys], h[values], h[position], h[y], h[starts], heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
@@ -6755,10 +6761,13 @@ public abstract partial class Backend
         }
     }
 
-    // The host fallback of AttentionRowsBFloat16 (the default body of AttentionRowsBFloat16Kernel), for RetryOnHost.
-    private bool AttentionRowsBFloat16OnHost(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    /// <summary>
+    /// The host fallback of <see cref="AttentionRowsBFloat16"/> (what runs on a device without its capability interface), for
+    /// <see cref="RetryOnHost"/> and for a device's own kernel to run the cases it has no pass for.
+    /// </summary>
+    protected bool AttentionRowsBFloat16OnHost(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
-        using var h = new HostCall(this, "AttentionRowsBFloat16");
+        using var h = new HostCall(this, nameof(AttentionRowsBFloat16));
         return CpuBackend.Instance.AttentionRowsBFloat16(h[q], h[keys], h[values], h[position], h[y], h[starts], heads, headsPerRow, rowsPerHead, steps, capacity, dim,
             scale, variant);
     }
@@ -6801,10 +6810,13 @@ public abstract partial class Backend
         }
     }
 
-    // The host fallback of AttentionSegmentedBackward (the default body of AttentionSegmentedBackwardKernel), for RetryOnHost.
-    private bool AttentionSegmentedBackwardOnHost(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
+    /// <summary>
+    /// The host fallback of <see cref="AttentionSegmentedBackward"/> (what runs on a device without its capability interface), for
+    /// <see cref="RetryOnHost"/> and for a device's own kernel to run the cases it has no pass for.
+    /// </summary>
+    protected bool AttentionSegmentedBackwardOnHost(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
     {
-        using var h = new HostCall(this, "AttentionSegmentedBackward");
+        using var h = new HostCall(this, nameof(AttentionSegmentedBackward));
         return CpuBackend.Instance.AttentionSegmentedBackward(h[q], h[keys], h[values], h[output], h[logSumExp], h[dOutput], h[dq], h[dkeys], h[dvalues],
             h[starts], h[ends], heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
@@ -6870,7 +6882,7 @@ public abstract partial class Backend
             return;
         }
 
-        using var h = new HostCall(this, "AttentionTiled");
+        using var h = new HostCall(this, nameof(AttentionTiled));
         CpuBackend.Instance.AttentionTiled(h[q], h[keys], h[values], h[position], h[y], h[logSumExp], heads, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
@@ -6936,7 +6948,7 @@ public abstract partial class Backend
     // The host fallback of AttentionSpans (the default body of AttentionSpansKernel), for RetryOnHost.
     private void AttentionSpansOnHost(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
     {
-        using var h = new HostCall(this, "AttentionSpans");
+        using var h = new HostCall(this, nameof(AttentionSpans));
         CpuBackend.Instance.AttentionSpans(h[q], h[keys], h[values], h[starts], h[ends], h[y], h.Maybe(logSumExp), heads, kvHeads, headsPerTable, rows,
             keyRows, dim, scale, variant);
     }
@@ -7035,7 +7047,7 @@ public abstract partial class Backend
     // The host fallback of AttentionSpansBackward (the default body of AttentionSpansBackwardKernel), for RetryOnHost.
     private void AttentionSpansBackwardOnHost(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
     {
-        using var h = new HostCall(this, "AttentionSpansBackward");
+        using var h = new HostCall(this, nameof(AttentionSpansBackward));
         CpuBackend.Instance.AttentionSpansBackward(h[q], h[keys], h[values], h[starts], h[ends], h[output], h[logSumExp], h[dOutput], h[dq], h[dkeys],
             h[dvalues], heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
     }
@@ -7090,7 +7102,7 @@ public abstract partial class Backend
     // The host fallback of DecoderMask (the default body of DecoderMaskKernel), for RetryOnHost.
     private void DecoderMaskOnHost(Storage position, Storage mask, int rows, int capacity)
     {
-        using var h = new HostCall(this, "DecoderMask");
+        using var h = new HostCall(this, nameof(DecoderMask));
         CpuBackend.Instance.DecoderMask(h[position], h[mask], rows, capacity);
     }
 
@@ -7144,7 +7156,7 @@ public abstract partial class Backend
     // The host fallback of KeyValueWrite (the default body of KeyValueWriteKernel), for RetryOnHost.
     private void KeyValueWriteOnHost(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
     {
-        using var h = new HostCall(this, "KeyValueWrite");
+        using var h = new HostCall(this, nameof(KeyValueWrite));
         CpuBackend.Instance.KeyValueWrite(h[source], h[cache], h[position], heads, steps, capacity, dim);
     }
 
@@ -7212,7 +7224,7 @@ public abstract partial class Backend
     // The host fallback of SampleRows (the default body of SampleRowsKernel), for RetryOnHost.
     private void SampleRowsOnHost(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
     {
-        using var h = new HostCall(this, "SampleRows");
+        using var h = new HostCall(this, nameof(SampleRows));
         CpuBackend.Instance.SampleRows(h[logits], h[ids], h[stats], h[step], rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
     }
 
@@ -7271,7 +7283,7 @@ public abstract partial class Backend
     // The host fallback of PenalizeRows (the default body of PenalizeRowsKernel), for RetryOnHost.
     private void PenalizeRowsOnHost(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
     {
-        using var h = new HostCall(this, "PenalizeRows");
+        using var h = new HostCall(this, nameof(PenalizeRows));
         CpuBackend.Instance.PenalizeRows(h[logits], h[work], h[history], h[length], rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
     }
 
@@ -7325,7 +7337,171 @@ public abstract partial class Backend
     // The host fallback of HistoryPush (the default body of HistoryPushKernel), for RetryOnHost.
     private void HistoryPushOnHost(Storage ids, Storage history, Storage length, int rows, int capacity)
     {
-        using var h = new HostCall(this, "HistoryPush");
+        using var h = new HostCall(this, nameof(HistoryPush));
         CpuBackend.Instance.HistoryPush(h[ids], h[history], h[length], rows, capacity);
+    }
+
+    private delegate void MaxPoolBackwardOwn(Storage dy, Storage argmax, Storage dx, int count);
+
+    private delegate void MaxPoolBackward2Own(Storage dy, Storage argmax, Storage dx, in ConvGeometry g);
+
+    // Which operations `b` has a kernel of its own for, by operation index (Kernels.OwnKernels keeps it per device type).
+    internal static bool[] OwnKernelsOf(Backend b)
+    {
+        var own = new bool[OperationIndex.Count];
+        own[OperationIndex.Fill] = Overrides(b.FillKernel);
+        own[OperationIndex.Unary] = Overrides(b.UnaryKernel);
+        own[OperationIndex.UnaryBackward] = Overrides(b.UnaryBackwardKernel);
+        own[OperationIndex.Binary] = Overrides(b.BinaryKernel);
+        own[OperationIndex.ExtremumBackward] = Overrides(b.ExtremumBackwardKernel);
+        own[OperationIndex.Pow] = Overrides(b.PowKernel);
+        own[OperationIndex.PowBackward] = Overrides(b.PowBackwardKernel);
+        own[OperationIndex.Clamp] = Overrides(b.ClampKernel);
+        own[OperationIndex.ClampBackward] = Overrides(b.ClampBackwardKernel);
+        own[OperationIndex.LeakyRelu] = Overrides(b.LeakyReluKernel);
+        own[OperationIndex.LeakyReluBackward] = Overrides(b.LeakyReluBackwardKernel);
+        own[OperationIndex.Where] = Overrides(b.WhereKernel);
+        own[OperationIndex.WhereBackward] = Overrides(b.WhereBackwardKernel);
+        own[OperationIndex.Affine] = Overrides(b.AffineKernel);
+        own[OperationIndex.Axpy] = Overrides(b.AxpyKernel);
+        own[OperationIndex.MulAdd] = Overrides(b.MulAddKernel);
+        own[OperationIndex.AddRowVector] = Overrides(b.AddRowVectorKernel);
+        own[OperationIndex.SumRows] = Overrides(b.SumRowsKernel);
+        own[OperationIndex.Sum] = Overrides(b.SumKernel);
+        own[OperationIndex.AxpyAt] = Overrides(b.AxpyAtKernel);
+        own[OperationIndex.AddBroadcastScalar] = Overrides(b.AddBroadcastScalarKernel);
+        own[OperationIndex.PackedMatMulLarge] = b._fused is not null;
+        own[OperationIndex.PackedMatMulEpilogue] = Overrides(b.PackedMatMulEpilogueKernel);
+        own[OperationIndex.PackedMatMulGated] = b._fused is not null;
+        own[OperationIndex.PackedMatMulAddRmsNorm] = b._fused is not null;
+        own[OperationIndex.PackedMatMulNormAddRmsNorm] = Overrides(b.PackedMatMulNormAddRmsNormKernel);
+        own[OperationIndex.PackedMatMulMany] = b._fused is not null;
+        own[OperationIndex.PackedMatMulGatedPair] = b._fused is not null;
+        own[OperationIndex.MatMulMany] = Overrides(b.MatMulManyKernel);
+        own[OperationIndex.MatMulBias] = Overrides(b.MatMulBiasKernel);
+        own[OperationIndex.MatMulLowRank] = b._matrixUnits is not null;
+        own[OperationIndex.BFloat16TransposedMatMul] = b._matrixUnits is not null;
+        own[OperationIndex.Float8QuantizeWeight] = b._float8 is not null;
+        own[OperationIndex.Float8MatMul] = b._float8 is not null;
+        own[OperationIndex.PackedMatMulLowRank] = b._fused is not null;
+        own[OperationIndex.GemmStrided] = b._matrixUnits is not null;
+        own[OperationIndex.AttentionStrided] = b._matrixUnits is not null;
+        own[OperationIndex.AttentionStridedBackward] = b._matrixUnits is not null;
+        own[OperationIndex.SumColumns] = Overrides(b.SumColumnsKernel);
+        own[OperationIndex.AddDropout] = Overrides(b.AddDropoutKernel);
+        own[OperationIndex.BatchedMatMul] = Overrides(b.BatchedMatMulKernel);
+        own[OperationIndex.Softmax] = Overrides(b.SoftmaxKernel);
+        own[OperationIndex.SoftmaxBackward] = Overrides(b.SoftmaxBackwardKernel);
+        own[OperationIndex.ArgMax] = Overrides(b.ArgMaxKernel);
+        own[OperationIndex.LogSoftmaxTopK] = Overrides(b.LogSoftmaxTopKKernel);
+        own[OperationIndex.ClassMatch] = Overrides(b.ClassMatchKernel);
+        own[OperationIndex.NormStats] = Overrides(b.NormStatsKernel);
+        own[OperationIndex.NormApply] = Overrides(b.NormApplyKernel);
+        own[OperationIndex.NormBackward] = Overrides(b.NormBackwardKernel);
+        own[OperationIndex.GroupScaleShift] = Overrides(b.GroupScaleShiftKernel);
+        own[OperationIndex.GroupReduce] = Overrides(b.GroupReduceKernel);
+        own[OperationIndex.WeightNorm] = Overrides(b.WeightNormKernel);
+        own[OperationIndex.WeightNormBackward] = Overrides(b.WeightNormBackwardKernel);
+        own[OperationIndex.InvSqrt] = Overrides(b.InvSqrtKernel);
+        own[OperationIndex.Gather] = Overrides(b.GatherKernel);
+        own[OperationIndex.GatherBFloat16] = Overrides(b.GatherBFloat16Kernel);
+        own[OperationIndex.GatherBFloat16Columns] = Overrides(b.GatherBFloat16ColumnsKernel);
+        own[OperationIndex.OneHot] = Overrides(b.OneHotKernel);
+        own[OperationIndex.ScatterAdd] = Overrides(b.ScatterAddKernel);
+        own[OperationIndex.Im2Col] = Overrides(b.Im2ColKernel);
+        own[OperationIndex.Col2Im] = Overrides(b.Col2ImKernel);
+        own[OperationIndex.MaxPool] = Overrides(b.MaxPoolKernel);
+        own[OperationIndex.MaxPoolBackward] = Overrides((MaxPoolBackwardOwn)b.MaxPoolBackwardKernel);
+        own[OperationIndex.MaxPoolBackward2] = Overrides((MaxPoolBackward2Own)b.MaxPoolBackwardKernel);
+        own[OperationIndex.Convolution] = Overrides(b.ConvolutionKernel);
+        own[OperationIndex.ConvolutionBackwardInput] = Overrides(b.ConvolutionBackwardInputKernel);
+        own[OperationIndex.ConvolutionBackwardWeight] = Overrides(b.ConvolutionBackwardWeightKernel);
+        own[OperationIndex.AvgPool] = Overrides(b.AvgPoolKernel);
+        own[OperationIndex.AvgPoolBackward] = Overrides(b.AvgPoolBackwardKernel);
+        own[OperationIndex.ResizeNormalize] = Overrides(b.ResizeNormalizeKernel);
+        own[OperationIndex.Interpolate2d] = Overrides(b.Interpolate2dKernel);
+        own[OperationIndex.Interpolate2dBackward] = Overrides(b.Interpolate2dBackwardKernel);
+        own[OperationIndex.AdaptiveAvgPool] = Overrides(b.AdaptiveAvgPoolKernel);
+        own[OperationIndex.AdaptiveAvgPoolBackward] = Overrides(b.AdaptiveAvgPoolBackwardKernel);
+        own[OperationIndex.AdaptiveMaxPool] = Overrides(b.AdaptiveMaxPoolKernel);
+        own[OperationIndex.AdaptiveMaxPoolBackward] = Overrides(b.AdaptiveMaxPoolBackwardKernel);
+        own[OperationIndex.CtcLoss] = Overrides(b.CtcLossKernel);
+        own[OperationIndex.CtcLossBackward] = Overrides(b.CtcLossBackwardKernel);
+        own[OperationIndex.LstmCell] = b._recurrent is not null;
+        own[OperationIndex.LstmCellBackward] = b._recurrent is not null;
+        own[OperationIndex.GruCell] = b._recurrent is not null;
+        own[OperationIndex.GruCellBackward] = b._recurrent is not null;
+        own[OperationIndex.LstmStep] = b._recurrent is not null;
+        own[OperationIndex.LstmStepBackward] = b._recurrent is not null;
+        own[OperationIndex.GruStep] = b._recurrent is not null;
+        own[OperationIndex.GruStepBackward] = b._recurrent is not null;
+        own[OperationIndex.LstmSequence] = b._recurrent is not null;
+        own[OperationIndex.LstmSequenceBackward] = b._recurrent is not null;
+        own[OperationIndex.GruSequence] = b._recurrent is not null;
+        own[OperationIndex.GruSequenceBackward] = b._recurrent is not null;
+        own[OperationIndex.BoxIouLoss] = Overrides(b.BoxIouLossKernel);
+        own[OperationIndex.BoxIouLossBackward] = Overrides(b.BoxIouLossBackwardKernel);
+        own[OperationIndex.SigmoidFocalLoss] = Overrides(b.SigmoidFocalLossKernel);
+        own[OperationIndex.SigmoidFocalLossBackward] = Overrides(b.SigmoidFocalLossBackwardKernel);
+        own[OperationIndex.Permute] = Overrides(b.PermuteKernel);
+        own[OperationIndex.SumAxis] = Overrides(b.SumAxisKernel);
+        own[OperationIndex.BroadcastAxis] = Overrides(b.BroadcastAxisKernel);
+        own[OperationIndex.SgdStep] = Overrides(b.SgdStepKernel);
+        own[OperationIndex.AdamStep] = Overrides(b.AdamStepKernel);
+        own[OperationIndex.AdamStep8Bit] = Overrides(b.AdamStep8BitKernel);
+        own[OperationIndex.SumSquares] = Overrides(b.SumSquaresKernel);
+        own[OperationIndex.FusedAdamW] = Overrides(b.FusedAdamWKernel);
+        own[OperationIndex.ClipFactor] = Overrides(b.ClipFactorKernel);
+        own[OperationIndex.Dropout] = Overrides(b.DropoutKernel);
+        own[OperationIndex.DropoutBackward] = Overrides(b.DropoutBackwardKernel);
+        own[OperationIndex.ScaleMaskSoftmax] = Overrides(b.ScaleMaskSoftmaxKernel);
+        own[OperationIndex.LayerNormFused] = Overrides(b.LayerNormFusedKernel);
+        own[OperationIndex.LayerNormTrain] = Overrides(b.LayerNormTrainKernel);
+        own[OperationIndex.LayerNormBackward] = Overrides(b.LayerNormBackwardKernel);
+        own[OperationIndex.BiasGelu] = Overrides(b.BiasGeluKernel);
+        own[OperationIndex.Int8MatMul] = Overrides(b.Int8MatMulKernel);
+        own[OperationIndex.BFloat16MatMul] = Overrides(b.BFloat16MatMulKernel);
+        own[OperationIndex.BFloat16Dequantize] = Overrides(b.BFloat16DequantizeKernel);
+        own[OperationIndex.Float16MatMul] = Overrides(b.Float16MatMulKernel);
+        own[OperationIndex.Float16Dequantize] = Overrides(b.Float16DequantizeKernel);
+        own[OperationIndex.PackBFloat16] = Overrides(b.PackBFloat16Kernel);
+        own[OperationIndex.Int8Dequantize] = Overrides(b.Int8DequantizeKernel);
+        own[OperationIndex.Int4MatMul] = Overrides(b.Int4MatMulKernel);
+        own[OperationIndex.Int4Dequantize] = Overrides(b.Int4DequantizeKernel);
+        own[OperationIndex.RmsNorm] = Overrides(b.RmsNormKernel);
+        own[OperationIndex.RmsNormBackward] = Overrides(b.RmsNormBackwardKernel);
+        own[OperationIndex.Rope] = Overrides(b.RopeKernel);
+        own[OperationIndex.RmsNormAffine] = Overrides(b.RmsNormAffineKernel);
+        own[OperationIndex.AddRmsNormAffine] = Overrides(b.AddRmsNormAffineKernel);
+        own[OperationIndex.RmsNormRope] = Overrides(b.RmsNormRopeKernel);
+        own[OperationIndex.RmsNormRopePair] = Overrides(b.RmsNormRopePairKernel);
+        own[OperationIndex.NormRopeHeads] = Overrides(b.NormRopeHeadsKernel);
+        own[OperationIndex.SoftmaxCrossEntropyRows] = Overrides(b.SoftmaxCrossEntropyRowsKernel);
+        own[OperationIndex.GatedActivation] = Overrides(b.GatedActivationKernel);
+        own[OperationIndex.GatedActivationBackward] = Overrides(b.GatedActivationBackwardKernel);
+        own[OperationIndex.GatedActivationPacked] = Overrides(b.GatedActivationPackedKernel);
+        own[OperationIndex.GatedActivationBackwardPacked] = Overrides(b.GatedActivationBackwardPackedKernel);
+        own[OperationIndex.KeyValueWriteInt8] = Overrides(b.KeyValueWriteInt8Kernel);
+        own[OperationIndex.AttentionScoresInt8] = Overrides(b.AttentionScoresInt8Kernel);
+        own[OperationIndex.AttentionContextInt8] = Overrides(b.AttentionContextInt8Kernel);
+        own[OperationIndex.AttentionDecode] = Overrides(b.AttentionDecodeKernel);
+        own[OperationIndex.AttentionInt8] = Overrides(b.AttentionInt8Kernel);
+        own[OperationIndex.AttentionBFloat16] = Overrides(b.AttentionBFloat16Kernel);
+        own[OperationIndex.KeyValueWriteBFloat16] = Overrides(b.KeyValueWriteBFloat16Kernel);
+        own[OperationIndex.AttentionTiledBackward] = Overrides(b.AttentionTiledBackwardKernel);
+        own[OperationIndex.AttentionSegmented] = b._segmented is not null;
+        own[OperationIndex.AttentionRows] = b._rows is not null;
+        own[OperationIndex.AttentionRowsBFloat16] = b._rows is not null;
+        own[OperationIndex.AttentionSegmentedBackward] = b._segmented is not null;
+        own[OperationIndex.AttentionTiled] = Overrides(b.AttentionTiledKernel);
+        own[OperationIndex.AttentionSpans] = Overrides(b.AttentionSpansKernel);
+        own[OperationIndex.AttentionSpansStrided] = Overrides(b.AttentionSpansStridedKernel);
+        own[OperationIndex.AttentionSpansBackward] = Overrides(b.AttentionSpansBackwardKernel);
+        own[OperationIndex.DecoderMask] = Overrides(b.DecoderMaskKernel);
+        own[OperationIndex.KeyValueWrite] = Overrides(b.KeyValueWriteKernel);
+        own[OperationIndex.SampleRows] = Overrides(b.SampleRowsKernel);
+        own[OperationIndex.PenalizeRows] = Overrides(b.PenalizeRowsKernel);
+        own[OperationIndex.HistoryPush] = Overrides(b.HistoryPushKernel);
+        return own;
     }
 }

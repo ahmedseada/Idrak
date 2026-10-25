@@ -260,7 +260,7 @@ public static class PluginTests
         Abstraction.Devices.DeviceProviders.Register(new ReferenceProvider());
         try
         {
-            var reference = Device.Get(ReferenceProvider.Name);
+            var reference = Device.Get(ReferenceProvider.Kind);
             Check(reference.ToString() == "reference:0" && !Device.Available.Contains(reference), "found by name, not listed");
             long before = ReferenceDevice.Instance.OwnCalls;
             var report = Abstraction.Testing.Conformance.Check(reference);
@@ -272,7 +272,7 @@ public static class PluginTests
         }
         finally
         {
-            Abstraction.Devices.DeviceProviders.Unregister(ReferenceProvider.Name);
+            Abstraction.Devices.DeviceProviders.Unregister(ReferenceProvider.Kind);
         }
     }
 

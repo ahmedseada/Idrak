@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Gpu.Abstractions;
 using static Idrak.Gpu.Vulkan.VulkanDriver;
 
 namespace Idrak.Gpu.Vulkan;
@@ -14,7 +15,7 @@ namespace Idrak.Gpu.Vulkan;
 // across batches); a block remembers the span in which a command last wrote it and last read it. A command gets a barrier
 // first when it reads or writes a block written in the current span (read after write, write after write) or writes a
 // block read in it (write after read); otherwise it may run alongside the commands before it.
-internal sealed unsafe partial class VulkanBackend
+internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
 {
     // Guards the queue, the batches and the pipelines (the pool has its own lock: Return runs on any thread).
     private readonly Lock _gate = new();
@@ -172,6 +173,10 @@ internal sealed unsafe partial class VulkanBackend
     }
 
     private sealed record Pipeline(ulong Handle, ulong Layout, VulkanBackend Owner);
+
+    // A plug-in's kernel (VulkanKernel.Dispatch): every storage bound whole.
+    void IVulkanKernelDispatcher.Dispatch(VulkanKernel kernel, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages,
+        ReadOnlySpan<byte> pushConstants) => Dispatch(kernel, groupsX, groupsY, groupsZ, storages, pushConstants);
 
     /// <summary>
     /// Queues <paramref name="kernel"/> over groupsX × groupsY × groupsZ workgroups: binding i of descriptor set 0 is

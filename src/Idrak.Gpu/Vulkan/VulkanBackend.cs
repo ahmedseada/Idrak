@@ -290,10 +290,6 @@ internal sealed unsafe partial class VulkanBackend : Backend
         DecodeAttentionHeadDim = Math.Min(Device.Cpu.Backend.Capabilities.DecodeAttentionHeadDim, VulkanKernels.AttentionMaxDim),
         TiledAttentionHeadDim = Math.Min(Device.Cpu.Backend.Capabilities.TiledAttentionHeadDim, VulkanKernels.AttentionMaxDim),
         SpanAttentionHeadDim = VulkanKernels.AttentionMaxDim,              // VulkanBackend.Spans.cs: larger heads take the host fallback
-        MatrixUnits = false,
-        MatrixUnitAttentionHeadDim = static _ => false,
-        FusedKernels = true,                                             // VulkanBackend.Fused.cs
-        Profiling = false,
     };
 
     /// <summary>The number of usable Vulkan devices (0 when there is no loader or driver).</summary>
@@ -961,32 +957,34 @@ internal sealed unsafe partial class VulkanBackend : Backend
 /// CUDA, when its driver is there) or they are CPU-type devices (software drivers: reached by name, e.g. for tests);
 /// discrete GPUs preferred to integrated ones. Only what the device reports decides: its type and its UUID.
 /// </summary>
-internal sealed class VulkanProvider : DeviceProvider
+internal sealed class VulkanProvider : ISeparableDeviceProvider
 {
-    public override string Kind => "vulkan";
+    public string Name => "vulkan";
 
-    public override string Display => "Vulkan";
+    public string Summary => "GPUs through Vulkan compute (SPIR-V kernels generated in C#)";
 
-    public override DeviceType Type => DeviceType.Vulkan;
+    public string Display => "Vulkan";
 
-    public override int Count => VulkanBackend.DeviceCount;
+    public DeviceType Type => DeviceType.Vulkan;
 
-    public override string? UnavailableReason => VulkanBackend.UnavailableReason;
+    public int Count => VulkanBackend.DeviceCount;
 
-    public override Backend Create(int ordinal) => VulkanBackend.Get(ordinal);
+    public string? UnavailableReason => VulkanBackend.UnavailableReason;
 
-    public override Backend? CreateSeparate(int ordinal, SeparateBackendOptions options) => VulkanBackend.CreateSeparate(ordinal, options);
+    public Backend Create(int ordinal) => VulkanBackend.Get(ordinal);
 
-    public override bool IsStarted(int ordinal) => VulkanBackend.IsInitialized(ordinal);
+    public Backend CreateSeparate(int ordinal, SeparateBackendOptions options) => VulkanBackend.CreateSeparate(ordinal, options);
 
-    public override Guid? DeviceUuid(int ordinal) => VulkanBackend.DeviceKind(ordinal).Uuid;
+    public bool IsStarted(int ordinal) => VulkanBackend.IsInitialized(ordinal);
 
-    public override bool Listed(int ordinal) =>
+    public Guid? DeviceUuid(int ordinal) => VulkanBackend.DeviceKind(ordinal).Uuid;
+
+    public bool Listed(int ordinal) =>
         VulkanBackend.DeviceKind(ordinal).Type != VulkanDriver.DeviceTypeCpu && DrivenElsewhere(ordinal) is null;
 
     // Not chosen by Device.Default until its kernels are tuned (a CPU can still beat an untuned integrated GPU);
     // IDRAK_VULKAN_DEFAULT=1 opts in. Reached by name ("vulkan:1") either way.
-    public override int? DefaultRank(int ordinal) => Environment.GetEnvironmentVariable("IDRAK_VULKAN_DEFAULT") != "1" ? null
+    public int? DefaultRank(int ordinal) => Environment.GetEnvironmentVariable("IDRAK_VULKAN_DEFAULT") != "1" ? null
         : VulkanBackend.DeviceKind(ordinal).Type switch
         {
             VulkanDriver.DeviceTypeDiscreteGpu => 50,
@@ -994,7 +992,7 @@ internal sealed class VulkanProvider : DeviceProvider
             _ => null,
         };
 
-    public override string? Note(int ordinal) =>
+    public string? Note(int ordinal) =>
         VulkanBackend.DeviceKind(ordinal).Type == VulkanDriver.DeviceTypeCpu ? "software driver: by name only"
         : DrivenElsewhere(ordinal) is var (display, name) ? $"driven by {display} as {name}: by name only"
         : DefaultRank(ordinal) is null ? "not the default device (IDRAK_VULKAN_DEFAULT=1 to prefer it)" : null;
@@ -1016,7 +1014,7 @@ internal sealed class VulkanProvider : DeviceProvider
     /// The first device of <paramref name="others"/> with UUID <paramref name="uuid"/> (its provider's display name and
     /// its device name), or null: the same physical GPU, reached through another API.
     /// </summary>
-    internal static (string Display, string Device)? DrivenBy(Guid? uuid, IEnumerable<DeviceProvider> others)
+    internal static (string Display, string Device)? DrivenBy(Guid? uuid, IEnumerable<IDeviceProvider> others)
     {
         if (uuid is not Guid id || id == Guid.Empty)
         {
@@ -1030,7 +1028,7 @@ internal sealed class VulkanProvider : DeviceProvider
             {
                 if (provider.DeviceUuid(i) == id)
                 {
-                    return (provider.Display, $"{provider.Kind}:{i}");
+                    return (provider.Display, $"{provider.Name}:{i}");
                 }
             }
         }

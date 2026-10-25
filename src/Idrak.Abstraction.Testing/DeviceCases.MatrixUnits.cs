@@ -12,7 +12,7 @@ namespace Idrak.Abstraction.Testing;
 // follow the contracts in Backend.cs to the letter (the FP8 bytes bit for bit).
 public static partial class DeviceCases
 {
-    // The k padding of the FP8 values the cases lay out (Backend.Float8PaddedK on the library's devices).
+    // The k padding of the FP8 values the cases lay out (IFloat8Backend.PaddedK on the library's devices).
     private const int Float8Padding = 64;
 
     // The e4m3 code of x: rounded to nearest, ties to even, saturated to ±448, the sign kept (-0 included); NaN is 0x7F.

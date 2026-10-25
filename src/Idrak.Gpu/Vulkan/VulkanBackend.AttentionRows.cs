@@ -13,7 +13,7 @@ namespace Idrak.Gpu.Vulkan;
 // (VulkanTuneOp.RowsAttention: the tiled kernel at every candidate width against the decoding kernel), as attention over
 // many rows is (VulkanBackend.Prompt.cs); until measured, the formula's choice is the tiled kernel where a head has at
 // least a block of rows at the device's width, else the decoding kernel.
-internal sealed partial class VulkanBackend
+internal sealed partial class VulkanBackend : IRowAttentionBackend
 {
     /// <summary>Tests and benchmarks only: attention for rows of different lengths, tiled (true) or the decoding kernel (false), instead of the measured choice.</summary>
     internal static bool? RowsAttentionKernel { get; set; }
@@ -26,27 +26,27 @@ internal sealed partial class VulkanBackend
     private bool RowsBindable => Bindable(RowsDecodeKernels[0]) && Bindable(RowsDecodeKernels[1]) && Bindable(RowsTiledKernels[0]) && Bindable(RowsTiledKernels[1]);
 
     // Both kernels take every head size up to AttentionMaxDim, a sliding window and soft-capped scores.
-    public override bool SupportsAttentionRows(int dim, AttentionVariant variant = default) =>
+    bool IRowAttentionBackend.SupportsRows(int dim, AttentionVariant variant) =>
         dim > 0 && dim <= VulkanKernels.AttentionMaxDim && !KernelsOff && RowsBindable;
 
-    public override bool AttentionRowsKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
-        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    bool IRowAttentionBackend.AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         if (!RowsFit(dim, steps, headsPerRow, q, keys, values, position, y, starts))
         {
-            return base.AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+            return AttentionRowsOnHost(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
         }
 
         AttendRows(0, [q, keys, values, starts, position, y], heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
         return true;
     }
 
-    public override bool AttentionRowsBFloat16Kernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads,
-        int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    bool IRowAttentionBackend.AttentionRowsBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads,
+        int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
         if (!RowsFit(dim, steps, headsPerRow, q, keys, values, position, y, starts))
         {
-            return base.AttentionRowsBFloat16Kernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+            return AttentionRowsBFloat16OnHost(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
         }
 
         AttendRows(1, [q, keys, values, starts, position, y], heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);

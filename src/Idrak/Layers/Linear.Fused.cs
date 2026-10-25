@@ -22,7 +22,7 @@ public sealed partial class Linear
     {
         input.ThrowIfDisposed();
         int k = input.Shape[^1], m = input.Size / Math.Max(1, k);
-        if (!input.Backend.Capabilities.MatrixUnits || layers.Count is < 1 or > 3 || m < 64 || k < 32 || !MixedPrecision.UsesTensorCores
+        if (!input.Backend.MatrixUnits || layers.Count is < 1 or > 3 || m < 64 || k < 32 || !MixedPrecision.UsesTensorCores
             || layers[0].Lora is not { } first || first.Rank > 32)
         {
             return null;
@@ -251,7 +251,7 @@ public sealed partial class Linear
         residual.ThrowIfDisposed();
         int k = x.Shape[^1], m = x.Size / Math.Max(1, k), n = layer.OutFeatures;
         if (layer.PackedWeight is not { Format: { } format } weight || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > x.Backend.Capabilities.FewRows
-            || residual.Size != m * n || residual.Shape[^1] != n || norm.Features != n || !x.Backend.Capabilities.FusedKernels)
+            || residual.Size != m * n || residual.Shape[^1] != n || norm.Features != n || !x.Backend.FusedKernels)
         {
             return null;
         }
@@ -294,7 +294,7 @@ public sealed partial class Linear
         residual.ThrowIfDisposed();
         int k = x.Shape[^1], m = x.Size / Math.Max(1, k), n = layer.OutFeatures;
         if (layer.PackedWeight is not { Format: { } format } weight || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > x.Backend.Capabilities.FewRows
-            || residual.Size != m * n || residual.Shape[^1] != n || norm.Features != n || yNorm.Features != n || !x.Backend.Capabilities.FusedKernels)
+            || residual.Size != m * n || residual.Shape[^1] != n || norm.Features != n || yNorm.Features != n || !x.Backend.FusedKernels)
         {
             return null;
         }
@@ -333,7 +333,7 @@ public sealed partial class Linear
         input.ThrowIfDisposed();
         int k = input.Shape[^1], m = input.Size / Math.Max(1, k), n = gate.OutFeatures;
         if (gate.PackedWeight is not { Format: { } format } gateWeight || up.PackedWeight is not { } upWeight || upWeight.Format != format
-            || m > input.Backend.Capabilities.FewRows || !input.Backend.Capabilities.FusedKernels || up.OutFeatures != n
+            || m > input.Backend.Capabilities.FewRows || !input.Backend.FusedKernels || up.OutFeatures != n
             || gate.InFeatures != k || up.InFeatures != k || gate.Bias is not null || up.Bias is not null || gate.Adapter is not null
             || up.Adapter is not null)
         {

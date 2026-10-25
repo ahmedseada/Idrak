@@ -6,12 +6,12 @@ using System.Runtime.CompilerServices;
 
 namespace Idrak.Gpu.Vulkan;
 
-// The fused decoding operations (BackendCapabilities.FusedKernels) as generated kernels (VulkanKernels.Fused.cs): fewer
+// The fused decoding operations (Backend.FusedKernels) as generated kernels (VulkanKernels.Fused.cs): fewer
 // dispatches per token, the same math as the steps they replace. Each returns false where its kernel does not fit (more
 // rows than the few-row products take, a format of one's own, more storages than the device binds per stage, storages
 // larger than a binding, kernels off), and the caller then runs the unfused steps. The products' widths, words per row
 // and splits of k come from the device's limits and are measured per shape on first use, as the plain packed products'.
-internal sealed partial class VulkanBackend
+internal sealed partial class VulkanBackend : IFusedPackedKernels
 {
     /// <summary>Tests: true makes the fused operations decline (callers run the unfused steps), to compare the two.</summary>
     internal static bool FusedOff { get; set; }
@@ -124,9 +124,16 @@ internal sealed partial class VulkanBackend
         TuneWithScratch(key, DistinctGemv(GemvCandidates(VulkanKernels.ColumnsPerWord(format), nmax, maxSplits), fallback, format, block, k, partial), fallback,
             operands.ToArray(), writes, run);
 
+    // The prompt-sized product is measured against the few-row kernels on CUDA only; the products with low-rank terms are
+    // CUDA's tensor-core passes. Here: the few-row kernels, and the adapters' products one by one.
+    bool IFusedPackedKernels.PrefersPackedMatMul(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k) => false;
+
+    bool IFusedPackedKernels.PackedMatMulLowRank(PackedFormat format, Storage x, int m, int k,
+        ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank) => false;
+
     // ------------------------------------------------------------------ several products sharing an input
 
-    public override bool PackedMatMulManyKernel(PackedFormat format, Storage x, int m, int k,
+    bool IFusedPackedKernels.PackedMatMulMany(PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products)
     {
         if (FusedOff || KernelFormat(format) is not { } f || products.Length is 0 or > 3 || m <= 0 || m > Capabilities.FewRows || k <= 0)
@@ -233,7 +240,7 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ gate and up with the activation
 
-    public override bool PackedMatMulGatedPairKernel(PackedFormat format, int activation, Storage x, int m, int k,
+    bool IFusedPackedKernels.PackedMatMulGatedPair(PackedFormat format, int activation, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden)
     {
         if (FusedOff || KernelFormat(format) is not { } f || products.Length != 2 || products[0].Columns != products[1].Columns || products[0].Columns <= 0
@@ -331,7 +338,7 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ a down projection reading the activation
 
-    public override bool PackedMatMulGatedKernel(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
+    bool IFusedPackedKernels.PackedMatMulGated(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y,
         int m, int n, int k)
     {
         if (FusedOff || KernelFormat(format) is not { } f || activation is not (0 or 1) || m <= 0 || m > Capabilities.FewRows || n <= 0 || k <= 0
@@ -423,7 +430,7 @@ internal sealed partial class VulkanBackend
 
     // ------------------------------------------------------------------ a projection, its residual and the next norm
 
-    public override bool PackedMatMulAddRmsNormKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
+    bool IFusedPackedKernels.PackedMatMulAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
         Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
         if (FusedOff || KernelFormat(format) is not { } f || m <= 0 || m > Capabilities.FewRows || n <= 0 || k <= 0
