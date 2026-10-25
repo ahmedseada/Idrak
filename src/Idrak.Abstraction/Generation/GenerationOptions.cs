@@ -72,8 +72,8 @@ public sealed record GenerationOptions
     /// piece's activations at once instead of the whole prompt's (rows × positions × the widest layer's width), with the same
     /// output within float rounding. 0 (the default) takes IDRAK_PREFILL_CHUNK when set, else measures it at run time: as
     /// many positions as <see cref="Idrak.Abstraction.ComputeResources.WorkspaceShare"/> of the memory the device reports
-    /// available holds (the whole prompt in one pass on a device that reports none). A prompt that fits one piece, and a
-    /// prompt with images, take one pass.
+    /// available holds, never fewer than <see cref="PrefillMinChunk"/> (the whole prompt in one pass on a device that reports
+    /// none). A prompt that fits one piece, and a prompt with images, take one pass.
     /// </summary>
     /// <exception cref="ArgumentOutOfRangeException">Negative.</exception>
     public int PrefillChunk
@@ -84,6 +84,29 @@ public sealed record GenerationOptions
     }
 
     private readonly int _prefillChunk;
+
+    /// <summary>The variable <see cref="PrefillMinChunk"/> falls back to when it is 0: "IDRAK_PREFILL_MIN_CHUNK".</summary>
+    public const string PrefillMinChunkVariable = "IDRAK_PREFILL_MIN_CHUNK";
+
+    /// <summary>The fewest positions a measured piece (<see cref="PrefillChunk"/> 0) takes when it is not given: 256.</summary>
+    public const int DefaultPrefillMinChunk = 256;
+
+    /// <summary>
+    /// The fewest positions a measured piece of a prompt's pass takes (<see cref="PrefillChunk"/> 0): each piece is a pass
+    /// through every layer, so pieces of a few positions (little memory measured free, for example while training holds
+    /// much of the device between generations) make a long prompt as many passes as it has positions. 0 (the default)
+    /// takes IDRAK_PREFILL_MIN_CHUNK when set, else <see cref="DefaultPrefillMinChunk"/>; a prompt shorter than it takes one
+    /// pass. A given <see cref="PrefillChunk"/> is used as it is.
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Negative.</exception>
+    public int PrefillMinChunk
+    {
+        get => _prefillMinChunk;
+        init => _prefillMinChunk = value >= 0 ? value
+            : throw new ArgumentOutOfRangeException(nameof(PrefillMinChunk), value, "The generation setting PrefillMinChunk is 0 (the default) or a number of positions.");
+    }
+
+    private readonly int _prefillMinChunk;
 
     /// <summary>
     /// Give the token ids on the final chunk (<see cref="ChatChunk.Tokens"/>, <see cref="GenerationChunk.Tokens"/>): the

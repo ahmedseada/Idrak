@@ -78,14 +78,21 @@ internal sealed partial class VulkanBackend
         {
             // A window shorter than the capacity under a key of its own (variants 2 and 3, the window last).
             bool windowed = variant.Window > 0 && variant.Window < capacity;
-            var key = new VulkanTuneKey(VulkanTuneOp.RowsAttention, format + (windowed ? 2 : 0), rows, rowsPerHead, steps, capacity, dim, windowed ? variant.Window : 0);
-            if (!TryTuned(key, out choice) || !RowsChoiceValid(choice))
+            // Sizes that follow the data by their class (TuneSizes), as decoding attention's; a class-mate's choice this
+            // shape cannot take gives the formula's.
+            var key = new VulkanTuneKey(VulkanTuneOp.RowsAttention, format + (windowed ? 2 : 0), TuneSizes.Class(rows), TuneSizes.Class(rowsPerHead),
+                TuneSizes.Class(steps), TuneSizes.Class(capacity), dim, windowed ? variant.Window : 0);
+            if (!TryTuned(key, out choice))
             {
                 choice = fallback;
                 if (CanTune)
                 {
                     choice = TuneRowsAttention(key, format, storages.ToArray(), fallback, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
                 }
+            }
+            else if (!RowsChoiceValid(choice))
+            {
+                choice = fallback;
             }
         }
 

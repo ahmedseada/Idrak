@@ -20,6 +20,7 @@ internal static partial class Tests
         ("tuning: decoding attention reads at least a measured number of positions per block (short caches on fewer blocks): every least chunk, split count and cache format gives the one-block result; lengths 64 ... capacity and chunk candidates", DecodeMinChunks),
         ("tuning: every backend keeps one set of measured choices per power source (mains or battery, as the system reports it)", PowerSourceKeys),
         ("tuning: sizes that follow the data are keyed by size class (exact up to 32, then four classes a doubling, each within a quarter), so convolutions over batches of every width share a few measured choices", TuneSizeClasses),
+        ("tuning: attention over rows of different lengths and decoding attention key the cache's size and the rows by size class: caches of 1000 and 1010 positions (float32 and bfloat16, decode and prompt steps) share one measured choice, the second measures nothing and matches the CPU", RowsTuneSizeClasses),
         ("tuning: a convolution or a float32 product at a size class none measured takes the choice of the nearest measured class of its shape within ComputeResources.TuningNeighbourOctaves (IDRAK_TUNE_NEIGHBOUR_OCTAVES) instead of measuring, a class farther away is measured, 0 measures every class, and the lent choice gives the CPU's result; each measured tuning is a TuningCompleted telemetry event", ConvNeighbourClasses),
         ("kernel shapes: derived from the device's reported limits; today's cards (12.0 and 8.6) give today's PTX byte for byte, other limits valid PTX with the same kernels, or a reason they cannot run", KernelShapesFromLimits),
     ];
@@ -217,6 +218,91 @@ internal static partial class Tests
         }
     }
 
+    // Attention over rows of different lengths (each row from its own start) on a cache of `capacity` positions filled to
+    // all but the step's own, float32 or bfloat16, with seeded data (the same on every device for one shape).
+    private static float[] RowsAttention(Device on, int capacity, int steps, bool bfloat16)
+    {
+        const int heads = 8, dim = 64;
+        var random = new Random(capacity * 31 + steps);
+        float[] Values(int n) => [.. Enumerable.Range(0, n).Select(_ => (float)(random.NextDouble() * 2 - 1))];
+        var backend = on.Backend;
+        using var q = Tensor.From(Values(heads * steps * dim), [heads, steps, dim], on);
+        using var k = Tensor.From(Values(heads * capacity * dim), [heads, capacity, dim], on);
+        using var v = Tensor.From(Values(heads * capacity * dim), [heads, capacity, dim], on);
+        using var position = Tensor.From([(float)(capacity - steps)], [1], on);
+        using var starts = Tensor.From([.. Enumerable.Range(0, heads * steps).Select(i => (float)(i / steps % 3 * 7))], [heads * steps], on);
+        using var y = Tensor.From(new float[heads * steps * dim], [heads, steps, dim], on);
+        if (!bfloat16)
+        {
+            Check(backend.AttentionRows(q.Storage, k.Storage, v.Storage, position.Storage, y.Storage, starts.Storage, heads, 1, steps, steps, capacity, dim, 0.125f),
+                $"float32 rows run on {on}");
+            return y.ToArray();
+        }
+
+        int words = (dim + 1) / 2;
+        using var zero = Tensor.From([0f], [1], on);
+        using var k16 = Tensor.From(new float[heads * capacity * words], [heads, capacity, words], on);
+        using var v16 = Tensor.From(new float[heads * capacity * words], [heads, capacity, words], on);
+        backend.KeyValueWriteBFloat16(k.Storage, k16.Storage, zero.Storage, heads, capacity, capacity, dim);
+        backend.KeyValueWriteBFloat16(v.Storage, v16.Storage, zero.Storage, heads, capacity, capacity, dim);
+        Check(backend.AttentionRowsBFloat16(q.Storage, k16.Storage, v16.Storage, position.Storage, y.Storage, starts.Storage, heads, 1, steps, steps, capacity, dim, 0.125f),
+            $"bfloat16 rows run on {on}");
+        return y.ToArray();
+    }
+
+    private static void RowsTuneSizeClasses(Device device)
+    {
+        var cuda = device.Backend as CudaBackend;
+        var vulkan = device.Backend as Idrak.Gpu.Vulkan.VulkanBackend;
+        if (cuda is null && vulkan is null)
+        {
+            return;                                                              // the CPU measures nothing
+        }
+
+        bool autotune = CudaBackend.Autotune, persist = CudaBackend.PersistTuning, vulkanAutotune = Idrak.Gpu.Vulkan.VulkanBackend.Autotune;
+        string? vulkanCache = Idrak.Gpu.Vulkan.VulkanBackend.TuningCacheFile;
+        string cache = Path.Combine(Path.GetTempPath(), $"idrak-rows-tuning-{Environment.ProcessId}.tsv");
+        var tunings = new TuningCounter();
+        try
+        {
+            CudaBackend.PersistTuning = false;                                   // measure here, whatever an earlier run kept
+            CudaBackend.Autotune = true;
+            Idrak.Gpu.Vulkan.VulkanBackend.Autotune = true;
+            Idrak.Gpu.Vulkan.VulkanBackend.TuningCacheFile = cache;
+            cuda?.ForgetTuning();
+            vulkan?.ForgetTuning();
+            using (Telemetry.Subscribe(tunings))
+            {
+                foreach (bool bfloat16 in new[] { false, true })
+                {
+                    foreach (int steps in new[] { 1, 9 })
+                    {
+                        string what = $"{(bfloat16 ? "bfloat16" : "float32")} rows, {(steps == 1 ? "a decoding step" : $"{steps} prompt steps")}";
+                        RowsAttention(device, 1000, steps, bfloat16);           // class 1024: measured where the shape offers choices
+                        int first = tunings.Total;
+                        var near = RowsAttention(device, 1010, steps, bfloat16);
+                        Check(tunings.Total == first, $"{what}: a cache of 1010 positions (class 1024) after 1000 measured {tunings.Total - first} choices again");
+                        var cpu = RowsAttention(Device.Cpu, 1010, steps, bfloat16);
+                        AssertClose(near, cpu, 1e-2f * Math.Max(1f, cpu.Max(Math.Abs)), $"{what}: the class-mate's choice against the CPU");
+                    }
+                }
+            }
+        }
+        finally
+        {
+            CudaBackend.Autotune = autotune;
+            CudaBackend.PersistTuning = persist;
+            Idrak.Gpu.Vulkan.VulkanBackend.Autotune = vulkanAutotune;
+            Idrak.Gpu.Vulkan.VulkanBackend.TuningCacheFile = vulkanCache;
+            cuda?.ForgetTuning();
+            vulkan?.ForgetTuning();
+            if (File.Exists(cache))
+            {
+                File.Delete(cache);
+            }
+        }
+    }
+
     private sealed class TuningCounter : ITelemetryHook
     {
         private readonly Dictionary<string, int> _counts = new(StringComparer.Ordinal);
@@ -224,6 +310,8 @@ internal static partial class Tests
         public TelemetryLevel Levels => TelemetryLevel.Devices;
 
         public int Convolutions => Count("Convolution");
+
+        public int Total => _counts.Values.Sum();
 
         public int Count(string operation) => _counts.GetValueOrDefault(operation);
 

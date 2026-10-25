@@ -20,6 +20,7 @@ internal static partial class Tests
         ("generation: keep-alive durations and model host expiry", KeepAliveAndHost),
         ("generation: num_predict, stop sequences, cache/graph/recompute agree; without a slide a reply ends where the window does", GeneratorBehaviour),
         ("generation: a batch of prompts of different lengths keeps a bfloat16 cache (IRowStartsLayout) and gives each prompt its text alone, greedy, through prompts and steps", BFloat16RowsBatch),
+        ("generation: a measured prompt piece is never fewer than PrefillMinChunk positions (256 by default) however little memory is free, never more than the prompt, and as many as the room holds between", PrefillPieceFloor),
         ("generation: chat end to end yields a final message and stats", ChatEndToEnd),
         ("generation: a kept KV cache reuses shared prompt prefixes without changing the output", PromptCacheReuse),
         ("generation: a windowed decoder generating far past its window with sliding windows' caches gives the texts of caches holding the whole reply (one row through recorded steps, a batch of two)", SlidingWindowGeneration),
@@ -224,6 +225,23 @@ internal static partial class Tests
             TextGenerator.SlideWindows = true;
             TextGenerator.MinSlidingSteps = least;
         }
+    }
+
+    private static void PrefillPieceFloor(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                              // arithmetic only: once
+        }
+
+        Check(GenerationOptions.DefaultPrefillMinChunk == 256 && new GenerationOptions().PrefillMinChunk == 0, "the floor's default and the option's");
+        Check(TextGenerator.PieceOf(0, 1000, 256, 3000) == 256 && TextGenerator.PieceOf(-5_000_000, 1000, 256, 3000) == 256, "no room (or less than none): the floor");
+        Check(TextGenerator.PieceOf(200_000, 1000, 256, 3000) == 256, "room for 200 positions: the floor");
+        Check(TextGenerator.PieceOf(1_000_000, 1000, 256, 3000) == 1000, "room for 1000 positions: 1000");
+        Check(TextGenerator.PieceOf(long.MaxValue, 1000, 256, 3000) == 3000, "room for more than the prompt: the prompt");
+        Check(TextGenerator.PieceOf(0, 1000, 256, 100) == 100, "a prompt shorter than the floor: one pass");
+        Check(TextGenerator.PieceOf(0, 1000, 0, 3000) == 1, "a floor of 0 counts as 1");
+        ThrowsNaming<ArgumentOutOfRangeException>(() => _ = new GenerationOptions { PrefillMinChunk = -1 }, "a negative floor", "PrefillMinChunk");
     }
 
     private static void BFloat16RowsBatch(Device device)

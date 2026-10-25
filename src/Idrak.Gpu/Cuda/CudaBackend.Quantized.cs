@@ -877,6 +877,9 @@ internal sealed unsafe partial class CudaBackend
     // 200 positions took 9.0 µs with the 24 splits measured at 4096, 7.6 with 16. So each block also takes at least
     // `minChunk` positions (the blocks past the filled length then add an empty part), measured per shape after the
     // splits over the same lengths; 1, the plain chunks, is the reference and stays unless another is faster. `attention`: the kernel's operands (RunDecode).
+    // Rows and capacity are keyed by their size class (TuneSizes): a prompt's pieces and every conversation's own length
+    // would otherwise measure the splits again at nearly every call; a class-mate's choice that is not one of this shape's
+    // candidates gives the formula's (TryTuned).
     private void DecodeSplit(int variant, in DecodeAttention attention, Storage position)
     {
         int rows = attention.Rows, capacity = attention.Capacity, dim = attention.Dim;
@@ -895,7 +898,7 @@ internal sealed unsafe partial class CudaBackend
             Span<int> candidates = stackalloc int[SplitCountsLength];
             candidates = candidates[..DecodeSplitCandidates(limit, formula, candidates)];
             Span<int> chunks = stackalloc int[DecodeChunksLength];
-            bool known = TryTuned(new TuneKey(TuneOp.DecodeSplits, variant, rows, capacity, dim), candidates, formula, out splits);
+            bool known = TryTuned(new TuneKey(TuneOp.DecodeSplits, variant, TuneSizes.Class(rows), TuneSizes.Class(capacity), dim), candidates, formula, out splits);
             if (known && DecodeMinChunk is int forcedChunk)
             {
                 minChunk = forcedChunk;
@@ -903,7 +906,7 @@ internal sealed unsafe partial class CudaBackend
             else if (known)
             {
                 chunks = chunks[..(splits > 1 ? DecodeMinChunks(capacity, splits, chunks) : 0)];
-                known = TryTuned(new TuneKey(TuneOp.DecodeMinChunk, variant, rows, capacity, dim, splits), chunks, 1, out minChunk);
+                known = TryTuned(new TuneKey(TuneOp.DecodeMinChunk, variant, TuneSizes.Class(rows), TuneSizes.Class(capacity), dim, splits), chunks, 1, out minChunk);
             }
 
             if (!known)
@@ -952,7 +955,7 @@ internal sealed unsafe partial class CudaBackend
 
         try
         {
-            int splits = Tune(new TuneKey(TuneOp.DecodeSplits, variant, rows, capacity, dim), candidates, formula, c =>
+            int splits = Tune(new TuneKey(TuneOp.DecodeSplits, variant, TuneSizes.Class(rows), TuneSizes.Class(capacity), dim), candidates, formula, c =>
             {
                 for (int i = 0; i < lengths.Length; i++)
                 {
@@ -960,7 +963,7 @@ internal sealed unsafe partial class CudaBackend
                 }
             }, part: (c, i) => RunDecode(attention, counters, c, 1, At(i)), parts: lengths.Length);
             int[] chunks = splits > 1 ? DecodeMinChunks(capacity, splits) : [];
-            int minChunk = DecodeMinChunk ?? Tune(new TuneKey(TuneOp.DecodeMinChunk, variant, rows, capacity, dim, splits), chunks, 1, c =>
+            int minChunk = DecodeMinChunk ?? Tune(new TuneKey(TuneOp.DecodeMinChunk, variant, TuneSizes.Class(rows), TuneSizes.Class(capacity), dim, splits), chunks, 1, c =>
             {
                 for (int i = 0; i < lengths.Length; i++)
                 {
@@ -1424,7 +1427,7 @@ internal sealed unsafe partial class CudaBackend
             return 0;
         }
 
-        var key = new TuneKey(TuneOp.RowsPath, tuning, TuneSizes.Class(a.Rows / a.RowsPerHead), TuneSizes.Class(a.RowsPerHead), a.Capacity, a.Dim);
+        var key = new TuneKey(TuneOp.RowsPath, tuning, TuneSizes.Class(a.Rows / a.RowsPerHead), TuneSizes.Class(a.RowsPerHead), TuneSizes.Class(a.Capacity), a.Dim);
         int formula = a.Steps >= TiledSteps ? 1 : 0;
         ReadOnlySpan<int> candidates = [0, 1];
         if (TryTuned(key, candidates, formula, out int path))

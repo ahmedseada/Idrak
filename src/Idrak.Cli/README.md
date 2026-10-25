@@ -713,6 +713,7 @@ stored by `idrak login`, not here. The most used:
 | `IDRAK_CPU_THREADS`, `IDRAK_CPU_MEMORY_LIMIT_MB`, `IDRAK_GPU_MEMORY_LIMIT_MB` | The most CPU threads (default every core) and the most MiB of tensor memory on the CPU and on each GPU (default unlimited) |
 | `IDRAK_GPU_MEMORY_RESERVE_MB`, `IDRAK_OFFLOAD_RETURN_HEADROOM_MB`, `IDRAK_WORKSPACE_SHARE` | MiB kept free on a GPU for the display (default a sixteenth); MiB kept free when offloaded tensors return (an eighth); the share of free memory one operation's working buffers may take (0.5) |
 | `IDRAK_PREFILL_CHUNK` | The positions a prompt's pass feeds the model at a time, a long prompt cached piece by piece (default 0: as many as the workspace share of the device's free memory holds) |
+| `IDRAK_PREFILL_MIN_CHUNK` | The fewest positions a measured piece takes (default 256), so little free memory never makes a long prompt a pass per few positions |
 | `IDRAK_MP3_BITRATE`, `IDRAK_MP3_RATE`, `IDRAK_MP3_CHANNELS`, `IDRAK_MP3_QUALITY`, `IDRAK_MP3_LOWPASS`, `IDRAK_MP3_FRAMES_PER_TASK` | the MP3 encoder `speak -o x.mp3` writes with: the bit rate in kbit/s (128 stereo, 64 mono), the rate (the sound's), joint, stereo or mono, the effort a granule (fast, standard, high), the low-pass in Hz, the frames an encoding task takes |
 | `IDRAK_AUDIO_CLEAN` | The audio pipeline `transcribe` runs the sound through, files and `--live` (`--audio-clean` wins; `none` turns it off) |
 | `HF_TOKEN`, `HF_ENDPOINT`, `HF_HOME` | The Hugging Face token, hub address and folder |

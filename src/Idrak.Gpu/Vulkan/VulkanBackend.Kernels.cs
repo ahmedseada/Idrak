@@ -1429,17 +1429,25 @@ internal sealed partial class VulkanBackend
         }
         else
         {
+            // Sizes that follow the data by their class (TuneSizes): a prompt's pieces and every conversation's own length would
+            // otherwise measure again at nearly every call. A class-mate's choice this shape cannot take gives the formula's.
             var key = windowed
-                ? new VulkanTuneKey(VulkanTuneOp.Attention, format + 3, rows, rowsPerHead, steps, capacity, dim, span)
-                : new VulkanTuneKey(VulkanTuneOp.Attention, format, rows, rowsPerHead, steps, capacity, dim);
-            if (!TryTuned(key, out choice) || Array.IndexOf(CandidateWidths, WidthOf(choice)) < 0
-                || (choice & Rest) > AttentionMaxSplits(WidthOf(choice), rows, span, dim) || (choice & Plain) != 0 && !Limits.SubgroupReductions)
+                ? new VulkanTuneKey(VulkanTuneOp.Attention, format + 3, TuneSizes.Class(rows), TuneSizes.Class(rowsPerHead), TuneSizes.Class(steps),
+                    TuneSizes.Class(capacity), dim, span)
+                : new VulkanTuneKey(VulkanTuneOp.Attention, format, TuneSizes.Class(rows), TuneSizes.Class(rowsPerHead), TuneSizes.Class(steps),
+                    TuneSizes.Class(capacity), dim);
+            if (!TryTuned(key, out choice))
             {
                 choice = fallback;
                 if (CanTune)
                 {
                     choice = MeasureAttention(key, kernel, fallback, storages, rows, span, heads, rowsPerHead, steps, capacity, dim, scale, variant, headsPerRow);
                 }
+            }
+            else if (Array.IndexOf(CandidateWidths, WidthOf(choice)) < 0 || (choice & Rest) > AttentionMaxSplits(WidthOf(choice), rows, span, dim)
+                     || (choice & Plain) != 0 && !Limits.SubgroupReductions)
+            {
+                choice = fallback;
             }
         }
 

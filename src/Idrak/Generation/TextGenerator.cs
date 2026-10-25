@@ -176,20 +176,31 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         }
 
         long room = (long)((free - CachesToCome(decoding)) * ComputeResources.WorkspaceShare);
-        return (int)Math.Clamp(room / (decoding.Batch * PositionWidth * sizeof(float)), 1, length);
+        int least = options.PrefillMinChunk > 0 ? options.PrefillMinChunk : PositionsVariable(GenerationOptions.PrefillMinChunkVariable) is int given and > 0 ? given
+            : GenerationOptions.DefaultPrefillMinChunk;
+        return PieceOf(room, decoding.Batch * PositionWidth * sizeof(float), least, length);
     }
 
+    // The positions per piece that `room` bytes hold at `perPosition` bytes a position: never fewer than `least` (each piece
+    // is a pass through every layer: a pass per few positions would make a long prompt as many passes as positions), never
+    // more than the prompt's `length`.
+    internal static int PieceOf(long room, long perPosition, int least, int length) =>
+        (int)Math.Clamp(Math.Max(0, room) / Math.Max(1, perPosition), Math.Min(Math.Max(1, least), length), length);
+
     // IDRAK_PREFILL_CHUNK (GenerationOptions.PrefillChunk when that is 0): 0 when unset.
-    private static int PrefillChunkVariable()
+    private static int PrefillChunkVariable() => PositionsVariable(GenerationOptions.PrefillChunkVariable) ?? 0;
+
+    // A count of positions from the environment variable `name`, null when unset.
+    private static int? PositionsVariable(string name)
     {
-        if (Environment.GetEnvironmentVariable(GenerationOptions.PrefillChunkVariable) is not { Length: > 0 } text)
+        if (Environment.GetEnvironmentVariable(name) is not { Length: > 0 } text)
         {
-            return 0;
+            return null;
         }
 
         return int.TryParse(text, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int value) && value >= 0
             ? value
-            : throw new InvalidOperationException($"{GenerationOptions.PrefillChunkVariable} is '{text}': give 0 (measured) or the positions a prompt's pass feeds at a time.");
+            : throw new InvalidOperationException($"{name} is '{text}': give 0 (the default) or a number of positions.");
     }
 
     // A prompt's pass through the cached model in pieces of at most `piece` positions (as equal as they can be: few
