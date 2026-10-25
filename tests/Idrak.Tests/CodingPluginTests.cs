@@ -30,6 +30,7 @@ internal static partial class Tests
         ("plugins: coding: CodingPlugin is the plug-in \"coding\" of ReinforcementPlugins.All; Register twice registers the coding environment, its four rewards and the container sandbox once, from Idrak.Reinforcement.Plugins; Unregister leaves the registries as found; the rewards pass the reward suite", d => { if (d == Device.Cpu) CodingPluginRegisters(); }),
         ("plugins: coding: on a C# suite (a project, a hidden test, a restore) and a scripted model: a seeded episode replays the same; the reward follows verification (solved, not solved, out of rounds); setup runs once per task and is reused; a broken setup is left out and reported; a test edit is overwritten by the hidden tests and reported, and refused when asked", d => { if (d == Device.Cpu) CodingEpisodes(); }),
         ("plugins: coding: the coding environment passes the environment suite; episodes stepped in parallel (R2's collector) give the rewards, info and conversations of one at a time, measured both ways", d => { if (d == Device.Cpu) CodingSuiteAndParallel(); }),
+        ("plugins: coding: verification and tool commands are limited by the task's own verification measured once when it is prepared (timeout-scale times it, at least timeout-least, at most 600 and 300 s), so a program that never ends costs seconds; verify-timeout and command-timeout given are used as they are", d => { if (d == Device.Cpu) CodingMeasuredLimits(); }),
         ("plugins: coding: R3's on-policy distillation on the coding environment under R2's trainer (grpo and a teacher term; no coding code of its own): only the assistant's tokens train, the prompts and the tools' results never, in one-turn and multi-turn episodes", CodingDistillation),
     ];
 
@@ -428,6 +429,61 @@ internal static partial class Tests
 
         public void Dispose()
         {
+        }
+    }
+
+    private static void CodingMeasuredLimits()
+    {
+        bool before = CodingRegistered();
+        string root = CodingTemp();
+        var recorder = new RecordingSandbox(new CommandResult(0, false, "", TimeSpan.Zero, false));
+        CommandSandboxes.Register(recorder);
+        try
+        {
+            var kind = EnvironmentKinds.Get("coding");
+            int made = 0;
+
+            // The episode's verification limit and a tool command's, the quick suite's verification answered at once by the recorder.
+            (TimeSpan Verify, TimeSpan Command) Limits(Dictionary<string, string> extra)
+            {
+                var options = new Dictionary<string, string> { ["suite"] = WriteQuickSuite(Path.Combine(root, $"suite-{made++}")), ["system"] = "Fix it.", ["rounds"] = "4", ["sandbox"] = recorder.Name };
+                foreach (var (key, value) in extra)
+                {
+                    options[key] = value;
+                }
+
+                using var environment = (CodingEnvironment)kind.Create(options);
+                environment.Reset(1);
+                var command = new ChatMessage("assistant", "", ToolCalls: [new ToolCall("run_command", new JsonObject { ["command"] = "git status" })]);
+                environment.StepAsync(command).AsTask().GetAwaiter().GetResult();
+                var tool = recorder.Calls[^1].Limits.Time;
+                environment.StepAsync(CodingDone).AsTask().GetAwaiter().GetResult();
+                return (recorder.Calls[^1].Limits.Time, tool);
+            }
+
+            var measured = Limits([]);
+            Check(measured == (TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30)), $"a verification measured at once: both limits the least, 30 s: {measured}");
+            var least = Limits(new() { ["timeout-least"] = "2" });
+            Check(least == (TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2)), $"timeout-least 2: {least}");
+            var most = Limits(new() { ["timeout-least"] = "1000" });
+            Check(most == (TimeSpan.FromSeconds(600), TimeSpan.FromSeconds(300)), $"never past 600 s for verification and 300 s for a tool command: {most}");
+            var given = Limits(new() { ["verify-timeout"] = "7", ["command-timeout"] = "9" });
+            Check(given == (TimeSpan.FromSeconds(7), TimeSpan.FromSeconds(9)), $"verify-timeout and command-timeout as given: {given}");
+            ThrowsNaming<ArgumentException>(() => kind.Create(new Dictionary<string, string> { ["suite"] = WriteQuickSuite(Path.Combine(root, "bad")), ["timeout-scale"] = "x" }),
+                "a timeout-scale that is not a number", "timeout-scale");
+        }
+        finally
+        {
+            CommandSandboxes.Unregister(recorder.Name);
+            if (!before)
+            {
+                CodingPlugin.Unregister();
+            }
+
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, true);
+            }
         }
     }
 

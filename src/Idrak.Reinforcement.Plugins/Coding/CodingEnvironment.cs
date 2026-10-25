@@ -44,8 +44,11 @@ namespace Idrak.Reinforcement.Plugins.Coding;
 /// none, or names; IDRAK_CODING_LANGUAGES, else all), <c>protect</c> (globs of files whose edits count as test edits
 /// beside the hidden tests' paths, separated by commas; none by default), <c>think</c>, <c>sandbox</c>
 /// (<see cref="CommandSandboxes"/>; IDRAK_SANDBOX, else process), <c>memory</c> (a command's memory: bytes, or with KB, MB,
-/// GB), <c>processes</c>, <c>cpus</c>, <c>network</c> (true or false), <c>command-timeout</c> (seconds, 300),
-/// <c>verify-timeout</c> (seconds, 600), <c>workspaces</c>, <c>keep</c>, <c>work</c> (the folder the copies are made in;
+/// GB), <c>processes</c>, <c>cpus</c>, <c>network</c> (true or false), <c>command-timeout</c> and <c>verify-timeout</c>
+/// (seconds: a tool command's and a verification command's limit; by default measured per task: when a task is prepared
+/// its verification runs once on its starting files, in a copy, and each limit is <c>timeout-scale</c> (10) times that
+/// run's time, at least <c>timeout-least</c> seconds (30) and at most 300 and 600 seconds, so a program that never ends
+/// costs seconds, not minutes), <c>timeout-scale</c>, <c>timeout-least</c>, <c>workspaces</c>, <c>keep</c>, <c>work</c> (the folder the copies are made in;
 /// a new temporary folder by default), <c>refuse-test-edits</c>. A variant for one language
 /// (<see cref="CodingEnvironmentVariant"/>, such as the C# plug-in's <c>csharp</c>) is this environment under its own
 /// name, with its language's defaults, its own options and its own info.
@@ -64,7 +67,7 @@ public sealed class CodingEnvironmentKind : IEnvironmentKind
     private static readonly string[] OwnKeys =
     [
         "suite", "filter", "reward", "rounds", "time", "system", "languages", "protect", "think", "sandbox", "memory", "processes", "cpus", "network", "command-timeout",
-        "verify-timeout", "workspaces", "keep", "work", "refuse-test-edits",
+        "verify-timeout", "timeout-scale", "timeout-least", "workspaces", "keep", "work", "refuse-test-edits",
     ];
 
     private readonly IReadOnlyList<CodingTask>? _tasks;
@@ -160,6 +163,28 @@ internal sealed record CodingSettings(string? Suite, string? Filter, string Rewa
     bool? Think, CodingToolOptions Tools, TimeSpan VerifyTimeout, int Workspaces, bool Keep, string? Work, bool RefuseTestEdits, string Key, string Languages,
     IReadOnlyList<string> Protect, Dictionary<string, string> VariantOptions)
 {
+    /// <summary>The most a measured tool command's limit may be (the option command-timeout's old default).</summary>
+    public static readonly TimeSpan MostCommand = TimeSpan.FromSeconds(300);
+
+    /// <summary>The most a measured verification command's limit may be (the option verify-timeout's old default).</summary>
+    public static readonly TimeSpan MostVerify = TimeSpan.FromSeconds(600);
+
+    // command-timeout and verify-timeout as given (null: measured per task), and the measured limits' multiple and least.
+    public TimeSpan? GivenCommandTimeout { get; init; }
+
+    public TimeSpan? GivenVerifyTimeout { get; init; }
+
+    public double TimeoutScale { get; init; } = 10;
+
+    public TimeSpan TimeoutLeast { get; init; } = TimeSpan.FromSeconds(30);
+
+    // A task's limits: as given, else `scale` times its measured verification, between the least and the most.
+    public (TimeSpan Command, TimeSpan Verify) Limits(TimeSpan? measured)
+    {
+        TimeSpan Of(TimeSpan most) => measured is { } m ? TimeSpan.FromTicks(Math.Clamp((long)(m.Ticks * TimeoutScale), Math.Min(TimeoutLeast.Ticks, most.Ticks), most.Ticks)) : most;
+        return (GivenCommandTimeout ?? Of(MostCommand), GivenVerifyTimeout ?? Of(MostVerify));
+    }
+
     public static CodingSettings Parse(CodingEnvironmentKind kind, IReadOnlyDictionary<string, string>? given)
     {
         // A variant's defaults for the coding options, under what the caller gives.
@@ -180,7 +205,8 @@ internal sealed record CodingSettings(string? Suite, string? Filter, string Rewa
         var rewardOptions = new Dictionary<string, string>(StringComparer.Ordinal);
         var variantOptions = new Dictionary<string, string>(StringComparer.Ordinal);
         int rounds = 40, processes = 0, workspaces = Positive(kind, CodingEnvironmentKind.WorkspacesVariable, Environment.GetEnvironmentVariable(CodingEnvironmentKind.WorkspacesVariable), allowEmpty: true);
-        double time = 1200, commandTimeout = 300, verifyTimeout = 600, cpus = 0;
+        double time = 1200, cpus = 0, scale = 10, least = 30;
+        double? commandTimeout = null, verifyTimeout = null;
         long memory = 0;
         bool network = true, refuse = false, keep = Flag(kind, CodingEnvironmentKind.KeepWorkspacesVariable, Environment.GetEnvironmentVariable(CodingEnvironmentKind.KeepWorkspacesVariable) ?? "false");
         foreach (var (key, value) in options)
@@ -235,6 +261,12 @@ internal sealed record CodingSettings(string? Suite, string? Filter, string Rewa
                 case "verify-timeout":
                     verifyTimeout = Seconds(kind, key, value);
                     break;
+                case "timeout-scale":
+                    scale = Seconds(kind, key, value);
+                    break;
+                case "timeout-least":
+                    least = Seconds(kind, key, value);
+                    break;
                 case "workspaces":
                     workspaces = Positive(kind, key, value);
                     break;
@@ -265,13 +297,18 @@ internal sealed record CodingSettings(string? Suite, string? Filter, string Rewa
         kind.Variant?.Check(variantOptions);
         var tools = new CodingToolOptions
         {
-            Sandbox = sandbox, CommandTimeout = TimeSpan.FromSeconds(commandTimeout), MaxMemoryBytes = memory, MaxProcesses = processes, MaxCpus = cpus, Network = network,
+            Sandbox = sandbox, CommandTimeout = commandTimeout is { } c ? TimeSpan.FromSeconds(c) : MostCommand, MaxMemoryBytes = memory, MaxProcesses = processes, MaxCpus = cpus, Network = network,
             Languages = languages, Environment = kind.Variant?.Variables(variantOptions),
         };
         string identity = string.Join("\n", options.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key}={p.Value}"))
                           + $"\n#sandbox={sandbox}\n#workspaces={workspaces}\n#keep={keep}\n#languages={languages}";
         return new CodingSettings(suite, filter, reward, rewardOptions, rounds, TimeSpan.FromSeconds(time), system, think is null ? null : think == "true", tools,
-            TimeSpan.FromSeconds(verifyTimeout), workspaces, keep, work, refuse, identity, languages, protect, variantOptions);
+            verifyTimeout is { } v ? TimeSpan.FromSeconds(v) : MostVerify, workspaces, keep, work, refuse, identity, languages, protect, variantOptions)
+        {
+            GivenCommandTimeout = commandTimeout is { } commandSeconds ? TimeSpan.FromSeconds(commandSeconds) : null,
+            GivenVerifyTimeout = verifyTimeout is { } verifySeconds ? TimeSpan.FromSeconds(verifySeconds) : null,
+            TimeoutScale = scale, TimeoutLeast = TimeSpan.FromSeconds(least),
+        };
     }
 
     private static int Positive(CodingEnvironmentKind kind, string key, string? value, bool allowEmpty = false) =>
@@ -481,7 +518,7 @@ internal sealed class CodingSuiteRun
         if (!setup.Passed)
         {
             Broken[task.Id] = setup.Output;
-            return new Prepared(folder, true);
+            return new Prepared(folder, true, Settings.Tools.CommandTimeout, Settings.VerifyTimeout);
         }
 
         CodingWorkspace.CommitStart(folder, Languages);
@@ -491,7 +528,31 @@ internal sealed class CodingSuiteRun
         {
         }
 
-        return new Prepared(folder, false);
+        var (command, verify) = Settings.Limits(Settings.GivenCommandTimeout is null || Settings.GivenVerifyTimeout is null ? await BaselineAsync(task, folder).ConfigureAwait(false) : null);
+        return new Prepared(folder, false, command, verify);
+    }
+
+    // The time of the task's verification on its starting files, in a copy of the prepared folder (the hidden tests are
+    // copied into the folder verified, which episodes clone), under the most a measured limit may be.
+    private async Task<TimeSpan> BaselineAsync(CodingTask task, string prepared)
+    {
+        string copy = prepared + "-baseline";
+        if (Directory.Exists(copy))
+        {
+            CodingWorkspace.Delete(copy);
+        }
+
+        CodingWorkspace.Clone(prepared, copy);
+        try
+        {
+            var clock = Stopwatch.StartNew();
+            await Verifier.VerifyAsync(task, new CodingTools(copy, Tools with { CommandTimeout = CodingSettings.MostVerify }, Sandbox)).ConfigureAwait(false);
+            return clock.Elapsed;
+        }
+        finally
+        {
+            Delete(copy, true);
+        }
     }
 
     private static void Delete(string folder, bool delete)
@@ -510,7 +571,8 @@ internal sealed class CodingSuiteRun
         }
     }
 
-    public sealed record Prepared(string Folder, bool Broken);
+    // A prepared task: its folder, whether its setup failed, and its tool commands' and verification commands' limits.
+    public sealed record Prepared(string Folder, bool Broken, TimeSpan CommandLimit = default, TimeSpan VerifyLimit = default);
 }
 
 /// <summary>
@@ -526,6 +588,7 @@ public sealed class CodingEnvironment : IEnvironment<ChatObservation, ChatMessag
     private CodingTask? _task;
     private string? _start;
     private CodingTools? _tools;
+    private TimeSpan _verifyLimit;
     private IToolRegistry? _registry;
     private List<ChatMessage> _messages = [];
     private int _rounds, _calls, _errors;
@@ -569,7 +632,8 @@ public sealed class CodingEnvironment : IEnvironment<ChatObservation, ChatMessag
         CodingWorkspace.Clone(prepared.Folder, folder);
         _task = task;
         _start = prepared.Folder;
-        _tools = new CodingTools(folder, _run.Tools, _run.Sandbox);
+        _verifyLimit = prepared.VerifyLimit;
+        _tools = new CodingTools(folder, _run.Tools with { CommandTimeout = prepared.CommandLimit }, _run.Sandbox);
         _registry = _tools.Registry();
         _messages = [new ChatMessage("system", _run.SystemPrompt), new ChatMessage("user", task.Prompt)];
         (_rounds, _calls, _errors, _previous) = (0, 0, 0, null);
@@ -654,7 +718,7 @@ public sealed class CodingEnvironment : IEnvironment<ChatObservation, ChatMessag
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                verification = await _run.Verifier.VerifyAsync(task, new CodingTools(workspace, _run.Tools with { CommandTimeout = settings.VerifyTimeout }, _run.Sandbox),
+                verification = await _run.Verifier.VerifyAsync(task, new CodingTools(workspace, _run.Tools with { CommandTimeout = _verifyLimit }, _run.Sandbox),
                     cancellationToken).ConfigureAwait(false);
             }
             finally
