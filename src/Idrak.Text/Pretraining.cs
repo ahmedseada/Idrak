@@ -451,13 +451,14 @@ public static partial class Pretrainer
 
                 // Data parallel (plan 23): every rank draws each step's sequences alike and trains its share of them.
                 using var sync = options.Cluster is { } cluster ? GradientSyncs.Create(cluster, optimizer, clusterOptions!) : null;
+                var sharded = sync as IShardedGradientSync;                 // asked once: the update, gathers and state are its
                 if (resume is { } rs && rs.Stage == stageIndex)
                 {
                     // The checkpoint's whole state: a sharded run (C6) keeps its share of it, any other loads it all.
                     var saved = ReadOptimizerState(rs.Folder);
-                    if (sync?.LoadOptimizerState(saved) != true)
+                    if (sharded?.LoadOptimizerState(saved) != true)
                     {
-                        optimizer.LoadState(saved);
+                        optimizer.RequireState().LoadState(saved);
                     }
                 }
 
@@ -516,27 +517,27 @@ public static partial class Pretrainer
 
                             present = sync is null || sync.BeginStep(step);
                         }
-                        catch (ClusterRunStoppedException) when (step > 0 && last != Path.Combine(outputFolder, $"checkpoint-{step}") && (lead || sync is { Updates: true }))
+                        catch (ClusterRunStoppedException) when (step > 0 && last != Path.Combine(outputFolder, $"checkpoint-{step}") && (lead || sharded is not null))
                         {
                             // Stopped at this step boundary (a dashboard's stop, plan 23 C9; a stop the ranks agreed on, Plan 27
                             // R7): every rank stops here alike, so the
                             // checkpoint is the last finished step's, written as a saving step writes it. A sharded run's weights
                             // and optimizer state are every rank's share: every rank joins them, rank 0 writes, all wait (C6).
                             partSources.Keep();
-                            if (sync is { Updates: true } && StreamedTransport(sync, clusterOptions, vision) is { } stopTo)
+                            if (sharded is not null && StreamedTransport(sharded, clusterOptions, vision) is { } stopTo)
                             {
-                                last = SaveShardedStreamed(model, sync, stopTo, optimizer, options, outputFolder, stageIndex, stageStep, step, finished, losses, evaluations);
+                                last = SaveShardedStreamed(model, sharded, stopTo, optimizer, options, outputFolder, stageIndex, stageStep, step, finished, losses, evaluations);
                             }
-                            else if (sync is { Updates: true })
+                            else if (sharded is not null)
                             {
-                                using (sync.Gather())
+                                using (sharded.Gather())
                                 {
-                                    var joined = sync.SaveOptimizerState();
-                                    last = sync.Rank == 0 ? SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, step, finished, losses, evaluations, joined)
+                                    var joined = sharded.SaveOptimizerState();
+                                    last = sharded.Rank == 0 ? SaveCheckpoint(model, vision, optimizer, options, outputFolder, stageIndex, stageStep, step, finished, losses, evaluations, joined)
                                         : Path.Combine(outputFolder, $"checkpoint-{step}");
                                 }
 
-                                sync.Barrier();
+                                sharded.Barrier();
                             }
                             else
                             {
@@ -577,7 +578,7 @@ public static partial class Pretrainer
                         {
                             throw gaveUp;                                      // this rank left its step on its own, loudly
                         }
-                        catch (OperationCanceledException) when (done > 0 && lead && sync is not { Updates: true })   // a sharded run's state is every rank's
+                        catch (OperationCanceledException) when (done > 0 && lead && sharded is null)   // a sharded run's state is every rank's
                         {
                             // No update was made (a step is cancelled before its update): the checkpoint is the last finished step's.
                             partSources.Keep();
@@ -611,9 +612,9 @@ public static partial class Pretrainer
                         // A sharded run's weights whole on every rank while they are read (plan 23, C6; nothing to do otherwise),
                         // and its optimizer state joined for the checkpoint (every rank takes part).
                         // Streamed (C8b): the checkpoint takes each rank's share from it a tensor at a time, gathering nothing whole.
-                        var streamTo = saving ? StreamedTransport(sync, clusterOptions, vision) : null;
-                        using var whole = evaluate || saving && streamTo is null ? sync?.Gather() : null;
-                        var joinedState = saving && streamTo is null ? sync?.SaveOptimizerState() : null;
+                        var streamTo = saving ? StreamedTransport(sharded, clusterOptions, vision) : null;
+                        using var whole = evaluate || saving && streamTo is null ? sharded?.Gather() : null;
+                        var joinedState = saving && streamTo is null ? sharded?.SaveOptimizerState() : null;
                         if (evaluate)
                         {
                             evaluationLoss = sync is null ? FineTuner.Evaluate(model, evaluation, options.BatchTokens, options.LossChunkRows, trace, vision, partSources.Sources)
@@ -634,7 +635,7 @@ public static partial class Pretrainer
                             partSources.Keep();
                             if (streamTo is not null)
                             {
-                                last = SaveShardedStreamed(model, sync!, streamTo, optimizer, options, outputFolder, stageIndex, stageStep, step, positions, losses, evaluations);
+                                last = SaveShardedStreamed(model, sharded!, streamTo, optimizer, options, outputFolder, stageIndex, stageStep, step, positions, losses, evaluations);
                             }
                             else
                             {
@@ -653,7 +654,7 @@ public static partial class Pretrainer
                             tokens / Math.Max(1e-9, seconds), images / Math.Max(1e-9, seconds), peak, remaining, evaluationLoss));
                     }
 
-                    sync?.End();                                             // a sharded run's weights whole on every rank again (C6)
+                    sharded?.End();                                          // a sharded run's weights whole on every rank again (C6)
 
                     // The vision parts this stage trained live in its encoder: the model keeps them, so the next stage's encoder
                     // (and every save) starts from them.
@@ -703,8 +704,8 @@ public static partial class Pretrainer
 
     // The transport a sharded run's checkpoint is streamed over (C8b), or null: the shares are joined whole (streaming off,
     // a vision part's tensors beside the model, or collectives that give no transport of their own).
-    private static ITransport? StreamedTransport(IGradientSync? sync, ClusterOptions? cluster, TuningVision? vision) =>
-        sync is { Updates: true, WorldSize: > 1 } && cluster is { StreamedSave: true } && vision is null ? sync.Collectives.Transport : null;
+    private static ITransport? StreamedTransport(IShardedGradientSync? sync, ClusterOptions? cluster, TuningVision? vision) =>
+        sync is { WorldSize: > 1 } && cluster is { StreamedSave: true } && vision is null ? sync.Collectives.Transport : null;
 
     // This rank's share of a step's drawn sequences: draws k·W + r while the shares are equal, else by the ranks' measured
     // speeds over the sequences' trained tokens; the step's totals over every rank go to the runner (a loss of one's own
@@ -1092,7 +1093,7 @@ public static partial class Pretrainer
             }
         }
 
-        var state = joinedState ?? optimizer.SaveState();               // a sharded run's: every rank's share joined (C6)
+        var state = joinedState ?? optimizer.RequireState().SaveState();               // a sharded run's: every rank's share joined (C6)
         Idrak.Models.SafeTensorsWriter.Write(Path.Combine(folder, OptimizerFile), state.Select(p => (p.Key, p.Value.Shape, p.Value.Values)),
             Idrak.Models.SafeTensorType.F32, new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name });
         WriteState(options, folder, outputFolder, stage, stageStep, step, positions, losses, evaluations);
@@ -1100,10 +1101,10 @@ public static partial class Pretrainer
     }
 
     // A sharded run's checkpoint streamed to rank 0 (plan 23, C8b): every rank answers rank 0's requests for its own weights
-    // (in memory without a collective, IGradientSync.Local) and its own optimizer entries a tensor at a time, while rank 0
+    // (in memory without a collective, IShardedGradientSync.Local) and its own optimizer entries a tensor at a time, while rank 0
     // writes the files one process writes, byte for byte the joined checkpoint (the entries in rank order, as C6 joined them):
     // nothing is gathered whole on any rank. Every rank calls it; rank 0 returns the folder it wrote, every rank waits for it.
-    private static string SaveShardedStreamed(PretrainedModel model, IGradientSync sync, ITransport transport, Optimizer optimizer, PretrainingOptions options,
+    private static string SaveShardedStreamed(PretrainedModel model, IShardedGradientSync sync, ITransport transport, Optimizer optimizer, PretrainingOptions options,
         string outputFolder, int stage, int stageStep, int step, (long, long, long)[] positions, List<float> losses, List<(int, float)> evaluations)
     {
         string folder = Path.Combine(outputFolder, $"checkpoint-{step}");
@@ -1128,7 +1129,7 @@ public static partial class Pretrainer
                     index.TryGetValue(stored.Tensor, out int i) && sync.Owner(stored.Tensor) is { } owner && owner != 0
                         ? StreamedCheckpoint.AskWeight(transport, owner, i)
                         : stored.Tensor.ToArray());
-                var own = sync.SaveOwnOptimizerState() ?? optimizer.SaveState();
+                var own = sync.SaveOwnOptimizerState() ?? optimizer.RequireState().SaveState();
                 var tensors = own.Select(e => (e.Key, e.Value.Shape, (Func<float[]>)(() => e.Value.Values))).ToList();
                 for (int r = 0; r < ranks.Count; r++)
                 {

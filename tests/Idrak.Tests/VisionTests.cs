@@ -241,7 +241,7 @@ internal static partial class Tests
         using var net = Network.Image(1, 4, 4).OnDevice(device).Seed(3).Conv2d(2, 1).Build();
         var history = new TrainingRun
         {
-            Model = net, Loss = Losses.PixelCrossEntropy, Optimizer = p => new Adam(p, 0.1f),
+            Model = net, Loss = Loss.PixelCrossEntropy, Optimizer = p => new Adam(p, 0.1f),
             Train = Dataset.FromArrays(features, targets).WithFeatureShape(1, 4, 4).Batches(16, shuffle: true, device: device, seed: 1), Epochs = 40,
         }.Fit();
         Check(history.Epochs[^1].Loss < 0.25 * history.Epochs[0].Loss, $"the loss falls: {history.Epochs[0].Loss:F3} -> {history.Epochs[^1].Loss:F3}");

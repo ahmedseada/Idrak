@@ -12,9 +12,9 @@ namespace Idrak.Abstraction.Cluster;
 /// at the same step boundary, that the run stops there (<see cref="Agree"/>, which every rank calls at every boundary and
 /// which gives every rank the same answer); every rank then leaves at that boundary, with no collective left half-done,
 /// and the trainer ends the run as a stopped run ends (one checkpoint, written by rank 0). The flag travels in a collective
-/// the ranks make anyway where one is offered (<see cref="Carries"/>: a gradient reduction adds <see cref="Contribution"/>
-/// to its header and hands the sum to <see cref="Carried"/>), else in a one-value all-reduce at the boundary. A run in
-/// one process has no agreement: its token stops it as before. <see cref="StopAgreements.For"/> gives a rank's agreement.
+/// the ranks make anyway where the agreement takes one (<see cref="ICarriedStopAgreement"/>: a gradient reduction adds its
+/// contribution to its header and hands the sum back), else in a one-value all-reduce at the boundary. A run in one
+/// process has no agreement: its token stops it as before. <see cref="StopAgreements.For"/> gives a rank's agreement.
 /// </summary>
 public interface IStopAgreement
 {
@@ -46,18 +46,6 @@ public interface IStopAgreement
     /// </summary>
     void Reset();
 
-    /// <summary>Whether a collective the ranks make anyway may carry the flag (<see cref="Contribution"/>, <see cref="Carried"/>).</summary>
-    bool Carries { get; }
-
-    /// <summary>What this rank adds to a sum every rank makes at the same point: 1 when it asked, else 0.</summary>
-    float Contribution { get; }
-
-    /// <summary>
-    /// The sum over the ranks of every rank's <see cref="Contribution"/>, from a collective every rank made at the same
-    /// point since the last boundary; the next boundary decides from it without a message of its own.
-    /// </summary>
-    void Carried(float sum);
-
     /// <summary>
     /// The step boundary before <paramref name="step"/>: every rank calls it at each boundary of its run, at the same point
     /// (a collective). True when the ranks agree that the run stops here, the same answer on every rank; once true, true
@@ -88,6 +76,23 @@ public interface IStopAgreement
     /// <summary>The exception every rank's trainer leaves with at the agreed boundary (a cancellation).</summary>
     /// <param name="step">The step no rank began.</param>
     ClusterRunStoppedException Stopped(long step);
+}
+
+/// <summary>
+/// A stop agreement whose flag a collective the ranks make anyway may carry (a gradient reduction's header): the
+/// collective adds every rank's <see cref="Contribution"/> and hands the sum to <see cref="Carried"/>, so the next boundary
+/// decides without a message of its own. Asked <c>is ICarriedStopAgreement</c> once, when the collective is set up.
+/// </summary>
+public interface ICarriedStopAgreement : IStopAgreement
+{
+    /// <summary>What this rank adds to a sum every rank makes at the same point: 1 when it asked, else 0.</summary>
+    float Contribution { get; }
+
+    /// <summary>
+    /// The sum over the ranks of every rank's <see cref="Contribution"/>, from a collective every rank made at the same
+    /// point since the last boundary; the next boundary decides from it without a message of its own.
+    /// </summary>
+    void Carried(float sum);
 }
 
 /// <summary>One way of agreeing on a stop, registered by name in <see cref="StopAgreements"/>.</summary>
@@ -148,12 +153,6 @@ public abstract class StopAgreement : IStopAgreement
 
     /// <inheritdoc/>
     public string? Reason => Volatile.Read(ref _reason);
-
-    /// <inheritdoc/>
-    public virtual bool Carries => false;
-
-    /// <inheritdoc/>
-    public float Contribution => Requested ? 1f : 0f;
 
     /// <inheritdoc/>
     public bool Agreed => _agreed;
@@ -223,11 +222,6 @@ public abstract class StopAgreement : IStopAgreement
         }
 
         Began();
-    }
-
-    /// <inheritdoc/>
-    public virtual void Carried(float sum)
-    {
     }
 
     /// <inheritdoc/>

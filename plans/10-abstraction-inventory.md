@@ -11,8 +11,8 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 116 | 16 | 54 | 185 | 0 |
-| `Idrak` | 17 | 4 | 20 | 41 | 0 |
+| `Idrak.Abstraction` | 125 | 16 | 54 | 194 | 0 |
+| `Idrak` | 21 | 4 | 20 | 45 | 0 |
 | `Idrak.Gpu` | 3 | 0 | 0 | 3 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Text` | 14 | 2 | 11 | 27 | 0 |
@@ -48,19 +48,22 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Cluster.Collectives` | registry | public | — |  | hierarchical, naive, ring | Cluster, Idrak, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.FailureModels` | registry | public | — |  | dropped-worker, late-join, link-loss, live, mixed, none, partition, slow-worker | Cluster | Abstraction |
 | `Idrak.Abstraction.Cluster.GradientSyncs` | registry | public | — |  | all-reduce, local-sgd, sharded | Idrak, Network, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.ICarriedStopAgreement` | interface | public | — | AllReduceStopAgreement |  | Abstraction, Cluster, Network, Reinforcement | Abstraction |
 | `Idrak.Abstraction.Cluster.IClusterTopology` | interface | public | — | ClusterTopology, GroupTopology, SubsetTopology |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.ICollectives` | interface | public | Device, Storage | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.ICollectivesProvider` | interface | public | Device | HierarchicalProvider, NaiveProvider, RingProvider |  | Abstraction, Cluster, Idrak, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.IDeviceTransport` | interface | public | Storage | NvlinkTransport, PciHostTransport |  | Idrak, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.IFailureModel` | interface | public | — | LiveFailures, NoFailures, SeededFailures |  | Cluster | Abstraction |
-| `Idrak.Abstraction.Cluster.IGradientSync` | interface | public | Tensor | GradientReduction, LocalSgd |  | Abstraction, Idrak, Network, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.IGradientSync` | interface | public | Tensor | GradientReduction, LocalSgd, ShardedGradientReduction |  | Abstraction, Idrak, Network, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IGradientSyncProvider` | interface | public | — | AllReduceSyncProvider, LocalSgdProvider, ShardedSyncProvider |  | Abstraction, Idrak, Network, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IHostGradients` | interface | public | — | HostOptimizer |  | Idrak, Network | Abstraction |
-| `Idrak.Abstraction.Cluster.IHostValueCollectives` | interface | public | — | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Cluster, Network, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.IHostValueCollectives` | interface | public | — | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Abstraction, Cluster, Network, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.ILinkProfile` | interface | public | — | LinkProfile, MeasuredLink |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IPipelineSchedule` | interface | public | — | GPipeSchedule |  | Abstraction, Idrak, Network, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IRunSteering` | interface | public | — | ControlFileSteering, InProcessSteering |  | Abstraction, Cluster, Network, Reinforcement | Abstraction |
 | `Idrak.Abstraction.Cluster.IRunSteeringProvider` | interface | public | — | ControlFileSteeringProvider, InProcessSteeringProvider |  | Abstraction, Cluster, Network, Reinforcement | Abstraction |
+| `Idrak.Abstraction.Cluster.IShardedGradientSync` | interface | public | Tensor | ShardedGradientReduction |  | Idrak, Network, Text | Abstraction |
+| `Idrak.Abstraction.Cluster.IShardedHostValueCollectives` | interface | public | — | HierarchicalCollectives, NaiveCollectives, RingCollectives, SimStepper |  | Cluster, Network | Abstraction |
 | `Idrak.Abstraction.Cluster.IStepGroup` | interface | public | — | SimStepper |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IStopAgreement` | interface | public | — | AllReduceStopAgreement, SharedStopAgreement |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Cluster.IStopAgreementProvider` | interface | public | — | AllReduceStopAgreementProvider, SharedStopAgreementProvider |  | Abstraction, Cluster, Idrak, Network, Reinforcement, Text | Abstraction |
@@ -199,6 +202,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +75 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Modules.ILinearLayer` | interface | public | Tensor | Linear |  | Abstraction, Audio.Plugins, Idrak, Text, Vision | Abstraction |
+| `Idrak.Abstraction.Modules.ITensorOwner` | interface | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +75 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Operations.PluginOperations` | registry | public | — |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Plugins.IIdrakPlugin` | interface | public | — | BertPlugin.BertRegistration, CSharpCodingPlugin.CSharpCodingRegistration, CSharpLanguagePlugin.CSharpLanguageRegistration, ClassicControlPlugin.ClassicRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, +19 |  | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
@@ -218,15 +222,20 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Reinforcement.RewardFunctions` | registry | public | — |  | json, judge, length, metric, regex, sum | Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Retrieval.IEmbedder` | interface | public | — | TextEncoder |  | AspNetCore, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Retrieval.IVectorStore` | interface | public | — | InMemoryVectorStore |  | Text | Abstraction |
-| `Idrak.Abstraction.Serving.EngineModel<TCopy>` | abstract class | public | — | ChatEngineModel, PredictorModel<TIn, TOut>, Seq2SeqEngineModel, TextEngineModel |  | AspNetCore, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Serving.EngineModel<TCopy>` | abstract class | public | — | ChatEngineModel, PredictorModel<TIn, TOut>, Seq2SeqEngineModel, TextEngineModel |  | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Serving.IEngineBatcher<TIn, TOut>` | interface | public | — | MicroBatcher<TIn, TOut> |  | Abstraction, AspNetCore, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Serving.IEngineHost<TCopy>` | interface | public | — | HostedModel.Host<TCopy> |  | Abstraction, AspNetCore, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Serving.IEngineLease<TCopy>` | interface | public | — | HostedModel.Lease<TCopy> |  | Abstraction, AspNetCore, Idrak, Text | Abstraction |
+| `Idrak.Abstraction.Serving.IEngineModel<TCopy>` | interface | public | — | ChatEngineModel, PredictorModel<TIn, TOut>, Seq2SeqEngineModel, TextEngineModel |  | Abstraction, AspNetCore, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Serving.IModelCatalog` | interface | public | — | InferenceEngine |  | Idrak, Mcp | Abstraction |
 | `Idrak.Abstraction.Serving.IPredictor<TIn, TOut>` | interface | public | — | IdrakBuilder.EnginePredictor<TIn, TOut>, Predictor<TIn, TOut>, PredictorModel<TIn, TOut> |  | AspNetCore, Idrak | Abstraction |
 | `Idrak.Abstraction.Training.ILearningRateSchedule` | interface | public | — | LearningRateSchedules.BuiltInSchedule |  | Abstraction, Audio, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Training.ILearningRateScheduler` | interface | public | — | CosineAnnealing, ExponentialDecay, LambdaSchedule, StepDecay |  | Abstraction, Audio, Idrak, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Training.IOptimizer` | interface | public | Tensor | Adam, AdamW, AdamW8Bit, GroupedOptimizer, HostOptimizer, Sgd |  | Abstraction, Audio, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Training.IOptimizerKind` | interface | public | — | AdamW8BitKind, OptimizerKinds.BuiltInKind |  | Abstraction, Audio, Idrak, Reinforcement, Text | Abstraction |
-| `Idrak.Abstraction.Training.LearningRateScheduler` | abstract class | public | — | CosineAnnealing, ExponentialDecay, LambdaSchedule, StepDecay |  | Abstraction, Audio, Idrak, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Training.IScaledGradientStep` | interface | public | — | AdamW8Bit |  | Abstraction, Audio, Idrak, Network, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Training.IStatefulOptimizer` | interface | public | — | Adam, AdamW, AdamW8Bit, GroupedOptimizer, HostOptimizer, Sgd |  | Abstraction, Audio, Idrak, Network, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Training.LearningRateScheduler` | abstract class | public | — | CosineAnnealing, ExponentialDecay, LambdaSchedule, StepDecay |  | Abstraction, Audio, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Training.LearningRateSchedules` | registry | public | — |  | constant, cosine, linear, wsd | Audio, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Training.Optimizer` | abstract class | public | Device, Tensor | Adam, AdamW, AdamW8Bit, GroupedOptimizer, HostOptimizer, Sgd |  | Abstraction, Audio, Idrak, Network, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Training.OptimizerKinds` | registry | public | Tensor |  | adam, adamw, adamw8bit, sgd | Audio, Idrak, Reinforcement, Text | Abstraction |
@@ -237,6 +246,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 |---|---|---|---|---|---|---|---|
 | `Idrak.Datasets.Abstractions.IBatchSource` | interface | public | — | DataLoader |  | Idrak | Idrak |
 | `Idrak.Datasets.Abstractions.IScaler` | interface | public | — | MinMaxScaler, StandardScaler |  | Idrak | Idrak |
+| `Idrak.Datasets.Abstractions.IShardableBatchSource` | interface | public | Device | DataLoader |  | Idrak | Idrak |
+| `Idrak.Datasets.Abstractions.IStepShares` | interface | public | — | DataLoader |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.ICachedModule` | interface | public | Tensor | CausalSelfAttention, CrossAttention, DecoderBlock, MultiHeadAttention, PipelineBoundary, PositionEmbedding, +3 |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.INetworkBuilder` | interface | public | Device, Module, Tensor | NetworkBuilder |  | Idrak | Idrak |
@@ -275,6 +286,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Onnx.Abstractions.OnnxGraph` | abstract class | public | Module | OnnxGraphWriter |  | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.OnnxImportContext` | abstract class | public | Module | ImportContext |  | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.OnnxImportOps` | registry | public | — |  | Add, AveragePool, BatchNormalization, Cast, Conv, ConvTranspose, Dropout, Flatten, +15 | Idrak | Idrak |
+| `Idrak.Training.Abstractions.ILoss` | interface | public | Tensor | Loss |  | Idrak | Idrak |
+| `Idrak.Training.Abstractions.IMetric` | interface | public | Tensor | Metric |  | Idrak | Idrak |
 | `Idrak.Training.Abstractions.ITrainerCallback` | interface | public | — | Checkpoint, CsvLog, EarlyStopping |  | Idrak | Idrak |
 
 ### Idrak.Gpu
@@ -424,7 +437,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Networking.Abstractions.IGradientCompression` | interface | public | Tensor | BFloat16Compression, PlainCompression, TopKCompression |  | Network | Network |
 | `Idrak.Networking.Abstractions.IGradientCompressor` | interface | public | — | DenseCompressor, TopKCompressor |  | Network | Network |
 | `Idrak.Networking.Abstractions.LocalTransport` | abstract class | internal | Storage | NvlinkTransport, PciHostTransport |  | Network | Network |
-| `Idrak.Networking.Abstractions.SyncCore` | abstract class | internal | Tensor | GradientReduction, LocalSgd |  | Network | Network |
+| `Idrak.Networking.Abstractions.SyncCore` | abstract class | internal | Tensor | GradientReduction, LocalSgd, ShardedGradientReduction |  | Network | Network |
 
 ### Idrak.Reinforcement
 

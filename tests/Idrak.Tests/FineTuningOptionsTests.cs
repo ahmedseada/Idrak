@@ -86,7 +86,7 @@ internal static partial class Tests
             }
 
             // The built-in schedules' rates, step by step (10 steps, 2 of warm-up).
-            float[] Rates(Func<Optimizer, int, LearningRateScheduler> schedule)
+            float[] Rates(Func<Optimizer, int, ILearningRateScheduler> schedule)
             {
                 using var p = Tensor.Persistent([0f], [1], Device.Cpu, requiresGrad: true);
                 using var optimizer = new Sgd([p], 1f);

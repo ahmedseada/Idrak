@@ -118,7 +118,7 @@ public sealed record Idrak.AspNetCore.GenerationRequest : System.IEquatable<Idra
   public string Prompt { get; init; }
 
 public sealed class Idrak.AspNetCore.IdrakBuilder
-  public Idrak.AspNetCore.IdrakBuilder Add<TCopy>(string name, System.Func<System.IServiceProvider, Idrak.Abstraction.Serving.EngineModel<TCopy>> create) where TCopy : class
+  public Idrak.AspNetCore.IdrakBuilder Add<TCopy>(string name, System.Func<System.IServiceProvider, Idrak.Abstraction.Serving.IEngineModel<TCopy>> create) where TCopy : class
   public Idrak.AspNetCore.IdrakBuilder AddPredictor<TIn, TOut>(string name, System.Func<System.IServiceProvider, Idrak.Abstraction.Module> load, System.Func<Idrak.Inference.PredictorBuilder<float[], float[]>, Idrak.Inference.PredictorBuilder<TIn, TOut>> configure)
   public Idrak.AspNetCore.IdrakBuilder AddPredictor<TIn, TOut>(string name, string packagePath, System.Func<Idrak.Inference.PredictorBuilder<float[], float[]>, Idrak.Inference.PredictorBuilder<TIn, TOut>> configure)
   public Idrak.AspNetCore.IdrakBuilder Configure(System.Action<System.IServiceProvider, Idrak.Inference.InferenceEngineBuilder> configure)

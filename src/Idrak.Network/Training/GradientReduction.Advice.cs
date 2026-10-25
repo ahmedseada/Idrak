@@ -29,7 +29,7 @@ namespace Idrak.Networking.Training;
 /// the log (<c>ClusterReplay.Run</c> with it, <c>idrak cluster replay --from</c>) measures alike.
 /// </para>
 /// </summary>
-internal sealed partial class GradientReduction
+internal partial class GradientReduction
 {
     // A run's decision and what it published, shared by its ranks in one process (and by its synchronisations: a pretraining
     // run's stages each start one), held as long as the run's options are.

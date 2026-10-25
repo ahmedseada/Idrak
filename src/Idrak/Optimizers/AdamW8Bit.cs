@@ -10,7 +10,7 @@ namespace Idrak.Optimizers;
 /// billion-parameter model train on a 16 GB GPU; training curves match 32-bit AdamW closely. Parameters with fewer than
 /// <see cref="MinimumSize"/> elements (norms, biases) keep float32 moments, as bitsandbytes does.
 /// </summary>
-public sealed class AdamW8Bit : Optimizer
+public sealed class AdamW8Bit : Optimizer, IStatefulOptimizer, IScaledGradientStep
 {
     /// <summary>Elements per quantization block (one scale per moment per block).</summary>
     public const int BlockSize = EightBitMoments.BlockSize;
@@ -18,6 +18,7 @@ public sealed class AdamW8Bit : Optimizer
     private readonly Tensor?[] _m, _v, _scales;
     private Tensor? _map;
     private int _step;
+    private float _gradientScale = 1f;
 
     /// <summary>Creates the optimizer.</summary>
     public AdamW8Bit(IEnumerable<Tensor> parameters, float learningRate = 0.001f, float beta1 = 0.9f, float beta2 = 0.999f, float epsilon = 1e-8f,
@@ -53,13 +54,17 @@ public sealed class AdamW8Bit : Optimizer
         _m.Zip(_v).Sum(p => (long)((p.First?.Size ?? 0) + (p.Second?.Size ?? 0)) * 4) + _scales.Sum(s => (long)(s?.Size ?? 0) * 4);
 
     /// <inheritdoc />
-    protected override bool ScalesGradientsInStep => true;
+    float IScaledGradientStep.GradientScale
+    {
+        get => _gradientScale;
+        set => _gradientScale = value;
+    }
 
     /// <inheritdoc />
     public override void Step()
     {
-        float scale = GradientScale;
-        GradientScale = 1f;
+        float scale = _gradientScale;
+        _gradientScale = 1f;
         _step++;
         float correctedLr = (float)(LearningRate * Math.Sqrt(1 - Math.Pow(Beta2, _step)) / (1 - Math.Pow(Beta1, _step)));
         for (int i = 0; i < Parameters.Count; i++)
@@ -139,7 +144,7 @@ public sealed class AdamW8Bit : Optimizer
     public static byte Nearest(ReadOnlySpan<float> map, float x) => EightBitMoments.Nearest(map, x);
 
     /// <inheritdoc />
-    public override IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
+    public IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
     {
         var state = new Dictionary<string, OptimizerStateValue>(StringComparer.Ordinal) { ["step"] = StateOf(_step) };
         for (int i = 0; i < Parameters.Count; i++)
@@ -160,7 +165,7 @@ public sealed class AdamW8Bit : Optimizer
     }
 
     /// <inheritdoc />
-    public override void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
+    public void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
     {
         ArgumentNullException.ThrowIfNull(state);
         _step = LoadStep(state);

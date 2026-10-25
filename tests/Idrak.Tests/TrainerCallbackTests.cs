@@ -123,7 +123,7 @@ internal static partial class Tests
             var stopper = new Recorder { StopAfterBatch = (c, _) => c.Step == batches + 2 };
             var run = new TrainingRun
             {
-                Model = model, Loss = Losses.MeanSquaredError, Optimizer = p => new Adam(p, 0.01f),
+                Model = model, Loss = Loss.MeanSquaredError, Optimizer = p => new Adam(p, 0.01f),
                 Train = train, Validation = validation, Epochs = 10, Callbacks = [stopper],
             };
             var history = run.Fit();
@@ -173,7 +173,7 @@ internal static partial class Tests
         using var viaRun = BuiltMlpFor3(device);
         var runHistory = new TrainingRun
         {
-            Model = viaRun, Loss = Losses.MeanSquaredError, Optimizer = p => new Adam(p, 0.08f),
+            Model = viaRun, Loss = Loss.MeanSquaredError, Optimizer = p => new Adam(p, 0.08f),
             Train = train, Validation = validation, Epochs = 200, Callbacks = [new EarlyStopping(2)],
         }.Fit();
 

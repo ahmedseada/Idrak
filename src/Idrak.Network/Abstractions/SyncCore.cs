@@ -31,6 +31,7 @@ internal abstract class SyncCore : IGradientSync
         Options = options ?? throw new ArgumentNullException(nameof(options));
         Parameters = optimizer.Parameters;
         HostGradients = optimizer as IHostGradients;
+        State = optimizer as IStatefulOptimizer;
         Values = new HostValues(collectives);
         _shares = [.. DrawShares.Even(collectives.WorldSize)];
         _nextExchange = FirstExchange;
@@ -57,6 +58,9 @@ internal abstract class SyncCore : IGradientSync
     protected ClusterOptions Options { get; }
 
     protected IHostGradients? HostGradients { get; }
+
+    /// <summary>The optimizer's saved state, or null when it keeps none (plain SGD without momentum keeps its own nowhere else).</summary>
+    protected IStatefulOptimizer? State { get; }
 
     protected HostValues Values { get; }
 
@@ -161,26 +165,8 @@ internal abstract class SyncCore : IGradientSync
     {
     }
 
-    public virtual bool Updates => false;
-
-    public virtual double? Update(float maxNorm, bool readNorm = false) =>
-        throw new NotSupportedException($"The {Name} synchronisation leaves the update to the optimizer (Updates is false).");
-
+    /// <summary>The whole weights on every rank until disposed (a sharded run's, <see cref="IShardedGradientSync.Gather"/>); null when every rank holds them anyway.</summary>
     public virtual IDisposable? Gather() => null;
-
-    public virtual IReadOnlyDictionary<string, OptimizerStateValue>? SaveOptimizerState() => null;
-
-    public virtual bool LoadOptimizerState(IReadOnlyDictionary<string, OptimizerStateValue> state) => false;
-
-    public virtual int? Owner(Tensor parameter) => null;
-
-    public virtual IDisposable? Local() => null;
-
-    public virtual IReadOnlyDictionary<string, OptimizerStateValue>? SaveOwnOptimizerState() => null;
-
-    public virtual void End()
-    {
-    }
 
     public abstract GradientSyncResult Reduce(double tokens, double loss, bool normalized = false);
 
@@ -314,21 +300,14 @@ internal abstract class SyncCore : IGradientSync
     /// <summary>The whole number <see cref="Split"/> made.</summary>
     protected static long Join(float high, float low) => ((long)high << 16) | (long)low;
 
-    // The holder's optimizer state (moments, step count), sent in two broadcasts: its length, then its values; a rank
-    // whose optimizer cannot load a state keeps its own (the holder's cannot save one: it sends none).
+    // The holder's optimizer state (moments, step count), sent in two broadcasts: its length, then its values; an optimizer
+    // that keeps no state sends none and takes none (every rank's optimizer is of one kind).
     private void ShareOptimizerState(int holder)
     {
         float[]? payload = null;
         if (Collectives.Rank == holder)
         {
-            try
-            {
-                payload = OptimizerState.Write(Optimizer.SaveState());
-            }
-            catch (NotSupportedException)
-            {
-                payload = [];
-            }
+            payload = State is { } state ? OptimizerState.Write(state.SaveState()) : [];
         }
 
         var (high, low) = Split(payload?.Length ?? 0);
@@ -344,14 +323,7 @@ internal abstract class SyncCore : IGradientSync
         Values.Broadcast(payload, holder);
         if (Collectives.Rank != holder)
         {
-            try
-            {
-                Optimizer.LoadState(OptimizerState.Read(payload));
-            }
-            catch (NotSupportedException)
-            {
-                // An optimizer that keeps no state of its own (plain SGD) has nothing to take.
-            }
+            State?.LoadState(OptimizerState.Read(payload));
         }
     }
 

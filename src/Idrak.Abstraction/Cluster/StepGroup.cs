@@ -61,20 +61,28 @@ public interface IHostValueCollectives
 
     /// <summary>Copies rank <paramref name="root"/>'s <paramref name="values"/> to every rank's.</summary>
     bool TryBroadcast(Span<float> values, int root);
+}
 
+/// <summary>
+/// Host-value collectives that also reduce and gather pieces of uneven length (plan 23, phase C6: a sharded run's gradient
+/// buckets and weights, each rank's piece the values of the parameters it owns). Collectives without them are asked
+/// <c>is IShardedHostValueCollectives</c> once, and the caller goes through the device instead. Each method returns false
+/// when it cannot this time (collectives of a plug-in behind a simulated rank), as the methods of
+/// <see cref="IHostValueCollectives"/> do.
+/// </summary>
+public interface IShardedHostValueCollectives : IHostValueCollectives
+{
     /// <summary>
-    /// Reduces <paramref name="values"/> across the ranks so that this rank's piece holds the reduction (plan 23, phase C6:
-    /// a sharded run's gradient bucket, each rank's piece the values of the parameters it owns). The pieces are
+    /// Reduces <paramref name="values"/> across the ranks so that this rank's piece holds the reduction. The pieces are
     /// <paramref name="counts"/> long, one per rank in rank order, contiguous from the start; the values outside this
     /// rank's piece are left in an unspecified state. Each sum is made in an order fixed by the algorithm and the sizes, as
-    /// <see cref="ICollectives.ReduceScatter"/>'s. False (the default) where the collectives cannot.
+    /// <see cref="ICollectives.ReduceScatter"/>'s.
     /// </summary>
-    bool TryReduceScatter(Span<float> values, ReadOnlySpan<int> counts, ReduceOp op, WireType wire) => false;
+    bool TryReduceScatter(Span<float> values, ReadOnlySpan<int> counts, ReduceOp op, WireType wire);
 
     /// <summary>
     /// <paramref name="values"/> holds this rank's piece (pieces of <paramref name="counts"/> values, one per rank in rank
-    /// order, contiguous from the start); every rank's afterwards (plan 23, phase C6: a sharded run's weights). False (the
-    /// default) where the collectives cannot.
+    /// order, contiguous from the start); every rank's afterwards.
     /// </summary>
-    bool TryAllGather(Span<float> values, ReadOnlySpan<int> counts) => false;
+    bool TryAllGather(Span<float> values, ReadOnlySpan<int> counts);
 }

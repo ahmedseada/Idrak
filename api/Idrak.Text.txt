@@ -549,7 +549,7 @@ public sealed record Idrak.Text.FineTuningOptions : System.IEquatable<Idrak.Text
   public Idrak.Text.TuningVision? Vision { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource> Parts { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> Targets { get; init; }
-  public System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler>? Scheduler { get; init; }
+  public System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.ILearningRateScheduler>? Scheduler { get; init; }
   public System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer>? Optimizer { get; init; }
   public bool CudaGraphs { get; init; }
   public bool Dora { get; init; }

@@ -4,7 +4,7 @@
 namespace Idrak.Abstraction.Training;
 
 /// <summary>Stochastic gradient descent with optional momentum and L2 weight decay: g += λp; v = μv + g; p -= lr·v.</summary>
-public sealed class Sgd(IEnumerable<Tensor> parameters, float learningRate = 0.01f, float momentum = 0f, float weightDecay = 0f) : Optimizer(parameters, learningRate)
+public sealed class Sgd(IEnumerable<Tensor> parameters, float learningRate = 0.01f, float momentum = 0f, float weightDecay = 0f) : Optimizer(parameters, learningRate), IStatefulOptimizer
 {
     /// <summary>L2 penalty λ added to the gradients.</summary>
     public float WeightDecay { get; } = weightDecay;
@@ -38,7 +38,7 @@ public sealed class Sgd(IEnumerable<Tensor> parameters, float learningRate = 0.0
     }
 
     /// <inheritdoc />
-    public override IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
+    public IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
     {
         var state = new Dictionary<string, OptimizerStateValue>(StringComparer.Ordinal);
         for (int i = 0; i < Parameters.Count; i++)
@@ -53,7 +53,7 @@ public sealed class Sgd(IEnumerable<Tensor> parameters, float learningRate = 0.0
     }
 
     /// <inheritdoc />
-    public override void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
+    public void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
     {
         ArgumentNullException.ThrowIfNull(state);
         _velocity ??= new Tensor?[Parameters.Count];

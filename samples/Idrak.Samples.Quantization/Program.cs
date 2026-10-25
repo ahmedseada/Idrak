@@ -69,7 +69,7 @@ var clock = Stopwatch.StartNew();
 var run = new TrainingRun
 {
     Model = model,
-    Loss = (logits, next) => SummaryLoss(logits, next),
+    Loss = new Loss((logits, next) => SummaryLoss(logits, next)),
     Optimizer = p => new AdamW(p, learningRate: 0.002f, weightDecay: 0.01f),
     Scheduler = o => new CosineAnnealing(o, epochs, minLearningRate: 1e-4f, warmupEpochs: 1),
     Train = new DataLoader(Sequences(train), options.BatchSize ?? 32, shuffle: true, device: device, seed: 5),

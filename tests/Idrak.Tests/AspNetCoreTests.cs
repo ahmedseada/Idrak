@@ -37,7 +37,7 @@ internal static partial class Tests
         var split = SmallRegression(120, 4).Split(0.8, seed: 1).StandardizeFeatures().StandardizeTargets();
         var network = Network.Input(3).Seed(3).Linear(8).ReLU().Linear(1);
         var model = network.Build();
-        new TrainingRun { Model = model, Loss = Losses.MeanSquaredError, Optimizer = p => new Adam(p, 0.01f), Train = split.Train.Batches(16), Epochs = 2 }.Fit();
+        new TrainingRun { Model = model, Loss = Loss.MeanSquaredError, Optimizer = p => new Adam(p, 0.01f), Train = split.Train.Batches(16), Epochs = 2 }.Fit();
         var direct = Predictor.For(model).Input<Row>(r => [r.A, r.B, r.C]).ScaleInputs(split.FeatureScaler!).UnscaleOutputs(split.TargetScaler!).Output(v => v[0]).Build();
         string package = Path.Combine(Path.GetTempPath(), $"api-{Guid.NewGuid():N}.ikm");
         direct.Save(package);

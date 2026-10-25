@@ -20,7 +20,7 @@ namespace Idrak.Training;
 /// var run = new TrainingRun
 /// {
 ///     Model = model,
-///     Loss = Losses.CrossEntropy,
+///     Loss = Loss.CrossEntropy,
 ///     Optimizer = p => new AdamW(p, 0.003f, weightDecay: 1e-4f),
 ///     Scheduler = o => new CosineAnnealing(o, 40, warmupEpochs: 1),
 ///     Train = train.Batches(64, shuffle: true, seed: 3),
@@ -38,8 +38,11 @@ public sealed record TrainingRun
     /// <summary>The model to train (<see cref="Trainer.Model"/>).</summary>
     public required Module Model { get; init; }
 
-    /// <summary>The loss function (<see cref="Trainer.Loss"/>).</summary>
-    public required Func<Tensor, Tensor, Tensor> Loss { get; init; }
+    /// <summary>
+    /// The loss (<see cref="Trainer.Loss"/>): one of <see cref="Training.Loss"/>'s (<c>Loss.CrossEntropy</c>), a function as
+    /// <c>new Loss(…)</c>, or any <see cref="ILoss"/>.
+    /// </summary>
+    public required ILoss Loss { get; init; }
 
     /// <summary>Creates the optimizer from the model's trainable parameters, e.g. <c>p =&gt; new Adam(p, 1e-3f)</c>.</summary>
     public required Func<IEnumerable<Tensor>, Optimizer> Optimizer { get; init; }
@@ -54,10 +57,10 @@ public sealed record TrainingRun
     public IBatchSource? Validation { get; init; }
 
     /// <summary>Creates the learning-rate schedule from the optimizer (<see cref="Trainer.Scheduler"/>), or null.</summary>
-    public Func<Optimizer, LearningRateScheduler>? Scheduler { get; init; }
+    public Func<Optimizer, ILearningRateScheduler>? Scheduler { get; init; }
 
     /// <summary>Metrics to report (<see cref="Trainer.Metrics"/>).</summary>
-    public IReadOnlyList<Metric> Metrics { get; init; } = [];
+    public IReadOnlyList<IMetric> Metrics { get; init; } = [];
 
     /// <summary><see cref="Trainer.EarlyStoppingPatience"/>.</summary>
     public int? EarlyStoppingPatience { get; init; }

@@ -56,7 +56,7 @@ public sealed class FineTuningSession : IDisposable
     private bool _float8Pending;
     private FineTuner.StepRunner? _runner;
     private readonly ActivationRung? _resumedRung;                        // the rung the checkpoint resumed from settled on
-    private LearningRateScheduler? _schedule;
+    private ILearningRateScheduler? _schedule;
     private FineTuningLoss? _lastLoss;
     private FineTuner.CustomLoss? _lastCustom;
     private int _nonFinite;
@@ -155,14 +155,15 @@ public sealed class FineTuningSession : IDisposable
             }
 
             Sync = options.Cluster is { } cluster ? GradientSyncs.Create(cluster, Optimizer, clusterOptions!) : null;
+            Sharded = Sync as IShardedGradientSync;                         // asked once: the update, gathers and state are its
             Stop = options.Cluster is { } ranks ? StopAgreements.For(ranks, clusterOptions) : null;
             _seeds = Sync is null ? null : Dropout.SeedsForRank(Sync.Rank);
             if (options.ResumeFrom is { } resumed)
             {
                 var saved = FineTuner.ReadOptimizerFile(resumed);
-                if (Sync?.LoadOptimizerState(saved) != true)
+                if (Sharded?.LoadOptimizerState(saved) != true)
                 {
-                    Optimizer.LoadState(saved);
+                    Optimizer.RequireState().LoadState(saved);
                 }
             }
 
@@ -201,6 +202,9 @@ public sealed class FineTuningSession : IDisposable
     internal Optimizer Optimizer { get; } = null!;
 
     internal IGradientSync? Sync { get; }
+
+    // The synchronisation when it shards the run (it makes the update and holds the optimizer's state), else null.
+    internal IShardedGradientSync? Sharded { get; }
 
     /// <summary>The ranks' agreement on a stop on a cluster (Plan 27, R7), or null in one process.</summary>
     internal IStopAgreement? Stop { get; }
@@ -464,7 +468,7 @@ public sealed class FineTuningSession : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentException.ThrowIfNullOrWhiteSpace(folder);
         bool writes = Sync is null || Sync.Rank == 0;
-        using (Sync?.Gather())
+        using (Sharded?.Gather())
         {
             if (writes)
             {
@@ -487,9 +491,9 @@ public sealed class FineTuningSession : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentException.ThrowIfNullOrWhiteSpace(folder);
-        using (Sync?.Gather())
+        using (Sharded?.Gather())
         {
-            var state = Sync?.SaveOptimizerState() ?? Optimizer.SaveState();
+            var state = Sharded?.SaveOptimizerState() ?? Optimizer.RequireState().SaveState();
             if (Sync is null || Sync.Rank == 0)
             {
                 Save(folder);
@@ -523,9 +527,9 @@ public sealed class FineTuningSession : IDisposable
         }
 
         var saved = FineTuner.ReadOptimizerFile(folder);
-        if (Sync?.LoadOptimizerState(saved) != true)
+        if (Sharded?.LoadOptimizerState(saved) != true)
         {
-            Optimizer.LoadState(saved);
+            Optimizer.RequireState().LoadState(saved);
         }
 
         while (Steps < steps)

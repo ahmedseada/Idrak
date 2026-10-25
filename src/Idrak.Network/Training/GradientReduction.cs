@@ -57,7 +57,7 @@ internal sealed class AllReduceSyncProvider : IGradientSyncProvider
 /// grouped by owner and reduce-scattered, and updates itself (<see cref="Update"/>).
 /// </para>
 /// </summary>
-internal sealed partial class GradientReduction : SyncCore
+internal partial class GradientReduction : SyncCore
 {
     /// <summary>
     /// Makes a device's pinned staging slots (the backend's own; a test puts in a staging of its own to check the
@@ -72,7 +72,7 @@ internal sealed partial class GradientReduction : SyncCore
 
     // The ranks' stop agreement (Plan 27, R7): when it reads a carried flag, the header's last value is this rank's flag, so
     // every step tells the next boundary whether a rank asked to stop, with no message of its own.
-    private readonly IStopAgreement? _stop;
+    private readonly ICarriedStopAgreement? _stop;
 
     private readonly IGradientCompressor _compressor;
     private readonly Dictionary<Tensor, int> _index = new(ReferenceEqualityComparer.Instance);
@@ -136,7 +136,7 @@ internal sealed partial class GradientReduction : SyncCore
 
         _sized = options.BucketBytes is not null;
         _layout = NewLayout(ValuesOf(options.BucketBytes ?? BucketSizing.ProbeBytes));
-        if (collectives.WorldSize > 1 && StopAgreements.For(collectives, options) is { Carries: true } stop)
+        if (collectives.WorldSize > 1 && StopAgreements.For(collectives, options) is ICarriedStopAgreement stop)
         {
             _stop = stop;
         }

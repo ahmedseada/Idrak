@@ -7,7 +7,8 @@ namespace Idrak.Optimizers;
 /// Several optimizers acting as one, so different parameter groups can use different settings (for fine-tuning:
 /// a small learning rate for the pretrained body, a larger one for the new head). <see cref="Optimizer.LearningRate"/>
 /// starts at the first group's rate; when a schedule changes it, every group's rate is scaled by the same factor, so
-/// the groups keep their ratio.
+/// the groups keep their ratio. Its state (<see cref="IStatefulOptimizer"/>) is every group's, under "group{g}."; saving
+/// or loading it needs every group to keep a state of its own.
 /// </summary>
 /// <example>
 /// <code>
@@ -15,10 +16,11 @@ namespace Idrak.Optimizers;
 ///     _ => new GroupedOptimizer(new AdamW(body.Parameters(), 1e-4f), new AdamW(head.Parameters(), 1e-3f)));
 /// </code>
 /// </example>
-public sealed class GroupedOptimizer : Optimizer
+public sealed class GroupedOptimizer : Optimizer, IStatefulOptimizer
 {
     private readonly Optimizer[] _groups;
     private readonly float[] _initialRates;
+    private readonly int[] _before;                                     // the parameters of the groups before each
     private readonly float _initialRate;
 
     /// <summary>Combines <paramref name="groups"/>; each must have its own, non-overlapping parameters.</summary>
@@ -37,16 +39,23 @@ public sealed class GroupedOptimizer : Optimizer
 
         _groups = groups;
         _initialRates = [.. groups.Select(g => g.LearningRate)];
+        _before = new int[groups.Length];
+        for (int g = 1; g < groups.Length; g++)
+        {
+            _before[g] = _before[g - 1] + groups[g - 1].Parameters.Count;
+        }
+
         _initialRate = groups[0].LearningRate;
     }
 
     /// <inheritdoc />
-    public override IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
+    /// <exception cref="NotSupportedException">A group keeps no state it can save.</exception>
+    public IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
     {
         var state = new Dictionary<string, OptimizerStateValue>(StringComparer.Ordinal);
         for (int g = 0; g < _groups.Length; g++)
         {
-            foreach (var (name, value) in _groups[g].SaveState())
+            foreach (var (name, value) in _groups[g].RequireState().SaveState())
             {
                 state[$"group{g}.{name}"] = value;
             }
@@ -56,34 +65,38 @@ public sealed class GroupedOptimizer : Optimizer
     }
 
     /// <inheritdoc />
-    public override void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
+    /// <exception cref="NotSupportedException">A group keeps no state it can restore.</exception>
+    public void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
     {
         ArgumentNullException.ThrowIfNull(state);
         for (int g = 0; g < _groups.Length; g++)
         {
             string prefix = $"group{g}.";
-            _groups[g].LoadState(state.Where(p => p.Key.StartsWith(prefix, StringComparison.Ordinal)).ToDictionary(p => p.Key[prefix.Length..], p => p.Value, StringComparer.Ordinal));
+            _groups[g].RequireState().LoadState(state.Where(p => p.Key.StartsWith(prefix, StringComparison.Ordinal)).ToDictionary(p => p.Key[prefix.Length..], p => p.Value, StringComparer.Ordinal));
         }
     }
 
     /// <inheritdoc />
-    /// <remarks>An entry "group{g}.{name}" is group g's entry: its parameter is that group's, counted after the groups before it.</remarks>
-    public override int? StateParameter(string name)
+    /// <remarks>
+    /// An entry "group{g}.{name}" is group g's entry: its parameter is that group's, counted after the groups before it.
+    /// The group's number is read from the name (no string made).
+    /// </remarks>
+    public int? StateParameter(ReadOnlySpan<char> name)
     {
-        ArgumentNullException.ThrowIfNull(name);
-        int before = 0;
-        for (int g = 0; g < _groups.Length; g++)
+        if (!name.StartsWith("group", StringComparison.Ordinal))
         {
-            string prefix = $"group{g}.";
-            if (name.StartsWith(prefix, StringComparison.Ordinal))
-            {
-                return _groups[g].StateParameter(name[prefix.Length..]) is { } local ? before + local : null;
-            }
-
-            before += _groups[g].Parameters.Count;
+            return null;
         }
 
-        return null;
+        var rest = name["group".Length..];
+        int dot = rest.IndexOf('.');
+        if (dot <= 0 || (dot > 1 && rest[0] == '0')                     // "group{g}." as the group's number is written
+            || !int.TryParse(rest[..dot], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int g) || g >= _groups.Length)
+        {
+            return null;
+        }
+
+        return _groups[g] is IStatefulOptimizer group && group.StateParameter(rest[(dot + 1)..]) is { } local ? _before[g] + local : null;
     }
 
     /// <summary>The combined optimizers, in order.</summary>

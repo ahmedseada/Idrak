@@ -321,7 +321,7 @@ public static class RunSteerings
     /// (held there while the run is paused), then a stop it says taken as the run's stop. In one process (no
     /// <paramref name="agreement"/>) true: the trainer stops here, as on a cancelled token. On a cluster every rank asks the
     /// ranks' agreement at this same boundary (<see cref="StopReason"/>) and, every rank having asked, hands it that sum
-    /// (<see cref="IStopAgreement.Carried"/>), so the trainer's <see cref="IStopAgreement.Agree"/> right after stops every
+    /// (<see cref="ICarriedStopAgreement.Carried"/> when it is carried), so the trainer's <see cref="IStopAgreement.Agree"/> right after stops every
     /// rank here; false (the agreement says it). False when nothing steers the run.
     /// </summary>
     public static bool Stops(this IRunSteering? steering, long step, IStopAgreement? agreement, CancellationToken cancellationToken = default)
@@ -337,9 +337,9 @@ public static class RunSteerings
         }
 
         agreement.Request(StopReason);
-        if (agreement.Carries)
+        if (agreement is ICarriedStopAgreement carried)
         {
-            agreement.Carried(agreement.WorldSize);            // every rank asked at this boundary: the sum is known with no message
+            carried.Carried(agreement.WorldSize);              // every rank asked at this boundary: the sum is known with no message
         }
 
         return false;

@@ -21,7 +21,7 @@ internal sealed class AllReduceStopAgreementProvider : IStopAgreementProvider
 /// <see cref="ClusterOptions.StopEvery"/> boundaries. Every rank makes the same collectives between two boundaries, so every
 /// rank decides from the same sum: the run stops at the same boundary on all of them.
 /// </summary>
-internal sealed class AllReduceStopAgreement : StopAgreement, IDisposable
+internal sealed class AllReduceStopAgreement : StopAgreement, ICarriedStopAgreement, IDisposable
 {
     private readonly HostValues _values;
     private readonly int _every;
@@ -38,12 +38,12 @@ internal sealed class AllReduceStopAgreement : StopAgreement, IDisposable
 
     public override string Name => "all-reduce";
 
-    public override bool Carries => true;
+    public float Contribution => Requested ? 1f : 0f;
 
     /// <summary>The boundaries decided by a one-value all-reduce of their own (the rest by a carried sum, or skipped).</summary>
     internal long Exchanges { get; private set; }
 
-    public override void Carried(float sum) => _carried = Math.Max(_carried ?? 0f, sum);
+    public void Carried(float sum) => _carried = Math.Max(_carried ?? 0f, sum);
 
     public void Dispose() => _values.Dispose();
 

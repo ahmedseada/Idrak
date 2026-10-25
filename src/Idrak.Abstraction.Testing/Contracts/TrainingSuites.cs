@@ -235,7 +235,7 @@ public sealed class LearningRateScheduleSuite(ILearningRateSchedule? reference =
     {
         using var parameter = Tensor.Persistent([0f], [1], Device.Cpu, requiresGrad: true);
         using var optimizer = new Sgd([parameter], rate);
-        var schedule = kind.Create(settings)(optimizer, steps);
+        var schedule = kind.Create(new LearningRateScheduleRequest(optimizer, steps, settings));
         checks?.Check("it works from the optimizer and its rate", ReferenceEquals(schedule.Optimizer, optimizer) && schedule.BaseLearningRate == rate,
             $"base rate {schedule.BaseLearningRate}, the optimizer's {rate}");
         var rates = new float[steps];

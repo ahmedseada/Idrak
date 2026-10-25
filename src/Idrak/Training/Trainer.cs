@@ -12,12 +12,16 @@ using Idrak.Training.Abstractions;
 
 namespace Idrak.Training;
 
-/// <summary>A quantity tracked during training and evaluation, computed as a mean over samples.</summary>
+/// <summary>A quantity tracked during training and evaluation, computed as a mean over samples (<see cref="IMetric"/> from functions).</summary>
 /// <param name="Name">Short name used in logs, e.g. "mae".</param>
 /// <param name="BatchMean">Returns the batch mean as a scalar tensor, given (predictions, targets).</param>
 /// <param name="Finalize">Optional transform of the epoch mean, e.g. a square root for RMSE.</param>
-public sealed record Metric(string Name, Func<Tensor, Tensor, Tensor> BatchMean, Func<double, double>? Finalize = null)
+public sealed record Metric(string Name, Func<Tensor, Tensor, Tensor> BatchMean, Func<double, double>? Finalize = null) : IMetric
 {
+    Tensor IMetric.BatchMean(Tensor predictions, Tensor targets) => BatchMean(predictions, targets);
+
+    double IMetric.Finish(double mean) => Finalize?.Invoke(mean) ?? mean;
+
     /// <summary>Mean absolute error.</summary>
     public static Metric MeanAbsoluteError { get; } = new("mae", Losses.MeanAbsoluteError);
 
@@ -44,6 +48,40 @@ public sealed record Metric(string Name, Func<Tensor, Tensor, Tensor> BatchMean,
     public static Metric BinaryAccuracy(float threshold = 0.5f) => new("accuracy", (p, t) => Tensor.MatchRate(p, t, threshold));
 }
 
+/// <summary>
+/// A loss function as an <see cref="ILoss"/>: (predictions, targets) → the scalar loss, such as one of <see cref="Losses"/>
+/// (<c>new Loss(Losses.CrossEntropy)</c>) or a lambda; the common ones are here already (<see cref="CrossEntropy"/>).
+/// </summary>
+/// <param name="compute">The batch's loss from (predictions, targets).</param>
+public sealed class Loss(Func<Tensor, Tensor, Tensor> compute) : ILoss
+{
+    private readonly Func<Tensor, Tensor, Tensor> _compute = compute ?? throw new ArgumentNullException(nameof(compute));
+
+    /// <summary>Mean squared error (<see cref="Losses.MeanSquaredError"/>).</summary>
+    public static Loss MeanSquaredError { get; } = new(Losses.MeanSquaredError);
+
+    /// <summary>Mean absolute error (<see cref="Losses.MeanAbsoluteError"/>).</summary>
+    public static Loss MeanAbsoluteError { get; } = new(Losses.MeanAbsoluteError);
+
+    /// <summary>Cross-entropy from logits and one-hot targets (<see cref="Losses.CrossEntropy(Tensor, Tensor)"/>).</summary>
+    public static Loss CrossEntropy { get; } = new(Losses.CrossEntropy);
+
+    /// <summary>Cross-entropy from logits and class indices (<see cref="Losses.SparseCrossEntropy(Tensor, Tensor)"/>).</summary>
+    public static Loss SparseCrossEntropy { get; } = new(Losses.SparseCrossEntropy);
+
+    /// <summary>Per-pixel cross-entropy from logits and class indices (<see cref="Losses.PixelCrossEntropy(Tensor, Tensor)"/>).</summary>
+    public static Loss PixelCrossEntropy { get; } = new(Losses.PixelCrossEntropy);
+
+    /// <summary>Binary cross-entropy from probabilities (<see cref="Losses.BinaryCrossEntropy"/>).</summary>
+    public static Loss BinaryCrossEntropy { get; } = new(Losses.BinaryCrossEntropy);
+
+    /// <summary>Binary cross-entropy from logits (<see cref="Losses.BinaryCrossEntropyWithLogits"/>).</summary>
+    public static Loss BinaryCrossEntropyWithLogits { get; } = new(Losses.BinaryCrossEntropyWithLogits);
+
+    /// <inheritdoc />
+    public Tensor Compute(Tensor predictions, Tensor targets) => _compute(predictions, targets);
+}
+
 /// <summary>Loss and metrics of a model on a dataset.</summary>
 /// <param name="Loss">Mean loss.</param>
 /// <param name="Metrics">Metric values by name.</param>
@@ -66,9 +104,14 @@ public sealed record EvaluationResult(double Loss, IReadOnlyDictionary<string, d
 /// var history = trainer.Fit(trainLoader, epochs: 300, validation: testLoader);
 /// </code>
 /// </example>
-public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tensor, Tensor> loss) : IDisposable
+public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDisposable
 {
     private readonly bool _ownsOptimizer;
+
+    /// <summary>A trainer of <paramref name="model"/> by <paramref name="optimizer"/> with a loss function (<c>Losses.MeanSquaredError</c>, a lambda).</summary>
+    public Trainer(Module model, Optimizer optimizer, Func<Tensor, Tensor, Tensor> loss) : this(model, optimizer, new Loss(loss))
+    {
+    }
 
     /// <summary>
     /// Creates the trainer from factories instead of ready-made objects: <paramref name="optimizer"/> receives the
@@ -83,12 +126,18 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     ///     scheduler: o => new CosineAnnealing(o, epochs, warmupEpochs: 1));
     /// </code>
     /// </example>
-    public Trainer(Module model, Func<Tensor, Tensor, Tensor> loss, Func<IEnumerable<Tensor>, Optimizer> optimizer,
-        Func<Optimizer, LearningRateScheduler>? scheduler = null)
+    public Trainer(Module model, ILoss loss, Func<IEnumerable<Tensor>, Optimizer> optimizer, Func<Optimizer, ILearningRateScheduler>? scheduler = null)
         : this(model, CreateOptimizer(model, optimizer), loss)
     {
         _ownsOptimizer = true;
         Scheduler = scheduler?.Invoke(Optimizer);
+    }
+
+    /// <summary>The factory form (see the one with an <see cref="ILoss"/>) with a loss function (<c>Losses.CrossEntropy</c>, a lambda).</summary>
+    public Trainer(Module model, Func<Tensor, Tensor, Tensor> loss, Func<IEnumerable<Tensor>, Optimizer> optimizer,
+        Func<Optimizer, ILearningRateScheduler>? scheduler = null)
+        : this(model, new Loss(loss), optimizer, scheduler)
+    {
     }
 
     private static Optimizer CreateOptimizer(Module model, Func<IEnumerable<Tensor>, Optimizer> factory)
@@ -112,11 +161,11 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     /// <summary>The optimizer updating the model.</summary>
     public Optimizer Optimizer { get; } = optimizer;
 
-    /// <summary>The loss function (predictions, targets) → scalar.</summary>
-    public Func<Tensor, Tensor, Tensor> Loss { get; } = loss;
+    /// <summary>The loss (predictions, targets) → scalar.</summary>
+    public ILoss Loss { get; } = loss ?? throw new ArgumentNullException(nameof(loss));
 
-    /// <summary>Extra quantities to report each epoch.</summary>
-    public List<Metric> Metrics { get; } = [];
+    /// <summary>Extra quantities to report each epoch (<see cref="Metric"/> or any <see cref="IMetric"/>).</summary>
+    public List<IMetric> Metrics { get; } = [];
 
     /// <summary>
     /// Stop when the monitored loss (validation loss if available, else training loss) has not improved
@@ -134,7 +183,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     public double MinImprovement { get; init; }
 
     /// <summary>Adjusts the learning rate after every epoch (e.g. <see cref="CosineAnnealing"/>).</summary>
-    public LearningRateScheduler? Scheduler { get; init; }
+    public ILearningRateScheduler? Scheduler { get; init; }
 
     /// <summary>When set, gradients are clipped to this global L2 norm before each step (recommended for RNNs).</summary>
     public float? MaxGradientNorm { get; init; }
@@ -142,9 +191,10 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     /// <summary>
     /// Data-parallel training (plan 23): this rank's collectives (a simulated cluster's rank, or a real one's), or null (the
     /// default) to train in this process alone, exactly as without it. With a cluster every rank runs <see cref="Fit"/>
-    /// with a model of its own on its rank's device: a <see cref="DataLoader"/>'s samples are sharded by position (rank r
-    /// takes the epoch's samples k·W + r, so batch k of every rank together is batch k of one process with batches W times
-    /// as large; a shuffling loader needs a seed, so every rank draws the same order), another batch source by batch.
+    /// with a model of its own on its rank's device: a <see cref="DataLoader"/>'s (any <see cref="IShardableBatchSource"/>'s)
+    /// samples are sharded by position (rank r takes the epoch's samples k·W + r, so batch k of every rank together is batch
+    /// k of one process with batches W times as large; a shuffling loader needs a seed, so every rank draws the same order),
+    /// another batch source by batch.
     /// After each backward pass the gradients are summed across the ranks, weighted by each rank's samples
     /// (<see cref="GradientSyncs"/>), so every rank updates with the gradient of the whole step; the reported losses and
     /// metrics are over every rank's samples, so every rank makes the same early-stopping decision; validation is
@@ -201,16 +251,17 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         }
 
         using var sync = Cluster is { } cluster ? GradientSyncs.Create(cluster, Optimizer, clusterOptions) : null;
-        if (sync is not null && train is DataLoader { Shuffle: true, Seed: null })
+        var sharded = sync as IShardedGradientSync;                         // asked once: the update, gathers and state are its
+        if (sync is not null && train is IShardableBatchSource { Seeded: false })
         {
             throw new ArgumentException("Data-parallel training draws one order of the samples on every rank: give the training DataLoader a seed.", nameof(train));
         }
 
-        // A loader over a sample source shares each step among the ranks that take part in it (every rank draws the step's
-        // samples as one process with batches W times as large, and keeps its own), so a group that changes from step to step
-        // (a simulated late join, a replay's end) still trains every sample and every rank runs the same steps. Another
-        // source is sharded by epoch, and a rank of it cannot sit a step out.
-        var stepLoader = sync is not null && train is DataLoader { Source: not null } loader ? loader : null;
+        // A source that shares each step among the ranks that take part in it (a loader over a sample source: every rank
+        // draws the step's samples as one process with batches W times as large, and keeps its own), so a group that changes
+        // from step to step (a simulated late join, a replay's end) still trains every sample and every rank runs the same
+        // steps. Another source is sharded by epoch, and a rank of it cannot sit a step out.
+        var stepShares = sync is not null && train is IShardableBatchSource { StepShares: { } shares } ? shares : null;
         int fullWorld = sync?.WorldSize ?? 1;                               // before any step: every rank
 
         var context = new TrainerContext(Model, Optimizer, epochs, history, cancellationToken) { Rank = sync?.Rank ?? 0, WorldSize = sync?.WorldSize ?? 1 };
@@ -222,7 +273,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         long resumeStep = 0;
         if (ResumeFrom is { } from)
         {
-            if (sync is not null && stepLoader is null)
+            if (sync is not null && stepShares is null)
             {
                 throw new NotSupportedException("A cluster run resumes from a stop's checkpoint with a DataLoader over a sample source (shared by step); this run's source is sharded by epoch.");
             }
@@ -296,11 +347,11 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
             long dataStart = Stopwatch.GetTimestamp();
 
             using var batches = (sync is null ? train
-                : stepLoader is not null ? stepLoader.StepShares(fullWorld, () => present ? (sync.Rank, sync.WorldSize) : null)
+                : stepShares is not null ? stepShares.Draw(fullWorld, () => present ? (sync.Rank, sync.WorldSize) : null)
                 : Shard(train, sync)).GetEnumerator();
             while (true)
             {
-                if (stepLoader is not null && step != begun && step >= resumeStep)
+                if (stepShares is not null && step != begun && step >= resumeStep)
                 {
                     present = Begin(step);                                  // before the step is drawn: its share follows the group
                     begun = step;
@@ -309,7 +360,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 // With a cluster a rank whose share of the epoch has ended goes on adding nothing until every rank's has; a
                 // loader shared by step gives every rank the same steps.
                 bool has = batches.MoveNext();
-                if (!has && (sync is null || stepLoader is not null))
+                if (!has && (sync is null || stepShares is not null))
                 {
                     break;
                 }
@@ -326,7 +377,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                     continue;
                 }
 
-                if (sync is not null && stepLoader is null && step != begun)
+                if (sync is not null && stepShares is null && step != begun)
                 {
                     present = Begin(step);                                  // a simulated cluster's faults, late joins and replays act here
                     begun = step;
@@ -339,7 +390,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                     // while it sits out, so only a replay's end (every rank out) is allowed there; anything else fails now,
                     // naming why, rather than leave the others waiting.
                     bool replayEnded = clusterOptions!.Simulation.ReplayStep is { } last && step > last;
-                    if (stepLoader is null && !replayEnded)
+                    if (stepShares is null && !replayEnded)
                     {
                         throw new InvalidOperationException($"Rank {sync!.Rank} sits out step {step} (a simulated late join): the Trainer shares a step among the ranks "
                             + $"that take part for a DataLoader over a sample source only; this run's training source ({train.GetType().Name}) is sharded by epoch, so the "
@@ -365,7 +416,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 if (batch is not null)
                 {
                     predictions = Model.Forward(batch.Features);
-                    batchLoss = Loss(predictions, batch.Targets);
+                    batchLoss = Loss.Compute(predictions, batch.Targets);
                     Optimizer.ZeroGrad();
                     using (sync?.Overlap(batch.Size))                       // gradient buckets go while the backward pass runs
                     {
@@ -385,7 +436,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 {
                     // The gradients of every rank's samples, weighted by each rank's count: one process's gradient of the step.
                     var reduced = sync.Reduce(batch?.Size ?? 0, batchLoss?.Item() ?? 0);
-                    if (reduced.Tokens <= 0 && stepLoader is null)
+                    if (reduced.Tokens <= 0 && stepShares is null)
                     {
                         break;                                              // every rank's share of the epoch has ended
                     }
@@ -394,11 +445,11 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 }
 
                 double? gradientNorm = null;
-                if (sync is { Updates: true })
+                if (sharded is not null)
                 {
                     // A sharded run (plan 23, C6): each rank clips by the global norm and steps the parameters it owns; the
                     // weights come back from their owners.
-                    gradientNorm = sync.Update(MaxGradientNorm ?? 0f, readNorm: Telemetry.IsEnabled(TelemetryLevel.Gradients));
+                    gradientNorm = sharded.Update(MaxGradientNorm ?? 0f, readNorm: Telemetry.IsEnabled(TelemetryLevel.Gradients));
                 }
                 else if (sync is not null && Optimizer is IHostGradients)
                 {
@@ -480,7 +531,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
             EvaluationResult? validationResult = null;
             if (validation is not null)
             {
-                using var whole = sync?.Gather();                           // a sharded run's weights whole for the evaluation
+                using var whole = sharded?.Gather();                        // a sharded run's weights whole for the evaluation
                 validationResult = sync is null ? Evaluate(validation) : EvaluateAcross(validation, sync);
             }
 
@@ -493,7 +544,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                 epochsWithoutImprovement = 0;
                 if (EarlyStoppingPatience is not null && RestoreBestWeights)
                 {
-                    using var whole = sync?.Gather();
+                    using var whole = sharded?.Gather();
                     bestWeights = [.. Model.Parameters().Select(p => p.ToArray())];
                 }
             }
@@ -534,7 +585,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
 
         if (!cancelled)
         {
-            sync?.End();                                                    // a sharded run's weights whole on every rank again
+            sharded?.End();                                                 // a sharded run's weights whole on every rank again
         }
 
         // Also when the run reached its last epoch: a last epoch that was not the best leaves worse weights than
@@ -575,9 +626,10 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
     private void WriteStop(string root, long step, IGradientSync sync)
     {
         string folder = Path.Combine(root, $"checkpoint-{step}");
-        using (sync.Gather())
+        var sharded = sync as IShardedGradientSync;
+        using (sharded?.Gather())
         {
-            var state = sync.SaveOptimizerState() ?? Optimizer.SaveState();
+            var state = sharded?.SaveOptimizerState() ?? Optimizer.RequireState().SaveState();
             if (sync.Rank == 0)
             {
                 Directory.CreateDirectory(folder);
@@ -605,9 +657,9 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         using var reader = Models.SafeTensorsReader.Open(Path.Combine(folder, StopOptimizerFile));
         Abstraction.Formats.ITensorStore store = reader;
         var saved = store.Names.ToDictionary(n => n, n => new OptimizerStateValue(store.ShapeOf(n), store.Read(n)), StringComparer.Ordinal);
-        if (sync?.LoadOptimizerState(saved) != true)
+        if ((sync as IShardedGradientSync)?.LoadOptimizerState(saved) != true)
         {
-            Optimizer.LoadState(saved);
+            Optimizer.RequireState().LoadState(saved);
         }
 
         return step;
@@ -714,7 +766,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         Model.Eval();
         try
         {
-            using var sums = Tensor.Zeros([1 + Metrics.Count], (data as DataLoader)?.Device ?? Device);
+            using var sums = Tensor.Zeros([1 + Metrics.Count], (data as IShardableBatchSource)?.Device ?? Device);
             int samples = 0;
             using (Autograd.NoGrad())
             {
@@ -723,7 +775,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
                     using var _ = batch;
                     using var scope = new TensorScope();
                     var predictions = Model.Forward(batch.Features);
-                    Accumulate(sums, Loss(predictions, batch.Targets), predictions, batch.Targets, batch.Size);
+                    Accumulate(sums, Loss.Compute(predictions, batch.Targets), predictions, batch.Targets, batch.Size);
                     samples += batch.Size;
                 }
             }
@@ -736,9 +788,9 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         }
     }
 
-    // A rank's share of a batch source: a loader's samples by position, any other source's batches by position.
+    // A rank's share of a batch source: a shardable source's samples by position, any other source's batches by position.
     private static IEnumerable<Batch> Shard(IBatchSource source, IGradientSync sync) =>
-        source is DataLoader loader ? loader.Shard(sync.Rank, sync.WorldSize) : ByBatch(source, sync.Rank, sync.WorldSize);
+        source is IShardableBatchSource shardable ? shardable.Shard(sync.Rank, sync.WorldSize) : ByBatch(source, sync.Rank, sync.WorldSize);
 
     private static IEnumerable<Batch> ByBatch(IBatchSource source, int rank, int world)
     {
@@ -817,7 +869,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, Func<Tensor, Tens
         for (int i = 0; i < Metrics.Count; i++)
         {
             double mean = values[i + 1] / n;
-            metrics[Metrics[i].Name] = Metrics[i].Finalize?.Invoke(mean) ?? mean;
+            metrics[Metrics[i].Name] = Metrics[i].Finish(mean);
         }
 
         return (values[0] / n, metrics);

@@ -18,7 +18,8 @@ public static class Losses
 
     /// <summary>
     /// <see cref="CrossEntropy(Tensor, Tensor, float)"/> without label smoothing. As a two-argument method it passes where
-    /// a loss is a <c>Func&lt;Tensor, Tensor, Tensor&gt;</c>: <c>Loss = Losses.CrossEntropy</c>.
+    /// a loss is a <c>Func&lt;Tensor, Tensor, Tensor&gt;</c>: <c>new Trainer(model, optimizer, Losses.CrossEntropy)</c>, or
+    /// <c>new Training.Loss(Losses.CrossEntropy)</c> where an <c>ILoss</c> is asked for.
     /// </summary>
     public static Tensor CrossEntropy(Tensor logits, Tensor targets) => CrossEntropy(logits, targets, 0f);
 
@@ -40,7 +41,7 @@ public static class Losses
 
     /// <summary>
     /// <see cref="SparseCrossEntropy(Tensor, Tensor, float)"/> without label smoothing; passes as a
-    /// <c>Func&lt;Tensor, Tensor, Tensor&gt;</c> loss (<c>Loss = Losses.SparseCrossEntropy</c>).
+    /// <c>Func&lt;Tensor, Tensor, Tensor&gt;</c> loss (<c>new Training.Loss(Losses.SparseCrossEntropy)</c> as an <c>ILoss</c>).
     /// </summary>
     public static Tensor SparseCrossEntropy(Tensor logits, Tensor classIndices) => SparseCrossEntropy(logits, classIndices, 0f);
 

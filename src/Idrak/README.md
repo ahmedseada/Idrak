@@ -137,7 +137,7 @@ using var model = Network.Input(data.FeatureCount)
 
 TrainingHistory history = new TrainingRun
 {
-    Model = model, Loss = Losses.MeanSquaredError, Optimizer = p => new Adam(p, 2e-3f),
+    Model = model, Loss = Loss.MeanSquaredError, Optimizer = p => new Adam(p, 2e-3f),
     Train = split.Train.Batches(64, shuffle: true), Validation = split.Test.Batches(512), Epochs = 400,
     Metrics = [Metric.MeanAbsoluteError], EarlyStoppingPatience = 30,   // restores the best weights when it stops
 }.Fit();

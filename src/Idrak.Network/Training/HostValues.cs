@@ -13,6 +13,7 @@ namespace Idrak.Networking.Training;
 internal sealed class HostValues(ICollectives collectives) : IDisposable
 {
     private readonly IHostValueCollectives? _host = collectives is IHostValueCollectives { SupportsHostValues: true } host ? host : null;
+    private readonly IShardedHostValueCollectives? _pieces = collectives is IShardedHostValueCollectives { SupportsHostValues: true } pieces ? pieces : null;
     private Tensor? _scratch;
 
     /// <summary>Whether the values travel from the host buffer itself (and so may from any thread).</summary>
@@ -79,7 +80,7 @@ internal sealed class HostValues(ICollectives collectives) : IDisposable
     /// </summary>
     public void ReduceScatter(Span<float> values, ReadOnlySpan<int> counts, WireType wire)
     {
-        if (values.IsEmpty || _host?.TryReduceScatter(values, counts, ReduceOp.Sum, wire) == true)
+        if (values.IsEmpty || _pieces?.TryReduceScatter(values, counts, ReduceOp.Sum, wire) == true)
         {
             return;
         }
@@ -90,7 +91,7 @@ internal sealed class HostValues(ICollectives collectives) : IDisposable
     /// <summary>Every rank's piece of <paramref name="values"/> (pieces of <paramref name="counts"/> values in rank order) on every rank.</summary>
     public void AllGather(Span<float> values, ReadOnlySpan<int> counts)
     {
-        if (values.IsEmpty || _host?.TryAllGather(values, counts) == true)
+        if (values.IsEmpty || _pieces?.TryAllGather(values, counts) == true)
         {
             return;
         }

@@ -16,7 +16,7 @@ namespace Idrak.Optimizers;
 /// gradient synchronisation reduces the gradients on the host copies this optimizer downloads (<see cref="IHostGradients"/>),
 /// and the clipping and the update then read the reduced values there.
 /// </summary>
-public sealed class HostOptimizer : Optimizer, IHostGradients
+public sealed class HostOptimizer : Optimizer, IHostGradients, IStatefulOptimizer
 {
     // Pinned buffers: four for gradients coming down, two for weights going up, 16 MiB each (a larger tensor moves in
     // pieces), so the pinned memory stays at 96 MiB whatever the model's size.
@@ -337,12 +337,14 @@ public sealed class HostOptimizer : Optimizer, IHostGradients
     }
 
     /// <inheritdoc />
-    public override IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
+    /// <remarks>Parameter i's optimizer's entries, each under "i.".</remarks>
+    /// <exception cref="NotSupportedException">The optimizers it was made with keep no state they can save.</exception>
+    public IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
     {
         var state = new Dictionary<string, OptimizerStateValue>(StringComparer.Ordinal);
         for (int i = 0; i < _cpu.Length; i++)
         {
-            foreach (var (name, value) in _cpu[i].SaveState())
+            foreach (var (name, value) in _cpu[i].RequireState().SaveState())
             {
                 state[$"{i}.{name}"] = value;
             }
@@ -352,14 +354,25 @@ public sealed class HostOptimizer : Optimizer, IHostGradients
     }
 
     /// <inheritdoc />
-    public override void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
+    /// <exception cref="NotSupportedException">The optimizers it was made with keep no state they can restore.</exception>
+    public void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
     {
         ArgumentNullException.ThrowIfNull(state);
         for (int i = 0; i < _cpu.Length; i++)
         {
             string prefix = $"{i}.";
-            _cpu[i].LoadState(state.Where(p => p.Key.StartsWith(prefix, StringComparison.Ordinal)).ToDictionary(p => p.Key[prefix.Length..], p => p.Value, StringComparer.Ordinal));
+            _cpu[i].RequireState().LoadState(state.Where(p => p.Key.StartsWith(prefix, StringComparison.Ordinal)).ToDictionary(p => p.Key[prefix.Length..], p => p.Value, StringComparer.Ordinal));
         }
+    }
+
+    /// <inheritdoc />
+    /// <remarks>An entry "i.{name}" is parameter i's (the number before the first dot, read from the name).</remarks>
+    public int? StateParameter(ReadOnlySpan<char> name)
+    {
+        int dot = name.IndexOf('.');
+        return dot > 0 && int.TryParse(name[..dot], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int i) && i < _cpu.Length
+            ? i
+            : null;
     }
 
     /// <inheritdoc />

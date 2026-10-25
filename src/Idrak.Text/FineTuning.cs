@@ -932,7 +932,7 @@ public sealed record FineTuningOptions
     /// per optimizer step (by name: <see cref="LearningRateSchedules.Factory"/>). Null (the default): a linear warm-up over
     /// <see cref="WarmupFraction"/> of the steps, then cosine decay to <see cref="MinLearningRate"/>.
     /// </summary>
-    public Func<Optimizer, int, LearningRateScheduler>? Scheduler { get; init; }
+    public Func<Optimizer, int, ILearningRateScheduler>? Scheduler { get; init; }
 
     /// <summary>
     /// The loss of a batch from its trained tokens' log-probabilities (built-in: <see cref="FineTuningLosses"/>; DPO, ORPO
@@ -1201,6 +1201,7 @@ public static class FineTuner
         var vision = options.Vision;
         var network = model.Network;
         var sync = session.Sync;
+        var sharded = session.Sharded;
         long resumeStep = session.ResumedSteps;
         bool lead = sync is null || sync.Rank == 0;
         var random = new Random(options.Seed);
@@ -1289,7 +1290,7 @@ public static class FineTuner
                     bool evaluate = evaluation is { Count: > 0 } && (options.EvaluateEvery > 0 ? step % options.EvaluateEvery == 0 : lastOfEpoch);
                     bool saving = outputFolder is not null && options.SaveEvery > 0 && step % options.SaveEvery == 0;
                     // A sharded run's weights whole on every rank while they are read (plan 23, C6; nothing to do otherwise).
-                    using var whole = evaluate || saving || options.Answers is { } due && due.IsDue(step, lastOfEpoch) ? sync?.Gather() : null;
+                    using var whole = evaluate || saving || options.Answers is { } due && due.IsDue(step, lastOfEpoch) ? sharded?.Gather() : null;
                     if (evaluate && evaluation is not null)
                     {
                         evaluationLoss = custom is not null ? EvaluateCustom(model, evaluation, pairs, custom, options, trace)
@@ -1324,7 +1325,7 @@ public static class FineTuner
             throw gaveUp;                                                  // this rank left its step on its own, loudly
         }
 
-        sync?.End();                                                       // a sharded run's weights whole on every rank again
+        sharded?.End();                                                    // a sharded run's weights whole on every rank again
         network.Eval();
         if (outputFolder is not null)
         {
@@ -1446,6 +1447,7 @@ public static class FineTuner
     internal sealed class StepRunner(PretrainedModel model, IReadOnlyList<TrainingSequence> train, Optimizer optimizer, FineTuningOptions options,
         int lossRows, CustomLoss? custom, Action<string>? trace, long largest, int imageTokens, IGradientSync? sync = null) : IDisposable
     {
+        private readonly IShardedGradientSync? _sharded = sync as IShardedGradientSync;   // asked once: it makes the update
         private IReadOnlyList<double>? _tracedShares;
 
         /// <summary>
@@ -1516,7 +1518,7 @@ public static class FineTuner
         private readonly bool _graphsBase = options.CudaGraphs && options.GradientAccumulation <= 1
             && !ComputeResources.OffloadToHostMemory && !options.HostOptimizer
             && model.Device.Backend.SupportsGraphs
-            && Recordable(optimizer) && sync is not { Updates: true }   // a sharded update gathers and sends, which a recording cannot
+            && Recordable(optimizer) && sync is not IShardedGradientSync   // a sharded update gathers and sends, which a recording cannot
             && !model.Network.Descendants().Any(m => m is Dropout { Probability: > 0f } or MixtureOfExperts);   // a recorded pass would reuse dropout masks
 
         // Graphs for the token cross-entropy only: a loss of one's own runs ordinary steps.
@@ -1932,7 +1934,7 @@ public static class FineTuner
         private (float Loss, long Tokens) Ordinary(IReadOnlyList<Batch> group, (int, int, int) shape, CancellationToken cancellationToken, Func<int, string> label)
         {
             _seen[shape] = _seen.GetValueOrDefault(shape) + 1;
-            return RunStep(model, _train, group, optimizer, _options, Custom, cancellationToken, trace, label, sync, StepTotals);
+            return RunStep(model, _train, group, optimizer, _options, Custom, cancellationToken, trace, label, sync, _sharded, StepTotals);
         }
 
         // Whether another graph may be recorded: always the first; another while the device's free memory, measured now,
@@ -2027,7 +2029,7 @@ public static class FineTuner
 
     // Clipping and the optimizer's update, after the gradients of a step whose loss (read already) is finite; a NaN or
     // infinite loss drops the step's gradients instead, so one bad step leaves the parameters as they were.
-    private static void Update(PretrainedModel model, Optimizer optimizer, FineTuningOptions options, float loss, IGradientSync? sync = null)
+    private static void Update(PretrainedModel model, Optimizer optimizer, FineTuningOptions options, float loss, IShardedGradientSync? sharded = null)
     {
         if (!float.IsFinite(loss))
         {
@@ -2035,9 +2037,9 @@ public static class FineTuner
             return;
         }
 
-        if (sync is { Updates: true })
+        if (sharded is not null)
         {
-            sync.Update(options.MaxGradientNorm);                       // a sharded run: each rank steps its own share (plan 23, C6)
+            sharded.Update(options.MaxGradientNorm);                    // a sharded run: each rank steps its own share (plan 23, C6)
             return;
         }
 
@@ -2053,7 +2055,7 @@ public static class FineTuner
     // tokens for the token loss; a loss of one's own divides by the whole step's counts (stepTotals) and is summed.
     private static (float Loss, long Tokens) RunStep(PretrainedModel model, IReadOnlyList<TrainingSequence> train, IReadOnlyList<Batch> group, Optimizer optimizer,
         FineTuningOptions options, CustomLoss? custom, CancellationToken cancellationToken, Action<string>? trace, Func<int, string> label,
-        IGradientSync? sync = null, (float Tokens, int Sequences)? stepTotals = null)
+        IGradientSync? sync = null, IShardedGradientSync? sharded = null, (float Tokens, int Sequences)? stepTotals = null)
     {
         var network = model.Network;
         int trained = group.Sum(b => b.Sequences.Sum(i => train[i].TrainedTokens));
@@ -2105,7 +2107,7 @@ public static class FineTuner
             (loss, tokens) = ((float)reduced.Loss, (long)reduced.Tokens);
         }
 
-        Update(model, optimizer, options, loss, sync);
+        Update(model, optimizer, options, loss, sharded);
         return (loss, tokens);
     }
 

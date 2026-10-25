@@ -36,9 +36,9 @@ public sealed record EngineHosting
     public TimeSpan? Timeout { get; init; }
 }
 
-/// <summary>What a loaded model is (<see cref="EngineModel{TCopy}.Describe"/>).</summary>
+/// <summary>What a loaded model is (<see cref="IEngineModel{TCopy}.Describe"/>).</summary>
 /// <param name="Name">The model's name in the engine.</param>
-/// <param name="Kind">The model's kind (<see cref="EngineModel{TCopy}.Kind"/>: "predictor", "text", "chat", ...).</param>
+/// <param name="Kind">The model's kind (<see cref="IEngineModel{TCopy}.Kind"/>: "predictor", "text", "chat", ...).</param>
 /// <param name="Parameters">Trainable values in one copy.</param>
 /// <param name="Device">Where the copies run.</param>
 /// <param name="ContextLength">The context length (text and chat models), or null.</param>
@@ -48,8 +48,41 @@ public sealed record ModelDescription(string Name, string Kind, long Parameters,
 /// A kind of model the inference engine can host: predictors, text and chat models, and whatever a domain package adds
 /// (image generation, transcription, speech, ...). The engine owns the machinery (loading at start or on first use,
 /// several copies, queue limits, timeouts, keep-alive unloading, micro-batching, statistics and telemetry); a kind says
-/// how to load, describe and unload one copy (<typeparamref name="TCopy"/>) and answers its own requests with the
-/// copies the engine lends it through <see cref="Host"/>. A kind exposes its requests by implementing the contract
+/// how it is hosted, how to load, describe and unload one copy (<typeparamref name="TCopy"/>), and answers its own
+/// requests with the copies the engine lends it through the host it is attached to. <see cref="EngineModel{TCopy}"/> is
+/// the base that keeps the host and checks it is attached once. The engine disposes the model
+/// (<see cref="IAsyncDisposable.DisposeAsync"/>) before it unloads the copies.
+/// </summary>
+/// <typeparam name="TCopy">One loaded copy of the model (for example a text generator).</typeparam>
+public interface IEngineModel<TCopy> : IAsyncDisposable
+    where TCopy : class
+{
+    /// <summary>The kind's name ("predictor", "text", "chat", ...), as the engine's status reports it.</summary>
+    string Kind { get; }
+
+    /// <summary>How the engine hosts the copies.</summary>
+    EngineHosting Hosting { get; }
+
+    /// <summary>Connects the model to the engine that hosts it; the engine calls this once, when it is built.</summary>
+    /// <exception cref="InvalidOperationException">The model already belongs to an engine.</exception>
+    void Attach(IEngineHost<TCopy> host);
+
+    /// <summary>Loads one copy (the engine calls this on a thread-pool thread, once per copy, and again after an unload).</summary>
+    TCopy LoadCopy();
+
+    /// <summary>Frees one copy the engine unloads (a no-op for objects the application owns).</summary>
+    void UnloadCopy(TCopy copy);
+
+    /// <summary>Describes the model from its first loaded copy.</summary>
+    ModelDescription Describe(TCopy copy);
+}
+
+/// <summary>
+/// The base of a model kind the inference engine hosts (<see cref="IEngineModel{TCopy}"/>): it keeps the engine's host
+/// (<see cref="Host"/>), attached once. The engine owns the machinery (loading at start or on first use, several copies,
+/// queue limits, timeouts, keep-alive unloading, micro-batching, statistics and telemetry); a kind says how to load,
+/// describe and unload one copy (<typeparamref name="TCopy"/>) and answers its own requests with the copies the engine
+/// lends it through <see cref="Host"/>. A kind exposes its requests by implementing the contract
 /// callers ask the engine for (<see cref="IPredictor{TIn, TOut}"/>, <see cref="Generation.IChatModel"/>,
 /// <see cref="Generation.ITextModel"/>, ...): <c>engine.Model&lt;IChatModel&gt;("my-gpt")</c>.
 /// </summary>
@@ -74,7 +107,7 @@ public sealed record ModelDescription(string Name, string Kind, long Parameters,
 /// string said = await engine.Model&lt;EchoModel&gt;("echo").EchoAsync("hi");
 /// </code>
 /// </example>
-public abstract class EngineModel<TCopy> : IAsyncDisposable
+public abstract class EngineModel<TCopy> : IEngineModel<TCopy>
     where TCopy : class
 {
     private IEngineHost<TCopy>? _host;
@@ -143,7 +176,7 @@ public abstract class EngineModel<TCopy> : IAsyncDisposable
     }
 }
 
-/// <summary>What the inference engine gives a model it hosts (<see cref="EngineModel{TCopy}.Host"/>). Implemented by the engine.</summary>
+/// <summary>What the inference engine gives a model it hosts (<see cref="IEngineModel{TCopy}.Attach"/>, <see cref="EngineModel{TCopy}.Host"/>). Implemented by the engine.</summary>
 /// <typeparam name="TCopy">One loaded copy of the model.</typeparam>
 public interface IEngineHost<TCopy>
     where TCopy : class

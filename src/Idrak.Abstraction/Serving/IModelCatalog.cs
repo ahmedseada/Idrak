@@ -16,7 +16,7 @@ public interface IModelCatalog
     /// <summary>The names of the models.</summary>
     IReadOnlyCollection<string> Names { get; }
 
-    /// <summary>The kind of the model named <paramref name="name"/> (<see cref="EngineModel{TCopy}.Kind"/>: "predictor", "text", "chat", ...).</summary>
+    /// <summary>The kind of the model named <paramref name="name"/> (<see cref="IEngineModel{TCopy}.Kind"/>: "predictor", "text", "chat", ...).</summary>
     /// <exception cref="KeyNotFoundException">There is no such model.</exception>
     string KindOf(string name);
 

@@ -112,7 +112,7 @@ public static partial class Pretrainer
                 {
                     // This stage's entries alone are read from the checkpoint (plan 23, C8b).
                     string prefix = $"{PipelineKey}.{pipe.Stage}.";
-                    optimizer.LoadState(ReadOptimizerState(rs.Folder, name => name.StartsWith(prefix, StringComparison.Ordinal))
+                    optimizer.RequireState().LoadState(ReadOptimizerState(rs.Folder, name => name.StartsWith(prefix, StringComparison.Ordinal))
                         .ToDictionary(e => e.Key[prefix.Length..], e => e.Value, StringComparer.Ordinal));
                 }
 
@@ -417,13 +417,13 @@ public static partial class Pretrainer
                     SendBlock(pipe.Transport, owner, MemoryMarshal.AsBytes(tensor.ToArray().AsSpan()).ToArray(), GatherTag + 2);
                 }
 
-                SendBlock(pipe.Transport, owner, PackState(optimizer.SaveState()), GatherTag + 4);
+                SendBlock(pipe.Transport, owner, PackState(optimizer.RequireState().SaveState()), GatherTag + 4);
             }
             else
             {
                 var everything = model.Network.Parameters().Distinct(ReferenceEqualityComparer.Instance).Cast<Tensor>().ToList();
                 var state = new Dictionary<string, OptimizerStateValue>(StringComparer.Ordinal);
-                foreach (var (name, value) in optimizer.SaveState())
+                foreach (var (name, value) in optimizer.RequireState().SaveState())
                 {
                     state[$"{PipelineKey}.0.{name}"] = value;
                 }
@@ -473,7 +473,7 @@ public static partial class Pretrainer
                 mine[pipe.ParameterIndices[i]] = pipe.Parameters[i];
             }
 
-            StreamedCheckpoint.Serve(transport, writer, global => mine[global].ToArray(), optimizer.SaveState());
+            StreamedCheckpoint.Serve(transport, writer, global => mine[global].ToArray(), optimizer.RequireState().SaveState());
         }
         else if (pipe.Replica == 0)
         {
@@ -492,7 +492,7 @@ public static partial class Pretrainer
                 return holder == 0 ? stored.Tensor.ToArray() : StreamedCheckpoint.AskWeight(transport, pipe.Layout.RankOf(holder, 0), index);
             });
 
-            var own = optimizer.SaveState();
+            var own = optimizer.RequireState().SaveState();
             var tensors = own.Select(e => ($"{PipelineKey}.0.{e.Key}", e.Value.Shape, (Func<float[]>)(() => e.Value.Values))).ToList();
             for (int o = 0; o < owners.Count; o++)
             {

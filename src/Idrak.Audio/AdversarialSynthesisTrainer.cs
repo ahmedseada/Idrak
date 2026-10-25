@@ -99,7 +99,7 @@ public static class AdversarialSynthesisTrainer
     {
         private Module? _discriminators;
         private Optimizer? _optimizer;
-        private LearningRateScheduler? _schedule;
+        private ILearningRateScheduler? _schedule;
         private Dictionary<string, float>? _terms;
         private int _steppedAt = -1;
         private float _discriminatorLoss;
@@ -161,7 +161,7 @@ public static class AdversarialSynthesisTrainer
                     throw new FileNotFoundException($"{resume} holds no discriminator optimizer state ({DiscriminatorOptimizerFile}); it was not written by AdversarialSynthesisTrainer.", path);
                 }
 
-                _optimizer.LoadState(SpeechTrainer.ReadState(path));
+                _optimizer.RequireState().LoadState(SpeechTrainer.ReadState(path));
             }
 
             _schedule = LearningRateSchedules.Factory(run.Schedule, new LearningRateScheduleSettings(run.WarmupFraction, run.MinLearningRate))(_optimizer, run.Steps);

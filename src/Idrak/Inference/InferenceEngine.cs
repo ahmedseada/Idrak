@@ -11,7 +11,7 @@ public sealed class InferenceQueueFullException(string message) : InvalidOperati
 
 /// <summary>The state of one model in the engine.</summary>
 /// <param name="Name">The model's name.</param>
-/// <param name="Kind">The model's kind (<see cref="EngineModel{TCopy}.Kind"/>: "predictor", "text", "chat", ...).</param>
+/// <param name="Kind">The model's kind (<see cref="IEngineModel{TCopy}.Kind"/>: "predictor", "text", "chat", ...).</param>
 /// <param name="Loaded">Whether its copies are in memory.</param>
 /// <param name="Instances">How many copies are loaded when it is loaded.</param>
 /// <param name="Running">Requests being processed now.</param>
@@ -35,7 +35,7 @@ public sealed record EngineStats(long Requests, long Rejected, long Failed, Time
 /// <summary>
 /// Hosts named models of any kind and serves requests to them from any kind of .NET application: loading (at start or
 /// on first use), warm-up, several copies, micro-batching, queue limits, timeouts, keep-alive unloading, statistics and
-/// telemetry — each off unless set when the model is added. A kind (<see cref="EngineModel{TCopy}"/>) says how to load
+/// telemetry — each off unless set when the model is added. A kind (<see cref="IEngineModel{TCopy}"/>) says how to load
 /// one copy and answers its requests with the copies the engine lends it; callers reach a model through the contract
 /// its kind implements (<see cref="Model{T}"/>): predictors (<see cref="IPredictor{TIn, TOut}"/>, built in), text and
 /// chat models (<see cref="ITextModel"/>, <see cref="IChatModel"/>; Idrak.Text's <c>GenerativeModels</c>), and the kinds
@@ -224,7 +224,7 @@ public sealed class InferenceEngineBuilder
     /// Hosts <paramref name="model"/> (a model of any kind: a domain package's, or one of your own) as
     /// <paramref name="name"/>. A model object belongs to one engine.
     /// </summary>
-    public InferenceEngineBuilder Add<TCopy>(string name, EngineModel<TCopy> model)
+    public InferenceEngineBuilder Add<TCopy>(string name, IEngineModel<TCopy> model)
         where TCopy : class
     {
         ArgumentNullException.ThrowIfNull(model);

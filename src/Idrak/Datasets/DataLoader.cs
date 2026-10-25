@@ -21,7 +21,7 @@ namespace Idrak.Datasets;
 /// }
 /// </code>
 /// </example>
-public sealed class DataLoader : IBatchSource
+public sealed class DataLoader : IShardableBatchSource, IStepShares
 {
     /// <summary>Batches with at least this many floats are gathered on a background thread.</summary>
     private const int PrefetchThreshold = 16 * 1024;
@@ -129,6 +129,16 @@ public sealed class DataLoader : IBatchSource
     internal int? Seed { get; private init; }
 
     /// <inheritdoc />
+    bool IShardableBatchSource.Seeded => !Shuffle || Seed is not null;
+
+    /// <inheritdoc />
+    /// <remarks>A loader over a sample source; null for a stream.</remarks>
+    IStepShares? IShardableBatchSource.StepShares => Source is null ? null : this;
+
+    /// <inheritdoc />
+    IEnumerable<Batch?> IStepShares.Draw(int world, Func<(int Place, int Count)?> place) => StepShares(world, place);
+
+    /// <inheritdoc />
     public IEnumerator<Batch> GetEnumerator() => Enumerate(0, 1);
 
     /// <summary>
@@ -137,7 +147,7 @@ public sealed class DataLoader : IBatchSource
     /// k·world + rank, in batches of <see cref="BatchSize"/>. Batch k of every rank together are batch k of one process
     /// with batches world times as large.
     /// </summary>
-    internal IEnumerable<Batch> Shard(int rank, int world)
+    public IEnumerable<Batch> Shard(int rank, int world)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(rank);
         ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(rank, world);

@@ -14,18 +14,32 @@ namespace Idrak.Abstraction.Training;
 /// <param name="DecayFraction">The share of the steps a warm-up, stable, decay schedule decays over (from 0 to 1).</param>
 public sealed record LearningRateScheduleSettings(float WarmupFraction = 0.03f, float MinLearningRate = 0f, float DecayFraction = 0.2f);
 
+/// <summary>What a learning-rate schedule is made for (<see cref="ILearningRateSchedule.Create"/>).</summary>
+/// <param name="Optimizer">The optimizer it schedules; its current rate is the peak the schedule works from.</param>
+/// <param name="Steps">The run's number of optimizer steps (the scheduler is stepped once per step).</param>
+/// <param name="Settings">The warm-up, minimum and decay the schedule reads.</param>
+public sealed record LearningRateScheduleRequest(IOptimizer Optimizer, int Steps, LearningRateScheduleSettings Settings);
+
 /// <summary>
-/// A kind of learning-rate schedule, made by name: from <see cref="LearningRateScheduleSettings"/>, what makes the schedule
-/// of an optimizer over a run's number of optimizer steps (the form <c>FineTuningOptions.Scheduler</c> takes). The schedule
-/// is stepped once per optimizer step and works from the optimizer's own rate, its peak. Registered in
-/// <see cref="LearningRateSchedules"/> under its <see cref="IKind.Name"/> ("cosine", "wsd"). Thread-safe: one kind makes
-/// the schedules of several runs.
+/// A kind of learning-rate schedule, made by name: the scheduler of an optimizer over a run's number of optimizer steps,
+/// with <see cref="LearningRateScheduleSettings"/>. The scheduler is stepped once per optimizer step and works from the
+/// optimizer's own rate, its peak. Registered in <see cref="LearningRateSchedules"/> under its <see cref="IKind.Name"/>
+/// ("cosine", "wsd"). Thread-safe: one kind makes the schedulers of several runs.
 /// </summary>
 public interface ILearningRateSchedule : IKind
 {
-    /// <summary>What makes the schedule from the optimizer and the number of optimizer steps, with <paramref name="settings"/>.</summary>
-    /// <exception cref="ArgumentException">A setting the schedule cannot use (a decay share outside [0, 1], say), refused here, before a run starts.</exception>
-    Func<Optimizer, int, LearningRateScheduler> Create(LearningRateScheduleSettings settings);
+    /// <summary>
+    /// Refuses settings the schedule cannot use before a run starts (<see cref="LearningRateSchedules.Factory"/> asks it as
+    /// the schedule is chosen); nothing by default, for a schedule that takes any.
+    /// </summary>
+    /// <exception cref="ArgumentException">A setting the schedule cannot use (a decay share outside [0, 1], say).</exception>
+    void Check(LearningRateScheduleSettings settings)
+    {
+    }
+
+    /// <summary>The scheduler of the request's optimizer over its steps, with its settings; it sets the first step's rate.</summary>
+    /// <exception cref="ArgumentException">A setting the schedule cannot use.</exception>
+    ILearningRateScheduler Create(LearningRateScheduleRequest request);
 }
 
 /// <summary>
@@ -63,14 +77,12 @@ public static class LearningRateSchedules
         var table = new KindTable<ILearningRateSchedule>(nameof(LearningRateSchedules), "Learning-rate schedule", "add it with LearningRateSchedules.Register",
             comparer: StringComparer.OrdinalIgnoreCase,
             unguarded: "a schedule sets the optimizer's rate at every step of a run from where it is, so another cannot take over half-way");
-        table.RegisterDefault(new BuiltInSchedule(Cosine, "warm-up, then cosine decay to the minimum rate at the last step",
-            s => CosineDecay(s.WarmupFraction, s.MinLearningRate)));
-        table.RegisterDefault(new BuiltInSchedule(Linear, "warm-up, then linear decay to the minimum rate at the last step",
-            s => LinearDecay(s.WarmupFraction, s.MinLearningRate)));
-        table.RegisterDefault(new BuiltInSchedule(Constant, "warm-up, then the optimizer's rate unchanged", s => Unchanged(s.WarmupFraction)));
+        table.RegisterDefault(new BuiltInSchedule(Cosine, "warm-up, then cosine decay to the minimum rate at the last step", CosineDecay));
+        table.RegisterDefault(new BuiltInSchedule(Linear, "warm-up, then linear decay to the minimum rate at the last step", LinearDecay));
+        table.RegisterDefault(new BuiltInSchedule(Constant, "warm-up, then the optimizer's rate unchanged", Unchanged));
         table.RegisterDefault(new BuiltInSchedule(WarmupStableDecay,
             "warm-up, the optimizer's rate, then linear decay to the minimum over the last decay share of the steps (MiniCPM)",
-            s => StableThenDecay(s.WarmupFraction, s.DecayFraction, s.MinLearningRate)));
+            StableThenDecay, CheckDecay));
         return table;
     }
 
@@ -102,70 +114,81 @@ public static class LearningRateSchedules
 
     /// <summary>
     /// What makes the schedule <paramref name="name"/> with <paramref name="settings"/> (its defaults when null) from the
-    /// optimizer and the number of optimizer steps. For command lines and settings files.
+    /// optimizer and the number of optimizer steps. For command lines and settings files: the schedule is looked up and
+    /// the settings checked now, so a bad name or setting fails here, before a run starts.
     /// </summary>
     /// <exception cref="NotSupportedException">The schedule is not registered.</exception>
     /// <exception cref="ArgumentException">A setting the schedule cannot use.</exception>
-    public static Func<Optimizer, int, LearningRateScheduler> Factory(ReadOnlySpan<char> name, LearningRateScheduleSettings? settings = null)
+    public static Func<IOptimizer, int, ILearningRateScheduler> Factory(ReadOnlySpan<char> name, LearningRateScheduleSettings? settings = null)
     {
         var schedule = Get(name);
-        return schedule.Create(settings ?? new LearningRateScheduleSettings())
-            ?? throw new InvalidOperationException($"The learning-rate schedule '{schedule.Name}' made no factory.");
+        var chosen = settings ?? new LearningRateScheduleSettings();
+        schedule.Check(chosen);
+        return (optimizer, steps) => schedule.Create(new LearningRateScheduleRequest(optimizer, steps, chosen))
+            ?? throw new InvalidOperationException($"The learning-rate schedule '{schedule.Name}' made no scheduler.");
     }
 
-    // Warm-up, then cosine decay to minLearningRate at the last step.
-    private static Func<Optimizer, int, LearningRateScheduler> CosineDecay(float warmupFraction, float minLearningRate) =>
-        (optimizer, steps) => new CosineAnnealing(optimizer, Math.Max(1, steps), minLearningRate, Warmup(warmupFraction, steps));
+    // Warm-up, then cosine decay to the minimum rate at the last step.
+    private static LearningRateScheduler CosineDecay(LearningRateScheduleRequest r) =>
+        new CosineAnnealing(r.Optimizer, Math.Max(1, r.Steps), r.Settings.MinLearningRate, Warmup(r.Settings.WarmupFraction, r.Steps));
 
-    // Warm-up, then linear decay to minLearningRate at the last step.
-    private static Func<Optimizer, int, LearningRateScheduler> LinearDecay(float warmupFraction, float minLearningRate) =>
-        (optimizer, steps) =>
-        {
-            int warmup = Warmup(warmupFraction, steps);
-            return new LambdaSchedule(optimizer, (step, rate) => step < warmup ? rate * (step + 1) / (warmup + 1)
-                : rate + (minLearningRate - rate) * (float)Math.Min(1.0, (step - warmup) / (double)Math.Max(1, steps - warmup)));
-        };
+    // Warm-up, then linear decay to the minimum rate at the last step.
+    private static LearningRateScheduler LinearDecay(LearningRateScheduleRequest r)
+    {
+        int steps = r.Steps, warmup = Warmup(r.Settings.WarmupFraction, steps);
+        float minLearningRate = r.Settings.MinLearningRate;
+        return new LambdaSchedule(r.Optimizer, (step, rate) => step < warmup ? rate * (step + 1) / (warmup + 1)
+            : rate + (minLearningRate - rate) * (float)Math.Min(1.0, (step - warmup) / (double)Math.Max(1, steps - warmup)));
+    }
 
     // Warm-up, then the optimizer's rate unchanged.
-    private static Func<Optimizer, int, LearningRateScheduler> Unchanged(float warmupFraction) =>
-        (optimizer, steps) =>
-        {
-            int warmup = Warmup(warmupFraction, steps);
-            return new LambdaSchedule(optimizer, (step, rate) => step < warmup ? rate * (step + 1) / (warmup + 1) : rate);
-        };
-
-    // Warm-up, then the optimizer's rate until the last decayFraction of the steps, then linear decay to minLearningRate.
-    private static Func<Optimizer, int, LearningRateScheduler> StableThenDecay(float warmupFraction, float decayFraction, float minLearningRate)
+    private static LearningRateScheduler Unchanged(LearningRateScheduleRequest r)
     {
-        if (decayFraction is < 0f or > 1f)
-        {
-            throw new ArgumentOutOfRangeException(nameof(decayFraction), "The decay fraction is in [0, 1].");
-        }
+        int warmup = Warmup(r.Settings.WarmupFraction, r.Steps);
+        return new LambdaSchedule(r.Optimizer, (step, rate) => step < warmup ? rate * (step + 1) / (warmup + 1) : rate);
+    }
 
-        return (optimizer, steps) =>
+    // Warm-up, then the optimizer's rate until the last decay share of the steps, then linear decay to the minimum rate.
+    private static LearningRateScheduler StableThenDecay(LearningRateScheduleRequest r)
+    {
+        int steps = r.Steps, warmup = Warmup(r.Settings.WarmupFraction, steps);
+        float minLearningRate = r.Settings.MinLearningRate;
+        int decay = Math.Max(0, Math.Min(steps - warmup, (int)Math.Round(r.Settings.DecayFraction * steps)));
+        int stable = steps - decay;
+        return new LambdaSchedule(r.Optimizer, (step, rate) => step < warmup ? rate * (step + 1) / (warmup + 1)
+            : step < stable ? rate
+            : rate + (minLearningRate - rate) * (float)Math.Min(1.0, (step - stable + 1) / (double)Math.Max(1, decay)));
+    }
+
+    private static void CheckDecay(LearningRateScheduleSettings settings)
+    {
+        if (settings.DecayFraction is < 0f or > 1f)
         {
-            int warmup = Warmup(warmupFraction, steps);
-            int decay = Math.Max(0, Math.Min(steps - warmup, (int)Math.Round(decayFraction * steps)));
-            int stable = steps - decay;
-            return new LambdaSchedule(optimizer, (step, rate) => step < warmup ? rate * (step + 1) / (warmup + 1)
-                : step < stable ? rate
-                : rate + (minLearningRate - rate) * (float)Math.Min(1.0, (step - stable + 1) / (double)Math.Max(1, decay)));
-        };
+            throw new ArgumentOutOfRangeException(nameof(settings), settings.DecayFraction, "The decay fraction is in [0, 1].");
+        }
     }
 
     private static int Warmup(float fraction, int steps) => (int)Math.Round(fraction * steps);
 
-    private sealed class BuiltInSchedule(string name, string summary, Func<LearningRateScheduleSettings, Func<Optimizer, int, LearningRateScheduler>> create)
-        : ILearningRateSchedule
+    private sealed class BuiltInSchedule(string name, string summary, Func<LearningRateScheduleRequest, LearningRateScheduler> create,
+        Action<LearningRateScheduleSettings>? check = null) : ILearningRateSchedule
     {
         public string Name => name;
 
         public string Summary => summary;
 
-        public Func<Optimizer, int, LearningRateScheduler> Create(LearningRateScheduleSettings settings)
+        public void Check(LearningRateScheduleSettings settings)
         {
             ArgumentNullException.ThrowIfNull(settings);
-            return create(settings);
+            check?.Invoke(settings);
+        }
+
+        public ILearningRateScheduler Create(LearningRateScheduleRequest request)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(request.Optimizer);
+            Check(request.Settings);
+            return create(request);
         }
 
         public override string ToString() => name;

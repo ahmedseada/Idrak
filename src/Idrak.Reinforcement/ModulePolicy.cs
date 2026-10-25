@@ -501,7 +501,7 @@ public sealed class ModulePolicy<TAction> : IPolicy<float[], TAction>, ISchedule
         _critic?.Save(Path.Combine(path, CriticFile));
         _spread?.Save(Path.Combine(path, SpreadFile));
         _reference?.Save(Path.Combine(path, ReferenceFile));
-        var state = Optimizer.SaveState();
+        var state = Optimizer.RequireState().SaveState();
         SafeTensorsWriter.Write(Path.Combine(path, OptimizerFile), state.Select(e => (e.Key, e.Value.Shape, e.Value.Values)), SafeTensorType.F32,
             new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = Optimizer.GetType().Name });
         File.WriteAllText(Path.Combine(path, StateFile), new JsonObject
@@ -547,7 +547,7 @@ public sealed class ModulePolicy<TAction> : IPolicy<float[], TAction>, ISchedule
 
         using var reader = SafeTensorsReader.Open(Path.Combine(path, OptimizerFile));
         ITensorStore store = reader;
-        Optimizer.LoadState(store.Names.ToDictionary(n => n, n => new OptimizerStateValue(store.ShapeOf(n), store.Read(n)), StringComparer.Ordinal));
+        Optimizer.RequireState().LoadState(store.Names.ToDictionary(n => n, n => new OptimizerStateValue(store.ShapeOf(n), store.Read(n)), StringComparer.Ordinal));
     }
 
     /// <summary>Disposes the optimizer and the weights (the actor's, the critic's, the reference's).</summary>

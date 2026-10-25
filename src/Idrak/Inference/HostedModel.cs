@@ -7,7 +7,7 @@ using System.Threading.Channels;
 namespace Idrak.Inference;
 
 /// <summary>
-/// The engine's side of one model of any kind (an <see cref="EngineModel{TCopy}"/>): loading, copies, queueing,
+/// The engine's side of one model of any kind (an <see cref="IEngineModel{TCopy}"/>): loading, copies, queueing,
 /// timeouts, keep-alive, micro-batching, statistics and telemetry. Copies are held as objects; the kind sees them typed
 /// through its <see cref="IEngineHost{TCopy}"/> and <see cref="IEngineLease{TCopy}"/>.
 /// </summary>
@@ -48,7 +48,7 @@ internal sealed class HostedModel : IAsyncDisposable
     }
 
     /// <summary>Hosts <paramref name="model"/> as <paramref name="name"/> and connects the model to its host.</summary>
-    public static HostedModel Create<TCopy>(string name, EngineModel<TCopy> model, EngineOptions options)
+    public static HostedModel Create<TCopy>(string name, IEngineModel<TCopy> model, EngineOptions options)
         where TCopy : class
     {
         var hosted = new HostedModel(name, model, model.Kind, model.Hosting, options, model.LoadCopy, copy => model.UnloadCopy((TCopy)copy),
@@ -71,7 +71,7 @@ internal sealed class HostedModel : IAsyncDisposable
 
     public string Name { get; }
 
-    /// <summary>The kind's object (the <see cref="EngineModel{TCopy}"/>), which callers reach through the contracts it implements.</summary>
+    /// <summary>The kind's object (the <see cref="IEngineModel{TCopy}"/>), which callers reach through the contracts it implements.</summary>
     public object Model { get; }
 
     public string Kind { get; }

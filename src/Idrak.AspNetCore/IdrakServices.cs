@@ -67,7 +67,7 @@ public sealed class IdrakBuilder
     /// A model of any kind (<see cref="InferenceEngineBuilder.Add{TCopy}"/>), made by <paramref name="create"/> when the
     /// host starts, with services.
     /// </summary>
-    public IdrakBuilder Add<TCopy>(string name, Func<IServiceProvider, EngineModel<TCopy>> create)
+    public IdrakBuilder Add<TCopy>(string name, Func<IServiceProvider, IEngineModel<TCopy>> create)
         where TCopy : class =>
         Step((services, engine) => engine.Add(name, create(services)));
 

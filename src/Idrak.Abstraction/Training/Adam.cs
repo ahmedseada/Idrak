@@ -11,10 +11,13 @@ namespace Idrak.Abstraction.Training;
 /// </summary>
 /// <remarks>
 /// <paramref name="weightDecay"/> adds an L2 penalty to the gradients (classic Adam). For decoupled weight
-/// decay, which usually generalizes better, use <see cref="AdamW"/>.
+/// decay, which usually generalizes better, use <see cref="AdamW"/>. The update is Adam's own (<see cref="Step"/> is
+/// sealed; a subclass chooses only <see cref="DecoupledWeightDecay"/>), so <see cref="ClipAndStep"/>'s fused version,
+/// the same update in a few device passes, holds for every subclass; an optimizer with another update derives from
+/// <see cref="Optimizer"/>.
 /// </remarks>
 public class Adam(IEnumerable<Tensor> parameters, float learningRate = 0.001f, float beta1 = 0.9f, float beta2 = 0.999f, float epsilon = 1e-8f, float weightDecay = 0f)
-    : Optimizer(parameters, learningRate)
+    : Optimizer(parameters, learningRate), IStatefulOptimizer
 {
     /// <summary>Weight decay factor λ.</summary>
     public float WeightDecay { get; } = weightDecay;
@@ -37,7 +40,7 @@ public class Adam(IEnumerable<Tensor> parameters, float learningRate = 0.001f, f
     public float Epsilon { get; } = epsilon;
 
     /// <inheritdoc />
-    public override void Step()
+    public sealed override void Step()
     {
         _step++;
         _m ??= new Tensor?[Parameters.Count];
@@ -77,7 +80,7 @@ public class Adam(IEnumerable<Tensor> parameters, float learningRate = 0.001f, f
     public override void ClipAndStep(float maxNorm)
     {
         var withGrad = Enumerable.Range(0, Parameters.Count).Where(i => Parameters[i].Grad is not null).ToList();
-        bool fusable = (GetType() == typeof(Adam) || GetType() == typeof(AdamW)) && (WeightDecay == 0f || DecoupledWeightDecay) && withGrad.Count > 0
+        bool fusable = (WeightDecay == 0f || DecoupledWeightDecay) && withGrad.Count > 0
                        && withGrad.All(i => Parameters[i].Device == Parameters[withGrad[0]].Device);
         if (!fusable)
         {
@@ -110,7 +113,7 @@ public class Adam(IEnumerable<Tensor> parameters, float learningRate = 0.001f, f
     }
 
     /// <inheritdoc />
-    public override IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
+    public IReadOnlyDictionary<string, OptimizerStateValue> SaveState()
     {
         var state = new Dictionary<string, OptimizerStateValue>(StringComparer.Ordinal) { ["step"] = StateOf(_step) };
         for (int i = 0; i < Parameters.Count; i++)
@@ -126,7 +129,7 @@ public class Adam(IEnumerable<Tensor> parameters, float learningRate = 0.001f, f
     }
 
     /// <inheritdoc />
-    public override void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
+    public void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state)
     {
         ArgumentNullException.ThrowIfNull(state);
         _fused?.Dispose();                                                   // it holds the old moments' buffers

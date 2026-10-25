@@ -11,9 +11,11 @@ namespace Idrak.Abstraction;
 
 /// <summary>
 /// Base class for network building blocks. A module maps an input tensor to an output tensor
-/// and owns the trainable parameters it uses.
+/// and owns the trainable parameters it uses (<see cref="ITensorOwner"/>): a container's are its children's; a leaf that
+/// holds tensors overrides <see cref="Parameters"/>, <see cref="Buffers"/> and <see cref="MoveTo"/> for them (and
+/// <see cref="Dispose"/> when it holds others), so all of them see the same tensors.
 /// </summary>
-public abstract class Module : IDisposable
+public abstract class Module : ITensorOwner
 {
     /// <summary>An optional name shown in summaries and telemetry.</summary>
     public string? Name { get; set; }
@@ -216,6 +218,8 @@ public abstract class Module : IDisposable
             child.MoveTo(device);
         }
     }
+
+    void ITensorOwner.MoveTo(Device device) => MoveTo(device);
 
     /// <summary>Releases the device memory held by the parameters.</summary>
     public virtual void Dispose()

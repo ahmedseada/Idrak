@@ -117,78 +117,75 @@ public interface IGradientSync : IDisposable
 
     /// <summary>Returns once every rank has called it (after rank 0 wrote a checkpoint, say).</summary>
     void Barrier();
+}
 
+/// <summary>
+/// A gradient synchronisation that makes the optimizer's update itself (plan 23, phase C6: a sharded run, where each rank
+/// owns a share of the trained parameters, updates those and keeps their optimizer state, and the weights travel
+/// afterwards). The trainers ask <c>sync is IShardedGradientSync</c> once, when the run starts, and then call
+/// <see cref="Update"/> after <see cref="IGradientSync.Reduce"/> in place of the optimizer's own clipping and step, gather
+/// the weights for what reads them whole, and join or split the optimizer's state for checkpoints; a synchronisation that
+/// is not one leaves all of it to the optimizer, as in one process.
+/// </summary>
+public interface IShardedGradientSync : IGradientSync
+{
     /// <summary>
-    /// Whether the synchronisation makes the optimizer's update itself (plan 23, phase C6: a sharded run, where each rank
-    /// updates the parameters it owns and the weights travel afterwards): the trainers call <see cref="Update"/> after
-    /// <see cref="Reduce"/> in place of the optimizer's own clipping and step. False (the default): the trainers update as
-    /// in one process.
-    /// </summary>
-    bool Updates => false;
-
-    /// <summary>
-    /// With <see cref="Updates"/>: clips the step's gradients to the global norm <paramref name="maxNorm"/> over every rank
-    /// (0: no clipping), updates this rank's parameters and brings every rank's weights up to date, as the optimizer's own
-    /// step would on the whole step's gradients. Every rank calls it once per step it took part in, after
-    /// <see cref="Reduce"/>; afterwards no rank holds gradients.
+    /// Clips the step's gradients to the global norm <paramref name="maxNorm"/> over every rank (0: no clipping), updates
+    /// this rank's parameters and brings every rank's weights up to date, as the optimizer's own step would on the whole
+    /// step's gradients. Every rank calls it once per step it took part in, after <see cref="IGradientSync.Reduce"/>;
+    /// afterwards no rank holds gradients.
     /// </summary>
     /// <param name="maxNorm">The largest global norm of the gradients, or 0 for no clipping.</param>
     /// <param name="readNorm">Whether the norm is wanted (for telemetry) when it is not clipped to.</param>
     /// <returns>The gradients' global norm before clipping when it was computed, else null.</returns>
-    /// <exception cref="NotSupportedException">The synchronisation does not update (<see cref="Updates"/> is false).</exception>
-    double? Update(float maxNorm, bool readNorm = false) =>
-        throw new NotSupportedException($"The {Name} synchronisation leaves the update to the optimizer (Updates is false).");
+    double? Update(float maxNorm, bool readNorm = false);
 
     /// <summary>
-    /// Gives every rank the whole weights until the returned scope is disposed (plan 23, phase C6: a run with
-    /// <see cref="ClusterOptions.Shard"/> = parameters, where each rank holds only its share between uses): for an
-    /// evaluation, a checkpoint, a copy of the best weights. What every rank writes into the weights meanwhile is kept. Every
-    /// rank calls it at the same point (it is a collective); null (the default) when every rank holds the whole weights anyway.
+    /// Gives every rank the whole weights until the returned scope is disposed (a run with <see cref="ClusterOptions.Shard"/>
+    /// = parameters, where each rank holds only its share between uses): for an evaluation, a checkpoint, a copy of the best
+    /// weights. What every rank writes into the weights meanwhile is kept. Every rank calls it at the same point (it is a
+    /// collective); null when every rank holds the whole weights anyway.
     /// </summary>
-    IDisposable? Gather() => null;
+    IDisposable? Gather();
 
     /// <summary>
-    /// The optimizer's whole state for a checkpoint (plan 23, phase C6): in a sharded run each rank holds the state of its
-    /// share, and every rank's are joined (every rank calls it at the same point: it is a collective); null (the default)
-    /// when each rank's optimizer holds the whole state (take <see cref="Optimizer.SaveState"/>).
+    /// The optimizer's whole state for a checkpoint: each rank holds the state of its share, and every rank's are joined
+    /// (every rank calls it at the same point: it is a collective); null when the optimizer keeps no state.
     /// </summary>
-    IReadOnlyDictionary<string, OptimizerStateValue>? SaveOptimizerState() => null;
+    IReadOnlyDictionary<string, OptimizerStateValue>? SaveOptimizerState();
 
     /// <summary>
-    /// The rank that alone holds <paramref name="parameter"/>'s trained state (plan 23, C8b: a sharded run's owner), or null
-    /// when every rank holds it (the default, and every parameter a synchronisation does not train). A checkpoint streamed to
-    /// rank 0 takes each parameter from its owner (<see cref="Local"/>, <see cref="SaveOwnOptimizerState"/>).
+    /// The rank that alone holds <paramref name="parameter"/>'s trained state (plan 23, C8b: its owner), or null when every
+    /// rank holds it (a parameter the synchronisation does not train, or before the owners are known). A checkpoint
+    /// streamed to rank 0 takes each parameter from its owner (<see cref="Local"/>, <see cref="SaveOwnOptimizerState"/>).
     /// </summary>
-    int? Owner(Tensor parameter) => null;
+    int? Owner(Tensor parameter);
 
     /// <summary>
     /// The parameters this rank owns (<see cref="Owner"/>) in memory with their trained values until the returned scope is
     /// disposed, without a collective (plan 23, C8b: a parameters shard gives them back between uses); null when they are in
-    /// memory anyway (the default).
+    /// memory anyway.
     /// </summary>
-    IDisposable? Local() => null;
+    IDisposable? Local();
 
     /// <summary>
     /// This rank's own entries of the optimizer's state, no collective (plan 23, C8b): its own parameters' moments, and on
     /// rank 0 the optimizer's own entries (its step count), so a checkpoint streamed to rank 0 joins every rank's at rank 0
-    /// one entry at a time; null (the default) when the synchronisation does not shard the state (every rank holds it whole).
+    /// one entry at a time; null when the optimizer keeps no state.
     /// </summary>
-    IReadOnlyDictionary<string, OptimizerStateValue>? SaveOwnOptimizerState() => null;
+    IReadOnlyDictionary<string, OptimizerStateValue>? SaveOwnOptimizerState();
 
     /// <summary>
     /// Takes a checkpoint's whole optimizer state (<see cref="SaveOptimizerState"/>, or one process's) for a resumed run:
-    /// a sharded run keeps each rank's share of it. False (the default): load it into the optimizer as in one process.
+    /// each rank keeps its share of it. False when the synchronisation leaves it to the optimizer.
     /// </summary>
-    bool LoadOptimizerState(IReadOnlyDictionary<string, OptimizerStateValue> state) => false;
+    bool LoadOptimizerState(IReadOnlyDictionary<string, OptimizerStateValue> state);
 
     /// <summary>
     /// Ends a run that finished on every rank (each calls it once, after its last step): a run that kept each rank's share
-    /// of the weights only gives every rank the whole trained weights again, so the model is whole afterwards. Nothing by
-    /// default.
+    /// of the weights only gives every rank the whole trained weights again, so the model is whole afterwards.
     /// </summary>
-    void End()
-    {
-    }
+    void End();
 }
 
 /// <summary>One kind of gradient synchronisation, registered by name in <see cref="GradientSyncs"/>.</summary>
@@ -200,7 +197,10 @@ public interface IGradientSyncProvider
     /// <summary>One line for listings.</summary>
     string Summary { get; }
 
-    /// <summary>The synchronisation of <paramref name="optimizer"/>'s parameters over <paramref name="collectives"/>.</summary>
+    /// <summary>
+    /// The synchronisation of <paramref name="optimizer"/>'s parameters over <paramref name="collectives"/>: an
+    /// <see cref="IShardedGradientSync"/> when it makes the update itself.
+    /// </summary>
     IGradientSync Create(ICollectives collectives, Optimizer optimizer, ClusterOptions options);
 }
 

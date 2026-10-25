@@ -137,7 +137,7 @@ int rerankEpochs = options.Epochs ?? 6;
 var rerankRun = new TrainingRun
 {
     Model = groupModel,
-    Loss = (logits, targets) => Losses.CrossEntropy(logits, targets),
+    Loss = Loss.CrossEntropy,
     Optimizer = p => new AdamW(p, learningRate: 0.002f, weightDecay: 0.01f),
     Scheduler = o => new CosineAnnealing(o, rerankEpochs, minLearningRate: 1e-4f, warmupEpochs: 1),
     Train = new DataLoader(groupTrain, options.BatchSize ?? 32, shuffle: true, device: device, seed: 8),
@@ -179,7 +179,7 @@ int chatEpochs = options.Epochs ?? 8;
 var chatRun = new TrainingRun
 {
     Model = generator,
-    Loss = (logits, next) => ReplyLoss(logits, next, replyTokens),
+    Loss = new Loss((logits, next) => ReplyLoss(logits, next, replyTokens)),
     Optimizer = p => new AdamW(p, learningRate: 0.002f, weightDecay: 0.01f),
     Scheduler = o => new CosineAnnealing(o, chatEpochs, minLearningRate: 1e-4f, warmupEpochs: 1),
     Train = new DataLoader(chatTrain, options.BatchSize ?? 32, shuffle: true, device: device, seed: 11),

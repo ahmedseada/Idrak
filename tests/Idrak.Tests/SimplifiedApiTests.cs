@@ -173,7 +173,7 @@ internal static partial class Tests
         using var model = Network.Input(3).OnDevice(device).Seed(1).Linear(3).Build();
         var run = new TrainingRun
         {
-            Model = model, Loss = Losses.CrossEntropy, Optimizer = p => new Sgd(p, 0.1f),
+            Model = model, Loss = Loss.CrossEntropy, Optimizer = p => new Sgd(p, 0.1f),
             Train = Dataset.FromFlat([1f, 0f, 0f, 0f, 1f, 0f], [1f, 0f, 0f, 0f, 1f, 0f], 2, ["a", "b", "c"], ["x", "y", "z"]).Batches(2, device: device),
             Epochs = 2,
         };
@@ -353,7 +353,7 @@ internal static partial class Tests
         var history = new TrainingRun
         {
             Model = model,
-            Loss = Losses.MeanSquaredError,
+            Loss = Loss.MeanSquaredError,
             Optimizer = p => new AdamW(p, 0.01f, weightDecay: 1e-4f),
             Scheduler = o => new CosineAnnealing(o, 6, warmupEpochs: 1),
             Train = split.Train.Batches(16, shuffle: true, device: device, seed: 5),
@@ -385,7 +385,7 @@ internal static partial class Tests
         using var model = BuiltMlpFor3(device);
         var run = new TrainingRun
         {
-            Model = model, Loss = Losses.MeanSquaredError, Optimizer = p => new Adam(p, 0.01f),
+            Model = model, Loss = Loss.MeanSquaredError, Optimizer = p => new Adam(p, 0.01f),
             Train = split.Train.Batches(16, device: device), Epochs = 5,
         };
         var seen = new List<int>();
@@ -501,7 +501,7 @@ internal static partial class Tests
             Check(session.HookCount == 3 && Telemetry.IsEnabled(TelemetryLevel.Training), "subscribed");
             var split = SmallRegression(64, 2).Split(0.75, seed: 1).StandardizeFeatures().StandardizeTargets();
             using var model = BuiltMlpFor3(device);
-            new TrainingRun { Model = model, Loss = Losses.MeanSquaredError, Optimizer = p => new Adam(p, 0.01f),
+            new TrainingRun { Model = model, Loss = Loss.MeanSquaredError, Optimizer = p => new Adam(p, 0.01f),
                 Train = split.Train.Batches(16, device: device), Epochs = 3 }.Fit();
         }
 
@@ -519,7 +519,7 @@ internal static partial class Tests
     {
         var split = SmallRegression(200, 7).Split(0.8, seed: 1).StandardizeFeatures().StandardizeTargets();
         using var model = BuiltMlpFor3(device);
-        new TrainingRun { Model = model, Loss = Losses.MeanSquaredError, Optimizer = p => new Adam(p, 0.01f),
+        new TrainingRun { Model = model, Loss = Loss.MeanSquaredError, Optimizer = p => new Adam(p, 0.01f),
             Train = split.Train.Batches(16, device: device), Epochs = 5 }.Fit();
 
         float[,] raw = { { 1, 6, 11 }, { 9, 12, 17 }, { 4, 8, 13 } };
@@ -769,7 +769,7 @@ internal static partial class Tests
     {
         var split = SmallRegression(200, 7).Split(0.8, seed: 1).StandardizeFeatures().StandardizeTargets();
         using var model = BuiltMlpFor3(device);
-        new TrainingRun { Model = model, Loss = Losses.MeanSquaredError, Optimizer = p => new Adam(p, 0.01f),
+        new TrainingRun { Model = model, Loss = Loss.MeanSquaredError, Optimizer = p => new Adam(p, 0.01f),
             Train = split.Train.Batches(16, device: device), Epochs = 3 }.Fit();
         var direct = DirectPredictor(model, split);
         var points = Enumerable.Range(0, 37).Select(i => new Point(i % 10, i % 7 + 5, i % 5 + 10)).ToList();

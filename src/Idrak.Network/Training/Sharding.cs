@@ -16,8 +16,15 @@ internal sealed class ShardedSyncProvider : IGradientSyncProvider
     public string Summary => "each rank owns a share of the trained parameters: their gradients reduce-scattered to it, their optimizer state kept there, "
                              + "the weights gathered (IDRAK_CLUSTER_SHARD: optimizer, gradients, parameters)";
 
-    public IGradientSync Create(ICollectives collectives, Optimizer optimizer, ClusterOptions options) => new GradientReduction(collectives, optimizer, options, sharded: true);
+    public IGradientSync Create(ICollectives collectives, Optimizer optimizer, ClusterOptions options) => new ShardedGradientReduction(collectives, optimizer, options);
 }
+
+/// <summary>
+/// The sharded synchronisation: <see cref="GradientReduction"/> made sharded, whose update, gather and optimizer-state
+/// members (Sharding.cs) are <see cref="IShardedGradientSync"/>'s.
+/// </summary>
+internal sealed class ShardedGradientReduction(ICollectives collectives, Optimizer optimizer, ClusterOptions options)
+    : GradientReduction(collectives, optimizer, options, sharded: true), IShardedGradientSync;
 
 /// <summary>
 /// Which rank owns each trained parameter in a sharded run (plan 23, phase C6): the largest first, each to the rank that
@@ -67,10 +74,10 @@ internal static class ShardOwners
 /// no weights travel after the update.</item>
 /// </list>
 /// A group that changes (a late joiner) moves each share to its new owner: the weights and each parameter's optimizer
-/// entries (<see cref="Optimizer.StateParameter"/>) from the rank that held them. A checkpoint joins every rank's share
+/// entries (<see cref="IStatefulOptimizer.StateParameter"/>) from the rank that held them. A checkpoint joins every rank's share
 /// (<see cref="SaveOptimizerState"/>), and a resumed run keeps its own (<see cref="LoadOptimizerState"/>).
 /// </summary>
-internal sealed partial class GradientReduction
+internal partial class GradientReduction
 {
     private readonly ShardMode _mode;
     private readonly WireType _wire;
@@ -90,8 +97,6 @@ internal sealed partial class GradientReduction
 
     /// <summary>The values of the parameters this rank owns.</summary>
     internal long OwnedValues => _owners is null ? 0 : Enumerable.Range(0, Parameters.Count).Where(i => _owners[i] == Collectives.Rank).Sum(i => (long)Parameters[i].Size);
-
-    public override bool Updates => _mode != ShardMode.None;
 
     private WireType CheckSharded(ClusterOptions options)
     {
@@ -221,11 +226,11 @@ internal sealed partial class GradientReduction
         }
     }
 
-    public override double? Update(float maxNorm, bool readNorm = false)
+    public double? Update(float maxNorm, bool readNorm = false)
     {
         if (_mode == ShardMode.None)
         {
-            return base.Update(maxNorm, readNorm);
+            throw new NotSupportedException($"The {Name} synchronisation leaves the update to the optimizer.");
         }
 
         if (!Present)
@@ -334,7 +339,7 @@ internal sealed partial class GradientReduction
 
     public override IDisposable? Gather() => _weights is { } weights && Present ? weights.Gather() : null;
 
-    public override void End()
+    public void End()
     {
         if (_weights is { } weights && Present)
         {
@@ -344,7 +349,7 @@ internal sealed partial class GradientReduction
         }
     }
 
-    public override IReadOnlyDictionary<string, OptimizerStateValue>? SaveOptimizerState()
+    public IReadOnlyDictionary<string, OptimizerStateValue>? SaveOptimizerState()
     {
         if (_mode == ShardMode.None)
         {
@@ -362,7 +367,7 @@ internal sealed partial class GradientReduction
         }
 
         int rank = Collectives.Rank;
-        var own = mine.Where(e => Optimizer.StateParameter(e.Key) is { } i ? _owners[i] == rank : rank == 0).ToDictionary(e => e.Key, e => e.Value, StringComparer.Ordinal);
+        var own = mine.Where(e => State!.StateParameter(e.Key) is { } i ? _owners[i] == rank : rank == 0).ToDictionary(e => e.Key, e => e.Value, StringComparer.Ordinal);
         var merged = new Dictionary<string, OptimizerStateValue>(StringComparer.Ordinal);
         for (int r = 0; r < World; r++)
         {
@@ -376,7 +381,7 @@ internal sealed partial class GradientReduction
     }
 
     // The rank owning `parameter` (C8b: a checkpoint streamed to rank 0 takes it from there), or null: every rank holds it.
-    public override int? Owner(Tensor parameter)
+    public int? Owner(Tensor parameter)
     {
         ArgumentNullException.ThrowIfNull(parameter);
         if (_mode == ShardMode.None || _owners is not { } owners || !Present)
@@ -395,10 +400,10 @@ internal sealed partial class GradientReduction
         return null;
     }
 
-    public override IDisposable? Local() => _weights is { } weights && Present ? weights.Local() : null;
+    public IDisposable? Local() => _weights is { } weights && Present ? weights.Local() : null;
 
     // This rank's own entries (C8b): its parameters' and, on rank 0, the optimizer's own; no collective.
-    public override IReadOnlyDictionary<string, OptimizerStateValue>? SaveOwnOptimizerState()
+    public IReadOnlyDictionary<string, OptimizerStateValue>? SaveOwnOptimizerState()
     {
         if (_mode == ShardMode.None)
         {
@@ -418,11 +423,11 @@ internal sealed partial class GradientReduction
         }
 
         // In name order, as the joined state takes each rank's (OptimizerState), so a streamed checkpoint is the joined one.
-        return mine.Where(e => Optimizer.StateParameter(e.Key) is { } i ? _owners[i] == rank : rank == 0).OrderBy(e => e.Key, StringComparer.Ordinal)
+        return mine.Where(e => State!.StateParameter(e.Key) is { } i ? _owners[i] == rank : rank == 0).OrderBy(e => e.Key, StringComparer.Ordinal)
             .ToDictionary(e => e.Key, e => e.Value, StringComparer.Ordinal);
     }
 
-    public override bool LoadOptimizerState(IReadOnlyDictionary<string, OptimizerStateValue> state)
+    public bool LoadOptimizerState(IReadOnlyDictionary<string, OptimizerStateValue> state)
     {
         ArgumentNullException.ThrowIfNull(state);
         if (_mode == ShardMode.None)
@@ -448,21 +453,13 @@ internal sealed partial class GradientReduction
         }
 
         int rank = Collectives.Rank;
-        Optimizer.LoadState(state.Where(e => Optimizer.StateParameter(e.Key) is not { } i || owners[i] == rank).ToDictionary(e => e.Key, e => e.Value, StringComparer.Ordinal));
+        var optimizer = Optimizer.RequireState();
+        optimizer.LoadState(state.Where(e => optimizer.StateParameter(e.Key) is not { } i || owners[i] == rank).ToDictionary(e => e.Key, e => e.Value, StringComparer.Ordinal));
         _pendingState = null;
     }
 
-    private IReadOnlyDictionary<string, OptimizerStateValue>? TrySaveState()
-    {
-        try
-        {
-            return Optimizer.SaveState();
-        }
-        catch (NotSupportedException)
-        {
-            return null;                                           // an optimizer that cannot save keeps its state where it is
-        }
-    }
+    // The optimizer's state, or null when it keeps none (it keeps nothing to move or join).
+    private IReadOnlyDictionary<string, OptimizerStateValue>? TrySaveState() => State?.SaveState();
 
     // Rank `root`'s entries (given there, null elsewhere) on every rank: their length, then their values.
     private Dictionary<string, OptimizerStateValue> BroadcastState(IReadOnlyDictionary<string, OptimizerStateValue>? entries, int root)
@@ -541,8 +538,8 @@ internal sealed partial class GradientReduction
         // The optimizer's state: its own entries (the step count) from the holder, each moving parameter's from its old owner.
         if (TrySaveState() is { } mine)                           // every rank's optimizer is of one kind: all save, or none does
         {
-            var kept = mine.Where(e => Optimizer.StateParameter(e.Key) is { } i && from[i] == rank && newOwners[i] == rank).ToDictionary(e => e.Key, e => e.Value, StringComparer.Ordinal);
-            foreach (var (name, value) in BroadcastState(rank == holder ? mine.Where(e => Optimizer.StateParameter(e.Key) is null).ToDictionary() : null, holder))
+            var kept = mine.Where(e => State!.StateParameter(e.Key) is { } i && from[i] == rank && newOwners[i] == rank).ToDictionary(e => e.Key, e => e.Value, StringComparer.Ordinal);
+            foreach (var (name, value) in BroadcastState(rank == holder ? mine.Where(e => State!.StateParameter(e.Key) is null).ToDictionary() : null, holder))
             {
                 kept[name] = value;
             }
@@ -554,7 +551,7 @@ internal sealed partial class GradientReduction
                     continue;
                 }
 
-                var moved = BroadcastState(rank == from[i] ? mine.Where(e => Optimizer.StateParameter(e.Key) == i).ToDictionary() : null, from[i]);
+                var moved = BroadcastState(rank == from[i] ? mine.Where(e => State!.StateParameter(e.Key) == i).ToDictionary() : null, from[i]);
                 if (newOwners[i] == rank)
                 {
                     foreach (var (name, value) in moved)
@@ -566,7 +563,7 @@ internal sealed partial class GradientReduction
 
             if (kept.Count > 0 || mine.Count > 0)
             {
-                Optimizer.LoadState(kept);
+                State!.LoadState(kept);
             }
         }
 

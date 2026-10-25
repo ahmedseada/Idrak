@@ -5,9 +5,83 @@ using Idrak.Abstraction.Devices;
 
 namespace Idrak.Abstraction.Training;
 
-/// <summary>Updates parameters from their gradients. Call <see cref="ZeroGrad"/>, then <c>loss.Backward()</c>, then <see cref="Step"/>.</summary>
-public abstract class Optimizer : IDisposable
+/// <summary>
+/// What updates parameters from their gradients: the tensors it updates, its rate and its step. Trainers, schedules and
+/// gradient synchronisations work through it; <see cref="Optimizer"/> is the base the library's optimizers derive from
+/// (clipping, weight decay and the state helpers). Call <see cref="ZeroGrad"/>, then <c>loss.Backward()</c>, then
+/// <see cref="Step"/>.
+/// </summary>
+public interface IOptimizer : IDisposable
 {
+    /// <summary>The tensors this optimizer updates, in the order its state is saved.</summary>
+    IReadOnlyList<Tensor> Parameters { get; }
+
+    /// <summary>Step size; can be changed between steps (e.g. by a schedule).</summary>
+    float LearningRate { get; set; }
+
+    /// <summary>Resets every parameter's gradient to zero.</summary>
+    void ZeroGrad();
+
+    /// <summary>Applies one update using the current gradients.</summary>
+    void Step();
+
+    /// <summary>
+    /// Clips the gradients' global norm to <paramref name="maxNorm"/> (0: no clipping) and applies one update; the
+    /// gradients are not to be read after it (an optimizer may leave them zeroed for the next step).
+    /// </summary>
+    void ClipAndStep(float maxNorm);
+}
+
+/// <summary>
+/// An optimizer that keeps state across steps (moments, a step count) and can save it for a checkpoint and restore it, so
+/// a resumed run goes on where it stopped. An optimizer that keeps no state does not implement it: a checkpoint has none
+/// of its to save, and a sharded run none to keep per rank.
+/// </summary>
+public interface IStatefulOptimizer : IOptimizer
+{
+    /// <summary>
+    /// The optimizer's state (its moments, step count, …) by name, copied to the host, for a checkpoint that resumes
+    /// training where it stopped (<see cref="LoadState"/>). Names are the optimizer's own; a parameter's state is named
+    /// by its index in <see cref="IOptimizer.Parameters"/>.
+    /// </summary>
+    IReadOnlyDictionary<string, OptimizerStateValue> SaveState();
+
+    /// <summary>
+    /// Restores a state <see cref="SaveState"/> gave (by an optimizer of the same kind over parameters of the same shapes,
+    /// in the same order).
+    /// </summary>
+    /// <exception cref="ArgumentException">A value's shape is not the one this optimizer holds, or a required value is missing.</exception>
+    void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state);
+
+    /// <summary>
+    /// The index in <see cref="IOptimizer.Parameters"/> of the parameter a saved state entry (<see cref="SaveState"/>)
+    /// belongs to, or null for an entry of the whole optimizer (its step count): a sharded run (plan 23, phase C6) keeps
+    /// each parameter's entries on the rank that owns it. By default the convention the library's optimizers follow: the
+    /// parameter's index after the last dot ("m.3"), parsed from the name without making a string; an optimizer that names
+    /// its entries otherwise implements its own.
+    /// </summary>
+    int? StateParameter(ReadOnlySpan<char> name) => Optimizer.IndexAfterLastDot(name, Parameters.Count);
+}
+
+/// <summary>
+/// An optimizer whose <see cref="IOptimizer.Step"/> multiplies the gradients by <see cref="GradientScale"/> as it reads
+/// them, so <see cref="Optimizer.ClipGradientNorm"/> needs no separate pass over them; the step then resets it to 1.
+/// </summary>
+public interface IScaledGradientStep : IOptimizer
+{
+    /// <summary>Factor for the gradients of the next <see cref="IOptimizer.Step"/> (1 when nothing scales them).</summary>
+    float GradientScale { get; set; }
+}
+
+/// <summary>
+/// The base of the library's optimizers (<see cref="IOptimizer"/>): the parameters, zeroing, clipping, weight decay and
+/// the helpers a stateful optimizer (<see cref="IStatefulOptimizer"/>) saves and loads its state with. Call
+/// <see cref="ZeroGrad"/>, then <c>loss.Backward()</c>, then <see cref="Step"/>.
+/// </summary>
+public abstract class Optimizer : IOptimizer
+{
+    private readonly IScaledGradientStep? _scaled;
+
     /// <summary>Creates an optimizer for the given parameters (usually <c>model.Parameters()</c>).</summary>
     protected Optimizer(IEnumerable<Tensor> parameters, float learningRate)
     {
@@ -18,6 +92,7 @@ public abstract class Optimizer : IDisposable
         }
 
         LearningRate = learningRate;
+        _scaled = this as IScaledGradientStep;                             // read once: clipping asks at every step
     }
 
     /// <summary>The tensors this optimizer updates.</summary>
@@ -63,35 +138,22 @@ public abstract class Optimizer : IDisposable
     }
 
     /// <summary>
-    /// The optimizer's state (its moments, step count, …) by name, copied to the host, for a checkpoint that resumes
-    /// training where it stopped (<see cref="LoadState"/>). Names are the optimizer's own; a parameter's state is named
-    /// by its index in <see cref="Parameters"/>.
+    /// This optimizer's saved state (<see cref="IStatefulOptimizer"/>), for a caller that needs it (a checkpoint, a resumed
+    /// run); a caller that can do without asks <c>optimizer is IStatefulOptimizer</c> instead.
     /// </summary>
-    /// <exception cref="NotSupportedException">The optimizer cannot save its state.</exception>
-    public virtual IReadOnlyDictionary<string, OptimizerStateValue> SaveState() =>
-        throw new NotSupportedException($"{GetType().Name} cannot save its state; a resumed run would start its moments again.");
+    /// <exception cref="NotSupportedException">The optimizer keeps no state it can save or restore.</exception>
+    public IStatefulOptimizer RequireState() => this as IStatefulOptimizer
+        ?? throw new NotSupportedException($"{GetType().Name} keeps no state it can save or restore (it is not an IStatefulOptimizer); a resumed run would start its moments again.");
 
     /// <summary>
-    /// Restores a state <see cref="SaveState"/> gave (by an optimizer of the same kind over parameters of the same shapes,
-    /// in the same order).
+    /// The parameter index after the last dot of a state entry's name ("m.3" is 3), parsed from the span; null when there is
+    /// none or it is not below <paramref name="count"/> (the convention of <see cref="IStatefulOptimizer.StateParameter"/>).
     /// </summary>
-    /// <exception cref="NotSupportedException">The optimizer cannot restore a state.</exception>
-    /// <exception cref="ArgumentException">A value's shape is not the one this optimizer holds, or a required value is missing.</exception>
-    public virtual void LoadState(IReadOnlyDictionary<string, OptimizerStateValue> state) =>
-        throw new NotSupportedException($"{GetType().Name} cannot restore a saved state.");
-
-    /// <summary>
-    /// The index in <see cref="Parameters"/> of the parameter a saved state entry (<see cref="SaveState"/>) belongs to, or
-    /// null for an entry of the whole optimizer (its step count): a sharded run (plan 23, phase C6) keeps each parameter's
-    /// entries on the rank that owns it. By default the convention the library's optimizers follow: the parameter's index
-    /// after the last dot ("m.3"); an optimizer that names its entries otherwise overrides it.
-    /// </summary>
-    public virtual int? StateParameter(string name)
+    internal static int? IndexAfterLastDot(ReadOnlySpan<char> name, int count)
     {
-        ArgumentNullException.ThrowIfNull(name);
         int dot = name.LastIndexOf('.');
-        return dot >= 0 && int.TryParse(name.AsSpan(dot + 1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int index)
-               && index < Parameters.Count
+        return dot >= 0 && int.TryParse(name[(dot + 1)..], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int index)
+               && index < count
             ? index
             : null;
     }
@@ -154,6 +216,7 @@ public abstract class Optimizer : IDisposable
     /// <summary>
     /// Scales all gradients down so their global L2 norm is at most <paramref name="maxNorm"/> (no change when
     /// already smaller). Prevents exploding gradients, especially in recurrent networks. Returns the norm before clipping.
+    /// An <see cref="IScaledGradientStep"/> scales them as its next step reads them instead of in a pass of their own.
     /// </summary>
     public double ClipGradientNorm(float maxNorm)
     {
@@ -161,9 +224,9 @@ public abstract class Optimizer : IDisposable
         if (norm > maxNorm && norm > 0)
         {
             float factor = (float)(maxNorm / norm);
-            if (ScalesGradientsInStep)
+            if (_scaled is not null)
             {
-                GradientScale = factor;                             // applied as the next Step reads the gradients
+                _scaled.GradientScale = factor;                     // applied as the next Step reads the gradients
                 return norm;
             }
 
@@ -205,15 +268,6 @@ public abstract class Optimizer : IDisposable
             backend.GroupScaleShift(p.Grad!.Storage, factor.Storage, null, p.Grad.Storage, p.Size, 1, p.Size, false);
         }
     }
-
-    /// <summary>
-    /// True when <see cref="Step"/> multiplies the gradients by <see cref="GradientScale"/> as it reads them (so
-    /// <see cref="ClipGradientNorm"/> needs no separate pass over them); the step then resets it to 1.
-    /// </summary>
-    protected virtual bool ScalesGradientsInStep => false;
-
-    /// <summary>Factor for the gradients of the next <see cref="Step"/> (see <see cref="ScalesGradientsInStep"/>).</summary>
-    protected float GradientScale { get; set; } = 1f;
 
     /// <summary>Adds L2 weight decay to the gradients: g += decay · p.</summary>
     protected void ApplyCoupledWeightDecay(float decay)
@@ -270,7 +324,7 @@ public abstract class Optimizer : IDisposable
     public virtual void Dispose() => GC.SuppressFinalize(this);
 }
 
-/// <summary>One value of an optimizer's saved state (<see cref="Optimizer.SaveState"/>): a tensor's shape and values.</summary>
+/// <summary>One value of an optimizer's saved state (<see cref="IStatefulOptimizer.SaveState"/>): a tensor's shape and values.</summary>
 /// <param name="Shape">The tensor's shape.</param>
 /// <param name="Values">Its values (packed state, such as 8-bit moments, as the float32 words that hold it).</param>
 public sealed record OptimizerStateValue(int[] Shape, float[] Values);

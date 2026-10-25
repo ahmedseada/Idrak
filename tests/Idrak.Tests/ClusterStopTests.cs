@@ -139,7 +139,9 @@ internal static partial class Tests
         var spaced = StopOptions("all-reduce") with { StopEvery = 3 };
         var counts = DpRun(DpTopology(device, 2), spaced, rank =>
         {
-            var stop = (AllReduceStopAgreement)StopAgreements.For(rank.Collectives, spaced);
+            var agreement = StopAgreements.For(rank.Collectives, spaced);
+            Check(agreement is ICarriedStopAgreement, "the all-reduce agreement's flag may travel in a collective the ranks make anyway (ICarriedStopAgreement)");
+            var stop = (AllReduceStopAgreement)agreement;
             stop.Reset();
             for (long b = 0; b < 6; b++)
             {

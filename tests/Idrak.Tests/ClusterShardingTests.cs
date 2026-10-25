@@ -60,7 +60,7 @@ internal static partial class Tests
             using Optimizer optimizer = adamW ? new AdamW(model.Parameters(), 0.01f) : new Adam(model.Parameters(), 0.01f);
             var trainer = new Trainer(model, optimizer, Losses.CrossEntropy) { Cluster = rank.Collectives, ClusterOptions = options, MaxGradientNorm = clip };
             var history = trainer.Fit(new DataLoader(data, 30 / rank.Collectives.WorldSize, shuffle: true, device: rank.Device, seed: 7), 1);
-            var moments = optimizer.SaveState().Keys.Where(k => k.StartsWith("m.", StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToArray();
+            var moments = optimizer.RequireState().SaveState().Keys.Where(k => k.StartsWith("m.", StringComparison.Ordinal)).Order(StringComparer.Ordinal).ToArray();
             return ([.. model.Parameters().SelectMany(p => p.ToArray())], [.. history.Epochs.Select(e => (float)e.Loss)], moments);
         }
 
@@ -103,6 +103,13 @@ internal static partial class Tests
             ThrowsNaming<ArgumentException>(() => GradientSyncs.Create(rank.Collectives, sgd, DpOptions() with { Shard = ShardMode.Optimizer, Compression = "top-k", TopK = 0.1 }), "top-k with a shard", "IDRAK_CLUSTER_COMPRESSION");
             ThrowsNaming<ArgumentException>(() => GradientSyncs.Create(rank.Collectives, sgd, DpOptions() with { Shard = ShardMode.Optimizer, GradientSync = "all-reduce" }), "all-reduce with a shard", "sharded");
             ThrowsNaming<ArgumentException>(() => GradientSyncs.Create(rank.Collectives, sgd, DpOptions() with { Shard = ShardMode.Optimizer, LocalSgdEvery = 2, GradientSync = "local-sgd" }), "local SGD with a shard", "IDRAK_CLUSTER_SHARD");
+            using (var sharded = GradientSyncs.Create(rank.Collectives, sgd, DpOptions() with { Shard = ShardMode.Optimizer }))
+            using (var whole = GradientSyncs.Create(rank.Collectives, sgd, DpOptions()))
+            {
+                Check(sharded is IShardedGradientSync && whole is not IShardedGradientSync && rank.Collectives is IShardedHostValueCollectives,
+                    "the sharded synchronisation makes the update (IShardedGradientSync), the all-reduce leaves it to the optimizer; the ranks reduce uneven pieces on the host");
+            }
+
             return 0;
         });
         Check(GradientSyncs.Find("sharded") is not null && GradientSyncs.Origin("sharded") == Overrides.Library, $"Idrak.Network registers sharded: {GradientSyncs.Describe()}");

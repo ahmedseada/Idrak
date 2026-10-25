@@ -95,7 +95,7 @@ internal static partial class Tests
             $"the library's schedules, in order: {string.Join(", ", LearningRateSchedules.Names)}");
 
         // The rates step by step (10 steps, 2 of warm-up), from each formula.
-        static float[] Rates(Func<Optimizer, int, LearningRateScheduler> schedule, int steps = 10)
+        static float[] Rates(Func<IOptimizer, int, ILearningRateScheduler> schedule, int steps = 10)
         {
             using var p = Tensor.Persistent([0f], [1], Device.Cpu, requiresGrad: true);
             using var optimizer = new Sgd([p], 1f);
@@ -202,7 +202,7 @@ internal static partial class Tests
 
         public string Summary => "half the rate";
 
-        public Func<Optimizer, int, LearningRateScheduler> Create(LearningRateScheduleSettings settings) =>
-            (optimizer, steps) => new LambdaSchedule(optimizer, (step, rate) => step < (int)Math.Round(settings.WarmupFraction * steps) ? rate : rate / 2);
+        public ILearningRateScheduler Create(LearningRateScheduleRequest request) =>
+            new LambdaSchedule(request.Optimizer, (step, rate) => step < (int)Math.Round(request.Settings.WarmupFraction * request.Steps) ? rate : rate / 2);
     }
 }

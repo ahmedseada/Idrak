@@ -179,7 +179,7 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
         int miniBatch = o.MiniBatch > 0 ? Math.Min(o.MiniBatch, o.EpisodesPerIteration) : o.EpisodesPerIteration;
         int updatesPerIteration = epochs * ((o.EpisodesPerIteration + miniBatch - 1) / miniBatch);
         var scheduled = _policy as IScheduledPolicy;
-        LearningRateScheduler? schedule = null;
+        ILearningRateScheduler? schedule = null;
         if (scheduled is not null)
         {
             scheduled.MaxGradientNorm = o.MaxGradientNorm;

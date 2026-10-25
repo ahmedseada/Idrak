@@ -438,7 +438,7 @@ internal static partial class Tests
             using var model = network.Build();
             new TrainingRun
             {
-                Model = model, Loss = Losses.CrossEntropy, Optimizer = p => new Adam(p, 0.01f),
+                Model = model, Loss = Loss.CrossEntropy, Optimizer = p => new Adam(p, 0.01f),
                 Train = images.ToDataset().Batches(8, shuffle: true, device: device, seed: 1), Epochs = 30,
             }.Fit();
             using (var saved = Predictor.For(model).InputShape(1, 8, 8).Softmax().Classes(images.Classes).Build())

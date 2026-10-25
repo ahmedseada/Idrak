@@ -27,7 +27,7 @@ namespace Idrak.Networking.Abstractions;
 /// says which ("device" or "host"). <see cref="ClusterOptions.DeviceCollectives"/> turns the device path off.
 /// </para>
 /// </summary>
-internal abstract partial class HostCollectives : ICollectives, IHostValueCollectives
+internal abstract partial class HostCollectives : ICollectives, IShardedHostValueCollectives
 {
     private long _chunkBytes;
     private bool _chunkKnown;

@@ -17,6 +17,15 @@ public interface Idrak.Datasets.Abstractions.IScaler
   public void InverseTransform(System.Span<float> data, int columns)
   public void Transform(System.Span<float> data, int columns)
 
+public interface Idrak.Datasets.Abstractions.IShardableBatchSource : Idrak.Datasets.Abstractions.IBatchSource, System.Collections.Generic.IEnumerable<Idrak.Datasets.Abstractions.Batch>, System.Collections.IEnumerable
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Datasets.Abstractions.IStepShares? StepShares { get; }
+  public System.Collections.Generic.IEnumerable<Idrak.Datasets.Abstractions.Batch> Shard(int rank, int world)
+  public bool Seeded { get; }
+
+public interface Idrak.Datasets.Abstractions.IStepShares
+  public System.Collections.Generic.IEnumerable<Idrak.Datasets.Abstractions.Batch?> Draw(int world, System.Func<(int, int)?> place)
+
 public sealed record Idrak.Datasets.CsvOptions : System.IEquatable<Idrak.Datasets.CsvOptions>
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public CsvOptions()
   public System.Collections.Generic.IReadOnlyList<string> IgnoreColumns { get; init; }
@@ -48,13 +57,14 @@ public static class Idrak.Datasets.DataExtensions
   public static Idrak.Datasets.DataSplit StandardizeTargets(this (Idrak.Datasets.Dataset, Idrak.Datasets.Dataset) split)
   public static Idrak.Datasets.DataSplit StandardizeTargets(this Idrak.Datasets.DataSplit split)
 
-public sealed class Idrak.Datasets.DataLoader : Idrak.Datasets.Abstractions.IBatchSource, System.Collections.Generic.IEnumerable<Idrak.Datasets.Abstractions.Batch>, System.Collections.IEnumerable
+public sealed class Idrak.Datasets.DataLoader : Idrak.Datasets.Abstractions.IBatchSource, Idrak.Datasets.Abstractions.IShardableBatchSource, Idrak.Datasets.Abstractions.IStepShares, System.Collections.Generic.IEnumerable<Idrak.Datasets.Abstractions.Batch>, System.Collections.IEnumerable
   public DataLoader(Idrak.Abstraction.Data.ISampleSource source, int batchSize = 32, bool shuffle = false, bool dropLast = false, Idrak.Abstraction.Device? device = null, int? seed = null)
   public DataLoader(Idrak.Abstraction.Data.ISampleStream stream, int batchSize = 32, int shuffleBuffer = 0, bool dropLast = false, Idrak.Abstraction.Device? device = null, int? seed = null)
   public Idrak.Abstraction.Data.ISampleSource? Source { get; }
   public Idrak.Abstraction.Data.ISampleStream? Stream { get; }
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Datasets.Dataset? Dataset { get; }
+  public System.Collections.Generic.IEnumerable<Idrak.Datasets.Abstractions.Batch> Shard(int rank, int world)
   public System.Collections.Generic.IEnumerator<Idrak.Datasets.Abstractions.Batch> GetEnumerator()
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ISampleTransform> Transforms { get; init; }
   public bool DropLast { get; }
@@ -378,7 +388,7 @@ public sealed class Idrak.Inference.InferenceEngine : Idrak.Abstraction.Serving.
   public void KeepAlive(string name, System.TimeSpan? idle)
 
 public sealed class Idrak.Inference.InferenceEngineBuilder
-  public Idrak.Inference.InferenceEngineBuilder Add<TCopy>(string name, Idrak.Abstraction.Serving.EngineModel<TCopy> model) where TCopy : class
+  public Idrak.Inference.InferenceEngineBuilder Add<TCopy>(string name, Idrak.Abstraction.Serving.IEngineModel<TCopy> model) where TCopy : class
   public Idrak.Inference.InferenceEngineBuilder LoadOnFirstUse()
   public Idrak.Inference.InferenceEngineBuilder Predictor<TIn, TOut>(string name, Idrak.Abstraction.Module model, System.Func<Idrak.Inference.PredictorBuilder<float[], float[]>, Idrak.Inference.PredictorBuilder<TIn, TOut>> configure)
   public Idrak.Inference.InferenceEngineBuilder Predictor<TIn, TOut>(string name, Idrak.Layers.NetworkBuilder network, string weightsPath, System.Func<Idrak.Inference.PredictorBuilder<float[], float[]>, Idrak.Inference.PredictorBuilder<TIn, TOut>> configure)
@@ -2397,8 +2407,9 @@ public static class Idrak.Onnx.OnnxImport
   public static Idrak.Onnx.ImportedNetwork Load(byte[] model, Idrak.Abstraction.Device? device = null, int[]? sampleShape = null)
   public static Idrak.Onnx.ImportedNetwork Load(string path, Idrak.Abstraction.Device? device = null, int[]? sampleShape = null)
 
-public sealed class Idrak.Optimizers.AdamW8Bit : Idrak.Abstraction.Training.Optimizer
+public sealed class Idrak.Optimizers.AdamW8Bit : Idrak.Abstraction.Training.Optimizer, Idrak.Abstraction.Training.IScaledGradientStep, Idrak.Abstraction.Training.IStatefulOptimizer
   public AdamW8Bit(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> parameters, float learningRate = 0.001f, float beta1 = 0.9f, float beta2 = 0.999f, float epsilon = 1E-08f, float weightDecay = 0.01f, int minimumSize = 4096)
+  public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
   public const int BlockSize = 256
   public float Beta1 { get; }
   public float Beta2 { get; }
@@ -2407,34 +2418,42 @@ public sealed class Idrak.Optimizers.AdamW8Bit : Idrak.Abstraction.Training.Opti
   public int MinimumSize { get; }
   public int StepCount { get; }
   public long StateBytes { get; }
-  public override System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
   public override void Dispose()
-  public override void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
   public override void Step()
   public static byte Nearest(System.ReadOnlySpan<float> map, float x)
   public static float[] DynamicMap(bool signed)
+  public void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
 
-public sealed class Idrak.Optimizers.GroupedOptimizer : Idrak.Abstraction.Training.Optimizer
+public sealed class Idrak.Optimizers.GroupedOptimizer : Idrak.Abstraction.Training.Optimizer, Idrak.Abstraction.Training.IStatefulOptimizer
   public GroupedOptimizer(params Idrak.Abstraction.Training.Optimizer[] groups)
+  public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Training.Optimizer> Groups { get; }
-  public override System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
-  public override int? StateParameter(string name)
+  public int? StateParameter(System.ReadOnlySpan<char> name)
   public override void Dispose()
-  public override void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
   public override void Step()
+  public void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
 
-public sealed class Idrak.Optimizers.HostOptimizer : Idrak.Abstraction.Training.Optimizer, Idrak.Abstraction.Cluster.IHostGradients
+public sealed class Idrak.Optimizers.HostOptimizer : Idrak.Abstraction.Training.Optimizer, Idrak.Abstraction.Cluster.IHostGradients, Idrak.Abstraction.Training.IStatefulOptimizer
   public HostOptimizer(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> parameters, System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer> create)
+  public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Training.Optimizer> CpuOptimizers { get; }
   public System.Span<float> CreateHostGradient(int parameter)
   public System.Span<float> HostGradient(int parameter)
-  public override System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
+  public int? StateParameter(System.ReadOnlySpan<char> name)
   public override void ClipAndStep(float maxNorm)
   public override void Dispose()
-  public override void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
   public override void Step()
   public void DownloadGradients()
+  public void LoadState(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state)
   public void ReloadParameters()
+
+public interface Idrak.Training.Abstractions.ILoss
+  public Idrak.Abstraction.Tensor Compute(Idrak.Abstraction.Tensor predictions, Idrak.Abstraction.Tensor targets)
+
+public interface Idrak.Training.Abstractions.IMetric
+  public (default) double Finish(double mean)
+  public Idrak.Abstraction.Tensor BatchMean(Idrak.Abstraction.Tensor predictions, Idrak.Abstraction.Tensor targets)
+  public string Name { get; }
 
 public interface Idrak.Training.Abstractions.ITrainerCallback
   public (default) bool NeedsBatchLoss { get; }
@@ -2495,7 +2514,18 @@ public sealed record Idrak.Training.EvaluationResult : System.IEquatable<Idrak.T
   public double Loss { get; init; }
   public int Samples { get; init; }
 
-public sealed record Idrak.Training.Metric : System.IEquatable<Idrak.Training.Metric>
+public sealed class Idrak.Training.Loss : Idrak.Training.Abstractions.ILoss
+  public Idrak.Abstraction.Tensor Compute(Idrak.Abstraction.Tensor predictions, Idrak.Abstraction.Tensor targets)
+  public Loss(System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> compute)
+  public static Idrak.Training.Loss BinaryCrossEntropy { get; }
+  public static Idrak.Training.Loss BinaryCrossEntropyWithLogits { get; }
+  public static Idrak.Training.Loss CrossEntropy { get; }
+  public static Idrak.Training.Loss MeanAbsoluteError { get; }
+  public static Idrak.Training.Loss MeanSquaredError { get; }
+  public static Idrak.Training.Loss PixelCrossEntropy { get; }
+  public static Idrak.Training.Loss SparseCrossEntropy { get; }
+
+public sealed record Idrak.Training.Metric : Idrak.Training.Abstractions.IMetric, System.IEquatable<Idrak.Training.Metric>
   public Metric(string Name, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> BatchMean, System.Func<double, double>? Finalize = null)
   public System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> BatchMean { get; init; }
   public System.Func<double, double>? Finalize { get; init; }
@@ -2567,18 +2597,20 @@ public sealed class Idrak.Training.Trainer : System.IDisposable
   public Idrak.Abstraction.Cluster.ClusterOptions? ClusterOptions { get; init; }
   public Idrak.Abstraction.Cluster.ICollectives? Cluster { get; init; }
   public Idrak.Abstraction.Module Model { get; }
-  public Idrak.Abstraction.Training.LearningRateScheduler? Scheduler { get; init; }
+  public Idrak.Abstraction.Training.ILearningRateScheduler? Scheduler { get; init; }
   public Idrak.Abstraction.Training.Optimizer Optimizer { get; }
+  public Idrak.Training.Abstractions.ILoss Loss { get; }
   public Idrak.Training.Abstractions.TrainingHistory Fit(Idrak.Datasets.Abstractions.IBatchSource train, int epochs, Idrak.Datasets.Abstractions.IBatchSource? validation = null, System.Threading.CancellationToken cancellationToken = default)
   public Idrak.Training.EvaluationResult Evaluate(Idrak.Datasets.Abstractions.IBatchSource data)
   public System.Action<Idrak.Abstraction.Diagnostics.EpochCompleted>? OnEpoch { get; init; }
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Diagnostics.EpochCompleted> TrainAsync(Idrak.Datasets.Abstractions.IBatchSource train, int epochs, Idrak.Datasets.Abstractions.IBatchSource? validation = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.List<Idrak.Training.Abstractions.IMetric> Metrics { get; }
   public System.Collections.Generic.List<Idrak.Training.Abstractions.ITrainerCallback> Callbacks { get; }
-  public System.Collections.Generic.List<Idrak.Training.Metric> Metrics { get; }
-  public System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> Loss { get; }
   public System.Threading.Tasks.Task<Idrak.Training.Abstractions.TrainingHistory> FitAsync(Idrak.Datasets.Abstractions.IBatchSource train, int epochs, Idrak.Datasets.Abstractions.IBatchSource? validation = null, System.IProgress<Idrak.Abstraction.Diagnostics.EpochCompleted>? progress = null, System.Threading.CancellationToken cancellationToken = default)
+  public Trainer(Idrak.Abstraction.Module model, Idrak.Abstraction.Training.Optimizer optimizer, Idrak.Training.Abstractions.ILoss loss)
   public Trainer(Idrak.Abstraction.Module model, Idrak.Abstraction.Training.Optimizer optimizer, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> loss)
-  public Trainer(Idrak.Abstraction.Module model, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> loss, System.Func<System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer> optimizer, System.Func<Idrak.Abstraction.Training.Optimizer, Idrak.Abstraction.Training.LearningRateScheduler>? scheduler = null)
+  public Trainer(Idrak.Abstraction.Module model, Idrak.Training.Abstractions.ILoss loss, System.Func<System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer> optimizer, System.Func<Idrak.Abstraction.Training.Optimizer, Idrak.Abstraction.Training.ILearningRateScheduler>? scheduler = null)
+  public Trainer(Idrak.Abstraction.Module model, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> loss, System.Func<System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer> optimizer, System.Func<Idrak.Abstraction.Training.Optimizer, Idrak.Abstraction.Training.ILearningRateScheduler>? scheduler = null)
   public bool RestoreBestWeights { get; init; }
   public double MinImprovement { get; init; }
   public float? MaxGradientNorm { get; init; }
@@ -2596,9 +2628,9 @@ public sealed record Idrak.Training.TrainingRun : System.IEquatable<Idrak.Traini
   public Idrak.Training.Trainer CreateTrainer()
   public System.Action<Idrak.Abstraction.Diagnostics.EpochCompleted>? OnEpoch { get; init; }
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Diagnostics.EpochCompleted> TrainAsync(System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Training.Abstractions.IMetric> Metrics { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Training.Abstractions.ITrainerCallback> Callbacks { get; init; }
-  public System.Collections.Generic.IReadOnlyList<Idrak.Training.Metric> Metrics { get; init; }
-  public System.Func<Idrak.Abstraction.Training.Optimizer, Idrak.Abstraction.Training.LearningRateScheduler>? Scheduler { get; init; }
+  public System.Func<Idrak.Abstraction.Training.Optimizer, Idrak.Abstraction.Training.ILearningRateScheduler>? Scheduler { get; init; }
   public System.Threading.Tasks.Task<Idrak.Training.Abstractions.TrainingHistory> FitAsync(System.IProgress<Idrak.Abstraction.Diagnostics.EpochCompleted>? progress = null, System.Threading.CancellationToken cancellationToken = default)
   public bool RestoreBestWeights { get; init; }
   public double MinImprovement { get; init; }
@@ -2606,6 +2638,6 @@ public sealed record Idrak.Training.TrainingRun : System.IEquatable<Idrak.Traini
   public int? EarlyStoppingPatience { get; init; }
   public required Idrak.Abstraction.Module Model { get; init; }
   public required Idrak.Datasets.Abstractions.IBatchSource Train { get; init; }
-  public required System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> Loss { get; init; }
+  public required Idrak.Training.Abstractions.ILoss Loss { get; init; }
   public required System.Func<System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer> Optimizer { get; init; }
   public required int Epochs { get; init; }
