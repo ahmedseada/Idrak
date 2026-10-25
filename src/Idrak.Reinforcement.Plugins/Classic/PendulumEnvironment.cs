@@ -23,20 +23,28 @@ public sealed record PendulumOptions
     /// <summary>The start angular velocity is drawn uniformly from [−this, this) (Gymnasium's 1, its y_init). Option <c>reset-speed</c>.</summary>
     public double ResetSpeed { get; init; } = 1.0;
 
+    private static readonly OptionSpec<int> MaxStepsOption = OptionSpec.Whole("max-steps", 200, min: 0, summary: "the step that reaches it is truncated; 0 for no limit");
+    private static readonly OptionSpec<double> G = OptionSpec.Real("g", 10.0, summary: "the gravity");
+    private static readonly OptionSpec<double> Angle = OptionSpec.Real("reset-angle", Math.PI, min: 0, summary: "the start angle's bound");
+    private static readonly OptionSpec<double> Speed = OptionSpec.Real("reset-speed", 1.0, min: 0, summary: "the start speed's bound");
+
+    /// <summary>The kind's options: their keys, types, ranges and defaults (a value of blanks is the default).</summary>
+    public static OptionSchema Schema { get; } = new($"{PendulumEnvironment.KindName} environment", blankIsDefault: true, MaxStepsOption, G, Angle, Speed);
+
     /// <summary>The kind's option keys.</summary>
-    public static OptionKeys Keys { get; } = new("max-steps", "g", "reset-angle", "reset-speed");
+    public static OptionKeys Keys => Schema.Keys;
 
     /// <summary>The settings the kind's <paramref name="options"/> give (the defaults for those not given).</summary>
     /// <exception cref="ArgumentException">An option not in <see cref="Keys"/>, or a bad value.</exception>
     public static PendulumOptions FromOptions(IReadOnlyDictionary<string, string>? options)
     {
-        var read = new ClassicOptions(PendulumEnvironment.KindName, Keys, options);
+        var read = Schema.Parse(options);
         return new PendulumOptions
         {
-            MaxSteps = read.Int("max-steps", 200, min: 0),
-            Gravity = read.Number("g", 10.0),
-            ResetAngle = read.Number("reset-angle", Math.PI, min: 0),
-            ResetSpeed = read.Number("reset-speed", 1.0, min: 0),
+            MaxSteps = read.Get(MaxStepsOption),
+            Gravity = read.Get(G),
+            ResetAngle = read.Get(Angle),
+            ResetSpeed = read.Get(Speed),
         };
     }
 }

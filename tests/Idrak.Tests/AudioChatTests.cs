@@ -423,7 +423,7 @@ internal static partial class Tests
     {
         public string Name => name;
 
-        public PretrainedAudio? Read(AudioCheckpoint checkpoint) => new FakePretrainedAudio(name, width, checkpoint);
+        public IPretrainedAudio? Read(AudioCheckpoint checkpoint) => new FakePretrainedAudio(name, width, checkpoint);
     }
 
     private sealed class FakePretrainedAudio(string family, int width, AudioCheckpoint checkpoint) : PretrainedAudio

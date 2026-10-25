@@ -138,7 +138,7 @@ public sealed record LanguageModelPolicyOptions
 public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>, IRolloutRanks<ChatObservation, ChatMessage>
 {
     private readonly bool _ownsSession;
-    private readonly FineTuningLoss? _teacher;
+    private readonly IFineTuningLoss? _teacher;
     private object? _batch;                                  // the rollout batch laid out
     private List<TrainingSequence>[] _sequences = [];        // its episodes' sequences, with their values and log-probabilities
     private EpisodeLayout[] _layouts = [];

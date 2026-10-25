@@ -50,7 +50,7 @@ internal sealed record ImageRunOptions
     /// <summary>The evaluation data (read as the training data), or null to hold out --validation of it.</summary>
     public string? Eval { get; init; }
 
-    /// <summary>The decoder of a detector (DetectionDecoders and DetectionHeads); null: the model's.</summary>
+    /// <summary>The decoder of a detector (DetectionDecoders, with its head); null: the model's.</summary>
     public string? Decoder { get; init; }
 
     /// <summary>A builder line recognizer's lines: ltr or rtl (flipped before the network); null: ltr.</summary>
@@ -107,7 +107,7 @@ internal sealed record ImageRunOptions
 /// annotated dataset read by an <see cref="AnnotationFormats">annotation format</see> (detection). Samples are read,
 /// augmented (<see cref="Augmentations"/>) and stretched to the network's input off the training thread
 /// (<see cref="AugmentedImageLoader"/>); the loss is the task's (or a <see cref="VisionLosses"/> entry), a detector's
-/// candidates come from its decoder's <see cref="DetectionHeads">head</see> and are matched by a
+/// candidates come from its decoder's head (<see cref="IDetectionHeadKind"/>) and are matched by a
 /// <see cref="BoxMatchers">matcher</see>; the evaluation data is scored by a <see cref="VisionMetrics">metric</see>. A
 /// batch the device has no room for is split into micro-batches whose gradients add up (halved again as needed). The run
 /// folder holds run.json, the checkpoints and log.jsonl as for any run; a builder network becomes a package (.ikm), a
@@ -292,10 +292,10 @@ internal static class ImageTraining
                             ?? (task switch { ImageTask.Classification => Accuracy, ImageTask.Segmentation => "miou", _ => "coco" });
         var (scale, shift) = Normalization(family?.Preprocessor, channels);
         string? decoderName = task != ImageTask.Detection ? null
-            : options.Decoder ?? family?.Decoder ?? throw new UsageException("Give --decoder NAME: the detector's decoder (registered in DetectionDecoders, its head in DetectionHeads).");
+            : options.Decoder ?? family?.Decoder ?? throw new UsageException("Give --decoder NAME: the detector's decoder (registered in DetectionDecoders, with its head).");
         var decoderSettings = family?.DecoderSettings ?? [];
-        var decoderContext = new DetectionDecoderContext(height, width, labels, decoderSettings);
-        DetectionHead? head = decoderName is null ? null : DetectionHeads.Create(decoderName, decoderContext);
+        var decoderContext = new DetectionDecoderRequest(height, width, labels, decoderSettings);
+        DetectionHead? head = decoderName is null ? null : DetectionDecoders.CreateHead(decoderName, decoderContext);
         DetectionDecoder? decoder = decoderName is null ? null : DetectionDecoders.Create(decoderName, decoderContext);
         var objective = new DetectionObjectiveOptions { Matcher = matcherName ?? BoxMatchers.Threshold, BoxLoss = lossName ?? "giou", Scale = Math.Max(height, width) };
 
@@ -328,7 +328,7 @@ internal static class ImageTraining
                     }
 
                     var onehot = Tensor.OneHot(target, labels.Count).Permute(0, 3, 1, 2);
-                    var predicted = lossName == "dice" ? logits.Permute(0, 2, 3, 1).Softmax().Permute(0, 3, 1, 2) : logits;
+                    var predicted = VisionLosses.Get(lossName).Target == VisionLossTarget.Masks ? logits.Permute(0, 2, 3, 1).Softmax().Permute(0, 3, 1, 2) : logits;
                     return VisionLosses.Compute(lossName, predicted, onehot);
                 }
 

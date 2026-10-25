@@ -97,14 +97,13 @@ public sealed record AudioCleaningOptions
 /// <c>SpeechTrainingOptions.Cleaning</c> over every utterance's sound before its features are taken, and
 /// <c>idrak data audio --clean</c> writes cleaned files. A stage is deterministic (the same sound gives the same result, so
 /// the cleaned features are cached) and knows no model family; one that runs a model (a denoiser, a network that
-/// isolates the voice) is a plug-in registered with <see cref="AudioCleaners.Register"/>, reading its own settings from
-/// <see cref="AudioCleaningOptions.Settings"/>.
+/// isolates the voice) is a plug-in registered with <see cref="AudioCleaners.Register"/> under its <see cref="IKind.Name"/>
+/// ("trim"), reading its own settings from <see cref="AudioCleaningOptions.Settings"/>: their keys are its
+/// <see cref="IConfigurableKind.Keys"/> (none for the library's stages), so a setting no stage of a run reads is refused
+/// (<see cref="AudioCleaners.CheckSettings"/>).
 /// </summary>
-public interface IAudioCleaner
+public interface IAudioCleaner : IConfigurableKind
 {
-    /// <summary>The stage's name ("trim").</summary>
-    string Name { get; }
-
     /// <summary>The recording cleaned: any channel count, the same rate; the length may change (trimming), the samples are not written in place.</summary>
     AudioData Clean(AudioData audio, AudioCleaningOptions options);
 }
@@ -133,42 +132,66 @@ public static class AudioCleaners
     /// <summary>The speech level set.</summary>
     public const string Normalize = "normalize";
 
-    private static readonly SlotTable<string, IAudioCleaner> Table = BuiltIn();
+    private static readonly KindTable<IAudioCleaner> Table = BuiltIn();
 
-    private static SlotTable<string, IAudioCleaner> BuiltIn()
+    private static KindTable<IAudioCleaner> BuiltIn()
     {
-        var table = new SlotTable<string, IAudioCleaner>(nameof(AudioCleaners), comparer: StringComparer.OrdinalIgnoreCase,
+        var table = new KindTable<IAudioCleaner>(nameof(AudioCleaners), "Audio cleaning stage", "add it with AudioCleaners.Register", comparer: StringComparer.OrdinalIgnoreCase,
             unguarded: "a cleaning stage's result is what later stages, the features and the cache see, so another cannot stand in for it unnoticed");
-        table.RegisterDefault(HighPass, new HighPassCleaner());
-        table.RegisterDefault(Denoise, new DenoiseCleaner());
-        table.RegisterDefault(Trim, new TrimCleaner());
-        table.RegisterDefault(Normalize, new NormalizeCleaner());
+        table.RegisterDefault(new HighPassCleaner());
+        table.RegisterDefault(new DenoiseCleaner());
+        table.RegisterDefault(new TrimCleaner());
+        table.RegisterDefault(new NormalizeCleaner());
         return table;
     }
 
     /// <summary>Registers <paramref name="cleaner"/> under its name (over the library's of that name, which stays behind it).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IAudioCleaner cleaner)
-    {
-        ArgumentNullException.ThrowIfNull(cleaner);
-        ArgumentException.ThrowIfNullOrWhiteSpace(cleaner.Name);
-        Table.Register(cleaner.Name, cleaner, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(IAudioCleaner cleaner) => Table.Register(cleaner, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's stage of that name (the library's, if any, answers again); false when the app registered none.</summary>
     public static bool Unregister(string name) => Table.Unregister(name);
 
     /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
+    public static IReadOnlyCollection<string> Names => Table.Names;
 
     /// <summary>The stage of that name, or null.</summary>
-    public static IAudioCleaner? Find(string name) => Table.Find(name);
+    public static IAudioCleaner? Find(ReadOnlySpan<char> name) => Table.Find(name);
 
     /// <summary>The stage of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static IAudioCleaner Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(AudioCleaners), name, Table.Keys,
-            $"Audio cleaning stage '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AudioCleaners.Register.");
+    public static IAudioCleaner Get(string name) => Table.Get(name);
+
+    /// <summary>Each registered stage as "name: summary", one per line.</summary>
+    public static string Describe() => Table.Describe();
+
+    /// <summary>
+    /// Checks that every key of <paramref name="options"/>' <see cref="AudioCleaningOptions.Settings"/> is read by one of
+    /// <paramref name="stages"/> (one of their <see cref="IConfigurableKind.Keys"/>): a setting none reads is refused,
+    /// naming the keys the stages take.
+    /// </summary>
+    /// <exception cref="NotSupportedException">A stage is not registered.</exception>
+    /// <exception cref="ArgumentException">A setting no stage reads.</exception>
+    public static void CheckSettings(IEnumerable<string> stages, AudioCleaningOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(stages);
+        ArgumentNullException.ThrowIfNull(options);
+        if (options.Settings is not { Count: > 0 } settings)
+        {
+            return;
+        }
+
+        var cleaners = stages.Select(Get).ToList();
+        foreach (var (key, _) in settings)
+        {
+            if (!cleaners.Any(c => c.Keys.Contains(key)))
+            {
+                var taken = cleaners.SelectMany(c => c.Keys).Distinct(StringComparer.Ordinal).ToList();
+                throw new ArgumentException($"No cleaning stage of {string.Join(", ", cleaners.Select(c => c.Name))} reads the setting '{key}'; they read: "
+                    + $"{(taken.Count == 0 ? "none" : string.Join(", ", taken))}.", nameof(options));
+            }
+        }
+    }
 
     /// <summary>The library's stage of that name, or null.</summary>
     public static IAudioCleaner? Default(string name) => Table.Default(name);

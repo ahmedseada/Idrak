@@ -23,20 +23,28 @@ public sealed record MountainCarOptions
     /// <summary>The high bound of the start position's uniform draw (Gymnasium's −0.4). Option <c>reset-high</c>.</summary>
     public double ResetHigh { get; init; } = -0.4;
 
+    private static readonly OptionSpec<int> MaxStepsOption = OptionSpec.Whole("max-steps", 200, min: 0, summary: "the step that reaches it is truncated; 0 for no limit");
+    private static readonly OptionSpec<double> Goal = OptionSpec.Real("goal-velocity", 0.0, summary: "the least velocity at the flag");
+    private static readonly OptionSpec<double> Low = OptionSpec.Real("reset-low", -0.6, MountainCarEnvironment.MinPosition, MountainCarEnvironment.MaxPosition);
+    private static readonly OptionSpec<double> High = OptionSpec.Real("reset-high", -0.4, MountainCarEnvironment.MinPosition, MountainCarEnvironment.MaxPosition);
+
+    /// <summary>The kind's options: their keys, types, ranges and defaults (a value of blanks is the default).</summary>
+    public static OptionSchema Schema { get; } = new($"{MountainCarEnvironment.KindName} environment", blankIsDefault: true, MaxStepsOption, Goal, Low, High);
+
     /// <summary>The kind's option keys.</summary>
-    public static OptionKeys Keys { get; } = new("max-steps", "goal-velocity", "reset-low", "reset-high");
+    public static OptionKeys Keys => Schema.Keys;
 
     /// <summary>The settings the kind's <paramref name="options"/> give (the defaults for those not given).</summary>
     /// <exception cref="ArgumentException">An option not in <see cref="Keys"/>, a bad value, or a low bound above the high one.</exception>
     public static MountainCarOptions FromOptions(IReadOnlyDictionary<string, string>? options)
     {
-        var read = new ClassicOptions(MountainCarEnvironment.KindName, Keys, options);
+        var read = Schema.Parse(options);
         var settings = new MountainCarOptions
         {
-            MaxSteps = read.Int("max-steps", 200, min: 0),
-            GoalVelocity = read.Number("goal-velocity", 0.0),
-            ResetLow = read.Number("reset-low", -0.6, MountainCarEnvironment.MinPosition, MountainCarEnvironment.MaxPosition),
-            ResetHigh = read.Number("reset-high", -0.4, MountainCarEnvironment.MinPosition, MountainCarEnvironment.MaxPosition),
+            MaxSteps = read.Get(MaxStepsOption),
+            GoalVelocity = read.Get(Goal),
+            ResetLow = read.Get(Low),
+            ResetHigh = read.Get(High),
         };
         return settings.ResetLow <= settings.ResetHigh
             ? settings

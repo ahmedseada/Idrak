@@ -1091,7 +1091,7 @@ public sealed class Idrak.Layers.LayerNorm : Idrak.Abstraction.Module
   public override string ToString()
   public static Idrak.Layers.LayerNorm FromWeights(Idrak.Abstraction.Tensor gamma, Idrak.Abstraction.Tensor beta, float epsilon)
 
-public sealed class Idrak.Layers.Linear : Idrak.Abstraction.Module, Idrak.Abstraction.Modules.ILinearLayer
+public sealed class Idrak.Layers.Linear : Idrak.Abstraction.Module, Idrak.Abstraction.ITiedWeights, Idrak.Abstraction.Modules.ILinearLayer
   public Idrak.Abstraction.Generation.BFloat16Weight? BFloat16 { get; }
   public Idrak.Abstraction.Generation.IKernelPackedWeight? KernelWeight { get; }
   public Idrak.Abstraction.Generation.IPackedWeight? PackedWeight { get; }
@@ -2143,6 +2143,7 @@ public sealed record Idrak.Models.PretrainedLoadTimes : System.IEquatable<Idrak.
 
 public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Formats.INetworkParts NetworkParts { get; }
   public Idrak.Abstraction.Formats.WeightFormat? CheckpointFormat { get; }
   public Idrak.Abstraction.Generation.DecoderSpec Spec { get; }
   public Idrak.Abstraction.Generation.IChatTemplate? ChatTemplate { get; }
@@ -2161,7 +2162,7 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public System.Collections.Generic.IReadOnlyList<string> Notes { get; }
   public System.Text.Json.Nodes.JsonObject Config { get; }
   public bool IsDeferred { get; }
-  public int AddAdapters(int rank, float alpha, System.Collections.Generic.IEnumerable<string> targets, int seed = 0, bool dora = false)
+  public int AddAdapters(int rank, float alpha, System.Collections.Generic.IEnumerable<string>? targets, int seed = 0, bool dora = false)
   public int KeepTrainedParts(System.Collections.Generic.IEnumerable<(string, int[], float[])> tensors)
   public int KeepTrainedVision(Idrak.Abstraction.Generation.IVisionEncoder encoder, System.Collections.Generic.IEnumerable<string> parts)
   public int LoadAdapter(string folder)
@@ -2496,7 +2497,7 @@ public static class Idrak.Onnx.OnnxImport
   public static Idrak.Onnx.ImportedNetwork Load(byte[] model, Idrak.Abstraction.Device? device = null, int[]? sampleShape = null)
   public static Idrak.Onnx.ImportedNetwork Load(string path, Idrak.Abstraction.Device? device = null, int[]? sampleShape = null)
 
-public sealed class Idrak.Optimizers.AdamW8Bit : Idrak.Abstraction.Training.Optimizer, Idrak.Abstraction.Training.IScaledGradientStep, Idrak.Abstraction.Training.IStatefulOptimizer
+public sealed class Idrak.Optimizers.AdamW8Bit : Idrak.Abstraction.Training.Optimizer, Idrak.Abstraction.Training.IInPlaceOptimizer, Idrak.Abstraction.Training.IScaledGradientStep, Idrak.Abstraction.Training.IStatefulOptimizer
   public AdamW8Bit(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> parameters, float learningRate = 0.001f, float beta1 = 0.9f, float beta2 = 0.999f, float epsilon = 1E-08f, float weightDecay = 0.01f, int minimumSize = 4096)
   public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> SaveState()
   public const int BlockSize = 256

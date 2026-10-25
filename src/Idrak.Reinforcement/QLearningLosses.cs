@@ -14,22 +14,27 @@ namespace Idrak.Reinforcement;
 /// ½ x² for δ = 0, averaged over the batch: L = (1 / B) Σ_i w_i ℓ_i, one reduction in transition order (rule 86). Q(s_i, a_i)
 /// is taken from the recorded values by a one-hot mask, so the gradient reaches only the actions taken.
 /// </summary>
-internal sealed class DqnLoss : IQLoss
+internal sealed class DqnLoss : IQLoss, IOptionSchema
 {
+    private static readonly OptionSpec<float> Huber = OptionSpec.Number(QLosses.HuberKey, 1f, 0f, summary: "the Huber loss's δ");
+    private static readonly OptionSpec<bool> Double = OptionSpec.Flag(QLosses.DoubleKey, summary: "double Q-learning");
+
     public string Name => QLosses.Dqn;
 
     public string Summary => "DQN (Mnih et al. 2015): a Huber loss of Q(s, a) against r + γ max Q'(s', ·) of a target network; double Q-learning (van Hasselt et al. 2016) as an option";
 
-    public IReadOnlyCollection<string> Keys { get; } = [QLosses.HuberKey, QLosses.DoubleKey];
+    public OptionSchema Options { get; } = new($"Q-learning loss {QLosses.Dqn}", Huber, Double);
 
-    public bool NeedsNextValues(IReadOnlyDictionary<string, string>? options = null) => new OptionReader($"Q-learning loss {Name}", Keys, options).Bool(QLosses.DoubleKey, false);
+    public IReadOnlySet<string> Keys => Options.Keys;
+
+    public bool NeedsNextValues(IReadOnlyDictionary<string, string>? options = null) => Options.Parse(options).Get(Double);
 
     public Tensor Loss(QLossInput input, IReadOnlyDictionary<string, string>? options = null)
     {
         ArgumentNullException.ThrowIfNull(input);
-        var read = new OptionReader($"Q-learning loss {Name}", Keys, options);
-        float delta = read.Float(QLosses.HuberKey, 1f, min: 0f);
-        bool doubleQ = read.Bool(QLosses.DoubleKey, false);
+        var read = Options.Parse(options);
+        float delta = read.Get(Huber);
+        bool doubleQ = read.Get(Double);
         if (doubleQ && input.NextValues.IsEmpty)
         {
             throw new ArgumentException($"The Q-learning loss {Name} with '{QLosses.DoubleKey}' true chooses the next action by the online network: the input has no next values of it (QLossInput.NextValues).");

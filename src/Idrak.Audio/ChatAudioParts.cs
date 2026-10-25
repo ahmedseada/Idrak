@@ -8,7 +8,7 @@ namespace Idrak.Audio;
 
 /// <summary>
 /// The audio parts of a conversation as soft tokens (<see cref="ISoftPartSource"/> for <see cref="ChatParts.Audio"/>),
-/// over a family's audio part (<see cref="PretrainedAudio"/>) and its encoder: each <see cref="ChatAudio"/> is decoded
+/// over a family's audio part (<see cref="IPretrainedAudio"/>) and its encoder: each <see cref="ChatAudio"/> is decoded
 /// by the registered codecs, its blocks of soft tokens asked of the encoder once per sound (kept by the sound's hash),
 /// and its features encoded once per sound, options and encoder, kept in a feature cache (<see cref="IFeatureCache"/>,
 /// keyed by the sound's hash and the extractor's options) so a second turn or epoch encodes nothing (rule 75). Give it
@@ -27,10 +27,10 @@ public sealed class ChatAudioParts : ITrainableSoftParts
     /// A source over <paramref name="audio"/> with <paramref name="encoder"/> (the family's, on the model's device).
     /// </summary>
     /// <param name="audio">The model's audio part.</param>
-    /// <param name="encoder">Its encoder (built with <see cref="PretrainedAudio.CreateEncoder"/> when null, and disposed with this).</param>
+    /// <param name="encoder">Its encoder (built with <see cref="IPretrainedAudio.CreateEncoder"/> when null, and disposed with this).</param>
     /// <param name="cache">Where features are kept (not disposed by this); a new "memory" one when null (disposed with this).</param>
     /// <param name="checkpoint">A text that changes when the checkpoint's weights do, for the cache's keys; the model folder's name when null.</param>
-    public ChatAudioParts(PretrainedAudio audio, IAudioLanguageEncoder? encoder = null, IFeatureCache? cache = null, string? checkpoint = null)
+    public ChatAudioParts(IPretrainedAudio audio, IAudioLanguageEncoder? encoder = null, IFeatureCache? cache = null, string? checkpoint = null)
     {
         Audio = audio ?? throw new ArgumentNullException(nameof(audio));
         _ownsEncoder = encoder is null;
@@ -43,7 +43,7 @@ public sealed class ChatAudioParts : ITrainableSoftParts
 
     // A source over a model's part (the "audio" model part's Open): its encoder built with `options`, and the cache
     // owned when `ownsCache` (both disposed with this).
-    internal ChatAudioParts(PretrainedAudio audio, AudioEncoderOptions options, IFeatureCache? cache, bool ownsCache)
+    internal ChatAudioParts(IPretrainedAudio audio, AudioEncoderOptions options, IFeatureCache? cache, bool ownsCache)
     {
         Audio = audio ?? throw new ArgumentNullException(nameof(audio));
         _ownsEncoder = true;
@@ -55,7 +55,7 @@ public sealed class ChatAudioParts : ITrainableSoftParts
     }
 
     /// <summary>The model's audio part.</summary>
-    public PretrainedAudio Audio { get; }
+    public IPretrainedAudio Audio { get; }
 
     /// <summary>The family's encoder.</summary>
     public IAudioLanguageEncoder Encoder { get; }

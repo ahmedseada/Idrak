@@ -240,13 +240,26 @@ public sealed class HifiGanVocoder : IVocoder, IDisposable
     /// <summary>
     /// Registers a vocoder read from <paramref name="path"/> under <paramref name="name"/> in <see cref="Vocoders"/>: the
     /// checkpoint is read at the first <see cref="Vocoders.Create"/> and kept for the process (the registry's options are
-    /// not read; the checkpoint fixes the mel layout).
+    /// not read; the checkpoint fixes the mel layout, so the kind takes only options of its rate and mel count).
     /// </summary>
     public static void RegisterFolder(string path, string name = DefaultName, Device? device = null)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
-        var loaded = new Lazy<HifiGanVocoder>(() => Load(path, device), LazyThreadSafetyMode.ExecutionAndPublication);
-        Vocoders.Register(name, _ => loaded.Value);
+        Vocoders.Register(new FolderKind(name, new Lazy<HifiGanVocoder>(() => Load(path, device), LazyThreadSafetyMode.ExecutionAndPublication)));
+    }
+
+    // A checkpoint folder as a vocoder kind: one vocoder, read once, of the checkpoint's mel layout.
+    private sealed class FolderKind(string name, Lazy<HifiGanVocoder> loaded) : IVocoderKind
+    {
+        public string Name => name;
+
+        public string Summary => "HiFi-GAN read from a checkpoint folder (its mel layout fixed by the checkpoint)";
+
+        public IReadOnlySet<string> Keys => OptionKeys.None;
+
+        public bool Accepts(AudioFeatureOptions options) => options.Mels == loaded.Value.Mels && options.SampleRate == loaded.Value.SampleRate;
+
+        public IVocoder Create(AudioFeatureOptions request) => loaded.Value;
     }
 
     /// <inheritdoc />

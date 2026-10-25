@@ -5,7 +5,10 @@ using System.Text.Json.Nodes;
 using Idrak.Layers;
 using Idrak.Models;
 using Idrak.Models.Abstractions;
+using Idrak.Audio.Abstractions;
 using Idrak.Text;
+using Idrak.Text.Abstractions;
+using Idrak.Vision.Abstractions;
 
 // The tests' own kinds, each a name and a function: what a test registers to replace or add one of a registry's kinds
 // (an app writes a class implementing the kind's interface).
@@ -56,6 +59,21 @@ internal static partial class Tests
         public static IConfigWritingArchitecture ConfigArchitecture(Func<JsonObject, List<string>, DecoderSpec> spec, Func<string, string?> tensorName,
             Func<DecoderSpec, JsonObject> config) => new ConfigFunctionArchitecture(spec, tensorName, config);
 
+        public static IKeywordIndexKind KeywordIndex(string name, Func<IEnumerable<string>, KeywordIndexOptions, IKeywordIndex> create, params string[] keys) =>
+            new KeywordIndexKind(name, request => create(request.Texts, request.Options), new OptionKeys(keys));
+
+        public static IDetectionDecoderKind DetectionDecoder(string name, Func<DetectionDecoderRequest, DetectionDecoder> create, params string[] keys) =>
+            new DetectionDecoderKind(name, create, new OptionKeys(keys));
+
+        public static IVisionLoss VisionLoss(string name, VisionLossTarget target, Func<Tensor, Tensor, VisionLossOptions, Tensor> compute) => new VisionLossKind(name, target, compute);
+
+        public static IVisionMetricKind VisionMetric(string name, ImageTask task, Func<VisionMetricOptions, IVisionMetric> create) =>
+            new VisionMetricKind(name, task, create);
+
+        public static IVocoderKind Vocoder(string name, Func<AudioFeatureOptions, IVocoder> create) => new VocoderKind(name, create);
+
+        public static IFineTuningLoss FineTuningLoss(Func<FineTuningLossInput, Tensor> compute) => FineTuningLosses.Of("a test's own", compute);
+
         private class FunctionKind<TRequest, T>(string name, Func<TRequest, T> create) : IKind<TRequest, T>
         {
             public string Name => name;
@@ -90,6 +108,41 @@ internal static partial class Tests
 
         private sealed class ChatReaderKind(string name, Func<ChatTemplateRequest, IChatTemplate?> create)
             : FunctionKind<ChatTemplateRequest, IChatTemplate?>(name, create), IChatTemplateReader;
+
+        private sealed class KeywordIndexKind(string name, Func<KeywordIndexRequest, IKeywordIndex> create, OptionKeys keys)
+            : FunctionKind<KeywordIndexRequest, IKeywordIndex>(name, create), IKeywordIndexKind
+        {
+            public new IReadOnlySet<string> Keys => keys;
+        }
+
+        private sealed class DetectionDecoderKind(string name, Func<DetectionDecoderRequest, DetectionDecoder> create, OptionKeys keys)
+            : FunctionKind<DetectionDecoderRequest, DetectionDecoder>(name, create), IDetectionDecoderKind
+        {
+            public new IReadOnlySet<string> Keys => keys;
+        }
+
+        private sealed class VisionLossKind(string name, VisionLossTarget target, Func<Tensor, Tensor, VisionLossOptions, Tensor> compute) : IVisionLoss
+        {
+            public string Name => name;
+
+            public string Summary => "a test's own";
+
+            public VisionLossTarget Target => target;
+
+            public Tensor Compute(Tensor predicted, Tensor expected, VisionLossOptions options) => compute(predicted, expected, options);
+        }
+
+        private sealed class VisionMetricKind(string name, ImageTask task, Func<VisionMetricOptions, IVisionMetric> create)
+            : FunctionKind<VisionMetricOptions, IVisionMetric>(name, create), IVisionMetricKind
+        {
+            public ImageTask Task => task;
+        }
+
+        // A test's vocoder takes every mel layout: the caller checks what it makes.
+        private sealed class VocoderKind(string name, Func<AudioFeatureOptions, IVocoder> create) : FunctionKind<AudioFeatureOptions, IVocoder>(name, create), IVocoderKind
+        {
+            public bool Accepts(AudioFeatureOptions options) => true;
+        }
 
         private sealed class CtcKind(string name, Func<ReadOnlyMemory<float>, int, int, CtcDecodeOptions, IReadOnlyList<CtcHypothesis>> decode) : ICtcDecoder
         {

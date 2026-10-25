@@ -18,22 +18,22 @@ internal static class FilterProcessors
         LowShelf = "lowshelf", HighShelf = "highshelf", Presence = "presence", PreEmphasis = "preemphasis", Mono = "mono", Resample = "resample";
 
     // The library's filters, registered after the cleaners (AudioProcessors.BuiltIn).
-    public static void RegisterDefaults(SlotTable<string, IAudioProcessor> table)
+    public static void RegisterDefaults(KindTable<IAudioProcessor> table)
     {
         ArgumentNullException.ThrowIfNull(table);
-        table.RegisterDefault(Gain, new GainProcessor());
-        table.RegisterDefault(Dc, new DcProcessor());
-        table.RegisterDefault(LowPass, new LowPassProcessor());
-        table.RegisterDefault(BandPass, new BandPassProcessor());
-        table.RegisterDefault(Notch, new NotchProcessor());
-        table.RegisterDefault(Dehum, new DehumProcessor());
-        table.RegisterDefault(Eq, new PeakingProcessor());
-        table.RegisterDefault(LowShelf, new ShelfProcessor(high: false));
-        table.RegisterDefault(HighShelf, new ShelfProcessor(high: true));
-        table.RegisterDefault(Presence, new PresenceProcessor());
-        table.RegisterDefault(PreEmphasis, new PreEmphasisProcessor());
-        table.RegisterDefault(Mono, new MonoProcessor());
-        table.RegisterDefault(Resample, new ResampleProcessor());
+        table.RegisterDefault(new GainProcessor());
+        table.RegisterDefault(new DcProcessor());
+        table.RegisterDefault(new LowPassProcessor());
+        table.RegisterDefault(new BandPassProcessor());
+        table.RegisterDefault(new NotchProcessor());
+        table.RegisterDefault(new DehumProcessor());
+        table.RegisterDefault(new PeakingProcessor());
+        table.RegisterDefault(new ShelfProcessor(high: false));
+        table.RegisterDefault(new ShelfProcessor(high: true));
+        table.RegisterDefault(new PresenceProcessor());
+        table.RegisterDefault(new PreEmphasisProcessor());
+        table.RegisterDefault(new MonoProcessor());
+        table.RegisterDefault(new ResampleProcessor());
     }
 }
 
@@ -305,15 +305,13 @@ internal sealed class BiquadStage : IAudioStage
 
 // "gain" (live): every sample times 10^(value / 20), in place (SIMD with a scalar tail). Nothing is clipped: a boost can
 // take samples past full scale (a limiter after it keeps them under).
-internal sealed class GainProcessor : IAudioProcessor
+internal sealed class GainProcessor : ILiveAudioProcessor
 {
     public string Name => FilterProcessors.Gain;
 
     public string Label => "Gain";
 
     public string Summary => "the level changed by the value, dB (above 0 louder, below 0 quieter); nothing is clipped";
-
-    public bool Live => true;
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
@@ -351,7 +349,7 @@ internal sealed class GainProcessor : IAudioProcessor
 
 // "dc" (live): a DC blocker, y[n] = x[n] - x[n-1] + pole·y[n-1] (a one-pole high-pass with its zero at 0 Hz; its corner
 // about rate·(1 - pole) / 2π Hz), started settled on the first sample's level (its output starts at 0, not at the offset).
-internal sealed class DcProcessor : IAudioProcessor
+internal sealed class DcProcessor : ILiveAudioProcessor
 {
     public const double DefaultPole = 0.995;
 
@@ -360,8 +358,6 @@ internal sealed class DcProcessor : IAudioProcessor
     public string Label => "DC blocker";
 
     public string Summary => string.Create(CultureInfo.InvariantCulture, $"a DC blocker (a one-pole high-pass, its pole `pole`, default {DefaultPole}): the offset goes, the sound above a few Hz stays");
-
-    public bool Live => true;
 
     public IAudioStage Open(AudioProcessorStep step, int sampleRate, int channels) => BiquadStage.Checked(this, step, sampleRate, channels, Design);
 
@@ -382,15 +378,13 @@ internal sealed class DcProcessor : IAudioProcessor
 }
 
 // "lowpass" (live): a Butterworth low-pass of `order` (default 2) at the value, Hz: the sound above it turned down.
-internal sealed class LowPassProcessor : IAudioProcessor
+internal sealed class LowPassProcessor : ILiveAudioProcessor
 {
     public string Name => FilterProcessors.LowPass;
 
     public string Label => "Low-pass filter";
 
     public string Summary => "a Butterworth low-pass at the value, Hz, of `order` (default 2): the hiss and the sound above it go";
-
-    public bool Live => true;
 
     public IAudioStage Open(AudioProcessorStep step, int sampleRate, int channels) => BiquadStage.Checked(this, step, sampleRate, channels, Design);
 
@@ -411,7 +405,7 @@ internal sealed class LowPassProcessor : IAudioProcessor
 // "bandpass" (live): a Butterworth high-pass at `low` then a Butterworth low-pass at `high`, both of `order`: the band
 // between them kept (300 to 3,400 Hz by default: the telephone band). Two cutoffs, not a centre and a Q, so each edge is
 // set where it is heard; it is the cascade of the two filters, not scipy's band-pass transform (whose order doubles).
-internal sealed class BandPassProcessor : IAudioProcessor
+internal sealed class BandPassProcessor : ILiveAudioProcessor
 {
     public const double DefaultLow = 300, DefaultHigh = 3400;
 
@@ -420,8 +414,6 @@ internal sealed class BandPassProcessor : IAudioProcessor
     public string Label => "Band-pass filter";
 
     public string Summary => $"the band from `low` to `high` Hz kept (default {DefaultLow} to {DefaultHigh}): a Butterworth high-pass and low-pass of `order`";
-
-    public bool Live => true;
 
     public IAudioStage Open(AudioProcessorStep step, int sampleRate, int channels) => BiquadStage.Checked(this, step, sampleRate, channels, Design);
 
@@ -453,7 +445,7 @@ internal sealed class BandPassProcessor : IAudioProcessor
 }
 
 // "notch" (live): one frequency taken out (scipy's iirnotch: the -3 dB width is value / q Hz), the rest left at its level.
-internal sealed class NotchProcessor : IAudioProcessor
+internal sealed class NotchProcessor : ILiveAudioProcessor
 {
     public const double DefaultQ = 30;
 
@@ -462,8 +454,6 @@ internal sealed class NotchProcessor : IAudioProcessor
     public string Label => "Notch filter";
 
     public string Summary => $"the value's frequency, Hz, taken out (a notch {DefaultQ} times narrower than it by default, `q`)";
-
-    public bool Live => true;
 
     public IAudioStage Open(AudioProcessorStep step, int sampleRate, int channels) => BiquadStage.Checked(this, step, sampleRate, channels, Design);
 
@@ -484,7 +474,7 @@ internal sealed class NotchProcessor : IAudioProcessor
 // "dehum" (live): the mains hum taken out: a notch (as "notch") at the value (50 or 60 Hz) and at each multiple of it up to
 // `harmonics` notches, all of the same q (so each is as wide as its frequency / q). Multiples at or over half the rate
 // are left out; a mains frequency there is refused.
-internal sealed class DehumProcessor : IAudioProcessor
+internal sealed class DehumProcessor : ILiveAudioProcessor
 {
     public const double DefaultMains = 50, DefaultQ = 30;
     public const int DefaultHarmonics = 4;
@@ -494,8 +484,6 @@ internal sealed class DehumProcessor : IAudioProcessor
     public string Label => "Hum remover";
 
     public string Summary => $"the mains hum taken out: notches at the value, Hz (50 or 60; default {DefaultMains}), and its multiples, `harmonics` in all (default {DefaultHarmonics})";
-
-    public bool Live => true;
 
     public IAudioStage Open(AudioProcessorStep step, int sampleRate, int channels) => BiquadStage.Checked(this, step, sampleRate, channels, Design);
 
@@ -529,7 +517,7 @@ internal sealed class DehumProcessor : IAudioProcessor
 
 // "eq" (live): the RBJ cookbook's peaking EQ: `db` dB at the value's frequency, the band as wide as `q` says, the rest
 // left at its level.
-internal sealed class PeakingProcessor : IAudioProcessor
+internal sealed class PeakingProcessor : ILiveAudioProcessor
 {
     public const double DefaultQ = 1;
 
@@ -538,8 +526,6 @@ internal sealed class PeakingProcessor : IAudioProcessor
     public string Label => "Peaking EQ";
 
     public string Summary => "a band around the value's frequency, Hz, boosted or cut by `db` dB (required), its width `q` (default 1)";
-
-    public bool Live => true;
 
     public IAudioStage Open(AudioProcessorStep step, int sampleRate, int channels) => BiquadStage.Checked(this, step, sampleRate, channels, Design);
 
@@ -567,7 +553,7 @@ internal sealed class PeakingProcessor : IAudioProcessor
 
 // "lowshelf" / "highshelf" (live): the RBJ cookbook's shelves: the sound below (low) or above (high) the value's frequency
 // boosted or cut by `db` dB, the turn as steep as `slope` (1: the steepest without a bump) or, when given instead, `q`.
-internal sealed class ShelfProcessor(bool high) : IAudioProcessor
+internal sealed class ShelfProcessor(bool high) : ILiveAudioProcessor
 {
     public const double DefaultSlope = 1;
 
@@ -576,8 +562,6 @@ internal sealed class ShelfProcessor(bool high) : IAudioProcessor
     public string Label => high ? "High shelf" : "Low shelf";
 
     public string Summary => $"the sound {(high ? "above" : "below")} the value's frequency, Hz, boosted or cut by `db` dB (required), the turn as steep as `slope` (default 1) or `q`";
-
-    public bool Live => true;
 
     public IAudioStage Open(AudioProcessorStep step, int sampleRate, int channels) => BiquadStage.Checked(this, step, sampleRate, channels, Design);
 
@@ -616,7 +600,7 @@ internal sealed class ShelfProcessor(bool high) : IAudioProcessor
 
 // "presence" (live): the speech clarity control (its "sharpness"): a wide peaking boost (as "eq") around 3 kHz, where the
 // consonants that tell words apart are; a cut (below 0) softens a harsh voice instead.
-internal sealed class PresenceProcessor : IAudioProcessor
+internal sealed class PresenceProcessor : ILiveAudioProcessor
 {
     public const double DefaultGain = 3, DefaultHertz = 3000, DefaultQ = 0.7;
 
@@ -625,8 +609,6 @@ internal sealed class PresenceProcessor : IAudioProcessor
     public string Label => "Presence (speech clarity)";
 
     public string Summary => $"the speech clarity control: the consonants' band around `frequency` (default {DefaultHertz} Hz) boosted by the value, dB (default {DefaultGain}; below 0 softens)";
-
-    public bool Live => true;
 
     public IAudioStage Open(AudioProcessorStep step, int sampleRate, int channels) => BiquadStage.Checked(this, step, sampleRate, channels, Design);
 
@@ -651,7 +633,7 @@ internal sealed class PresenceProcessor : IAudioProcessor
 // "preemphasis" (live): y[n] = x[n] - value·x[n-1] (the speech front ends' first step: the highs lifted against the
 // lows), started settled on the first sample's level (x[-1] = x[0], so y[0] = (1 - value)·x[0]; torchaudio's starts
 // from x[-1] = 0).
-internal sealed class PreEmphasisProcessor : IAudioProcessor
+internal sealed class PreEmphasisProcessor : ILiveAudioProcessor
 {
     public const double DefaultCoefficient = 0.97;
 
@@ -660,8 +642,6 @@ internal sealed class PreEmphasisProcessor : IAudioProcessor
     public string Label => "Pre-emphasis";
 
     public string Summary => $"y[n] = x[n] - value·x[n-1] (default {DefaultCoefficient}): the highs lifted against the lows, as speech front ends do";
-
-    public bool Live => true;
 
     public IAudioStage Open(AudioProcessorStep step, int sampleRate, int channels) => BiquadStage.Checked(this, step, sampleRate, channels, Design);
 
@@ -682,15 +662,13 @@ internal sealed class PreEmphasisProcessor : IAudioProcessor
 
 // "mono" (live): the channels' mean, sample by sample (float sums, SIMD with a scalar tail): one channel out. Mono sound
 // passes as it is; otherwise each block's output is a new block of one channel (its size is not the input's).
-internal sealed class MonoProcessor : IAudioProcessor
+internal sealed class MonoProcessor : ILiveAudioProcessor
 {
     public string Name => FilterProcessors.Mono;
 
     public string Label => "Mix to mono";
 
     public string Summary => "the channels mixed to one (their mean)";
-
-    public bool Live => true;
 
     public IReadOnlyList<AudioProcessorParameter> Parameters => [];
 
@@ -764,7 +742,7 @@ internal sealed class MonoProcessor : IAudioProcessor
 // output trails the input by at most Delay samples (the kernel's half width plus one frame); the samples are not
 // shifted (Latency 0). Each block's output is a new block (its size is not the input's); a large block's frames are spread over the
 // cores, a live block's stay on its thread.
-internal sealed class ResampleProcessor : IAudioProcessor
+internal sealed class ResampleProcessor : ILiveAudioProcessor
 {
     public const int DefaultWidth = 6;
     public const double DefaultRolloff = 0.99;
@@ -774,8 +752,6 @@ internal sealed class ResampleProcessor : IAudioProcessor
     public string Label => "Resample";
 
     public string Summary => string.Create(CultureInfo.InvariantCulture, $"the sound at the value's rate, Hz (windowed sinc: `width` zero crossings, default {DefaultWidth}; `rolloff` of the lower Nyquist, default {DefaultRolloff})");
-
-    public bool Live => true;
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [

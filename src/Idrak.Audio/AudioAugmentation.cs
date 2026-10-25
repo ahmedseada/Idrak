@@ -7,11 +7,11 @@ namespace Idrak.Audio;
 
 // "speed": the sound taken as if recorded at rate · factor and resampled back to its rate, so it lasts 1 / factor as long
 // (the pitch moves with it), Kaldi's speed perturbation; a factor of 1 leaves it as it is.
-internal sealed class SpeedAugmentation : IAudioAugmentation
+internal sealed class SpeedAugmentation : ISoundAugmentation
 {
     public string Name => AudioAugmentations.Speed;
 
-    public AudioAugmentationStage Stage => AudioAugmentationStage.Sound;
+    public string Summary => "the sound resampled by a factor of SpeedFactors, so it plays faster or slower";
 
     public AudioData Augment(AudioData audio, Random random, AudioAugmentationOptions options)
     {
@@ -28,14 +28,14 @@ internal sealed class SpeedAugmentation : IAudioAugmentation
 
 // "noise": white noise, or a stretch of a noise file, added at a signal-to-noise ratio drawn between the limits (the
 // signal's power its mean square; a silent signal is left as it is).
-internal sealed class NoiseAugmentation : IAudioAugmentation
+internal sealed class NoiseAugmentation : ISoundAugmentation
 {
     // Noise files decoded once per (path, rate), one channel.
     private static readonly ConcurrentDictionary<(string Path, int Rate), float[]> Decoded = new();
 
     public string Name => AudioAugmentations.Noise;
 
-    public AudioAugmentationStage Stage => AudioAugmentationStage.Sound;
+    public string Summary => "white noise, or a stretch of a noise file, added at a signal-to-noise ratio between the limits";
 
     public AudioData Augment(AudioData audio, Random random, AudioAugmentationOptions options)
     {
@@ -108,11 +108,11 @@ internal sealed class NoiseAugmentation : IAudioAugmentation
 // "spec-mask": SpecAugment's masks: TimeMasks stretches of at most min(TimeMaskFrames, TimeMaskFraction · frames) frames and
 // FrequencyMasks bands of at most FrequencyMaskBands mels, each width drawn uniformly from 0 to its limit, filled with the
 // utterance's mean feature (so a mask reads as an average frame, not as silence).
-internal sealed class SpecMaskAugmentation : IAudioAugmentation
+internal sealed class SpecMaskAugmentation : IFeatureAugmentation
 {
     public string Name => AudioAugmentations.SpecMask;
 
-    public AudioAugmentationStage Stage => AudioAugmentationStage.Features;
+    public string Summary => "SpecAugment's time and frequency masks on the features, filled with the utterance's mean";
 
     public void Augment(Span<float> features, int frames, int mels, Random random, AudioAugmentationOptions options)
     {

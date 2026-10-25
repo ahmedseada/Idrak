@@ -43,71 +43,89 @@ public interface IKeywordIndex
     IReadOnlyList<SearchHit> Search(string query, int top);
 }
 
+/// <summary>What a keyword index is built from (<see cref="IKeywordIndexKind"/>): the texts and the settings.</summary>
+/// <param name="Texts">The texts to index (their ids are their positions).</param>
+/// <param name="Options">The settings (<see cref="KeywordIndexOptions.Parameters"/>' keys among the kind's <see cref="IConfigurableKind.Keys"/>).</param>
+public sealed record KeywordIndexRequest(IEnumerable<string> Texts, KeywordIndexOptions Options);
+
+/// <summary>
+/// A kind of keyword index, registered in <see cref="KeywordIndexes"/> under its <see cref="IKind.Name"/>: builds an
+/// index over a request's texts (<see cref="IKind{TRequest, T}.Create"/>), with settings of its own beyond k1 and b
+/// among its <see cref="IConfigurableKind.Keys"/> (<see cref="KeywordIndexOptions.Parameters"/>).
+/// </summary>
+public interface IKeywordIndexKind : IKind<KeywordIndexRequest, IKeywordIndex>;
+
 /// <summary>
 /// The keyword indexes, by name (ignoring case). The library's: <see cref="Bm25"/> (Okapi BM25, <see cref="Bm25Index"/>,
-/// with <see cref="KeywordIndexOptions.K1"/> and <see cref="KeywordIndexOptions.B"/>). Register another with
-/// <see cref="Register"/>: a factory from the texts and the options to an index; one under the library's name shadows it,
-/// which <see cref="Unregister"/> brings back. The registry has no guard: an index holds the texts it indexed, and falling
-/// back would index them twice.
+/// with <see cref="KeywordIndexOptions.K1"/> and <see cref="KeywordIndexOptions.B"/>). Register another kind with
+/// <see cref="Register"/>; one under the library's name shadows it, which <see cref="Unregister"/> brings back. The
+/// registry has no guard: an index holds the texts it indexed, and falling back would index them twice.
 /// </summary>
 public static class KeywordIndexes
 {
     /// <summary>Okapi BM25, the library's keyword index.</summary>
     public const string Bm25 = "bm25";
 
-    private sealed record Entry(Func<IEnumerable<string>, KeywordIndexOptions, IKeywordIndex> Create, string Summary);
+    private static readonly KindTable<IKeywordIndexKind> Table = new(nameof(KeywordIndexes), "Keyword index", "add it with KeywordIndexes.Register",
+        comparer: StringComparer.OrdinalIgnoreCase, unguarded: "an index holds the texts it indexed, and falling back would index them twice");
 
-    private static readonly SlotTable<string, Entry> Table = new(nameof(KeywordIndexes), comparer: StringComparer.OrdinalIgnoreCase,
-        unguarded: "an index holds the texts it indexed, and falling back would index them twice");
+    static KeywordIndexes() => Overrides.AsLibraryDefaults(() => Register(new Bm25Kind()));
 
-    static KeywordIndexes() => Overrides.AsLibraryDefaults(() =>
-        Register(Bm25, (texts, options) => new Bm25Index(texts, options.K1, options.B),
-            "Okapi BM25: rare words weigh more, repeated words saturate (k1), long texts weigh slightly less (b)"));
-
-    /// <summary>
-    /// Registers the keyword index <paramref name="name"/>, built by <paramref name="factory"/> from the texts and the
-    /// options (over the library's of that name, which stays behind it).
-    /// </summary>
-    /// <param name="name">Its name, as retrieval and <c>idrak rag index --keywords</c> give it.</param>
-    /// <param name="factory">Builds an index over the texts (their ids are their positions).</param>
-    /// <param name="summary">One line for listings.</param>
+    /// <summary>Registers <paramref name="kind"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string name, Func<IEnumerable<string>, KeywordIndexOptions, IKeywordIndex> factory, string? summary = null)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ArgumentNullException.ThrowIfNull(factory);
-        Table.Register(name, new Entry(factory, summary ?? name), System.Reflection.Assembly.GetCallingAssembly(), factory);
-    }
+    public static void Register(IKeywordIndexKind kind) => Table.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's index <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Table.Unregister(name);
 
     /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
+    public static IReadOnlyCollection<string> Names => Table.Names;
 
-    /// <summary>The factory registered as <paramref name="name"/>, or null.</summary>
-    public static Func<IEnumerable<string>, KeywordIndexOptions, IKeywordIndex>? Find(string name) => Table.Find(name)?.Create;
+    /// <summary>The kind registered as <paramref name="name"/>, or null.</summary>
+    public static IKeywordIndexKind? Find(ReadOnlySpan<char> name) => Table.Find(name);
 
-    /// <summary>The factory registered as <paramref name="name"/>.</summary>
+    /// <summary>The kind registered as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
-    public static Func<IEnumerable<string>, KeywordIndexOptions, IKeywordIndex> Get(string name) => Find(name)
-        ?? throw new NotRegisteredException(nameof(KeywordIndexes), name, Table.Keys,
-            $"Keyword index '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with KeywordIndexes.Register.");
+    public static IKeywordIndexKind Get(ReadOnlySpan<char> name) => Table.Get(name);
 
-    /// <summary>The library's factory <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static Func<IEnumerable<string>, KeywordIndexOptions, IKeywordIndex>? Default(string name) => Table.Default(name)?.Create;
+    /// <summary>The library's kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static IKeywordIndexKind? Default(string name) => Table.Default(name);
 
     /// <summary>Who registered the index <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Table.Origin(name);
 
     /// <summary>Each registered index as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Keys.Select(k => $"{k}: {Table.Find(k)!.Summary}"));
+    public static string Describe() => Table.Describe();
 
     /// <summary>Builds the index <paramref name="name"/> over <paramref name="texts"/> (their ids are their positions).</summary>
     /// <exception cref="NotSupportedException">No index has that name.</exception>
+    /// <exception cref="ArgumentException">A setting in <see cref="KeywordIndexOptions.Parameters"/> the kind does not take.</exception>
     public static IKeywordIndex Create(string name, IEnumerable<string> texts, KeywordIndexOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(texts);
-        return Get(name)(texts, options ?? new KeywordIndexOptions());
+        var kind = Get(name);
+        options ??= new KeywordIndexOptions();
+        foreach (string key in options.Parameters.Keys)
+        {
+            if (!kind.Keys.Contains(key))
+            {
+                throw new ArgumentException($"The keyword index {kind.Name} does not take the setting '{key}'; it takes: {(kind.Keys.Count == 0 ? "none" : string.Join(", ", kind.Keys))}.",
+                    nameof(options));
+            }
+        }
+
+        return kind.Create(new KeywordIndexRequest(texts, options));
+    }
+
+    // Okapi BM25 with k1 and b.
+    private sealed class Bm25Kind : IKeywordIndexKind
+    {
+        public string Name => Bm25;
+
+        public string Summary => "Okapi BM25: rare words weigh more, repeated words saturate (k1), long texts weigh slightly less (b)";
+
+        public IReadOnlySet<string> Keys => OptionKeys.None;
+
+        public IKeywordIndex Create(KeywordIndexRequest request) => new Bm25Index(request.Texts, request.Options.K1, request.Options.B);
     }
 }

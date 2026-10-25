@@ -13,7 +13,7 @@ namespace Idrak.Models;
 /// (the same values in half the memory), and a smaller weights' format when the device has nothing left beyond its headroom.
 /// A figure the device does not report decides nothing.
 /// </summary>
-internal sealed class PretrainedModelAdvisor : ISettingAdvisor
+internal sealed class PretrainedModelAdvisor : ISettingAdvisor<PretrainedModel>
 {
     /// <summary>The advisor's name: "pretrained model".</summary>
     public const string AdvisorName = "pretrained model";
@@ -22,14 +22,10 @@ internal sealed class PretrainedModelAdvisor : ISettingAdvisor
 
     public string Summary => "a loaded model: bfloat16 weights for a bfloat16 checkpoint read as float32; a smaller weights' format when the device has nothing left beyond its headroom";
 
-    public IEnumerable<SettingSuggestion> Suggest(AdviceSituation situation)
+    public IEnumerable<SettingSuggestion> Suggest(AdviceSituation situation, PretrainedModel model)
     {
         ArgumentNullException.ThrowIfNull(situation);
-        if (situation.Subject is not PretrainedModel model)
-        {
-            yield break;
-        }
-
+        ArgumentNullException.ThrowIfNull(model);
         var projections = model.Network.Descendants().OfType<Linear>().Where(l => l.Name != "head").ToList();
         long weights = projections.Sum(l => (long)l.InFeatures * l.OutFeatures);
         if (weights == 0)

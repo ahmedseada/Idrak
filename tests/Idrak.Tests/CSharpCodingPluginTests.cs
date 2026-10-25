@@ -133,11 +133,9 @@ internal static partial class Tests
         return found;
     }
 
-    private static Dictionary<string, string> CSharpInfoOf(int total, int passed, bool built, int errors, int warnings) => new()
-    {
-        [CSharpInfo.TestsTotal] = $"{total}", [CSharpInfo.TestsPassed] = $"{passed}", [CSharpInfo.BuildPassed] = built ? "true" : "false",
-        [CSharpInfo.BuildErrors] = $"{errors}", [CSharpInfo.BuildWarnings] = $"{warnings}",
-    };
+    private static EpisodeInfo CSharpInfoOf(int total, int passed, bool built, int errors, int warnings) => new EpisodeInfo()
+        .Set(CSharpInfo.TestsTotal, total).Set(CSharpInfo.TestsPassed, passed).Set(CSharpInfo.BuildPassed, built)
+        .Set(CSharpInfo.BuildErrors, errors).Set(CSharpInfo.BuildWarnings, warnings);
 
     private static void CSharpPluginRegisters()
     {
@@ -186,7 +184,7 @@ internal static partial class Tests
             AssertClose([1f, 1f, -0.2f, 1f], Score(CSharpRewards.Build, new Dictionary<string, string> { ["floor"] = "-0.2" }), 1e-6f, "csharp-build at least its floor");
             ThrowsNaming<ArgumentException>(() => Score(CSharpRewards.Build, new Dictionary<string, string> { ["weight"] = "1" }), "an option csharp-build does not take", "'weight'", "error, warning, floor");
             ThrowsNaming<ArgumentException>(() => RewardFunctions.Get(CSharpRewards.Tests).ScoreAsync([new RewardInput("p", "a")]).AsTask().GetAwaiter().GetResult(),
-                "an answer without the csharp environment's info", CSharpInfo.TestsTotal, "csharp environment");
+                "an answer without the csharp environment's info", CSharpInfo.TestsTotal.Name, "csharp environment");
 
             // The machine-readable output: TRX counters summed over the files, MSBuild's error and warning lines counted once.
             string folder = Path.Combine(Path.GetTempPath(), "idrak-csharp-results-" + Guid.NewGuid().ToString("N"));
@@ -290,22 +288,22 @@ internal static partial class Tests
             var partly = first.StepAsync(CSharpFixAdd).AsTask().GetAwaiter().GetResult();
             var end = first.StepAsync(CSharpDone).AsTask().GetAwaiter().GetResult();
             Check(!partly.Done && end.Done, "two steps");
-            Check(end.Info![CSharpInfo.TestsTotal] == "4" && end.Info[CSharpInfo.TestsPassed] == "3" && end.Info[CSharpInfo.BuildPassed] == "true" && end.Info[CSharpInfo.BuildErrors] == "0"
-                  && end.Info[CodingInfo.VerifyPassedCommands] == "1" && end.Info[CodingInfo.VerifyCommands] == "2",
+            Check(end.Info!.Get(CSharpInfo.TestsTotal) == 4 && end.Info.Get(CSharpInfo.TestsPassed) == 3 && end.Info.Get(CSharpInfo.BuildPassed) && end.Info.Get(CSharpInfo.BuildErrors) == 0
+                  && end.Info.Get(CodingInfo.VerifyPassedCommands) == 1 && end.Info.Get(CodingInfo.VerifyCommands) == 2,
                 $"a partly right answer: {ShowInfo(end.Info)}\n{first.Verification?.Output}");
             AssertClose([0.75f + 1f], [end.Reward], 1e-6f, "the reward: the share of the tests (0.75) and the build (1)");
 
             // A build with errors: no tests ran; csharp-build's penalty per error.
             var broken = PlayCoding(first, 1, [CSharpBreak, CSharpDone])[^1];
-            Check(broken.Info![CSharpInfo.BuildPassed] == "false" && broken.Info[CSharpInfo.BuildErrors] == "2" && broken.Info[CSharpInfo.TestsTotal] == "0",
+            Check(!broken.Info!.Get(CSharpInfo.BuildPassed) && broken.Info.Get(CSharpInfo.BuildErrors) == 2 && broken.Info.Get(CSharpInfo.TestsTotal) == 0,
                 $"a build with two errors: {ShowInfo(broken.Info)}");
             AssertClose([-0.2f], [broken.Reward], 1e-6f, "the reward: no tests, 0 less 0.1 for each of the two errors");
 
             // Edits to the test project and to the build's shared files: reported, and refused when asked.
             refusing = (CodingEnvironment)kind.Create(new EnvironmentRequest(new Dictionary<string, string>(options) { ["refuse-test-edits"] = "true", ["work"] = Path.Combine(root, "work-refusing") }));
             var refused = PlayCoding(refusing, 0, [CSharpEditTests, CSharpDone])[^1];
-            Check(refused.Info![CodingInfo.Refused] == "test-edits" && refused.Info[CodingInfo.TestEdits] == "Directory.Build.props,Lib.Tests/Lib.Tests.csproj"
-                  && refused.Info[CSharpInfo.TestsTotal] == "0", $"the protected edits refused: {ShowInfo(refused.Info)}");
+            Check(refused.Info!.Get(CodingInfo.Refused) == "test-edits" && refused.Info.Get(CodingInfo.TestEdits) == "Directory.Build.props,Lib.Tests/Lib.Tests.csproj"
+                  && refused.Info.Get(CSharpInfo.TestsTotal) == 0, $"the protected edits refused: {ShowInfo(refused.Info)}");
 
             // Two episodes at once (the collector's way): the same rewards, one package folder, no build node left running.
             var episodes = new[] { first, second }.Select(environment => Task.Run(() => PlayCoding(environment, 0, [CSharpFixAdd, CSharpDone])[^1])).ToArray();

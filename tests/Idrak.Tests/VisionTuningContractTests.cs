@@ -452,7 +452,7 @@ internal static partial class Tests
 
         public bool LowerIsBetter => false;
 
-        public IReadOnlyCollection<string> Keys => [];
+        public IReadOnlySet<string> Keys => OptionKeys.None;
 
         public TuningScore Score(string answer, string reference, IReadOnlyDictionary<string, string>? options = null) => new(answer == reference ? 1 : 0, 1);
     }

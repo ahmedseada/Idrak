@@ -328,27 +328,17 @@ internal sealed class VoiceTrainCommand : Command
         };
     }
 
-    // The base loaded to be trained: a family whose model trains against discriminators.
+    // The base loaded to be trained: a family whose model trains against discriminators (ITrainableSpeechSynthesisFamily).
     private static IAdversarialSpeechSynthesizer Load(CommandContext context, string folder)
     {
-        ISpeechSynthesizer synthesizer;
         try
         {
-            synthesizer = SpeechSynthesisModels.Load(folder, new SpeechSynthesisLoadOptions { Device = context.Device, Training = true });
+            return SpeechSynthesisModels.LoadForTraining(folder, new SpeechSynthesisLoadOptions { Device = context.Device });
         }
         catch (FileNotFoundException e)
         {
             throw new UsageException($"{folder} is not a synthesizer's folder: {e.Message}");
         }
-
-        if (synthesizer is IAdversarialSpeechSynthesizer adversarial)
-        {
-            return adversarial;
-        }
-
-        synthesizer.Dispose();
-        throw new UsageException($"{folder} holds a {synthesizer.GetType().Name}, which its family does not train against discriminators (no IAdversarialSpeechSynthesizer); "
-            + "voice train fine-tunes a VITS checkpoint (Idrak.Audio.Plugins' VITS family).");
     }
 
     // --time-steps: steps until the second pass over the recordings (the first takes every clip's training rows), then 3 timed
@@ -491,10 +481,16 @@ internal sealed class VoiceTrainCommand : Command
             ["steps"] = result.Steps, ["run"] = run, ["checkpoint"] = Path.GetFileName(result.Checkpoint), ["utterances"] = result.Utterances,
             ["final_loss"] = output["final_loss"]?.DeepClone(), ["options"] = options.ToJson(),
         };
+        if (store is not ICheckpointVoiceStore checkpoints)
+        {
+            context.Error($"Voice store '{store.Name}' keeps no model folders (voices of kind {VoiceKinds.Checkpoint}).");
+            return ExitCodes.Failed;
+        }
+
         VoiceProfile voice;
         try
         {
-            voice = store.AddCheckpoint(name, result.Checkpoint, new VoiceCheckpointOptions
+            voice = checkpoints.AddCheckpoint(name, result.Checkpoint, new VoiceCheckpointOptions
             {
                 Consent = new VoiceConsent((string)consent["speaker"]!, (string)consent["statement"]!, DateTimeOffset.Parse((string)consent["agreed"]!, CultureInfo.InvariantCulture)),
                 Languages = [.. settings["languages"]!.AsArray().Select(l => (string)l!)],

@@ -70,18 +70,9 @@ public sealed record Idrak.Text.Abstractions.CodingToolExamples : System.IEquata
   public System.Collections.Generic.IReadOnlyList<string> SearchPatterns { get; init; }
   public static Idrak.Text.Abstractions.CodingToolExamples None { get; }
 
-public abstract class Idrak.Text.Abstractions.DistillationTeacher : System.IDisposable
-  protected DistillationTeacher()
-  protected virtual void Dispose(bool disposing)
-  public abstract Idrak.Text.Abstractions.TeacherDistributions Distributions(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences)
-  public abstract int TopK { get; }
-  public abstract int Vocabulary { get; }
-  public abstract string? Fingerprint { get; }
+public static class Idrak.Text.Abstractions.DistillationTeacher
   public static string VocabularyFingerprint(Idrak.Abstraction.Generation.ITokenizer tokenizer)
   public static void CheckVocabulary(Idrak.Abstraction.Generation.ITokenizer teacher, Idrak.Abstraction.Generation.ITokenizer student)
-  public virtual Idrak.Abstraction.Generation.ITokenizer? Tokenizer { get; }
-  public void Check(Idrak.Abstraction.Generation.ITokenizer student)
-  public void Dispose()
 
 public static class Idrak.Text.Abstractions.FeatureCacheKeyExtensions
   public static Idrak.Abstraction.Generation.FeatureCacheKey For(Idrak.Abstraction.Generation.ChatImage image, Idrak.Text.TuningImages images, string family, string checkpoint, string dtype, string stage = "tower")
@@ -105,6 +96,19 @@ public interface Idrak.Text.Abstractions.ICodingLanguage
   public string Name { get; }
   public string Summary { get; }
 
+public interface Idrak.Text.Abstractions.IDistillationTeacher : System.IDisposable
+  public (default) void Check(Idrak.Abstraction.Generation.ITokenizer student)
+  public Idrak.Text.Abstractions.ITeacherDistributions Distributions(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences)
+  public Idrak.Text.Abstractions.TeacherVocabulary Identity { get; }
+  public int TopK { get; }
+  public int Vocabulary { get; }
+
+public interface Idrak.Text.Abstractions.IFineTuningLoss : Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Tensor Compute(Idrak.Text.FineTuningLossInput input)
+  public bool NeedsPairs { get; }
+  public bool NeedsReference { get; }
+  public bool NeedsTeacher { get; }
+
 public interface Idrak.Text.Abstractions.IJsonRepair
   public Idrak.Text.Abstractions.JsonRepairResult? Repair(string text)
   public string Name { get; }
@@ -115,6 +119,8 @@ public interface Idrak.Text.Abstractions.IKeywordIndex
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Retrieval.SearchHit> Search(string query, int top)
   public int Count { get; }
   public string Name { get; }
+
+public interface Idrak.Text.Abstractions.IKeywordIndexKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Text.Abstractions.KeywordIndexRequest, Idrak.Text.Abstractions.IKeywordIndex>
 
 public interface Idrak.Text.Abstractions.IPagePartFiller
   public string Name { get; }
@@ -130,16 +136,28 @@ public interface Idrak.Text.Abstractions.IPretrainingSource
   public string Name { get; }
   public string Summary { get; }
 
+public interface Idrak.Text.Abstractions.IPromptDataEnvironmentKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Reinforcement.EnvironmentRequest, Idrak.Abstraction.Reinforcement.IEnvironment>, Idrak.Abstraction.Reinforcement.IEnvironmentKind
+  public Idrak.Abstraction.Reinforcement.IEnvironmentKind WithTasks(System.Collections.Generic.IReadOnlyList<Idrak.Text.ChatTranscript> conversations, Idrak.Abstraction.Generation.ITokenizer? tokenizer)
+  public string? DataKey { get; }
+
 public interface Idrak.Text.Abstractions.IRandomTextSource
   public string Line(System.Random random, int words, Idrak.Text.RandomTextOptions options)
   public string Name { get; }
   public string Summary { get; }
 
+public interface Idrak.Text.Abstractions.ISyntheticRecord
+  public System.Text.Json.Nodes.JsonObject Write(string answer, string image)
+  public string Answer { get; }
+  public string Where { get; }
+
 public interface Idrak.Text.Abstractions.ISyntheticRecordFormat
-  public System.Collections.Generic.IEnumerable<Idrak.Text.Abstractions.SyntheticRecord> Read(string path, string prompt, string? answerKey)
+  public System.Collections.Generic.IEnumerable<Idrak.Text.Abstractions.ISyntheticRecord> Read(string path, string prompt, string? answerKey)
   public bool Recognizes(string path)
   public string Name { get; }
   public string Summary { get; }
+
+public interface Idrak.Text.Abstractions.ITeacherDistributions : System.IDisposable
+  public Idrak.Abstraction.Tensor Probabilities(int start, int count, float temperature, int vocabulary, Idrak.Abstraction.Device device)
 
 public interface Idrak.Text.Abstractions.ITeacherDivergence
   public (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor?) Rows(Idrak.Abstraction.Tensor studentLogProbabilities, Idrak.Abstraction.Tensor teacherProbabilities, float beta, bool gradient)
@@ -182,17 +200,22 @@ public sealed record Idrak.Text.Abstractions.KeywordIndexOptions : System.IEquat
   public double B { get; init; }
   public double K1 { get; init; }
 
+public sealed record Idrak.Text.Abstractions.KeywordIndexRequest : System.IEquatable<Idrak.Text.Abstractions.KeywordIndexRequest>
+  public Idrak.Text.Abstractions.KeywordIndexOptions Options { get; init; }
+  public KeywordIndexRequest(System.Collections.Generic.IEnumerable<string> Texts, Idrak.Text.Abstractions.KeywordIndexOptions Options)
+  public System.Collections.Generic.IEnumerable<string> Texts { get; init; }
+
 public static class Idrak.Text.Abstractions.KeywordIndexes
   public const string Bm25 = "bm25"
   public static Idrak.Text.Abstractions.IKeywordIndex Create(string name, System.Collections.Generic.IEnumerable<string> texts, Idrak.Text.Abstractions.KeywordIndexOptions? options = null)
+  public static Idrak.Text.Abstractions.IKeywordIndexKind Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Text.Abstractions.IKeywordIndexKind? Default(string name)
+  public static Idrak.Text.Abstractions.IKeywordIndexKind? Find(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static System.Func<System.Collections.Generic.IEnumerable<string>, Idrak.Text.Abstractions.KeywordIndexOptions, Idrak.Text.Abstractions.IKeywordIndex> Get(string name)
-  public static System.Func<System.Collections.Generic.IEnumerable<string>, Idrak.Text.Abstractions.KeywordIndexOptions, Idrak.Text.Abstractions.IKeywordIndex>? Default(string name)
-  public static System.Func<System.Collections.Generic.IEnumerable<string>, Idrak.Text.Abstractions.KeywordIndexOptions, Idrak.Text.Abstractions.IKeywordIndex>? Find(string name)
   public static bool Unregister(string name)
   public static string Describe()
   public static string? Origin(string name)
-  public static void Register(string name, System.Func<System.Collections.Generic.IEnumerable<string>, Idrak.Text.Abstractions.KeywordIndexOptions, Idrak.Text.Abstractions.IKeywordIndex> factory, string? summary = null)
+  public static void Register(Idrak.Text.Abstractions.IKeywordIndexKind kind)
 
 public sealed class Idrak.Text.Abstractions.PagePartContext
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public PagePartContext()
@@ -257,9 +280,10 @@ public static class Idrak.Text.Abstractions.RandomTextSources
   public static string? Origin(string name)
   public static void Register(Idrak.Text.Abstractions.IRandomTextSource source)
 
-public sealed class Idrak.Text.Abstractions.SyntheticRecord
+public sealed class Idrak.Text.Abstractions.SyntheticRecord : Idrak.Text.Abstractions.ISyntheticRecord
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public SyntheticRecord()
-  public required System.Func<string, string, System.Text.Json.Nodes.JsonObject> Write { get; init; }
+  public System.Text.Json.Nodes.JsonObject Write(string answer, string image)
+  public required System.Func<string, string, System.Text.Json.Nodes.JsonObject> Writer { get; init; }
   public required string Answer { get; init; }
   public required string Where { get; init; }
 
@@ -271,11 +295,6 @@ public static class Idrak.Text.Abstractions.SyntheticRecordFormats
   public static bool Unregister(string name)
   public static string? Origin(string name)
   public static void Register(Idrak.Text.Abstractions.ISyntheticRecordFormat format)
-
-public abstract class Idrak.Text.Abstractions.TeacherDistributions : System.IDisposable
-  protected TeacherDistributions()
-  public abstract Idrak.Abstraction.Tensor Probabilities(int start, int count, float temperature, int vocabulary, Idrak.Abstraction.Device device)
-  public virtual void Dispose()
 
 public static class Idrak.Text.Abstractions.TeacherDivergences
   public const string Forward = "forward"
@@ -290,6 +309,17 @@ public static class Idrak.Text.Abstractions.TeacherDivergences
   public static string? Origin(string name)
   public static void Register(Idrak.Text.Abstractions.ITeacherDivergence divergence)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed class Idrak.Text.Abstractions.TeacherVocabulary
+  public Idrak.Abstraction.Generation.ITokenizer? Tokenizer { get; }
+  public bool IsKnown { get; }
+  public override string ToString()
+  public static Idrak.Text.Abstractions.TeacherVocabulary Fingerprinted(string fingerprint)
+  public static Idrak.Text.Abstractions.TeacherVocabulary Of(Idrak.Abstraction.Generation.ITokenizer tokenizer)
+  public static Idrak.Text.Abstractions.TeacherVocabulary Unknown(string reason)
+  public string? Fingerprint { get; }
+  public string? UnknownReason { get; }
+  public void Check(Idrak.Abstraction.Generation.ITokenizer student)
 
 public readonly record struct Idrak.Text.Abstractions.TextMatch : System.IEquatable<Idrak.Text.Abstractions.TextMatch>
   public TextMatch(int Start, int Length, int Distance)
@@ -475,10 +505,10 @@ public sealed record Idrak.Text.ConversationTuningResult : System.IEquatable<Idr
   public string Folder { get; init; }
 
 public static class Idrak.Text.DistillationTeachers
-  public static Idrak.Text.Abstractions.DistillationTeacher FromFile(string path)
-  public static Idrak.Text.Abstractions.DistillationTeacher FromModel(Idrak.Models.PretrainedModel teacher, int topK = 0, int batchTokens = 4096)
-  public static Idrak.Text.Abstractions.DistillationTeacher FromModel(Idrak.Models.PretrainedModel teacher, int topK, int batchTokens, Idrak.Text.TuningImages images)
-  public static void CheckOnPolicy(Idrak.Text.Abstractions.DistillationTeacher teacher, Idrak.Abstraction.Generation.ITokenizer student)
+  public static Idrak.Text.Abstractions.IDistillationTeacher FromFile(string path)
+  public static Idrak.Text.Abstractions.IDistillationTeacher FromModel(Idrak.Models.PretrainedModel teacher, int topK = 0, int batchTokens = 4096)
+  public static Idrak.Text.Abstractions.IDistillationTeacher FromModel(Idrak.Models.PretrainedModel teacher, int topK, int batchTokens, Idrak.Text.TuningImages images)
+  public static void CheckOnPolicy(Idrak.Text.Abstractions.IDistillationTeacher teacher, Idrak.Abstraction.Generation.ITokenizer student)
 
 public sealed record Idrak.Text.EvaluatedAnswer : System.IEquatable<Idrak.Text.EvaluatedAnswer>
   public EvaluatedAnswer(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Prompt, string Reference, string Answer, double Score, int Tokens)
@@ -507,8 +537,6 @@ public static class Idrak.Text.FineTuner
   public static System.Collections.Generic.List<int[][]> PackedBatches(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, int length, int rows, System.Random? random)
   public static float Evaluate(Idrak.Models.PretrainedModel model, System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, int batchTokens = 4096, int chunkRows = 512, System.Action<string>? trace = null, Idrak.Text.TuningVision? vision = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource>? parts = null)
 
-public delegate Idrak.Abstraction.Tensor Idrak.Text.FineTuningLoss(Idrak.Text.FineTuningLossInput input)
-
 public sealed class Idrak.Text.FineTuningLossInput
   public FineTuningLossInput(Idrak.Abstraction.Tensor logProbabilities, System.Collections.Generic.IReadOnlyList<int> tokenCounts, Idrak.Abstraction.Tensor? referenceLogProbabilities = null, bool pairs = false, int stepTokens = 0, int stepSequences = 0, System.Func<float, float[]>? teacherDivergence = null, Idrak.Abstraction.Tensor? sequenceValues = null, Idrak.Abstraction.Tensor? tokenValues = null, Idrak.Abstraction.Tensor? behaviorLogProbabilities = null)
   public Idrak.Abstraction.Tensor Chosen(Idrak.Abstraction.Tensor perSequence)
@@ -530,25 +558,26 @@ public sealed class Idrak.Text.FineTuningLossInput
   public int StepTokens { get; }
 
 public static class Idrak.Text.FineTuningLosses
-  public static Idrak.Text.FineTuningLoss Add(Idrak.Text.FineTuningLoss first, Idrak.Text.FineTuningLoss second, float weight = 1f)
-  public static Idrak.Text.FineTuningLoss Distillation(float temperature = 1f, float alpha = 0.5f)
-  public static Idrak.Text.FineTuningLoss Dpo(float beta = 0.1f, float labelSmoothing = 0f)
-  public static Idrak.Text.FineTuningLoss OnPolicyDistillation(string divergence = "reverse", float temperature = 1f, float beta = 0.5f)
-  public static Idrak.Text.FineTuningLoss Orpo(float lambda = 0.1f)
-  public static Idrak.Text.FineTuningLoss Policy(Idrak.Abstraction.Reinforcement.IPolicyLoss loss, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
-  public static Idrak.Text.FineTuningLoss SimPo(float beta = 2f, float gamma = 1f)
-  public static Idrak.Text.FineTuningLoss TokenCrossEntropy { get; }
+  public static Idrak.Text.Abstractions.IFineTuningLoss Add(Idrak.Text.Abstractions.IFineTuningLoss first, Idrak.Text.Abstractions.IFineTuningLoss second, float weight = 1f)
+  public static Idrak.Text.Abstractions.IFineTuningLoss Distillation(float temperature = 1f, float alpha = 0.5f)
+  public static Idrak.Text.Abstractions.IFineTuningLoss Dpo(float beta = 0.1f, float labelSmoothing = 0f)
+  public static Idrak.Text.Abstractions.IFineTuningLoss Of(string name, System.Func<Idrak.Text.FineTuningLossInput, Idrak.Abstraction.Tensor> compute, bool needsPairs = false, bool needsReference = false, bool needsTeacher = false, string? summary = null)
+  public static Idrak.Text.Abstractions.IFineTuningLoss OnPolicyDistillation(string divergence = "reverse", float temperature = 1f, float beta = 0.5f)
+  public static Idrak.Text.Abstractions.IFineTuningLoss Orpo(float lambda = 0.1f)
+  public static Idrak.Text.Abstractions.IFineTuningLoss Policy(Idrak.Abstraction.Reinforcement.IPolicyLoss loss, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public static Idrak.Text.Abstractions.IFineTuningLoss SimPo(float beta = 2f, float gamma = 1f)
+  public static Idrak.Text.Abstractions.IFineTuningLoss TokenCrossEntropy { get; }
 
 public sealed record Idrak.Text.FineTuningOptions : System.IEquatable<Idrak.Text.FineTuningOptions>
   public FineTuningOptions()
   public Idrak.Abstraction.Cluster.ClusterOptions? ClusterOptions { get; init; }
   public Idrak.Abstraction.Cluster.ICollectives? Cluster { get; init; }
-  public Idrak.Text.Abstractions.DistillationTeacher? Teacher { get; init; }
-  public Idrak.Text.FineTuningLoss? Loss { get; init; }
+  public Idrak.Text.Abstractions.IDistillationTeacher? Teacher { get; init; }
+  public Idrak.Text.Abstractions.IFineTuningLoss? Loss { get; init; }
   public Idrak.Text.TuningAnswerScorer? Answers { get; init; }
   public Idrak.Text.TuningVision? Vision { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource> Parts { get; init; }
-  public System.Collections.Generic.IReadOnlyList<string> Targets { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string>? Targets { get; init; }
   public System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.ILearningRateScheduler>? Scheduler { get; init; }
   public System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer>? Optimizer { get; init; }
   public bool CudaGraphs { get; init; }
@@ -606,7 +635,7 @@ public sealed class Idrak.Text.FineTuningSession : System.IDisposable
   public FineTuningSession(Idrak.Models.PretrainedModel model, Idrak.Text.FineTuningOptions options, int totalSteps, System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence>? sample = null, System.Action<string>? trace = null)
   public Idrak.Models.PretrainedModel Model { get; }
   public Idrak.Text.FineTuningOptions Options { get; }
-  public Idrak.Text.FineTuningStepStats Step(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, Idrak.Text.FineTuningLoss? loss = null, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Text.FineTuningStepStats Step(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, Idrak.Text.Abstractions.IFineTuningLoss? loss = null, System.Threading.CancellationToken cancellationToken = default)
   public Idrak.Text.Generation.ChatGenerator Generator(Idrak.Abstraction.Generation.IKeyValueLayout cacheLayout, int? contextLength = null)
   public Idrak.Text.Generation.ChatGenerator Generator(int? contextLength = null, Idrak.Abstraction.Generation.KeyValueFormat cacheFormat = (Idrak.Abstraction.Generation.KeyValueFormat)0)
   public bool SaveOnce(string folder)
@@ -975,7 +1004,7 @@ public sealed record Idrak.Text.PretrainingCheckpoint : System.IEquatable<Idrak.
 public sealed record Idrak.Text.PretrainingOptions : System.IEquatable<Idrak.Text.PretrainingOptions>
   public Idrak.Abstraction.Cluster.ClusterOptions? ClusterOptions { get; init; }
   public Idrak.Abstraction.Cluster.ICollectives? Cluster { get; init; }
-  public Idrak.Text.Abstractions.DistillationTeacher? Teacher { get; init; }
+  public Idrak.Text.Abstractions.IDistillationTeacher? Teacher { get; init; }
   public Idrak.Text.TuningImages Images { get; init; }
   public PretrainingOptions()
   public System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.PretrainingSource> Evaluation { get; init; }
@@ -1075,6 +1104,11 @@ public enum Idrak.Text.RandomTextUnit : int
   Pages = 0
   Words = 2
 
+public interface Idrak.Text.Reinforcement.Abstractions.IRewardedEnvironmentKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Reinforcement.EnvironmentRequest, Idrak.Abstraction.Reinforcement.IEnvironment>, Idrak.Abstraction.Reinforcement.IEnvironmentKind
+  public string RewardKey { get; }
+  public string? RoundsKey { get; }
+  public string? ThinkKey { get; }
+
 public sealed record Idrak.Text.Reinforcement.EpisodeLayout : System.IEquatable<Idrak.Text.Reinforcement.EpisodeLayout>
   public EpisodeLayout(string Mode, System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> Sequences)
   public System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> Sequences { get; init; }
@@ -1090,10 +1124,11 @@ public static class Idrak.Text.Reinforcement.EpisodeTurns
   public static bool PrefixStable(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.ActionRecord> records)
   public static string Parse(string mode)
 
-public sealed class Idrak.Text.Reinforcement.JudgeReward : Idrak.Abstraction.Reinforcement.IRewardFunction
+public sealed class Idrak.Text.Reinforcement.JudgeReward : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IOptionSchema, Idrak.Abstraction.Reinforcement.IRewardFunction
+  public Idrak.Abstraction.OptionSchema Options { get; }
   public JudgeReward()
   public JudgeReward(Idrak.Text.AnswerScorer scorer, string name = "judge")
-  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+  public System.Collections.Generic.IReadOnlySet<string> Keys { get; }
   public System.Threading.Tasks.ValueTask<float[]> ScoreAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.RewardInput> inputs, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, System.Threading.CancellationToken cancellationToken = default)
   public string Name { get; }
   public string Summary { get; }
@@ -1175,9 +1210,10 @@ public sealed record Idrak.Text.Reinforcement.PromptTask : System.IEquatable<Idr
   public static Idrak.Text.Reinforcement.PromptTask FromTranscript(Idrak.Text.ChatTranscript transcript)
   public string? Reference { get; init; }
 
-public sealed class Idrak.Text.Reinforcement.PromptsEnvironmentKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Reinforcement.EnvironmentRequest, Idrak.Abstraction.Reinforcement.IEnvironment>, Idrak.Abstraction.Reinforcement.IEnvironmentKind
+public sealed class Idrak.Text.Reinforcement.PromptsEnvironmentKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Reinforcement.EnvironmentRequest, Idrak.Abstraction.Reinforcement.IEnvironment>, Idrak.Abstraction.Reinforcement.IEnvironmentKind, Idrak.Text.Abstractions.IPromptDataEnvironmentKind, Idrak.Text.Reinforcement.Abstractions.IRewardedEnvironmentKind
   public Idrak.Abstraction.Generation.ITokenizer? Tokenizer { get; init; }
   public Idrak.Abstraction.Reinforcement.IEnvironment Create(Idrak.Abstraction.Reinforcement.EnvironmentRequest request)
+  public Idrak.Abstraction.Reinforcement.IEnvironmentKind WithTasks(System.Collections.Generic.IReadOnlyList<Idrak.Text.ChatTranscript> conversations, Idrak.Abstraction.Generation.ITokenizer? tokenizer)
   public PromptsEnvironmentKind()
   public PromptsEnvironmentKind(System.Collections.Generic.IReadOnlyList<Idrak.Text.Reinforcement.PromptTask> tasks, Idrak.Abstraction.Generation.IToolRegistry? tools = null, string name = "prompts")
   public System.Collections.Generic.IReadOnlySet<string> Keys { get; }
@@ -1185,7 +1221,11 @@ public sealed class Idrak.Text.Reinforcement.PromptsEnvironmentKind : Idrak.Abst
   public System.Type ObservationType { get; }
   public const string KindName = "prompts"
   public string Name { get; }
+  public string RewardKey { get; }
   public string Summary { get; }
+  public string? DataKey { get; }
+  public string? RoundsKey { get; }
+  public string? ThinkKey { get; }
 
 public static class Idrak.Text.Reinforcement.TextRewards
   public const string Json = "json"
@@ -1202,6 +1242,10 @@ public sealed record Idrak.Text.Retrieval.Abstractions.Chunk : System.IEquatable
   public int Position { get; init; }
   public string DocumentId { get; init; }
   public string Text { get; init; }
+
+public interface Idrak.Text.Retrieval.Abstractions.IPairEncoder
+  public System.Collections.Generic.IReadOnlyList<int> Shape { get; }
+  public void Encode(System.ReadOnlySpan<char> query, System.ReadOnlySpan<char> passage, System.Span<float> pair)
 
 public interface Idrak.Text.Retrieval.Abstractions.IReranker
   public System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Abstractions.RetrievedChunk>> RerankAsync(string query, System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Abstractions.RetrievedChunk> candidates, int keep, System.Threading.CancellationToken cancellationToken = default)
@@ -1240,11 +1284,11 @@ public sealed record Idrak.Text.Retrieval.Citation : System.IEquatable<Idrak.Tex
   public string Label { get; init; }
 
 public sealed class Idrak.Text.Retrieval.CrossEncoder : Idrak.Text.Retrieval.Abstractions.IReranker
+  public CrossEncoder(Idrak.Abstraction.Module model, Idrak.Text.Retrieval.Abstractions.IPairEncoder encoder)
   public CrossEncoder(Idrak.Abstraction.Module model, System.Func<string, string, float[]> encodePair, int[] pairShape)
   public Idrak.Abstraction.Module Model { get; }
+  public Idrak.Text.Retrieval.Abstractions.IPairEncoder Encoder { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Abstractions.RetrievedChunk> Rerank(string query, System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Abstractions.RetrievedChunk> candidates, int keep)
-  public System.Collections.Generic.IReadOnlyList<int> PairShape { get; }
-  public System.Func<string, string, float[]> EncodePair { get; }
   public System.Threading.Tasks.ValueTask<System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Abstractions.RetrievedChunk>> RerankAsync(string query, System.Collections.Generic.IReadOnlyList<Idrak.Text.Retrieval.Abstractions.RetrievedChunk> candidates, int keep, System.Threading.CancellationToken cancellationToken = default)
   public float[] Score(string query, System.Collections.Generic.IReadOnlyList<string> passages)
 

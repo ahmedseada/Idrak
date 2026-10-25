@@ -1142,7 +1142,7 @@ internal sealed class ShareGptSyntheticRecords : ISyntheticRecordFormat
 
     public bool Recognizes(string path) => SyntheticRecordFiles.First(path) is { } first && first["conversations"] is JsonArray;
 
-    public IEnumerable<SyntheticRecord> Read(string path, string prompt, string? answerKey)
+    public IEnumerable<ISyntheticRecord> Read(string path, string prompt, string? answerKey)
     {
         foreach (var (record, where) in TuningRecords.Read(path))
         {
@@ -1156,7 +1156,7 @@ internal sealed class ShareGptSyntheticRecords : ISyntheticRecordFormat
             yield return new SyntheticRecord
             {
                 Answer = v.GetValue<string>(), Where = where,
-                Write = (answer, image) =>
+                Writer = (answer, image) =>
                 {
                     var copy = (JsonObject)record.DeepClone();
                     var copyTurns = (JsonArray)copy["conversations"]!;
@@ -1179,7 +1179,7 @@ internal sealed class MessagesSyntheticRecords : ISyntheticRecordFormat
 
     public bool Recognizes(string path) => SyntheticRecordFiles.First(path) is { } first && first["messages"] is JsonArray;
 
-    public IEnumerable<SyntheticRecord> Read(string path, string prompt, string? answerKey)
+    public IEnumerable<ISyntheticRecord> Read(string path, string prompt, string? answerKey)
     {
         foreach (var (record, where) in TuningRecords.Read(path))
         {
@@ -1199,7 +1199,7 @@ internal sealed class MessagesSyntheticRecords : ISyntheticRecordFormat
             yield return new SyntheticRecord
             {
                 Answer = answer, Where = where,
-                Write = (text, image) =>
+                Writer = (text, image) =>
                 {
                     var copy = (JsonObject)record.DeepClone();
                     var copyMessages = (JsonArray)copy["messages"]!;
@@ -1239,7 +1239,7 @@ internal sealed class TextSyntheticRecords : ISyntheticRecordFormat
     public bool Recognizes(string path) =>
         Directory.Exists(path) ? Directory.EnumerateFiles(path, "*.txt").Any() : File.Exists(path) && Path.GetExtension(path).Equals(".txt", StringComparison.OrdinalIgnoreCase);
 
-    public IEnumerable<SyntheticRecord> Read(string path, string prompt, string? answerKey)
+    public IEnumerable<ISyntheticRecord> Read(string path, string prompt, string? answerKey)
     {
         IEnumerable<(string Text, string Where)> documents = Directory.Exists(path)
             ? Directory.EnumerateFiles(path, "*.txt").Order(StringComparer.Ordinal).Select(f => (File.ReadAllText(f, Encoding.UTF8), Path.GetFileName(f)))
@@ -1256,7 +1256,7 @@ internal sealed class TextSyntheticRecords : ISyntheticRecordFormat
             yield return new SyntheticRecord
             {
                 Answer = answer, Where = where,
-                Write = (written, image) => new JsonObject
+                Writer = (written, image) => new JsonObject
                 {
                     ["conversations"] = new JsonArray(
                         new JsonObject { ["from"] = "human", ["value"] = "<image>" + prompt },

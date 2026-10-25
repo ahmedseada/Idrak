@@ -134,22 +134,28 @@ internal static class Estimators
 /// backwards from each episode's last step; the return R_t = A_t + V(s_t) (the value head's target, TD(λ)). Options:
 /// gamma (γ, default 0.99), lambda (λ, default 0.95), normalize (the batch's advantages to mean 0 and spread 1, default false).
 /// </summary>
-internal sealed class GeneralizedAdvantageEstimator : IAdvantageEstimator
+internal sealed class GeneralizedAdvantageEstimator : IAdvantageEstimator, IOptionSchema
 {
+    private static readonly OptionSpec<float> Gamma = OptionSpec.Number(ReinforcementNames.GammaKey, 0.99f, 0f, 1f, summary: "the discount γ");
+    private static readonly OptionSpec<float> Lambda = OptionSpec.Number(ReinforcementNames.LambdaKey, 0.95f, 0f, 1f, summary: "GAE's λ");
+    private static readonly OptionSpec<bool> Normalize = OptionSpec.Flag(ReinforcementNames.NormalizeAdvantagesKey, summary: "the batch's advantages to mean 0 and spread 1");
+
     public string Name => ReinforcementNames.Gae;
 
     public string Summary => "generalized advantage estimation (Schulman et al. 2015): TD errors of a critic summed with γλ; needs value estimates";
 
-    public IReadOnlySet<string> Keys { get; } = new OptionKeys(ReinforcementNames.GammaKey, ReinforcementNames.LambdaKey, ReinforcementNames.NormalizeAdvantagesKey);
+    public OptionSchema Options { get; } = new($"advantage estimator {ReinforcementNames.Gae}", Gamma, Lambda, Normalize);
+
+    public IReadOnlySet<string> Keys => Options.Keys;
 
     public bool UsesValues => true;
 
     public void Estimate(AdvantageInput input, Span<float> advantages, Span<float> returns, IReadOnlyDictionary<string, string>? options = null)
     {
-        var reader = new OptionReader($"advantage estimator {Name}", Keys, options);
-        double gamma = reader.Float(ReinforcementNames.GammaKey, 0.99f, 0f, 1f);
-        double lambda = reader.Float(ReinforcementNames.LambdaKey, 0.95f, 0f, 1f);
-        bool normalize = reader.Bool(ReinforcementNames.NormalizeAdvantagesKey, false);
+        var read = Options.Parse(options);
+        double gamma = read.Get(Gamma);
+        double lambda = read.Get(Lambda);
+        bool normalize = read.Get(Normalize);
         Estimators.CheckOutputs(Name, input, advantages, returns, needsValues: true);
         int end = 0;
         for (int e = 0; e < input.Episodes; e++)
@@ -185,21 +191,26 @@ internal sealed class GeneralizedAdvantageEstimator : IAdvantageEstimator
 /// gets 0. Every step of the episode gets A_i; the return of a step is its reward-to-go. Options: scale (default true),
 /// epsilon (default 1e-4). Needs no critic.
 /// </summary>
-internal sealed class GroupAdvantageEstimator : IAdvantageEstimator
+internal sealed class GroupAdvantageEstimator : IAdvantageEstimator, IOptionSchema
 {
+    private static readonly OptionSpec<bool> Scale = OptionSpec.Flag(ReinforcementNames.ScaleKey, true, summary: "divide by the group's spread");
+    private static readonly OptionSpec<float> Epsilon = OptionSpec.Number(ReinforcementNames.EpsilonKey, 1e-4f, 0f, summary: "added to the spread before dividing");
+
     public string Name => ReinforcementNames.Group;
 
     public string Summary => "group-relative advantages (GRPO, Shao et al. 2024): an episode's return less its group's mean, over the group's deviation or not";
 
-    public IReadOnlySet<string> Keys { get; } = new OptionKeys(ReinforcementNames.ScaleKey, ReinforcementNames.EpsilonKey);
+    public OptionSchema Options { get; } = new($"advantage estimator {ReinforcementNames.Group}", Scale, Epsilon);
+
+    public IReadOnlySet<string> Keys => Options.Keys;
 
     public bool UsesValues => false;
 
     public void Estimate(AdvantageInput input, Span<float> advantages, Span<float> returns, IReadOnlyDictionary<string, string>? options = null)
     {
-        var reader = new OptionReader($"advantage estimator {Name}", Keys, options);
-        bool scale = reader.Bool(ReinforcementNames.ScaleKey, true);
-        double epsilon = reader.Float(ReinforcementNames.EpsilonKey, 1e-4f, 0f);
+        var read = Options.Parse(options);
+        bool scale = read.Get(Scale);
+        double epsilon = read.Get(Epsilon);
         Estimators.CheckOutputs(Name, input, advantages, returns, needsValues: false);
         GroupEstimate(input, advantages, (totals, members, count, result) =>
         {
@@ -277,19 +288,21 @@ internal sealed class GroupAdvantageEstimator : IAdvantageEstimator
 /// A_i = R_i − (1 / (k − 1)) Σ_{j ≠ i} R_j, an unbiased baseline since it does not depend on episode i; a group of one gets 0.
 /// Every step of the episode gets A_i; the return of a step is its reward-to-go. No options; needs no critic.
 /// </summary>
-internal sealed class LeaveOneOutEstimator : IAdvantageEstimator
+internal sealed class LeaveOneOutEstimator : IAdvantageEstimator, IOptionSchema
 {
     public string Name => ReinforcementNames.LeaveOneOut;
 
     public string Summary => "leave-one-out advantages (RLOO, Ahmadian et al. 2024): an episode's return less the mean of its group's others";
 
-    public IReadOnlySet<string> Keys => OptionKeys.None;
+    public OptionSchema Options { get; } = new($"advantage estimator {ReinforcementNames.LeaveOneOut}");
+
+    public IReadOnlySet<string> Keys => Options.Keys;
 
     public bool UsesValues => false;
 
     public void Estimate(AdvantageInput input, Span<float> advantages, Span<float> returns, IReadOnlyDictionary<string, string>? options = null)
     {
-        _ = new OptionReader($"advantage estimator {Name}", Keys, options);
+        _ = Options.Parse(options);
         Estimators.CheckOutputs(Name, input, advantages, returns, needsValues: false);
         GroupAdvantageEstimator.GroupEstimate(input, advantages, static (totals, members, count, result) =>
         {
@@ -317,22 +330,28 @@ internal sealed class LeaveOneOutEstimator : IAdvantageEstimator
 /// summed in step order) or value (the critic's V(s_t); the input must have values). The return is G_t. Options: gamma
 /// (γ, default 0.99), baseline (default none), normalize (the batch's advantages to mean 0 and spread 1, default false).
 /// </summary>
-internal sealed class ReturnsEstimator : IAdvantageEstimator
+internal sealed class ReturnsEstimator : IAdvantageEstimator, IOptionSchema
 {
+    private static readonly OptionSpec<float> Gamma = OptionSpec.Number(ReinforcementNames.GammaKey, 0.99f, 0f, 1f, summary: "the discount γ");
+    private static readonly OptionSpec<string> Baseline = OptionSpec.Choice(ReinforcementNames.BaselineKey, "none", "none", "mean", "value");
+    private static readonly OptionSpec<bool> Normalize = OptionSpec.Flag(ReinforcementNames.NormalizeAdvantagesKey, summary: "the batch's advantages to mean 0 and spread 1");
+
     public string Name => ReinforcementNames.Returns;
 
     public string Summary => "discounted returns (REINFORCE, Williams 1992), less a baseline (none, the batch's mean, or the critic's value) or not";
 
-    public IReadOnlySet<string> Keys { get; } = new OptionKeys(ReinforcementNames.GammaKey, ReinforcementNames.BaselineKey, ReinforcementNames.NormalizeAdvantagesKey);
+    public OptionSchema Options { get; } = new($"advantage estimator {ReinforcementNames.Returns}", Gamma, Baseline, Normalize);
+
+    public IReadOnlySet<string> Keys => Options.Keys;
 
     public bool UsesValues => false;
 
     public void Estimate(AdvantageInput input, Span<float> advantages, Span<float> returns, IReadOnlyDictionary<string, string>? options = null)
     {
-        var reader = new OptionReader($"advantage estimator {Name}", Keys, options);
-        double gamma = reader.Float(ReinforcementNames.GammaKey, 0.99f, 0f, 1f);
-        string baseline = reader.Choice(ReinforcementNames.BaselineKey, "none", "none", "mean", "value");
-        bool normalize = reader.Bool(ReinforcementNames.NormalizeAdvantagesKey, false);
+        var read = Options.Parse(options);
+        double gamma = read.Get(Gamma);
+        string baseline = read.Get(Baseline);
+        bool normalize = read.Get(Normalize);
         Estimators.CheckOutputs(Name, input, advantages, returns, needsValues: baseline == "value");
         int end = 0;
         double sum = 0;

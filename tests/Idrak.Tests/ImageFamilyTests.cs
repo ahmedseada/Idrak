@@ -264,11 +264,11 @@ internal static partial class Tests
     {
         Check(DetectionDecoders.Names.Where(n => DetectionDecoders.Origin(n) == Overrides.Library).SequenceEqual([DetectionDecoders.BoxesScores]),
             $"the library's decoders: {string.Join(", ", DetectionDecoders.Names.Where(n => DetectionDecoders.Origin(n) == Overrides.Library))}");
-        static IReadOnlyList<Detection> Decode(string name, DetectionDecoderContext context, float[] outputs, params int[] shape) =>
+        static IReadOnlyList<Detection> Decode(string name, DetectionDecoderRequest context, float[] outputs, params int[] shape) =>
             [.. DetectionDecoders.Create(name, context)(outputs, shape)];
 
         float[] rows = [10, 20, 30, 40, 0.1f, 0.7f, 0, 0, 5, 5, 0.9f, 0.2f];
-        var plain = new DetectionDecoderContext(0, 0, null, []);
+        var plain = new DetectionDecoderRequest(0, 0, null, []);
         var found = Decode(DetectionDecoders.BoxesScores, plain, rows, 2, 6);
         Check(found.Count == 2 && found[0] == new Detection(new BoundingBox(10, 20, 20, 20), 1, 0.7f) && found[1] == new Detection(new BoundingBox(0, 0, 5, 5), 0, 0.9f),
             $"rows, xyxy: {string.Join(", ", found)}");
@@ -284,16 +284,19 @@ internal static partial class Tests
         Check(Decode(DetectionDecoders.BoxesScores, plain with { Settings = new JsonObject { ["layout"] = "columns" } }, columns, 6, 2).SequenceEqual(found), "columns");
         var xywh = Decode(DetectionDecoders.BoxesScores, plain with { Settings = new JsonObject { ["box"] = "xywh" } }, rows, 2, 6);
         Check(xywh[0].Box == new BoundingBox(10, 20, 30, 40), "xywh");
-        var centre = Decode(DetectionDecoders.BoxesScores, new DetectionDecoderContext(100, 200, ["only"],
+        var centre = Decode(DetectionDecoders.BoxesScores, new DetectionDecoderRequest(100, 200, ["only"],
             new JsonObject { ["box"] = "cxcywh", ["normalized"] = true, ["scores"] = "logits" }), [0.5f, 0.5f, 0.1f, 0.2f, 2f], 1, 5);
         Check(centre.Single().Box == new BoundingBox(90, 40, 20, 20) && MathF.Abs(centre[0].Score - 1f / (1f + MathF.Exp(-2f))) < 1e-6f, $"cxcywh, normalized, logits: {centre[0]}");
-        ExpectRefusal<ArgumentException>(() => Decode(DetectionDecoders.BoxesScores, new DetectionDecoderContext(0, 0, ["a", "b", "c"], []), rows, 2, 6), "for 3 classes", "classes disagree");
+        ExpectRefusal<ArgumentException>(() => Decode(DetectionDecoders.BoxesScores, new DetectionDecoderRequest(0, 0, ["a", "b", "c"], []), rows, 2, 6), "for 3 classes", "classes disagree");
         ExpectRefusal<NotSupportedException>(() => DetectionDecoders.Create(DetectionDecoders.BoxesScores, plain with { Settings = new JsonObject { ["box"] = "polar" } }), "box 'polar'", "a box layout");
         ExpectRefusal<NotSupportedException>(() => DetectionDecoders.Create("yolo-of-nobody", plain), "Detection decoder 'yolo-of-nobody' is not registered", "an unknown decoder");
         ExpectRefusal<NotSupportedException>(() => DetectionDecoders.Create("yolo-of-nobody", plain), "register it with DetectionDecoders.Register", "the remedy");
+        ExpectRefusal<ArgumentException>(() => DetectionDecoders.Create(DetectionDecoders.BoxesScores, plain with { Settings = new JsonObject { ["stride"] = 8 } }),
+            "does not take the setting 'stride'; it takes: layout, box, normalized, scores", "a setting the decoder does not declare");
 
         // An app's decoder over the library's: guarded, it falls back when it fails under FallBack.
-        DetectionDecoders.Register(DetectionDecoders.BoxesScores, _ => (_, _) => throw new InvalidOperationException("the app's decoder fails"));
+        DetectionDecoders.Register(TestKinds.DetectionDecoder(DetectionDecoders.BoxesScores, _ => (_, _) => throw new InvalidOperationException("the app's decoder fails"),
+            "layout", "box", "normalized", "scores"));
         try
         {
             ExpectRefusal<InvalidOperationException>(() => Decode(DetectionDecoders.BoxesScores, plain, rows, 2, 6), "the app's decoder fails", "Throw: the error reaches the caller");

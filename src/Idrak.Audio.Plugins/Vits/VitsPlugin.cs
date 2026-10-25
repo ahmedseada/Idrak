@@ -46,7 +46,7 @@ public static class VitsPlugin
 /// The family: reads a VITS checkpoint folder (config.json, vocab.json, the safetensors) into a <see cref="VitsSynthesizer"/>;
 /// with <see cref="SpeechSynthesisLoadOptions.Training"/>, one the adversarial trainer fine-tunes (plan 21, S9 route C).
 /// </summary>
-public sealed class VitsSpeechFamily : ISpeechSynthesisFamily
+public sealed class VitsSpeechFamily : ITrainableSpeechSynthesisFamily
 {
     /// <summary>The architecture name the checkpoints give, "VitsModel".</summary>
     public const string Architecture = "VitsModel";
@@ -55,7 +55,16 @@ public sealed class VitsSpeechFamily : ISpeechSynthesisFamily
     public string Name => Architecture;
 
     /// <inheritdoc />
-    public ISpeechSynthesizer Read(SpeechSynthesisCheckpoint checkpoint, SpeechSynthesisLoadOptions options)
+    public ISpeechSynthesizer Read(SpeechSynthesisCheckpoint checkpoint, SpeechSynthesisLoadOptions options) => ReadVits(checkpoint, options);
+
+    /// <inheritdoc />
+    public IAdversarialSpeechSynthesizer ReadForTraining(SpeechSynthesisCheckpoint checkpoint, SpeechSynthesisLoadOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        return ReadVits(checkpoint, options with { Training = true });
+    }
+
+    private static VitsSynthesizer ReadVits(SpeechSynthesisCheckpoint checkpoint, SpeechSynthesisLoadOptions options)
     {
         ArgumentNullException.ThrowIfNull(checkpoint);
         ArgumentNullException.ThrowIfNull(options);

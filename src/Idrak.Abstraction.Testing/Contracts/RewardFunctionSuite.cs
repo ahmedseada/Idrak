@@ -13,7 +13,7 @@ namespace Idrak.Abstraction.Testing;
 /// <item>a score per input, finite, and none for no input;</item>
 /// <item>a batch scores what its inputs score one by one (within <see cref="Tolerance"/>), whatever else is in it;</item>
 /// <item>the same scores every time, and from two calls at once;</item>
-/// <item>an option not in its <see cref="IRewardFunction.Keys"/> is refused, naming it; a cancelled call throws an
+/// <item>an option not in its <see cref="IConfigurableKind.Keys"/> is refused, naming it; a cancelled call throws an
 /// <see cref="OperationCanceledException"/>;</item>
 /// <item>given a reference (the library's reward of that name), the same scores within <see cref="Tolerance"/>.</item>
 /// </list>

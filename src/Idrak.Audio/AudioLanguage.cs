@@ -22,7 +22,7 @@ public static class AudioLanguage
     /// <param name="notes">Where the family appends what it approximated; a new list when null.</param>
     /// <exception cref="NotSupportedException">The checkpoint has an audio part and no family is registered under its name (the message names <see cref="AudioFamilies.Register"/>).</exception>
     /// <exception cref="InvalidDataException">The family found a tensor missing or of the wrong shape.</exception>
-    public static PretrainedAudio? Attach(PretrainedModel model, string? architecture = null, List<string>? notes = null)
+    public static IPretrainedAudio? Attach(PretrainedModel model, string? architecture = null, List<string>? notes = null)
     {
         ArgumentNullException.ThrowIfNull(model);
         string name = architecture ?? (string?)model.Config["architectures"]?[0]

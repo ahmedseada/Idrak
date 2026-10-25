@@ -8,7 +8,7 @@ namespace Idrak.Layers;
 /// (any leading dimensions, e.g. [batch, time, features] for sequences).
 /// Weights start Xavier/Glorot-uniform and the bias starts at zero.
 /// </summary>
-public sealed partial class Linear : Module, ILinearLayer
+public sealed partial class Linear : Module, ILinearLayer, ITiedWeights
 {
     /// <summary>Creates the layer on <paramref name="device"/> (default: <see cref="Device.Default"/>).</summary>
     /// <param name="inFeatures">Size of each input row.</param>
@@ -75,6 +75,9 @@ public sealed partial class Linear : Module, ILinearLayer
 
     /// <summary>The embedding this layer reads its weights from (see <see cref="Tied"/>), else null.</summary>
     public Embedding? TiedTo => _tiedTo;
+
+    /// <inheritdoc />
+    Module? ITiedWeights.WeightsOf => _tiedTo;
 
     /// <summary>
     /// The embedding that reads this layer's bfloat16 weights as its table (<see cref="Embedding.FromHead"/>), else null.

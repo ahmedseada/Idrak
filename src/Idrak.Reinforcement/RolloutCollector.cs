@@ -458,7 +458,7 @@ public sealed class RolloutCollector<TObservation, TAction> : IDisposable
 
         public float FinalValue { get; set; } = float.NaN;
 
-        public IReadOnlyDictionary<string, string>? Info { get; set; }
+        public EpisodeInfo? Info { get; set; }
 
         public void Clear()
         {

@@ -810,9 +810,9 @@ public static class CompletionsTranslation
     };
 
     // Content as a string, or an array of parts: {"type": "text", "text"}, {"type": "image_url", "image_url": {"url"}}
-    // with a data URL (http(s) URLs are downloaded by the endpoint first, when its options allow), {"type":
-    // "input_audio", "input_audio": {"data", "format"}} and a registered kind's own part ({"type": "audio", ...}). Other
-    // parts are refused, never dropped.
+    // with a data URL (http(s) URLs are downloaded by the endpoint first, when its options allow), a binary kind's input
+    // part ({"type": "input_audio", "input_audio": {"data", "format"}}, its IBinaryPartKind.RecordKeys.InputPart) and a
+    // registered kind's own part ({"type": "audio", ...}). Other parts are refused, never dropped.
     private static List<ChatPart> Parts(JsonNode? content)
     {
         switch (content)
@@ -833,8 +833,8 @@ public static class CompletionsTranslation
                         case "image_url":
                             list.Add(Image(p!.AsObject()));
                             break;
-                        case "input_audio":
-                            list.Add(Audio(p!.AsObject()));
+                        case { } type when InputKind(type) is { } binary:
+                            list.Add(Input(binary, type, p!.AsObject()));
                             break;
                         case { } type when type != "image" && ChatParts.Find(type) is { } kind:
                             list.Add(kind.Read(p!.AsObject()));                 // a registered kind's own JSON ("audio": {"media_type", "data"})
@@ -850,17 +850,27 @@ public static class CompletionsTranslation
         }
     }
 
-    // An input_audio part, {"input_audio": {"data": "<base64>", "format": "wav"}}: the "audio" part of the kind registered
-    // under that name (a binary kind: the package that brings audio registers it), a 400 when none is or the data is bad.
-    private static ChatPart Audio(JsonObject part)
+    // The binary kind whose requests' content parts have the type `type` (its RecordKeys.InputPart: "input_audio" for
+    // the audio kind the package that brings audio registers); null for none.
+    private static IBinaryPartKind? InputKind(string type)
     {
-        var audio = part["input_audio"] as JsonObject ?? throw new ArgumentException("An input_audio part needs \"input_audio\": {\"data\": \"<base64>\", \"format\": \"wav\"}.");
-        string data = (string?)audio["data"] ?? throw new ArgumentException("input_audio: give the sound's bytes as base64 in \"data\".");
-        if (ChatParts.Find(ChatParts.Audio) is not IBinaryPartKind kind)
+        foreach (var kind in ChatParts.BinaryKinds)
         {
-            throw new ArgumentException("input_audio: this server reads no sound (no \"audio\" part kind is registered).");
+            if (kind.RecordKeys.InputPart == type)
+            {
+                return kind;
+            }
         }
 
+        return null;
+    }
+
+    // An input part of a binary kind, {"input_audio": {"data": "<base64>", "format": "wav"}}: a part of that kind made
+    // from the bytes, a 400 when the data is bad.
+    private static ChatPart Input(IBinaryPartKind kind, string type, JsonObject part)
+    {
+        var input = part[type] as JsonObject ?? throw new ArgumentException($"An {type} part needs \"{type}\": {{\"data\": \"<base64>\", \"format\": \"wav\"}}.");
+        string data = (string?)input["data"] ?? throw new ArgumentException($"{type}: give the {kind.Name}'s bytes as base64 in \"data\".");
         byte[] bytes;
         try
         {
@@ -868,19 +878,18 @@ public static class CompletionsTranslation
         }
         catch (FormatException)
         {
-            throw new ArgumentException("input_audio: \"data\" is not base64.");
+            throw new ArgumentException($"{type}: \"data\" is not base64.");
         }
 
-        string? format = ((string?)audio["format"])?.Trim().ToLowerInvariant();
+        string? format = ((string?)input["format"])?.Trim().ToLowerInvariant();
         string? mediaType = format switch
         {
             null or "" => null,                                                  // read from the bytes
-            "mp3" or "mpeg" => "audio/mpeg",
-            "wav" or "wave" => "audio/wav",
+            var known when kind.RecordKeys.Formats.TryGetValue(known, out var listed) => listed,
             var other when other.Contains('/') => other,
-            var other => "audio/" + other,
+            var other => kind.Name + "/" + other,
         };
-        return bytes.Length == 0 ? throw new ArgumentException("input_audio: the sound is empty.") : kind.FromBytes(bytes, mediaType);
+        return bytes.Length == 0 ? throw new ArgumentException($"{type}: the {kind.Name} is empty.") : kind.FromBytes(bytes, mediaType);
     }
 
     // An image_url part with a data URL (a 400 for anything else: an address the endpoint did not download, bad base64).

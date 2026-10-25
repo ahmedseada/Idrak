@@ -278,7 +278,7 @@ internal static partial class Tests
 
         public string Summary => "invert: 1 - value (a test's own)";
 
-        public IReadOnlyCollection<string> Keys => ["strength"];
+        public IReadOnlySet<string> Keys { get; } = new OptionKeys("strength");
 
         public void Check(ImageTransformStep step) => step.ThrowIfValue();
 

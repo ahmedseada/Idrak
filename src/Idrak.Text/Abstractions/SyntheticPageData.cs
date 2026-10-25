@@ -10,16 +10,32 @@ namespace Idrak.Text.Abstractions;
 /// One record a synthetic page is drawn from: the answer it was tuned to give (whose page text the page draws) and how to
 /// write the record again with a new answer and image (<see cref="Write"/>).
 /// </summary>
-public sealed class SyntheticRecord
+public interface ISyntheticRecord
 {
     /// <summary>The record's answer as written: JSON (in a code fence or not) or plain text.</summary>
-    public required string Answer { get; init; }
+    string Answer { get; }
 
     /// <summary>Where the record is, for messages ("train.jsonl line 12").</summary>
+    string Where { get; }
+
+    /// <summary>The record again, with <paramref name="answer"/> as its answer and <paramref name="image"/> (a relative path) as its one image.</summary>
+    JsonObject Write(string answer, string image);
+}
+
+/// <summary>A record whose writing is a function (<see cref="ISyntheticRecord"/>): the library's formats make these.</summary>
+public sealed class SyntheticRecord : ISyntheticRecord
+{
+    /// <inheritdoc />
+    public required string Answer { get; init; }
+
+    /// <inheritdoc />
     public required string Where { get; init; }
 
-    /// <summary>The record again, with <c>answer</c> as its answer and <c>image</c> (a relative path) as its one image.</summary>
-    public required Func<string, string, JsonObject> Write { get; init; }
+    /// <summary>Writes the record again with an answer and an image (<see cref="Write"/>).</summary>
+    public required Func<string, string, JsonObject> Writer { get; init; }
+
+    /// <inheritdoc />
+    public JsonObject Write(string answer, string image) => Writer(answer, image);
 }
 
 /// <summary>
@@ -42,7 +58,7 @@ public interface ISyntheticRecordFormat
     /// <param name="prompt">The question a written record asks, for formats whose records have none (plain text).</param>
     /// <param name="answerKey">The JSON key a plain text's answer is written under; null for the text itself.</param>
     /// <exception cref="InvalidDataException">A record is not one it reads; the message names it.</exception>
-    IEnumerable<SyntheticRecord> Read(string path, string prompt, string? answerKey);
+    IEnumerable<ISyntheticRecord> Read(string path, string prompt, string? answerKey);
 }
 
 /// <summary>

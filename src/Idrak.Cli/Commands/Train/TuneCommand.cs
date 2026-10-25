@@ -398,7 +398,7 @@ internal sealed class TuneInitCommand : Command
               "adapter-type": "lora",
               "rank": {{defaults.Rank}},
               "alpha": {{Number(defaults.Alpha)}},
-              "targets": {{Json(string.Join(',', defaults.Targets))}},
+              "targets": {{Json(string.Join(',', defaults.Targets ?? Idrak.Abstraction.Formats.NetworkParts.Decoder.AdapterTargets))}},
               // Optimization: learning rate, epochs, optimizer (adamw, adam, adamw8bit, sgd), schedule (cosine, linear,
               // constant, wsd) and the warm-up as a fraction of the steps.
               "lr": {{Number(defaults.LearningRate)}},

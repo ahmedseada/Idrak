@@ -13,7 +13,7 @@ namespace Idrak.Text.Generation;
 /// pages that fit together, a bfloat16 cache when it fits more, and the weights' format the device has room for. A
 /// figure the device does not report decides nothing.
 /// </summary>
-internal sealed class ImageReaderAdvisor : ISettingAdvisor
+internal sealed class ImageReaderAdvisor : ISettingAdvisor<ImageReader>
 {
     /// <summary>The advisor's name: "image reader".</summary>
     public const string AdvisorName = "image reader";
@@ -22,14 +22,10 @@ internal sealed class ImageReaderAdvisor : ISettingAdvisor
 
     public string Summary => "an image reader: bfloat16 encoder and prompt where the device has matrix units; from the first read, the pages that fit together, a bfloat16 cache, the weights' format";
 
-    public IEnumerable<SettingSuggestion> Suggest(AdviceSituation situation)
+    public IEnumerable<SettingSuggestion> Suggest(AdviceSituation situation, ImageReader reader)
     {
         ArgumentNullException.ThrowIfNull(situation);
-        if (situation.Subject is not ImageReader reader)
-        {
-            yield break;
-        }
-
+        ArgumentNullException.ThrowIfNull(reader);
         var backend = situation.Device.Backend;
         string device = situation.Device.ToString();
         var options = reader.Options;

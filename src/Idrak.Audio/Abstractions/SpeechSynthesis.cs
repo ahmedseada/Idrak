@@ -107,8 +107,10 @@ public sealed record SpeechSynthesisLoadOptions
 
     /// <summary>
     /// Load the model to be trained: its weights as parameters that take gradients, kept in the form training updates (a
-    /// weight norm's gains and directions, not folded once as for speaking), so a family that trains returns a model the
-    /// trainers take (an <see cref="IAdversarialSpeechSynthesizer"/>). A family that does not train ignores it.
+    /// weight norm's gains and directions, not folded once as for speaking), read by the family's
+    /// <see cref="ITrainableSpeechSynthesisFamily.ReadForTraining"/> into a model the trainers take (an
+    /// <see cref="IAdversarialSpeechSynthesizer"/>; see <see cref="SpeechSynthesisModels.LoadForTraining"/>). A family that
+    /// does not train refuses it.
     /// </summary>
     public bool Training { get; init; }
 }
@@ -122,17 +124,35 @@ public interface ISpeechSynthesisFamily
     /// <summary>The architecture name it is registered under.</summary>
     string Name { get; }
 
-    /// <summary>Reads the checkpoint (configuration, tokenizer, tensors) into a synthesizer on the options' device.</summary>
+    /// <summary>Reads the checkpoint (configuration, tokenizer, tensors) into a synthesizer on the options' device, to speak.</summary>
     /// <exception cref="InvalidDataException">A tensor or file is missing or disagrees with the configuration.</exception>
     ISpeechSynthesizer Read(SpeechSynthesisCheckpoint checkpoint, SpeechSynthesisLoadOptions options);
+}
 
+/// <summary>
+/// A text-to-speech family that makes models that did not exist from its own description of them
+/// (<see cref="SpeechSynthesisModels.Create"/>); a family read from checkpoints only does not implement it.
+/// </summary>
+public interface ICreatableSynthesisFamily : ISpeechSynthesisFamily
+{
     /// <summary>
     /// A model that did not exist, from the family's own description of it (<paramref name="spec"/>): its tensors drawn from
-    /// <paramref name="seed"/>, its config.json and other files (<see cref="SpeechSynthesisModels.Create"/> writes them). A
-    /// family read from checkpoints only keeps this default, which refuses.
+    /// <paramref name="seed"/>, its config.json and other files (<see cref="SpeechSynthesisModels.Create"/> writes them).
     /// </summary>
-    CreatedSpeechModel Create(JsonObject spec, ITokenizer tokenizer, int seed) =>
-        throw new NotSupportedException($"Speech synthesis family '{Name}' cannot make a model from a description (it reads checkpoints only).");
+    CreatedSpeechModel Create(JsonObject spec, ITokenizer tokenizer, int seed);
+}
+
+/// <summary>
+/// A text-to-speech family whose models train against discriminators: it reads a checkpoint to be trained
+/// (<see cref="ReadForTraining"/>, <see cref="SpeechSynthesisLoadOptions.Training"/>) into a model the adversarial
+/// trainer takes; a family that does not implement it is not trained.
+/// </summary>
+public interface ITrainableSpeechSynthesisFamily : ISpeechSynthesisFamily
+{
+    /// <summary>Reads the checkpoint to be trained: its weights as parameters, in the form training updates.</summary>
+    /// <exception cref="InvalidDataException">A tensor or file is missing or disagrees with the configuration.</exception>
+    /// <exception cref="NotSupportedException">The checkpoint is one the family does not train (a multi-speaker one, say).</exception>
+    IAdversarialSpeechSynthesizer ReadForTraining(SpeechSynthesisCheckpoint checkpoint, SpeechSynthesisLoadOptions options);
 }
 
 /// <summary>
@@ -199,10 +219,32 @@ public static class SpeechSynthesisModels
     /// <exception cref="FileNotFoundException">There is no config.json.</exception>
     /// <exception cref="InvalidDataException">config.json names no architecture.</exception>
     /// <exception cref="NotSupportedException">The architecture has no registered family.</exception>
+    /// <exception cref="NotSupportedException">The architecture has no registered family, or the options ask to train and its family does not train.</exception>
     public static ISpeechSynthesizer Load(string path, SpeechSynthesisLoadOptions? options = null)
     {
-        ArgumentException.ThrowIfNullOrEmpty(path);
         options ??= new SpeechSynthesisLoadOptions();
+        return options.Training ? LoadForTraining(path, options) : Read(path, (family, checkpoint) => family.Read(checkpoint, options));
+    }
+
+    /// <summary>
+    /// Loads the model at <paramref name="path"/> to be trained against discriminators: its family's
+    /// <see cref="ITrainableSpeechSynthesisFamily.ReadForTraining"/> (the options' <see cref="SpeechSynthesisLoadOptions.Training"/> set).
+    /// </summary>
+    /// <exception cref="FileNotFoundException">There is no config.json.</exception>
+    /// <exception cref="InvalidDataException">config.json names no architecture.</exception>
+    /// <exception cref="NotSupportedException">The architecture has no registered family, or its family does not train (it is no <see cref="ITrainableSpeechSynthesisFamily"/>).</exception>
+    public static IAdversarialSpeechSynthesizer LoadForTraining(string path, SpeechSynthesisLoadOptions? options = null)
+    {
+        var training = (options ?? new SpeechSynthesisLoadOptions()) with { Training = true };
+        return Read(path, (family, checkpoint) => family is ITrainableSpeechSynthesisFamily trainable ? trainable.ReadForTraining(checkpoint, training)
+            : throw new NotSupportedException($"Speech synthesis family '{family.Name}' does not train against discriminators (it is no ITrainableSpeechSynthesisFamily): "
+                + "its models speak but are not trained here."));
+    }
+
+    // The checkpoint at `path` read by the family its config.json names.
+    private static T Read<T>(string path, Func<ISpeechSynthesisFamily, SpeechSynthesisCheckpoint, T> read)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
         var format = CheckpointFormats.For(path);
         string folder = format.Prepare(path);
         string configPath = Path.Combine(folder, "config.json");
@@ -217,12 +259,12 @@ public static class SpeechSynthesisModels
             : config["model_type"]?.GetValue<string>() ?? throw new InvalidDataException($"{configPath} names no architecture (\"architectures\" or \"model_type\").");
         var family = SpeechSynthesisFamilies.For(architecture);
         using var tensors = format.Open(folder);
-        return family.Read(new SpeechSynthesisCheckpoint(architecture, config, tensors, folder, () => format.Open(folder), []), options);
+        return read(family, new SpeechSynthesisCheckpoint(architecture, config, tensors, folder, () => format.Open(folder), []));
     }
 
     /// <summary>
     /// A text-to-speech model that did not exist: the family registered under the spec's architecture makes it from
-    /// <paramref name="spec"/> (<see cref="ISpeechSynthesisFamily.Create"/>: its tensors drawn from the seed, its config.json
+    /// <paramref name="spec"/> (<see cref="ICreatableSynthesisFamily.Create"/>: its tensors drawn from the seed, its config.json
     /// and other files), which is written into <paramref name="folder"/> (config.json with "architectures",
     /// model.safetensors in float32, the tokenizer as tokenizer.json when it is an <c>IPretrainedTokenizer</c> and the family wrote
     /// none, the family's files) and loaded from there, so it is a model like any other: it speaks, trains and saves (plan 21, S6).
@@ -237,7 +279,8 @@ public static class SpeechSynthesisModels
         ArgumentNullException.ThrowIfNull(tokenizer);
         options ??= new SpeechCreateOptions();
         string architecture = SpeechModels.Architecture(spec, options);
-        var family = SpeechSynthesisFamilies.Get(architecture);
+        var family = SpeechSynthesisFamilies.Get(architecture) as ICreatableSynthesisFamily
+            ?? throw new NotSupportedException($"Speech synthesis family '{architecture}' cannot make a model from a description (it reads checkpoints only).");
         SpeechModels.CheckFolder(folder, options);
         SpeechModels.Write(folder, architecture, family.Create(spec, tokenizer, options.Seed), tokenizer);
         return Load(folder, new SpeechSynthesisLoadOptions { Device = options.Device });

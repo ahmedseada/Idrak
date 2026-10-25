@@ -74,6 +74,14 @@ public interface IScaledGradientStep : IOptimizer
 }
 
 /// <summary>
+/// An optimizer that updates each parameter where it lives and keeps every parameter's gradient buffer from step to step,
+/// by construction (the library's SGD, Adam, AdamW and 8-bit AdamW): a recorded training step (its forward and backward
+/// pass replayed as a graph, writing the same buffers) can let it update without checking the buffers first. An
+/// optimizer that moves the update elsewhere (to the host) does not implement it.
+/// </summary>
+public interface IInPlaceOptimizer : IOptimizer;
+
+/// <summary>
 /// The base of the library's optimizers (<see cref="IOptimizer"/>): the parameters, zeroing, clipping, weight decay and
 /// the helpers a stateful optimizer (<see cref="IStatefulOptimizer"/>) saves and loads its state with. Call
 /// <see cref="ZeroGrad"/>, then <c>loss.Backward()</c>, then <see cref="Step"/>.

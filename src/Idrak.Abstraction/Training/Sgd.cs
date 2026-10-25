@@ -4,7 +4,7 @@
 namespace Idrak.Abstraction.Training;
 
 /// <summary>Stochastic gradient descent with optional momentum and L2 weight decay: g += λp; v = μv + g; p -= lr·v.</summary>
-public sealed class Sgd(IEnumerable<Tensor> parameters, float learningRate = 0.01f, float momentum = 0f, float weightDecay = 0f) : Optimizer(parameters, learningRate), IStatefulOptimizer
+public sealed class Sgd(IEnumerable<Tensor> parameters, float learningRate = 0.01f, float momentum = 0f, float weightDecay = 0f) : Optimizer(parameters, learningRate), IStatefulOptimizer, IInPlaceOptimizer
 {
     /// <summary>L2 penalty λ added to the gradients.</summary>
     public float WeightDecay { get; } = weightDecay;

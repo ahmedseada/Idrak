@@ -268,6 +268,7 @@ public sealed record SpeechTrainingOptions
         }
 
         AugmentationOptions.Check();
+        AudioCleaners.CheckSettings(Cleaning, CleaningOptions);          // every stage registered, every setting read by one
         foreach (string name in Cleaning)
         {
             _ = AudioCleaners.Get(name);
@@ -1035,7 +1036,7 @@ public static class SpeechTrainer
                 if (random.NextDouble() < options.AugmentationOptions.Probability)
                 {
                     draws[a] = random;
-                    sound |= augmentations[a].Stage == AudioAugmentationStage.Sound;
+                    sound |= augmentations[a] is ISoundAugmentation;
                 }
             }
 
@@ -1078,9 +1079,9 @@ public static class SpeechTrainer
 
                 for (int a = 0; a < augmentations.Length; a++)
                 {
-                    if (draws[a] is { } random && augmentations[a].Stage == AudioAugmentationStage.Sound)
+                    if (draws[a] is { } random && augmentations[a] is ISoundAugmentation varies)
                     {
-                        audio = augmentations[a].Augment(audio, random, options.AugmentationOptions);
+                        audio = varies.Augment(audio, random, options.AugmentationOptions);
                     }
                 }
 
@@ -1096,9 +1097,9 @@ public static class SpeechTrainer
 
             for (int a = 0; a < augmentations.Length; a++)
             {
-                if (draws[a] is { } random && augmentations[a].Stage == AudioAugmentationStage.Features)
+                if (draws[a] is { } random && augmentations[a] is IFeatureAugmentation features)
                 {
-                    augmentations[a].Augment(values.AsSpan(0, frames * mels), frames, mels, random, options.AugmentationOptions);
+                    features.Augment(values.AsSpan(0, frames * mels), frames, mels, random, options.AugmentationOptions);
                 }
             }
 

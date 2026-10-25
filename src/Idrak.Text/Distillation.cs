@@ -12,7 +12,7 @@ using Idrak.Text.Abstractions;
 namespace Idrak.Text;
 
 /// <summary>
-/// The built-in teachers of knowledge distillation (<see cref="DistillationTeacher"/>, Idrak.Abstraction) for
+/// The built-in teachers of knowledge distillation (<see cref="IDistillationTeacher"/>) for
 /// <see cref="FineTuner"/>: the distribution over the next token at every trained position, which
 /// <see cref="FineTuningLossInput.TeacherDivergence(float)"/> compares with the student's (and
 /// <see cref="FineTuningLosses.Distillation"/> trains on). Set one as <see cref="FineTuningOptions.Teacher"/>. Two kinds:
@@ -37,7 +37,7 @@ public static class DistillationTeachers
     /// <paramref name="topK"/> &gt; 0 only the k most likely tokens of each position are kept and renormalized (as stored
     /// logits are); 0 uses the full distribution. The model is not disposed with the teacher.
     /// </summary>
-    public static DistillationTeacher FromModel(PretrainedModel teacher, int topK = 0, int batchTokens = 4096) => FromModel(teacher, topK, batchTokens, TuningImages.None);
+    public static IDistillationTeacher FromModel(PretrainedModel teacher, int topK = 0, int batchTokens = 4096) => FromModel(teacher, topK, batchTokens, TuningImages.None);
 
     /// <summary>
     /// <see cref="FromModel(PretrainedModel, int, int)"/> for sequences with images too: a vision-language teacher reads
@@ -46,7 +46,7 @@ public static class DistillationTeachers
     /// image tokens for that image (the text around it, its begin and end tokens included, as the student has it), and the
     /// trained positions follow; a teacher that cuts an image into another number of blocks is refused.
     /// </summary>
-    public static DistillationTeacher FromModel(PretrainedModel teacher, int topK, int batchTokens, TuningImages images)
+    public static IDistillationTeacher FromModel(PretrainedModel teacher, int topK, int batchTokens, TuningImages images)
     {
         ArgumentNullException.ThrowIfNull(teacher);
         ArgumentNullException.ThrowIfNull(images);
@@ -56,18 +56,18 @@ public static class DistillationTeachers
     }
 
     /// <summary>A teacher that reads the top-k logits stored in <paramref name="path"/> (see <see cref="TeacherLogitsWriter"/>); disposing it closes the file.</summary>
-    public static DistillationTeacher FromFile(string path) => new StoredTeacher(TeacherLogitsFile.Open(path));
+    public static IDistillationTeacher FromFile(string path) => new StoredTeacher(TeacherLogitsFile.Open(path));
 
     /// <summary>
     /// Checks that <paramref name="teacher"/> can teach <paramref name="student"/> on-policy
     /// (<see cref="FineTuningLosses.OnPolicyDistillation"/>): it must compute its distributions on sequences it has never
     /// seen (the student's own samples), so a live teacher (<see cref="FromModel(PretrainedModel, int, int)"/>, or one of
     /// one's own), not stored logits (<see cref="FromFile"/>, which hold only the sequences they were written for); and it
-    /// must share the student's vocabulary (<see cref="DistillationTeacher.Check"/>).
+    /// must share the student's vocabulary (<see cref="IDistillationTeacher.Check"/>).
     /// </summary>
     /// <exception cref="NotSupportedException">A teacher file.</exception>
     /// <exception cref="InvalidOperationException">The vocabularies differ: the message names <c>idrak distill --generate</c> (answers the teacher writes, which cross tokenizers).</exception>
-    public static void CheckOnPolicy(DistillationTeacher teacher, ITokenizer student)
+    public static void CheckOnPolicy(IDistillationTeacher teacher, ITokenizer student)
     {
         ArgumentNullException.ThrowIfNull(teacher);
         ArgumentNullException.ThrowIfNull(student);
@@ -167,9 +167,9 @@ internal static class TopKLogits
 }
 
 // A loaded model as the teacher: its hidden states at the batch's trained positions, the head run per chunk on demand.
-internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTokens, TuningImages images) : DistillationTeacher
+internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTokens, TuningImages images) : IDistillationTeacher
 {
-    private string? _fingerprint;
+    private TeacherVocabulary? _identity;
     private Linear? _head;
     private TuningVision? _vision;
     private readonly Dictionary<string, ISoftPartSource> _parts = new(StringComparer.Ordinal);
@@ -193,32 +193,30 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
         return source;
     }
 
-    protected override void Dispose(bool disposing)
+    public void Dispose()
     {
-        if (disposing)
+        _vision?.Dispose();
+        _vision = null;
+        foreach (var source in _parts.Values)
         {
-            _vision?.Dispose();
-            _vision = null;
-            foreach (var source in _parts.Values)
-            {
-                (source as IDisposable)?.Dispose();
-            }
-
-            _parts.Clear();
+            (source as IDisposable)?.Dispose();
         }
 
-        base.Dispose(disposing);
+        _parts.Clear();
     }
 
-    public override int Vocabulary => model.Spec.Vocabulary;
+    public int Vocabulary => model.Spec.Vocabulary;
 
-    public override int TopK => topK;
+    public int TopK => topK;
 
-    public override string? Fingerprint => model.Tokenizer is { } t ? _fingerprint ??= VocabularyFingerprint(t) : null;
+    // The model's tokenizer; a model loaded without one cannot say what its vocabulary is.
+    public TeacherVocabulary Identity => _identity ??= model.Tokenizer is { } t ? TeacherVocabulary.Of(t)
+        : TeacherVocabulary.Unknown("the teacher model has no tokenizer");
 
-    public override ITokenizer? Tokenizer => model.Tokenizer;
+    // The fingerprint written with the logits (null when the model has no tokenizer).
+    public string? Fingerprint => Identity.Fingerprint;
 
-    public override TeacherDistributions Distributions(IReadOnlyList<TrainingSequence> sequences) => new Batch(this, Hidden(sequences));
+    public ITeacherDistributions Distributions(IReadOnlyList<TrainingSequence> sequences) => new Batch(this, Hidden(sequences));
 
     // The teacher's final hidden states at the trained positions of the sequences, in order: [trained tokens, dim] on its
     // device. Padded batches of sequences in their order (right padding: a causal model's positions before it are
@@ -513,9 +511,9 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
         return (ids, logits);
     }
 
-    private sealed class Batch(ModelTeacher teacher, Tensor hidden) : TeacherDistributions
+    private sealed class Batch(ModelTeacher teacher, Tensor hidden) : ITeacherDistributions
     {
-        public override Tensor Probabilities(int start, int count, float temperature, int vocabulary, Device device)
+        public Tensor Probabilities(int start, int count, float temperature, int vocabulary, Device device)
         {
             Tensor result;
             using (var scope = new TensorScope())
@@ -563,20 +561,22 @@ internal sealed class ModelTeacher(PretrainedModel model, int topK, int batchTok
             return result;
         }
 
-        public override void Dispose() => hidden.Dispose();
+        public void Dispose() => hidden.Dispose();
     }
 }
 
 // Stored top-k logits as the teacher.
-internal sealed class StoredTeacher(TeacherLogitsFile file) : DistillationTeacher
+internal sealed class StoredTeacher(TeacherLogitsFile file) : IDistillationTeacher
 {
-    public override int Vocabulary => file.Vocabulary;
+    public int Vocabulary => file.Vocabulary;
 
-    public override int TopK => file.TopK;
+    public int TopK => file.TopK;
 
-    public override string? Fingerprint => file.VocabularyFingerprint;
+    // The fingerprint the file stores; a file written without one cannot say what its vocabulary is.
+    public TeacherVocabulary Identity { get; } = file.VocabularyFingerprint is { } fingerprint ? TeacherVocabulary.Fingerprinted(fingerprint)
+        : TeacherVocabulary.Unknown($"the teacher logits file {file.Path} stores no vocabulary fingerprint");
 
-    public override TeacherDistributions Distributions(IReadOnlyList<TrainingSequence> sequences)
+    public ITeacherDistributions Distributions(IReadOnlyList<TrainingSequence> sequences)
     {
         int k = file.TopK, total = sequences.Sum(s => s.TrainedTokens);
         var ids = new int[total * k];
@@ -594,18 +594,16 @@ internal sealed class StoredTeacher(TeacherLogitsFile file) : DistillationTeache
         return new Batch(ids, logits, k);
     }
 
-    protected override void Dispose(bool disposing)
-    {
-        if (disposing)
-        {
-            file.Dispose();
-        }
-    }
+    public void Dispose() => file.Dispose();
 
-    private sealed class Batch(int[] ids, float[] logits, int k) : TeacherDistributions
+    private sealed class Batch(int[] ids, float[] logits, int k) : ITeacherDistributions
     {
-        public override Tensor Probabilities(int start, int count, float temperature, int vocabulary, Device device) =>
+        public Tensor Probabilities(int start, int count, float temperature, int vocabulary, Device device) =>
             TopKLogits.Dense(ids, logits, k, start, count, temperature, vocabulary, device);
+
+        public void Dispose()
+        {
+        }
     }
 }
 

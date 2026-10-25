@@ -301,7 +301,7 @@ internal static class LibraryImageTransforms
 
         public string Summary => summary;
 
-        public IReadOnlyCollection<string> Keys => keys;
+        public IReadOnlySet<string> Keys { get; } = new OptionKeys(keys);
 
         public void Check(ImageTransformStep step) => check(step);
 

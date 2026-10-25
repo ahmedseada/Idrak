@@ -8,19 +8,7 @@ using Idrak.Text.Abstractions;
 namespace Idrak.Text;
 
 /// <summary>
-/// A fine-tuning loss (<see cref="FineTuningOptions.Loss"/>): the loss of one batch from the log-probabilities of its
-/// trained tokens, as a single-element tensor built with ordinary tensor operations from
-/// <see cref="FineTuningLossInput.LogProbabilities"/> (and, for losses against a reference model,
-/// <see cref="FineTuningLossInput.ReferenceLogProbabilities"/>). The losses of the batches of one optimizer step are added,
-/// so a loss averaged over the step divides by <see cref="FineTuningLossInput.StepTokens"/> or
-/// <see cref="FineTuningLossInput.StepSequences"/>. Built-in: <see cref="FineTuningLosses"/>.
-/// </summary>
-/// <param name="input">The batch's log-probabilities and how they divide into sequences.</param>
-/// <returns>The batch's loss, one element.</returns>
-public delegate Tensor FineTuningLoss(FineTuningLossInput input);
-
-/// <summary>
-/// What a <see cref="FineTuningLoss"/> receives for one batch: log p of every trained token (one value per trained token,
+/// What an <see cref="IFineTuningLoss"/> receives for one batch: log p of every trained token (one value per trained token,
 /// the batch's sequences one after another, each in order), how many belong to each sequence, and the sizes of the whole
 /// optimizer step. The values live on the CPU (a few per token), so a loss is any composition of tensor operations; the
 /// trainer turns its gradient into gradients of the network with one more pass of the output head over the trained rows,
@@ -260,7 +248,7 @@ public sealed class FineTuningLossInput
     /// The teacher's divergence from the model at each trained token [tokens]: KL(q ‖ p) between the teacher's
     /// distribution over the next token, q = softmax(teacher logits / T), and the model's, p = softmax(logits / T), at
     /// <paramref name="temperature"/> T (the teacher is <see cref="FineTuningOptions.Teacher"/>; see
-    /// <see cref="DistillationTeacher"/>). Recorded: a loss may combine it with <see cref="LogProbabilities"/> freely, and
+    /// <see cref="IDistillationTeacher"/>). Recorded: a loss may combine it with <see cref="LogProbabilities"/> freely, and
     /// the trainer turns its gradient into the network's with one more pass of the output head over the trained rows
     /// (row t's logits receive g_t · (p − q) / T), so the [tokens, vocabulary] logits are never stored. Each temperature
     /// asked for costs one more pass of the head (and of the teacher's head) over the trained rows.
@@ -310,8 +298,7 @@ public sealed class FineTuningLossInput
             }
         }
 
-        var divergence = _divergence?.Invoke(temperature, kind, beta)
-                         ?? throw new InvalidOperationException("No teacher for this input: set FineTuningOptions.Teacher (DistillationTeachers.FromModel or FromFile) to distil.");
+        var divergence = _divergence?.Invoke(temperature, kind, beta) ?? throw new InvalidOperationException(NoTeacher);
         if (divergence.Length != LogProbabilities.Size)
         {
             throw new InvalidOperationException($"The teacher gave {divergence.Length} divergences for {LogProbabilities.Size} trained tokens.");
@@ -321,6 +308,8 @@ public sealed class FineTuningLossInput
         _divergences.Add((tensor, temperature, kind, beta));
         return tensor;
     }
+
+    internal const string NoTeacher = "No teacher for this input: set FineTuningOptions.Teacher (DistillationTeachers.FromModel or FromFile) to distil.";
 
     /// <summary>The divergence tensors the loss asked for, with their temperatures and kinds (null: the forward KL) (the trainer back-propagates them).</summary>
     internal IReadOnlyList<(Tensor Values, float Temperature, ITeacherDivergence? Kind, float Beta)> Divergences => _divergences;
@@ -418,17 +407,38 @@ public sealed class FineTuningLossInput
 public sealed record PreferencePair(TrainingSequence Chosen, TrainingSequence Rejected);
 
 /// <summary>
-/// Built-in <see cref="FineTuningLoss"/>es: the token cross-entropy of supervised fine-tuning, and preference losses over
-/// <see cref="PreferencePair"/>s (DPO, ORPO, SimPO). Each preference loss is the mean over the step's pairs.
+/// Built-in <see cref="IFineTuningLoss"/>es: the token cross-entropy of supervised fine-tuning, distillation, policy
+/// losses, and preference losses over <see cref="PreferencePair"/>s (DPO, ORPO, SimPO); each preference loss is the mean
+/// over the step's pairs. <see cref="Of"/> makes one of one's own from a function.
 /// </summary>
 public static class FineTuningLosses
 {
     /// <summary>
-    /// The default loss written as a <see cref="FineTuningLoss"/>: the mean negative log-likelihood per trained token over
+    /// The default loss written as an <see cref="IFineTuningLoss"/>: the mean negative log-likelihood per trained token over
     /// the step. Training without <see cref="FineTuningOptions.Loss"/> computes the same loss in one fused pass (and can
     /// record it as a graph); this form is a starting point for losses of one's own.
     /// </summary>
-    public static FineTuningLoss TokenCrossEntropy { get; } = input => -input.LogProbabilities.Sum() / input.StepTokens;
+    public static IFineTuningLoss TokenCrossEntropy { get; } = new Loss("token-cross-entropy", "the mean negative log-likelihood per trained token over the step",
+        input => -input.LogProbabilities.Sum() / input.StepTokens);
+
+    /// <summary>
+    /// A loss of one's own: <paramref name="compute"/> for each batch, needing what the flags say (training refuses a loss
+    /// that needs pairs or a teacher without them; a trainer prepares the reference beforehand only when
+    /// <paramref name="needsReference"/>, and a loss that reads it without saying so has it computed on first use).
+    /// </summary>
+    /// <param name="name">Its name, for messages.</param>
+    /// <param name="compute">The batch's loss, one element.</param>
+    /// <param name="needsPairs">It reads preference pairs.</param>
+    /// <param name="needsReference">It reads the reference's log-probabilities.</param>
+    /// <param name="needsTeacher">It reads a teacher's divergences.</param>
+    /// <param name="summary">One line for listings; null: the name.</param>
+    public static IFineTuningLoss Of(string name, Func<FineTuningLossInput, Tensor> compute, bool needsPairs = false, bool needsReference = false, bool needsTeacher = false,
+        string? summary = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(compute);
+        return new Loss(name, summary ?? name, compute) { NeedsPairs = needsPairs, NeedsReference = needsReference, NeedsTeacher = needsTeacher };
+    }
 
     /// <summary>
     /// Knowledge distillation per token (Hinton, Vinyals and Dean 2015, "Distilling the Knowledge in a Neural Network",
@@ -440,7 +450,7 @@ public static class FineTuningLosses
     /// </summary>
     /// <param name="temperature">Softens both distributions (1: as they are; 1 to 2 is usual for language models).</param>
     /// <param name="alpha">The weight of the distillation term (1: the teacher alone); the label cross-entropy gets 1 − α.</param>
-    public static FineTuningLoss Distillation(float temperature = 1f, float alpha = 0.5f)
+    public static IFineTuningLoss Distillation(float temperature = 1f, float alpha = 0.5f)
     {
         if (!(temperature > 0f) || float.IsInfinity(temperature))
         {
@@ -452,7 +462,7 @@ public static class FineTuningLosses
             throw new ArgumentOutOfRangeException(nameof(alpha), "Alpha is in [0, 1].");
         }
 
-        return input =>
+        return new Loss("distillation", "α · T² · KL(teacher ‖ model) + (1 − α) · token cross-entropy, per trained token", input =>
         {
             var hard = alpha >= 1f ? null : input.LogProbabilities.Sum() * (-(1f - alpha) / input.StepTokens);
             if (alpha <= 0f)
@@ -462,7 +472,8 @@ public static class FineTuningLosses
 
             var soft = input.TeacherDivergence(temperature).Sum() * (alpha * temperature * temperature / input.StepTokens);
             return hard is null ? soft : soft + hard;
-        };
+        })
+        { NeedsTeacher = alpha > 0f };
     }
 
     /// <summary>
@@ -480,16 +491,17 @@ public static class FineTuningLosses
     /// </summary>
     /// <param name="loss">The policy loss (<see cref="PolicyLosses.Get"/>).</param>
     /// <param name="options">Its options by key (<see cref="IConfigurableKind.Keys"/>), null for its defaults.</param>
-    public static FineTuningLoss Policy(IPolicyLoss loss, IReadOnlyDictionary<string, string>? options = null)
+    public static IFineTuningLoss Policy(IPolicyLoss loss, IReadOnlyDictionary<string, string>? options = null)
     {
         ArgumentNullException.ThrowIfNull(loss);
         bool reference = loss.NeedsReference(options);
-        return input =>
+        return new Loss(loss.Name, loss.Summary, input =>
         {
             var policy = new PolicyLossInput(input.LogProbabilities, input.TokenCounts, input.TokenValues, input.BehaviorLogProbabilities,
                 reference ? input.ReferenceLogProbabilities : null, stepUnits: input.StepTokens, stepSequences: input.StepSequences);
             return loss.Loss(policy, options);
-        };
+        })
+        { NeedsReference = reference };
     }
 
     /// <summary>
@@ -505,7 +517,7 @@ public static class FineTuningLosses
     /// <param name="temperature">Softens both distributions (1: as they are).</param>
     /// <param name="beta">The generalized Jensen-Shannon weight, for a kind that takes one, in (0, 1).</param>
     /// <exception cref="NotSupportedException">No divergence of that name is registered.</exception>
-    public static FineTuningLoss OnPolicyDistillation(string divergence = TeacherDivergences.Reverse, float temperature = 1f, float beta = 0.5f)
+    public static IFineTuningLoss OnPolicyDistillation(string divergence = TeacherDivergences.Reverse, float temperature = 1f, float beta = 0.5f)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(divergence);
         if (!(temperature > 0f) || float.IsInfinity(temperature))
@@ -519,7 +531,9 @@ public static class FineTuningLosses
             throw new ArgumentOutOfRangeException(nameof(beta), beta, $"The '{kind.Name}' divergence's beta is in (0, 1).");
         }
 
-        return input => input.TeacherDivergence(temperature, divergence, beta).Sum() * (temperature * temperature / input.StepTokens);
+        return new Loss("on-policy-distillation", $"T² · {kind.Name} divergence from the teacher on the student's own samples, per trained token",
+            input => input.TeacherDivergence(temperature, divergence, beta).Sum() * (temperature * temperature / input.StepTokens))
+        { NeedsTeacher = true };
     }
 
     /// <summary>
@@ -527,7 +541,7 @@ public static class FineTuningLosses
     /// <paramref name="second"/> (a policy loss with a teacher term, <see cref="OnPolicyDistillation"/>). The weight can
     /// follow a schedule by building a new sum each step.
     /// </summary>
-    public static FineTuningLoss Add(FineTuningLoss first, FineTuningLoss second, float weight = 1f)
+    public static IFineTuningLoss Add(IFineTuningLoss first, IFineTuningLoss second, float weight = 1f)
     {
         ArgumentNullException.ThrowIfNull(first);
         ArgumentNullException.ThrowIfNull(second);
@@ -536,7 +550,14 @@ public static class FineTuningLosses
             throw new ArgumentOutOfRangeException(nameof(weight), weight, "The weight is a finite number.");
         }
 
-        return input => weight == 0f ? first(input) : first(input) + second(input) * weight;
+        bool both = weight != 0f;                                              // a zero weight never reads the second
+        return new Loss($"{first.Name}+{second.Name}", $"{first.Summary}, plus {second.Summary}",
+            input => weight == 0f ? first.Compute(input) : first.Compute(input) + second.Compute(input) * weight)
+        {
+            NeedsPairs = first.NeedsPairs || (both && second.NeedsPairs),
+            NeedsReference = first.NeedsReference || (both && second.NeedsReference),
+            NeedsTeacher = first.NeedsTeacher || (both && second.NeedsTeacher),
+        };
     }
 
     /// <summary>
@@ -550,7 +571,7 @@ public static class FineTuningLosses
     /// </summary>
     /// <param name="beta">How far the model may move from the reference (larger: closer to it). TRL's default is 0.1.</param>
     /// <param name="labelSmoothing">The probability that a preference is wrong (0 for plain DPO).</param>
-    public static FineTuningLoss Dpo(float beta = 0.1f, float labelSmoothing = 0f)
+    public static IFineTuningLoss Dpo(float beta = 0.1f, float labelSmoothing = 0f)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(beta);
         if (labelSmoothing is < 0f or >= 0.5f)
@@ -558,7 +579,7 @@ public static class FineTuningLosses
             throw new ArgumentOutOfRangeException(nameof(labelSmoothing), "Label smoothing is in [0, 0.5).");
         }
 
-        return input =>
+        return new Loss("DPO", "direct preference optimization against the reference (the model with its adapters disabled)", input =>
         {
             Require(input, "DPO");
             var ratios = input.SequenceSums(input.LogProbabilities) - input.SequenceSums(input.ReferenceLogProbabilities);
@@ -570,7 +591,8 @@ public static class FineTuningLosses
             }
 
             return losses.Sum() / (input.StepSequences / 2);
-        };
+        })
+        { NeedsPairs = true, NeedsReference = true };
     }
 
     /// <summary>
@@ -581,10 +603,10 @@ public static class FineTuningLosses
     /// pairs (TRL averages it over the chosen tokens of a batch; the two agree when the answers have equal lengths).
     /// </summary>
     /// <param name="lambda">Weight of the odds-ratio term (the paper's λ, TRL's beta; 0.1 by default).</param>
-    public static FineTuningLoss Orpo(float lambda = 0.1f)
+    public static IFineTuningLoss Orpo(float lambda = 0.1f)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(lambda);
-        return input =>
+        return new Loss("ORPO", "odds ratio preference optimization (no reference)", input =>
         {
             Require(input, "ORPO");
             var means = input.SequenceMeans(input.LogProbabilities);
@@ -594,7 +616,8 @@ public static class FineTuningLosses
             var ratio = Losses.LogSigmoid(input.Chosen(logOdds) - input.Rejected(logOdds));
             var losses = -input.Chosen(means) - ratio * lambda;
             return losses.Sum() / (input.StepSequences / 2);
-        };
+        })
+        { NeedsPairs = true };
     }
 
     /// <summary>
@@ -604,23 +627,42 @@ public static class FineTuningLosses
     /// </summary>
     /// <param name="beta">Reward scale (the paper uses 2 to 2.5).</param>
     /// <param name="gamma">Target reward margin (the paper uses about 0.5 to 1.6).</param>
-    public static FineTuningLoss SimPo(float beta = 2f, float gamma = 1f)
+    public static IFineTuningLoss SimPo(float beta = 2f, float gamma = 1f)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(beta);
-        return input =>
+        return new Loss("SimPO", "simple preference optimization: length-normalized rewards with a margin (no reference)", input =>
         {
             Require(input, "SimPO");
             var means = input.SequenceMeans(input.LogProbabilities);
             var margins = (input.Chosen(means) - input.Rejected(means)) * beta - gamma;
             return -Losses.LogSigmoid(margins).Sum() / (input.StepSequences / 2);
-        };
+        })
+        { NeedsPairs = true };
     }
 
     private static void Require(FineTuningLossInput input, string name)
     {
         if (!input.Pairs)
         {
-            throw new InvalidOperationException($"{name} needs preference pairs: train with PreferencePair data (chosen and rejected answers).");
+            throw new InvalidOperationException(NeedsPairsMessage(name));
         }
+    }
+
+    internal static string NeedsPairsMessage(string name) => $"{name} needs preference pairs: train with PreferencePair data (chosen and rejected answers).";
+
+    // A loss as a function and what it needs.
+    private sealed class Loss(string name, string summary, Func<FineTuningLossInput, Tensor> compute) : IFineTuningLoss
+    {
+        public string Name => name;
+
+        public string Summary => summary;
+
+        public bool NeedsPairs { get; init; }
+
+        public bool NeedsReference { get; init; }
+
+        public bool NeedsTeacher { get; init; }
+
+        public Tensor Compute(FineTuningLossInput input) => compute(input);
     }
 }

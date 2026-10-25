@@ -46,7 +46,7 @@ public sealed record TeacherDataOptions
 /// <summary>
 /// Teacher-generated data for sequence-level distillation: a teacher model answers prompts, and its answers become chat
 /// rows (<c>{"messages": [...]}</c>) for supervised fine-tuning of a student (<see cref="ChatTranscriptEncoder"/>,
-/// <see cref="FineTuner"/>). Unlike logit distillation (<see cref="DistillationTeacher"/>) it needs no shared vocabulary:
+/// <see cref="FineTuner"/>). Unlike logit distillation (<see cref="IDistillationTeacher"/>) it needs no shared vocabulary:
 /// the student learns from the teacher's text.
 /// </summary>
 /// <example>

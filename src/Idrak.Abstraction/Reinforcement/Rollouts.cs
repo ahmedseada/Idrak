@@ -31,7 +31,7 @@ public sealed class Trajectory<TObservation, TAction>
     /// <param name="info">What the environment reported at the last step; null for nothing.</param>
     /// <exception cref="ArgumentException">No step, lists of other lengths than the steps say, or a reward that is not finite.</exception>
     public Trajectory(int index, int seed, IReadOnlyList<TObservation> observations, IReadOnlyList<TAction> actions, IReadOnlyList<ActionRecord> records,
-        IReadOnlyList<float> rewards, bool terminated, bool truncated, int? group = null, float finalValue = float.NaN, IReadOnlyDictionary<string, string>? info = null)
+        IReadOnlyList<float> rewards, bool terminated, bool truncated, int? group = null, float finalValue = float.NaN, EpisodeInfo? info = null)
     {
         ArgumentNullException.ThrowIfNull(observations);
         ArgumentNullException.ThrowIfNull(actions);
@@ -102,7 +102,7 @@ public sealed class Trajectory<TObservation, TAction>
     public float FinalValue { get; }
 
     /// <summary>What the environment reported at the last step, or null.</summary>
-    public IReadOnlyDictionary<string, string>? Info { get; }
+    public EpisodeInfo? Info { get; }
 
     /// <summary>The steps of the episode.</summary>
     public int Steps => _rewards.Length;

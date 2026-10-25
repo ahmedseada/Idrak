@@ -58,7 +58,7 @@ internal static partial class Tests
         Check((bool?)normalize["live"] == false && (string?)normalize["live_alternative"] == "agc" && (string?)normalize["origin"] == Overrides.Library, $"normalize: {normalize}");
         var denoise = rows.First(r => (string?)r!["name"] == "denoise")!["parameters"]!.AsArray();
         Check(denoise.Select(p => (string?)p!["key"]).SequenceEqual(AudioProcessors.Get("denoise").Parameters.Select(p => p.Key)), $"denoise's parameters: {denoise}");
-        foreach (var processor in AudioProcessors.Names.Select(AudioProcessors.Get))
+        foreach (var processor in AudioProcessors.Names.Select(n => AudioProcessors.Get(n)))
         {
             var row = rows.First(r => (string?)r!["name"] == processor.Name)!;
             var parameters = row["parameters"]!.AsArray();

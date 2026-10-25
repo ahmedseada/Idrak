@@ -243,7 +243,7 @@ internal sealed class DistillCommand : Command
         // The teacher joins once the student and the data are ready: its logits written (precompute), or its
         // distributions as the loss's soft targets.
         PretrainedModel? teacherModel = null;
-        DistillationTeacher? source = null;
+        IDistillationTeacher? source = null;
         int precomputed = 0;
         IReadOnlyList<float> onPolicyLosses = [];
         if (onPolicy)
@@ -498,7 +498,7 @@ internal sealed class DistillCommand : Command
 
     // The teacher of a distillation: a model and its distributions on the fly (its top k, 0: all), or a stored top-k logits
     // file (no model loaded; refused where new samples are scored, by the library).
-    internal static (PretrainedModel? Model, DistillationTeacher Teacher) LoadTeacher(CommandContext context, ToolConsole console, ModelChoices.ModelChoice choice,
+    internal static (PretrainedModel? Model, IDistillationTeacher Teacher) LoadTeacher(CommandContext context, ToolConsole console, ModelChoices.ModelChoice choice,
         Device device, int topK, int batchTokens)
     {
         if (TeacherLogitsFile.IsTeacherLogits(choice.Model))
@@ -523,7 +523,7 @@ internal sealed class DistillCommand : Command
     // cluster (R10) every rank runs this: each samples its shards' prompts, a stop is agreed at one step on every rank, rank 0
     // alone shows the progress and writes the adapter.
     internal static (int Code, IReadOnlyList<float> Losses) TrainOnPolicy(CommandContext context, ToolConsole console, PretrainedModel model, FineTuningOptions tuning,
-        DistillationTeacher teacher, IReadOnlyList<ChatTranscript> data, OnPolicyDistillationOptions options, string output)
+        IDistillationTeacher teacher, IReadOnlyList<ChatTranscript> data, OnPolicyDistillationOptions options, string output)
     {
         if (data.Count == 0)
         {

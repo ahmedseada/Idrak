@@ -6,20 +6,18 @@ public sealed record Idrak.Vision.Abstractions.BoxMatchOptions : System.IEquatab
   public float NegativeThreshold { get; init; }
   public float PositiveThreshold { get; init; }
 
-public delegate int[] Idrak.Vision.Abstractions.BoxMatcher(System.ReadOnlyMemory<float> quality, int predictions, int truths, Idrak.Vision.Abstractions.BoxMatchOptions options)
-
 public static class Idrak.Vision.Abstractions.BoxMatchers
   public const int Ignored = -2
   public const int Negative = -1
   public const string Hungarian = "hungarian"
   public const string Threshold = "iou-threshold"
-  public static Idrak.Vision.Abstractions.BoxMatcher Get(string name)
-  public static Idrak.Vision.Abstractions.BoxMatcher? Default(string name)
+  public static Idrak.Vision.Abstractions.IBoxMatcher Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Vision.Abstractions.IBoxMatcher? Default(string name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static bool Unregister(string name)
   public static int[] Match(string name, System.ReadOnlyMemory<float> quality, int predictions, int truths, Idrak.Vision.Abstractions.BoxMatchOptions? options = null)
   public static string? Origin(string name)
-  public static void Register(string name, Idrak.Vision.Abstractions.BoxMatcher matcher)
+  public static void Register(Idrak.Vision.Abstractions.IBoxMatcher matcher)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed record Idrak.Vision.Abstractions.Detection : System.IEquatable<Idrak.Vision.Abstractions.Detection>
@@ -41,8 +39,8 @@ public sealed record Idrak.Vision.Abstractions.DetectionCandidates : System.IDis
 
 public delegate System.Collections.Generic.IEnumerable<Idrak.Vision.Abstractions.Detection> Idrak.Vision.Abstractions.DetectionDecoder(System.ReadOnlySpan<float> outputs, System.Collections.Generic.IReadOnlyList<int> outputShape)
 
-public sealed record Idrak.Vision.Abstractions.DetectionDecoderContext : System.IEquatable<Idrak.Vision.Abstractions.DetectionDecoderContext>
-  public DetectionDecoderContext(int InputHeight, int InputWidth, System.Collections.Generic.IReadOnlyList<string>? Labels, System.Text.Json.Nodes.JsonObject Settings)
+public sealed record Idrak.Vision.Abstractions.DetectionDecoderRequest : System.IEquatable<Idrak.Vision.Abstractions.DetectionDecoderRequest>
+  public DetectionDecoderRequest(int InputHeight, int InputWidth, System.Collections.Generic.IReadOnlyList<string>? Labels, System.Text.Json.Nodes.JsonObject Settings)
   public System.Collections.Generic.IReadOnlyList<string>? Labels { get; init; }
   public System.Text.Json.Nodes.JsonObject Settings { get; init; }
   public bool Flag(string name, bool otherwise)
@@ -53,32 +51,21 @@ public sealed record Idrak.Vision.Abstractions.DetectionDecoderContext : System.
   public int[]? Integers(string name)
   public string Text(string name, string otherwise)
 
-public delegate Idrak.Vision.Abstractions.DetectionDecoder Idrak.Vision.Abstractions.DetectionDecoderFactory(Idrak.Vision.Abstractions.DetectionDecoderContext context)
-
 public static class Idrak.Vision.Abstractions.DetectionDecoders
   public const string BoxesScores = "boxes-scores"
-  public static Idrak.Vision.Abstractions.DetectionDecoder Create(string name, Idrak.Vision.Abstractions.DetectionDecoderContext context)
-  public static Idrak.Vision.Abstractions.DetectionDecoderFactory Get(string name)
-  public static Idrak.Vision.Abstractions.DetectionDecoderFactory? Default(string name)
+  public static Idrak.Vision.Abstractions.DetectionDecoder Create(string name, Idrak.Vision.Abstractions.DetectionDecoderRequest request)
+  public static Idrak.Vision.Abstractions.DetectionHead CreateHead(string name, Idrak.Vision.Abstractions.DetectionDecoderRequest request)
+  public static Idrak.Vision.Abstractions.IDetectionDecoderKind Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Vision.Abstractions.IDetectionDecoderKind? Default(string name)
+  public static Idrak.Vision.Abstractions.IDetectionDecoderKind? Find(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Trainable(System.ReadOnlySpan<char> name)
   public static bool Unregister(string name)
   public static string? Origin(string name)
-  public static void Register(string name, Idrak.Vision.Abstractions.DetectionDecoderFactory factory)
+  public static void Register(Idrak.Vision.Abstractions.IDetectionDecoderKind kind)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public delegate Idrak.Vision.Abstractions.DetectionCandidates Idrak.Vision.Abstractions.DetectionHead(Idrak.Abstraction.Tensor outputs)
-
-public delegate Idrak.Vision.Abstractions.DetectionHead Idrak.Vision.Abstractions.DetectionHeadFactory(Idrak.Vision.Abstractions.DetectionDecoderContext context)
-
-public static class Idrak.Vision.Abstractions.DetectionHeads
-  public static Idrak.Vision.Abstractions.DetectionHead Create(string name, Idrak.Vision.Abstractions.DetectionDecoderContext context)
-  public static Idrak.Vision.Abstractions.DetectionHeadFactory Get(string name)
-  public static Idrak.Vision.Abstractions.DetectionHeadFactory? Default(string name)
-  public static Idrak.Vision.Abstractions.DetectionHeadFactory? Find(string name)
-  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static bool Unregister(string name)
-  public static string? Origin(string name)
-  public static void Register(string name, Idrak.Vision.Abstractions.DetectionHeadFactory factory)
 
 public sealed class Idrak.Vision.Abstractions.ForegroundImage
   public ForegroundImage(float[] values, int width, int height, float threshold, bool inverted = false)
@@ -88,6 +75,14 @@ public sealed class Idrak.Vision.Abstractions.ForegroundImage
   public float Threshold { get; }
   public int Height { get; }
   public int Width { get; }
+
+public interface Idrak.Vision.Abstractions.IBoxMatcher : Idrak.Abstraction.IKind
+  public int[] Match(System.ReadOnlyMemory<float> quality, int predictions, int truths, Idrak.Vision.Abstractions.BoxMatchOptions options)
+
+public interface Idrak.Vision.Abstractions.IDetectionDecoderKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Vision.Abstractions.DetectionDecoderRequest, Idrak.Vision.Abstractions.DetectionDecoder>
+
+public interface Idrak.Vision.Abstractions.IDetectionHeadKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Vision.Abstractions.DetectionDecoderRequest, Idrak.Vision.Abstractions.DetectionDecoder>, Idrak.Vision.Abstractions.IDetectionDecoderKind
+  public Idrak.Vision.Abstractions.DetectionHead CreateHead(Idrak.Vision.Abstractions.DetectionDecoderRequest request)
 
 public interface Idrak.Vision.Abstractions.IDetectionMetric : Idrak.Vision.Abstractions.IVisionMetric
   public void Add(System.Collections.Generic.IReadOnlyList<Idrak.Vision.Abstractions.Detection> predictions, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ObjectAnnotation> truths)
@@ -112,10 +107,17 @@ public interface Idrak.Vision.Abstractions.ITextLineSegmenter
   public Idrak.Vision.Abstractions.PageLines Find(Idrak.Abstraction.Data.ImageData page, Idrak.Vision.Abstractions.LineSegmentationOptions options)
   public string Name { get; }
 
+public interface Idrak.Vision.Abstractions.IVisionLoss : Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Tensor Compute(Idrak.Abstraction.Tensor predicted, Idrak.Abstraction.Tensor target, Idrak.Vision.Abstractions.VisionLossOptions options)
+  public Idrak.Vision.Abstractions.VisionLossTarget Target { get; }
+
 public interface Idrak.Vision.Abstractions.IVisionMetric
   public System.Collections.Generic.IReadOnlyDictionary<string, double> Compute()
   public string Name { get; }
   public void Reset()
+
+public interface Idrak.Vision.Abstractions.IVisionMetricKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Vision.Abstractions.VisionMetricOptions, Idrak.Vision.Abstractions.IVisionMetric>
+  public Idrak.Vision.Abstractions.ImageTask Task { get; }
 
 public sealed record Idrak.Vision.Abstractions.ImageCheckpoint : System.IEquatable<Idrak.Vision.Abstractions.ImageCheckpoint>
   public Idrak.Abstraction.Device Device { get; }
@@ -235,8 +237,6 @@ public static class Idrak.Vision.Abstractions.TextLineSegmenters
   public static void Register(Idrak.Vision.Abstractions.ITextLineSegmenter segmenter)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
-public delegate Idrak.Abstraction.Tensor Idrak.Vision.Abstractions.VisionLoss(Idrak.Abstraction.Tensor predicted, Idrak.Abstraction.Tensor target, Idrak.Vision.Abstractions.VisionLossOptions options)
-
 public sealed record Idrak.Vision.Abstractions.VisionLossOptions : System.IEquatable<Idrak.Vision.Abstractions.VisionLossOptions>
   public Idrak.LossReduction Reduction { get; init; }
   public VisionLossOptions()
@@ -247,17 +247,20 @@ public sealed record Idrak.Vision.Abstractions.VisionLossOptions : System.IEquat
   public float Gamma { get; init; }
   public float Smooth { get; init; }
 
+public enum Idrak.Vision.Abstractions.VisionLossTarget : int
+  Boxes = 0
+  Classes = 1
+  Masks = 2
+
 public static class Idrak.Vision.Abstractions.VisionLosses
   public static Idrak.Abstraction.Tensor Compute(string name, Idrak.Abstraction.Tensor predicted, Idrak.Abstraction.Tensor target, Idrak.Vision.Abstractions.VisionLossOptions? options = null)
-  public static Idrak.Vision.Abstractions.VisionLoss Get(string name)
-  public static Idrak.Vision.Abstractions.VisionLoss? Default(string name)
+  public static Idrak.Vision.Abstractions.IVisionLoss Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Vision.Abstractions.IVisionLoss? Default(string name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static bool Unregister(string name)
   public static string? Origin(string name)
-  public static void Register(string name, Idrak.Vision.Abstractions.VisionLoss loss)
+  public static void Register(Idrak.Vision.Abstractions.IVisionLoss loss)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
-
-public delegate Idrak.Vision.Abstractions.IVisionMetric Idrak.Vision.Abstractions.VisionMetricFactory(Idrak.Vision.Abstractions.VisionMetricOptions options)
 
 public sealed record Idrak.Vision.Abstractions.VisionMetricOptions : System.IEquatable<Idrak.Vision.Abstractions.VisionMetricOptions>
   public System.Collections.Generic.IReadOnlyList<string>? ClassNames { get; init; }
@@ -270,12 +273,12 @@ public static class Idrak.Vision.Abstractions.VisionMetrics
   public static Idrak.Vision.Abstractions.IDetectionMetric Detection(string name, Idrak.Vision.Abstractions.VisionMetricOptions? options = null)
   public static Idrak.Vision.Abstractions.ISegmentationMetric Segmentation(string name, Idrak.Vision.Abstractions.VisionMetricOptions options)
   public static Idrak.Vision.Abstractions.IVisionMetric Create(string name, Idrak.Vision.Abstractions.VisionMetricOptions? options = null)
-  public static Idrak.Vision.Abstractions.VisionMetricFactory Get(string name)
-  public static Idrak.Vision.Abstractions.VisionMetricFactory? Default(string name)
+  public static Idrak.Vision.Abstractions.IVisionMetricKind Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Vision.Abstractions.IVisionMetricKind? Default(string name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static bool Unregister(string name)
   public static string? Origin(string name)
-  public static void Register(string name, Idrak.Vision.Abstractions.VisionMetricFactory create)
+  public static void Register(Idrak.Vision.Abstractions.IVisionMetricKind kind)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed class Idrak.Vision.AugmentedImageLoader : System.Collections.Generic.IEnumerable<Idrak.Vision.DetectionBatch>, System.Collections.IEnumerable

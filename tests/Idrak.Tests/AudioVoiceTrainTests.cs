@@ -128,7 +128,7 @@ internal static partial class Tests
 
                 sgdD.Step();
                 sgdG.ZeroGrad();
-                var terms = step.Generate();
+                var terms = step.Generate().ByName(0f);
                 foreach (var (key, name) in new[] { ("generator", "generator") })
                 {
                     float torch = (float)expected[name]!;
@@ -215,7 +215,7 @@ internal static partial class Tests
                 using var scope = new TensorScope();
                 using var step = model.Begin(batch, options, keep);
                 float d = step.Discriminate();
-                var terms = step.Generate();
+                var terms = step.Generate().ByName(0f);
                 foreach (var p in model.Generator.Parameters().Concat(model.Discriminators(options, 0).Parameters()))
                 {
                     p.ZeroGrad();
@@ -539,7 +539,7 @@ internal static partial class Tests
             ThrowsNaming<IOException>(() => store.AddCheckpoint("tester", model, options), "a second voice of the name", "installed already", "Overwrite");
             Check(store.AddCheckpoint("tester", model, options with { Overwrite = true }).Kind == VoiceKinds.Checkpoint && store.List().Count == 1, "overwritten");
             Check(((IVoiceStore)new NoModelStore()).Name == "no-models", "a store of its own");
-            ThrowsNaming<NotSupportedException>(() => ((IVoiceStore)new NoModelStore()).AddCheckpoint("x", model, options), "a store that keeps no models", "keeps no model folders");
+            Check((IVoiceStore)new NoModelStore() is not ICheckpointVoiceStore && store is ICheckpointVoiceStore, "a store that keeps no models is no ICheckpointVoiceStore");
 
             // Spoken through VoicedSynthesizer: the voice's own model speaks, whatever the synthesizer given.
             var speak = new SpeechSynthesisOptions { Voice = "tester", NoiseScale = 0, DurationNoiseScale = 0 };
@@ -572,7 +572,7 @@ internal static partial class Tests
         }
     }
 
-    // A store that keeps no model folders: the contract's default refuses a checkpoint voice.
+    // A store that keeps no model folders: it is no ICheckpointVoiceStore.
     private sealed class NoModelStore : IVoiceStore
     {
         public string Name => "no-models";

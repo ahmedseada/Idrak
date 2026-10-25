@@ -132,55 +132,136 @@ public sealed record TrainingPart(ChatPart Part, IReadOnlyList<(int Position, in
 /// which a fine-tuning loss compares with the student's (Idrak.Text's <c>FineTuningLossInput.TeacherDivergence</c>
 /// and <c>FineTuningLosses.Distillation</c>; set the teacher as <c>FineTuningOptions.Teacher</c>). Idrak.Text
 /// makes the two built-in kinds (<c>DistillationTeachers.FromModel</c>: a loaded model computing its distributions on the
-/// fly; <c>DistillationTeachers.FromFile</c>: stored top-k logits); derive from this class for another source of
+/// fly; <c>DistillationTeachers.FromFile</c>: stored top-k logits); implement this interface for another source of
 /// distributions (a teacher served elsewhere, another stored format), returning each batch's distributions from
 /// <see cref="Distributions"/>.
 /// <para>
-/// Teacher and student must share a vocabulary (the same token for every id): see <see cref="CheckVocabulary"/>. When they
-/// do not, distil through data the teacher writes instead (sequence-level distillation).
+/// Teacher and student must share a vocabulary (the same token for every id): every teacher says what its vocabulary is
+/// (<see cref="Identity"/>), and training checks it against the student's first (<see cref="Check"/>). When they do not
+/// share one, distil through data the teacher writes instead (sequence-level distillation).
 /// </para>
 /// </summary>
-public abstract class DistillationTeacher : IDisposable
+public interface IDistillationTeacher : IDisposable
 {
     /// <summary>The width of the teacher's distributions (its output head; for stored logits, the width recorded).</summary>
-    public abstract int Vocabulary { get; }
+    int Vocabulary { get; }
 
     /// <summary>Tokens kept per position (0: the full distribution).</summary>
-    public abstract int TopK { get; }
+    int TopK { get; }
 
     /// <summary>
-    /// A fingerprint of the teacher's vocabulary (<see cref="VocabularyFingerprint"/>), or null when unknown; a student
-    /// whose own fingerprint differs does not share it.
+    /// What the teacher's vocabulary is: its tokenizer, a fingerprint of it, or a teacher's own statement that it cannot
+    /// say (<see cref="TeacherVocabulary.Unknown"/>, with the reason). Required: a teacher cannot leave it out.
     /// </summary>
-    public abstract string? Fingerprint { get; }
-
-    /// <summary>The teacher's tokenizer, when it has one at hand (a model's; not stored logits).</summary>
-    public virtual ITokenizer? Tokenizer => null;
+    TeacherVocabulary Identity { get; }
 
     /// <summary>
     /// The distributions at the trained positions of <paramref name="sequences"/>, in order (the batch's): computed now or
     /// on demand, and released when the result is disposed (after the step).
     /// </summary>
-    public abstract TeacherDistributions Distributions(IReadOnlyList<TrainingSequence> sequences);
+    ITeacherDistributions Distributions(IReadOnlyList<TrainingSequence> sequences);
 
     /// <summary>
-    /// Checks that a student with the tokenizer <paramref name="student"/> can learn from this teacher: the same token for
-    /// every id (see <see cref="CheckVocabulary"/>, or the fingerprints of stored logits). Throws
-    /// <see cref="InvalidOperationException"/> naming the difference when not.
+    /// Checks that a student with the tokenizer <paramref name="student"/> can learn from this teacher (see
+    /// <see cref="TeacherVocabulary.Check"/>). Throws <see cref="InvalidOperationException"/> naming the difference when not.
+    /// </summary>
+    void Check(ITokenizer student) => Identity.Check(student);
+}
+
+/// <summary>The teacher's distributions at the trained positions of one batch (see <see cref="IDistillationTeacher.Distributions"/>).</summary>
+public interface ITeacherDistributions : IDisposable
+{
+    /// <summary>
+    /// The probabilities at temperature <paramref name="temperature"/> of trained positions start … start + count − 1 as
+    /// [count, vocabulary] on <paramref name="device"/>: a teacher wider than <paramref name="vocabulary"/> is cut to it (and
+    /// renormalized), a narrower one gets zeros past its end.
+    /// </summary>
+    Tensor Probabilities(int start, int count, float temperature, int vocabulary, Device device);
+}
+
+/// <summary>
+/// What a teacher's vocabulary is (<see cref="IDistillationTeacher.Identity"/>), so a student can be checked against it:
+/// the teacher's tokenizer (<see cref="Of(ITokenizer)"/>: every id compared), the fingerprint stored with its logits
+/// (<see cref="Fingerprinted"/>), or a statement that it is unknown (<see cref="Unknown"/>: a model without a tokenizer,
+/// logits written before fingerprints were stored), whose reason a check names instead of passing silently.
+/// </summary>
+public sealed class TeacherVocabulary
+{
+    private string? _fingerprint;
+
+    private TeacherVocabulary(ITokenizer? tokenizer, string? fingerprint, string? unknown)
+    {
+        Tokenizer = tokenizer;
+        _fingerprint = fingerprint;
+        UnknownReason = unknown;
+    }
+
+    /// <summary>The vocabulary of <paramref name="tokenizer"/>: a student's is compared id by id (<see cref="DistillationTeacher.CheckVocabulary"/>).</summary>
+    public static TeacherVocabulary Of(ITokenizer tokenizer)
+    {
+        ArgumentNullException.ThrowIfNull(tokenizer);
+        return new TeacherVocabulary(tokenizer, null, null);
+    }
+
+    /// <summary>The vocabulary whose fingerprint is <paramref name="fingerprint"/> (<see cref="DistillationTeacher.VocabularyFingerprint"/>): a student's is compared by its fingerprint.</summary>
+    public static TeacherVocabulary Fingerprinted(string fingerprint)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fingerprint);
+        return new TeacherVocabulary(null, fingerprint, null);
+    }
+
+    /// <summary>
+    /// A vocabulary the teacher cannot state, for <paramref name="reason"/> ("the stored logits were written without a
+    /// fingerprint"): a check cannot compare it and passes, on the teacher's word; the reason says why.
+    /// </summary>
+    public static TeacherVocabulary Unknown(string reason)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        return new TeacherVocabulary(null, null, reason);
+    }
+
+    /// <summary>The teacher's tokenizer, when the identity is one (a model's; not stored logits).</summary>
+    public ITokenizer? Tokenizer { get; }
+
+    /// <summary>The vocabulary's fingerprint: stored, or computed once from <see cref="Tokenizer"/>; null when unknown.</summary>
+    public string? Fingerprint => _fingerprint ??= Tokenizer is { } tokenizer ? DistillationTeacher.VocabularyFingerprint(tokenizer) : null;
+
+    /// <summary>Why the vocabulary is unknown (<see cref="Unknown"/>); null when it is known.</summary>
+    public string? UnknownReason { get; }
+
+    /// <summary>Whether the vocabulary is known (a tokenizer or a fingerprint): a check then compares it.</summary>
+    public bool IsKnown => UnknownReason is null;
+
+    /// <summary>
+    /// Checks that a student with the tokenizer <paramref name="student"/> shares this vocabulary: the same token for every
+    /// id (a tokenizer, <see cref="DistillationTeacher.CheckVocabulary"/>) or the same fingerprint (stored logits); an
+    /// <see cref="Unknown"/> vocabulary is taken on the teacher's word. Throws <see cref="InvalidOperationException"/>
+    /// naming the difference when not.
     /// </summary>
     public void Check(ITokenizer student)
     {
         ArgumentNullException.ThrowIfNull(student);
         if (Tokenizer is { } own)
         {
-            CheckVocabulary(own, student);
+            DistillationTeacher.CheckVocabulary(own, student);
         }
-        else if (Fingerprint is { } fingerprint && fingerprint != VocabularyFingerprint(student))
+        else if (_fingerprint is { } fingerprint && fingerprint != DistillationTeacher.VocabularyFingerprint(student))
         {
-            throw new InvalidOperationException(Mismatch("the stored teacher logits were written for another vocabulary (their fingerprint differs from the student's)"));
+            throw new InvalidOperationException(DistillationTeacher.Mismatch("the stored teacher logits were written for another vocabulary (their fingerprint differs from the student's)"));
         }
     }
 
+    /// <inheritdoc />
+    public override string ToString() => Tokenizer is not null ? "a tokenizer" : _fingerprint is { } f ? $"fingerprint {f}" : $"unknown ({UnknownReason})";
+}
+
+/// <summary>
+/// What every distillation teacher's vocabulary is checked with (<see cref="IDistillationTeacher"/>,
+/// <see cref="TeacherVocabulary"/>): the comparison of two tokenizers id by id, and the fingerprint stored with teacher
+/// logits.
+/// </summary>
+public static class DistillationTeacher
+{
     /// <summary>
     /// Checks that <paramref name="teacher"/> and <paramref name="student"/> share a vocabulary: every id is the same
     /// token in both (ids past a tokenizer's end, such as the padding rows models add for alignment, count as empty, so
@@ -243,19 +324,7 @@ public abstract class DistillationTeacher : IDisposable
         return string.Create(CultureInfo.InvariantCulture, $"{count}-{hash:x16}");
     }
 
-    /// <inheritdoc />
-    public void Dispose()
-    {
-        Dispose(true);
-        GC.SuppressFinalize(this);
-    }
-
-    /// <summary>Releases what the teacher holds (an open file).</summary>
-    protected virtual void Dispose(bool disposing)
-    {
-    }
-
-    private static string Mismatch(string detail) =>
+    internal static string Mismatch(string detail) =>
         $"The teacher and the student do not share a vocabulary: {detail}. Logit distillation compares their distributions token by token, "
         + "so it needs the same tokenizer; distil through answers the teacher writes instead (sequence-level distillation, TeacherData), which works across vocabularies.";
 
@@ -274,22 +343,5 @@ public abstract class DistillationTeacher : IDisposable
         }
 
         return count;
-    }
-}
-
-/// <summary>The teacher's distributions at the trained positions of one batch (see <see cref="DistillationTeacher.Distributions"/>).</summary>
-public abstract class TeacherDistributions : IDisposable
-{
-    /// <summary>
-    /// The probabilities at temperature <paramref name="temperature"/> of trained positions start … start + count − 1 as
-    /// [count, vocabulary] on <paramref name="device"/>: a teacher wider than <paramref name="vocabulary"/> is cut to it (and
-    /// renormalized), a narrower one gets zeros past its end.
-    /// </summary>
-    public abstract Tensor Probabilities(int start, int count, float temperature, int vocabulary, Device device);
-
-    /// <summary>Releases what the distributions hold (hidden states kept on a device, for example).</summary>
-    public virtual void Dispose()
-    {
-        GC.SuppressFinalize(this);
     }
 }

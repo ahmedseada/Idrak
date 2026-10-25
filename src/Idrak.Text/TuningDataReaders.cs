@@ -354,21 +354,22 @@ internal sealed class TuningImageSource : IDisposable
     public void Dispose() => _zip?.Dispose();
 
     /// <summary>
-    /// The sound <paramref name="reference"/> names (a path under the root or in the zip, or a data URL), as a part of
-    /// the "audio" kind registered in <see cref="ChatParts"/> (Idrak.Audio's), for the record at <paramref name="where"/>.
+    /// The part <paramref name="reference"/> names (a path under the root or in the zip, or a data URL), as a part of the
+    /// binary kind <paramref name="kind"/> registered in <see cref="ChatParts"/> (Idrak.Audio's "audio"), for the record
+    /// at <paramref name="where"/>.
     /// </summary>
-    /// <exception cref="InvalidDataException">No "audio" kind is registered, or the reference is empty, remote or not a sound.</exception>
-    public ChatPart LoadAudio(string reference, string where)
+    /// <exception cref="InvalidDataException">No binary kind of that name is registered, or the reference is empty, remote or not a part of it.</exception>
+    public ChatPart LoadPart(string kind, string reference, string where)
     {
-        if (ChatParts.Find(ChatParts.Audio) is not IBinaryPartKind audio)
+        if (ChatParts.Find(kind) is not IBinaryPartKind binary)
         {
-            throw new InvalidDataException($"{where}: the record names a sound ({reference}) and no 'audio' part kind is registered in ChatParts "
-                + "(ship Idrak.Audio, or register one with ChatParts.Register).");
+            throw new InvalidDataException($"{where}: the record names a '{kind}' part ({reference}) and no '{kind}' part kind made from bytes is registered in ChatParts "
+                + "(ship Idrak.Audio for 'audio', or register one with ChatParts.Register).");
         }
 
         if (string.IsNullOrWhiteSpace(reference))
         {
-            throw new InvalidDataException($"{where}: an audio entry is empty.");
+            throw new InvalidDataException($"{where}: an {kind} entry is empty.");
         }
 
         string text = reference.Trim();
@@ -378,12 +379,12 @@ internal sealed class TuningImageSource : IDisposable
             string[] header = comma < 0 ? [] : text[5..comma].Split(';', StringSplitOptions.TrimEntries);
             if (comma < 0 || !header.Skip(1).Contains("base64", StringComparer.OrdinalIgnoreCase))
             {
-                throw new InvalidDataException($"{where}: an audio data URL must be base64 (data:audio/wav;base64,...).");
+                throw new InvalidDataException($"{where}: an {kind} data URL must be base64 (data:{kind}/...;base64,...).");
             }
 
             try
             {
-                return audio.FromBytes(Convert.FromBase64String(text[(comma + 1)..]), header[0].Length == 0 ? null : header[0]);
+                return binary.FromBytes(Convert.FromBase64String(text[(comma + 1)..]), header[0].Length == 0 ? null : header[0]);
             }
             catch (Exception ex) when (ex is FormatException or ArgumentException)
             {
@@ -393,38 +394,38 @@ internal sealed class TuningImageSource : IDisposable
 
         if (Uri.TryCreate(text, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" or "ftp" or "s3" or "gs")
         {
-            throw new InvalidDataException($"{where}: the sound {text} is remote; Idrak reads local files only (download them, then give their folder or zip as the audios root).");
+            throw new InvalidDataException($"{where}: the {kind} {text} is remote; Idrak reads local files only (download them, then give their folder or zip as the {binary.RecordKeys.List} root).");
         }
 
         if (_zip is not null && !(Path.IsPathFullyQualified(text) && File.Exists(text)))
         {
             string name = Normalize(text);
-            var entry = Find(name) ?? throw new FileNotFoundException($"{where}: the sound {reference} is not in {_zipPath} (looked for '{name}' and for an entry ending in each trailing part of it).", reference);
+            var entry = Find(name) ?? throw new FileNotFoundException($"{where}: the {kind} {reference} is not in {_zipPath} (looked for '{name}' and for an entry ending in each trailing part of it).", reference);
             if (entry.Length == 0 || entry.Length > Array.MaxLength)
             {
-                throw new InvalidDataException($"{where}: the sound {entry.FullName} in {_zipPath} is {(entry.Length == 0 ? "empty" : $"{entry.Length:N0} bytes, too large for one sound")}.");
+                throw new InvalidDataException($"{where}: the {kind} {entry.FullName} in {_zipPath} is {(entry.Length == 0 ? "empty" : $"{entry.Length:N0} bytes, too large for one part")}.");
             }
 
-            return ReadAudio(audio, entry.Open(), (int)entry.Length, where, entry.FullName);
+            return ReadPart(binary, entry.Open(), (int)entry.Length, where, entry.FullName);
         }
 
         string path = Path.IsPathFullyQualified(text) && File.Exists(text) ? text : FolderPath(text);
         if (!File.Exists(path))
         {
-            throw new FileNotFoundException($"{where}: audio file not found: {path}", path);
+            throw new FileNotFoundException($"{where}: {kind} file not found: {path}", path);
         }
 
         long size = new FileInfo(path).Length;
         if (size == 0 || size > Array.MaxLength)
         {
-            throw new InvalidDataException($"{where}: the audio file {path} is {(size == 0 ? "empty" : $"{size:N0} bytes, too large for one sound")}.");
+            throw new InvalidDataException($"{where}: the {kind} file {path} is {(size == 0 ? "empty" : $"{size:N0} bytes, too large for one part")}.");
         }
 
-        return ReadAudio(audio, File.OpenRead(path), (int)size, where, path);
+        return ReadPart(binary, File.OpenRead(path), (int)size, where, path);
     }
 
-    // The sound's bytes read through a pooled block into the part's own array (one allocation per sound, rule 10).
-    private static ChatPart ReadAudio(IBinaryPartKind audio, Stream stream, int length, string where, string name)
+    // The part's bytes read through a pooled block into the part's own array (one allocation per part, rule 10).
+    private static ChatPart ReadPart(IBinaryPartKind kind, Stream stream, int length, string where, string name)
     {
         byte[] block = ArrayPool<byte>.Shared.Rent(length);
         try
@@ -434,7 +435,7 @@ internal sealed class TuningImageSource : IDisposable
                 stream.ReadExactly(block.AsSpan(0, length));
             }
 
-            return audio.FromBytes(block.AsSpan(0, length), null);
+            return kind.FromBytes(block.AsSpan(0, length), null);
         }
         catch (ArgumentException ex)
         {
@@ -575,27 +576,42 @@ internal sealed record PendingImage(int Index, string? Reference = null) : ChatP
     public override string Kind => ChatParts.Image;
 }
 
-// An audio part not read yet, as PendingImage: the index of the record's "audios" entry, or the part's own reference.
-internal sealed record PendingAudio(int Index, string? Reference = null) : ChatPart
+// A part of a binary kind (IBinaryPartKind: Idrak.Audio's "audio") not read yet, as PendingImage: the index of the
+// entry of the record's list of that kind (its RecordKeys.List, "audios"), or the part's own reference.
+internal sealed record PendingPart(string PartKind, int Index, string? Reference = null) : ChatPart
 {
-    public override string Kind => ChatParts.Audio;
+    public override string Kind => PartKind;
 }
 
-// A record read and checked, its images and sounds not read yet: the transcript with a PendingImage (PendingAudio) for
-// each image (audio) part (but those that carry their bytes), the "images" ("audios") entries they take, how many image
-// and audio parts it has and where the record is.
+// A record read and checked, its images and binary parts not read yet: the transcript with a PendingImage (PendingPart)
+// for each image (binary) part (but those that carry their bytes), the "images" entries (and each kind's list entries,
+// by kind) they take, how many image and binary parts it has and where the record is.
 internal sealed record PendingRecord(ChatTranscript Transcript, IReadOnlyList<string> References, int Images, string Where)
 {
-    public IReadOnlyList<string> AudioReferences { get; init; } = [];
+    public IReadOnlyDictionary<string, List<string>> PartReferences { get; init; } = NoParts;
 
-    public int Audios { get; init; }
+    public int Parts { get; init; }
+
+    public static readonly IReadOnlyDictionary<string, List<string>> NoParts = new Dictionary<string, List<string>>();
 }
 
-// The placeholders counted while a record's messages are read: image parts and <image> markers, audio parts and <audio>
-// markers, each numbered from 0 in its own list.
+// The placeholders counted while a record's messages are read: image parts and <image> markers, and each binary kind's
+// parts and markers (<audio>), each numbered from 0 in its own list.
 internal struct PendingCounts
 {
-    public int Images, Audios;
+    public int Images;
+    private Dictionary<string, int>? _parts;
+
+    // The next number of the kind's placeholders (counted up).
+    public int Next(string kind)
+    {
+        _parts ??= new Dictionary<string, int>(StringComparer.Ordinal);
+        ref int count = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(_parts, kind, out _);
+        return count++;
+    }
+
+    // The kind's placeholders counted.
+    public readonly int Of(string kind) => _parts is not null && _parts.TryGetValue(kind, out int count) ? count : 0;
 }
 
 // "transcripts": {"audio", "text"} per line or as a JSON array, the keys as Idrak.Audio's "transcripts" speech source reads
@@ -612,10 +628,12 @@ internal sealed class TranscriptsDataFormat : ITuningDataFormat
     public bool Recognizes(JsonObject record) =>
         record["messages"] is null && record["conversations"] is null && AudioKeys.Any(k => record[k] is JsonValue) && TextKeys.Any(k => record[k] is JsonValue);
 
-    public IEnumerable<ChatTranscript> Read(string path, TuningDataOptions? options = null) => TuningRecordImages.Read(path, options, (r, w) => Pending(r, w, options));
+    public IEnumerable<ChatTranscript> Read(string path, TuningDataOptions? options = null) => TuningRecordImages.Read(path, options, (r, w, _) => Pending(r, w, options));
 
-    public PendingConversations ReadPending(string path, TuningDataOptions? options = null) => TuningRecordImages.ReadPending(path, options, (r, w) => Pending(r, w, options));
+    public PendingConversations ReadPending(string path, TuningDataOptions? options = null) => TuningRecordImages.ReadPending(path, options, (r, w, _) => Pending(r, w, options));
 
+    // The row's sound is a part of the "audio" kind (a speech transcript is audio's by definition), read through the
+    // binary kind registered under that name when the record is taken.
     private static PendingRecord Pending(JsonObject record, string where, TuningDataOptions? options)
     {
         string? sound = AudioKeys.Select(k => (string?)record[k]).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
@@ -626,9 +644,9 @@ internal sealed class TranscriptsDataFormat : ITuningDataFormat
         }
 
         string prompt = options?.Prompt ?? "Transcribe.";
-        ChatPart[] user = prompt.Length == 0 ? [new PendingAudio(-1, sound)] : [new PendingAudio(-1, sound), new ChatText(prompt)];
+        ChatPart[] user = prompt.Length == 0 ? [new PendingPart(ChatParts.Audio, -1, sound)] : [new PendingPart(ChatParts.Audio, -1, sound), new ChatText(prompt)];
         var transcript = new ChatTranscript([new ChatMessage("user", user), new ChatMessage("assistant", text)], []);
-        return TuningRecordImages.Check(transcript, new PendingCounts(), [], $"{TuningRecordImages.Marker} markers", where);
+        return TuningRecordImages.Check(transcript, new PendingCounts(), [], $"{TuningRecordImages.Marker} markers", where, []);
     }
 }
 
@@ -638,7 +656,9 @@ internal sealed class TranscriptsDataFormat : ITuningDataFormat
 // a record's images only when it is taken.
 internal static class TuningRecordImages
 {
-    public static IEnumerable<ChatTranscript> Read(string path, TuningDataOptions? options, Func<JsonObject, string, PendingRecord> pending)
+    // Each format reads a record at `where` with the binary kinds registered when the read began (their keys: lists and
+    // markers), taken once per read.
+    public static IEnumerable<ChatTranscript> Read(string path, TuningDataOptions? options, Func<JsonObject, string, IReadOnlyList<IBinaryPartKind>, PendingRecord> pending)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         var records = TuningRecords.Read(path);
@@ -647,29 +667,31 @@ internal static class TuningRecordImages
 
         IEnumerable<ChatTranscript> Iterate()
         {
+            IReadOnlyList<IBinaryPartKind> kinds = [.. ChatParts.BinaryKinds];
             using var source = new TuningImageSource(path, options?.Images);
             using var audios = AudioSource(path, options, source);
             foreach (var (record, where) in records)
             {
-                yield return Fill(pending(record, where), source, audios);
+                yield return Fill(pending(record, where, kinds), source, audios);
             }
         }
     }
 
-    // Where sounds come from: their own root when given, else where the images come from.
+    // Where binary parts (sounds) come from: their own root when given, else where the images come from.
     private static TuningImageSource AudioSource(string path, TuningDataOptions? options, TuningImageSource images) =>
         options?.Audios is { } root ? new TuningImageSource(path, root, "audios") : images;
 
-    public static PendingConversations ReadPending(string path, TuningDataOptions? options, Func<JsonObject, string, PendingRecord> pending)
+    public static PendingConversations ReadPending(string path, TuningDataOptions? options, Func<JsonObject, string, IReadOnlyList<IBinaryPartKind>, PendingRecord> pending)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         var records = TuningRecords.Read(path);
         TuningImageSource.CheckRoot(options?.Images);
+        IReadOnlyList<IBinaryPartKind> kinds = [.. ChatParts.BinaryKinds];
         var read = new List<PendingRecord>();
         int images = 0;
         foreach (var (record, where) in records)
         {
-            var one = pending(record, where);
+            var one = pending(record, where, kinds);
             read.Add(one);
             images += one.Images;
         }
@@ -690,37 +712,44 @@ internal static class TuningRecordImages
 
     public const string Marker = "<image>";
 
-    public const string AudioMarker = "<audio>";
-
     // Whether a failure while reading the record at `where` is rethrown as an InvalidDataException naming it (one that
     // already names it, or a missing file, is not).
     public static bool Rewrap(Exception ex, string where) =>
         ex is FormatException or NotSupportedException or InvalidOperationException or ArgumentException or JsonException
         || (ex is InvalidDataException && !ex.Message.StartsWith(where, StringComparison.Ordinal));
 
-    // The parts of a text with each <image> marker a pending image and each <audio> marker a pending sound, numbered
-    // from `next`'s counts (counted up).
-    public static IEnumerable<ChatPart> Split(string text, ref PendingCounts next, bool images = true, bool audios = true)
+    // The parts of a text with each <image> marker a pending image and each marker of one of `kinds` (its
+    // RecordKeys.Marker, <audio>) a pending part of that kind, numbered from `next`'s counts (counted up).
+    public static IEnumerable<ChatPart> Split(string text, ref PendingCounts next, bool images, IReadOnlyList<IBinaryPartKind> kinds)
     {
         var parts = new List<ChatPart>();
         int from = 0;
         while (true)
         {
-            int image = images ? text.IndexOf(Marker, from, StringComparison.Ordinal) : -1, audio = audios ? text.IndexOf(AudioMarker, from, StringComparison.Ordinal) : -1;
-            if (image < 0 && audio < 0)
+            int at = images ? text.IndexOf(Marker, from, StringComparison.Ordinal) : -1, length = Marker.Length;
+            IBinaryPartKind? found = null;
+            foreach (var kind in kinds)
+            {
+                string marker = kind.RecordKeys.Marker;
+                int position = text.IndexOf(marker, from, StringComparison.Ordinal);
+                if (position >= 0 && (at < 0 || position < at))
+                {
+                    (at, length, found) = (position, marker.Length, kind);
+                }
+            }
+
+            if (at < 0)
             {
                 break;
             }
 
-            bool isImage = audio < 0 || (image >= 0 && image < audio);
-            int at = isImage ? image : audio;
             if (at > from)
             {
                 parts.Add(new ChatText(text[from..at]));
             }
 
-            parts.Add(isImage ? new PendingImage(next.Images++) : new PendingAudio(next.Audios++));
-            from = at + (isImage ? Marker.Length : AudioMarker.Length);
+            parts.Add(found is null ? new PendingImage(next.Images++) : new PendingPart(found.Name, next.Next(found.Name)));
+            from = at + length;
         }
 
         if (from < text.Length)
@@ -732,10 +761,11 @@ internal static class TuningRecordImages
     }
 
     // The record's "images" entries as references (strings, or objects with a "path"); null when it has none.
-    public static List<string>? References(JsonObject record, string where) => References(record, "images", where);
+    public static List<string>? References(JsonObject record, string where) => References(record, "images", "image", where);
 
-    // The record's `key` entries ("images", "audios") as references (strings, or objects with a "path"); null when it has none.
-    public static List<string>? References(JsonObject record, string key, string where)
+    // The record's `key` entries ("images", a binary kind's list: "audios") as references (strings, or objects with a
+    // "path"), each one a `what` ("image", "audio"); null when it has none.
+    public static List<string>? References(JsonObject record, string key, string what, string where)
     {
         if (record[key] is not { } node)
         {
@@ -747,7 +777,6 @@ internal static class TuningRecordImages
             return [single.GetValue<string>()];
         }
 
-        string what = key == "images" ? "image" : "audio";
         if (node is not JsonArray list)
         {
             throw new InvalidDataException($"{where}: \"{key}\" is a list of {what} paths, not {node.ToJsonString()}.");
@@ -768,9 +797,10 @@ internal static class TuningRecordImages
     }
 
     // The record, after checking there is one entry of `references` per image placeholder (`placeholders.Images` of them:
-    // bare parts and markers; parts that name their own image are pending too, and counted apart) and one entry of the
-    // record's "audios" per audio placeholder.
-    public static PendingRecord Check(ChatTranscript transcript, PendingCounts placeholders, IReadOnlyList<string> references, string what, string where, JsonObject? record = null)
+    // bare parts and markers; parts that name their own image are pending too, and counted apart) and, for each of the
+    // binary `kinds`, one entry of the record's list of that kind (its RecordKeys.List, "audios") per placeholder of it.
+    public static PendingRecord Check(ChatTranscript transcript, PendingCounts placeholders, IReadOnlyList<string> references, string what, string where,
+        IReadOnlyList<IBinaryPartKind> kinds, JsonObject? record = null)
     {
         if (placeholders.Images != references.Count)
         {
@@ -778,45 +808,84 @@ internal static class TuningRecordImages
                 + "each image needs its own placeholder, in the order of the list.");
         }
 
-        var audioReferences = record is null ? null : References(record, "audios", where);
-        if (placeholders.Audios != (audioReferences?.Count ?? 0))
+        Dictionary<string, List<string>>? lists = null;
+        foreach (var kind in kinds)
         {
-            throw new InvalidDataException($"{where}: {placeholders.Audios} audio placeholder{(placeholders.Audios == 1 ? "" : "s")} (bare audio parts and {AudioMarker} markers) for "
-                + $"{audioReferences?.Count ?? 0} entr{(audioReferences?.Count == 1 ? "y" : "ies")} of \"audios\"; each sound needs its own placeholder, in the order of the list.");
+            var keys = kind.RecordKeys;
+            var listed = record is null ? null : References(record, keys.List, kind.Name, where);
+            int count = placeholders.Of(kind.Name);
+            if (count != (listed?.Count ?? 0))
+            {
+                throw new InvalidDataException($"{where}: {count} {kind.Name} placeholder{(count == 1 ? "" : "s")} (bare {kind.Name} parts and {keys.Marker} markers) for "
+                    + $"{listed?.Count ?? 0} entr{(listed?.Count == 1 ? "y" : "ies")} of \"{keys.List}\"; each {kind.Name} part needs its own placeholder, in the order of the list.");
+            }
+
+            if (listed is not null)
+            {
+                (lists ??= new Dictionary<string, List<string>>(StringComparer.Ordinal))[kind.Name] = listed;
+            }
         }
 
-        int images = 0, audios = 0;
+        int images = 0, parts = 0;
         foreach (var message in transcript.Messages)
         {
             images += message.Parts.Count(p => p is PendingImage or ChatImage);     // the parts that carry their bytes are read already
-            audios += message.Parts.Count(p => p is PendingAudio || (p is not ChatText and not ChatImage && p.Kind == ChatParts.Audio));
+            parts += message.Parts.Count(p => p is PendingPart || (p is not ChatText and not ChatImage && IsBinary(kinds, p.Kind)));
         }
 
-        return new PendingRecord(transcript, references, images, where) { AudioReferences = audioReferences ?? [], Audios = audios };
+        return new PendingRecord(transcript, references, images, where) { PartReferences = lists ?? PendingRecord.NoParts, Parts = parts };
     }
 
-    // The record's transcript with each pending image and sound read (an "images" or "audios" entry once, however many
-    // placeholders take it).
+    // Whether `kind` is the name of one of the binary kinds.
+    public static IBinaryPartKind? Binary(IReadOnlyList<IBinaryPartKind> kinds, string? kind)
+    {
+        foreach (var binary in kinds)
+        {
+            if (binary.Name == kind)
+            {
+                return binary;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsBinary(IReadOnlyList<IBinaryPartKind> kinds, string kind) => Binary(kinds, kind) is not null;
+
+    // The record's transcript with each pending image and binary part read (an "images" entry, or an entry of a kind's
+    // list, once, however many placeholders take it).
     public static ChatTranscript Fill(PendingRecord record, TuningImageSource source, TuningImageSource? audios = null)
     {
-        if (record.Images == 0 && record.Audios == 0)
+        if (record.Images == 0 && record.Parts == 0)
         {
             return record.Transcript;
         }
 
         string where = record.Where;
-        audios ??= source;
+        var parts = audios ?? source;
         try
         {
             var images = new ChatImage?[record.References.Count];
-            var sounds = new ChatPart?[record.AudioReferences.Count];
-            var messages = record.Transcript.Messages.Select(m => m.Parts.Any(p => p is PendingImage or PendingAudio)
+            Dictionary<string, ChatPart?[]>? read = null;
+            ChatPart Listed(PendingPart pending)
+            {
+                read ??= new Dictionary<string, ChatPart?[]>(StringComparer.Ordinal);
+                var references = record.PartReferences[pending.PartKind];
+                if (!read.TryGetValue(pending.PartKind, out var done))
+                {
+                    read[pending.PartKind] = done = new ChatPart?[references.Count];
+                }
+
+                return done[pending.Index] ??= parts.LoadPart(pending.PartKind, references[pending.Index], where);
+            }
+
+            var messages = record.Transcript.Messages.Select(m => m.Parts.Any(p => p is PendingImage or PendingPart)
                 ? m with
                 {
                     Parts = [.. m.Parts.Select(p => p switch
                     {
                         PendingImage pending => pending.Reference is { } own ? source.Load(own, where) : images[pending.Index] ??= source.Load(record.References[pending.Index], where),
-                        PendingAudio pending => pending.Reference is { } own ? audios.LoadAudio(own, where) : sounds[pending.Index] ??= audios.LoadAudio(record.AudioReferences[pending.Index], where),
+                        PendingPart pending => pending.Reference is { } own ? parts.LoadPart(pending.PartKind, own, where) : Listed(pending),
                         _ => p,
                     })],
                 }
@@ -844,21 +913,22 @@ internal sealed class MessagesDataFormat : ITuningDataFormat
 
     public PendingConversations ReadPending(string path, TuningDataOptions? options = null) => TuningRecordImages.ReadPending(path, options, Pending);
 
-    // The record at `where` with its images as placeholders, their count checked against its "images".
-    private static PendingRecord Pending(JsonObject record, string where)
+    // The record at `where` with its images as placeholders, their count checked against its "images" (and each binary
+    // kind's parts against its list).
+    private static PendingRecord Pending(JsonObject record, string where, IReadOnlyList<IBinaryPartKind> kinds)
     {
         try
         {
             var references = TuningRecordImages.References(record, where);
-            bool audios = record["audios"] is not null;
+            IReadOnlyList<IBinaryPartKind> listed = [.. kinds.Where(k => record[k.RecordKeys.List] is not null)];   // their markers take the list
             var pending = new PendingCounts();
-            var transcript = ChatTranscript.Parse(record, content => Content(content, references is not null, audios, ref pending));
+            var transcript = ChatTranscript.Parse(record, content => Content(content, references is not null, kinds, listed, ref pending));
             if (references is null && pending.Images > 0)
             {
                 throw new InvalidDataException($"{where}: {pending.Images} image part{(pending.Images == 1 ? "" : "s")} without data or a path, and no \"images\" list to take them from.");
             }
 
-            return TuningRecordImages.Check(transcript, pending, references ?? [], "image placeholders (bare image parts and <image> markers)", where, record);
+            return TuningRecordImages.Check(transcript, pending, references ?? [], "image placeholders (bare image parts and <image> markers)", where, kinds, record);
         }
         catch (Exception ex) when (TuningRecordImages.Rewrap(ex, where))
         {
@@ -866,9 +936,10 @@ internal sealed class MessagesDataFormat : ITuningDataFormat
         }
     }
 
-    // Markers: <image> markers take the record's "images" when it has that list, <audio> markers its "audios"; a text
-    // without the list for a marker keeps it as text.
-    private static IReadOnlyList<ChatPart> Content(JsonNode? content, bool markers, bool audioMarkers, ref PendingCounts pending)
+    // Markers: <image> markers take the record's "images" when it has that list, a binary kind's markers (<audio>) its
+    // list ("audios", the kinds in `listed`); a text without the list for a marker keeps it as text.
+    private static IReadOnlyList<ChatPart> Content(JsonNode? content, bool markers, IReadOnlyList<IBinaryPartKind> kinds, IReadOnlyList<IBinaryPartKind> listed,
+        ref PendingCounts pending)
     {
         switch (content)
         {
@@ -876,7 +947,7 @@ internal sealed class MessagesDataFormat : ITuningDataFormat
                 return [];
             case JsonValue v when v.GetValueKind() == JsonValueKind.String:
                 string text = v.GetValue<string>();
-                return text.Length == 0 ? [] : [.. Split(text, markers, audioMarkers, ref pending)];
+                return text.Length == 0 ? [] : [.. Split(text, markers, listed, ref pending)];
             case JsonArray items:
                 var parts = new List<ChatPart>(items.Count);
                 foreach (var item in items)
@@ -897,24 +968,24 @@ internal sealed class MessagesDataFormat : ITuningDataFormat
                             parts.Add(ChatParts.FromJson(o));
                         }
                     }
-                    else if (item is JsonObject a && (string?)a["type"] == ChatParts.Audio)
+                    else if (item is JsonObject a && TuningRecordImages.Binary(kinds, (string?)a["type"]) is { } binary)
                     {
                         if (a["data"] is not null)
                         {
                             parts.Add(ChatParts.FromJson(a));                         // the registered kind reads its bytes
                         }
-                        else if (Reference(a, "path", "audio", "url") is { } reference)
+                        else if (Reference(a, "path", binary.Name, "url") is { } reference)
                         {
-                            parts.Add(new PendingAudio(-1, reference));
+                            parts.Add(new PendingPart(binary.Name, -1, reference));
                         }
                         else
                         {
-                            parts.Add(new PendingAudio(pending.Audios++));
+                            parts.Add(new PendingPart(binary.Name, pending.Next(binary.Name)));
                         }
                     }
-                    else if ((markers || audioMarkers) && item is JsonObject t && (string?)t["type"] == ChatParts.Text && (string?)t["text"] is { } inner)
+                    else if ((markers || listed.Count > 0) && item is JsonObject t && (string?)t["type"] == ChatParts.Text && (string?)t["text"] is { } inner)
                     {
-                        parts.AddRange(Split(inner, markers, audioMarkers, ref pending));
+                        parts.AddRange(Split(inner, markers, listed, ref pending));
                     }
                     else
                     {
@@ -929,8 +1000,8 @@ internal sealed class MessagesDataFormat : ITuningDataFormat
     }
 
     // The text's parts: its markers of the kinds whose lists the record has become pending parts; the others stay text.
-    private static IEnumerable<ChatPart> Split(string text, bool markers, bool audioMarkers, ref PendingCounts pending) =>
-        markers || audioMarkers ? TuningRecordImages.Split(text, ref pending, markers, audioMarkers) : [new ChatText(text)];
+    private static IEnumerable<ChatPart> Split(string text, bool markers, IReadOnlyList<IBinaryPartKind> listed, ref PendingCounts pending) =>
+        markers || listed.Count > 0 ? TuningRecordImages.Split(text, ref pending, markers, listed) : [new ChatText(text)];
 
     private static string? Reference(JsonObject part, params ReadOnlySpan<string> keys)
     {
@@ -990,8 +1061,9 @@ internal sealed class ShareGptDataFormat : ITuningDataFormat
 
     public PendingConversations ReadPending(string path, TuningDataOptions? options = null) => TuningRecordImages.ReadPending(path, options, Pending);
 
-    // The record at `where` with its images as placeholders, their count checked against its "images".
-    private static PendingRecord Pending(JsonObject record, string where)
+    // The record at `where` with its images as placeholders, their count checked against its "images" (and each binary
+    // kind's markers against its list).
+    private static PendingRecord Pending(JsonObject record, string where, IReadOnlyList<IBinaryPartKind> kinds)
     {
         try
         {
@@ -1012,7 +1084,7 @@ internal sealed class ShareGptDataFormat : ITuningDataFormat
             var transcript = ChatTranscript.Parse(record, value => value switch
             {
                 null => [],
-                JsonValue v when v.GetValueKind() == JsonValueKind.String => [.. TuningRecordImages.Split(v.GetValue<string>(), ref pending)],
+                JsonValue v when v.GetValueKind() == JsonValueKind.String => [.. TuningRecordImages.Split(v.GetValue<string>(), ref pending, true, kinds)],
                 _ => throw new InvalidDataException($"a turn's \"value\" is text, not {value.ToJsonString()}"),
             });
             if ((string?)record["system"] is { Length: > 0 } system && transcript.Messages is not [{ Role: "system" }, ..])
@@ -1020,7 +1092,7 @@ internal sealed class ShareGptDataFormat : ITuningDataFormat
                 transcript = transcript with { Messages = [new ChatMessage("system", system), .. transcript.Messages] };
             }
 
-            return TuningRecordImages.Check(transcript, pending, TuningRecordImages.References(record, where) ?? [], $"{TuningRecordImages.Marker} markers", where, record);
+            return TuningRecordImages.Check(transcript, pending, TuningRecordImages.References(record, where) ?? [], $"{TuningRecordImages.Marker} markers", where, kinds, record);
         }
         catch (Exception ex) when (TuningRecordImages.Rewrap(ex, where))
         {

@@ -208,7 +208,7 @@ internal static partial class Tests
 
         public string Summary => "a test's loss that fails";
 
-        public IReadOnlyCollection<string> Keys { get; } = ["huber", "double"];
+        public IReadOnlySet<string> Keys { get; } = new OptionKeys("huber", "double");
 
         public Tensor Loss(QLossInput input, IReadOnlyDictionary<string, string>? options = null) => throw new InvalidOperationException("the test's loss fails");
     }

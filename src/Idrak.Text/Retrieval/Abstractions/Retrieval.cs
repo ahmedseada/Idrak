@@ -37,3 +37,16 @@ public interface IReranker
     ValueTask<IReadOnlyList<RetrievedChunk>> RerankAsync(string query, IReadOnlyList<RetrievedChunk> candidates, int keep,
         CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// Turns a (query, passage) pair into a cross-encoder's input values (<c>CrossEncoder</c>): the shape of one encoded pair
+/// and the values written into the caller's slot of the batch, so no array is made per pair.
+/// </summary>
+public interface IPairEncoder
+{
+    /// <summary>The shape of one encoded pair (for example [maxLength]); its size is how many values <see cref="Encode"/> writes.</summary>
+    IReadOnlyList<int> Shape { get; }
+
+    /// <summary>Writes the input values of the pair (<paramref name="query"/>, <paramref name="passage"/>) into <paramref name="pair"/>, of the shape's size.</summary>
+    void Encode(ReadOnlySpan<char> query, ReadOnlySpan<char> passage, Span<float> pair);
+}

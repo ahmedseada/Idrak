@@ -185,12 +185,8 @@ internal static class RolloutExchange
                     writer.Write(reward);
                 }
 
-                writer.Write(trajectory.Info?.Count ?? -1);
-                foreach (var (key, value) in trajectory.Info ?? new Dictionary<string, string>())
-                {
-                    writer.Write(key);
-                    writer.Write(value);
-                }
+                writer.Write(trajectory.Info is not null);
+                trajectory.Info?.Write(writer);                                // each value in its own type
 
                 messages.Clear();
                 foreach (var observation in trajectory.Observations)
@@ -292,17 +288,7 @@ internal static class RolloutExchange
                 rewards[s] = reader.ReadSingle();
             }
 
-            int infos = reader.ReadInt32();
-            Dictionary<string, string>? info = null;
-            if (infos >= 0)
-            {
-                info = new Dictionary<string, string>(infos, StringComparer.Ordinal);
-                for (int i = 0; i < infos; i++)
-                {
-                    string key = reader.ReadString();
-                    info[key] = reader.ReadString();
-                }
-            }
+            var info = reader.ReadBoolean() ? EpisodeInfo.Read(reader) : null;
 
             var messages = new ChatMessage[reader.ReadInt32()];
             for (int m = 0; m < messages.Length; m++)

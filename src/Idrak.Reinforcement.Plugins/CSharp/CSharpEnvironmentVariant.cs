@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Globalization;
+using Idrak.Abstraction.Reinforcement;
 using Idrak.Reinforcement.Plugins.Coding;
 using Idrak.Reinforcement.Plugins.Coding.Abstractions;
 using Idrak.Text.Abstractions;
@@ -28,7 +28,7 @@ namespace Idrak.Reinforcement.Plugins.CSharp;
 /// build's shared files count as test edits (reported; refused with <c>refuse-test-edits</c>).</item>
 /// </list>
 /// </summary>
-public sealed class CSharpEnvironmentVariant : CodingEnvironmentVariant
+public sealed class CSharpEnvironmentVariant : IVariantOptions, IVerificationHooks
 {
     /// <summary>The kind's name: "csharp".</summary>
     public const string KindName = "csharp";
@@ -52,7 +52,6 @@ public sealed class CSharpEnvironmentVariant : CodingEnvironmentVariant
     // and the coding tools refuse one).
     private const string BuildLogging = " -fl1 -flp1:errorsonly -fl2 -flp2:warningsonly", TestLogging = " --logger trx --results-directory " + ResultsFolder;
 
-    private static readonly string[] OwnKeys = ["packages", "node-reuse", "build-server"];
 
     /// <summary>
     /// The files whose edits count as test edits by default: the build's shared files (<c>Directory.Build.props</c>,
@@ -63,17 +62,17 @@ public sealed class CSharpEnvironmentVariant : CodingEnvironmentVariant
         ["**/Directory.Build.props", "**/Directory.Build.targets", "**/Directory.Packages.props", "**/global.json", "**/*Tests/**", "**/*Test/**", "**/*Tests.csproj", "**/*Test.csproj"];
 
     /// <inheritdoc />
-    public override string Name => KindName;
+    public string Name => KindName;
 
     /// <inheritdoc />
-    public override string Summary =>
+    public string Summary =>
         "C# coding tasks (suite=DIR): the coding environment with dotnet's defaults; rewards from the build's error log and the tests' TRX results (reward=csharp-tests)";
 
     /// <inheritdoc />
-    public override string Language => CSharpLanguagePlugin.LanguageName;
+    public string Language => CSharpLanguagePlugin.LanguageName;
 
     /// <inheritdoc />
-    public override IReadOnlyCollection<string> Keys => OwnKeys;
+    public IReadOnlySet<string> Keys { get; } = new OptionKeys("packages", "node-reuse", "build-server");
 
     /// <summary>The protected globs: <see cref="ProtectVariable"/>'s, else <see cref="DefaultProtect"/>.</summary>
     public static IReadOnlyList<string> Protect =>
@@ -82,13 +81,13 @@ public sealed class CSharpEnvironmentVariant : CodingEnvironmentVariant
             : DefaultProtect;
 
     /// <inheritdoc />
-    public override IReadOnlyDictionary<string, string> Defaults() => new Dictionary<string, string>(StringComparer.Ordinal)
+    public IReadOnlyDictionary<string, string> Defaults() => new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["reward"] = CSharpRewards.Tests, ["languages"] = Language, ["protect"] = string.Join(",", Protect),
     };
 
     /// <inheritdoc />
-    public override void Check(IReadOnlyDictionary<string, string> options)
+    public void Check(IReadOnlyDictionary<string, string> options)
     {
         ArgumentNullException.ThrowIfNull(options);
         _ = Flag(options, "node-reuse", false);
@@ -108,7 +107,7 @@ public sealed class CSharpEnvironmentVariant : CodingEnvironmentVariant
     }
 
     /// <inheritdoc />
-    public override IReadOnlyDictionary<string, string> Variables(IReadOnlyDictionary<string, string> options)
+    public IReadOnlyDictionary<string, string> Variables(IReadOnlyDictionary<string, string> options)
     {
         ArgumentNullException.ThrowIfNull(options);
         var variables = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -132,14 +131,14 @@ public sealed class CSharpEnvironmentVariant : CodingEnvironmentVariant
     }
 
     /// <summary>The task as the environment runs it: the language's commands for what it does not name, and every verification <c>dotnet build</c> and <c>dotnet test</c> writing its results to files.</summary>
-    public override CodingTask Task(CodingTask task, ICodingLanguage language, IReadOnlyDictionary<string, string> options)
+    public CodingTask Task(CodingTask task, ICodingLanguage language, IReadOnlyDictionary<string, string> options)
     {
-        var withDefaults = base.Task(task, language, options);
+        var withDefaults = CodingEnvironmentVariants.WithLanguageDefaults(task, language);
         return withDefaults with { Verify = [.. (withDefaults.Verify ?? []).Select(Logged)] };
     }
 
     /// <summary>Removes the logs and results a verification writes (and any the agent left) from the workspace.</summary>
-    public override void BeforeVerify(string workspace, IReadOnlyDictionary<string, string> options)
+    public void BeforeVerify(string workspace, IReadOnlyDictionary<string, string> options)
     {
         ArgumentNullException.ThrowIfNull(workspace);
         foreach (var log in new[] { ErrorLog, WarningLog })
@@ -159,15 +158,14 @@ public sealed class CSharpEnvironmentVariant : CodingEnvironmentVariant
     }
 
     /// <summary>Adds the tests' results (TRX) and the build's errors and warnings (its logs) to the info (<see cref="CSharpInfo"/>).</summary>
-    public override void AfterVerify(CodingTask task, string workspace, CodingVerification verification, IDictionary<string, string> info, IReadOnlyDictionary<string, string> options)
+    public void AfterVerify(CodingTask task, string workspace, CodingVerification verification, EpisodeInfo info, IReadOnlyDictionary<string, string> options)
     {
         ArgumentNullException.ThrowIfNull(task);
         ArgumentNullException.ThrowIfNull(workspace);
         ArgumentNullException.ThrowIfNull(verification);
         ArgumentNullException.ThrowIfNull(info);
         var (total, passed) = CSharpResults.Tests(Path.Combine(workspace, ResultsFolder));
-        info[CSharpInfo.TestsTotal] = total.ToString(CultureInfo.InvariantCulture);
-        info[CSharpInfo.TestsPassed] = passed.ToString(CultureInfo.InvariantCulture);
+        info.Set(CSharpInfo.TestsTotal, total).Set(CSharpInfo.TestsPassed, passed);
 
         // The build passed when its command ran (every command before it passed) and passed itself.
         var verify = task.Verify ?? [];
@@ -177,9 +175,9 @@ public sealed class CSharpEnvironmentVariant : CodingEnvironmentVariant
             build = IsDotnet(verify[i], "build") ? i : -1;
         }
 
-        info[CSharpInfo.BuildPassed] = build >= 0 && build < verification.PassedCommands ? "true" : "false";
-        info[CSharpInfo.BuildErrors] = CSharpResults.Diagnostics(Path.Combine(workspace, ErrorLog), "error").ToString(CultureInfo.InvariantCulture);
-        info[CSharpInfo.BuildWarnings] = CSharpResults.Diagnostics(Path.Combine(workspace, WarningLog), "warning").ToString(CultureInfo.InvariantCulture);
+        info.Set(CSharpInfo.BuildPassed, build >= 0 && build < verification.PassedCommands)
+            .Set(CSharpInfo.BuildErrors, CSharpResults.Diagnostics(Path.Combine(workspace, ErrorLog), "error"))
+            .Set(CSharpInfo.BuildWarnings, CSharpResults.Diagnostics(Path.Combine(workspace, WarningLog), "warning"));
     }
 
     // A verification command with its results written to files: a dotnet build gets the error and warning logs, a dotnet test the TRX logger.

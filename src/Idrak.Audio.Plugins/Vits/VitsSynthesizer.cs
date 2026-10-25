@@ -18,7 +18,7 @@ namespace Idrak.Audio.Plugins.Vits;
 /// a gather of repeated rows, the flow in reverse, the HiFi-GAN decoder; one device pass per piece of text. The
 /// rate, noise scales and seed come from <see cref="SpeechSynthesisOptions"/> (null scales: the checkpoint's).
 /// </summary>
-public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
+public sealed class VitsSynthesizer : IPartFreezingSynthesizer
 {
     private readonly VitsTextEncoder _encoder;
     private readonly IVitsDurationPredictor _durations;

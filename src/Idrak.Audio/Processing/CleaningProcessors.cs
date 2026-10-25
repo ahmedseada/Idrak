@@ -8,7 +8,7 @@ namespace Idrak.Audio;
 // (BiquadStage); the DC offset and the rumble below the cutoff go, the voice above it is untouched in level. The filter
 // starts settled on the first sample's level (no step at the start). A cutoff of 0 leaves the sound as it is. Order 2
 // gives the samples of the high-pass before plan 31 bit for bit.
-internal sealed class HighPassProcessor : IAudioProcessor
+internal sealed class HighPassProcessor : ILiveAudioProcessor
 {
     public const double DefaultHertz = 60;
     public const int DefaultOrder = 2;
@@ -18,8 +18,6 @@ internal sealed class HighPassProcessor : IAudioProcessor
     public string Label => "High-pass filter";
 
     public string Summary => $"a Butterworth high-pass at the value, Hz (default {DefaultHertz}; 0 leaves the sound), of `order` (default {DefaultOrder}): the DC offset and the rumble go";
-
-    public bool Live => true;
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
@@ -42,7 +40,7 @@ internal sealed class HighPassProcessor : IAudioProcessor
 // "trim" (whole recording): the silence at both ends cut. A frame more than `silence` dB under the loudest is silence;
 // the speech runs from the first frame that is not to the last, the value's seconds kept on both sides. A silent
 // recording stays as it is.
-internal sealed class TrimProcessor : IAudioProcessor
+internal sealed class TrimProcessor : IRecordingAudioProcessor
 {
     public const double DefaultPad = 0.1, DefaultSilence = 40, DefaultHop = 0.01;
 
@@ -51,8 +49,6 @@ internal sealed class TrimProcessor : IAudioProcessor
     public string Label => "Trim silence";
 
     public string Summary => $"the silence at both ends cut, the value's seconds kept on both sides (default {DefaultPad}); silence is a frame `silence` dB under the loudest";
-
-    public bool Live => false;
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
@@ -85,7 +81,7 @@ internal sealed class TrimProcessor : IAudioProcessor
 
 // "normalize" (whole recording): the speech level (the RMS over the frames that are not silence) brought to the value,
 // dBFS, by one gain over every channel, lowered when the peak would pass `peak`. A silent recording stays as it is.
-internal sealed class NormalizeProcessor : IAudioProcessor
+internal sealed class NormalizeProcessor : IRecordingAudioProcessor
 {
     public const double DefaultTarget = -20, DefaultPeak = 0.95;
 
@@ -94,8 +90,6 @@ internal sealed class NormalizeProcessor : IAudioProcessor
     public string Label => "Normalize level";
 
     public string Summary => $"the speech level (the RMS of the frames that are not silence) brought to the value, dBFS (default {DefaultTarget}), the peak kept under `peak`";
-
-    public bool Live => false;
 
     public string? LiveAlternative => "agc";
 
@@ -167,7 +161,7 @@ internal sealed class NormalizeProcessor : IAudioProcessor
 // frequency is (magnitude - value · floor) / magnitude, no lower than `floor` dB and no higher than 1, smoothed over the
 // neighbouring frame on each side (no musical noise); the gained spectrum goes back through the inverse STFT to the
 // recording's exact length.
-internal sealed class DenoiseProcessor : IAudioProcessor
+internal sealed class DenoiseProcessor : IRecordingAudioProcessor
 {
     public const double DefaultStrength = 1.5, DefaultQuantile = 0.1, DefaultFloor = -25, DefaultWindow = 0.032;
 
@@ -176,8 +170,6 @@ internal sealed class DenoiseProcessor : IAudioProcessor
     public string Label => "Denoise";
 
     public string Summary => $"spectral gating: the noise floor read from the quietest frames (the pauses) taken off value times (default {DefaultStrength}), no frequency turned down past `floor` dB";
-
-    public bool Live => false;
 
     public string? LiveAlternative => RepairProcessors.DenoiseLive;
 

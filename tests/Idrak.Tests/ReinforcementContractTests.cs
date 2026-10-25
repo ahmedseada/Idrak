@@ -103,7 +103,7 @@ internal static partial class Tests
             _steps++;
             bool terminated = _position == length - 1, truncated = !terminated && _steps >= limit;
             _running = !(terminated || truncated);
-            var info = new Dictionary<string, string>(StringComparer.Ordinal) { ["position"] = _position.ToString(CultureInfo.InvariantCulture) };
+            var info = new EpisodeInfo().Set(new EpisodeInfoKey<int>("position"), _position);
             return ValueTask.FromResult(new EnvironmentStep<float[]>([_position / (float)(length - 1)], terminated ? 1f : -0.01f, terminated, truncated, info));
         }
 
@@ -117,7 +117,7 @@ internal static partial class Tests
 
         public string Summary => "the reference answer within a length budget (the reinforcement contract tests)";
 
-        public IReadOnlyCollection<string> Keys { get; } = ["budget"];
+        public IReadOnlySet<string> Keys { get; } = new OptionKeys("budget");
 
         public ValueTask<float[]> ScoreAsync(IReadOnlyList<RewardInput> inputs, IReadOnlyDictionary<string, string>? options = null, CancellationToken cancellationToken = default)
         {
@@ -356,7 +356,7 @@ internal static partial class Tests
         new("2 + 2?", "4", "4"),
         new("The capital of France?", "Paris, which is the capital", "Paris"),
         new("Say nothing.", "", null),
-        new("Fix the test.", "done", "done", new Dictionary<string, string> { ["tests"] = "3/3" }),
+        new("Fix the test.", "done", "done", new EpisodeInfo().Set(new EpisodeInfoKey<string>("tests"), "3/3")),
     ];
 
     private static void ReinforcementRewardSuite(Device device)
@@ -454,7 +454,7 @@ internal static partial class Tests
         // throws (Throw), falls back to the library's (FallBack), or lets the library's answer and is compared (Shadow).
         const string Guarded = "reinforcement-test-guarded";
         var inputs = RewardSamples;
-        GuardedRegistry(nameof(RewardFunctions), Guarded, RewardFunctions.Register, RewardFunctions.Unregister, RewardFunctions.Get, RewardFunctions.Default, RewardFunctions.Origin,
+        GuardedRegistry(nameof(RewardFunctions), Guarded, RewardFunctions.Register, RewardFunctions.Unregister, name => RewardFunctions.Get(name), RewardFunctions.Default, RewardFunctions.Origin,
             RewardFunctions.SetPolicy, new BudgetReward(Guarded), new BudgetReward(Guarded, broken: true), new BudgetReward(Guarded, bonus: 1f),
             reward => reward.ScoreAsync(inputs).AsTask().GetAwaiter().GetResult());
         float[] Estimated(IAdvantageEstimator estimator)

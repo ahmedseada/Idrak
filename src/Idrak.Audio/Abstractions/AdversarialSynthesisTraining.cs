@@ -78,7 +78,7 @@ public sealed record AdversarialSynthesisOptions
     public string? DiscriminatorWeights { get; init; }
 
     /// <summary>
-    /// The generator's parts kept as the base has them (<see cref="IAdversarialSpeechSynthesizer.Parts"/> names them; for
+    /// The generator's parts kept as the base has them (<see cref="IPartFreezingSynthesizer.Parts"/> names them; for
     /// VITS "decoder" keeps the base's waveform generator): their weights take no gradient and no optimizer state. Empty,
     /// the default: every part trains.
     /// </summary>
@@ -181,10 +181,52 @@ public interface IAdversarialSynthesisStep : IDisposable
 
     /// <summary>
     /// Adds the generator's gradients of its loss over this micro-batch (the discriminators' parameters get none); returns
-    /// this micro-batch's share of the step's terms: "mel", "kl", "duration", "adversarial", "feature_matching" (each
-    /// weighted) and "generator" (their sum).
+    /// this micro-batch's share of the step's terms (each weighted) and their sum.
     /// </summary>
-    IReadOnlyDictionary<string, float> Generate();
+    AdversarialTerms Generate();
+}
+
+/// <summary>
+/// A micro-batch's share of the generator's loss terms in an adversarial synthesis step (<see cref="IAdversarialSynthesisStep.Generate"/>),
+/// each weighted by its <see cref="AdversarialSynthesisOptions"/> weight; the step's terms are the micro-batches' summed
+/// (<see cref="op_Addition"/>, field by field in micro-batch order).
+/// </summary>
+/// <param name="Mel">The log-mel reconstruction term ("mel").</param>
+/// <param name="Kl">The KL term ("kl").</param>
+/// <param name="Duration">The duration term ("duration").</param>
+/// <param name="Adversarial">The generator's least-squares adversarial term ("adversarial").</param>
+/// <param name="FeatureMatching">The feature-matching term ("feature_matching").</param>
+/// <param name="Generator">The generator's loss, the terms' sum ("generator").</param>
+public readonly record struct AdversarialTerms(float Mel, float Kl, float Duration, float Adversarial, float FeatureMatching, float Generator)
+{
+    /// <summary>The two shares added, term by term.</summary>
+    public static AdversarialTerms operator +(AdversarialTerms a, AdversarialTerms b) =>
+        new(a.Mel + b.Mel, a.Kl + b.Kl, a.Duration + b.Duration, a.Adversarial + b.Adversarial, a.FeatureMatching + b.FeatureMatching, a.Generator + b.Generator);
+
+    /// <summary>The terms by the names a training run reports them under ("mel", "kl", "duration", "adversarial", "feature_matching", "generator"), with the discriminators' loss ("discriminator").</summary>
+    public Dictionary<string, float> ByName(float discriminator) => new(StringComparer.Ordinal)
+    {
+        ["mel"] = Mel, ["kl"] = Kl, ["duration"] = Duration, ["adversarial"] = Adversarial, ["feature_matching"] = FeatureMatching, ["generator"] = Generator,
+        ["discriminator"] = discriminator,
+    };
+}
+
+/// <summary>
+/// An adversarially trained synthesizer whose generator names parts that training can keep as they are
+/// (<see cref="AdversarialSynthesisOptions.Frozen"/>); one that does not trains whole, and frozen parts are refused for it.
+/// </summary>
+public interface IPartFreezingSynthesizer : IAdversarialSpeechSynthesizer
+{
+    /// <summary>The generator's parts <see cref="Freeze"/> can keep as they are, in the order the model reads them.</summary>
+    IReadOnlyList<string> Parts { get; }
+
+    /// <summary>
+    /// Keeps <paramref name="parts"/> (of <see cref="Parts"/>) as they are for training: their weights take no gradient
+    /// and leave <see cref="IAdversarialSpeechSynthesizer.Generator"/>'s parameters, so the optimizer neither steps nor
+    /// holds state for them; they are saved unchanged. Called once, before the trainer reads the parameters.
+    /// </summary>
+    /// <exception cref="ArgumentException">A part is not one of <see cref="Parts"/>.</exception>
+    void Freeze(IReadOnlyCollection<string> parts);
 }
 
 /// <summary>
@@ -239,23 +281,6 @@ public interface IAdversarialSpeechSynthesizer : ISpeechSynthesizer
 
     /// <summary>The files of a saved folder only training reads (the discriminators), left out when the folder is installed as a voice.</summary>
     IReadOnlyList<string> TrainingFiles { get; }
-
-    /// <summary>The generator's parts <see cref="Freeze"/> can keep as they are, in the order the model reads them (none: it trains whole).</summary>
-    IReadOnlyList<string> Parts => [];
-
-    /// <summary>
-    /// Keeps <paramref name="parts"/> (of <see cref="Parts"/>) as they are for training: their weights take no gradient
-    /// and leave <see cref="Generator"/>'s parameters, so the optimizer neither steps nor holds state for them; they are
-    /// saved unchanged. Called once, before the trainer reads the parameters.
-    /// </summary>
-    /// <exception cref="ArgumentException">A part is not one of <see cref="Parts"/>.</exception>
-    void Freeze(IReadOnlyCollection<string> parts)
-    {
-        if (parts.Count > 0)
-        {
-            throw new ArgumentException($"A {Architecture} model keeps no part fixed (it names no parts); train it whole, without frozen parts.", nameof(parts));
-        }
-    }
 
     /// <summary>Writes the model (and its discriminators, as <see cref="TrainingFiles"/>) as a folder <c>SpeechSynthesisModels.Load</c> reads, the weights as they are now.</summary>
     void Save(string folder);

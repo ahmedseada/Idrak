@@ -26,6 +26,11 @@ public static class Idrak.Data.Abstractions.DataFileFormats
   public static string? Origin(string name)
   public static void Register(Idrak.Data.Abstractions.IDataFileFormat format)
 
+public enum Idrak.Data.Abstractions.DataFileKind : int
+  Binary = 1
+  Code = 2
+  Table = 0
+
 public enum Idrak.Data.Abstractions.DataFormat : int
   Code = 6
   Csv = 2
@@ -67,6 +72,7 @@ public interface Idrak.Data.Abstractions.IAnnotationFormat
   public void Write(Idrak.Abstraction.Data.AnnotatedDataset dataset, string path)
 
 public interface Idrak.Data.Abstractions.IDataFileFormat
+  public (default) Idrak.Data.Abstractions.DataFileKind Kind { get; }
   public System.Collections.Generic.IEnumerable<System.Text.Json.Nodes.JsonObject> Read(System.Func<System.IO.Stream> open, string path, Idrak.Data.Abstractions.ReadOptions options)
   public System.Collections.Generic.IReadOnlyCollection<string> Extensions { get; }
   public string Name { get; }

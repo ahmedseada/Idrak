@@ -32,7 +32,7 @@ public sealed record AudioEncoderOptions
 }
 
 /// <summary>
-/// The trainable side of a family's audio part (implemented by its <see cref="PretrainedAudio"/> when it trains, as a
+/// The trainable side of a family's audio part (implemented by its <see cref="IPretrainedAudio"/> when it trains, as a
 /// from-scratch family's does): which parts it trains, their parameters in its encoder, the features with gradients and
 /// the trained tensors in the checkpoint's names. <c>ChatAudioParts</c> uses it to be a trainable soft-part source.
 /// </summary>
@@ -61,7 +61,7 @@ public interface IAudioTuningPart
 /// <summary>
 /// The audio side of an audio-language model: decoded sounds in, each sound's token features out, with as many soft
 /// tokens per sound as its family gives it (<see cref="Blocks"/>). It does its family's own feature extraction
-/// (<see cref="PretrainedAudio.Features"/>) on the decoded samples it is given. The mirror of core's <c>IVisionEncoder</c>
+/// (<see cref="IPretrainedAudio.Features"/>) on the decoded samples it is given. The mirror of core's <c>IVisionEncoder</c>
 /// (the plan's <c>IAudioEncoder</c>; named apart from the sound-file encoder <see cref="IAudioEncoder"/> of
 /// <see cref="AudioEncoders"/>, which shares the namespace). One sound may become several blocks of soft tokens (a family
 /// that writes a segment per 30 s, say); most give one.
@@ -87,34 +87,65 @@ public interface IAudioLanguageEncoder : IDisposable
 
 /// <summary>
 /// The audio part of an audio-language checkpoint as its family reads it (<see cref="IAudioFamily.Read"/>): everything
-/// the rest of the library needs to put sounds into the prompt, and nothing about how the family builds its encoder. A
-/// family derives from it and adds what is its own. <see cref="AudioLanguage.Attach"/> reads it beside a loaded model;
-/// <c>ChatAudioParts</c> turns it into a soft-part source for generation and tuning.
+/// the rest of the library needs to put sounds into the prompt, and nothing about how the family builds its encoder.
+/// <see cref="AudioLanguage.Attach"/> reads it beside a loaded model; <c>ChatAudioParts</c> turns it into a soft-part
+/// source for generation and tuning. A family that lets parts of it train implements <see cref="IAudioTuningPart"/> too.
+/// <see cref="PretrainedAudio"/> is a base with the common defaults.
 /// </summary>
-public abstract class PretrainedAudio
+public interface IPretrainedAudio
 {
     /// <summary>The family it was read by: its name in <see cref="AudioFamilies"/> (the architecture name).</summary>
-    public abstract string Family { get; }
+    string Family { get; }
 
     /// <summary>The width of the audio features: the text decoder's (one embedding per soft token).</summary>
-    public abstract int Width { get; }
+    int Width { get; }
 
     /// <summary>The checkpoint tensors (by their stored names) the audio part reads: they do not count as unused.</summary>
-    public abstract IReadOnlySet<string> StoredTensors { get; }
+    IReadOnlySet<string> StoredTensors { get; }
 
     /// <summary>How sound becomes the encoder's features (from the checkpoint's <c>preprocessor_config.json</c>).</summary>
-    public abstract IAudioFeatureExtractor Features { get; }
+    IAudioFeatureExtractor Features { get; }
 
     /// <summary>How the rendered prompt's audio markers expand to the soft tokens, with the family's token ids (<see cref="ImageTokenFormat"/> reused, plan 21 decision 5).</summary>
-    public abstract IImagePromptFormat PromptFormat { get; }
+    IImagePromptFormat PromptFormat { get; }
 
     /// <summary>How the soft tokens attend in the prompt (a rule of <see cref="ImageAttentionRules"/>, the family's choice).</summary>
-    public abstract IImageAttentionRule Attention { get; }
+    IImageAttentionRule Attention { get; }
 
     /// <summary>Builds the family's audio encoder from the checkpoint: decoded sounds in, each sound's features out. Dispose it when done.</summary>
-    public abstract IAudioLanguageEncoder CreateEncoder(AudioEncoderOptions? options = null);
+    IAudioLanguageEncoder CreateEncoder(AudioEncoderOptions? options = null);
 
     /// <summary>One line for <c>idrak show</c> and messages: the family's features and soft tokens.</summary>
+    string Describe();
+}
+
+/// <summary>
+/// A base for a family's audio part (<see cref="IPretrainedAudio"/>): a family derives from it and adds what is its own.
+/// </summary>
+public abstract class PretrainedAudio : IPretrainedAudio
+{
+    /// <inheritdoc />
+    public abstract string Family { get; }
+
+    /// <inheritdoc />
+    public abstract int Width { get; }
+
+    /// <inheritdoc />
+    public abstract IReadOnlySet<string> StoredTensors { get; }
+
+    /// <inheritdoc />
+    public abstract IAudioFeatureExtractor Features { get; }
+
+    /// <inheritdoc />
+    public abstract IImagePromptFormat PromptFormat { get; }
+
+    /// <inheritdoc />
+    public abstract IImageAttentionRule Attention { get; }
+
+    /// <inheritdoc />
+    public abstract IAudioLanguageEncoder CreateEncoder(AudioEncoderOptions? options = null);
+
+    /// <inheritdoc />
     public virtual string Describe() => $"{Family}, {Features.Name} ({Features.Options.Mels} mels at {Features.Options.SampleRate} Hz), {PromptFormat.Name}, audio tokens attend: {Attention.Name}";
 
     /// <inheritdoc />
@@ -122,7 +153,7 @@ public abstract class PretrainedAudio
 }
 
 /// <summary>
-/// An audio part made by <see cref="IAudioFamily.Create"/>: what is written into the model folder so the family's
+/// An audio part made by <see cref="ICreatableAudioFamily.Create"/>: what is written into the model folder so the family's
 /// <see cref="IAudioFamily.Read"/> reads it like any checkpoint.
 /// </summary>
 /// <param name="Config">Keys for config.json's top level (the family's audio configuration and soft token ids).</param>
@@ -145,21 +176,25 @@ public interface IAudioFamily
     /// this checkpoint of the family has no audio weights (a note says so).
     /// </summary>
     /// <exception cref="InvalidDataException">A tensor is missing or its shape disagrees with the configuration.</exception>
-    PretrainedAudio? Read(AudioCheckpoint checkpoint);
+    IPretrainedAudio? Read(AudioCheckpoint checkpoint);
+}
 
+/// <summary>
+/// An audio-language family that makes audio parts that did not exist, for models made from a spec; a family read from
+/// checkpoints only does not implement it.
+/// </summary>
+public interface ICreatableAudioFamily : IAudioFamily
+{
     /// <summary>
     /// An audio part that did not exist, for a model made from a spec: its checkpoint tensors drawn from
-    /// <paramref name="seed"/>, the config.json keys that describe it (<see cref="Read"/> reads them back) and its other
-    /// files. <paramref name="audio"/> is the family's own description of the part: the library does not read it. A family
-    /// read from checkpoints only keeps this default, which refuses.
+    /// <paramref name="seed"/>, the config.json keys that describe it (<see cref="IAudioFamily.Read"/> reads them back) and
+    /// its other files. <paramref name="audio"/> is the family's own description of the part: the library does not read it.
     /// </summary>
     /// <param name="audio">The family's description of the part.</param>
     /// <param name="textDim">The text decoder's width (each soft token's embedding).</param>
     /// <param name="tokenizer">The model's tokenizer (the family's audio tokens are looked up in it).</param>
     /// <param name="seed">The seed the weights are drawn from.</param>
-    /// <exception cref="NotSupportedException">The family cannot make an audio part from a description.</exception>
-    CreatedAudio Create(JsonObject audio, int textDim, ITokenizer tokenizer, int seed) =>
-        throw new NotSupportedException($"Audio family '{Name}' cannot make an audio part from a description (it reads checkpoints only).");
+    CreatedAudio Create(JsonObject audio, int textDim, ITokenizer tokenizer, int seed);
 }
 
 /// <summary>

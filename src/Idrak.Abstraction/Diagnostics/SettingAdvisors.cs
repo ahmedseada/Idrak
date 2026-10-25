@@ -51,6 +51,25 @@ public interface ISettingAdvisor
 }
 
 /// <summary>
+/// An advisor for subjects of one type (an image reader, a loaded model, a cluster's step measure): the advisor answers
+/// only for them, and its <see cref="Suggest(AdviceSituation, TSubject)"/> receives the subject typed, so it never tests
+/// <see cref="AdviceSituation.Subject"/> itself; any other subject gets no suggestion.
+/// </summary>
+/// <typeparam name="TSubject">What it advises (a class: the subject's test boxes nothing).</typeparam>
+public interface ISettingAdvisor<in TSubject> : ISettingAdvisor where TSubject : class
+{
+    /// <summary>The settings worth changing for <paramref name="subject"/> in <paramref name="situation"/> (none when nothing is decided).</summary>
+    IEnumerable<SettingSuggestion> Suggest(AdviceSituation situation, TSubject subject);
+
+    /// <inheritdoc />
+    IEnumerable<SettingSuggestion> ISettingAdvisor.Suggest(AdviceSituation situation)
+    {
+        ArgumentNullException.ThrowIfNull(situation);
+        return situation.Subject is TSubject subject ? Suggest(situation, subject) : [];
+    }
+}
+
+/// <summary>
 /// The advisors asked for suggested settings, by name: every package adds its own for the subjects it ships (Idrak.Text:
 /// "image reader"), and an app registers its own or replaces one. Each subject asks them all
 /// (<see cref="Suggest"/>) and publishes what they suggest, once each (<see cref="Publish"/>).

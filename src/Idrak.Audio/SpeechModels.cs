@@ -67,7 +67,7 @@ public static class SpeechModels
 
     /// <summary>
     /// A speech model that did not exist: the family registered under the spec's architecture makes it from
-    /// <paramref name="spec"/> (<see cref="ISpeechFamily.Create"/>: its tensors drawn from the seed, its config.json and
+    /// <paramref name="spec"/> (<see cref="ICreatableSpeechFamily.Create"/>: its tensors drawn from the seed, its config.json and
     /// other files), which is written into <paramref name="folder"/> (config.json with "architectures", model.safetensors
     /// in float32, the tokenizer as tokenizer.json when it is an <see cref="IPretrainedTokenizer"/> and the family wrote none, the
     /// family's files) and loaded from there, so it is a model like any other: it transcribes, trains and saves (plan 21, S6).
@@ -82,7 +82,8 @@ public static class SpeechModels
         ArgumentNullException.ThrowIfNull(tokenizer);
         options ??= new SpeechCreateOptions();
         string architecture = Architecture(spec, options);
-        var family = SpeechFamilies.Get(architecture);
+        var family = SpeechFamilies.Get(architecture) as ICreatableSpeechFamily
+            ?? throw new NotSupportedException($"Speech family '{architecture}' cannot make a model from a description (it reads checkpoints only).");
         CheckFolder(folder, options);
         Write(folder, architecture, family.Create(spec, tokenizer, options.Seed), tokenizer);
         return Load(folder, new SpeechModelOptions { Device = options.Device });

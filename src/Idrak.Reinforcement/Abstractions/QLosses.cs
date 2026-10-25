@@ -94,24 +94,17 @@ public sealed class QLossInput
 /// <summary>
 /// A Q-learning loss: from the online network's action values at a mini-batch's states and the target network's at
 /// the next states, a one-element loss whose gradient trains the online network (<c>OffPolicyTrainer</c>), registered in
-/// <see cref="QLosses"/> under <see cref="Name"/>. The library's is DQN's ("dqn": Mnih et al. 2015, with double Q-learning
-/// as an option). Thread-safe: it keeps no state.
+/// <see cref="QLosses"/> under its <see cref="IKind.Name"/> ("dqn"), with the option keys <see cref="Loss"/> takes
+/// (<see cref="IConfigurableKind.Keys"/>). The library's is DQN's ("dqn": Mnih et al. 2015, with double Q-learning as an
+/// option). Thread-safe: it keeps no state.
 /// </summary>
-public interface IQLoss
+public interface IQLoss : IConfigurableKind
 {
-    /// <summary>The loss's name in <see cref="QLosses"/> ("dqn").</summary>
-    string Name { get; }
-
-    /// <summary>One line for help and listings.</summary>
-    string Summary { get; }
-
-    /// <summary>The option keys <see cref="Loss"/> takes; any other is refused, naming these.</summary>
-    IReadOnlyCollection<string> Keys { get; }
 
     /// <summary>The mini-batch's loss, one element, finite; its gradient flows to <see cref="QLossInput.Values"/>.</summary>
     /// <param name="input">The online values, the targets' parts.</param>
-    /// <param name="options">The loss's options by key (<see cref="Keys"/>), values as text; null for its defaults.</param>
-    /// <exception cref="ArgumentException">An option the loss does not take (the message names it and <see cref="Keys"/>), a bad value, or an input without what the loss needs (the online next values).</exception>
+    /// <param name="options">The loss's options by key (<see cref="IConfigurableKind.Keys"/>), values as text; null for its defaults.</param>
+    /// <exception cref="ArgumentException">An option the loss does not take (the message names it and <see cref="IConfigurableKind.Keys"/>), a bad value, or an input without what the loss needs (the online next values).</exception>
     Tensor Loss(QLossInput input, IReadOnlyDictionary<string, string>? options = null);
 
     /// <summary>
@@ -159,7 +152,7 @@ public static class QLosses
         return table;
     }
 
-    /// <summary>Registers <paramref name="loss"/> under its <see cref="IQLoss.Name"/> (over the library's of that name, which stays behind it).</summary>
+    /// <summary>Registers <paramref name="loss"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(IQLoss loss)
     {
@@ -207,7 +200,7 @@ public static class QLosses
 
         public string Summary => app.Summary;
 
-        public IReadOnlyCollection<string> Keys => app.Keys;
+        public IReadOnlySet<string> Keys => app.Keys;
 
         // The library's loss may answer in the app's place (a fall-back, a shadow), so the next values are given when either reads them.
         public bool NeedsNextValues(IReadOnlyDictionary<string, string>? options = null) => app.NeedsNextValues(options) || library.NeedsNextValues(options);

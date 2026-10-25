@@ -270,15 +270,13 @@ internal static partial class Tests
     private static bool ProcessingSame(float[] a, float[] b) => MemoryMarshal.Cast<float, int>(a.AsSpan()).SequenceEqual(MemoryMarshal.Cast<float, int>(b.AsSpan()));
 
     // An app's live processor implementing only Open: a gain in dB, in place.
-    private sealed class ProcessingGain(string name = ProcessingGain.Id) : IAudioProcessor
+    private sealed class ProcessingGain(string name = ProcessingGain.Id) : ILiveAudioProcessor
     {
         public const string Id = "test-gain";
 
         public string Name => name;
 
         public string Summary => "a gain in dB (a test's)";
-
-        public bool Live => true;
 
         public IReadOnlyList<AudioProcessorParameter> Parameters { get; } = [new("", "Gain", AudioProcessorInput.Number) { Min = -60, Max = 24, Unit = "dB" }];
 
@@ -305,15 +303,13 @@ internal static partial class Tests
     }
 
     // An app's live processor with a latency: the sound delayed by the value's samples (silence first, the tail at the flush).
-    private sealed class ProcessingDelay : IAudioProcessor
+    private sealed class ProcessingDelay : ILiveAudioProcessor
     {
         public const string Id = "test-delay";
 
         public string Name => Id;
 
         public string Summary => "the sound delayed by N samples (a test's)";
-
-        public bool Live => true;
 
         public IReadOnlyList<AudioProcessorParameter> Parameters { get; } = [new("", "Samples", AudioProcessorInput.Integer) { Min = 1 }];
 
@@ -355,15 +351,13 @@ internal static partial class Tests
     }
 
     // An app's whole-recording processor implementing only Apply: the sound backwards.
-    private sealed class ProcessingReverse : IAudioProcessor
+    private sealed class ProcessingReverse : IRecordingAudioProcessor
     {
         public const string Id = "test-reverse";
 
         public string Name => Id;
 
         public string Summary => "the sound backwards (a test's)";
-
-        public bool Live => false;
 
         public AudioData Apply(AudioData audio, AudioProcessorStep step)
         {

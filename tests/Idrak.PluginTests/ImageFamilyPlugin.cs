@@ -181,7 +181,7 @@ public static class ImageFamilyPluginTests
                     $"refused naming the registry: {e.Message}");
             }
 
-            DetectionDecoders.Register(Decoder, GridDecoder.Create);
+            DetectionDecoders.Register(GridDecoder.Kind(Decoder));
             Check(DetectionDecoders.Origin(Decoder) == typeof(GridDecoder).Assembly.GetName().Name && DetectionDecoders.Default(Decoder) is null, "the decoder is this assembly's");
             var detector = model.Detector(filter);
             var found = detector.Detect(images);
@@ -490,8 +490,11 @@ public sealed class GridDetectorFamily : IImageModelFamily
 /// </summary>
 public static class GridDecoder
 {
+    /// <summary>The grid decoder as a kind registered as <paramref name="name"/>, with its training head (<see cref="GridHead"/>); its setting: "stride".</summary>
+    public static IDetectionHeadKind Kind(string name) => new GridKind(name);
+
     /// <summary>The decoder for one detector.</summary>
-    public static DetectionDecoder Create(DetectionDecoderContext context)
+    public static DetectionDecoder Create(DetectionDecoderRequest context)
     {
         ArgumentNullException.ThrowIfNull(context);
         int? configured = context.Settings["stride"] is JsonValue v ? (int)v : null;
@@ -539,4 +542,18 @@ public static class GridDecoder
 
         static float Sigmoid(float x) => 1f / (1f + MathF.Exp(-x));
     }
+}
+
+// The grid decoder and its head, one kind.
+internal sealed class GridKind(string name) : IDetectionHeadKind
+{
+    public string Name => name;
+
+    public string Summary => "the grid detector's outputs [5 + C, rows, columns] (setting: stride)";
+
+    public IReadOnlySet<string> Keys { get; } = new OptionKeys("stride");
+
+    public DetectionDecoder Create(DetectionDecoderRequest request) => GridDecoder.Create(request);
+
+    public DetectionHead CreateHead(DetectionDecoderRequest request) => GridHead.Create(request);
 }

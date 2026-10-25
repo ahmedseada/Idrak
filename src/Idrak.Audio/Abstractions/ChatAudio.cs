@@ -197,4 +197,13 @@ public sealed class AudioPartKind : IBinaryPartKind
 
     /// <inheritdoc />
     public ChatPart FromBytes(ReadOnlySpan<byte> data, string? mediaType = null) => ChatAudio.FromBytes(data, mediaType);
+
+    /// <summary>
+    /// A tuning record's <c>"audios"</c> list and <c>&lt;audio&gt;</c> markers, a completions request's
+    /// <c>"input_audio"</c> part (formats mp3 and wav).
+    /// </summary>
+    public BinaryPartRecordKeys RecordKeys { get; } = new("audios", "<audio>", "input_audio")
+    {
+        Formats = new Dictionary<string, string>(StringComparer.Ordinal) { ["mp3"] = "audio/mpeg", ["mpeg"] = "audio/mpeg", ["wav"] = "audio/wav", ["wave"] = "audio/wav" },
+    };
 }

@@ -22,22 +22,22 @@ public static class ClassicControlPlugin
 
     /// <summary>The <c>bandit</c> kind: options <see cref="BanditOptions.Keys"/>.</summary>
     public static IEnvironmentKind BanditKind { get; } = new ClassicKind(BanditEnvironment.KindName,
-        "a multi-armed bandit: arms, means and spreads as options (Sutton and Barto's 10-armed testbed by default)", BanditOptions.Keys, typeof(int),
+        "a multi-armed bandit: arms, means and spreads as options (Sutton and Barto's 10-armed testbed by default)", BanditOptions.Schema, typeof(int),
         options => new BanditEnvironment(BanditOptions.FromOptions(options)));
 
     /// <summary>The <c>cartpole</c> kind (Gymnasium's CartPole-v1): options <see cref="CartPoleOptions.Keys"/>.</summary>
     public static IEnvironmentKind CartPoleKind { get; } = new ClassicKind(CartPoleEnvironment.KindName,
-        "Gymnasium's CartPole-v1: balance a pole on a cart, 1 a step, 500 steps at most", CartPoleOptions.Keys, typeof(int),
+        "Gymnasium's CartPole-v1: balance a pole on a cart, 1 a step, 500 steps at most", CartPoleOptions.Schema, typeof(int),
         options => new CartPoleEnvironment(CartPoleOptions.FromOptions(options)));
 
     /// <summary>The <c>pendulum</c> kind (Gymnasium's Pendulum-v1, a box action): options <see cref="PendulumOptions.Keys"/>.</summary>
     public static IEnvironmentKind PendulumKind { get; } = new ClassicKind(PendulumEnvironment.KindName,
-        "Gymnasium's Pendulum-v1: swing a pendulum up with a torque in [-2, 2] (a box action), 200 steps", PendulumOptions.Keys, typeof(float[]),
+        "Gymnasium's Pendulum-v1: swing a pendulum up with a torque in [-2, 2] (a box action), 200 steps", PendulumOptions.Schema, typeof(float[]),
         options => new PendulumEnvironment(PendulumOptions.FromOptions(options)));
 
     /// <summary>The <c>mountain-car</c> kind (Gymnasium's MountainCar-v0): options <see cref="MountainCarOptions.Keys"/>.</summary>
     public static IEnvironmentKind MountainCarKind { get; } = new ClassicKind(MountainCarEnvironment.KindName,
-        "Gymnasium's MountainCar-v0: rock an under-powered car up to the flag, -1 a step, 200 steps at most", MountainCarOptions.Keys, typeof(int),
+        "Gymnasium's MountainCar-v0: rock an under-powered car up to the flag, -1 a step, 200 steps at most", MountainCarOptions.Schema, typeof(int),
         options => new MountainCarEnvironment(MountainCarOptions.FromOptions(options)));
 
     /// <summary>The four kinds, in the order the plug-in registers them.</summary>
@@ -65,14 +65,16 @@ public static class ClassicControlPlugin
 
     // A classic kind: its environments observe float arrays, draw nothing when they are made (every one of a kind with the
     // same options is the same environment) and keep no shared state, so creating one costs its arrays.
-    private sealed class ClassicKind(string name, string summary, IReadOnlySet<string> keys, Type actionType,
-        Func<IReadOnlyDictionary<string, string>?, IEnvironment> create) : IEnvironmentKind
+    private sealed class ClassicKind(string name, string summary, OptionSchema options, Type actionType,
+        Func<IReadOnlyDictionary<string, string>?, IEnvironment> create) : IEnvironmentKind, IOptionSchema
     {
         public string Name => name;
 
         public string Summary => summary;
 
-        public IReadOnlySet<string> Keys => keys;
+        public OptionSchema Options => options;
+
+        public IReadOnlySet<string> Keys => options.Keys;
 
         public Type ObservationType => typeof(float[]);
 

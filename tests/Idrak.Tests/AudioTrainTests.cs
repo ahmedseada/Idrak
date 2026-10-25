@@ -200,7 +200,7 @@ internal static partial class Tests
     {
         var tone = new AudioData(ReadNpyFloat32(AudioData("wav/pcm16.npy")), 1, 16000);
         var options = new AudioAugmentationOptions();
-        var speed = AudioAugmentations.Get(AudioAugmentations.Speed);
+        var speed = (ISoundAugmentation)AudioAugmentations.Get(AudioAugmentations.Speed);
         Check(speed.Stage == AudioAugmentationStage.Sound, "speed works on the sound");
         foreach (double factor in new[] { 0.9, 1.1 })
         {
@@ -223,7 +223,7 @@ internal static partial class Tests
             return 10 * Math.Log10(signal / noise);
         }
 
-        var noise = AudioAugmentations.Get(AudioAugmentations.Noise);
+        var noise = (ISoundAugmentation)AudioAugmentations.Get(AudioAugmentations.Noise);
         var at20 = options with { MinSnrDb = 20, MaxSnrDb = 20 };
         var white = noise.Augment(tone, new Random(3), at20);
         Check(white.Length == tone.Length && Math.Abs(SnrDb(tone.Samples, white.Samples) - 20) < 0.5, $"white noise at 20 dB measures {SnrDb(tone.Samples, white.Samples):F2} dB");
@@ -231,7 +231,7 @@ internal static partial class Tests
         Check(Math.Abs(SnrDb(tone.Samples, fromFile.Samples) - 20) < 0.01, $"file noise at 20 dB measures {SnrDb(tone.Samples, fromFile.Samples):F3} dB");
         Check(noise.Augment(tone, new Random(3), at20).Samples.SequenceEqual(white.Samples), "the same draws give the same noise");
 
-        var mask = AudioAugmentations.Get(AudioAugmentations.SpecMask);
+        var mask = (IFeatureAugmentation)AudioAugmentations.Get(AudioAugmentations.SpecMask);
         Check(mask.Stage == AudioAugmentationStage.Features, "spec-mask works on the features");
         int frames = 200, mels = 80;
         var features = RandomArray(new Random(5), frames * mels);

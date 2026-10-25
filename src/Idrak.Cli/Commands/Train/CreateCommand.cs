@@ -208,21 +208,17 @@ internal sealed class CreateCommand : Command
         bool synthesizer = Idrak.Audio.Abstractions.SpeechSynthesisFamilies.Find(architecture) is not null;
         try
         {
-            if (Idrak.Audio.Abstractions.SpeechFamilies.Find(architecture) is null && synthesizer)
+            // A recognizer when its family makes one from this description (ICreatableSpeechFamily.Creates), else a synthesizer's task.
+            if (Idrak.Audio.Abstractions.SpeechFamilies.Find(architecture) is not Idrak.Audio.Abstractions.ICreatableSpeechFamily recognizer
+                ? synthesizer
+                : synthesizer && !recognizer.Creates(spec))
             {
                 model = Idrak.Audio.Abstractions.SpeechSynthesisModels.Create(output, spec, tokenizer, options);
             }
             else
             {
-                try
-                {
-                    model = Idrak.Audio.SpeechModels.Create(output, spec, tokenizer, options);
-                    synthesizer = false;
-                }
-                catch (NotSupportedException) when (synthesizer)
-                {
-                    model = Idrak.Audio.Abstractions.SpeechSynthesisModels.Create(output, spec, tokenizer, options);   // a synthesizer's task
-                }
+                model = Idrak.Audio.SpeechModels.Create(output, spec, tokenizer, options);
+                synthesizer = false;
             }
         }
         catch (NotRegisteredException e)

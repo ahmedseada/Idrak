@@ -61,7 +61,7 @@ internal static partial class Tests
                 Rank = 4, Alpha = 8, LearningRate = 3e-3f, BatchTokens = 200, Epochs = 3, GradientAccumulation = 64, Seed = 4, CudaGraphs = false,
                 Checkpointing = false, RecomputeFeedForward = false, BFloat16Activations = false,
             };
-            foreach (var (name, run, given) in new (string, FineTuningOptions, FineTuningLoss?)[]
+            foreach (var (name, run, given) in new (string, FineTuningOptions, IFineTuningLoss?)[]
                      {
                          ("the fused token cross-entropy", options, null),
                          ("a loss of one's own (FineTuningOptions.Loss)", options with { Loss = FineTuningLosses.TokenCrossEntropy }, null),
@@ -537,7 +537,7 @@ internal static partial class Tests
         var leaf = Tensor.From(logp, [9], Device.Cpu, requiresGrad: true);
         var input = new FineTuningLossInput(leaf, counts, Tensor.From(reference, [9], Device.Cpu), stepTokens: 12, tokenValues: Tensor.From(advantages, [9], Device.Cpu),
             behaviorLogProbabilities: Tensor.From(behavior, [9], Device.Cpu));
-        var adapted = FineTuningLosses.Policy(grpo, kl)(input);
+        var adapted = FineTuningLosses.Policy(grpo, kl).Compute(input);
         adapted.Backward();
         var direct = Tensor.From(logp, [9], Device.Cpu, requiresGrad: true);
         var expected = grpo.Loss(new PolicyLossInput(direct, counts, Tensor.From(advantages, [9], Device.Cpu), Tensor.From(behavior, [9], Device.Cpu),
@@ -548,12 +548,12 @@ internal static partial class Tests
 
         // A loss that does not read the reference (grpo without a KL) is not given it, though the input has one.
         var recorder = new RecordingLoss("reinforcement-text-test-adapter", grpo);
-        var noReference = FineTuningLosses.Policy(recorder)(new FineTuningLossInput(Tensor.From(logp, [9], Device.Cpu), counts, Tensor.From(reference, [9], Device.Cpu),
+        var noReference = FineTuningLosses.Policy(recorder).Compute(new FineTuningLossInput(Tensor.From(logp, [9], Device.Cpu), counts, Tensor.From(reference, [9], Device.Cpu),
             tokenValues: Tensor.From(advantages, [9], Device.Cpu)));
         var expectedNoReference = grpo.Loss(new PolicyLossInput(Tensor.From(logp, [9], Device.Cpu), counts, Tensor.From(advantages, [9], Device.Cpu)));
         AssertClose([expectedNoReference.Item()], [noReference.Item()], 1e-6f, "on-policy, no reference");
         Check(!recorder.SawReference, "the reference is left out for a loss that does not read it");
-        _ = FineTuningLosses.Policy(recorder, kl)(new FineTuningLossInput(Tensor.From(logp, [9], Device.Cpu), counts, Tensor.From(reference, [9], Device.Cpu),
+        _ = FineTuningLosses.Policy(recorder, kl).Compute(new FineTuningLossInput(Tensor.From(logp, [9], Device.Cpu), counts, Tensor.From(reference, [9], Device.Cpu),
             tokenValues: Tensor.From(advantages, [9], Device.Cpu)));
         Check(recorder.SawReference, "and given to one that reads it");
 
@@ -805,15 +805,19 @@ internal static partial class Tests
     }
 
     // A teacher of another vocabulary (its fingerprint differs).
-    private sealed class OtherVocabularyTeacher : DistillationTeacher
+    private sealed class OtherVocabularyTeacher : IDistillationTeacher
     {
-        public override int Vocabulary => 260;
+        public int Vocabulary => 260;
 
-        public override int TopK => 0;
+        public int TopK => 0;
 
-        public override string? Fingerprint => "17-0000000000000000";
+        public TeacherVocabulary Identity { get; } = TeacherVocabulary.Fingerprinted("17-0000000000000000");
 
-        public override TeacherDistributions Distributions(IReadOnlyList<TrainingSequence> sequences) => throw new NotSupportedException();
+        public ITeacherDistributions Distributions(IReadOnlyList<TrainingSequence> sequences) => throw new NotSupportedException();
+
+        public void Dispose()
+        {
+        }
     }
 
     // The student's reverse KL on its own samples (a Monte Carlo estimate: the mean over replies of Σ log p − log q at
@@ -937,7 +941,7 @@ internal static partial class Tests
             var observation = environment.Reset(3);
             var answer = observation.Messages[^1].Content.Contains("France", StringComparison.Ordinal) ? "Paris." : "4";
             var step = environment.StepAsync(new ChatMessage("assistant", answer)).AsTask().GetAwaiter().GetResult();
-            Check(step is { Reward: 1f, Terminated: true } && step.Info!["rounds"] == "1", $"a task from the file, answered: {step.Reward}");
+            Check(step is { Reward: 1f, Terminated: true } && step.Info!.Get(EpisodeInfoKeys.Rounds) == 1, $"a task from the file, answered: {step.Reward}");
             ThrowsNaming<ArgumentException>(() => EnvironmentKinds.Get("prompts").Create(new EnvironmentRequest()), "no data", "data");
             ThrowsNaming<ArgumentException>(() => EnvironmentKinds.Get("prompts").Create(new EnvironmentRequest(new Dictionary<string, string> { ["data"] = data, ["reward"] = "exact", ["length.unit"] = "words" })),
                 "an option of a term not in the expression", "length.unit");
@@ -954,8 +958,8 @@ internal static partial class Tests
         [
             new("2 + 2?", "4", "4"),
             new("The capital of France?", "Paris, which is the capital", "Paris"),
-            new("Give JSON", "{\"a\": 1}", "x", new Dictionary<string, string> { ["tokens"] = "12" }),
-            new("Give JSON", "```json\n{'a': 1,}\n```", "x", new Dictionary<string, string> { ["tokens"] = "300" }),
+            new("Give JSON", "{\"a\": 1}", "x", new EpisodeInfo().Set(EpisodeInfoKeys.Tokens, 12)),
+            new("Give JSON", "```json\n{'a': 1,}\n```", "x", new EpisodeInfo().Set(EpisodeInfoKeys.Tokens, 300)),
         ];
         float[] Score(string name, Dictionary<string, string>? options) => RewardFunctions.Get(name).ScoreAsync(samples, options).AsTask().GetAwaiter().GetResult();
         foreach (var (name, options, expected) in new (string, Dictionary<string, string>?, float[]?)[]

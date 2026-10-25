@@ -23,20 +23,28 @@ public sealed record CartPoleOptions
     /// <summary>The high bound of each start element's uniform draw (Gymnasium's 0.05). Option <c>reset-high</c>.</summary>
     public double ResetHigh { get; init; } = 0.05;
 
+    private static readonly OptionSpec<int> MaxStepsOption = OptionSpec.Whole("max-steps", 500, min: 0, summary: "the step that reaches it is truncated; 0 for no limit");
+    private static readonly OptionSpec<bool> SuttonBarto = OptionSpec.Flag("sutton-barto", summary: "0 a step, −1 on the step that fails");
+    private static readonly OptionSpec<double> Low = OptionSpec.Real("reset-low", -0.05, summary: "the low bound of each start element's draw");
+    private static readonly OptionSpec<double> High = OptionSpec.Real("reset-high", 0.05, summary: "the high bound of each start element's draw");
+
+    /// <summary>The kind's options: their keys, types, ranges and defaults (a value of blanks is the default).</summary>
+    public static OptionSchema Schema { get; } = new($"{CartPoleEnvironment.KindName} environment", blankIsDefault: true, MaxStepsOption, SuttonBarto, Low, High);
+
     /// <summary>The kind's option keys.</summary>
-    public static OptionKeys Keys { get; } = new("max-steps", "sutton-barto", "reset-low", "reset-high");
+    public static OptionKeys Keys => Schema.Keys;
 
     /// <summary>The settings the kind's <paramref name="options"/> give (the defaults for those not given).</summary>
     /// <exception cref="ArgumentException">An option not in <see cref="Keys"/>, a bad value, or a low bound above the high one.</exception>
     public static CartPoleOptions FromOptions(IReadOnlyDictionary<string, string>? options)
     {
-        var read = new ClassicOptions(CartPoleEnvironment.KindName, Keys, options);
+        var read = Schema.Parse(options);
         var settings = new CartPoleOptions
         {
-            MaxSteps = read.Int("max-steps", 500, min: 0),
-            SuttonBartoReward = read.Bool("sutton-barto", false),
-            ResetLow = read.Number("reset-low", -0.05),
-            ResetHigh = read.Number("reset-high", 0.05),
+            MaxSteps = read.Get(MaxStepsOption),
+            SuttonBartoReward = read.Get(SuttonBarto),
+            ResetLow = read.Get(Low),
+            ResetHigh = read.Get(High),
         };
         return settings.ResetLow <= settings.ResetHigh
             ? settings

@@ -17,7 +17,7 @@ namespace Idrak.Abstraction.Training;
 /// <see cref="Optimizer"/>.
 /// </remarks>
 public class Adam(IEnumerable<Tensor> parameters, float learningRate = 0.001f, float beta1 = 0.9f, float beta2 = 0.999f, float epsilon = 1e-8f, float weightDecay = 0f)
-    : Optimizer(parameters, learningRate), IStatefulOptimizer
+    : Optimizer(parameters, learningRate), IStatefulOptimizer, IInPlaceOptimizer
 {
     /// <summary>Weight decay factor λ.</summary>
     public float WeightDecay { get; } = weightDecay;

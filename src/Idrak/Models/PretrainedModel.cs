@@ -4,6 +4,7 @@
 using System.Diagnostics;
 using System.Text.Json.Nodes;
 using Idrak.Abstraction.Devices;
+using Idrak.Abstraction.Formats;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
 
@@ -228,6 +229,7 @@ public sealed class PretrainedModel : IDisposable
         IReadOnlyList<string> notes, int maxPositions, IPretrainedArchitecture architecture, Device device, IPretrainedVision? vision)
     {
         Architecture = architecture;
+        NetworkParts = architecture as INetworkParts ?? Abstraction.Formats.NetworkParts.Decoder;   // asked once, at load
         Vision = vision;
         Device = device;
         Folder = folder;
@@ -269,6 +271,12 @@ public sealed class PretrainedModel : IDisposable
 
     /// <summary>How the model's checkpoint names map to Idrak's (used to save adapters and weights back).</summary>
     public IPretrainedArchitecture Architecture { get; }
+
+    /// <summary>
+    /// The parts of <see cref="Network"/> training speaks of (embeddings, decoder, head) and the projections adapters go on
+    /// by default: the architecture's (<see cref="INetworkParts"/>), else the library's decoders' (<see cref="Abstraction.Formats.NetworkParts.Decoder"/>).
+    /// </summary>
+    public INetworkParts NetworkParts { get; }
 
     /// <summary>Where the model lives.</summary>
     public Device Device { get; }
@@ -795,11 +803,12 @@ public sealed class PretrainedModel : IDisposable
     /// <summary>
     /// Adds LoRA adapters (rank <paramref name="rank"/>, scale alpha / rank), or DoRA adapters with <paramref name="dora"/>
     /// (see <see cref="DoraAdapter"/>), to the projections named in <paramref name="targets"/> (q, k, v, o, gate, up,
-    /// down, head) and freezes everything else. Returns how many were added.
+    /// down, head; null: the network's <see cref="INetworkParts.AdapterTargets"/>) and freezes everything else. Returns how
+    /// many were added.
     /// </summary>
-    public int AddAdapters(int rank, float alpha, IEnumerable<string> targets, int seed = 0, bool dora = false)
+    public int AddAdapters(int rank, float alpha, IEnumerable<string>? targets, int seed = 0, bool dora = false)
     {
-        var names = targets.ToHashSet(StringComparer.Ordinal);
+        var names = (targets ?? NetworkParts.AdapterTargets).ToHashSet(StringComparer.Ordinal);
         Func<Linear, bool> chosen = l => l.Name is { } name && names.Contains(name) && l.TiedTo is null;
         return dora ? Network.AddDora(rank, alpha, chosen, freezeBase: true, new Random(seed))
             : Network.AddLora(rank, alpha, chosen, freezeBase: true, new Random(seed));

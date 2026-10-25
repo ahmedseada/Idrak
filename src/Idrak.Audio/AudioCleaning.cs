@@ -91,6 +91,10 @@ internal sealed class HighPassCleaner : IAudioCleaner
 {
     public string Name => AudioCleaners.HighPass;
 
+    public string Summary => "a Butterworth high-pass at HighPassHertz: the DC offset and rumble go";
+
+    public IReadOnlySet<string> Keys => OptionKeys.None;
+
     public AudioData Clean(AudioData audio, AudioCleaningOptions options) => options.HighPassHertz <= 0 || audio.Length == 0
         ? audio
         : CleaningSteps.Run(AudioProcessors.HighPass, audio, CleaningSteps.Text(options.HighPassHertz));
@@ -101,6 +105,10 @@ internal sealed class TrimCleaner : IAudioCleaner
 {
     public string Name => AudioCleaners.Trim;
 
+    public string Summary => "the silence at both ends cut, TrimPadSeconds kept";
+
+    public IReadOnlySet<string> Keys => OptionKeys.None;
+
     public AudioData Clean(AudioData audio, AudioCleaningOptions options) => CleaningSteps.Run(AudioProcessors.Trim, audio, CleaningSteps.Text(options.TrimPadSeconds),
         ("silence", options.SilenceDecibels), ("hop", options.HopSeconds));
 }
@@ -110,6 +118,10 @@ internal sealed class NormalizeCleaner : IAudioCleaner
 {
     public string Name => AudioCleaners.Normalize;
 
+    public string Summary => "the speech level brought to TargetDecibels, the peak kept under PeakCeiling";
+
+    public IReadOnlySet<string> Keys => OptionKeys.None;
+
     public AudioData Clean(AudioData audio, AudioCleaningOptions options) => CleaningSteps.Run(AudioProcessors.Normalize, audio, CleaningSteps.Text(options.TargetDecibels),
         ("silence", options.SilenceDecibels), ("hop", options.HopSeconds), ("peak", options.PeakCeiling));
 }
@@ -118,6 +130,10 @@ internal sealed class NormalizeCleaner : IAudioCleaner
 internal sealed class DenoiseCleaner : IAudioCleaner
 {
     public string Name => AudioCleaners.Denoise;
+
+    public string Summary => "spectral gating against the noise floor read from the pauses";
+
+    public IReadOnlySet<string> Keys => OptionKeys.None;
 
     public AudioData Clean(AudioData audio, AudioCleaningOptions options) => CleaningSteps.Run(AudioProcessors.Denoise, audio, CleaningSteps.Text(options.DenoiseStrength),
         ("quantile", options.NoiseQuantile), ("floor", options.DenoiseFloorDecibels), ("window", options.DenoiseWindowSeconds));

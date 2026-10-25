@@ -167,7 +167,7 @@ public sealed record PretrainingOptions
     /// (one that reads images, for image records). It shares the model's vocabulary. Not saved in checkpoints: give it
     /// again on resume.
     /// </summary>
-    public DistillationTeacher? Teacher { get; init; }
+    public IDistillationTeacher? Teacher { get; init; }
 
     /// <summary>The distillation temperature (with <see cref="Teacher"/>).</summary>
     public float DistillationTemperature { get; init; } = 1f;
@@ -485,8 +485,9 @@ public static partial class Pretrainer
                     MaxLength = options.MaxLength,
                     Vision = vision,
                     Parts = partSources.Sources,
-                    // An optimizer other than the built-in AdamW: the recorded step checks it keeps its gradient buffers.
-                    Optimizer = optimizer is AdamW && !options.HostOptimizer ? null : _ => optimizer,
+                    // An optimizer that does not update in place by construction (IInPlaceOptimizer): the recorded step checks it
+                    // keeps its gradient buffers.
+                    Optimizer = optimizer is IInPlaceOptimizer && !options.HostOptimizer ? null : _ => optimizer,
                 };
 
                 if (!startedTelemetry && lead)
@@ -871,15 +872,15 @@ public static partial class Pretrainer
 
         var chosen = new List<Tensor>();
         var seen = new HashSet<Tensor>(ReferenceEqualityComparer.Instance);
+        var parts = model.NetworkParts;
         foreach (var (path, module) in model.NamedModules())
         {
-            if (module is Idrak.Layers.Linear { TiedTo: not null })
+            if (module is ITiedWeights { WeightsOf: not null })
             {
-                continue;
+                continue;                                                    // its weights are the module's it reads them from
             }
 
-            string top = path.Split('.')[0];
-            string part = top is "embed" or "pos" ? "embeddings" : top == "head" ? "head" : "decoder";
+            string part = parts.PartOf(path);
             var own = module.Parameters().Except(module.Children().SelectMany(c => c.Parameters()), ReferenceEqualityComparer.Instance).Cast<Tensor>();
             foreach (var p in own)
             {

@@ -22,7 +22,7 @@ namespace Idrak.Networking.Training;
 /// buckets that let the network go during the backward pass.</item>
 /// </list>
 /// </summary>
-internal sealed class ClusterSettingAdvisor : ISettingAdvisor
+internal sealed class ClusterSettingAdvisor : ISettingAdvisor<ClusterStepMeasure>
 {
     /// <summary>The advisor's name: "cluster".</summary>
     public const string AdvisorName = "cluster";
@@ -41,10 +41,11 @@ internal sealed class ClusterSettingAdvisor : ISettingAdvisor
     public string Summary => "a data-parallel run whose network takes more of a step than IDRAK_CLUSTER_SUGGEST_SHARE: a bf16 wire within its measured error, "
                              + "gradient accumulation, local SGD, top-k, the bucket size, the hierarchical collective";
 
-    public IEnumerable<SettingSuggestion> Suggest(AdviceSituation situation)
+    public IEnumerable<SettingSuggestion> Suggest(AdviceSituation situation, ClusterStepMeasure m)
     {
         ArgumentNullException.ThrowIfNull(situation);
-        if (situation.Subject is not ClusterStepMeasure m || m.Steps == 0 || m.Step <= TimeSpan.Zero)
+        ArgumentNullException.ThrowIfNull(m);
+        if (m.Steps == 0 || m.Step <= TimeSpan.Zero)
         {
             yield break;
         }

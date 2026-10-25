@@ -11,6 +11,7 @@ using Idrak.Reinforcement;
 using Idrak.Text;
 using Idrak.Text.Abstractions;
 using Idrak.Text.Reinforcement;
+using Idrak.Text.Reinforcement.Abstractions;
 
 namespace Idrak.Cli.Commands.Train;
 
@@ -211,7 +212,8 @@ internal sealed class ReinforceCommand : Command
                                      + "conversations and acts with replies (ChatObservation, ChatMessage).");
         }
 
-        bool prompts = kind is PromptsEnvironmentKind;
+        var promptData = kind as IPromptDataEnvironmentKind;                // its tasks are the prompts of --data
+        bool prompts = promptData is not null;
         var data = context.Options("--data");
         var environmentOptions = EnvironmentOptions(context, kind, prompts, data);
         if (prompts && data.Count == 0)
@@ -265,7 +267,7 @@ internal sealed class ReinforceCommand : Command
         }
 
         PretrainedModel? teacherModel = null;
-        DistillationTeacher? source = null;
+        IDistillationTeacher? source = null;
         ReinforcementResult? result = null;
         IReadOnlyList<float> distilled = [];
         tool.Session = (loaded, tuning) =>
@@ -353,7 +355,7 @@ internal sealed class ReinforceCommand : Command
     // The run: a session on the loaded model (with the teacher), the policy over it, the trainer in the environment; the
     // adapter written to `output` at the end, also after a stop.
     private static (int Code, ReinforcementResult Result) Train(CommandContext context, ToolConsole console, TuneTool tool, PretrainedModel model, FineTuningOptions tuning,
-        DistillationTeacher? teacher, IEnvironmentKind kind, bool prompts, ReinforcementOptions options, LanguageModelPolicyOptions policyOptions, string output)
+        IDistillationTeacher? teacher, IEnvironmentKind kind, bool prompts, ReinforcementOptions options, LanguageModelPolicyOptions policyOptions, string output)
     {
         // The prompts environment over the data as idrak tune reads it, counting each answer's tokens for a length reward.
         string tasks = "";
@@ -365,7 +367,7 @@ internal sealed class ReinforceCommand : Command
                 throw new InvalidOperationException("The data holds no conversation to take prompts from.");
             }
 
-            kind = new PromptsEnvironmentKind([.. chats.Select(PromptTask.FromTranscript)], name: kind.Name) { Tokenizer = model.Tokenizer };
+            kind = ((IPromptDataEnvironmentKind)kind).WithTasks(chats, model.Tokenizer);
             tasks = $" ({chats.Count:N0} prompts)";
         }
 
@@ -502,10 +504,14 @@ internal sealed class ReinforceCommand : Command
         return o;
     }
 
-    // The environment's options: --reward, --suite, --rounds, --sandbox, --no-think, --data (for a kind that reads a data
-    // file itself) and every --env-option, each checked against the kind's keys (a reward term's options hold a dot).
+    // The environment's options: --reward, --rounds and --no-think (under the keys a rewarded kind declares,
+    // IRewardedEnvironmentKind), --suite and --sandbox (a suite kind's, ISuiteEnvironmentKind), --data (for a kind that
+    // reads a data file itself) and every --env-option, each checked against the kind's keys (a reward term's options hold
+    // a dot). A kind that does not declare a key gets the flag under its usual name, which its keys then refuse.
     private static Dictionary<string, string> EnvironmentOptions(CommandContext context, IEnvironmentKind kind, bool prompts, IReadOnlyList<string> data)
     {
+        var rewarded = kind as IRewardedEnvironmentKind;
+        var suites = kind as ISuiteEnvironmentKind;
         var options = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (string item in context.Options("--env-option"))
         {
@@ -520,28 +526,28 @@ internal sealed class ReinforceCommand : Command
 
         if ((context.Option("--reward") ?? Text(RewardVariable)) is { } reward)
         {
-            options["reward"] = reward;
+            options[rewarded?.RewardKey ?? "reward"] = reward;
         }
 
         if (context.Option("--suite") is { } suite)
         {
-            options["suite"] = suite;
+            options[suites?.SuiteKey ?? "suite"] = suite;
         }
 
         if (context.Option("--rounds") is not null)
         {
-            options["rounds"] = context.IntOption("--rounds", 1) is > 0 and var rounds ? rounds.ToString(CultureInfo.InvariantCulture)
+            options[rewarded?.RoundsKey ?? "rounds"] = context.IntOption("--rounds", 1) is > 0 and var rounds ? rounds.ToString(CultureInfo.InvariantCulture)
                 : throw new UsageException("--rounds is a positive whole number.");
         }
 
         if (context.Option("--sandbox") is { } sandbox)
         {
-            options["sandbox"] = CommandSandboxes.Find(sandbox)?.Name ?? throw new UsageException($"--sandbox {sandbox}: use {string.Join(", ", CommandSandboxes.Names)} (CommandSandboxes).");
+            options[suites?.SandboxKey ?? "sandbox"] = CommandSandboxes.Find(sandbox)?.Name ?? throw new UsageException($"--sandbox {sandbox}: use {string.Join(", ", CommandSandboxes.Names)} (CommandSandboxes).");
         }
 
-        if (context.Flag("--no-think") && kind.Keys.Contains("think"))
+        if (context.Flag("--no-think") && rewarded?.ThinkKey is { } think)
         {
-            options["think"] = "false";
+            options[think] = "false";
         }
 
         if (!prompts && data.Count > 0)
@@ -550,17 +556,18 @@ internal sealed class ReinforceCommand : Command
         }
 
         // The prompts environment's tasks are the data as idrak tune reads it (not its own data option).
-        var keys = prompts ? kind.Keys.Where(k => k != "data").ToList() : [.. kind.Keys];
+        string? ownData = (kind as IPromptDataEnvironmentKind)?.DataKey;
+        var keys = prompts ? kind.Keys.Where(k => k != ownData).ToList() : [.. kind.Keys];
         foreach (string key in options.Keys)
         {
             if (!key.Contains('.', StringComparison.Ordinal) && !keys.Contains(key))
             {
-                throw new UsageException($"The {kind.Name} environment does not take '{key}'{(prompts && key == "data" ? " as an option: give --data FILE" : "")}; it takes: "
+                throw new UsageException($"The {kind.Name} environment does not take '{key}'{(prompts && key == ownData ? " as an option: give --data FILE" : "")}; it takes: "
                                          + $"{string.Join(", ", keys)}, and a reward term's options as term.key.");
             }
         }
 
-        if (kind.Keys.Contains("suite") && !options.ContainsKey("suite"))
+        if (suites?.SuiteKey is { } suiteKey && !options.ContainsKey(suiteKey))
         {
             throw new UsageException($"The {kind.Name} environment plays the tasks of a suite: give --suite DIR (folders with task.json).");
         }

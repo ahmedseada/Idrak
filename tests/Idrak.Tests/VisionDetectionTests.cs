@@ -125,13 +125,13 @@ internal static partial class Tests
         foreach (var (name, input) in new[] { ("iou", VisionLossInput.Boxes), ("giou", VisionLossInput.Boxes), ("diou", VisionLossInput.Boxes), ("ciou", VisionLossInput.Boxes),
                      ("l1", VisionLossInput.Boxes), ("smooth-l1", VisionLossInput.Boxes), ("focal", VisionLossInput.Logits), ("dice", VisionLossInput.Probabilities) })
         {
-            Func<Tensor, Tensor, Tensor> loss = (p, t) => VisionLosses.Get(name)(p, t, new() { Reduction = LossReduction.None });
-            Func<Tensor, Tensor, Tensor> library = (p, t) => VisionLosses.Default(name)!(p, t, new() { Reduction = LossReduction.None });
+            Func<Tensor, Tensor, Tensor> loss = (p, t) => VisionLosses.Get(name).Compute(p, t, new() { Reduction = LossReduction.None });
+            Func<Tensor, Tensor, Tensor> library = (p, t) => VisionLosses.Default(name)!.Compute(p, t, new() { Reduction = LossReduction.None });
             Conformance.Check(loss, new VisionLossSuite(input, library), new ContractCheckOptions { RandomCases = 6 }).ThrowIfFailed();
         }
 
-        Func<Tensor, Tensor, Tensor> off = (p, t) => VisionLosses.Get("giou")(p, t, new() { Reduction = LossReduction.None }) * 1.01f;
-        var report = Conformance.Check(off, new VisionLossSuite(VisionLossInput.Boxes, (p, t) => VisionLosses.Get("giou")(p, t, new() { Reduction = LossReduction.None })),
+        Func<Tensor, Tensor, Tensor> off = (p, t) => VisionLosses.Get("giou").Compute(p, t, new() { Reduction = LossReduction.None }) * 1.01f;
+        var report = Conformance.Check(off, new VisionLossSuite(VisionLossInput.Boxes, (p, t) => VisionLosses.Get("giou").Compute(p, t, new() { Reduction = LossReduction.None })),
             new ContractCheckOptions { RandomCases = 2 });
         Check(!report.Passed && report.Failures.Any(f => f.Check.Contains("reference", StringComparison.Ordinal)), $"a loss 1% off passes:\n{report}");
     }
@@ -205,11 +205,11 @@ internal static partial class Tests
         Check(BoxMatchers.Match(BoxMatchers.Hungarian, new[] { float.NegativeInfinity, 0.5f, float.NegativeInfinity, float.NegativeInfinity }, 2, 2).SequenceEqual([1, -1]),
             "forbidden pairs stay unmatched");
 
-        Conformance.Check<Func<ReadOnlyMemory<float>, int, int, int[]>>((q, p, g) => BoxMatchers.Get(BoxMatchers.Hungarian)(q, p, g, new()),
+        Conformance.Check<Func<ReadOnlyMemory<float>, int, int, int[]>>((q, p, g) => BoxMatchers.Get(BoxMatchers.Hungarian).Match(q, p, g, new()),
             new BoxMatcherSuite(BoxMatcherExpectation.Optimal)).ThrowIfFailed();
         foreach (bool low in new[] { false, true })
         {
-            Conformance.Check<Func<ReadOnlyMemory<float>, int, int, int[]>>((q, p, g) => BoxMatchers.Get(BoxMatchers.Threshold)(q, p, g, new() { AllowLowQuality = low }),
+            Conformance.Check<Func<ReadOnlyMemory<float>, int, int, int[]>>((q, p, g) => BoxMatchers.Get(BoxMatchers.Threshold).Match(q, p, g, new() { AllowLowQuality = low }),
                 new BoxMatcherSuite(new BoxMatcherExpectation(false, 0.5f, 0.4f, low))).ThrowIfFailed();
         }
 
@@ -330,9 +330,9 @@ internal static partial class Tests
         // The kit's suites, each metric against itself as the reference (through the registry).
         foreach (string name in new[] { "coco", "voc", "voc07" })
         {
-            double Run(IReadOnlyList<DetectionImage> images, VisionMetricFactory create)
+            double Run(IReadOnlyList<DetectionImage> images, IVisionMetricKind kind)
             {
-                var metric = (IDetectionMetric)create(new VisionMetricOptions());
+                var metric = (IDetectionMetric)kind.Create(new VisionMetricOptions());
                 foreach (var image in images)
                 {
                     metric.Add([.. image.Predictions.Select(p => new Detection(p.Box, p.Class, p.Score))], image.Truths);
@@ -402,7 +402,7 @@ internal static partial class Tests
         var p = Tensor.From(new float[] { 0, 0, 4, 4 }, [1, 4], device);
         var t = Tensor.From(new float[] { 1, 1, 5, 5 }, [1, 4], device);
         float expected = VisionLosses.Compute("giou", p, t).Item();
-        VisionLosses.Register("giou", (_, _, _) => throw new InvalidOperationException("app loss broke"));
+        VisionLosses.Register(TestKinds.VisionLoss("giou", VisionLossTarget.Boxes, (_, _, _) => throw new InvalidOperationException("app loss broke")));
         try
         {
             Check(VisionLosses.Origin("giou") != Overrides.Library, "the app's loss shadows the library's");
@@ -493,7 +493,13 @@ internal static partial class Tests
         GradCheckAt(device, objectness, [1, 3], o => DetectionObjective.Loss(new DetectionCandidates(Tensor.From(boxes, [1, 3, 4], device), Tensor.From(logits, [1, 3, 2], device), o),
             truths, labels), "the objective's gradient on the objectness");
 
-        ExpectRefusal<NotSupportedException>(() => DetectionHeads.Get("nobody"), "Detection head 'nobody' is not registered", "an unregistered head");
-        Check(DetectionHeads.Default("anything") is null, "the library registers no head");
+        ExpectRefusal<NotSupportedException>(() => DetectionDecoders.CreateHead("nobody", new DetectionDecoderRequest(0, 0, null, [])), "Detection decoder 'nobody' is not registered",
+            "an unregistered decoder has no head");
+        ExpectRefusal<NotSupportedException>(() => DetectionDecoders.CreateHead(DetectionDecoders.BoxesScores, new DetectionDecoderRequest(0, 0, null, [])), "has no training head",
+            "the library's decoder has no head (it is no IDetectionHeadKind)");
+        Check(!DetectionDecoders.Trainable(DetectionDecoders.BoxesScores), "the library registers no head");
+        Check(VisionLosses.Get("dice").Target == VisionLossTarget.Masks && VisionLosses.Get("focal").Target == VisionLossTarget.Classes && VisionLosses.Get("giou").Target == VisionLossTarget.Boxes,
+            "each loss says what it scores");
+        Check(VisionMetrics.Get("coco").Task == ImageTask.Detection && VisionMetrics.Get("miou").Task == ImageTask.Segmentation, "each metric's task, known without making one");
     }
 }

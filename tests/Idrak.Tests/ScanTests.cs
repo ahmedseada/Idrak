@@ -413,7 +413,7 @@ internal static partial class Tests
 
         public string Summary => "coffee=N: N rings from a cup; seed=S";
 
-        public IReadOnlyCollection<string> Keys => ["seed"];
+        public IReadOnlySet<string> Keys { get; } = new OptionKeys("seed");
 
         public void Check(ImageTransformStep step)
         {

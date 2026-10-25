@@ -288,7 +288,7 @@ public sealed class EnvironmentSuite<TObservation, TAction>(Func<Random, TObserv
     {
         null => "null",
         float[] values => $"[{string.Join(", ", values.Take(8).Select(v => v.ToString("G6", System.Globalization.CultureInfo.InvariantCulture)))}{(values.Length > 8 ? ", ..." : "")}]",
-        IReadOnlyDictionary<string, string> info => string.Join("; ", info.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key}={p.Value}")),
+        EpisodeInfo info => string.Join("; ", info.Entries.Select(p => $"{p.Key}={p.Value}")),
         _ => Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? "",
     };
 

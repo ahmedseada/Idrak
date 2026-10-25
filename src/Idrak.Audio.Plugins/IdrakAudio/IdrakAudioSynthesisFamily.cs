@@ -13,7 +13,7 @@ namespace Idrak.Audio.Plugins.IdrakAudio;
 /// <c>SpeechSynthesisModels.Load</c>) as an <see cref="IdrakAudioTtsModel"/>. A recognizer task is refused, naming the
 /// recognizers' loader.
 /// </summary>
-public sealed class IdrakAudioSynthesisFamily : ISpeechSynthesisFamily
+public sealed class IdrakAudioSynthesisFamily : ICreatableSynthesisFamily
 {
     /// <inheritdoc />
     public string Name => IdrakAudioFamily.Architecture;

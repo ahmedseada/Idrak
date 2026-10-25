@@ -40,8 +40,9 @@ task; the assistant's tool calls run through `CodingTools`; the hidden tests' ve
 The task layer and the environment name no programming language: build output, dependency folders (linked, not
 copied) and git excludes come from the coding languages (`CodingLanguages`, Idrak.Text; option `languages`: all, detected,
 none or names, `IDRAK_CODING_LANGUAGES`), and the option `protect` (globs) adds files whose edits count as test edits. A
-variant for one language (`CodingEnvironmentVariant`, `Idrak.Reinforcement.Plugins.Coding.Abstractions`) is the coding
-environment under its own name with that language's defaults, its own options and its own info.
+variant for one language (`ICodingEnvironmentVariant`, `Idrak.Reinforcement.Plugins.Coding.Abstractions`) is the coding
+environment under its own name with that language's defaults, its own options (`IVariantOptions`) and its own info
+(`IVerificationHooks`, written under typed `EpisodeInfoKey<T>` keys).
 
 **C#** (`Idrak.Reinforcement.Plugins.CSharp`): the `csharp` environment, the coding environment on C# projects. A task
 that names no commands restores (`dotnet restore`), builds (`dotnet build --no-restore`) and tests (`dotnet test

@@ -26,7 +26,7 @@ internal sealed class ErrorRateMetric(bool words) : ITuningMetric
 
     public bool LowerIsBetter => true;
 
-    public IReadOnlyCollection<string> Keys { get; } = [StripDiacritics, IgnoreCase];
+    public IReadOnlySet<string> Keys { get; } = new OptionKeys(StripDiacritics, IgnoreCase);
 
     public TuningScore Score(string answer, string reference, IReadOnlyDictionary<string, string>? options = null)
     {
@@ -145,7 +145,7 @@ internal sealed partial class AnswerMatchMetric(string name) : ITuningMetric
 
     public bool LowerIsBetter => false;
 
-    public IReadOnlyCollection<string> Keys { get; } = [];
+    public IReadOnlySet<string> Keys => OptionKeys.None;
 
     public TuningScore Score(string answer, string reference, IReadOnlyDictionary<string, string>? options = null)
     {

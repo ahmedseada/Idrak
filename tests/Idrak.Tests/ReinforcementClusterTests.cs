@@ -91,11 +91,11 @@ internal static partial class Tests
         ChatObservation first = new([system, user], tools, true), second = new([system, user, call, result], tools), last = new([system, user, call, result, answer], tools);
         var trajectory = new Trajectory<ChatObservation, ChatMessage>(41, 7, [first, second, last], [call, answer],
             [new ActionRecord([5, 6, 7], [-0.5f, -1.25f, -0f], float.NaN, [1, 2, 3, 4]), new ActionRecord([9], [-2f])], [0f, 1.5f], terminated: true, truncated: false, group: 40,
-            info: new Dictionary<string, string> { ["task"] = "find", ["rounds"] = "2" });
+            info: new EpisodeInfo().Set(new EpisodeInfoKey<string>("task"), "find").Set(EpisodeInfoKeys.Rounds, 2));
         var back = RolloutExchange.Read(RolloutExchange.Write([trajectory])).Single();
         static string Text(ChatMessage m) => $"{m.Role}|{m.Content}|{m.Thinking}|{m.ToolName}|{string.Join(";", (m.ToolCalls ?? []).Select(c => c.Name + c.Arguments.ToJsonString()))}";
         Check(back is { Index: 41, Seed: 7, Group: 40, Terminated: true, Truncated: false, Steps: 2 } && float.IsNaN(back.FinalValue) && back.Rewards.ToArray().SequenceEqual([0f, 1.5f])
-              && back.Info!.OrderBy(p => p.Key).SequenceEqual(trajectory.Info!.OrderBy(p => p.Key)), "the episode's number, seed, group, ends, rewards and info");
+              && back.Info!.ToString() == trajectory.Info!.ToString() && back.Info.Get(EpisodeInfoKeys.Rounds) == 2, "the episode's number, seed, group, ends, rewards and info (each value in its type)");
         Check(back.Observations.Zip(trajectory.Observations).All(p => p.First.Think == p.Second.Think && p.First.Messages.Select(Text).SequenceEqual(p.Second.Messages.Select(Text))
               && p.First.Tools!.Single() is { Name: "grep", Description: "searches" } tool && tool.Parameters!.ToJsonString() == tools[0].Parameters!.ToJsonString())
               && back.Actions.Select(Text).SequenceEqual(trajectory.Actions.Select(Text)), "the observations (messages, tools, reasoning mode) and the actions");

@@ -57,7 +57,7 @@ public sealed class FineTuningSession : IDisposable
     private FineTuner.StepRunner? _runner;
     private readonly ActivationRung? _resumedRung;                        // the rung the checkpoint resumed from settled on
     private ILearningRateScheduler? _schedule;
-    private FineTuningLoss? _lastLoss;
+    private IFineTuningLoss? _lastLoss;
     private FineTuner.CustomLoss? _lastCustom;
     private int _nonFinite;
     private bool _disposed;
@@ -279,7 +279,7 @@ public sealed class FineTuningSession : IDisposable
     /// </param>
     /// <param name="cancellationToken">Stops between batches, before the update.</param>
     /// <exception cref="ArgumentException">No sequence, or none with a token to train.</exception>
-    public FineTuningStepStats Step(IReadOnlyList<TrainingSequence> sequences, FineTuningLoss? loss = null, CancellationToken cancellationToken = default)
+    public FineTuningStepStats Step(IReadOnlyList<TrainingSequence> sequences, IFineTuningLoss? loss = null, CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(sequences);
@@ -323,9 +323,9 @@ public sealed class FineTuningSession : IDisposable
     }
 
     // The step's loss: the session's own (FineTuningOptions.Loss, distillation with a teacher, or the fused token
-    // cross-entropy), or the given one, kept from step to step while it is the same delegate (its reference values for
+    // cross-entropy), or the given one, kept from step to step while it is the same loss (its reference values for
     // the step's sequences with it; those of sequences no longer trained dropped).
-    private FineTuner.CustomLoss? CustomFor(FineTuningLoss? loss, IReadOnlyList<TrainingSequence> sequences)
+    private FineTuner.CustomLoss? CustomFor(IFineTuningLoss? loss, IReadOnlyList<TrainingSequence> sequences)
     {
         if (loss is null)
         {

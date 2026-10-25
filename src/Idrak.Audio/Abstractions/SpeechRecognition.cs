@@ -187,7 +187,7 @@ public sealed record SpeechModelOptions
 public sealed record SpeechCheckpoint(string Architecture, JsonObject Config, string Path, string? Folder, ITensorStore Tensors, SpeechModelOptions Options, List<string> Notes);
 
 /// <summary>
-/// A speech model made by <see cref="ISpeechFamily.Create"/>: what is written into the model folder so the family's
+/// A speech model made by <see cref="ICreatableSpeechFamily.Create"/>: what is written into the model folder so the family's
 /// <see cref="ISpeechFamily.Read"/> reads it like any checkpoint.
 /// </summary>
 /// <param name="Config">The config.json.</param>
@@ -208,14 +208,26 @@ public interface ISpeechFamily
     /// <summary>The recognizer read from <paramref name="checkpoint"/>.</summary>
     /// <exception cref="InvalidDataException">A tensor or file is missing, or a shape disagrees with the configuration.</exception>
     ISpeechRecognizer Read(SpeechCheckpoint checkpoint);
+}
 
+/// <summary>
+/// A speech recognition family that makes models that did not exist from its own description of them
+/// (<c>SpeechModels.Create</c>); a family read from checkpoints only does not implement it.
+/// </summary>
+public interface ICreatableSpeechFamily : ISpeechFamily
+{
     /// <summary>
     /// A model that did not exist, from the family's own description of it (<paramref name="spec"/>): its tensors drawn from
-    /// <paramref name="seed"/>, its config.json and other files. A family read from checkpoints only keeps this default,
-    /// which refuses.
+    /// <paramref name="seed"/>, its config.json and other files.
     /// </summary>
-    CreatedSpeechModel Create(JsonObject spec, ITokenizer tokenizer, int seed) =>
-        throw new NotSupportedException($"Speech family '{Name}' cannot make a model from a description (it reads checkpoints only).");
+    CreatedSpeechModel Create(JsonObject spec, ITokenizer tokenizer, int seed);
+
+    /// <summary>
+    /// Whether <paramref name="spec"/> describes a recognizer this family makes: a family whose architecture name also
+    /// names a synthesizer's or a chat model's audio part tells them apart by the description (its task), so a caller
+    /// routes the description without trying and catching. True by default.
+    /// </summary>
+    bool Creates(JsonObject spec) => true;
 }
 
 /// <summary>

@@ -197,6 +197,31 @@ public interface IBinaryPartKind : IChatPartKind
     /// <summary>A part of this kind holding a copy of <paramref name="data"/>, of <paramref name="mediaType"/> when given (else read from the bytes when the kind can).</summary>
     /// <exception cref="ArgumentException">The bytes are empty.</exception>
     ChatPart FromBytes(ReadOnlySpan<byte> data, string? mediaType = null);
+
+    /// <summary>
+    /// The keys data records and request bodies name parts of this kind by (a tuning record's <c>"audios"</c> list and
+    /// <c>&lt;audio&gt;</c> markers, a completions request's <c>"input_audio"</c> part), so the readers find them through
+    /// the registered kind instead of names of their own.
+    /// </summary>
+    BinaryPartRecordKeys RecordKeys { get; }
+}
+
+/// <summary>
+/// The keys under which data records and request bodies name parts of a binary kind (<see cref="IBinaryPartKind.RecordKeys"/>).
+/// </summary>
+/// <param name="List">A data record's list of the parts' references, in order ("audios"): each placeholder takes the next.</param>
+/// <param name="Marker">The marker in a message's text that stands for the next entry of <paramref name="List"/> ("&lt;audio&gt;").</param>
+/// <param name="InputPart">
+/// The type of a request's content part that carries a part's bytes as base64 with a format
+/// (<c>{"type": "input_audio", "input_audio": {"data", "format"}}</c>); null when requests have none.
+/// </param>
+public sealed record BinaryPartRecordKeys(string List, string Marker, string? InputPart = null)
+{
+    /// <summary>
+    /// The media types of the formats an <see cref="InputPart"/> names ("mp3" to "audio/mpeg"), by format in lower case;
+    /// a format not listed is taken as a media type when it holds a '/', else as the kind's own subtype.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Formats { get; init; } = new Dictionary<string, string>();
 }
 
 /// <summary>
@@ -240,7 +265,8 @@ public static class ChatParts
     }
 
     // Writing and reading are single calls: an app's kind falls back (or is shadowed) per call.
-    private static IChatPartKind Guard(Slot slot, IChatPartKind app, IChatPartKind library) => new GuardedKind(slot, app, library);
+    private static IChatPartKind Guard(Slot slot, IChatPartKind app, IChatPartKind library) =>
+        app is IBinaryPartKind binary && library is IBinaryPartKind libraryBinary ? new GuardedBinaryKind(slot, binary, libraryBinary) : new GuardedKind(slot, app, library);
 
     /// <summary>
     /// Registers <paramref name="kind"/> under its <see cref="IKind.Name"/>: under a built-in name it takes that
@@ -254,6 +280,15 @@ public static class ChatParts
 
     /// <summary>The registered kind names, in registration order.</summary>
     public static IReadOnlyCollection<string> Names => Table.Names;
+
+    /// <summary>The registered kinds, in the order of <see cref="Names"/>.</summary>
+    public static IReadOnlyList<IChatPartKind> Kinds => Table.Kinds;
+
+    /// <summary>
+    /// The registered kinds made from bytes (<see cref="IBinaryPartKind"/>: Idrak.Audio's "audio"), in registration order:
+    /// what the readers of data records and requests find parts by, through each kind's <see cref="IBinaryPartKind.RecordKeys"/>.
+    /// </summary>
+    public static IEnumerable<IBinaryPartKind> BinaryKinds => Table.Kinds.OfType<IBinaryPartKind>();
 
     /// <summary>The kind registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
@@ -419,8 +454,27 @@ public static class ChatParts
     private static T Of<T>(ChatPart part, string kind) where T : ChatPart =>
         part as T ?? throw new ArgumentException($"The '{kind}' kind writes {typeof(T).Name} parts, not {part.GetType().Name}.", nameof(part));
 
-    private sealed class GuardedKind(Slot slot, IChatPartKind app, IChatPartKind library) : IChatPartKind
+    // A binary kind over the library's stays one: its parts from bytes fall back per call, its keys are the app's.
+    private sealed class GuardedBinaryKind(Slot guarded, IBinaryPartKind own, IBinaryPartKind fallback) : GuardedKind(guarded, own, fallback), IBinaryPartKind
     {
+        public BinaryPartRecordKeys RecordKeys => ((IBinaryPartKind)App).RecordKeys;
+
+        public ChatPart FromBytes(ReadOnlySpan<byte> data, string? mediaType = null)
+        {
+            byte[] copy = data.ToArray();                                       // a span cannot reach the fallback's lambda
+            var (app, library) = ((IBinaryPartKind)App, (IBinaryPartKind)Library);
+            return Slot.Call(() => app.FromBytes(copy, mediaType), () => library.FromBytes(copy, mediaType), Comparisons.Exact);
+        }
+    }
+
+    private class GuardedKind(Slot slot, IChatPartKind app, IChatPartKind library) : IChatPartKind
+    {
+        protected Slot Slot => slot;
+
+        protected IChatPartKind App => app;
+
+        protected IChatPartKind Library => library;
+
         public string Name => app.Name;
 
         public string Summary => app.Summary;

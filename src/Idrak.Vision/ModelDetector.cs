@@ -61,7 +61,7 @@ public sealed class ModelDetector : IObjectDetector
     /// </summary>
     /// <exception cref="NotSupportedException">No decoder is registered under that name.</exception>
     public ModelDetector(Module model, int channels, int height, int width, string decoder, JsonObject? settings = null, DetectorOptions? options = null, Device? device = null)
-        : this(model, channels, height, width, DetectionDecoders.Create(decoder, new DetectionDecoderContext(height, width, options?.Classes, settings ?? [])), options, device)
+        : this(model, channels, height, width, DetectionDecoders.Create(decoder, new DetectionDecoderRequest(height, width, options?.Classes, settings ?? [])), options, device)
     {
     }
 
@@ -189,12 +189,12 @@ public sealed class ModelDetector : IObjectDetector
         return box => (box with { X = box.X + left, Y = box.Y + top }).Scale(scaleX, scaleY);
     }
 
-    private static DetectionDecoderContext ContextFor(ImagePreprocessor preprocessor, DetectorOptions? options, JsonObject? settings)
+    private static DetectionDecoderRequest ContextFor(ImagePreprocessor preprocessor, DetectorOptions? options, JsonObject? settings)
     {
         ArgumentNullException.ThrowIfNull(preprocessor);
         var (h, w) = preprocessor.CenterCrop ? (preprocessor.CropHeight, preprocessor.CropWidth)
             : preprocessor.Resize && preprocessor.ShortestEdge <= 0 ? (preprocessor.Height, preprocessor.Width)
             : (0, 0);
-        return new DetectionDecoderContext(h, w, options?.Classes, settings ?? []);
+        return new DetectionDecoderRequest(h, w, options?.Classes, settings ?? []);
     }
 }

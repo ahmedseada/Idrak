@@ -33,12 +33,33 @@ public sealed record VisionLossOptions
     public float Epsilon { get; init; } = 1e-7f;
 }
 
+/// <summary>What a vision loss scores (<see cref="IVisionLoss.Target"/>): what its predictions and targets hold.</summary>
+public enum VisionLossTarget
+{
+    /// <summary>Corner boxes [..., 4] against corner boxes: a detector's boxes.</summary>
+    Boxes,
+
+    /// <summary>Logits against 0/1 targets of one shape: classes (a detector's, or each pixel's), scored through a sigmoid.</summary>
+    Classes,
+
+    /// <summary>Probabilities against one-hot targets [N, classes, ...]: masks (a segmenter's pixels), the logits softmaxed first.</summary>
+    Masks,
+}
+
 /// <summary>
-/// A detection or segmentation loss: predictions against targets, with gradients to the predictions. What the tensors hold
-/// depends on the loss: corner boxes [..., 4] for the box losses, logits and 0/1 targets of one shape for the focal loss,
-/// probabilities and one-hot targets [N, classes, ...] for dice.
+/// A detection or segmentation loss, registered in <see cref="VisionLosses"/> under its <see cref="IKind.Name"/>:
+/// predictions against targets, with gradients to the predictions. What the tensors hold is its <see cref="Target"/>:
+/// corner boxes [..., 4] for the box losses, logits and 0/1 targets of one shape for the focal loss, probabilities and
+/// one-hot targets [N, classes, ...] for dice.
 /// </summary>
-public delegate Tensor VisionLoss(Tensor predicted, Tensor target, VisionLossOptions options);
+public interface IVisionLoss : IKind
+{
+    /// <summary>What it scores, so a trainer gives it the predictions it reads (a segmenter's logits softmaxed for <see cref="VisionLossTarget.Masks"/>).</summary>
+    VisionLossTarget Target { get; }
+
+    /// <summary>The loss of <paramref name="predicted"/> against <paramref name="target"/>.</summary>
+    Tensor Compute(Tensor predicted, Tensor target, VisionLossOptions options);
+}
 
 /// <summary>
 /// The detection and segmentation losses, by name. The library's: "iou", "giou", "diou", "ciou" (box overlap losses on
@@ -48,44 +69,45 @@ public delegate Tensor VisionLoss(Tensor predicted, Tensor target, VisionLossOpt
 /// </summary>
 public static class VisionLosses
 {
-    private static readonly SlotTable<string, VisionLoss> Registry = BuiltIn();
+    private static readonly KindTable<IVisionLoss> Registry = BuiltIn();
 
-    private static SlotTable<string, VisionLoss> BuiltIn()
+    private static KindTable<IVisionLoss> BuiltIn()
     {
-        var table = new SlotTable<string, VisionLoss>(nameof(VisionLosses), Guard, StringComparer.OrdinalIgnoreCase);
-        table.RegisterDefault("iou", (p, t, o) => DetectionLosses.BoxIou(p, t, BoxOverlap.IoU, o.Reduction, o.Epsilon));
-        table.RegisterDefault("giou", (p, t, o) => DetectionLosses.BoxIou(p, t, BoxOverlap.GIoU, o.Reduction, o.Epsilon));
-        table.RegisterDefault("diou", (p, t, o) => DetectionLosses.BoxIou(p, t, BoxOverlap.DIoU, o.Reduction, o.Epsilon));
-        table.RegisterDefault("ciou", (p, t, o) => DetectionLosses.BoxIou(p, t, BoxOverlap.CIoU, o.Reduction, o.Epsilon));
-        table.RegisterDefault("l1", (p, t, o) => DetectionLosses.SmoothL1(p, t, 0f, o.Reduction));
-        table.RegisterDefault("smooth-l1", (p, t, o) => DetectionLosses.SmoothL1(p, t, o.Beta, o.Reduction));
-        table.RegisterDefault("focal", (p, t, o) => DetectionLosses.Focal(p, t, o.Alpha, o.Gamma, o.Reduction));
-        table.RegisterDefault("dice", (p, t, o) => SegmentationLosses.Dice(p, t, o.Smooth, o.Batch, o.Reduction));
+        var table = new KindTable<IVisionLoss>(nameof(VisionLosses), "Vision loss", "add it with VisionLosses.Register", Guard, StringComparer.OrdinalIgnoreCase);
+        table.RegisterDefault(new Loss("iou", "1 − IoU of corner boxes", VisionLossTarget.Boxes, (p, t, o) => DetectionLosses.BoxIou(p, t, BoxOverlap.IoU, o.Reduction, o.Epsilon)));
+        table.RegisterDefault(new Loss("giou", "1 − generalized IoU of corner boxes", VisionLossTarget.Boxes,
+            (p, t, o) => DetectionLosses.BoxIou(p, t, BoxOverlap.GIoU, o.Reduction, o.Epsilon)));
+        table.RegisterDefault(new Loss("diou", "1 − distance IoU of corner boxes", VisionLossTarget.Boxes,
+            (p, t, o) => DetectionLosses.BoxIou(p, t, BoxOverlap.DIoU, o.Reduction, o.Epsilon)));
+        table.RegisterDefault(new Loss("ciou", "1 − complete IoU of corner boxes", VisionLossTarget.Boxes,
+            (p, t, o) => DetectionLosses.BoxIou(p, t, BoxOverlap.CIoU, o.Reduction, o.Epsilon)));
+        table.RegisterDefault(new Loss("l1", "the L1 distance of box coordinates", VisionLossTarget.Boxes, (p, t, o) => DetectionLosses.SmoothL1(p, t, 0f, o.Reduction)));
+        table.RegisterDefault(new Loss("smooth-l1", "the smooth L1 distance of box coordinates (beta)", VisionLossTarget.Boxes,
+            (p, t, o) => DetectionLosses.SmoothL1(p, t, o.Beta, o.Reduction)));
+        table.RegisterDefault(new Loss("focal", "sigmoid focal loss on logits (alpha, gamma)", VisionLossTarget.Classes,
+            (p, t, o) => DetectionLosses.Focal(p, t, o.Alpha, o.Gamma, o.Reduction)));
+        table.RegisterDefault(new Loss("dice", "soft dice per class on probabilities (smooth, batch)", VisionLossTarget.Masks,
+            (p, t, o) => SegmentationLosses.Dice(p, t, o.Smooth, o.Batch, o.Reduction)));
         return table;
     }
 
-    /// <summary>Registers the loss <paramref name="name"/>; under a library name it replaces the library's, which stays behind it (see <see cref="SetPolicy"/>).</summary>
+    /// <summary>Registers <paramref name="loss"/> under its name; under a library name it replaces the library's, which stays behind it (see <see cref="SetPolicy"/>).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string name, VisionLoss loss)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ArgumentNullException.ThrowIfNull(loss);
-        Registry.Register(name, loss, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(IVisionLoss loss) => Registry.Register(loss, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's loss <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered loss names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
+    public static IReadOnlyCollection<string> Names => Registry.Names;
 
     /// <summary>The loss <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name: the message names those that are.</exception>
-    public static VisionLoss Get(string name) => Registry.TryGet(name, out var loss) ? loss
-        : throw new NotSupportedException($"No vision loss '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with VisionLosses.Register.");
+    public static IVisionLoss Get(ReadOnlySpan<char> name) => Registry.TryGet(name, out var loss) ? loss
+        : throw new NotSupportedException($"No vision loss '{name}' is registered ({string.Join(", ", Registry.Names)}); add it with VisionLosses.Register.");
 
     /// <summary>The library's loss <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static VisionLoss? Default(string name) => Registry.Default(name);
+    public static IVisionLoss? Default(string name) => Registry.Default(name);
 
     /// <summary>Who registered the loss <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
@@ -98,15 +120,27 @@ public static class VisionLosses
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
 
     /// <summary>The loss <paramref name="name"/> of <paramref name="predicted"/> against <paramref name="target"/>.</summary>
-    public static Tensor Compute(string name, Tensor predicted, Tensor target, VisionLossOptions? options = null) => Get(name)(predicted, target, options ?? new());
+    public static Tensor Compute(string name, Tensor predicted, Tensor target, VisionLossOptions? options = null) => Get(name).Compute(predicted, target, options ?? new());
 
     // An app's loss under its policy; Shadow compares the values (the library's tensor answers, so its graph is the one trained).
-    private static VisionLoss Guard(Slot slot, VisionLoss app, VisionLoss library) => (predicted, target, options) =>
-        slot.Call(() => app(predicted, target, options), () => library(predicted, target, options), (a, b) =>
+    private static IVisionLoss Guard(Slot slot, IVisionLoss app, IVisionLoss library) => new Loss(app.Name, app.Summary, app.Target, (predicted, target, options) =>
+        slot.Call(() => app.Compute(predicted, target, options), () => library.Compute(predicted, target, options), (a, b) =>
         {
             using (Autograd.NoGrad())
             {
                 return Comparisons.Tensors(a, b, 1e-4f);
             }
-        });
+        }));
+
+    // A loss as a function and what it scores.
+    private sealed class Loss(string name, string summary, VisionLossTarget scores, Func<Tensor, Tensor, VisionLossOptions, Tensor> compute) : IVisionLoss
+    {
+        public string Name => name;
+
+        public string Summary => summary;
+
+        public VisionLossTarget Target => scores;
+
+        public Tensor Compute(Tensor predicted, Tensor target, VisionLossOptions options) => compute(predicted, target, options);
+    }
 }

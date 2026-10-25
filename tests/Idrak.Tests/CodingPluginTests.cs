@@ -260,11 +260,9 @@ internal static partial class Tests
             Check(State() == found, $"Unregister leaves the registries as found:\n{found}\nnow:\n{State()}");
             CodingPlugin.Register();
 
-            RewardInput Input(bool passed, int commands, int passedCommands, int rounds, int errors) => new("Fix it.", "Done.", null, new Dictionary<string, string>
-            {
-                [CodingInfo.VerifyPassed] = passed ? "true" : "false", [CodingInfo.VerifyCommands] = $"{commands}", [CodingInfo.VerifyPassedCommands] = $"{passedCommands}",
-                [CodingInfo.Rounds] = $"{rounds}", [CodingInfo.ToolErrors] = $"{errors}", [CodingInfo.ToolCalls] = $"{rounds}",
-            });
+            RewardInput Input(bool passed, int commands, int passedCommands, int rounds, int errors) => new("Fix it.", "Done.", null, new EpisodeInfo()
+                .Set(CodingInfo.VerifyPassed, passed).Set(CodingInfo.VerifyCommands, commands).Set(CodingInfo.VerifyPassedCommands, passedCommands)
+                .Set(CodingInfo.Rounds, rounds).Set(CodingInfo.ToolErrors, errors).Set(CodingInfo.ToolCalls, rounds));
             RewardInput[] samples = [Input(true, 2, 2, 3, 0), Input(false, 2, 1, 5, 2), Input(true, 0, 0, 1, 0), Input(false, 4, 0, 40, 7)];
             foreach (var reward in CodingRewards.All)
             {
@@ -307,8 +305,7 @@ internal static partial class Tests
         return steps;
     }
 
-    private static string ShowInfo(IReadOnlyDictionary<string, string>? info) =>
-        info is null ? "" : string.Join(", ", info.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key}={p.Value}"));
+    private static string ShowInfo(EpisodeInfo? info) => info?.ToString() ?? "";
 
     private static void CodingEpisodes()
     {
@@ -370,25 +367,25 @@ internal static partial class Tests
 
             // Not solved: the build passes, the hidden test fails.
             var wrong = PlayCoding(first, hi, [CodingFix, CodingDone])[^1];
-            Check(wrong.Info![CodingInfo.VerifyPassed] == "false" && wrong.Info[CodingInfo.VerifyPassedCommands] == "1" && wrong.Info[CodingInfo.Outcome] == "Failed",
+            Check(!wrong.Info!.Get(CodingInfo.VerifyPassed) && wrong.Info.Get(CodingInfo.VerifyPassedCommands) == 1 && wrong.Info.Get(CodingInfo.Outcome) == "Failed",
                 $"not solved: {ShowInfo(wrong.Info)}");
             AssertClose([-0.02f], [wrong.Reward], 1e-6f, "not solved: the penalties alone");
             Check(RewardFunctions.Get("verify-fraction").ScoreAsync([new RewardInput("", "", null, wrong.Info)]).AsTask().GetAwaiter().GetResult()[0] == 0.5f, "half the verification passed");
 
             // Out of rounds: still calling tools at the last one; verification still runs.
             var budget = PlayCoding(first, hello, [CodingRead, CodingMissing, CodingRead, CodingMissing, CodingRead, CodingMissing, CodingDone]);
-            Check(budget.Count == 6 && budget[^1] is { Truncated: true, Terminated: false } && budget[^1].Info![CodingInfo.Outcome] == "OutOfBudget",
+            Check(budget.Count == 6 && budget[^1] is { Truncated: true, Terminated: false } && budget[^1].Info!.Get(CodingInfo.Outcome) == "OutOfBudget",
                 $"the rounds run out: {budget.Count} steps, {ShowInfo(budget[^1].Info)}");
 
             // A test edit: the hidden tests overwrite it (the task passes), and it is reported.
             var edited = PlayCoding(first, hello, [CodingFix, CodingTestEdit, CodingDone])[^1];
-            Check(edited.Info![CodingInfo.TestEdits] == "tests/Check.cs" && edited.Info[CodingInfo.VerifyPassed] == "true" && !edited.Info.ContainsKey(CodingInfo.Refused),
+            Check(edited.Info!.Get(CodingInfo.TestEdits) == "tests/Check.cs" && edited.Info.Get(CodingInfo.VerifyPassed) && !edited.Info.Contains(CodingInfo.Refused),
                 $"a test edit reported, the hidden tests copied over it: {ShowInfo(edited.Info)}");
 
             // Refused when asked: no verification, counted as failed.
             refusing = (CodingEnvironment)kind.Create(new EnvironmentRequest(new Dictionary<string, string>(options) { ["refuse-test-edits"] = "true", ["work"] = Path.Combine(root, "work-refusing") }));
             var refused = PlayCoding(refusing, hello, [CodingFix, CodingTestEdit, CodingDone])[^1];
-            Check(refused.Info![CodingInfo.Refused] == "test-edits" && refused.Info[CodingInfo.VerifyPassed] == "false" && refused.Info[CodingInfo.TestEdits] == "tests/Check.cs",
+            Check(refused.Info!.Get(CodingInfo.Refused) == "test-edits" && !refused.Info.Get(CodingInfo.VerifyPassed) && refused.Info.Get(CodingInfo.TestEdits) == "tests/Check.cs",
                 $"a test edit refused: {ShowInfo(refused.Info)}");
             AssertClose([-0.03f], [refused.Reward], 1e-6f, "a refused episode: the penalties alone");
             Check(refusing.Verification!.Output.StartsWith("refused", StringComparison.Ordinal), "the verification did not run");

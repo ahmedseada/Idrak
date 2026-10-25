@@ -229,7 +229,7 @@ internal static partial class Tests
         {
             var data = DistillationPrompts();
             var settings = new OnPolicyDistillationOptions { Steps = 8, PromptsPerStep = 4, MaxNewTokens = 4, Mix = 0.25f, Seed = 5, Shards = 2 };
-            FineTuningSession Open(PretrainedModel model, DistillationTeacher source, ClusterRank? rank, ClusterOptions? options) =>
+            FineTuningSession Open(PretrainedModel model, IDistillationTeacher source, ClusterRank? rank, ClusterOptions? options) =>
                 new(model, SessionOptions(1e-2f) with { BatchTokens = 64, Teacher = source, Cluster = rank?.Collectives, ClusterOptions = options }, totalSteps: 100);
 
             foreach (string name in new[] { StopAgreements.Automatic, "all-reduce" })

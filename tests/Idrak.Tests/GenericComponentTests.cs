@@ -365,7 +365,7 @@ internal static partial class Tests
         Check(reread.Search("river bridge", 4).Select(h => (h.Chunk.Id, h.Score)).SequenceEqual(index.Search("river bridge", 4).Select(h => (h.Chunk.Id, h.Score))), "read back, the same rankings");
 
         // An app's index: by name through the builder, saved by name, read back through the registry.
-        KeywordIndexes.Register("test-keywords", (texts, options) => new TestKeywords(texts, options));
+        KeywordIndexes.Register(TestKinds.KeywordIndex("test-keywords", (texts, options) => new TestKeywords(texts, options), "boost"));
         try
         {
             Check(KeywordIndexes.Origin("test-keywords") == "Idrak.Tests", "an app's index is the app's");

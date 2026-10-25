@@ -17,15 +17,15 @@ internal static class DynamicsProcessors
 {
     public const string Gate = "gate", Compress = "compress", Limit = "limit", Agc = "agc", Loudness = "loudness", LoudnessLive = "loudness-live", Peak = "peaknorm";
 
-    public static void RegisterDefaults(SlotTable<string, IAudioProcessor> table)
+    public static void RegisterDefaults(KindTable<IAudioProcessor> table)
     {
-        table.RegisterDefault(Gate, new GateProcessor());
-        table.RegisterDefault(Compress, new CompressProcessor());
-        table.RegisterDefault(Limit, new LimitProcessor());
-        table.RegisterDefault(Agc, new AgcProcessor());
-        table.RegisterDefault(Loudness, new LoudnessProcessor());
-        table.RegisterDefault(LoudnessLive, new LiveLoudnessProcessor());
-        table.RegisterDefault(Peak, new PeakProcessor());
+        table.RegisterDefault(new GateProcessor());
+        table.RegisterDefault(new CompressProcessor());
+        table.RegisterDefault(new LimitProcessor());
+        table.RegisterDefault(new AgcProcessor());
+        table.RegisterDefault(new LoudnessProcessor());
+        table.RegisterDefault(new LiveLoudnessProcessor());
+        table.RegisterDefault(new PeakProcessor());
     }
 }
 
@@ -312,15 +312,13 @@ internal sealed class DynamicsWalk
 // the linked channels, read per sample; the gate opens when the level reaches the value (dBFS), stays open while the
 // level is at or above the value less `hysteresis`, and once the level falls under that, after `hold`, closes. The gain
 // moves to 1 (open) with `attack` and to `range` dB down (closed) with `release`. It starts closed.
-internal sealed class GateProcessor : IAudioProcessor
+internal sealed class GateProcessor : ILiveAudioProcessor
 {
     public string Name => DynamicsProcessors.Gate;
 
     public string Label => "Noise gate";
 
     public string Summary => "a noise gate: the sound under the value, dBFS (default -50), is turned down by `range` dB, opening with `attack`, held open `hold` ms, closing with `release`";
-
-    public bool Live => true;
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
@@ -418,15 +416,13 @@ internal sealed class GateProcessor : IAudioProcessor
 // under the knee, a quadratic through the knee (`knee` dB wide around the value) and (level - value)(1/ratio - 1) above
 // it (Giannoulis, Massberg and Reiss, 2012); that gain in dB is smoothed with `attack` (more reduction) or `release`
 // (less), then `makeup` dB is added (auto: the curve's reduction at 0 dBFS, so a full-scale level stays full scale).
-internal sealed class CompressProcessor : IAudioProcessor
+internal sealed class CompressProcessor : ILiveAudioProcessor
 {
     public string Name => DynamicsProcessors.Compress;
 
     public string Label => "Compressor";
 
     public string Summary => "a feed-forward compressor: the level over the value, dBFS (default -20), divided by `ratio` (soft knee `knee` dB, `attack`/`release` ms, `makeup` dB or auto)";
-
-    public bool Live => true;
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
@@ -545,15 +541,13 @@ internal sealed class CompressProcessor : IAudioProcessor
 // those L + 1 values is at most the r of the sample it is applied to, so their mean is too; each sample is then clamped
 // to the largest float not over the ceiling, which only rounding can reach. The output lags by L (the stage's Latency):
 // silence first, and Flush gives the last L samples (the input followed by L samples of silence).
-internal sealed class LimitProcessor : IAudioProcessor
+internal sealed class LimitProcessor : ILiveAudioProcessor
 {
     public string Name => DynamicsProcessors.Limit;
 
     public string Label => "Limiter";
 
     public string Summary => "a look-ahead peak limiter: no sample passes the value, dBFS (default -1); the output lags by `lookahead` ms, the gain comes back with `release`";
-
-    public bool Live => true;
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
@@ -730,15 +724,13 @@ internal sealed class LimitProcessor : IAudioProcessor
 // (`window`) of the mean square over the linked channels; at or above `quiet` dBFS the wanted gain is value - level,
 // within `min` and `max` dB, and under it (a pause, silence) the gain holds; the gain in dB follows the wanted gain with
 // `attack` (down) or `release` (up), from 0 dB.
-internal sealed class AgcProcessor : IAudioProcessor
+internal sealed class AgcProcessor : ILiveAudioProcessor
 {
     public string Name => DynamicsProcessors.Agc;
 
     public string Label => "Automatic gain control";
 
     public string Summary => "automatic gain control: the level (an RMS over `window` ms) brought towards the value, dBFS (default -20), within `min` and `max` dB, held through the pauses under `quiet`";
-
-    public bool Live => true;
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
@@ -881,15 +873,13 @@ internal static class KWeighting
 // loudness -0.691 + 10 log10 of its mean; the blocks above `absolute` LUFS, then above their mean's loudness plus
 // `relative` LU, averaged. The gain is lowered so the peak (meter=true: the true peak; sample: the sample peak; none: not
 // kept) stays at or under `ceiling` dBFS. A silent recording stays as it is.
-internal sealed class LoudnessProcessor : IAudioProcessor
+internal sealed class LoudnessProcessor : IRecordingAudioProcessor
 {
     public string Name => DynamicsProcessors.Loudness;
 
     public string Label => "Loudness (EBU R128)";
 
     public string Summary => "the integrated loudness (ITU-R BS.1770-4, EBU R128) brought to the value, LUFS (default -23), the true peak kept under `ceiling` dBFS";
-
-    public bool Live => false;
 
     public string? LiveAlternative => DynamicsProcessors.LoudnessLive;
 
@@ -1011,15 +1001,13 @@ internal sealed class LoudnessProcessor : IAudioProcessor
 // the wanted gain is the value - loudness, within `min` and `max` dB, else (and before the first hop) the gain holds; the
 // gain in dB follows the wanted gain sample by sample with `attack` (down) or `release` (up), from 0 dB. Follow it with
 // limit to keep the peaks under a ceiling.
-internal sealed class LiveLoudnessProcessor : IAudioProcessor
+internal sealed class LiveLoudnessProcessor : ILiveAudioProcessor
 {
     public string Name => DynamicsProcessors.LoudnessLive;
 
     public string Label => "Loudness (live)";
 
     public string Summary => "the short-term loudness (BS.1770, over `window` ms) steered towards the value, LUFS (default -23), smoothly, within `min` and `max` dB";
-
-    public bool Live => true;
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
@@ -1117,15 +1105,13 @@ internal sealed class LiveLoudnessProcessor : IAudioProcessor
 
 // "peaknorm" (whole recording): peak normalization, the largest peak (meter=sample: of the samples; true: the true peak, between the samples
 // too) brought to the value, dBFS, by one gain over every channel. A silent recording stays as it is.
-internal sealed class PeakProcessor : IAudioProcessor
+internal sealed class PeakProcessor : IRecordingAudioProcessor
 {
     public string Name => DynamicsProcessors.Peak;
 
     public string Label => "Peak normalize";
 
     public string Summary => "the peak brought to the value, dBFS (default -1), by one gain (meter=true: the true peak)";
-
-    public bool Live => false;
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [

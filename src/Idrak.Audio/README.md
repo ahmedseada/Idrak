@@ -92,11 +92,10 @@ name starts a new step, so an option is best written after a space (`normalize=-
 `AudioProcessors.Register`:
 
 ```csharp
-sealed class Gain : IAudioProcessor
+sealed class Gain : ILiveAudioProcessor          // live: block by block (IRecordingAudioProcessor needs the whole recording)
 {
     public string Name => "gain";
     public string Summary => "a gain in dB";
-    public bool Live => true;
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
         [new("", "Gain", AudioProcessorInput.Number) { Min = -60, Max = 24, Unit = "dB" }];
 

@@ -441,7 +441,7 @@ internal static partial class Tests
             using var student = PretrainedModel.Load(studentFolder, new PretrainedOptions { Device = device });
             using var reader = TeacherLogitsFile.Open(path);
             double expected = DistillationLoss(student, null, sequences, 1.5, 0.7, s => reader.Read(s)!.Value, K);
-            float First(DistillationTeacher source)
+            float First(IDistillationTeacher source)
             {
                 using var model = PretrainedModel.Load(studentFolder, new PretrainedOptions { Device = device });
                 var losses = new List<float>();

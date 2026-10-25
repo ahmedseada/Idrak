@@ -14,7 +14,7 @@ namespace Idrak.Audio.Plugins.RnNoise;
 /// stage's latency, which a recording's Apply takes off, and blocks of any size give the whole recording's samples. The model is read
 /// from RNNoise's model file (<see cref="RnNoisePlugin.LocateModel"/>), once per process.
 /// </summary>
-internal sealed class RnNoiseProcessor : IAudioProcessor
+internal sealed class RnNoiseProcessor : ILiveAudioProcessor
 {
     private const int Rate = 48000;
 
@@ -25,8 +25,6 @@ internal sealed class RnNoiseProcessor : IAudioProcessor
     public string Summary => "RNNoise's learned denoiser (xiph's recurrent network on 48 kHz frames of 10 ms; another rate is resampled to 48 kHz and back): "
         + "`mix` of the denoised sound against the original (default 1), `attenuation` the most a band is turned down, dB (default none); "
         + $"`model=PATH` its model file (default {RnNoisePlugin.ModelVariable}, else rnnoise/rnnoise.rnnn in the cache); the output lags by 959 samples at 48 kHz (about 20 ms)";
-
-    public bool Live => true;
 
     public IReadOnlyList<AudioProcessorParameter> Parameters { get; } =
     [
@@ -48,7 +46,7 @@ internal sealed class RnNoiseProcessor : IAudioProcessor
     ];
 
     // `model` takes a path, which no parameter kind describes: it is a key, checked here, and named in the summary.
-    public IReadOnlyCollection<string> Keys => [.. Parameters.Select(p => p.Key), RnNoisePlugin.ModelOption];
+    public IReadOnlySet<string> Keys => field ??= new OptionKeys([.. Parameters.Where(p => p.Key.Length > 0).Select(p => p.Key), RnNoisePlugin.ModelOption]);
 
     public void Check(AudioProcessorStep step)
     {

@@ -34,7 +34,9 @@ internal sealed class AudioModelPart : IModelPart
     public CreatedModelPart Create(ModelPartRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var made = AudioFamilies.Get(request.Architecture).Create(request.Description, request.TextDim, request.Tokenizer, request.Seed);
+        var family = AudioFamilies.Get(request.Architecture) as ICreatableAudioFamily
+            ?? throw new NotSupportedException($"Audio family '{request.Architecture}' cannot make an audio part from a description (it reads checkpoints only).");
+        var made = family.Create(request.Description, request.TextDim, request.Tokenizer, request.Seed);
         return new CreatedModelPart(made.Config, made.Tensors, made.Files);
     }
 
@@ -45,7 +47,7 @@ internal sealed class AudioModelPart : IModelPart
         return new ChatAudioParts(audio, new AudioEncoderOptions { Device = options.Device, Trained = options.Trained }, options.Cache, ownsCache: true);
     }
 
-    private static PretrainedAudio? Read(ModelPartCheckpoint checkpoint)
+    private static IPretrainedAudio? Read(ModelPartCheckpoint checkpoint)
     {
         var family = AudioFamilies.For(checkpoint.Architecture, checkpoint.Config)
             ?? throw new InvalidDataException($"The {checkpoint.Architecture} config.json has no audio_config.");

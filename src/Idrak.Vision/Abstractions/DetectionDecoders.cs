@@ -6,12 +6,15 @@ using System.Text.Json.Nodes;
 
 namespace Idrak.Vision.Abstractions;
 
-/// <summary>What a detection decoder is made for (<see cref="DetectionDecoderFactory"/>).</summary>
+/// <summary>What a detection decoder (and its training head) is made for (<see cref="IDetectionDecoderKind"/>).</summary>
 /// <param name="InputHeight">The network's input height in pixels (the boxes' coordinate space), or 0 when it follows each image.</param>
 /// <param name="InputWidth">The network's input width in pixels, or 0 when it follows each image.</param>
 /// <param name="Labels">The class names in output order, or null when unknown.</param>
-/// <param name="Settings">The decoder's settings (strides, box layout, ...): from the model family's config, or the app's; empty when none.</param>
-public sealed record DetectionDecoderContext(int InputHeight, int InputWidth, IReadOnlyList<string>? Labels, JsonObject Settings)
+/// <param name="Settings">
+/// The decoder's settings (strides, box layout, ...), each a key of the kind's <see cref="IConfigurableKind.Keys"/>: from
+/// the model family's config, or the app's; empty when none.
+/// </param>
+public sealed record DetectionDecoderRequest(int InputHeight, int InputWidth, IReadOnlyList<string>? Labels, JsonObject Settings)
 {
     /// <summary>The number of classes, or 0 when the labels are unknown.</summary>
     public int Classes => Labels?.Count ?? 0;
@@ -29,13 +32,30 @@ public sealed record DetectionDecoderContext(int InputHeight, int InputWidth, IR
     public int[]? Integers(string name) => Settings[name] is JsonArray a ? [.. a.Select(v => (int)v!)] : null;
 }
 
-/// <summary>Makes the <see cref="DetectionDecoder"/> for one detector (its input size, classes and settings).</summary>
-public delegate DetectionDecoder DetectionDecoderFactory(DetectionDecoderContext context);
+/// <summary>
+/// A kind of detection decoder, registered in <see cref="DetectionDecoders"/> under its <see cref="IKind.Name"/>: makes
+/// the <see cref="DetectionDecoder"/> of one detector (its input size, classes and settings, the settings' keys declared
+/// as <see cref="IConfigurableKind.Keys"/>). A decoder whose detector can be trained implements
+/// <see cref="IDetectionHeadKind"/> too.
+/// </summary>
+public interface IDetectionDecoderKind : IKind<DetectionDecoderRequest, DetectionDecoder>;
+
+/// <summary>
+/// A detection decoder kind with its training side (<see cref="DetectionHead"/>): the network's outputs read as the
+/// candidates its decoder turns into detections, but as tensors that carry gradients. Decoder and head are one kind, so
+/// the two read the outputs the same way.
+/// </summary>
+public interface IDetectionHeadKind : IDetectionDecoderKind
+{
+    /// <summary>The head for one detector (its input size, classes and settings, as its decoder gets them).</summary>
+    DetectionHead CreateHead(DetectionDecoderRequest request);
+}
 
 /// <summary>
 /// The detection decoders, by name: how a detection network's outputs become boxes (Idrak.Vision's <c>ModelDetector</c>
-/// takes one by name, an image model family names its own). A decoder is part of a model family (its anchors or grid, its
-/// box encoding, how its scores are stored), so it is registered by the plug-in or app that brings the family; the library
+/// takes one by name, an image model family names its own), and, for a kind that has one (<see cref="IDetectionHeadKind"/>),
+/// how its detector trains (<see cref="CreateHead"/>). A decoder is part of a model family (its anchors or grid, its box
+/// encoding, how its scores are stored), so it is registered by the plug-in or app that brings the family; the library
 /// registers only <see cref="BoxesScores"/>, for networks whose outputs are already boxes and scores. An unregistered name
 /// is refused, naming this registry.
 /// </summary>
@@ -50,40 +70,36 @@ public static class DetectionDecoders
     /// </summary>
     public const string BoxesScores = "boxes-scores";
 
-    private static readonly SlotTable<string, DetectionDecoderFactory> Registry = BuiltIn();
+    private static readonly KindTable<IDetectionDecoderKind> Registry = BuiltIn();
 
-    private static SlotTable<string, DetectionDecoderFactory> BuiltIn()
+    private static KindTable<IDetectionDecoderKind> BuiltIn()
     {
-        var table = new SlotTable<string, DetectionDecoderFactory>(nameof(DetectionDecoders), Guard, StringComparer.Ordinal);
-        table.RegisterDefault(BoxesScores, BoxesScoresDecoder.Create);
+        var table = new KindTable<IDetectionDecoderKind>(nameof(DetectionDecoders), "Detection decoder",
+            "register it with DetectionDecoders.Register (a plug-in or the app that brings the model family; the library registers only generic ones)", Guard,
+            StringComparer.Ordinal);
+        table.RegisterDefault(new BoxesScoresDecoder());
         return table;
     }
 
-    /// <summary>Registers the decoder <paramref name="name"/>; under a library name it replaces the library's, which stays behind it (see <see cref="SetPolicy"/>).</summary>
+    /// <summary>Registers <paramref name="kind"/> under its name; under a library name it replaces the library's, which stays behind it (see <see cref="SetPolicy"/>).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string name, DetectionDecoderFactory factory)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(name);
-        ArgumentNullException.ThrowIfNull(factory);
-        Registry.Register(name, factory, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(IDetectionDecoderKind kind) => Registry.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's decoder <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered decoder names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
+    public static IReadOnlyCollection<string> Names => Registry.Names;
 
-    /// <summary>The decoder <paramref name="name"/>'s factory; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
+    /// <summary>The decoder kind <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     /// <exception cref="NotSupportedException">None is registered; the message names <see cref="Register"/>.</exception>
-    public static DetectionDecoderFactory Get(string name) =>
-        Registry.TryGet(name, out var factory) ? factory
-            : throw new NotRegisteredException(nameof(DetectionDecoders), name, Registry.Keys,
-                $"Detection decoder '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); register it with "
-                + "DetectionDecoders.Register (a plug-in or the app that brings the model family; the library registers only generic ones).");
+    public static IDetectionDecoderKind Get(ReadOnlySpan<char> name) => Registry.Get(name);
+
+    /// <summary>The decoder kind <paramref name="name"/>, or null.</summary>
+    public static IDetectionDecoderKind? Find(ReadOnlySpan<char> name) => Registry.Find(name);
 
     /// <summary>The library's decoder <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static DetectionDecoderFactory? Default(string name) => Registry.Default(name);
+    public static IDetectionDecoderKind? Default(string name) => Registry.Default(name);
 
     /// <summary>Who registered the decoder <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
@@ -91,27 +107,80 @@ public static class DetectionDecoders
     /// <summary>
     /// What happens when the app's decoder <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set;
     /// <see cref="SlotPolicy.FallBack"/> retries on the library's), or whether it only runs beside the library's
-    /// (<see cref="SlotPolicy.Shadow"/>: the library's answers, the detections are compared).
+    /// (<see cref="SlotPolicy.Shadow"/>: the library's answers, the detections are compared). A head is never guarded: it
+    /// is the app's kind's own.
     /// </summary>
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
 
-    /// <summary>The decoder <paramref name="name"/> made for <paramref name="context"/>.</summary>
-    public static DetectionDecoder Create(string name, DetectionDecoderContext context)
+    /// <summary>The decoder <paramref name="name"/> made for <paramref name="request"/>.</summary>
+    /// <exception cref="ArgumentException">A setting the kind does not take (the message names it and the kind's keys).</exception>
+    public static DetectionDecoder Create(string name, DetectionDecoderRequest request)
     {
-        ArgumentNullException.ThrowIfNull(context);
-        return Get(name)(context) ?? throw new InvalidOperationException($"Detection decoder '{name}' made no decoder.");
+        var kind = Checked(name, request);
+        return kind.Create(request) ?? throw new InvalidOperationException($"Detection decoder '{name}' made no decoder.");
+    }
+
+    /// <summary>The training head of the decoder <paramref name="name"/> made for <paramref name="request"/>.</summary>
+    /// <exception cref="NotSupportedException">No decoder of that name is registered, or it has no head (it is not an <see cref="IDetectionHeadKind"/>).</exception>
+    public static DetectionHead CreateHead(string name, DetectionDecoderRequest request)
+    {
+        var kind = Checked(name, request) as IDetectionHeadKind
+            ?? throw new NotSupportedException($"Detection decoder '{name}' has no training head (it is not an IDetectionHeadKind): its detector cannot be trained here; "
+                + "register a kind with its head under that name with DetectionDecoders.Register (the plug-in or app that brings the model family).");
+        return kind.CreateHead(request) ?? throw new InvalidOperationException($"Detection decoder '{name}' made no head.");
+    }
+
+    /// <summary>Whether the decoder <paramref name="name"/> is registered and has a training head.</summary>
+    public static bool Trainable(ReadOnlySpan<char> name) => Registry.Find(name) is IDetectionHeadKind;
+
+    // The kind, with the request's settings checked against its keys.
+    private static IDetectionDecoderKind Checked(string name, DetectionDecoderRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var kind = Get(name);
+        foreach (var (key, _) in request.Settings)
+        {
+            if (!kind.Keys.Contains(key))
+            {
+                throw new ArgumentException($"Detection decoder '{name}' does not take the setting '{key}'; it takes: {(kind.Keys.Count == 0 ? "none" : string.Join(", ", kind.Keys))}.",
+                    nameof(request));
+            }
+        }
+
+        return kind;
     }
 
     // An app's decoder under its policy, per call: the outputs are copied once (a span cannot be held), both decoders read the copy.
-    private static DetectionDecoderFactory Guard(Slot slot, DetectionDecoderFactory app, DetectionDecoderFactory library) => context =>
+    private static IDetectionDecoderKind Guard(Slot slot, IDetectionDecoderKind app, IDetectionDecoderKind library) =>
+        app is IDetectionHeadKind head ? new GuardedHeadKind(slot, head, library) : new GuardedKind(slot, app, library);
+
+    private class GuardedKind(Slot slot, IDetectionDecoderKind app, IDetectionDecoderKind library) : IDetectionDecoderKind
     {
-        DetectionDecoder? own = null, theirs = null;
-        return (outputs, shape) =>
+        public string Name => app.Name;
+
+        public string Summary => app.Summary;
+
+        public IReadOnlySet<string> Keys => app.Keys;
+
+        public DetectionDecoder Create(DetectionDecoderRequest request)
         {
-            var copy = outputs.ToArray();
-            return slot.Call<IReadOnlyList<Detection>>(() => [.. (own ??= app(context))(copy, shape)], () => [.. (theirs ??= library(context))(copy, shape)], Compare);
-        };
-    };
+            DetectionDecoder? own = null, theirs = null;
+            return (outputs, shape) =>
+            {
+                var copy = outputs.ToArray();
+                return slot.Call<IReadOnlyList<Detection>>(() => [.. (own ??= app.Create(request))(copy, shape)], () => [.. (theirs ??= library.Create(request))(copy, shape)],
+                    Compare);
+            };
+        }
+    }
+
+    // The head is the app's own: a head and a decoder from two registrations would read the outputs differently.
+    private sealed class GuardedHeadKind(Slot slot, IDetectionHeadKind own, IDetectionDecoderKind fallback) : GuardedKind(slot, own, fallback), IDetectionHeadKind
+    {
+        public DetectionHead CreateHead(DetectionDecoderRequest request) => Head.CreateHead(request);
+
+        private IDetectionHeadKind Head { get; } = own;
+    }
 
     private static string? Compare(IReadOnlyList<Detection> a, IReadOnlyList<Detection> b)
     {
@@ -133,9 +202,15 @@ public static class DetectionDecoders
 }
 
 // "boxes-scores": rows of 4 box coordinates and C class scores, read as they are.
-internal static class BoxesScoresDecoder
+internal sealed class BoxesScoresDecoder : IDetectionDecoderKind
 {
-    public static DetectionDecoder Create(DetectionDecoderContext context)
+    public string Name => DetectionDecoders.BoxesScores;
+
+    public string Summary => "outputs that are boxes and scores already: [N, 4 + C] rows (layout, box, normalized, scores)";
+
+    public IReadOnlySet<string> Keys { get; } = new OptionKeys("layout", "box", "normalized", "scores");
+
+    public DetectionDecoder Create(DetectionDecoderRequest context)
     {
         bool columns = context.Text("layout", "rows") switch
         {

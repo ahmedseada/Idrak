@@ -10,7 +10,7 @@ namespace Idrak.Optimizers;
 /// billion-parameter model train on a 16 GB GPU; training curves match 32-bit AdamW closely. Parameters with fewer than
 /// <see cref="MinimumSize"/> elements (norms, biases) keep float32 moments, as bitsandbytes does.
 /// </summary>
-public sealed class AdamW8Bit : Optimizer, IStatefulOptimizer, IScaledGradientStep
+public sealed class AdamW8Bit : Optimizer, IStatefulOptimizer, IScaledGradientStep, IInPlaceOptimizer
 {
     /// <summary>Elements per quantization block (one scale per moment per block).</summary>
     public const int BlockSize = EightBitMoments.BlockSize;

@@ -151,6 +151,8 @@ internal static partial class Tests
 
         public IReadOnlyCollection<string> Extensions => inner.Extensions;
 
+        public DataFileKind Kind => inner.Kind;
+
         public IEnumerable<JsonObject> Read(Func<Stream> open, string path, ReadOptions options)
         {
             Reads++;

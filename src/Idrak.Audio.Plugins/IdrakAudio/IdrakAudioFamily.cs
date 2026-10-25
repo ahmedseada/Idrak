@@ -12,7 +12,7 @@ namespace Idrak.Audio.Plugins.IdrakAudio;
 /// <c>SpeechModels.Load</c>). The task is the config's "task": "ctc" (<see cref="IdrakAudioCtcModel"/>) and "seq2seq"
 /// (<see cref="IdrakAudioSeq2SeqModel"/>) are built; another is refused naming them.
 /// </summary>
-public sealed class IdrakAudioFamily : ISpeechFamily
+public sealed class IdrakAudioFamily : ICreatableSpeechFamily
 {
     /// <summary>The architecture name the family is registered under and its config.json gives.</summary>
     public const string Architecture = "IdrakAudio";
@@ -75,6 +75,13 @@ public sealed class IdrakAudioFamily : ISpeechFamily
 
             throw;
         }
+    }
+
+    /// <inheritdoc />
+    public bool Creates(JsonObject spec)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+        return (string?)spec["task"] is not (TtsTask or AudioLanguageTask);   // those tasks are a synthesizer's and a chat model's
     }
 
     /// <inheritdoc />

@@ -79,13 +79,9 @@ public static class DataFiles
     private static IDataFileFormat? Chosen(ReadOptions options) =>
         options.FileFormat ?? (options.Format is { } format ? DataFileFormats.Get(format.ToString()) : null);
 
-    // Documents: every format but Parquet is read as source code (one row per file).
+    // Documents: every format but a binary one (Parquet) is read as source code (one row per file).
     private static IDataFileFormat? DocumentFormat(IDataFileFormat? format, ReadOptions options) =>
-        options.Documents && format is not null && !Is(format, DataFormat.Parquet) ? DataFileFormats.Get(nameof(DataFormat.Code)) : format;
-
-    // Whether the format has the name of a built-in (it may be a replacement registered under that name).
-    private static bool Is(IDataFileFormat format, DataFormat builtIn) =>
-        string.Equals(format.Name, builtIn.ToString(), StringComparison.OrdinalIgnoreCase);
+        options.Documents && format is not null && format.Kind != DataFileKind.Binary ? DataFileFormats.Get(nameof(DataFormat.Code)) : format;
 
     // The built-in formats, registered in DataFileFormats by LibraryRegistrations (once, before it is first used).
     internal static void RegisterAll()
@@ -94,9 +90,9 @@ public static class DataFiles
         DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Json), [".json"], Json));
         DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Csv), [".csv"], (open, _, options) => Delimited(open, ',', options)));
         DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Tsv), [".tsv"], (open, _, options) => Delimited(open, '\t', options)));
-        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Parquet), [".parquet"], (open, _, _) => ParquetRows(open)));
+        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Parquet), [".parquet"], (open, _, _) => ParquetRows(open)) { Kind = DataFileKind.Binary });
         DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Text), [".txt", ".text", ".md", ".markdown", ".rst"], Text));
-        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Code), [.. CodeLanguages.Keys], Code));
+        DataFileFormats.Register(new BuiltIn(nameof(DataFormat.Code), [.. CodeLanguages.Keys], Code) { Kind = DataFileKind.Code });
     }
 
     private sealed class BuiltIn(string name, string[] extensions, Func<Func<Stream>, string, ReadOptions, IEnumerable<JsonObject>> read) : IDataFileFormat
@@ -104,6 +100,8 @@ public static class DataFiles
         public string Name => name;
 
         public IReadOnlyCollection<string> Extensions => extensions;
+
+        public DataFileKind Kind { get; init; } = DataFileKind.Table;
 
         public IEnumerable<JsonObject> Read(Func<Stream> open, string path, ReadOptions options) => read(open, path, options);
     }
@@ -187,7 +185,7 @@ public static class DataFiles
             }
 
             var format = DocumentFormat(DataFileFormats.Find(name, options.IncludeCode || options.Documents), options);
-            return format is not null && !(options.Documents && Is(format, DataFormat.Parquet));
+            return format is not null && !(options.Documents && format.Kind == DataFileKind.Binary);
         }
 
         if (path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))

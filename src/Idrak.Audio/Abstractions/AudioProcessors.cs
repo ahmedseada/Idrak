@@ -13,37 +13,34 @@ namespace Idrak.Audio.Abstractions;
 /// (<see cref="AudioPipeline"/>) names processors in the order they run, as text such as
 /// <c>highpass=80, denoise=1.5 quantile=0.2, normalize=-20</c>.
 /// <para>
-/// A processor runs in one of two ways, declared by <see cref="Live"/>. A <b>live</b> one works on the sound as it comes:
-/// <see cref="Open"/> gives a stage (<see cref="IAudioStage"/>) that takes blocks in order and keeps what it needs
-/// between them (a filter's memory, a level's envelope); it implements <see cref="Open"/>, and <see cref="Apply"/> runs
-/// a whole recording through a stage. A <b>whole-recording</b> one needs the end before it can start (trimming the
-/// silence at both ends, a level read over all the speech, a noise floor read from the pauses); it implements
-/// <see cref="Apply"/>, and its stage keeps the blocks and gives the result when flushed, so a live pipeline (one that
-/// cleans a microphone) refuses it, naming <see cref="LiveAlternative"/> when it has one.
+/// A processor runs in one of two ways, by the interface it implements. A <b>live</b> one
+/// (<see cref="ILiveAudioProcessor"/>) works on the sound as it comes: <see cref="Open"/> gives a stage
+/// (<see cref="IAudioStage"/>) that takes blocks in order and keeps what it needs between them (a filter's memory, a
+/// level's envelope), and <see cref="Apply"/> runs a whole recording through a stage. A <b>whole-recording</b> one
+/// (<see cref="IRecordingAudioProcessor"/>) needs the end before it can start (trimming the silence at both ends, a
+/// level read over all the speech, a noise floor read from the pauses): it implements <see cref="Apply"/>, and its stage
+/// keeps the blocks and gives the result when flushed, so a live pipeline (one that cleans a microphone) refuses it,
+/// naming <see cref="LiveAlternative"/> when it has one.
 /// </para>
 /// <para>
-/// What a processor takes is described by <see cref="Parameters"/>: its value (<c>80</c> in <c>highpass=80</c>) and
-/// options (<c>quantile=0.2</c>), each with its kind, range, unit and the value used when left out. The default
-/// <see cref="Keys"/> and <see cref="Check"/> follow from them, so a processor that describes its inputs gets its steps
-/// checked when a pipeline is parsed. A processor knows nothing of models: one that runs a model (a learned denoiser)
-/// is a plug-in.
+/// Its <see cref="IKind.Name"/> is what a pipeline uses (<c>highpass</c>; names compare ignoring case and hold no ',',
+/// '=' or spaces). What a processor takes is described by <see cref="Parameters"/>: its value (<c>80</c> in
+/// <c>highpass=80</c>) and options (<c>quantile=0.2</c>), each with its kind, range, unit and the value used when left
+/// out. The default <see cref="IConfigurableKind.Keys"/> and <see cref="Check"/> follow from them, so a processor that
+/// describes its inputs gets its steps checked when a pipeline is parsed. A processor knows nothing of models: one that
+/// runs a model (a learned denoiser) is a plug-in.
 /// </para>
 /// </summary>
-public interface IAudioProcessor
+public interface IAudioProcessor : IConfigurableKind
 {
-    /// <summary>The name a pipeline uses (<c>highpass</c>); names compare ignoring case and hold no ',', '=' or spaces.</summary>
-    string Name { get; }
-
-    /// <summary>One line on what it does and what its value is (listed with the registered processors).</summary>
-    string Summary { get; }
-
     /// <summary>
-    /// Whether it runs on sound as it comes, block by block (true), or needs the whole recording (false: its stage gives
-    /// everything when flushed, and a live pipeline refuses it).
+    /// Whether it runs on sound as it comes, block by block (an <see cref="ILiveAudioProcessor"/>), or needs the whole
+    /// recording (an <see cref="IRecordingAudioProcessor"/>: its stage gives everything when flushed, and a live pipeline
+    /// refuses it).
     /// </summary>
-    bool Live { get; }
+    bool Live => this is ILiveAudioProcessor;
 
-    /// <summary>A short name for people ("High-pass filter"); <see cref="Name"/> unless the processor gives one.</summary>
+    /// <summary>A short name for people ("High-pass filter"); <see cref="IKind.Name"/> unless the processor gives one.</summary>
     string Label => Name;
 
     /// <summary>
@@ -53,7 +50,7 @@ public interface IAudioProcessor
     IReadOnlyList<AudioProcessorParameter> Parameters => [];
 
     /// <summary>The option keys it takes besides its value: by default, those of <see cref="Parameters"/>.</summary>
-    IReadOnlyCollection<string> Keys => [.. Parameters.Where(p => p.Key.Length > 0).Select(p => p.Key)];
+    IReadOnlySet<string> IConfigurableKind.Keys => new OptionKeys(Parameters.Where(p => p.Key.Length > 0).Select(p => p.Key));
 
     /// <summary>For a whole-recording processor, the live one to use on live sound instead (named when a live pipeline refuses it); null when there is none.</summary>
     string? LiveAlternative => null;
@@ -66,31 +63,52 @@ public interface IAudioProcessor
 
     /// <summary>
     /// A stage running <paramref name="step"/> over blocks of <paramref name="channels"/> channels at
-    /// <paramref name="sampleRate"/>. A live processor implements it; a whole-recording one's default keeps the blocks
-    /// and runs <see cref="Apply"/> over them when flushed.
+    /// <paramref name="sampleRate"/>. A live processor implements it (<see cref="ILiveAudioProcessor"/>); a
+    /// whole-recording one's keeps the blocks and runs <see cref="Apply"/> over them when flushed.
     /// </summary>
     /// <exception cref="ArgumentException">The step cannot run at that rate or channel count (a cutoff over half the rate).</exception>
-    IAudioStage Open(AudioProcessorStep step, int sampleRate, int channels) => Live
-        ? throw new NotSupportedException($"The audio processor {Name} is live but does not implement Open.")
-        : new BufferedStage(this, step, sampleRate, channels);
+    IAudioStage Open(AudioProcessorStep step, int sampleRate, int channels) => this is IRecordingAudioProcessor
+        ? new BufferedStage(this, step, sampleRate, channels)
+        : throw new NotSupportedException(AudioProcessors.Neither(Name));
 
     /// <summary>
     /// The whole recording after <paramref name="step"/>, aligned with it (a stage's <see cref="IAudioStage.Latency"/>
     /// taken off, so a step that keeps the length keeps it exactly); <paramref name="audio"/> is not changed (the result
     /// is new samples, or <paramref name="audio"/> itself when nothing changes). A whole-recording processor implements
-    /// it; a live one's default runs a copy through one <see cref="Open"/>ed stage and drops its latency.
+    /// it (<see cref="IRecordingAudioProcessor"/>); a live one's runs a copy through one <see cref="Open"/>ed stage and
+    /// drops its latency.
     /// </summary>
     AudioData Apply(AudioData audio, AudioProcessorStep step)
     {
         ArgumentNullException.ThrowIfNull(audio);
-        if (!Live)
+        if (this is not ILiveAudioProcessor)
         {
-            throw new NotSupportedException($"The audio processor {Name} needs the whole recording but does not implement Apply.");
+            throw new NotSupportedException(AudioProcessors.Neither(Name));
         }
 
         using var stage = Open(step, audio.SampleRate, audio.Channels);
         return AudioStages.Run(stage, AudioStages.Copy(audio), stage.Latency);
     }
+}
+
+/// <summary>
+/// An audio processor that runs on sound as it comes, block by block (<see cref="IAudioProcessor.Live"/>): it implements
+/// <see cref="IAudioProcessor.Open"/>, and a whole recording runs through one of its stages.
+/// </summary>
+public interface ILiveAudioProcessor : IAudioProcessor
+{
+    /// <inheritdoc cref="IAudioProcessor.Open"/>
+    abstract IAudioStage IAudioProcessor.Open(AudioProcessorStep step, int sampleRate, int channels);
+}
+
+/// <summary>
+/// An audio processor that needs the whole recording before it can start: it implements <see cref="IAudioProcessor.Apply"/>,
+/// and its stage keeps the blocks and gives the result when flushed (a live pipeline refuses it).
+/// </summary>
+public interface IRecordingAudioProcessor : IAudioProcessor
+{
+    /// <inheritdoc cref="IAudioProcessor.Apply"/>
+    abstract AudioData IAudioProcessor.Apply(AudioData audio, AudioProcessorStep step);
 }
 
 /// <summary>
@@ -428,16 +446,16 @@ public static class AudioProcessors
     /// <summary>The speech level set, the peak kept under a ceiling (whole recording).</summary>
     public const string Normalize = "normalize";
 
-    private static readonly SlotTable<string, IAudioProcessor> Table = BuiltIn();
+    private static readonly KindTable<IAudioProcessor> Table = BuiltIn();
 
-    private static SlotTable<string, IAudioProcessor> BuiltIn()
+    private static KindTable<IAudioProcessor> BuiltIn()
     {
-        var table = new SlotTable<string, IAudioProcessor>(nameof(AudioProcessors), comparer: StringComparer.OrdinalIgnoreCase,
+        var table = new KindTable<IAudioProcessor>(nameof(AudioProcessors), "Audio processor", "add one with AudioProcessors.Register", comparer: StringComparer.OrdinalIgnoreCase,
             unguarded: "a processor's stage keeps its state between blocks, so another cannot stand in for one block unnoticed");
-        table.RegisterDefault(HighPass, new HighPassProcessor());
-        table.RegisterDefault(Denoise, new DenoiseProcessor());
-        table.RegisterDefault(Trim, new TrimProcessor());
-        table.RegisterDefault(Normalize, new NormalizeProcessor());
+        table.RegisterDefault(new HighPassProcessor());
+        table.RegisterDefault(new DenoiseProcessor());
+        table.RegisterDefault(new TrimProcessor());
+        table.RegisterDefault(new NormalizeProcessor());
         FilterProcessors.RegisterDefaults(table);
         DynamicsProcessors.RegisterDefaults(table);
         RepairProcessors.RegisterDefaults(table);
@@ -456,21 +474,25 @@ public static class AudioProcessors
             throw new ArgumentException($"An audio processor's name has no ',', '=' or space ('{processor.Name}').", nameof(processor));
         }
 
-        Table.Register(processor.Name, processor, System.Reflection.Assembly.GetCallingAssembly());
+        Table.Register(processor, System.Reflection.Assembly.GetCallingAssembly());
     }
+
+    // The refusal of a processor that is neither live nor whole-recording.
+    internal static string Neither(string name) =>
+        $"The audio processor {name} implements neither ILiveAudioProcessor (Open) nor IRecordingAudioProcessor (Apply): it runs neither on blocks nor on a whole recording.";
 
     /// <summary>Removes the app's processor <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Table.Unregister(name);
 
     /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
+    public static IReadOnlyCollection<string> Names => Table.Names;
 
     /// <summary>The processor registered as <paramref name="name"/>, or null.</summary>
-    public static IAudioProcessor? Find(string name) => Table.Find(name);
+    public static IAudioProcessor? Find(ReadOnlySpan<char> name) => Table.Find(name);
 
     /// <summary>The processor registered as <paramref name="name"/>.</summary>
     /// <exception cref="ArgumentException">None is: the message names the registered ones.</exception>
-    public static IAudioProcessor Get(string name) => Table.Find(name)
+    public static IAudioProcessor Get(ReadOnlySpan<char> name) => Table.Find(name)
         ?? throw new ArgumentException($"Unknown audio processor '{name}' (registered: {string.Join(", ", Names)}); add one with AudioProcessors.Register.");
 
     /// <summary>The library's processor <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
@@ -480,5 +502,5 @@ public static class AudioProcessors
     public static string? Origin(string name) => Table.Origin(name);
 
     /// <summary>Each registered processor as "name: summary" (with "(whole recording)" for those that are not live), one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(p => $"{p.Name}: {p.Summary}{(p.Live ? "" : " (whole recording)")}"));
+    public static string Describe() => string.Join("\n", Table.Kinds.Select(p => $"{p.Name}: {p.Summary}{(p.Live ? "" : " (whole recording)")}"));
 }

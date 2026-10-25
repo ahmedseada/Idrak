@@ -6,34 +6,34 @@ public static class Idrak.Reinforcement.Plugins.CSharp.CSharpCodingPlugin
   public static void Register()
   public static void Unregister()
 
-public sealed class Idrak.Reinforcement.Plugins.CSharp.CSharpEnvironmentVariant : Idrak.Reinforcement.Plugins.Coding.Abstractions.CodingEnvironmentVariant
+public sealed class Idrak.Reinforcement.Plugins.CSharp.CSharpEnvironmentVariant : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Reinforcement.Plugins.Coding.Abstractions.ICodingEnvironmentVariant, Idrak.Reinforcement.Plugins.Coding.Abstractions.IVariantOptions, Idrak.Reinforcement.Plugins.Coding.Abstractions.IVerificationHooks
   public CSharpEnvironmentVariant()
+  public Idrak.Reinforcement.Plugins.Coding.CodingTask Task(Idrak.Reinforcement.Plugins.Coding.CodingTask task, Idrak.Text.Abstractions.ICodingLanguage language, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Defaults()
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Variables(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+  public System.Collections.Generic.IReadOnlySet<string> Keys { get; }
   public const string ErrorLog = "msbuild1.log"
   public const string KindName = "csharp"
   public const string PackagesVariable = "IDRAK_CSHARP_PACKAGES"
   public const string ProtectVariable = "IDRAK_CSHARP_PROTECT"
   public const string ResultsFolder = ".idrak-results"
   public const string WarningLog = "msbuild2.log"
-  public override Idrak.Reinforcement.Plugins.Coding.CodingTask Task(Idrak.Reinforcement.Plugins.Coding.CodingTask task, Idrak.Text.Abstractions.ICodingLanguage language, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
-  public override System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
-  public override System.Collections.Generic.IReadOnlyDictionary<string, string> Defaults()
-  public override System.Collections.Generic.IReadOnlyDictionary<string, string> Variables(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
-  public override string Language { get; }
-  public override string Name { get; }
-  public override string Summary { get; }
-  public override void AfterVerify(Idrak.Reinforcement.Plugins.Coding.CodingTask task, string workspace, Idrak.Reinforcement.Plugins.Coding.CodingVerification verification, System.Collections.Generic.IDictionary<string, string> info, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
-  public override void BeforeVerify(string workspace, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
-  public override void Check(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
   public static System.Collections.Generic.IReadOnlyList<string> DefaultProtect { get; }
   public static System.Collections.Generic.IReadOnlyList<string> Protect { get; }
   public static string? PackageFolder(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+  public string Language { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public void AfterVerify(Idrak.Reinforcement.Plugins.Coding.CodingTask task, string workspace, Idrak.Reinforcement.Plugins.Coding.CodingVerification verification, Idrak.Abstraction.Reinforcement.EpisodeInfo info, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+  public void BeforeVerify(string workspace, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+  public void Check(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
 
 public static class Idrak.Reinforcement.Plugins.CSharp.CSharpInfo
-  public const string BuildErrors = "csharp_build_errors"
-  public const string BuildPassed = "csharp_build_passed"
-  public const string BuildWarnings = "csharp_build_warnings"
-  public const string TestsPassed = "csharp_tests_passed"
-  public const string TestsTotal = "csharp_tests_total"
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<bool> BuildPassed { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<int> BuildErrors { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<int> BuildWarnings { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<int> TestsPassed { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<int> TestsTotal { get; }
 
 public static class Idrak.Reinforcement.Plugins.CSharp.CSharpResults
   public static (int, int) Tests(string folder)
@@ -67,6 +67,7 @@ public sealed record Idrak.Reinforcement.Plugins.Classic.BanditOptions : System.
   public int MeansSeed { get; init; }
   public int Pulls { get; init; }
   public static Idrak.Abstraction.OptionKeys Keys { get; }
+  public static Idrak.Abstraction.OptionSchema Schema { get; }
   public static Idrak.Reinforcement.Plugins.Classic.BanditOptions FromOptions(System.Collections.Generic.IReadOnlyDictionary<string, string>? options)
 
 public sealed class Idrak.Reinforcement.Plugins.Classic.CartPoleEnvironment : Idrak.Abstraction.Reinforcement.IEnvironment, Idrak.Abstraction.Reinforcement.IEnvironment<float[], int>, System.IDisposable
@@ -90,6 +91,7 @@ public sealed record Idrak.Reinforcement.Plugins.Classic.CartPoleOptions : Syste
   public double ResetLow { get; init; }
   public int MaxSteps { get; init; }
   public static Idrak.Abstraction.OptionKeys Keys { get; }
+  public static Idrak.Abstraction.OptionSchema Schema { get; }
   public static Idrak.Reinforcement.Plugins.Classic.CartPoleOptions FromOptions(System.Collections.Generic.IReadOnlyDictionary<string, string>? options)
 
 public static class Idrak.Reinforcement.Plugins.Classic.ClassicControlPlugin
@@ -124,6 +126,7 @@ public sealed record Idrak.Reinforcement.Plugins.Classic.MountainCarOptions : Sy
   public double ResetLow { get; init; }
   public int MaxSteps { get; init; }
   public static Idrak.Abstraction.OptionKeys Keys { get; }
+  public static Idrak.Abstraction.OptionSchema Schema { get; }
   public static Idrak.Reinforcement.Plugins.Classic.MountainCarOptions FromOptions(System.Collections.Generic.IReadOnlyDictionary<string, string>? options)
 
 public sealed class Idrak.Reinforcement.Plugins.Classic.PendulumEnvironment : Idrak.Abstraction.Reinforcement.IEnvironment, Idrak.Abstraction.Reinforcement.IEnvironment<float[], float[]>, System.IDisposable
@@ -147,20 +150,25 @@ public sealed record Idrak.Reinforcement.Plugins.Classic.PendulumOptions : Syste
   public double ResetSpeed { get; init; }
   public int MaxSteps { get; init; }
   public static Idrak.Abstraction.OptionKeys Keys { get; }
+  public static Idrak.Abstraction.OptionSchema Schema { get; }
   public static Idrak.Reinforcement.Plugins.Classic.PendulumOptions FromOptions(System.Collections.Generic.IReadOnlyDictionary<string, string>? options)
 
-public abstract class Idrak.Reinforcement.Plugins.Coding.Abstractions.CodingEnvironmentVariant
-  protected CodingEnvironmentVariant()
-  public abstract string Language { get; }
-  public abstract string Name { get; }
-  public abstract string Summary { get; }
-  public virtual Idrak.Reinforcement.Plugins.Coding.CodingTask Task(Idrak.Reinforcement.Plugins.Coding.CodingTask task, Idrak.Text.Abstractions.ICodingLanguage language, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
-  public virtual System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
-  public virtual System.Collections.Generic.IReadOnlyDictionary<string, string> Defaults()
-  public virtual System.Collections.Generic.IReadOnlyDictionary<string, string> Variables(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
-  public virtual void AfterVerify(Idrak.Reinforcement.Plugins.Coding.CodingTask task, string workspace, Idrak.Reinforcement.Plugins.Coding.CodingVerification verification, System.Collections.Generic.IDictionary<string, string> info, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
-  public virtual void BeforeVerify(string workspace, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
-  public virtual void Check(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+public static class Idrak.Reinforcement.Plugins.Coding.Abstractions.CodingEnvironmentVariants
+  public static Idrak.Reinforcement.Plugins.Coding.CodingTask WithLanguageDefaults(Idrak.Reinforcement.Plugins.Coding.CodingTask task, Idrak.Text.Abstractions.ICodingLanguage language)
+  public static System.Collections.Generic.IReadOnlyDictionary<string, string> NoOptions { get; }
+
+public interface Idrak.Reinforcement.Plugins.Coding.Abstractions.ICodingEnvironmentVariant : Idrak.Abstraction.IKind
+  public (default) Idrak.Reinforcement.Plugins.Coding.CodingTask Task(Idrak.Reinforcement.Plugins.Coding.CodingTask task, Idrak.Text.Abstractions.ICodingLanguage language, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+  public (default) System.Collections.Generic.IReadOnlyDictionary<string, string> Defaults()
+  public string Language { get; }
+
+public interface Idrak.Reinforcement.Plugins.Coding.Abstractions.IVariantOptions : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Reinforcement.Plugins.Coding.Abstractions.ICodingEnvironmentVariant
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Variables(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+  public void Check(System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+
+public interface Idrak.Reinforcement.Plugins.Coding.Abstractions.IVerificationHooks : Idrak.Abstraction.IKind, Idrak.Reinforcement.Plugins.Coding.Abstractions.ICodingEnvironmentVariant
+  public void AfterVerify(Idrak.Reinforcement.Plugins.Coding.CodingTask task, string workspace, Idrak.Reinforcement.Plugins.Coding.CodingVerification verification, Idrak.Abstraction.Reinforcement.EpisodeInfo info, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+  public void BeforeVerify(string workspace, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
 
 public sealed class Idrak.Reinforcement.Plugins.Coding.CodingEnvironment : Idrak.Abstraction.Reinforcement.IEnvironment, Idrak.Abstraction.Reinforcement.IEnvironment<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>, System.IDisposable
   public Idrak.Abstraction.Generation.ChatObservation Reset(int seed)
@@ -173,12 +181,12 @@ public sealed class Idrak.Reinforcement.Plugins.Coding.CodingEnvironment : Idrak
   public string? Workspace { get; }
   public void Dispose()
 
-public sealed class Idrak.Reinforcement.Plugins.Coding.CodingEnvironmentKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Reinforcement.EnvironmentRequest, Idrak.Abstraction.Reinforcement.IEnvironment>, Idrak.Abstraction.Reinforcement.IEnvironmentKind
+public sealed class Idrak.Reinforcement.Plugins.Coding.CodingEnvironmentKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Reinforcement.EnvironmentRequest, Idrak.Abstraction.Reinforcement.IEnvironment>, Idrak.Abstraction.Reinforcement.IEnvironmentKind, Idrak.Abstraction.Reinforcement.ISuiteEnvironmentKind, Idrak.Text.Reinforcement.Abstractions.IRewardedEnvironmentKind
   public CodingEnvironmentKind()
-  public CodingEnvironmentKind(Idrak.Reinforcement.Plugins.Coding.Abstractions.CodingEnvironmentVariant variant, System.Collections.Generic.IReadOnlyList<Idrak.Reinforcement.Plugins.Coding.CodingTask>? tasks = null)
+  public CodingEnvironmentKind(Idrak.Reinforcement.Plugins.Coding.Abstractions.ICodingEnvironmentVariant variant, System.Collections.Generic.IReadOnlyList<Idrak.Reinforcement.Plugins.Coding.CodingTask>? tasks = null)
   public CodingEnvironmentKind(System.Collections.Generic.IReadOnlyList<Idrak.Reinforcement.Plugins.Coding.CodingTask> tasks, string name = "coding")
   public Idrak.Abstraction.Reinforcement.IEnvironment Create(Idrak.Abstraction.Reinforcement.EnvironmentRequest request)
-  public Idrak.Reinforcement.Plugins.Coding.Abstractions.CodingEnvironmentVariant? Variant { get; }
+  public Idrak.Reinforcement.Plugins.Coding.Abstractions.ICodingEnvironmentVariant? Variant { get; }
   public System.Collections.Generic.IReadOnlySet<string> Keys { get; }
   public System.Type ActionType { get; }
   public System.Type ObservationType { get; }
@@ -186,20 +194,25 @@ public sealed class Idrak.Reinforcement.Plugins.Coding.CodingEnvironmentKind : I
   public const string KindName = "coding"
   public const string WorkspacesVariable = "IDRAK_RL_WORKSPACES"
   public string Name { get; }
+  public string RewardKey { get; }
   public string Summary { get; }
+  public string? RoundsKey { get; }
+  public string? SandboxKey { get; }
+  public string? SuiteKey { get; }
+  public string? ThinkKey { get; }
 
 public static class Idrak.Reinforcement.Plugins.Coding.CodingInfo
-  public const string BrokenTasks = "broken_tasks"
-  public const string Outcome = "outcome"
-  public const string Refused = "refused"
-  public const string Rounds = "rounds"
-  public const string Task = "task"
-  public const string TestEdits = "test_edits"
-  public const string ToolCalls = "tool_calls"
-  public const string ToolErrors = "tool_errors"
-  public const string VerifyCommands = "verify_commands"
-  public const string VerifyPassed = "verify_passed"
-  public const string VerifyPassedCommands = "verify_passed_commands"
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<bool> VerifyPassed { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<int> Rounds { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<int> ToolCalls { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<int> ToolErrors { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<int> VerifyCommands { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<int> VerifyPassedCommands { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<string> BrokenTasks { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<string> Outcome { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<string> Refused { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<string> Task { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<string> TestEdits { get; }
 
 public enum Idrak.Reinforcement.Plugins.Coding.CodingOutcome : int
   Error = 4

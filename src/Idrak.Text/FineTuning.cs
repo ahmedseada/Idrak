@@ -779,8 +779,12 @@ public sealed record FineTuningOptions
     /// </summary>
     public bool Dora { get; init; }
 
-    /// <summary>Layers that get adapters, by name: q, k, v, o (attention), gate, up, down (feed-forward), head.</summary>
-    public IReadOnlyList<string> Targets { get; init; } = ["q", "k", "v", "o", "gate", "up", "down"];
+    /// <summary>
+    /// Layers that get adapters, by name: q, k, v, o (attention), gate, up, down (feed-forward), head. Null (the default):
+    /// the model's own (<see cref="PretrainedModel.NetworkParts"/>' adapter targets: q, k, v, o, gate, up and down for the
+    /// library's decoders).
+    /// </summary>
+    public IReadOnlyList<string>? Targets { get; init; }
 
     /// <summary>Peak learning rate (reached after the warm-up, then cosine decay to <see cref="MinLearningRate"/>).</summary>
     public float LearningRate { get; init; } = 2e-4f;
@@ -942,16 +946,16 @@ public sealed record FineTuningOptions
     /// Evaluation losses are this loss over the whole evaluation set. With a <see cref="Teacher"/> and no loss,
     /// <see cref="FineTuningLosses.Distillation"/> with its defaults.
     /// </summary>
-    public FineTuningLoss? Loss { get; init; }
+    public IFineTuningLoss? Loss { get; init; }
 
     /// <summary>
     /// The teacher for knowledge distillation (<see cref="DistillationTeachers.FromModel(PretrainedModel, int, int)"/> or
     /// <see cref="DistillationTeachers.FromFile"/>), whose distributions a loss reads through
     /// <see cref="FineTuningLossInput.TeacherDivergence(float)"/> (see <see cref="FineTuningLosses.Distillation"/>). It must share the
-    /// student's vocabulary (<see cref="DistillationTeacher.Check"/>, which training runs first). Null: no teacher. Not
+    /// student's vocabulary (<see cref="IDistillationTeacher.Check"/>, which training runs first). Null: no teacher. Not
     /// disposed by training.
     /// </summary>
-    public DistillationTeacher? Teacher { get; init; }
+    public IDistillationTeacher? Teacher { get; init; }
 
     /// <summary>
     /// The image side for sequences with images (<see cref="TrainingSequence.Images"/>, a vision-language model): the
@@ -1177,7 +1181,7 @@ public static class FineTuner
     }
 
     // The loss of one's own (or distillation, with a teacher and no loss), or null for the fused token cross-entropy. A
-    // teacher is checked against the model first.
+    // teacher is checked against the model first; a loss that needs pairs or a teacher it is not given is refused here.
     internal static CustomLoss? Custom(PretrainedModel model, FineTuningOptions options, bool pairs)
     {
         options.Teacher?.Check(model.Tokenizer ?? throw new InvalidOperationException("The student has no tokenizer: its vocabulary cannot be compared with the teacher's."));
@@ -1527,8 +1531,8 @@ public static class FineTuner
         // An optimizer of one's own (FineTuningOptions.Optimizer): the recorded backward pass writes into the gradient
         // buffers the parameters had when it was recorded, so they must stay the parameters' between steps. Checked before
         // recording (each trained parameter still has its gradient after an update) and before every replay (the same
-        // buffers); the built-in AdamW keeps them by construction.
-        private readonly bool _checkGradients = options.Optimizer is not null;
+        // buffers); an optimizer that updates in place (IInPlaceOptimizer: the built-in AdamW) keeps them by construction.
+        private readonly bool _checkGradients = options.Optimizer is not null && optimizer is not IInPlaceOptimizer;
         private Tensor?[] _gradients = [];
         private readonly bool _automatic = options.Checkpointing is null && !ComputeResources.OffloadToHostMemory;
         private FineTuningOptions _options = options with { Checkpointing = options.Checkpointing ?? ComputeResources.OffloadToHostMemory };
@@ -1963,9 +1967,15 @@ public static class FineTuner
 
         public void Dispose() => DropGraphs();
 
-        // Whether the optimizer updates the parameters where they are: not the CPU update, which releases the gradients.
-        private static bool Recordable(Optimizer optimizer) =>
-            optimizer is not HostOptimizer && (optimizer is not GroupedOptimizer grouped || grouped.Groups.All(Recordable));
+        // Whether the optimizer updates the parameters where they are: one that says so (IInPlaceOptimizer), a group of
+        // such, or one of one's own that does not bring the gradients to the host (IHostGradients: the CPU update, which
+        // releases them); the gradient buffers of one that does not say so are checked before recording and replaying.
+        private static bool Recordable(IOptimizer optimizer) => optimizer switch
+        {
+            IInPlaceOptimizer => true,
+            GroupedOptimizer grouped => grouped.Groups.All(Recordable),
+            _ => optimizer is not IHostGradients,
+        };
     }
 
     // FP8 copies of the frozen weights of the layers with adapters (options.Float8), kept only when a sample's loss with
@@ -2306,9 +2316,22 @@ public static class FineTuner
     // are never stored. Reference log-probabilities (adapters disabled) are kept per sequence for the whole run.
     // A teacher's divergences (FineTuningLossInput.TeacherDivergence) go the same way: their values first, without
     // gradients, then the divergence over the same rows weighted by their gradient g (d loss / d θ = Σ_t g_t · d KL_t / d θ).
-    internal sealed class CustomLoss(FineTuningLoss loss, bool pairs, DistillationTeacher? teacher = null)
+    internal sealed class CustomLoss(IFineTuningLoss loss, bool pairs, IDistillationTeacher? teacher = null)
     {
         private readonly Dictionary<TrainingSequence, float[]> _reference = [];
+        private readonly IFineTuningLoss _loss = Checked(loss, pairs, teacher);   // what the loss needs, checked once before any step
+
+        // The loss, refused when it needs pairs or a teacher it is not given.
+        private static IFineTuningLoss Checked(IFineTuningLoss loss, bool pairs, IDistillationTeacher? teacher)
+        {
+            ArgumentNullException.ThrowIfNull(loss);
+            if (loss.NeedsPairs && !pairs)
+            {
+                throw new InvalidOperationException(FineTuningLosses.NeedsPairsMessage(loss.Name));
+            }
+
+            return !loss.NeedsTeacher || teacher is not null ? loss : throw new InvalidOperationException(FineTuningLossInput.NoTeacher);
+        }
 
         public Tensor BatchLoss(PretrainedModel model, Tensor tokens, Tensor hidden, Linear head, IReadOnlyList<TrainingSequence> sequences, BatchData data,
             int stepTokens, int stepSequences, int chunkRows, StepImages? images = null)
@@ -2317,7 +2340,7 @@ public static class FineTuner
             var values = Losses.TokenLogProbabilities(hidden, h => head.Forward(h), data.Trained, targets, chunkRows);
             bool training = Autograd.IsEnabled;
             var probabilities = Tensor.From(values, [values.Length], Device.Cpu, requiresGrad: training);
-            TeacherDistributions? distributions = null;
+            ITeacherDistributions? distributions = null;
             Func<int, int, Tensor> Teacher(float temperature) => (start, count) =>
             {
                 distributions ??= teacher!.Distributions(sequences);
@@ -2331,7 +2354,7 @@ public static class FineTuner
                         TeacherDivergences.Rule(kind, beta));
                 var input = new FineTuningLossInput(probabilities, [.. sequences.Select(s => s.TrainedTokens)], sequences,
                     () => Reference(model, tokens, sequences, data, targets, chunkRows, images), pairs, stepTokens, stepSequences, divergence);
-                var value = loss(input) ?? throw new InvalidOperationException("FineTuningOptions.Loss returned no tensor.");
+                var value = _loss.Compute(input) ?? throw new InvalidOperationException("FineTuningOptions.Loss returned no tensor.");
                 if (value.Size != 1)
                 {
                     throw new InvalidOperationException($"FineTuningOptions.Loss must return one value, not {Tensor.FormatShape(value.Shape)}.");

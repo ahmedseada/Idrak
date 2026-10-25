@@ -43,26 +43,19 @@ public readonly record struct TuningScore(double Numerator, double Denominator)
 /// <summary>
 /// A score of generated text against its reference, for a fine-tune's evaluation set (an answer generated every few steps
 /// and compared with the expected one): character or word error rate, exact match, or a metric of one's own. Registered in
-/// <see cref="TuningMetrics"/> under <see cref="Name"/>. Thread-safe: one metric scores many answers at once.
+/// <see cref="TuningMetrics"/> under its <see cref="IKind.Name"/> ("cer", "wer", "f1"), with the option keys
+/// <see cref="Score"/> takes (<see cref="IConfigurableKind.Keys"/>; any other is refused, naming these). Thread-safe: one
+/// metric scores many answers at once.
 /// </summary>
-public interface ITuningMetric
+public interface ITuningMetric : IConfigurableKind
 {
-    /// <summary>The metric's name in <see cref="TuningMetrics"/> ("cer", "wer", "f1").</summary>
-    string Name { get; }
-
-    /// <summary>One line for help and listings.</summary>
-    string Summary { get; }
-
     /// <summary>Whether a lower <see cref="TuningScore.Value"/> is better (an error rate), or a higher one (a match rate).</summary>
     bool LowerIsBetter { get; }
-
-    /// <summary>The option keys <see cref="Score"/> takes (none by default); any other is refused, naming these.</summary>
-    IReadOnlyCollection<string> Keys { get; }
 
     /// <summary>The score of <paramref name="answer"/> against <paramref name="reference"/>.</summary>
     /// <param name="answer">The generated text.</param>
     /// <param name="reference">The expected text.</param>
-    /// <param name="options">The metric's options by key (<see cref="Keys"/>), values as text; null for its defaults.</param>
+    /// <param name="options">The metric's options by key (<see cref="IConfigurableKind.Keys"/>), values as text; null for its defaults.</param>
     /// <exception cref="ArgumentException">An option the metric does not take, or a bad value.</exception>
     TuningScore Score(string answer, string reference, IReadOnlyDictionary<string, string>? options = null);
 }
@@ -128,7 +121,7 @@ public static class TuningMetrics
         return table;
     }
 
-    /// <summary>Registers <paramref name="metric"/> under its <see cref="ITuningMetric.Name"/> (over the library's of that name, which stays behind it).</summary>
+    /// <summary>Registers <paramref name="metric"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(ITuningMetric metric)
     {
@@ -361,7 +354,7 @@ public static class TuningMetrics
 
         public bool LowerIsBetter => app.LowerIsBetter;
 
-        public IReadOnlyCollection<string> Keys => app.Keys;
+        public IReadOnlySet<string> Keys => app.Keys;
 
         public TuningScore Score(string answer, string reference, IReadOnlyDictionary<string, string>? options = null) =>
             slot.Call(() => app.Score(answer, reference, options), () => library.Score(answer, reference, options),

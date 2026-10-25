@@ -210,7 +210,7 @@ internal static partial class Tests
     {
         string root = TempFolder("tts-create");
         IdrakAudioPlugin.Register();
-        Vocoders.Register("tts-test-other-mels", _ => new OtherMelsVocoder());
+        Vocoders.Register(TestKinds.Vocoder("tts-test-other-mels", _ => new OtherMelsVocoder()));
         try
         {
             var (_, texts) = ToneSpeech(Path.Combine(root, "data"), 6, 11);

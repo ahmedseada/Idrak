@@ -85,7 +85,7 @@ public sealed class TuningAnswerScorer
     /// <summary>Whether a lower score is better (the metric's <see cref="ITuningMetric.LowerIsBetter"/>).</summary>
     public bool LowerIsBetter => _metric.LowerIsBetter;
 
-    /// <summary>The metric's options (its <see cref="ITuningMetric.Keys"/>), or null for its defaults.</summary>
+    /// <summary>The metric's options (its <see cref="IConfigurableKind.Keys"/>), or null for its defaults.</summary>
     public IReadOnlyDictionary<string, string>? MetricOptions { get; init; }
 
     /// <summary>

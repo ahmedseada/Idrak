@@ -41,7 +41,7 @@ public interface ISegmentationMetric : IVisionMetric
     void Add(SegmentationMask predicted, SegmentationMask expected);
 }
 
-/// <summary>What a metric is created with (<see cref="VisionMetrics.Create"/>); each reads what it needs.</summary>
+/// <summary>What a metric is created with (<see cref="IVisionMetricKind"/>, <see cref="VisionMetrics.Create"/>); each reads what it needs.</summary>
 public sealed record VisionMetricOptions
 {
     /// <summary>The number of classes (segmentation: required; detection: 0 to take the classes from the images).</summary>
@@ -57,8 +57,17 @@ public sealed record VisionMetricOptions
     public IReadOnlyList<string>? ClassNames { get; init; }
 }
 
-/// <summary>Creates a metric with its options.</summary>
-public delegate IVisionMetric VisionMetricFactory(VisionMetricOptions options);
+/// <summary>
+/// A kind of vision metric, registered in <see cref="VisionMetrics"/> under its <see cref="IKind.Name"/>: what it measures
+/// (<see cref="Task"/>, known without making one) and a new metric for its options
+/// (<see cref="IKind{TRequest, T}.Create"/>: an <see cref="IDetectionMetric"/> for <see cref="ImageTask.Detection"/>, an
+/// <see cref="ISegmentationMetric"/> for <see cref="ImageTask.Segmentation"/>).
+/// </summary>
+public interface IVisionMetricKind : IKind<VisionMetricOptions, IVisionMetric>
+{
+    /// <summary>What its metrics measure: <see cref="ImageTask.Detection"/> or <see cref="ImageTask.Segmentation"/>.</summary>
+    ImageTask Task { get; }
+}
 
 /// <summary>
 /// The detection and segmentation metrics, by name. The library's: "coco" (COCO's mean average precision: 101 recall
@@ -70,41 +79,37 @@ public delegate IVisionMetric VisionMetricFactory(VisionMetricOptions options);
 /// </summary>
 public static class VisionMetrics
 {
-    private static readonly SlotTable<string, VisionMetricFactory> Registry = BuiltIn();
+    private static readonly KindTable<IVisionMetricKind> Registry = BuiltIn();
 
-    private static SlotTable<string, VisionMetricFactory> BuiltIn()
+    private static KindTable<IVisionMetricKind> BuiltIn()
     {
-        var table = new SlotTable<string, VisionMetricFactory>(nameof(VisionMetrics), Guard, StringComparer.OrdinalIgnoreCase);
-        table.RegisterDefault("coco", o => new CocoAveragePrecision(o));
-        table.RegisterDefault("voc", o => new VocAveragePrecision(o, elevenPoints: false));
-        table.RegisterDefault("voc07", o => new VocAveragePrecision(o, elevenPoints: true));
-        table.RegisterDefault("miou", o => new SegmentationMetrics(o.Classes > 0 ? o.Classes : throw new ArgumentException("A segmentation metric needs the number of classes (VisionMetricOptions.Classes)."),
-            o.IgnoreClass, o.ClassNames));
+        var table = new KindTable<IVisionMetricKind>(nameof(VisionMetrics), "Vision metric", "add it with VisionMetrics.Register", Guard, StringComparer.OrdinalIgnoreCase);
+        table.RegisterDefault(new Kind("coco", "COCO's mean average precision (IoU 0.5 to 0.95), AP50, AP75, by size, AR100", ImageTask.Detection, o => new CocoAveragePrecision(o)));
+        table.RegisterDefault(new Kind("voc", "Pascal VOC's AP at IoU 0.5, every recall point", ImageTask.Detection, o => new VocAveragePrecision(o, elevenPoints: false)));
+        table.RegisterDefault(new Kind("voc07", "Pascal VOC 2007's AP at IoU 0.5, 11 recall points", ImageTask.Detection, o => new VocAveragePrecision(o, elevenPoints: true)));
+        table.RegisterDefault(new Kind("miou", "each class's IoU and their mean, pixel and class accuracy, frequency-weighted IoU", ImageTask.Segmentation,
+            o => new SegmentationMetrics(o.Classes > 0 ? o.Classes : throw new ArgumentException("A segmentation metric needs the number of classes (VisionMetricOptions.Classes)."),
+                o.IgnoreClass, o.ClassNames)));
         return table;
     }
 
-    /// <summary>Registers the metric <paramref name="name"/>; under a library name it replaces the library's, which stays behind it (see <see cref="SetPolicy"/>).</summary>
+    /// <summary>Registers <paramref name="kind"/> under its name; under a library name it replaces the library's, which stays behind it (see <see cref="SetPolicy"/>).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string name, VisionMetricFactory create)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ArgumentNullException.ThrowIfNull(create);
-        Registry.Register(name, create, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(IVisionMetricKind kind) => Registry.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's metric <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered metric names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
+    public static IReadOnlyCollection<string> Names => Registry.Names;
 
-    /// <summary>The factory of the metric <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
+    /// <summary>The metric kind <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name: the message names those that are.</exception>
-    public static VisionMetricFactory Get(string name) => Registry.TryGet(name, out var create) ? create
-        : throw new NotSupportedException($"No vision metric '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with VisionMetrics.Register.");
+    public static IVisionMetricKind Get(ReadOnlySpan<char> name) => Registry.TryGet(name, out var kind) ? kind
+        : throw new NotSupportedException($"No vision metric '{name}' is registered ({string.Join(", ", Registry.Names)}); add it with VisionMetrics.Register.");
 
-    /// <summary>The library's factory <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static VisionMetricFactory? Default(string name) => Registry.Default(name);
+    /// <summary>The library's metric kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static IVisionMetricKind? Default(string name) => Registry.Default(name);
 
     /// <summary>Who registered the metric <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
@@ -117,30 +122,52 @@ public static class VisionMetrics
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
 
     /// <summary>A new metric <paramref name="name"/>.</summary>
-    public static IVisionMetric Create(string name, VisionMetricOptions? options = null) => Get(name)(options ?? new());
+    public static IVisionMetric Create(string name, VisionMetricOptions? options = null) => Get(name).Create(options ?? new());
 
     /// <summary>A new detection metric <paramref name="name"/>.</summary>
-    /// <exception cref="ArgumentException">The metric is not a detection metric.</exception>
-    public static IDetectionMetric Detection(string name, VisionMetricOptions? options = null) =>
-        Create(name, options) as IDetectionMetric ?? throw new ArgumentException($"The vision metric '{name}' does not measure detections.");
+    /// <exception cref="ArgumentException">The metric is not a detection metric (its kind says so before one is made).</exception>
+    public static IDetectionMetric Detection(string name, VisionMetricOptions? options = null)
+    {
+        var kind = Get(name);
+        return kind.Task == ImageTask.Detection && kind.Create(options ?? new()) is IDetectionMetric metric ? metric
+            : throw new ArgumentException($"The vision metric '{name}' does not measure detections.");
+    }
 
     /// <summary>A new segmentation metric <paramref name="name"/>.</summary>
-    /// <exception cref="ArgumentException">The metric is not a segmentation metric.</exception>
-    public static ISegmentationMetric Segmentation(string name, VisionMetricOptions options) =>
-        Create(name, options) as ISegmentationMetric ?? throw new ArgumentException($"The vision metric '{name}' does not measure segmentation masks.");
+    /// <exception cref="ArgumentException">The metric is not a segmentation metric (its kind says so before one is made).</exception>
+    public static ISegmentationMetric Segmentation(string name, VisionMetricOptions options)
+    {
+        var kind = Get(name);
+        return kind.Task == ImageTask.Segmentation && kind.Create(options) is ISegmentationMetric metric ? metric
+            : throw new ArgumentException($"The vision metric '{name}' does not measure segmentation masks.");
+    }
 
     // An app's metric under its policy: the library's is fed the same images, so it can answer when the app's fails
     // (FallBack) or be compared with it (Shadow).
-    private static VisionMetricFactory Guard(Slot slot, VisionMetricFactory app, VisionMetricFactory library) => options =>
+    private static IVisionMetricKind Guard(Slot slot, IVisionMetricKind app, IVisionMetricKind library) => new Kind(app.Name, app.Summary, app.Task, options =>
     {
-        var mine = app(options);
+        var mine = app.Create(options);
         return mine switch
         {
-            IDetectionMetric detection => new GuardedDetection(slot, detection, (IDetectionMetric)library(options)),
-            ISegmentationMetric segmentation => new GuardedSegmentation(slot, segmentation, (ISegmentationMetric)library(options)),
+            IDetectionMetric detection => new GuardedDetection(slot, detection, (IDetectionMetric)library.Create(options)),
+            ISegmentationMetric segmentation => new GuardedSegmentation(slot, segmentation, (ISegmentationMetric)library.Create(options)),
             _ => mine,
         };
-    };
+    });
+
+    // A metric kind as a function and its task.
+    private sealed class Kind(string name, string summary, ImageTask task, Func<VisionMetricOptions, IVisionMetric> create) : IVisionMetricKind
+    {
+        public string Name => name;
+
+        public string Summary => summary;
+
+        public ImageTask Task => task;
+
+        public IReadOnlySet<string> Keys => OptionKeys.None;
+
+        public IVisionMetric Create(VisionMetricOptions request) => create(request);
+    }
 
     private abstract class Guarded(Slot slot, IVisionMetric app, IVisionMetric library) : IVisionMetric
     {

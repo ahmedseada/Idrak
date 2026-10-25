@@ -24,16 +24,13 @@ namespace Idrak.Abstraction.Data;
 /// transform. A transform knows nothing of
 /// models: a fine-tune that wants its scans prepared a certain way is given a pipeline by the application.
 /// </summary>
-public interface IImageTransform
+/// <remarks>
+/// Its <see cref="IKind.Name"/> is what a pipeline uses (<c>contrast</c>; names compare ignoring case), its
+/// <see cref="IKind.Summary"/> one line on what it does and what its value is, and its <see cref="IConfigurableKind.Keys"/>
+/// the option keys it takes besides its value (<c>resample</c> for a resize; none for most).
+/// </remarks>
+public interface IImageTransform : IConfigurableKind
 {
-    /// <summary>The name a pipeline uses (<c>contrast</c>); names compare ignoring case.</summary>
-    string Name { get; }
-
-    /// <summary>One line on what it does and what its value is (listed with the registered transforms).</summary>
-    string Summary { get; }
-
-    /// <summary>The option keys it takes besides its value (<c>resample</c> for a resize); none for most.</summary>
-    IReadOnlyCollection<string> Keys { get; }
 
     /// <summary>Throws <see cref="ArgumentException"/> when <paramref name="step"/>'s value or options are not ones it takes (checked when a pipeline is parsed).</summary>
     void Check(ImageTransformStep step);
@@ -41,7 +38,7 @@ public interface IImageTransform
     /// <summary>The image after this step (a new image, or <paramref name="image"/> itself when nothing changes).</summary>
     ImageData Apply(ImageData image, ImageTransformStep step);
 
-    /// <summary>A short name for people ("Thicken dark strokes"); <see cref="Name"/> unless the transform gives one.</summary>
+    /// <summary>A short name for people ("Thicken dark strokes"); <see cref="IKind.Name"/> unless the transform gives one.</summary>
     string Label => Name;
 
     /// <summary>
@@ -423,7 +420,7 @@ public static class ImageTransforms
 
         public string Summary => app.Summary;
 
-        public IReadOnlyCollection<string> Keys => app.Keys;
+        public IReadOnlySet<string> Keys => app.Keys;
 
         public string Label => app.Label;
 

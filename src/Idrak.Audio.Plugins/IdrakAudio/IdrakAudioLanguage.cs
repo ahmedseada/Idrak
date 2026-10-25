@@ -99,7 +99,7 @@ public sealed class IdrakAudioProjector : Module
 /// audio marker expanded to the begin token, the soft tokens and the end token. Both train ("audio-encoder",
 /// "audio-projector"), through the library's model part ("audio") and pretraining stages.
 /// </summary>
-public sealed class IdrakAudioLanguageFamily : IAudioFamily
+public sealed class IdrakAudioLanguageFamily : ICreatableAudioFamily
 {
     /// <summary>The architecture name config.json gives; the text decoder is registered under it too.</summary>
     public const string Architecture = "IdrakAudioForConditionalGeneration";
@@ -120,7 +120,7 @@ public sealed class IdrakAudioLanguageFamily : IAudioFamily
     public string Name => Architecture;
 
     /// <inheritdoc />
-    public PretrainedAudio? Read(AudioCheckpoint checkpoint)
+    public IPretrainedAudio? Read(AudioCheckpoint checkpoint)
     {
         ArgumentNullException.ThrowIfNull(checkpoint);
         var config = checkpoint.Config;

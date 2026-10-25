@@ -1,64 +1,73 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Reinforcement;
 using Idrak.Text.Abstractions;
 
 namespace Idrak.Reinforcement.Plugins.Coding.Abstractions;
 
 /// <summary>
 /// A variant of the <c>coding</c> environment for one coding language (the C# plug-in's <c>csharp</c>): an environment
-/// kind of its own name (<see cref="CodingEnvironmentKind"/>, made with the variant) that
-/// is the coding environment with the language's defaults (its setup and verification for a task that names none, its
-/// programs and prompt lines), defaults for the coding options (<see cref="Defaults"/>: the reward, the protected files),
-/// options of its own (<see cref="Keys"/>), variables for every command, and what it reads from the workspace after
-/// verification into the episode's info (for its rewards). It copies nothing of the coding environment.
+/// kind of its own <see cref="IKind.Name"/> (<see cref="CodingEnvironmentKind"/>, made with the variant) that is the coding
+/// environment with the language's defaults (its setup and verification for a task that names none, its programs and
+/// prompt lines) and defaults for the coding options (<see cref="Defaults"/>: the reward, the protected files). A variant
+/// with options of its own implements <see cref="IVariantOptions"/>; one that reads the workspace around verification
+/// into the episode's info (for its rewards) implements <see cref="IVerificationHooks"/>. It copies nothing of the coding
+/// environment.
 /// </summary>
-public abstract class CodingEnvironmentVariant
+public interface ICodingEnvironmentVariant : IKind
 {
-    /// <summary>The environment kind's name (in <c>EnvironmentKinds</c>).</summary>
-    public abstract string Name { get; }
-
-    /// <summary>One line on the kind (its <c>IKind.Summary</c>).</summary>
-    public abstract string Summary { get; }
-
     /// <summary>The coding language (a <see cref="CodingLanguages"/> name) whose defaults the tasks get, and the coding option <c>languages</c> unless given.</summary>
-    public abstract string Language { get; }
-
-    /// <summary>Its own options, beside the coding environment's (none by default).</summary>
-    public virtual IReadOnlyCollection<string> Keys => [];
+    string Language { get; }
 
     /// <summary>Coding options it sets when the caller does not (for example <c>reward</c> and <c>protect</c>); none by default.</summary>
-    public virtual IReadOnlyDictionary<string, string> Defaults() => new Dictionary<string, string>(StringComparer.Ordinal);
-
-    /// <summary>Checks its own options (<paramref name="options"/>: those of <see cref="Keys"/> given), once per run; throws <see cref="ArgumentException"/> naming a bad one.</summary>
-    public virtual void Check(IReadOnlyDictionary<string, string> options)
-    {
-    }
-
-    /// <summary>Variables every command of a run gets (the agent's tools, setup and verification), over the languages' own; none by default.</summary>
-    public virtual IReadOnlyDictionary<string, string> Variables(IReadOnlyDictionary<string, string> options) => new Dictionary<string, string>(StringComparer.Ordinal);
+    IReadOnlyDictionary<string, string> Defaults() => CodingEnvironmentVariants.NoOptions;
 
     /// <summary>
     /// The task as the variant runs it: by default with <paramref name="language"/>'s setup and verification
-    /// (<see cref="ICodingLanguage.DefaultSetup"/>, <see cref="ICodingLanguage.DefaultVerify"/>) for what it does not name.
+    /// (<see cref="CodingEnvironmentVariants.WithLanguageDefaults"/>) for what it does not name.
     /// </summary>
-    public virtual CodingTask Task(CodingTask task, ICodingLanguage language, IReadOnlyDictionary<string, string> options)
+    CodingTask Task(CodingTask task, ICodingLanguage language, IReadOnlyDictionary<string, string> options) => CodingEnvironmentVariants.WithLanguageDefaults(task, language);
+}
+
+/// <summary>
+/// A coding variant with options of its own (<see cref="IConfigurableKind.Keys"/>, beside the coding environment's): its
+/// keys, the check of their values, and the variables every command of a run gets from them, declared together so they
+/// agree.
+/// </summary>
+public interface IVariantOptions : ICodingEnvironmentVariant, IConfigurableKind
+{
+    /// <summary>Checks its own options (<paramref name="options"/>: those of <see cref="IConfigurableKind.Keys"/> given), once per run; throws <see cref="ArgumentException"/> naming a bad one.</summary>
+    void Check(IReadOnlyDictionary<string, string> options);
+
+    /// <summary>Variables every command of a run gets (the agent's tools, setup and verification), over the languages' own.</summary>
+    IReadOnlyDictionary<string, string> Variables(IReadOnlyDictionary<string, string> options);
+}
+
+/// <summary>A coding variant that works on the workspace around an episode's verification, and reads what it left into the episode's info.</summary>
+public interface IVerificationHooks : ICodingEnvironmentVariant
+{
+    /// <summary>Called before an episode's verification (a refused one too), in its workspace: for example to remove result files the agent could have left.</summary>
+    void BeforeVerify(string workspace, IReadOnlyDictionary<string, string> options);
+
+    /// <summary>
+    /// Called after an episode's verification (or its refusal: <paramref name="verification"/> then did not run), before
+    /// the reward: adds what it reads from <paramref name="workspace"/> to <paramref name="info"/>, under keys its rewards read.
+    /// </summary>
+    void AfterVerify(CodingTask task, string workspace, CodingVerification verification, EpisodeInfo info, IReadOnlyDictionary<string, string> options);
+}
+
+/// <summary>What coding variants share.</summary>
+public static class CodingEnvironmentVariants
+{
+    /// <summary>No options.</summary>
+    public static IReadOnlyDictionary<string, string> NoOptions { get; } = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    /// <summary><paramref name="task"/> with <paramref name="language"/>'s setup and verification (<see cref="ICodingLanguage.DefaultSetup"/>, <see cref="ICodingLanguage.DefaultVerify"/>) for what it does not name.</summary>
+    public static CodingTask WithLanguageDefaults(CodingTask task, ICodingLanguage language)
     {
         ArgumentNullException.ThrowIfNull(task);
         ArgumentNullException.ThrowIfNull(language);
         return task with { Setup = task.Setup ?? language.DefaultSetup, Verify = task.Verify ?? language.DefaultVerify };
-    }
-
-    /// <summary>Called before an episode's verification (a refused one too), in its workspace: for example to remove result files the agent could have left. Nothing by default.</summary>
-    public virtual void BeforeVerify(string workspace, IReadOnlyDictionary<string, string> options)
-    {
-    }
-
-    /// <summary>
-    /// Called after an episode's verification (or its refusal: <paramref name="verification"/> then did not run), before
-    /// the reward: adds what it reads from <paramref name="workspace"/> to <paramref name="info"/>. Nothing by default.
-    /// </summary>
-    public virtual void AfterVerify(CodingTask task, string workspace, CodingVerification verification, IDictionary<string, string> info, IReadOnlyDictionary<string, string> options)
-    {
     }
 }

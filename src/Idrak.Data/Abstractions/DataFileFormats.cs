@@ -6,9 +6,22 @@ using System.Text.Json.Nodes;
 
 namespace Idrak.Data.Abstractions;
 
+/// <summary>What a data file format's files hold (<see cref="IDataFileFormat.Kind"/>), which decides how reading treats them.</summary>
+public enum DataFileKind
+{
+    /// <summary>Rows written as text (JSON Lines, CSV, plain text): read as rows, or as one document per file when documents are asked for.</summary>
+    Table,
+
+    /// <summary>Rows in a binary layout (Parquet): read as rows only, never as a document.</summary>
+    Binary,
+
+    /// <summary>Source code: one row per file, chosen by extension only when code is asked for.</summary>
+    Code,
+}
+
 /// <summary>
-/// A kind of data file a dataset reads (<c>DatasetRows</c> and <c>DataFiles</c> in Idrak.Data): its name, the extensions it is chosen by and how its rows are read.
-/// Register new ones with <see cref="DataFileFormats.Register"/>.
+/// A kind of data file a dataset reads (<c>DatasetRows</c> and <c>DataFiles</c> in Idrak.Data): its name, the extensions it is chosen by, what its files hold
+/// (<see cref="Kind"/>) and how its rows are read. Register new ones with <see cref="DataFileFormats.Register"/>.
 /// </summary>
 public interface IDataFileFormat
 {
@@ -17,6 +30,9 @@ public interface IDataFileFormat
 
     /// <summary>The extensions files of this format have, with the dot (".csv"); a trailing ".gz" is stripped before matching.</summary>
     IReadOnlyCollection<string> Extensions { get; }
+
+    /// <summary>What its files hold: rows as text (<see cref="DataFileKind.Table"/>, unless the format says otherwise), rows in a binary layout, or source code.</summary>
+    DataFileKind Kind => DataFileKind.Table;
 
     /// <summary>The rows of a file of this format; <paramref name="open"/> opens it (already decompressed), <paramref name="path"/> is shown in rows and errors.</summary>
     IEnumerable<JsonObject> Read(Func<Stream> open, string path, ReadOptions options);
@@ -67,19 +83,15 @@ public static class DataFileFormats
     public static string? Origin(string name) => Registry.Origin(name);
 
     /// <summary>
-    /// The format of <paramref name="path"/> by its extension (.gz stripped), or null for an unknown one. Source code
-    /// (the "Code" format) is only chosen when <paramref name="includeCode"/>.
+    /// The format of <paramref name="path"/> by its extension (.gz stripped), or null for an unknown one. A format of source
+    /// code (<see cref="DataFileKind.Code"/>) is only chosen when <paramref name="includeCode"/>.
     /// </summary>
     public static IDataFileFormat? Find(string path, bool includeCode = true)
     {
         string name = path.EndsWith(".gz", StringComparison.OrdinalIgnoreCase) ? path[..^3] : path;
         string extension = Path.GetExtension(name);
-        return ByExtension().TryGetValue(extension, out var format) && (includeCode || !Is(format, DataFormat.Code)) ? format : null;
+        return ByExtension().TryGetValue(extension, out var format) && (includeCode || format.Kind != DataFileKind.Code) ? format : null;
     }
-
-    // Whether the format has the name of a built-in (it may be a replacement registered under that name).
-    private static bool Is(IDataFileFormat format, DataFormat builtIn) =>
-        string.Equals(format.Name, builtIn.ToString(), StringComparison.OrdinalIgnoreCase);
 
     private static Dictionary<string, IDataFileFormat> ByExtension()
     {

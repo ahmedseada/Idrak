@@ -26,11 +26,15 @@ public sealed record BoxMatchOptions
 
 /// <summary>
 /// Assigns predictions (anchors, or a set predictor's outputs) to the true objects from a quality matrix
-/// [predictions, truths] (row-major, higher is better: an IoU, or a negated cost). The result holds, for each prediction,
-/// the index of its truth, <see cref="BoxMatchers.Negative"/> or <see cref="BoxMatchers.Ignored"/>. A quality of -∞
-/// forbids the pair.
+/// [predictions, truths] (row-major, higher is better: an IoU, or a negated cost), registered in <see cref="BoxMatchers"/>
+/// under its <see cref="IKind.Name"/>. The result holds, for each prediction, the index of its truth,
+/// <see cref="BoxMatchers.Negative"/> or <see cref="BoxMatchers.Ignored"/>. A quality of -∞ forbids the pair.
 /// </summary>
-public delegate int[] BoxMatcher(ReadOnlyMemory<float> quality, int predictions, int truths, BoxMatchOptions options);
+public interface IBoxMatcher : IKind
+{
+    /// <summary>The assignment of each of <paramref name="predictions"/> predictions to one of <paramref name="truths"/> truths (or none).</summary>
+    int[] Match(ReadOnlyMemory<float> quality, int predictions, int truths, BoxMatchOptions options);
+}
 
 /// <summary>
 /// The box matchers, by name. The library's: "iou-threshold" (each prediction to its best truth when the quality passes
@@ -53,38 +57,34 @@ public static class BoxMatchers
     /// <summary>"hungarian": optimal one-to-one matching.</summary>
     public const string Hungarian = "hungarian";
 
-    private static readonly SlotTable<string, BoxMatcher> Registry = BuiltIn();
+    private static readonly KindTable<IBoxMatcher> Registry = BuiltIn();
 
-    private static SlotTable<string, BoxMatcher> BuiltIn()
+    private static KindTable<IBoxMatcher> BuiltIn()
     {
-        var table = new SlotTable<string, BoxMatcher>(nameof(BoxMatchers), Guard, StringComparer.OrdinalIgnoreCase);
-        table.RegisterDefault(Threshold, BoxMatching.MatchByThreshold);
-        table.RegisterDefault(Hungarian, BoxMatching.MatchOneToOne);
+        var table = new KindTable<IBoxMatcher>(nameof(BoxMatchers), "Box matcher", "add it with BoxMatchers.Register", Guard, StringComparer.OrdinalIgnoreCase);
+        table.RegisterDefault(new Matcher(Threshold, "each prediction to its best truth above the positive threshold, a negative below the negative one, ignored between",
+            BoxMatching.MatchByThreshold));
+        table.RegisterDefault(new Matcher(Hungarian, "one to one, the largest total quality (the Hungarian algorithm)", BoxMatching.MatchOneToOne));
         return table;
     }
 
-    /// <summary>Registers the matcher <paramref name="name"/>; under a library name it replaces the library's, which stays behind it (see <see cref="SetPolicy"/>).</summary>
+    /// <summary>Registers <paramref name="matcher"/> under its name; under a library name it replaces the library's, which stays behind it (see <see cref="SetPolicy"/>).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string name, BoxMatcher matcher)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ArgumentNullException.ThrowIfNull(matcher);
-        Registry.Register(name, matcher, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(IBoxMatcher matcher) => Registry.Register(matcher, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's matcher <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered matcher names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
+    public static IReadOnlyCollection<string> Names => Registry.Names;
 
     /// <summary>The matcher <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name: the message names those that are.</exception>
-    public static BoxMatcher Get(string name) => Registry.TryGet(name, out var matcher) ? matcher
-        : throw new NotSupportedException($"No box matcher '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with BoxMatchers.Register.");
+    public static IBoxMatcher Get(ReadOnlySpan<char> name) => Registry.TryGet(name, out var matcher) ? matcher
+        : throw new NotSupportedException($"No box matcher '{name}' is registered ({string.Join(", ", Registry.Names)}); add it with BoxMatchers.Register.");
 
     /// <summary>The library's matcher <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static BoxMatcher? Default(string name) => Registry.Default(name);
+    public static IBoxMatcher? Default(string name) => Registry.Default(name);
 
     /// <summary>Who registered the matcher <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
@@ -106,7 +106,7 @@ public static class BoxMatchers
             throw new ArgumentException($"{quality.Length} qualities are not {predictions} predictions x {truths} truths.", nameof(quality));
         }
 
-        var matches = Get(name)(quality, predictions, truths, options ?? new());
+        var matches = Get(name).Match(quality, predictions, truths, options ?? new());
         if (matches.Length != predictions || matches.Any(m => m < Ignored || m >= truths))
         {
             throw new InvalidOperationException($"The box matcher '{name}' gave {matches.Length} assignments for {predictions} predictions, or one outside [{Ignored}, {truths}).");
@@ -115,6 +115,16 @@ public static class BoxMatchers
         return matches;
     }
 
-    private static BoxMatcher Guard(Slot slot, BoxMatcher app, BoxMatcher library) => (quality, predictions, truths, options) =>
-        slot.Call(() => app(quality, predictions, truths, options), () => library(quality, predictions, truths, options), (a, b) => Comparisons.Difference(a, b));
+    private static IBoxMatcher Guard(Slot slot, IBoxMatcher app, IBoxMatcher library) => new Matcher(app.Name, app.Summary, (quality, predictions, truths, options) =>
+        slot.Call(() => app.Match(quality, predictions, truths, options), () => library.Match(quality, predictions, truths, options), (a, b) => Comparisons.Difference(a, b)));
+
+    // A matcher as a function.
+    private sealed class Matcher(string name, string summary, Func<ReadOnlyMemory<float>, int, int, BoxMatchOptions, int[]> match) : IBoxMatcher
+    {
+        public string Name => name;
+
+        public string Summary => summary;
+
+        public int[] Match(ReadOnlyMemory<float> quality, int predictions, int truths, BoxMatchOptions options) => match(quality, predictions, truths, options);
+    }
 }

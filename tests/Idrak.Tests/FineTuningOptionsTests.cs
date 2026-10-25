@@ -122,7 +122,7 @@ internal static partial class Tests
 
             // A loss that is never finite: every step's update is skipped, so the adapters keep their starting values (those
             // of a run whose learning rate is 0) and none of them is NaN.
-            FineTuningLoss nan = input => FineTuningLosses.TokenCrossEntropy(input) * float.NaN;
+            var nan = TestKinds.FineTuningLoss(input => FineTuningLosses.TokenCrossEntropy.Compute(input) * float.NaN);
             var skipped = TrainTiny(folder, device, sequences, options with { Loss = nan });
             var still = TrainTiny(folder, device, sequences, options with { LearningRate = 0f, WeightDecay = 0f });
             Check(skipped.Losses.Count >= 3 && skipped.Losses.All(float.IsNaN), $"every step's loss is NaN: {string.Join(", ", skipped.Losses)}");
@@ -213,12 +213,12 @@ internal static partial class Tests
             simpo += -LogSigmoid(2 * (means[2 * p] - means[2 * p + 1]) - 0.5);
         }
 
-        float Run(FineTuningLoss loss, out float[] gradient)
+        float Run(IFineTuningLoss loss, out float[] gradient)
         {
             using var scope = new TensorScope();
             var leaf = Tensor.From(policy, [policy.Length], Device.Cpu, requiresGrad: true);
             var input = new FineTuningLossInput(leaf, counts, Tensor.From(reference, [reference.Length], Device.Cpu), pairs: true);
-            var value = loss(input);
+            var value = loss.Compute(input);
             value.Backward();
             gradient = leaf.Grad!.ToArray();
             return value.Item();
@@ -254,7 +254,7 @@ internal static partial class Tests
         using (var scope = new TensorScope())
         {
             var plain = new FineTuningLossInput(Tensor.From(policy, [policy.Length], Device.Cpu), counts);
-            Check(Refused(() => FineTuningLosses.Dpo()(plain)), "DPO without pairs is refused");
+            Check(Refused(() => FineTuningLosses.Dpo().Compute(plain)), "DPO without pairs is refused");
         }
     }
 
@@ -294,7 +294,7 @@ internal static partial class Tests
         {
             var pairs = RandomPairs(16, 73);
             var held = RandomPairs(8, 74);
-            foreach (var (name, loss, rate) in new (string, FineTuningLoss?, float)[]
+            foreach (var (name, loss, rate) in new (string, IFineTuningLoss?, float)[]
                      {
                          ("DPO", null, 5e-3f), ("ORPO", FineTuningLosses.Orpo(), 5e-3f), ("SimPO", FineTuningLosses.SimPo(), 5e-3f),
                      })

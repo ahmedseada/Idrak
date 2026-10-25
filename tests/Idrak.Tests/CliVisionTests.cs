@@ -133,7 +133,7 @@ internal static partial class Tests
             // The grid detector: PyTorch's decoded, clipped and suppressed boxes, from the family's decoder and by name.
             var detected = TrainCliJson(["predict", "-P", plugin, detector, .. images, "--threshold", "0.3", "--iou", "0.5", "-d", d]);
             CheckBoxes(detected, reference, images, "the family's decoder");
-            DetectionDecoders.Register("cli-test-grid", GridDecoder.Create);
+            DetectionDecoders.Register(GridDecoder.Kind("cli-test-grid"));
             var named = TrainCliJson(["predict", "-P", plugin, detector, .. images, "--threshold", "0.3", "--iou", "0.5", "--decoder", "cli-test-grid", "-d", d]);
             CheckBoxes(named, reference, images, "--decoder cli-test-grid");
             var table = TrainCli("predict", "-P", plugin, detector, images[0], "--threshold", "0.3", "-d", d);
@@ -457,11 +457,11 @@ internal static partial class Tests
             var boxes = TrainCliJson("predict", "-P", ImagePluginPath, detector, Path.Combine(yolo, "images"), "--weights", tuned, "--threshold", "0.05", "-d", d);
             Check((string?)boxes["task"] == "detection" && (int)boxes["images"]! == 6, $"predict --weights with the fine-tuned detector: {boxes}");
 
-            // A builder network naming a decoder no plug-in gives a head for; a loss no registry holds.
+            // A builder network naming a decoder no plug-in registers (its kind gives the head); a loss no registry holds.
             string spec = Path.Combine(folder, "grid.json");
             File.WriteAllText(spec, Network.Image(3, 64, 64).Conv2d(8, 3, stride: 8, padding: 1).ReLU().Conv2d(8, 1).ToJson().ToJsonString());
             var noHead = TrainCli("train", spec, "--data", Path.Combine(coco, "train.json"), "--decoder", "nobody-grid", "--epochs", "1", "--cache", cache, "-d", d);
-            Check(noHead.Code == 1 && noHead.Err.Contains("Detection head 'nobody-grid' is not registered", StringComparison.Ordinal) && noHead.Err.Contains("-P", StringComparison.Ordinal),
+            Check(noHead.Code == 1 && noHead.Err.Contains("Detection decoder 'nobody-grid' is not registered", StringComparison.Ordinal) && noHead.Err.Contains("-P", StringComparison.Ordinal),
                 $"an unregistered head: {noHead.Code} {noHead.Err}");
             var noLoss = TrainCli("train", "-P", ImagePluginPath, detector, "--data", Path.Combine(coco, "train.json"), "--loss", "nope", "--cache", cache, "-d", d);
             Check(noLoss.Code == 2 && noLoss.Err.Contains("--loss nope: use ", StringComparison.Ordinal) && noLoss.Err.Contains("giou", StringComparison.Ordinal), $"an unknown loss: {noLoss.Err}");

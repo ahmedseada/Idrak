@@ -284,7 +284,7 @@ public sealed record VoiceAddOptions
     public bool Overwrite { get; init; }
 }
 
-/// <summary>How a trained model folder is installed as a voice of kind <see cref="VoiceKinds.Checkpoint"/> (<see cref="IVoiceStore.AddCheckpoint"/>).</summary>
+/// <summary>How a trained model folder is installed as a voice of kind <see cref="VoiceKinds.Checkpoint"/> (<see cref="ICheckpointVoiceStore.AddCheckpoint"/>).</summary>
 public sealed record VoiceCheckpointOptions
 {
     /// <summary>The speaker's consent; required, as for a voice from clips: a model trained on a person's recordings speaks as them.</summary>
@@ -336,18 +336,6 @@ public interface IVoiceStore
     /// <exception cref="IOException">A voice of that name exists and <see cref="VoiceAddOptions.Overwrite"/> is off.</exception>
     VoiceProfile Add(string name, IReadOnlyList<string> clips, ISpeakerEncoder encoder, VoiceAddOptions options, CancellationToken cancellationToken = default);
 
-    /// <summary>
-    /// Installs the model folder <paramref name="modelFolder"/> (a synthesizer fine-tuned on the person's recordings,
-    /// <c>SpeechSynthesisModels.Load</c> reads it) as the voice <paramref name="name"/> of kind
-    /// <see cref="VoiceKinds.Checkpoint"/>: the folder copied into the voice's model/ (without
-    /// <see cref="VoiceCheckpointOptions.Exclude"/>), voice.json beside it. A store that keeps no models keeps this default, which refuses.
-    /// </summary>
-    /// <exception cref="ArgumentException">The name is not a plain name, or there is no consent.</exception>
-    /// <exception cref="FileNotFoundException">The folder holds no config.json.</exception>
-    /// <exception cref="IOException">A voice of that name exists and <see cref="VoiceCheckpointOptions.Overwrite"/> is off.</exception>
-    VoiceProfile AddCheckpoint(string name, string modelFolder, VoiceCheckpointOptions options) =>
-        throw new NotSupportedException($"Voice store '{Name}' keeps no model folders (voices of kind {VoiceKinds.Checkpoint}).");
-
     /// <summary>The embedding of an embedding voice.</summary>
     /// <exception cref="InvalidDataException">The voice has no embedding, or it is not as wide as voice.json says.</exception>
     float[] ReadEmbedding(VoiceProfile voice);
@@ -361,6 +349,23 @@ public interface IVoiceStore
 
     /// <summary>Removes the voice <paramref name="name"/>; false when there is none.</summary>
     bool Remove(string name);
+}
+
+/// <summary>
+/// A voice store that keeps model folders: voices of kind <see cref="VoiceKinds.Checkpoint"/> (a synthesizer fine-tuned on
+/// the person's recordings); a store that keeps only embeddings does not implement it.
+/// </summary>
+public interface ICheckpointVoiceStore : IVoiceStore
+{
+    /// <summary>
+    /// Installs the model folder <paramref name="modelFolder"/> (<c>SpeechSynthesisModels.Load</c> reads it) as the voice
+    /// <paramref name="name"/> of kind <see cref="VoiceKinds.Checkpoint"/>: the folder copied into the voice's model/
+    /// (without <see cref="VoiceCheckpointOptions.Exclude"/>), voice.json beside it.
+    /// </summary>
+    /// <exception cref="ArgumentException">The name is not a plain name, or there is no consent.</exception>
+    /// <exception cref="FileNotFoundException">The folder holds no config.json.</exception>
+    /// <exception cref="IOException">A voice of that name exists and <see cref="VoiceCheckpointOptions.Overwrite"/> is off.</exception>
+    VoiceProfile AddCheckpoint(string name, string modelFolder, VoiceCheckpointOptions options);
 }
 
 /// <summary>

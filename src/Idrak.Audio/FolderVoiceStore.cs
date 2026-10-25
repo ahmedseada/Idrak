@@ -17,7 +17,7 @@ namespace Idrak.Audio;
 /// clips/ (only when the clips were kept). A voice is
 /// written to a hidden folder first and moved into place, so a half-written voice is never listed.
 /// </summary>
-public sealed class FolderVoiceStore : IVoiceStore
+public sealed class FolderVoiceStore : ICheckpointVoiceStore
 {
     /// <summary>The manifest's file name.</summary>
     public const string ManifestFile = "voice.json";

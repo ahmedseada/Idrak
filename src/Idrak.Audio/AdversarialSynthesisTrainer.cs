@@ -50,7 +50,15 @@ public static class AdversarialSynthesisTrainer
         }
 
         var adversarial = options.Adversarial ?? new AdversarialSynthesisOptions();
-        model.Freeze(adversarial.Frozen);
+        if (model is IPartFreezingSynthesizer parts)
+        {
+            parts.Freeze(adversarial.Frozen);
+        }
+        else if (adversarial.Frozen.Count > 0)
+        {
+            throw new ArgumentException($"A {model.Architecture} model keeps no part fixed (it names no parts); train it whole, without frozen parts.", nameof(options));
+        }
+
         if (adversarial.Frozen.Count > 0)
         {
             trace?.Invoke($"frozen: {string.Join(", ", adversarial.Frozen)}");
@@ -61,19 +69,17 @@ public static class AdversarialSynthesisTrainer
 
     /// <summary>
     /// Goes on with the run a checkpoint folder holds: its model read back to be trained
-    /// (<see cref="SpeechSynthesisModels.Load"/> with <see cref="SpeechSynthesisLoadOptions.Training"/>, a family whose model
-    /// is an <see cref="IAdversarialSpeechSynthesizer"/>, its discriminators from the folder), both optimizers' state, the
-    /// sources, position and options (or <paramref name="overrides"/>), writing later checkpoints beside it.
+    /// (<see cref="SpeechSynthesisModels.LoadForTraining"/>, by a family that trains, <see cref="ITrainableSpeechSynthesisFamily"/>;
+    /// its discriminators from the folder), both optimizers' state, the sources, position and options (or
+    /// <paramref name="overrides"/>), writing later checkpoints beside it.
     /// </summary>
     /// <exception cref="FileNotFoundException">The folder holds no training state.</exception>
-    /// <exception cref="InvalidDataException">The folder's model is not one this trainer trains.</exception>
+    /// <exception cref="NotSupportedException">The folder's model is not one this trainer trains (its family does not train).</exception>
     public static SpeechTrainingResult Resume(string checkpointFolder, SpeechTrainingOptions? overrides = null, Device? device = null, IProgress<SpeechTrainingProgress>? progress = null,
         CancellationToken cancellationToken = default, Action<string>? trace = null)
     {
         var state = SpeechTrainer.ReadCheckpoint(checkpointFolder);
-        using var synthesizer = SpeechSynthesisModels.Load(checkpointFolder, new SpeechSynthesisLoadOptions { Device = device, Training = true });
-        var model = synthesizer as IAdversarialSpeechSynthesizer
-            ?? throw new InvalidDataException($"{checkpointFolder} holds a {synthesizer.GetType().Name}, not a model the adversarial trainer trains (an IAdversarialSpeechSynthesizer).");
+        using var model = SpeechSynthesisModels.LoadForTraining(checkpointFolder, new SpeechSynthesisLoadOptions { Device = device });
         string output = Path.GetDirectoryName(Path.GetFullPath(checkpointFolder))!;
         var options = overrides ?? state.Options;
         return Train(model, state.Train, state.Evaluation, options, output, state with { Options = options }, progress, cancellationToken, trace);
@@ -239,20 +245,16 @@ public static class AdversarialSynthesisTrainer
                 }
 
                 optimizer.ZeroGrad();
-                var terms = new Dictionary<string, float>(StringComparer.Ordinal);
+                var terms = default(AdversarialTerms);
                 foreach (var part in steps)
                 {
                     using var scope = keep ? null : new TensorScope();
-                    foreach (var (name, value) in part!.Generate())
-                    {
-                        terms[name] = terms.GetValueOrDefault(name) + value;
-                    }
+                    terms += part!.Generate();
                 }
 
                 optimizer.ClipAndStep(run.MaxGradientNorm);
-                terms["discriminator"] = _discriminatorLoss;
-                _terms = terms;
-                return terms.TryGetValue("generator", out float generator) ? generator : float.NaN;
+                _terms = terms.ByName(_discriminatorLoss);
+                return terms.Generator;
             }
             finally
             {

@@ -267,15 +267,15 @@ public static partial class Pretrainer
         bool Trains(string part) => all || stage.Trained.Contains(part, StringComparer.OrdinalIgnoreCase);
         var held = new HashSet<Tensor>(pipe.Parameters, ReferenceEqualityComparer.Instance);
         var part = new Dictionary<Tensor, string>(ReferenceEqualityComparer.Instance);
+        var parts = model.NetworkParts;
         foreach (var (path, module) in model.NamedModules())
         {
-            if (module is Linear { TiedTo: not null })
+            if (module is ITiedWeights { WeightsOf: not null })
             {
-                continue;
+                continue;                                                    // its weights are the module's it reads them from
             }
 
-            string top = path.Split('.')[0];
-            string name = top is "embed" or "pos" ? "embeddings" : top == "head" ? "head" : "decoder";
+            string name = parts.PartOf(path);
             foreach (var p in module.Parameters().Except(module.Children().SelectMany(c => c.Parameters()), ReferenceEqualityComparer.Instance).Cast<Tensor>())
             {
                 if (held.Contains(p))

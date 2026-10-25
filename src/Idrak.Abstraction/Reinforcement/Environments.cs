@@ -19,9 +19,9 @@ namespace Idrak.Abstraction.Reinforcement;
 /// The episode was cut by a limit outside the task (steps, rounds, time): the state still had a future, so an estimator
 /// bootstraps from the value of <paramref name="Observation"/>.
 /// </param>
-/// <param name="Info">What else the environment reports for the step (tests passed, files changed), as text by key; null for nothing.</param>
+/// <param name="Info">What else the environment reports for the step (tests passed, files changed), each value in its own type; null for nothing.</param>
 public readonly record struct EnvironmentStep<TObservation>(TObservation Observation, float Reward, bool Terminated, bool Truncated,
-    IReadOnlyDictionary<string, string>? Info = null)
+    EpisodeInfo? Info = null)
 {
     /// <summary>Whether the episode ended (<see cref="Terminated"/> or <see cref="Truncated"/>): it must be reset before the next step.</summary>
     public bool Done => Terminated || Truncated;
@@ -106,6 +106,19 @@ public interface IEnvironmentKind : IKind<EnvironmentRequest, IEnvironment>
 
     /// <summary>The type of their actions (the TAction of <see cref="IEnvironment{TObservation, TAction}"/>).</summary>
     Type ActionType { get; }
+}
+
+/// <summary>
+/// An environment kind that plays the tasks of a suite (a folder of task folders): the option keys a trainer's command line
+/// (<c>idrak reinforce --suite</c>, <c>--sandbox</c>) sets them by.
+/// </summary>
+public interface ISuiteEnvironmentKind : IEnvironmentKind
+{
+    /// <summary>The option of the suite's folder ("suite"), which the kind needs; null when the kind was made with its tasks.</summary>
+    string? SuiteKey { get; }
+
+    /// <summary>The option of the command sandbox its tasks' commands run in ("sandbox"); null when the kind runs none.</summary>
+    string? SandboxKey { get; }
 }
 
 /// <summary>

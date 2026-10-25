@@ -53,7 +53,7 @@ internal sealed class TrainCommand : Command
               --matcher NAME     detection: a BoxMatchers name (iou-threshold, the default, or hungarian)
               --metric NAME      image models: scored on the evaluation data at the end: accuracy (classification), or a
                                  VisionMetrics name (miou for segmentation, coco, voc or voc07 for detection; the defaults)
-              --decoder NAME     detection: the decoder (DetectionDecoders) whose head (DetectionHeads) trains the network;
+              --decoder NAME     detection: the decoder (DetectionDecoders) whose head trains the network;
                                  default the model's
               --direction D      line recognition, a builder network: ltr (default) or rtl (lines flipped first)
               --reading-order R  line recognition, a builder network: the ReadingOrders name that turns a transcription to

@@ -3,6 +3,8 @@
 
 using System.Globalization;
 using Idrak.Abstraction.Reinforcement;
+using Idrak.Text.Abstractions;
+using Idrak.Text.Reinforcement.Abstractions;
 
 namespace Idrak.Text.Reinforcement;
 
@@ -38,7 +40,7 @@ public sealed record PromptTask(IReadOnlyList<ChatMessage> Prompt, string? Refer
 /// called tools. The library's kind reads its tasks from <c>data</c> (a chat-transcript JSON-lines file); an app makes
 /// one of its own tasks, tools and tokenizer (to give each answer's token count for the length reward).
 /// </summary>
-public sealed class PromptsEnvironmentKind : IEnvironmentKind
+public sealed class PromptsEnvironmentKind : IPromptDataEnvironmentKind, IRewardedEnvironmentKind
 {
     /// <summary>The kind's name.</summary>
     public const string KindName = "prompts";
@@ -83,12 +85,31 @@ public sealed class PromptsEnvironmentKind : IEnvironmentKind
     public IReadOnlySet<string> Keys => _tasks is null ? DataKeys : TaskKeys;
 
     /// <inheritdoc />
+    public string? DataKey => _tasks is null ? "data" : null;
+
+    /// <inheritdoc />
+    public string RewardKey => "reward";
+
+    /// <inheritdoc />
+    public string? RoundsKey => "rounds";
+
+    /// <inheritdoc />
+    public string? ThinkKey => null;
+
+    /// <inheritdoc />
     public Type ObservationType => typeof(ChatObservation);
 
     /// <inheritdoc />
     public Type ActionType => typeof(ChatMessage);
 
-    /// <summary>Counts each answer's tokens into the episode's info ("tokens", for the length reward); null: not counted.</summary>
+    /// <summary>A kind of this one's name over the prompts of <paramref name="conversations"/> (<see cref="PromptTask.FromTranscript"/>), counting answers' tokens with <paramref name="tokenizer"/>.</summary>
+    public IEnvironmentKind WithTasks(IReadOnlyList<ChatTranscript> conversations, ITokenizer? tokenizer)
+    {
+        ArgumentNullException.ThrowIfNull(conversations);
+        return new PromptsEnvironmentKind([.. conversations.Select(PromptTask.FromTranscript)], _tools, Name) { Tokenizer = tokenizer };
+    }
+
+    /// <summary>Counts each answer's tokens into the episode's info (<see cref="EpisodeInfoKeys.Tokens"/>, for the length reward); null: not counted.</summary>
     public ITokenizer? Tokenizer { get; init; }
 
     /// <inheritdoc />
@@ -188,12 +209,12 @@ internal sealed class PromptsEnvironment(IReadOnlyList<PromptTask> tasks, Reward
 
     private ChatObservation Observation() => new([.. _messages], _task!.Tools, _task.Think);
 
-    private Dictionary<string, string> Info(ChatMessage action)
+    private EpisodeInfo Info(ChatMessage action)
     {
-        var info = new Dictionary<string, string>(StringComparer.Ordinal) { ["rounds"] = _turns.ToString(CultureInfo.InvariantCulture) };
+        var info = new EpisodeInfo().Set(EpisodeInfoKeys.Rounds, _turns);
         if (tokenizer is not null)
         {
-            info["tokens"] = tokenizer.Encode(action.Content).Count.ToString(CultureInfo.InvariantCulture);
+            info.Set(EpisodeInfoKeys.Tokens, tokenizer.Encode(action.Content).Count);
         }
 
         return info;

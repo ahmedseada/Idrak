@@ -101,23 +101,27 @@ public sealed record AudioAugmentationOptions
 /// One way of varying training audio so a model sees more than the recordings it has. It draws everything from the
 /// <see cref="Random"/> it is given, which the trainer seeds from the run's seed, the pass and the utterance
 /// (<see cref="AudioAugmentations.RandomFor"/>): the same utterance in the same pass is varied the same way on every run
-/// and on resume. Register one with <see cref="AudioAugmentations.Register"/>.
+/// and on resume. It varies the sound (<see cref="ISoundAugmentation"/>) or the features (<see cref="IFeatureAugmentation"/>).
+/// Register one with <see cref="AudioAugmentations.Register"/> under its <see cref="IKind.Name"/> ("speed").
 /// </summary>
-public interface IAudioAugmentation
+public interface IAudioAugmentation : IKind
 {
-    /// <summary>The augmentation's name ("speed").</summary>
-    string Name { get; }
+    /// <summary>Whether it changes the sound (<see cref="ISoundAugmentation"/>) or the features (<see cref="IFeatureAugmentation"/>).</summary>
+    AudioAugmentationStage Stage => this is IFeatureAugmentation ? AudioAugmentationStage.Features : AudioAugmentationStage.Sound;
+}
 
-    /// <summary>Whether it changes the sound or the features.</summary>
-    AudioAugmentationStage Stage { get; }
+/// <summary>An augmentation of the sound, before its features are taken (<see cref="AudioAugmentationStage.Sound"/>).</summary>
+public interface ISoundAugmentation : IAudioAugmentation
+{
+    /// <summary>The sound varied: <paramref name="audio"/> is one channel; the result one channel at the same rate.</summary>
+    AudioData Augment(AudioData audio, Random random, AudioAugmentationOptions options);
+}
 
-    /// <summary>The sound varied (<see cref="AudioAugmentationStage.Sound"/>): <paramref name="audio"/> is one channel; the result one channel at the same rate.</summary>
-    AudioData Augment(AudioData audio, Random random, AudioAugmentationOptions options) => audio;
-
-    /// <summary>The features [<paramref name="frames"/>, <paramref name="mels"/>] varied in place (<see cref="AudioAugmentationStage.Features"/>).</summary>
-    void Augment(Span<float> features, int frames, int mels, Random random, AudioAugmentationOptions options)
-    {
-    }
+/// <summary>An augmentation of the features, after they are taken (<see cref="AudioAugmentationStage.Features"/>).</summary>
+public interface IFeatureAugmentation : IAudioAugmentation
+{
+    /// <summary>The features [<paramref name="frames"/>, <paramref name="mels"/>] varied in place (one row a frame, in memory order).</summary>
+    void Augment(Span<float> features, int frames, int mels, Random random, AudioAugmentationOptions options);
 }
 
 /// <summary>
@@ -138,41 +142,45 @@ public static class AudioAugmentations
     /// <summary>Time and frequency masks.</summary>
     public const string SpecMask = "spec-mask";
 
-    private static readonly SlotTable<string, IAudioAugmentation> Table = BuiltIn();
+    private static readonly KindTable<IAudioAugmentation> Table = BuiltIn();
 
-    private static SlotTable<string, IAudioAugmentation> BuiltIn()
+    private static KindTable<IAudioAugmentation> BuiltIn()
     {
-        var table = new SlotTable<string, IAudioAugmentation>(nameof(AudioAugmentations), comparer: StringComparer.OrdinalIgnoreCase,
+        var table = new KindTable<IAudioAugmentation>(nameof(AudioAugmentations), "Audio augmentation", "add it with AudioAugmentations.Register",
+            comparer: StringComparer.OrdinalIgnoreCase,
             unguarded: "an augmentation's draws are its own, so another cannot stand in for it and give the same varied audio");
-        table.RegisterDefault(Speed, new SpeedAugmentation());
-        table.RegisterDefault(Noise, new NoiseAugmentation());
-        table.RegisterDefault(SpecMask, new SpecMaskAugmentation());
+        table.RegisterDefault(new SpeedAugmentation());
+        table.RegisterDefault(new NoiseAugmentation());
+        table.RegisterDefault(new SpecMaskAugmentation());
         return table;
     }
 
     /// <summary>Registers <paramref name="augmentation"/> under its name (over the library's of that name, which stays behind it).</summary>
+    /// <exception cref="ArgumentException">It varies neither the sound nor the features (it is no <see cref="ISoundAugmentation"/> and no <see cref="IFeatureAugmentation"/>).</exception>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(IAudioAugmentation augmentation)
     {
         ArgumentNullException.ThrowIfNull(augmentation);
-        ArgumentException.ThrowIfNullOrWhiteSpace(augmentation.Name);
-        Table.Register(augmentation.Name, augmentation, System.Reflection.Assembly.GetCallingAssembly());
+        if (augmentation is not (ISoundAugmentation or IFeatureAugmentation))
+        {
+            throw new ArgumentException($"The audio augmentation '{augmentation.Name}' varies neither the sound (ISoundAugmentation) nor the features (IFeatureAugmentation).", nameof(augmentation));
+        }
+
+        Table.Register(augmentation, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's augmentation of that name (the library's, if any, answers again); false when the app registered none.</summary>
     public static bool Unregister(string name) => Table.Unregister(name);
 
     /// <summary>The registered names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
+    public static IReadOnlyCollection<string> Names => Table.Names;
 
     /// <summary>The augmentation of that name, or null.</summary>
-    public static IAudioAugmentation? Find(string name) => Table.Find(name);
+    public static IAudioAugmentation? Find(ReadOnlySpan<char> name) => Table.Find(name);
 
     /// <summary>The augmentation of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
-    public static IAudioAugmentation Get(string name) => Table.Find(name)
-        ?? throw new NotRegisteredException(nameof(AudioAugmentations), name, Table.Keys,
-            $"Audio augmentation '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AudioAugmentations.Register.");
+    public static IAudioAugmentation Get(string name) => Table.Get(name);
 
     /// <summary>The library's augmentation of that name, or null.</summary>
     public static IAudioAugmentation? Default(string name) => Table.Default(name);

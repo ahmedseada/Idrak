@@ -1,8 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Globalization;
-
 namespace Idrak.Reinforcement;
 
 /// <summary>
@@ -79,81 +77,6 @@ public static class ReinforcementNames
 
     /// <summary>The library's policy losses, in their registration order.</summary>
     public static IReadOnlyList<string> Algorithms { get; } = [Reinforce, Ppo, Grpo];
-}
-
-// Options of an estimator or a loss by key: every key checked against the taker's own, values parsed with the invariant
-// culture, a bad value refused naming its key.
-internal readonly struct OptionReader
-{
-    private readonly IReadOnlyDictionary<string, string>? _options;
-    private readonly string _what;
-
-    public OptionReader(string what, IReadOnlyCollection<string> keys, IReadOnlyDictionary<string, string>? options)
-    {
-        _what = what;
-        _options = options;
-        if (options is null)
-        {
-            return;
-        }
-
-        foreach (string key in options.Keys)
-        {
-            if (!keys.Contains(key))
-            {
-                throw new ArgumentException($"The {what} does not take the option '{key}'; it takes: {(keys.Count == 0 ? "none" : string.Join(", ", keys))}.");
-            }
-        }
-    }
-
-    public float Float(string key, float fallback, float min = float.NegativeInfinity, float max = float.PositiveInfinity)
-    {
-        if (_options is null || !_options.TryGetValue(key, out string? text))
-        {
-            return fallback;
-        }
-
-        if (!float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value) || !float.IsFinite(value) || value < min || value > max)
-        {
-            throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"The {_what}'s option '{key}' is '{text}': a number from {min} to {max}."));
-        }
-
-        return value;
-    }
-
-    public bool Bool(string key, bool fallback)
-    {
-        if (_options is null || !_options.TryGetValue(key, out string? text))
-        {
-            return fallback;
-        }
-
-        return text.Trim().ToLowerInvariant() switch
-        {
-            "true" or "1" or "yes" or "on" => true,
-            "false" or "0" or "no" or "off" => false,
-            _ => throw new ArgumentException($"The {_what}'s option '{key}' is '{text}': true or false."),
-        };
-    }
-
-    public string Choice(string key, string fallback, params ReadOnlySpan<string> choices)
-    {
-        if (_options is null || !_options.TryGetValue(key, out string? text))
-        {
-            return fallback;
-        }
-
-        string value = text.Trim().ToLowerInvariant();
-        foreach (string choice in choices)
-        {
-            if (value == choice)
-            {
-                return choice;
-            }
-        }
-
-        throw new ArgumentException($"The {_what}'s option '{key}' is '{text}': one of {string.Join(", ", choices.ToArray())}.");
-    }
 }
 
 // Every draw of a run from its seed: a stream number and indices mixed by SplitMix64 (Steele et al. 2014), so a run's

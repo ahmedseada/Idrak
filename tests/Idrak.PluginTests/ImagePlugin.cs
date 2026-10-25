@@ -44,8 +44,7 @@ public static class ImageFamilyPlugin
             Part(() => ImageModelFamilies.Register(new GridDetectorFamily()), () => ImageModelFamilies.Unregister(ImageFamilyPluginTests.Detector));
             Part(() => ImageModelFamilies.Register(new OnnxSegmenterFamily()), () => ImageModelFamilies.Unregister(Segmenter));
             Part(() => ImageModelFamilies.Register(new OnnxBackboneFamily()), () => ImageModelFamilies.Unregister(Backbone));
-            Part(() => DetectionDecoders.Register(ImageFamilyPluginTests.Decoder, GridDecoder.Create), () => DetectionDecoders.Unregister(ImageFamilyPluginTests.Decoder));
-            Part(() => DetectionHeads.Register(ImageFamilyPluginTests.Decoder, GridHead.Create), () => DetectionHeads.Unregister(ImageFamilyPluginTests.Decoder));
+            Part(() => DetectionDecoders.Register(GridDecoder.Kind(ImageFamilyPluginTests.Decoder)), () => DetectionDecoders.Unregister(ImageFamilyPluginTests.Decoder));
         }
     }
 }
@@ -101,14 +100,14 @@ public sealed class OnnxBackboneFamily : IImageModelFamily
 }
 
 /// <summary>
-/// The grid detector's training head (<see cref="DetectionHeads"/>, under its decoder's name): the outputs [N, 5 + C, rows,
+/// The grid detector's training head (<see cref="IDetectionHeadKind.CreateHead"/>, of its decoder's kind): the outputs [N, 5 + C, rows,
 /// columns] read as <see cref="GridDecoder"/> reads them, as tensors: each cell's box centre ((g + σ(t)) · stride), size
 /// (e^t · stride) as corners, its objectness logit and its class logits.
 /// </summary>
 public static class GridHead
 {
     /// <summary>The head for one detector.</summary>
-    public static DetectionHead Create(DetectionDecoderContext context)
+    public static DetectionHead Create(DetectionDecoderRequest context)
     {
         ArgumentNullException.ThrowIfNull(context);
         int? configured = context.Settings["stride"] is JsonValue v ? (int)v : null;

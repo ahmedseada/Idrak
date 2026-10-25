@@ -80,14 +80,20 @@ internal static class PolicyLossTerms
 /// (1 / (|sequence| · the step's sequences)) or constant (1 / constant). It ignores the behaviour policy: an on-policy
 /// estimator. Options: entropy (c_H, default 0), value (c_V, default 0.5), normalize, constant.
 /// </summary>
-internal sealed class ReinforceLoss : IPolicyLoss
+internal sealed class ReinforceLoss : IPolicyLoss, IOptionSchema
 {
+    private static readonly OptionSpec<float> Entropy = OptionSpec.Number(ReinforcementNames.EntropyKey, 0f, summary: "the entropy bonus's weight");
+    private static readonly OptionSpec<float> Value = OptionSpec.Number(ReinforcementNames.ValueKey, 0.5f, 0f, summary: "the value head's weight");
+    private static readonly OptionSpec<string> Normalize = OptionSpec.Choice(ReinforcementNames.NormalizeKey, "token", "token", "sequence", "constant");
+    private static readonly OptionSpec<float> Constant = OptionSpec.Number(ReinforcementNames.ConstantKey, 0f, 0f, summary: "the divisor with normalize=constant");
+
     public string Name => ReinforcementNames.Reinforce;
 
     public string Summary => "REINFORCE (Williams 1992): log-probabilities weighted by the advantages, with an entropy bonus and a value loss when weighted";
 
-    public IReadOnlySet<string> Keys { get; } =
-        new OptionKeys(ReinforcementNames.EntropyKey, ReinforcementNames.ValueKey, ReinforcementNames.NormalizeKey, ReinforcementNames.ConstantKey);
+    public OptionSchema Options { get; } = new($"policy loss {ReinforcementNames.Reinforce}", Entropy, Value, Normalize, Constant);
+
+    public IReadOnlySet<string> Keys => Options.Keys;
 
     // No KL term: the reference is never read.
     public bool NeedsReference(IReadOnlyDictionary<string, string>? options = null) => false;
@@ -95,11 +101,11 @@ internal sealed class ReinforceLoss : IPolicyLoss
     public Tensor Loss(PolicyLossInput input, IReadOnlyDictionary<string, string>? options = null)
     {
         ArgumentNullException.ThrowIfNull(input);
-        var reader = new OptionReader($"policy loss {Name}", Keys, options);
-        float entropy = reader.Float(ReinforcementNames.EntropyKey, 0f);
-        float value = reader.Float(ReinforcementNames.ValueKey, 0.5f, 0f);
-        string normalize = reader.Choice(ReinforcementNames.NormalizeKey, "token", "token", "sequence", "constant");
-        float constant = reader.Float(ReinforcementNames.ConstantKey, 0f, 0f);
+        var read = Options.Parse(options);
+        float entropy = read.Get(Entropy);
+        float value = read.Get(Value);
+        string normalize = read.Get(Normalize);
+        float constant = read.Get(Constant);
         var weights = PolicyLossTerms.Weights(input, normalize, constant, Name);
         var perUnit = -(input.Advantages * input.LogProbabilities);
         if (PolicyLossTerms.EntropyBonus(input, entropy) is { } bonus)
@@ -134,17 +140,26 @@ internal sealed class ReinforceLoss : IPolicyLoss
 /// clip-high (ε_high, default ε), kl (β), kl-estimator (k1, k2, k3; default k3), entropy (c_H), value (ppo only, c_V),
 /// normalize (token, sequence, constant), constant.
 /// </summary>
-internal sealed class ClippedRatioLoss(string name, string normalization, bool values, string summary) : IPolicyLoss
+internal sealed class ClippedRatioLoss(string name, string normalization, bool values, string summary) : IPolicyLoss, IOptionSchema
 {
+    private static readonly OptionSpec<float> Clip = OptionSpec.Number(ReinforcementNames.ClipKey, 0.2f, 0f, 1f, summary: "the ratio's clip ε");
+    private static readonly OptionSpec<float> ClipHigh = OptionSpec.Number(ReinforcementNames.ClipHighKey, 0.2f, 0f, summary: "the ratio's upper clip (the clip unless given)");
+    private static readonly OptionSpec<float> Kl = OptionSpec.Number(ReinforcementNames.KlKey, 0f, 0f, summary: "the KL penalty's weight β");
+    private static readonly OptionSpec<string> KlEstimator = OptionSpec.Choice(ReinforcementNames.KlEstimatorKey, "k3", "k1", "k2", "k3");
+    private static readonly OptionSpec<float> Entropy = OptionSpec.Number(ReinforcementNames.EntropyKey, 0f, summary: "the entropy bonus's weight");
+    private static readonly OptionSpec<float> Value = OptionSpec.Number(ReinforcementNames.ValueKey, 0.5f, 0f, summary: "the value head's weight");
+    private static readonly OptionSpec<float> Constant = OptionSpec.Number(ReinforcementNames.ConstantKey, 0f, 0f, summary: "the divisor with normalize=constant");
+    private readonly OptionSpec<string> _normalize = OptionSpec.Choice(ReinforcementNames.NormalizeKey, normalization, "token", "sequence", "constant");
+
     public string Name => name;
 
     public string Summary => summary;
 
-    public IReadOnlySet<string> Keys { get; } = values
-        ? new OptionKeys(ReinforcementNames.ClipKey, ReinforcementNames.ClipHighKey, ReinforcementNames.ValueKey, ReinforcementNames.EntropyKey, ReinforcementNames.KlKey,
-            ReinforcementNames.KlEstimatorKey, ReinforcementNames.NormalizeKey, ReinforcementNames.ConstantKey)
-        : new OptionKeys(ReinforcementNames.ClipKey, ReinforcementNames.ClipHighKey, ReinforcementNames.KlKey, ReinforcementNames.KlEstimatorKey, ReinforcementNames.EntropyKey,
-            ReinforcementNames.NormalizeKey, ReinforcementNames.ConstantKey);
+    public OptionSchema Options => field ??= values
+        ? new($"policy loss {name}", Clip, ClipHigh, Value, Entropy, Kl, KlEstimator, _normalize, Constant)
+        : new($"policy loss {name}", Clip, ClipHigh, Kl, KlEstimator, Entropy, _normalize, Constant);
+
+    public IReadOnlySet<string> Keys => Options.Keys;
 
     // The reference is read by the KL term only, weighted by the option kl (0 by default); a value Loss refuses is left to it.
     public bool NeedsReference(IReadOnlyDictionary<string, string>? options = null) =>
@@ -154,15 +169,15 @@ internal sealed class ClippedRatioLoss(string name, string normalization, bool v
     public Tensor Loss(PolicyLossInput input, IReadOnlyDictionary<string, string>? options = null)
     {
         ArgumentNullException.ThrowIfNull(input);
-        var reader = new OptionReader($"policy loss {Name}", Keys, options);
-        float clip = reader.Float(ReinforcementNames.ClipKey, 0.2f, 0f, 1f);
-        float clipHigh = reader.Float(ReinforcementNames.ClipHighKey, clip, 0f);
-        float kl = reader.Float(ReinforcementNames.KlKey, 0f, 0f);
-        string estimator = reader.Choice(ReinforcementNames.KlEstimatorKey, "k3", "k1", "k2", "k3");
-        float entropy = reader.Float(ReinforcementNames.EntropyKey, 0f);
-        float value = values ? reader.Float(ReinforcementNames.ValueKey, 0.5f, 0f) : 0f;
-        string normalize = reader.Choice(ReinforcementNames.NormalizeKey, normalization, "token", "sequence", "constant");
-        float constant = reader.Float(ReinforcementNames.ConstantKey, 0f, 0f);
+        var read = Options.Parse(options);
+        float clip = read.Get(Clip);
+        float clipHigh = read.IsGiven(ClipHigh) ? read.Get(ClipHigh) : clip;
+        float kl = read.Get(Kl);
+        string estimator = read.Get(KlEstimator);
+        float entropy = read.Get(Entropy);
+        float value = values ? read.Get(Value) : 0f;
+        string normalize = read.Get(_normalize);
+        float constant = read.Get(Constant);
         var weights = PolicyLossTerms.Weights(input, normalize, constant, Name);
 
         var ratio = (input.LogProbabilities - input.BehaviorLogProbabilities).Exp();

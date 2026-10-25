@@ -509,12 +509,9 @@ internal sealed class VitsTraining : IDisposable
             return total;
         }
 
-        public IReadOnlyDictionary<string, float> Generate()
+        public AdversarialTerms Generate()
         {
-            var terms = new Dictionary<string, float>(StringComparer.Ordinal)
-            {
-                ["mel"] = 0, ["kl"] = 0, ["duration"] = 0, ["adversarial"] = 0, ["feature_matching"] = 0, ["generator"] = 0,
-            };
+            AdversarialTerms terms;
             var parameters = discriminators.Module.Parameters().ToList();
             foreach (var p in parameters)
             {
@@ -551,12 +548,7 @@ internal sealed class VitsTraining : IDisposable
                 var adv = adversarial * (options.AdversarialWeight * share);
                 var fm = matching * (options.FeatureMatchingWeight * share);
                 var loss = mel + kl + duration + adv + fm;
-                terms["mel"] += mel.Item();
-                terms["kl"] += kl.Item();
-                terms["duration"] += duration.Item();
-                terms["adversarial"] += adv.Item();
-                terms["feature_matching"] += fm.Item();
-                terms["generator"] += loss.Item();
+                terms = default(AdversarialTerms) + new AdversarialTerms(mel.Item(), kl.Item(), duration.Item(), adv.Item(), fm.Item(), loss.Item());   // added to zeros, as before
                 loss.Backward();
             }
             finally
