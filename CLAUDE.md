@@ -59,10 +59,10 @@ These are the owner's standing rules. They hold in every session, after every co
   (waves are a dependency order, not a barrier).
 - **Keep the owner informed.** Before each step, say in a line what you are about to do and why; never go quiet while
   working. The same for the software: long work shows live progress (what it is doing, how far, how fast, time left).
-- **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`. After
-  any change pushed to the repository, every command list starts by pulling the session's working branch (the branch
-  the session pushed its work to, named in the command, never assumed), before any build, test, run or app, so the
-  owner never builds an old copy:
+- **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`. Every
+  block of commands handed to the owner (a build, a test run, a training or app run, each block on its own) starts with
+  the pull of the session's working branch (the branch the session pushed its work to, named in the command, never
+  assumed), so the owner never builds or runs an old copy:
   ```powershell
   cd D:\Projects\Idrak; git checkout <the session's branch>; git pull origin <the session's branch>
   ```
