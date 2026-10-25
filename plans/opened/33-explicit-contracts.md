@@ -30,6 +30,7 @@ names the required surface, implementations implement it, and a capability flag,
 
 | Phase | Covers | Tables below |
 |---|---|---|
+| C0 | The shared kind contract (`IKind`, `IConfigurableKind`, `IKind<TRequest, T>`), `KindTable<TKind>`, and `SlotTable`'s span lookup: the base the other phases' registries and kinds use. | "C0: the shared kind contract" below |
 | C1 | The device contract: `Backend` split into `IDeviceBackend` and capability interfaces (graphs, profiling, FP8, row and segmented attention, fused packed products, matrix units, recurrent kernels, offloading and peer copies, host storage); `DeviceProvider`; own kernels without reflection over names. CPU, CUDA, Vulkan, HIP and the test devices implement them. | Idrak.Abstraction: devices and kernels; Idrak.Gpu |
 | C2 | Generation contracts: `KeyValueLayout`'s remaining flags, `PackedWeight`, `ChatTemplate`, chat template readers, tool-call formats, `Tool`, `PretrainedVision`, `PretrainedArchitecture`, GGUF, and every `Func`-element registry in Idrak.Abstraction and Idrak. | Idrak.Abstraction: generation, training, cluster (generation rows); Idrak (core) (models rows) |
 | C3 | Training and serving: `Optimizer` and its state, `Adam`'s fused path, schedulers, `EngineModel`, the `Module` leaf, `Trainer` and data sources, metrics and losses, cluster contracts with stub defaults. | Idrak.Abstraction: generation, training, cluster (training and cluster rows); Idrak (core) (training rows) |
@@ -39,6 +40,85 @@ names the required surface, implementations implement it, and a capability flag,
 | C7 | The testing kit: suites take the real interfaces instead of `…UnderTest` delegate bags; annotation format traits on the format. | Idrak.Abstraction.Testing rows |
 
 Rows marked "(low)" go last in their phase; rows marked "leave as is" are listed for completeness and need no change.
+
+## C0: the shared kind contract
+
+Most registries below hold the same shape under different names: a name, a summary, the option keys it reads, and a
+factory (`IDetectionDecoderKind { Name; Keys; Create; CreateHead }`, `IVisionMetricKind { Name; Task; Create }`,
+`IVocoderKind { Accepts; Create }`, `IKeywordIndexKind { Name; Summary; Create }`, `IEncoderHeadKind { Name; Keys;
+Create }`, `ISampleSourceKind { Name; Keys; Create }`, …), and the interfaces that exist today repeat it too
+(`IEnvironmentKind`, `IPolicyLoss`, `IAdvantageEstimator`: `Name`, `Summary`, `Keys`; `IOptimizerKind`,
+`ILearningRateSchedule`: `Name`, `Summary`, a `Create`; `IChatPartKind`: `Name`, a `Read`). One base, in
+`Idrak.Abstraction`:
+
+```csharp
+// What every registered kind is: listed, described, found by name.
+public interface IKind
+{
+    string Name { get; }        // stored, a key, printed: string (optimization rule 3)
+    string Summary { get; }
+}
+
+// A kind that reads options: the keys it takes (later the option schema: types, ranges, defaults).
+public interface IConfigurableKind : IKind
+{
+    IReadOnlySet<string> Keys { get; }   // a FrozenSet: a key read from text is checked by span (rule 15)
+}
+
+// A kind that makes something from one request record (a new field never breaks an implementation).
+public interface IKind<in TRequest, out T> : IConfigurableKind where TRequest : allows ref struct   // rule 20
+{
+    T Create(TRequest request);
+}
+
+// The registry of kinds: over SlotTable (two layers, policies, versions, the overrides report, as every registry);
+// registers by kind.Name, so a name never drifts from what it registers; lists names and summaries alike for every
+// --list, help page and "not registered" error.
+public sealed class KindTable<TKind> where TKind : class, IKind   // class: no box on a null or type test (rule 89)
+{
+    public void Register(TKind kind);
+    public void Register(params ReadOnlySpan<TKind> kinds);              // rule 19
+    public TKind? Find(ReadOnlySpan<char> name);                         // alternate lookup, no string made (rules 1, 15)
+    public bool TryGet(ReadOnlySpan<char> name, [MaybeNullWhen(false)] out TKind kind);
+}
+```
+
+Each specific kind keeps only what is its own:
+
+| Kind | Becomes |
+|---|---|
+| `IDetectionDecoderKind` | `IKind<DetectionDecoderRequest, DetectionDecoder>` + `CreateHead` |
+| `IVisionMetricKind` | `IKind<VisionMetricOptions, IVisionMetric>` + `Task` |
+| `IVocoderKind` | `IKind<AudioFeatureOptions, IVocoder>` + `Accepts(options)` |
+| `IKeywordIndexKind` | `IKind<KeywordIndexRequest, IKeywordIndex>` |
+| `IEncoderHeadKind` | `IKind<EncoderHeadRequest, EncoderHead>` |
+| `ISampleSourceKind` | `IKind<SampleSourceRequest, ISampleSource>` |
+| `ITokenSamplerKind`, `IPositionBiasKind`, `IFeatureCacheKind`, `IProgressReporterKind`, `IAudioFeatureKind`, `ITokenizerModelKind`, `ITokenizerComponentKind<T>`, `IChatTemplateReader`, `IPackedFormat`, `IToolCallFormat`, `IVisionLoss`, `IBoxMatcher`, `ILayerType<T>`, `IGraphOp`, `INetworkOp`, `IOnnxImportOp`, `IOnnxExportOp`, `IRopeScaling`, the GGUF kinds | `IKind<TheirRequest, TheirResult>` + their own member where they have one |
+| `IEnvironmentKind`, `IPolicyLoss`, `IAdvantageEstimator`, `IOptimizerKind`, `ILearningRateSchedule`, `IChatPartKind`, `IDeviceProvider` (C1) | Adopt `IKind` / `IConfigurableKind`; their factories take a request record (`IOptimizerKind.Create(parameters, settings)` → `Create(OptimizerRequest)`) |
+
+**`SlotTable`'s span lookup.** `SlotTable<TKey, TValue>` (`src/Idrak.Abstraction/Overrides/SlotTable.cs`) is the store
+behind all 46 registries (a name to the library default and an app's override, with the Throw/FallBack/Shadow
+policies, default versions and the overrides report). Its `Find`, `TryGet` and `Contains` take only `TKey`, which is
+`string` for every named registry, so every name read from a command line, a JSON config or an options dictionary is
+made into a string before it is looked up (against rules 1 and 15). Fix it in `SlotTable` itself, so every registry
+gains it, not only `KindTable`: for string keys, `TryGet(ReadOnlySpan<char>, …)`, `Find(ReadOnlySpan<char>)` and
+`Contains(ReadOnlySpan<char>)` through `GetAlternateLookup<ReadOnlySpan<char>>()` on its snapshot's map, the lookup
+made once per snapshot when the snapshot is built (rule 75), still lock-free.
+
+## The optimization rules every new contract follows
+
+The contracts below are not only renamed members: each new interface is shaped by `docs/optimization.md`. Per phase:
+
+| Phase | What the rules require of its contracts |
+|---|---|
+| All | Stored names, keys and printed text `string` (rule 3); anything that takes a name, key or option read from input `ReadOnlySpan<char>` or `ReadOnlySpan<byte>` (rule 1), found through alternate lookups (rule 15) built once (rule 75); option text split with `span.Split` and `static readonly SearchValues` (rules 16, 17) and values parsed with `T.TryParse` on spans, `InvariantCulture` (rule 29); several registrations as `params ReadOnlySpan<T>` (rule 19); generic tables and helpers constrained `class` where `T` is a contract (rule 89); new interfaces' hot members free of telemetry cost when nobody listens (rule 78); every change proven to give the same output (rule 71). |
+| C1 (devices) | Kernel contracts take `Storage` and sizes, never arrays or lists per call (rules 22, 75); capability interfaces tested once per backend and kept (`is IGraphCaptureBackend` at construction, not per kernel call: rule 75); `IHostStorage.HostMemory` a `Span<float>`; the device's limits read from the device (rule 84), and no member of a capability interface assumes a card. |
+| C2 (generation) | `IChatTemplate.Render` writes into a caller's buffer (`IBufferWriter<char>` or a pooled builder returned in `finally`) instead of returning a new string per turn where the caller only tokenizes it; tool-call parsing and detection on `ReadOnlySpan<char>` (rule 1, section 2's sync core); `IGgufType.Dequantize(ReadOnlySpan<byte>, Span<float>)` with SIMD and a scalar tail (section 5); `ITool.InvokeAsync` keeps the async shell and its argument parsing in a sync span core (section 2). |
+| C3 (training, serving) | `IStatefulOptimizer.StateParameter(ReadOnlySpan<char>)` parses the index from the span (rule 29), not with `Split`/`Substring`; `IMetric` and `ILoss` take tensors, no per-batch allocations on the host; `IShardableBatchSource.Shard` hands out indices without copying the source. |
+| C4 (plug-ins) | The plug-in package and library registrations found through an assembly attribute read once per assembly, not by scanning every exported type with reflection on each load (rule 75). |
+| C5 (domain packages) | `EpisodeInfoKey<T>` stores typed values (no `"true"`/number-as-text round trips: rules 4 and 74); audio, vision and text kinds take spans of samples and pixels (rule 72: memory walked in order); `IOptionSchema` parses each declared option from a span once per run. |
+| C6 (type checks) | The interface test (`is IAttentionCacheInfo`) made once when a model is built or a generator made, kept, not per step or per token (rule 75). |
+| C7 (testing kit) | Suites call the real interfaces, so they measure the real allocations (rule 90's diagnosis applies to them as to the library). |
 
 ## Where (Current File, Convention Followed, Candidate or Proposed Fix)
 
