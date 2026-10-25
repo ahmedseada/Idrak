@@ -128,7 +128,7 @@ public sealed class ChatAudioParts : ITrainableSoftParts
             decoded.Add(Read(Of(part)));
         }
 
-        long start = Telemetry.Start(TelemetryLevel.Inference);
+        long start = Telemetry.StartStage();
         IReadOnlyList<ImageFeatures> encoded;
         lock (_family)
         {
@@ -176,7 +176,7 @@ public sealed class ChatAudioParts : ITrainableSoftParts
     public static AudioData Read(ChatAudio audio)
     {
         ArgumentNullException.ThrowIfNull(audio);
-        long start = Telemetry.Start(TelemetryLevel.Inference);
+        long start = Telemetry.StartStage();
         var decoded = audio.Decode();
         Telemetry.InferenceStage(InferenceStageKind.AudioDecode, null, start, (long)decoded.Channels * decoded.Length, audio.Data.Length);
         return decoded;
@@ -235,7 +235,7 @@ public sealed class ChatAudioParts : ITrainableSoftParts
                 decoded.Add(Read(audios[i]));
             }
 
-            long start = Telemetry.Start(TelemetryLevel.Inference);
+            long start = Telemetry.StartStage();
             IReadOnlyList<ImageFeatures> encoded;
             lock (_family)
             {

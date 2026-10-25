@@ -56,7 +56,7 @@ public sealed class LogMelFeatures : IAudioFeatureExtractor
     {
         ArgumentNullException.ThrowIfNull(audio);
         ArgumentNullException.ThrowIfNull(device);
-        long start = Telemetry.Start(TelemetryLevel.Inference);
+        long start = Telemetry.StartStage();
         var segment = Segment(audio);
         int frames = FramesFor(audio.Length);
         if (frames == 0)

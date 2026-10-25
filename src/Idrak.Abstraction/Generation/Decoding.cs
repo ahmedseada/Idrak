@@ -833,7 +833,7 @@ public sealed class DecodingContext : IDisposable
     {
         if (!_caches.TryGetValue(owner, out var cache))
         {
-            long start = Telemetry.Start(TelemetryLevel.Inference);
+            long start = Telemetry.StartStage();
             using (Device.Backend.LongLivedAllocations())                  // a read's caches live as long as it
             {
                 _caches[owner] = cache = new KeyValueCache(rows, Capacity, headDim, Device, Layout);

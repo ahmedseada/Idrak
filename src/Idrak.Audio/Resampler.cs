@@ -52,7 +52,7 @@ public static class Resampler
             return audio;
         }
 
-        long start = Telemetry.Start(TelemetryLevel.Inference);
+        long start = Telemetry.StartStage();
         var kernel = KernelFor(audio.SampleRate, sampleRate, options ?? new ResampleOptions());
         int length = (int)OutputLength(audio.Length, audio.SampleRate, sampleRate);
         var output = GC.AllocateUninitializedArray<float>(audio.Channels * length);
@@ -82,7 +82,7 @@ public static class Resampler
             return same;
         }
 
-        long start = Telemetry.Start(TelemetryLevel.Inference);
+        long start = Telemetry.StartStage();
         options ??= new ResampleOptions();
         var kernel = KernelFor(audio.SampleRate, sampleRate, options);
         int length = (int)OutputLength(audio.Length, audio.SampleRate, sampleRate);

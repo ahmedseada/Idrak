@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json;
 using Idrak;
 
@@ -12,7 +13,83 @@ internal static partial class Tests
     [
         ("profiler: a workload's stages and values, the cold run apart, the statistic over the warm runs; cpu, heap and memory around each timed run; the intrusive probes in runs of their own (operations and host fallbacks counted, kernels only where the device times them); an unknown probe refused naming the registered ones", ProfilerRuns),
         ("profiler: the table, markdown, csv and json writers; an app's probe and writer registered, used and removed; the criteria from IDRAK_PROFILE_*", ProfilerWritersAndCriteria),
+        ("profiler: a watched run (Profiler.Watch) is one run with the probes that do not change it, the intrusive ones only when named (with a note), ended once from any thread, written with its notes; the tuning, fallbacks and inference probes record from telemetry", ProfilerWatch),
     ];
+
+    // One run of work watched as it runs: the watched probes around it, the kernel choices, host fallbacks and inference
+    // stages the telemetry reported in it, the report written with its notes; ended once, from another thread too.
+    private static void ProfilerWatch(Device device)
+    {
+        var watch = Profiler.Watch("a command", device);
+        ProfiledProduct(watch.Run);
+        Telemetry.Tuning(new TuningCompleted(device.Backend.Kind, "test product", 4, TimeSpan.FromMilliseconds(30), false));
+        Telemetry.Tuning(new TuningCompleted(device.Backend.Kind, "test product", 2, TimeSpan.FromMilliseconds(10), true));
+        Telemetry.Tuning(new TuningCompleted(device.Backend.Kind, "test convolution", 3, TimeSpan.FromMilliseconds(5), false));
+        Telemetry.InferenceStage(InferenceStageKind.Prefill, device, Telemetry.StartStage(), 24, 0, 2, 3, 4);
+        Telemetry.InferenceStage(InferenceStageKind.DecodeChunk, device, Telemetry.StartStage(), 8, 0, 2);
+        Telemetry.InferenceStage(InferenceStageKind.DecodeChunk, device, Telemetry.StartStage(), 8, 0, 2);
+        ProfileReport? other = null;
+        var thread = new Thread(() => other = watch.End());                     // as Ctrl+C ends it
+        thread.Start();
+        thread.Join();
+        var report = watch.End();
+        Check(ReferenceEquals(report, other) && watch.Ended && report.Watched && report.Runs is [{ Kind: ProfileRunKind.Once, Index: 0 }],
+            $"one run, ended once: {string.Join(", ", report.Runs.Select(r => r.Kind))}");
+        Check(report.Probes.All(p => ProfileProbes.Get(p).Watched) && !report.Probes.Contains("bandwidth") && !report.Probes.Contains("operations")
+              && report.Probes.Contains("tuning") && report.Probes.Contains("fallbacks") && report.Probes.Contains("inference"),
+            $"the watched probes: {string.Join(", ", report.Probes)}");
+        Check(report.Notes.Any(n => n.Contains("operations", StringComparison.Ordinal) && n.Contains("IDRAK_PROFILE_PROBES", StringComparison.Ordinal)),
+            $"the probes left out are named: {string.Join(" | ", report.Notes)}");
+        Check(report["wall"] is { Count: 1, Value: > 0, Cold: null } && report["product"] is { Value: > 0 } && report["items"]?.Value == 64
+              && report["cpu"] is { Source: "cpu" } && report["allocated"] is { Source: "heap" } && report["device peak"] is { Source: "memory" },
+            $"the run's own values and the probes': {string.Join("; ", report.Summary.Select(s => $"{s.Name} {s.Value}"))}");
+        Check(report["tunings"]?.Value == 3 && report["tuning time"] is { Value: 35, Unit: "ms" } && report["tuned operations"]?.Value == 2
+              && report.Runs[0].Tables.Single(t => t.Name == "tuning") is { Rows: [[_, "test product", "2", "1", "6", "40", _], [_, "test convolution", "1", "0", "3", "5", _]] },
+            $"the kernel choices by operation, nested ones within the outer time: {report["tunings"]}, {report["tuning time"]}");
+        Check(report["prefill events"]?.Value == 1 && report["prefill count"]?.Value == 24 && report["prefill pieces"]?.Value == 3
+              && report["decode chunk events"]?.Value == 2 && report["decode chunk count"]?.Value == 16 && report["decode rate"] is { Unit: "tok/s" }
+              && report.Runs[0].Tables.Single(t => t.Name == "inference stages").Rows.Single(r => r[0] == "prefill") is [_, "1", "24", "2", "3", "4", ..],
+            $"the inference stages, without waiting for the device: {string.Join("; ", report.Summary.Where(s => s.Source == "inference").Select(s => $"{s.Name} {s.Value}"))}");
+        Check(report["fallback calls"] is { Unit: "calls" } && report["Prefill time"] is null, "the fallbacks recorded; the intrusive stages probe not run");
+
+        var text = new StringWriter();
+        report.Write(text);
+        string written = text.ToString();
+        Check(written.Contains("one run watched", StringComparison.Ordinal) && written.Contains("  not measured in a watched run", StringComparison.Ordinal)
+              && written.Contains("measured", StringComparison.Ordinal) && !written.Contains("median", StringComparison.Ordinal) && written.Contains("tuning (2 rows)", StringComparison.Ordinal),
+            $"the table of a watched run: {written}");
+        var jsonText = new StringWriter();
+        report.Write(jsonText, ProfileWriters.Json);
+        var json = JsonDocument.Parse(jsonText.ToString()).RootElement;
+        Check(json.GetProperty("options").GetProperty("watched").GetBoolean() && json.GetProperty("notes").GetArrayLength() == report.Notes.Count
+              && json.GetProperty("runs")[0].GetProperty("kind").GetString() == "once", "the JSON of a watched run");
+
+        // An intrusive probe named measures the run itself, with a note; nothing is measured after the end.
+        using (var named = Profiler.Watch("named", device, new ProfileOptions { Probes = ["operations", "heap"] }))
+        {
+            ProfiledProduct(named.Run);
+            named.Note("ended with exit code 0");
+            var namedReport = named.End();
+            Check(namedReport.Probes.SequenceEqual(["operations", "heap"]) && namedReport["operations"] is { Value: > 0 }
+                  && namedReport.Notes.Any(n => n.Contains("include their cost", StringComparison.Ordinal)) && namedReport.Notes[^1] == "ended with exit code 0",
+                $"a named intrusive probe in the watched run: {string.Join(" | ", namedReport.Notes)}");
+        }
+
+        // The host fallbacks of a device without kernels of its own, by operation, counted while the probe listens.
+        if (device.Type == DeviceType.Cpu)
+        {
+            var minimal = Device.Get("minimal");
+            long before = Idrak.Abstraction.Operations.Kernels.HostCalls(minimal.Backend);
+            var fallbacks = Profiler.Watch("minimal", minimal, new ProfileOptions { Probes = ["fallbacks"] });
+            ProfiledProduct(fallbacks.Run);
+            var minimalReport = fallbacks.End();
+            var table = minimalReport.Runs[0].Tables.Single(t => t.Name == "host fallbacks");
+            Check(minimalReport["fallback calls"]?.Value == Idrak.Abstraction.Operations.Kernels.HostCalls(minimal.Backend) - before && minimalReport["fallback calls"]?.Value > 0
+                  && table.Rows.Any(r => r[0] == "minimal" && r[1] == "Softmax" && long.Parse(r[2], CultureInfo.InvariantCulture) >= 1)
+                  && table.Rows.Where(r => r[0] == "minimal").Sum(r => long.Parse(r[2], CultureInfo.InvariantCulture)) == minimalReport["fallback calls"]?.Value,
+                $"the host fallbacks by operation: {minimalReport["fallback calls"]}, {string.Join("; ", table.Rows.Select(r => string.Join(' ', r)))}");
+        }
+    }
 
     // A small product and softmax on the device, a stage of it timed, a value of the workload's own recorded.
     private static void ProfiledProduct(ProfileRun run)
@@ -178,7 +255,7 @@ internal static partial class Tests
         }
 
         Check(ProfileProbes.Find("runs counted") is null && ProfileWriters.Find("names") is null, "unregistered");
-        Check(ProfileProbes.Names.SequenceEqual(["bandwidth", "cpu", "heap", "memory", "operations", "kernels", "stages", "timings", "cluster", "network"]) && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
+        Check(ProfileProbes.Names.SequenceEqual(["bandwidth", "cpu", "heap", "memory", "tuning", "fallbacks", "inference", "operations", "kernels", "stages", "timings", "cluster", "network"]) && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
             $"the library's: {string.Join(", ", ProfileProbes.Names)}; {string.Join(", ", ProfileWriters.Names)}");
 
         // The criteria from the environment.

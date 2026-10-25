@@ -65,10 +65,10 @@ public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format
             }
         }
 
-        long start = Telemetry.Start(TelemetryLevel.Inference);
+        long start = Telemetry.StartStage();
         var decoded = Decode(image);
         Telemetry.InferenceStage(InferenceStageKind.ImageDecode, null, start, (long)decoded.Channels * decoded.Height * decoded.Width, image.Data.Length);
-        start = Telemetry.Start(TelemetryLevel.Inference);
+        start = Telemetry.StartStage();
         var pixels = pipeline.IsEmpty ? decoded : pipeline.Apply(decoded);
         if (!pipeline.IsEmpty)
         {
@@ -369,7 +369,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
     // once more, so a full device never leaves every later prompt with images failing the same way.
     private IReadOnlyList<ImageFeatures> EncodeImages(IVisionEncoder encoder, IReadOnlyList<ImageData> images, VisionOptions? options)
     {
-        long start = Telemetry.Start(TelemetryLevel.Inference);
+        long start = Telemetry.StartStage();
         IReadOnlyList<ImageFeatures> features;
         try
         {
@@ -570,7 +570,7 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
             {
                 foreach (var (source, parts) in soft)
                 {
-                    long start = Telemetry.Start(TelemetryLevel.Inference);
+                    long start = Telemetry.StartStage();
                     var own = source.Encode(parts);
                     encoded.AddRange(own);
                     if (start != 0)

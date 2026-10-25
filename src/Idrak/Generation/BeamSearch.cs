@@ -153,7 +153,7 @@ public static class BeamSearch
         var picks = onDevice ? new Picks(beams) : null;
         try
         {
-            long prefillStart = Telemetry.Start(TelemetryLevel.Inference);
+            long prefillStart = Telemetry.StartStage();
             if (picks is not null)
             {
                 picks.Ban(0, prompt, sequences, scores, options);
@@ -165,7 +165,7 @@ public static class BeamSearch
             }
 
             Telemetry.InferenceStage(InferenceStageKind.Prefill, device, prefillStart, prompt.Count);
-            long decodeStart = Telemetry.Start(TelemetryLevel.Inference);
+            long decodeStart = Telemetry.StartStage();
             int produced = 0;
             bool done = false;
             for (int s = 0; s < options.MaxTokens && !done && !cancellationToken.IsCancellationRequested; s++)

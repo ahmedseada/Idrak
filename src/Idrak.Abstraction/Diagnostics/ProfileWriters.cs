@@ -11,13 +11,14 @@ namespace Idrak.Abstraction.Diagnostics;
 /// <summary>
 /// The writers of a <see cref="ProfileReport"/>, by name (ignoring case). The library's:
 /// <list type="bullet">
-/// <item>"table" (<see cref="Table"/>): aligned text for people: the summary (cold, the statistic, least and most of
-/// the warm runs), then each run's tables (the kernels, the operations), at most 30 rows each.</item>
+/// <item>"table" (<see cref="Table"/>): aligned text for people: the title and the report's notes, the summary (cold, the
+/// statistic, least and most of the warm runs; for a watched run its values), then each run's tables (the kernels, the
+/// operations), at most 30 rows each.</item>
 /// <item>"markdown" (<see cref="Markdown"/>): the same as Markdown tables, every row.</item>
 /// <item>"csv" (<see cref="Csv"/>): one row per value of every run (report, device, run, kind, probe, source, name,
 /// value, unit), with a header.</item>
 /// <item>"json" (<see cref="Json"/>): the whole report as one JSON object on one line (so a file of several reports is
-/// JSON Lines): the options, every run's values and tables, and the summary.</item>
+/// JSON Lines): the options, the notes, every run's values and tables, and the summary.</item>
 /// </list>
 /// Numbers are written the same on every machine (the invariant culture). Register another with <see cref="Register"/>;
 /// one under a library name shadows the library's, which <see cref="Unregister"/> brings back. The registry has no guard:
@@ -88,9 +89,10 @@ public static class ProfileWriters
     private static string Title(ProfileReport report)
     {
         var o = report.Options;
+        string runs = report.Watched ? "one run watched" : $"{(o.Cold ? "a cold run, " : "")}{o.WarmRuns} warm runs ({o.Statistic.ToString().ToLowerInvariant()})";
         return string.Create(CultureInfo.InvariantCulture,
-            $"Profile \"{report.Name}\" on {report.Device} ({report.Device.Backend.Name}): {(o.Cold ? "a cold run, " : "")}{o.WarmRuns} warm runs "
-            + $"({o.Statistic.ToString().ToLowerInvariant()}); probes {(report.Probes.Count == 0 ? "none" : string.Join(", ", report.Probes))}"
+            $"Profile \"{report.Name}\" on {report.Device} ({report.Device.Backend.Name}): {runs}; "
+            + $"probes {(report.Probes.Count == 0 ? "none" : string.Join(", ", report.Probes))}"
             + $"{(report.Skipped.Count > 0 ? "; not on this device: " + string.Join(", ", report.Skipped) : "")}");
     }
 
@@ -103,17 +105,32 @@ public static class ProfileWriters
         public void Write(ProfileReport report, TextWriter output)
         {
             output.WriteLine(markdown ? "## " + Title(report) : Title(report));
+            foreach (string note in report.Notes)
+            {
+                output.WriteLine(markdown ? "- " + note : "  " + note);
+            }
+
             output.WriteLine();
             string statistic = report.Options.Statistic.ToString().ToLowerInvariant();
-            Grid(output, ["value", "unit", "cold", statistic, "min", "max", "from"],
-                [.. report.Summary.Select(s => (IReadOnlyList<string>)[s.Name, s.Unit, Number(s.Cold), Number(s.Value), Number(s.Min), Number(s.Max), s.Source ?? "workload"])],
-                rightFrom: 2);
+            if (report.Watched)
+            {
+                Grid(output, ["value", "unit", "measured", "from"],
+                    [.. report.Summary.Select(s => (IReadOnlyList<string>)[s.Name, s.Unit, Number(s.Value), s.Source ?? "workload"])], rightFrom: 2);
+            }
+            else
+            {
+                Grid(output, ["value", "unit", "cold", statistic, "min", "max", "from"],
+                    [.. report.Summary.Select(s => (IReadOnlyList<string>)[s.Name, s.Unit, Number(s.Cold), Number(s.Value), Number(s.Min), Number(s.Max), s.Source ?? "workload"])],
+                    rightFrom: 2);
+            }
+
             foreach (var run in report.Runs)
             {
                 foreach (var table in run.Tables)
                 {
                     output.WriteLine();
-                    string title = $"{table.Name} ({run.Kind.ToString().ToLowerInvariant()} run {run.Index}{(run.Probe is { } p ? ", " + p : "")}, {table.Rows.Count} rows)";
+                    string title = report.Watched ? $"{table.Name} ({table.Rows.Count} rows)"
+                        : $"{table.Name} ({run.Kind.ToString().ToLowerInvariant()} run {run.Index}{(run.Probe is { } p ? ", " + p : "")}, {table.Rows.Count} rows)";
                     output.WriteLine(markdown ? "### " + title : title);
                     Grid(output, table.Columns, markdown ? table.Rows : [.. table.Rows.Take(30)], rightFrom: 1);
                 }
@@ -202,9 +219,11 @@ public static class ProfileWriters
                 w.WriteBoolean("cold", o.Cold);
                 w.WriteNumber("warm_runs", o.WarmRuns);
                 w.WriteString("statistic", o.Statistic.ToString().ToLowerInvariant());
+                w.WriteBoolean("watched", report.Watched);
                 Strings(w, "probes", report.Probes);
                 Strings(w, "skipped", report.Skipped);
                 w.WriteEndObject();
+                Strings(w, "notes", report.Notes);
                 w.WriteStartArray("runs");
                 foreach (var run in report.Runs)
                 {

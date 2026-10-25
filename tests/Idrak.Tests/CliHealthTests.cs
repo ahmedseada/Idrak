@@ -32,7 +32,54 @@ internal static partial class Tests
         ("cli health: update reads the published versions; login and logout store and remove a token", CliUpdateLogin),
         ("cli health: help topics and pages, group words, setup android", CliHelpTopics),
         ("cli health: @file, --log, --output, --format csv/md, --color, --timeout, --threads, progress", CliFoundation),
+        ("cli health: --profile on any command (and IDRAK_PROFILE=1) leaves its output as it is and writes one watched profile to the error stream or IDRAK_PROFILE_OUT, secrets hidden", CliProfileFlag),
     ];
+
+    // --profile, common to every command: the output (JSON included) unchanged, one report of one watched run on the
+    // error stream, or appended to IDRAK_PROFILE_OUT; IDRAK_PROFILE=1 the same; a value that is neither on nor off refused.
+    private static void CliProfileFlag(Device device)
+    {
+        string config = Path.Combine(CliTemp(), "none.json");
+        var plain = Cli("version", "-j", "-d", device.ToString(), "-C", config);
+        var profiled = Cli("version", "-j", "-d", device.ToString(), "-C", config, "--profile");
+        Check(plain.Exit == 0 && profiled.Exit == 0 && profiled.Out == plain.Out && JsonNode.Parse(profiled.Out) is not null && !plain.Err.Contains("Profile ", StringComparison.Ordinal),
+            $"the output as it is: {profiled.Exit}, '{profiled.Out}' for '{plain.Out}'");
+        string err = profiled.Err;
+        Check(err.Contains($"Profile \"idrak version -j -d {device} -C {config} --profile\" on {device}", StringComparison.Ordinal) && err.Contains("one run watched", StringComparison.Ordinal)
+              && err.Contains("ended with exit code 0", StringComparison.Ordinal) && err.Contains("wall time", StringComparison.Ordinal)
+              && Regex.IsMatch(err, @"\nwall +ms +\d") && err.Contains("allocated", StringComparison.Ordinal) && err.Contains("tuning time", StringComparison.Ordinal)
+              && err.Contains("fallback calls", StringComparison.Ordinal),
+            $"the report on the error stream: {err}");
+
+        WithEnvironment(new Dictionary<string, string?> { ["IDRAK_PROFILE"] = "1" }, () =>
+        {
+            var byVariable = Cli("version", "-j", "-d", device.ToString(), "-C", config);
+            Check(byVariable.Exit == 0 && byVariable.Out == plain.Out && byVariable.Err.Contains("one run watched", StringComparison.Ordinal), $"IDRAK_PROFILE=1: {byVariable.Err}");
+        });
+        WithEnvironment(new Dictionary<string, string?> { ["IDRAK_PROFILE"] = "phone" }, () =>
+        {
+            var refused = Cli("version", "-C", config);
+            Check(refused.Exit == ExitCodes.Usage && refused.Err.Contains("IDRAK_PROFILE=phone", StringComparison.Ordinal) && refused.Err.Contains("IDRAK_CONFIG_PROFILE", StringComparison.Ordinal),
+                $"IDRAK_PROFILE that is neither on nor off: {refused.Exit}, {refused.Err}");
+        });
+
+        string file = Path.Combine(CliTemp(), "runs", "profile.txt");
+        WithEnvironment(new Dictionary<string, string?> { ["IDRAK_PROFILE_OUT"] = file, ["IDRAK_PROFILE_FORMAT"] = "json" }, () =>
+        {
+            var toFile = Cli("version", "-d", device.ToString(), "-C", config, "--profile");
+            Check(toFile.Exit == 0 && File.Exists(file) && toFile.Err.Contains("profile written to", StringComparison.Ordinal) && !toFile.Err.Contains("one run watched", StringComparison.Ordinal),
+                $"IDRAK_PROFILE_OUT: {toFile.Err}");
+            var json = JsonNode.Parse(File.ReadAllText(file))!;
+            Check(json["options"]?["watched"]?.GetValue<bool>() == true && json["notes"]!.AsArray().Any(n => n!.GetValue<string>().Contains("exit code 0", StringComparison.Ordinal)),
+                $"the report appended to the file as JSON: {File.ReadAllText(file)}");
+        });
+
+        string shown = CommandProfile.Shown(["config", "set", "tokens.github", "ghp_secret", "--hf-token", "hf_secret", "--api-key=k_secret", "--tokenizer", "tok.json",
+            "HF_TOKEN=x_secret", "https://user:pw_secret@example.org/m", "my prompt"]);
+        Check(!shown.Contains("secret", StringComparison.Ordinal) && shown.Contains("--tokenizer tok.json", StringComparison.Ordinal) && shown.Contains("tokens.github ***", StringComparison.Ordinal)
+              && shown.Contains("--api-key=***", StringComparison.Ordinal) && shown.Contains("https://user:***@example.org/m", StringComparison.Ordinal) && shown.EndsWith("\"my prompt\"", StringComparison.Ordinal),
+            $"secrets hidden in the report's command line: {shown}");
+    }
 
     // Runs the tool in-process: the exit code and what it wrote.
     private static (int Exit, string Out, string Err) Cli(params string[] args)

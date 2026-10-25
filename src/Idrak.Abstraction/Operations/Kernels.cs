@@ -135,6 +135,16 @@ public static class Kernels
     }
 
     /// <summary>
+    /// The host fallbacks of <paramref name="backend"/> by operation, counted while a telemetry hook listened at
+    /// <see cref="TelemetryLevel.Devices"/> (nothing is counted by operation while nobody listens): a copy.
+    /// </summary>
+    public static IReadOnlyDictionary<string, long> HostCallsByOperation(Backend backend)
+    {
+        ArgumentNullException.ThrowIfNull(backend);
+        return backend.HostCallsByOperation;
+    }
+
+    /// <summary>
     /// Whether a failure on a device of <paramref name="kind"/> would be retried on the host (for the hint of a
     /// <see cref="DeviceFailed"/> event): <see cref="Backend.RetryOnHost"/> of a live device of that kind, or, before one
     /// starts, <c>IDRAK_RETRY_ON_HOST</c>.

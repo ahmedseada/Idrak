@@ -313,7 +313,7 @@ public sealed class VitsSynthesizer : IAdversarialSpeechSynthesizer
         float lengthScale = 1f / (options.Rate * Config.SpeakingRate);
         var random = new Random(seed);
         long started = Stopwatch.GetTimestamp();
-        long telemetryStart = Telemetry.Start(TelemetryLevel.Inference);
+        long telemetryStart = Telemetry.StartStage();
         using var noGrad = Autograd.NoGrad();
         using var scope = new TensorScope();
         var speaker = Speaker(options.Voice);

@@ -32,6 +32,12 @@ public enum ProfileRunKind
 
     /// <summary>A run for one intrusive probe (<see cref="IProfileProbe.Intrusive"/>), not timed: only that probe's values count.</summary>
     Probe,
+
+    /// <summary>
+    /// The one run of work that cannot be repeated (a command, an app's session), watched as it ran (<see cref="Profiler.Watch"/>):
+    /// neither cold nor warm, its values reported as they are.
+    /// </summary>
+    Once,
 }
 
 /// <summary>How the warm runs of a profile are summed up into one value.</summary>
@@ -64,7 +70,7 @@ public sealed class ProfileRun
     /// <summary>The run's place in the profile, from 0.</summary>
     public int Index { get; }
 
-    /// <summary>Cold, warm, or the pass of one intrusive probe.</summary>
+    /// <summary>Cold, warm, the pass of one intrusive probe, or the one run watched.</summary>
     public ProfileRunKind Kind { get; }
 
     /// <summary>The device profiled.</summary>
@@ -151,10 +157,10 @@ public sealed class ProfileRun
 /// <param name="Unit">Its unit.</param>
 /// <param name="Source">The probe that measured it, or null for the workload and the runner.</param>
 /// <param name="Cold">The cold run's value, or null (no cold run, or not measured in it).</param>
-/// <param name="Value">The statistic over the warm runs; for an intrusive probe's value, its pass's value.</param>
-/// <param name="Min">The least of the warm runs (the pass's value for an intrusive probe).</param>
-/// <param name="Max">The most of the warm runs (the pass's value for an intrusive probe).</param>
-/// <param name="Count">The warm runs that measured it (1 for an intrusive probe's pass).</param>
+/// <param name="Value">The statistic over the warm runs; for an intrusive probe's value, its pass's value; for a watched run (<see cref="ProfileRunKind.Once"/>), its value.</param>
+/// <param name="Min">The least of the warm runs (the pass's or the watched run's value).</param>
+/// <param name="Max">The most of the warm runs (the pass's or the watched run's value).</param>
+/// <param name="Count">The warm runs that measured it (1 for an intrusive probe's pass and for a watched run).</param>
 public sealed record ProfileSummary(string Name, string Unit, string? Source, double? Cold, double? Value, double? Min, double? Max, int Count);
 
 /// <summary>
@@ -246,9 +252,10 @@ public sealed record ProfileOptions
 /// </summary>
 public sealed class ProfileReport
 {
-    internal ProfileReport(string name, Device device, ProfileOptions options, IReadOnlyList<ProfileRun> runs, IReadOnlyList<string> probes, IReadOnlyList<string> skipped)
+    internal ProfileReport(string name, Device device, ProfileOptions options, IReadOnlyList<ProfileRun> runs, IReadOnlyList<string> probes, IReadOnlyList<string> skipped,
+        IReadOnlyList<string>? notes = null)
     {
-        (Name, Device, Options, Runs, Probes, Skipped) = (name, device, options, runs, probes, skipped);
+        (Name, Device, Options, Runs, Probes, Skipped, Notes) = (name, device, options, runs, probes, skipped, notes ?? []);
         Summary = Summarize();
     }
 
@@ -269,6 +276,15 @@ public sealed class ProfileReport
 
     /// <summary>The probes asked for that the device does not support.</summary>
     public IReadOnlyList<string> Skipped { get; }
+
+    /// <summary>
+    /// Lines the writers print under the title: what a watched run was and how it ended, the probes it left out
+    /// (<see cref="ProfileSession.Note"/>, <see cref="Profiler.Watch"/>); empty for <see cref="Profiler.Run"/>.
+    /// </summary>
+    public IReadOnlyList<string> Notes { get; }
+
+    /// <summary>Whether the report is of one run watched as it ran (<see cref="Profiler.Watch"/>), not of runs repeated.</summary>
+    public bool Watched => Runs.Count > 0 && Runs.All(r => r.Kind == ProfileRunKind.Once);
 
     /// <summary>Every value summed up: the timed runs' values first (in the order first recorded), then the intrusive probes' own.</summary>
     public IReadOnlyList<ProfileSummary> Summary { get; }
@@ -302,7 +318,7 @@ public sealed class ProfileReport
     private List<ProfileSummary> Summarize()
     {
         var cold = Runs.FirstOrDefault(r => r.Kind == ProfileRunKind.Cold);
-        var warm = Runs.Where(r => r.Kind == ProfileRunKind.Warm).ToList();
+        var warm = Runs.Where(r => r.Kind is ProfileRunKind.Warm or ProfileRunKind.Once).ToList();   // a watched run stands for the warm ones
         var summary = new List<ProfileSummary>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var value in Runs.Where(r => r.Kind != ProfileRunKind.Probe).SelectMany(r => r.Values))
@@ -357,6 +373,14 @@ public interface IProfileProbe
 
     /// <summary>Whether the probe can measure on <paramref name="device"/> (kernel timing only where the device has it).</summary>
     bool Supports(Device device);
+
+    /// <summary>
+    /// Whether <see cref="Profiler.Watch"/> measures with the probe when the options name none: by default every probe
+    /// that is not <see cref="Intrusive"/>. A watched run happens once, so a probe that changes it (an intrusive one) or
+    /// does work of its own on the device before it (the bandwidth's copies through device memory) says false; named in
+    /// <see cref="ProfileOptions.Probes"/>, it is measured with all the same.
+    /// </summary>
+    bool Watched => !Intrusive;
 
     /// <summary>
     /// Starts measuring before the workload runs; returns what ends it after the run, recording into
@@ -467,13 +491,162 @@ public static class Profiler
             return run;
         }
     }
+
+    /// <summary>
+    /// Starts watching one run of work that cannot be repeated (a command line, an app's session): every selected probe
+    /// begins now and ends at <see cref="ProfileSession.End"/>, which returns a report of that one run
+    /// (<see cref="ProfileRunKind.Once"/>) with its wall time ("wall", ms: host time; the device's queued work is not waited
+    /// for, so a watch can end from another thread, at Ctrl+C). <see cref="ProfileOptions.Cold"/>,
+    /// <see cref="ProfileOptions.WarmRuns"/> and <see cref="ProfileOptions.Statistic"/> do not apply. With no probes named,
+    /// the registered probes that are <see cref="IProfileProbe.Watched"/> are measured; the others are listed in a note.
+    /// An intrusive probe cannot have a run of its own here: named in <see cref="ProfileOptions.Probes"/>, it measures the
+    /// same run, and a note says the times include its cost.
+    /// </summary>
+    /// <exception cref="NotSupportedException">A probe named in the options is not registered (the message names the registered ones).</exception>
+    /// <example>
+    /// <code>
+    /// using var watch = Profiler.Watch("idrak reinforce …", device, ProfileOptions.FromEnvironment());
+    /// RunTheCommand();
+    /// watch.End().Write();
+    /// </code>
+    /// </example>
+    public static ProfileSession Watch(string name, Device device, ProfileOptions? options = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(device);
+        options ??= new ProfileOptions();
+        var named = options.Probes is { } names ? names.Select(ProfileProbes.Get).ToList() : [.. ProfileProbes.Names.Select(ProfileProbes.Get).Where(p => p.Watched)];
+        var probes = named.Where(p => p.Supports(device)).ToList();
+        var skipped = named.Where(p => !p.Supports(device)).Select(p => p.Name).ToList();
+        var notes = new List<string>();
+        if (options.Probes is null && ProfileProbes.Names.Where(n => !ProfileProbes.Get(n).Watched).ToList() is { Count: > 0 } left)
+        {
+            notes.Add($"not measured in a watched run (they would change it): {string.Join(", ", left)}; name them in IDRAK_PROFILE_PROBES to add them");
+        }
+
+        if (probes.Where(p => p.Intrusive).Select(p => p.Name).ToList() is { Count: > 0 } intrusive)
+        {
+            notes.Add($"intrusive probes measured in the run itself: its times include their cost ({string.Join(", ", intrusive)})");
+        }
+
+        return new ProfileSession(name, device, options, probes, skipped, notes);
+    }
+}
+
+/// <summary>
+/// One run of work watched as it runs (<see cref="Profiler.Watch"/>): the probes began when it was made and end at
+/// <see cref="End"/> (or <see cref="Dispose"/>), once, from any thread. A probe whose end fails leaves a note instead of
+/// its values, so the rest of the report still comes.
+/// </summary>
+public sealed class ProfileSession : IDisposable
+{
+    private readonly Lock _lock = new();
+    private readonly string _name;
+    private readonly ProfileOptions _options;
+    private readonly List<string> _probes;
+    private readonly List<string> _skipped;
+    private readonly List<string> _notes;
+    private readonly List<(string Name, Action End)> _ends = [];
+    private readonly long _start;
+    private ProfileReport? _report;
+
+    internal ProfileSession(string name, Device device, ProfileOptions options, List<IProfileProbe> probes, List<string> skipped, List<string> notes)
+    {
+        (_name, _options, _skipped, _notes) = (name, options, skipped, notes);
+        Run = new ProfileRun(0, ProfileRunKind.Once, device, null);
+        _probes = [.. probes.Select(p => p.Name)];
+        try
+        {
+            foreach (var probe in probes)
+            {
+                _ends.Add((probe.Name, probe.Begin(Run)));
+            }
+        }
+        catch
+        {
+            EndProbes();
+            throw;
+        }
+
+        _start = Stopwatch.GetTimestamp();
+    }
+
+    /// <summary>The run being watched: record the work's own values and stages into it (from the thread doing the work).</summary>
+    public ProfileRun Run { get; }
+
+    /// <summary>Whether <see cref="End"/> was called.</summary>
+    public bool Ended
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _report is not null;
+            }
+        }
+    }
+
+    /// <summary>Adds a line to the report's <see cref="ProfileReport.Notes"/> (how the work ended, what it was); ignored once ended.</summary>
+    public void Note(string line)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(line);
+        lock (_lock)
+        {
+            if (_report is null)
+            {
+                _notes.Add(line);
+            }
+        }
+    }
+
+    /// <summary>Ends every probe (the last begun first) and returns the report; again, the same report.</summary>
+    public ProfileReport End()
+    {
+        lock (_lock)
+        {
+            if (_report is null)
+            {
+                Run.Stage("wall", Stopwatch.GetElapsedTime(_start));
+                EndProbes();
+                _report = new ProfileReport(_name, Run.Device, _options, [Run], _probes, _skipped, _notes);
+            }
+
+            return _report;
+        }
+    }
+
+    /// <summary>Ends the watch (<see cref="End"/>) if it was not ended.</summary>
+    public void Dispose() => End();
+
+    private void EndProbes()
+    {
+        for (int i = _ends.Count - 1; i >= 0; i--)
+        {
+            Run.Source = _ends[i].Name;
+            try
+            {
+                _ends[i].End();
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                _notes.Add($"probe {_ends[i].Name} failed at its end: {e.Message.Split('\n')[0]}");
+            }
+            finally
+            {
+                Run.Source = null;
+            }
+        }
+
+        _ends.Clear();
+    }
 }
 
 /// <summary>
 /// The probes a <see cref="Profiler"/> measures with, by name (ignoring case). The library's, in this order:
 /// <list type="bullet">
 /// <item>"bandwidth": the device's memory bandwidth ("device bandwidth", GB/s): copies through device memory, measured once
-/// per device before its first run, so a run's rate of bytes read (a decoding step's weights) has its ceiling beside it.</item>
+/// per device before its first run, so a run's rate of bytes read (a decoding step's weights) has its ceiling beside it.
+/// Not <see cref="IProfileProbe.Watched"/>: its copies would run inside a watched command.</item>
 /// <item>"cpu": the process's processor time ("cpu", ms) and the cores it kept busy ("cores busy": processor time over wall time).</item>
 /// <item>"heap": the managed heap: bytes allocated on every thread ("allocated", MB), collections of each generation
 /// ("gc0", "gc1", "gc2") and the time paused for them ("gc pause", ms).</item>
@@ -482,6 +655,19 @@ public static class Profiler
 /// their driver has free ("device free", MB) and what neither the library nor that holds ("device other", MB: the
 /// driver's context and kernels, other programs), and the process's working set ("process", MB) and peak since it
 /// started ("process peak", MB).</item>
+/// <item>"tuning": the kernel choices the devices measured during the run (a shape class met for the first time, from the
+/// telemetry's <see cref="TuningCompleted"/>): "tunings" (count), "tuning time" (ms, nested measurements counted within
+/// their outer one), "tuned operations", and the table "tuning" by device and operation, slowest first.</item>
+/// <item>"fallbacks": the operations the run's device ran through the host fallback (each call copies its operands to the
+/// CPU and back): "fallback calls" (calls) and "fallback operations", with the table "host fallbacks" by operation (the
+/// device's counts by operation while the probe listens at <see cref="TelemetryLevel.Devices"/>, and the first fallback of
+/// an operation on another device from <see cref="HostFallback"/>).</item>
+/// <item>"inference": the stages of reading an answer (<see cref="InferenceStage"/>) listened to at
+/// <see cref="TelemetryLevel.Stages"/>, which waits for nothing: for each stage seen "{stage} time" (ms), "{stage} events"
+/// and "{stage} count" (what it counts: tokens for the prompt's pass and decoding), "prefill pieces", "prompt rate" and
+/// "decode rate" (tok/s), and the table "inference stages" (events, count, rows, pieces, piece size, ms, MB, share). The
+/// prompt's pass and the decoding chunks end with their tokens read back, so their times are complete; the other stages'
+/// times are the host's (queued device work counts in the next stage).</item>
 /// <item>"operations" (intrusive): every operation called on the device ("operations", calls; "operation kinds") and every
 /// host fallback ("host fallbacks", calls), with tables of both by operation.</item>
 /// <item>"kernels" (intrusive; devices that time their kernels, such as CUDA): the device's time in kernels ("kernel time",
@@ -511,7 +697,11 @@ public static class ProfileProbes
         var table = new SlotTable<string, IProfileProbe>(nameof(ProfileProbes), comparer: StringComparer.OrdinalIgnoreCase,
             unguarded: "a probe holds what it measures from before a run to after it, so it cannot be swapped half-way");
         // The bandwidth first: its one measurement (before the first run) is done before the other probes start theirs.
-        foreach (var probe in new IProfileProbe[] { new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new MemoryProbe(), new OperationsProbe(), new KernelsProbe(), new StagesProbe(), new TimingsProbe() })
+        foreach (var probe in new IProfileProbe[]
+                 {
+                     new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new MemoryProbe(), new TuningProbe(), new FallbacksProbe(), new InferenceProbe(),
+                     new OperationsProbe(), new KernelsProbe(), new StagesProbe(), new TimingsProbe(),
+                 })
         {
             table.RegisterDefault(probe.Name, probe);
         }
@@ -558,6 +748,8 @@ public static class ProfileProbes
         public string Summary => "the device's memory bandwidth as copies through it measure it, once per device before its first run: the ceiling of a rate of bytes read";
 
         public bool Intrusive => false;
+
+        public bool Watched => false;                                           // its copies would run inside a watched command
 
         public bool Supports(Device device) => true;
 
@@ -637,6 +829,200 @@ public static class ProfileProbes
         }
 
         return rate;
+    }
+
+    // The kernel choices measured during a run (TuningCompleted, at TelemetryLevel.Devices): count, candidates and time by
+    // device and operation. Not intrusive: the event is published once per shape class, when the device has measured.
+    private sealed class TuningProbe : IProfileProbe
+    {
+        public string Name => "tuning";
+
+        public string Summary => "the kernel choices the devices measured in the run (shape classes met for the first time): count and time by operation and device";
+
+        public bool Intrusive => false;
+
+        public bool Supports(Device device) => true;
+
+        public Action Begin(ProfileRun run)
+        {
+            var hook = new TuningSums();
+            var subscription = Telemetry.Subscribe(hook);
+            return () =>
+            {
+                subscription.Dispose();
+                lock (hook)
+                {
+                    var rows = hook.Sums.OrderByDescending(t => t.Value.Ms).ThenBy(t => t.Key.Operation, StringComparer.Ordinal).ToList();
+                    run.Record("tunings", rows.Sum(t => t.Value.Count));
+                    run.Record("tuning time", hook.OuterMs, "ms");
+                    run.Record("tuned operations", rows.Count);
+                    if (rows.Count > 0)
+                    {
+                        run.Add(new ProfileTable("tuning", ["device", "operation", "tunings", "nested", "candidates", "ms", "share"],
+                            [.. rows.Select(t => (IReadOnlyList<string>)[t.Key.Device, t.Key.Operation, Text(t.Value.Count), Text(t.Value.Nested), Text(t.Value.Candidates),
+                                Text(t.Value.Ms), Text(hook.OuterMs > 0 ? 100 * t.Value.Ms / hook.OuterMs : 0) + "%"])]));
+                    }
+                }
+            };
+        }
+
+        private sealed class TuningSums : ITelemetryHook
+        {
+            public TelemetryLevel Levels => TelemetryLevel.Devices;
+
+            public Dictionary<(string Device, string Operation), (long Count, long Nested, long Candidates, double Ms)> Sums { get; } = [];
+
+            // The time of the measurements not inside another's (a nested one's time lies within its outer one's).
+            public double OuterMs { get; private set; }
+
+            public void OnTuning(in TuningCompleted e)
+            {
+                lock (this)
+                {
+                    ref var sum = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(Sums, (e.Device, e.Operation), out _);
+                    double ms = e.Duration.TotalMilliseconds;
+                    sum = (sum.Count + 1, sum.Nested + (e.Nested ? 1 : 0), sum.Candidates + e.Candidates, sum.Ms + ms);
+                    OuterMs += e.Nested ? 0 : ms;
+                }
+            }
+        }
+    }
+
+    // The host fallbacks of a run: the run's device's counts by operation (Kernels.HostCallsByOperation, counted while the
+    // probe listens at TelemetryLevel.Devices) and the first fallback of an operation on any other device (HostFallback).
+    // Not intrusive: a fallback is counted where it happens, nothing is traced.
+    private sealed class FallbacksProbe : IProfileProbe
+    {
+        public string Name => "fallbacks";
+
+        public string Summary => "the operations run through the host fallback (operands copied to the CPU and back): calls by operation";
+
+        public bool Intrusive => false;
+
+        public bool Supports(Device device) => true;
+
+        public Action Begin(ProfileRun run)
+        {
+            var backend = run.Device.Backend;
+            var hook = new FirstFallbacks();
+            var subscription = Telemetry.Subscribe(hook);                      // counting by operation starts with it
+            long calls = Operations.Kernels.HostCalls(backend);
+            var before = Operations.Kernels.HostCallsByOperation(backend);
+            return () =>
+            {
+                long total = Operations.Kernels.HostCalls(backend) - calls;
+                var after = Operations.Kernels.HostCallsByOperation(backend);
+                subscription.Dispose();
+                var rows = after.Select(c => (Device: backend.Kind, Operation: c.Key, Calls: c.Value - before.GetValueOrDefault(c.Key)))
+                    .Where(c => c.Calls > 0).OrderByDescending(c => c.Calls).ThenBy(c => c.Operation, StringComparer.Ordinal)
+                    .Select(c => (c.Device, c.Operation, Calls: Text(c.Calls))).ToList();
+                lock (hook)
+                {
+                    // Another device's first fallback of an operation: its count is that device's, not watched here.
+                    rows.AddRange(hook.Seen.Where(f => f.Device != backend.Kind).Select(f => (f.Device, f.Operation, Calls: "first")));
+                }
+
+                run.Record("fallback calls", total, "calls");
+                run.Record("fallback operations", rows.Count);
+                if (rows.Count > 0)
+                {
+                    run.Add(new ProfileTable("host fallbacks", ["device", "operation", "calls"], [.. rows.Select(r => (IReadOnlyList<string>)[r.Device, r.Operation, r.Calls])]));
+                }
+            };
+        }
+
+        private sealed class FirstFallbacks : ITelemetryHook
+        {
+            public TelemetryLevel Levels => TelemetryLevel.Devices;
+
+            public List<(string Device, string Operation)> Seen { get; } = [];
+
+            public void OnHostFallback(in HostFallback e)
+            {
+                lock (this)
+                {
+                    Seen.Add((e.Device, e.Operation));
+                }
+            }
+        }
+    }
+
+    // The stages of reading an answer (InferenceStage) at TelemetryLevel.Stages, which waits for nothing (unlike the
+    // Inference level, whose Predict events wait for the device): each stage's events, counts, rows, pieces, time and bytes.
+    private sealed class InferenceProbe : IProfileProbe
+    {
+        // Each stage's name in values and tables ("decode chunk"), made once.
+        private static readonly string[] StageNames = [.. Enum.GetValues<InferenceStageKind>().Select(k =>
+            string.Concat(k.ToString().Select((c, i) => char.IsUpper(c) && i > 0 ? " " + char.ToLowerInvariant(c) : char.ToLowerInvariant(c).ToString())))];
+
+        public string Name => "inference";
+
+        public string Summary => "the stages of reading an answer without waiting for the device: the prompt's passes and their pieces, decoding chunks, "
+                                 + "encoders, caches and graphs: events, tokens, time and rates";
+
+        public bool Intrusive => false;
+
+        public bool Supports(Device device) => true;
+
+        private static string StageName(InferenceStageKind stage) => (int)stage < StageNames.Length ? StageNames[(int)stage] : stage.ToString();
+
+        public Action Begin(ProfileRun run)
+        {
+            var hook = new StageSums();
+            var subscription = Telemetry.Subscribe(hook);
+            return () =>
+            {
+                subscription.Dispose();
+                lock (hook)
+                {
+                    double total = hook.Sums.Values.Sum(v => v.Ms);
+                    foreach (var (stage, sum) in hook.Sums)
+                    {
+                        string name = StageName(stage);
+                        run.Record(string.Create(CultureInfo.InvariantCulture, $"{name} time"), sum.Ms, "ms");
+                        run.Record(string.Create(CultureInfo.InvariantCulture, $"{name} events"), sum.Events);
+                        run.Record(string.Create(CultureInfo.InvariantCulture, $"{name} count"), sum.Count);
+                    }
+
+                    if (hook.Sums.TryGetValue(InferenceStageKind.Prefill, out var prefill))
+                    {
+                        run.Record("prefill pieces", prefill.Pieces);
+                        run.Record("prompt rate", prefill.Ms > 0 ? prefill.Count / (prefill.Ms / 1000) : 0, "tok/s");
+                    }
+
+                    if (hook.Sums.TryGetValue(InferenceStageKind.DecodeChunk, out var decode))
+                    {
+                        run.Record("decode rate", decode.Ms > 0 ? decode.Count / (decode.Ms / 1000) : 0, "tok/s");
+                    }
+
+                    if (hook.Sums.Count > 0)
+                    {
+                        run.Add(new ProfileTable("inference stages", ["stage", "events", "count", "rows", "pieces", "piece size", "ms", "MB", "share"],
+                            [.. hook.Sums.OrderByDescending(s => s.Value.Ms).Select(s => (IReadOnlyList<string>)[StageName(s.Key), Text(s.Value.Events), Text(s.Value.Count),
+                                Text(s.Value.Rows), Text(s.Value.Pieces), s.Value.PieceSize > 0 ? Text(s.Value.PieceSize) : "", Text(s.Value.Ms),
+                                s.Value.Bytes > 0 ? Text(s.Value.Bytes / 1048576.0) : "", Text(total > 0 ? 100 * s.Value.Ms / total : 0) + "%"])]));
+                    }
+                }
+            };
+        }
+
+        private sealed class StageSums : ITelemetryHook
+        {
+            public TelemetryLevel Levels => TelemetryLevel.Stages;
+
+            // Per stage: events, what they count, the most rows read together, the pieces, the largest piece, ms, bytes.
+            public SortedDictionary<InferenceStageKind, (long Events, long Count, int Rows, long Pieces, int PieceSize, double Ms, long Bytes)> Sums { get; } = [];
+
+            public void OnInferenceStage(in InferenceStage e)
+            {
+                lock (this)
+                {
+                    var s = Sums.GetValueOrDefault(e.Stage);
+                    Sums[e.Stage] = (s.Events + 1, s.Count + e.Count, Math.Max(s.Rows, e.Rows), s.Pieces + e.Pieces, Math.Max(s.PieceSize, e.PieceSize),
+                        s.Ms + e.Duration.TotalMilliseconds, s.Bytes + e.Bytes);
+                }
+            }
+        }
     }
 
     // The stages of reading an answer (InferenceStage events) in a run: each stage's time, count and bytes summed, and the

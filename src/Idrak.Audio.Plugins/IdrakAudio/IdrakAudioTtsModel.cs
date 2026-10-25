@@ -262,7 +262,7 @@ public sealed class IdrakAudioTtsModel : ITrainableSpeechSynthesizer
     private (float[] Samples, TimeSpan Model, TimeSpan Vocoder) SpeakPiece(int[] labels, SpeechSynthesisOptions options, IVocoder vocoder)
     {
         long started = Stopwatch.GetTimestamp();
-        long telemetryStart = Telemetry.Start(TelemetryLevel.Inference);
+        long telemetryStart = Telemetry.StartStage();
         var (logMel, frames, _) = Spectrogram(labels, options.Rate);
         Telemetry.InferenceStage(InferenceStageKind.Encoder, Device, telemetryStart, labels.Length, (long)logMel.Length * sizeof(float));
         var modelTime = Stopwatch.GetElapsedTime(started);

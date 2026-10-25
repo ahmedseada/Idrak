@@ -312,6 +312,9 @@ public abstract partial class Backend
     // The operations whose first host fallback was reported to telemetry (HostFallback), made on the first report.
     private ConcurrentDictionary<string, bool>? _hostFallbacksReported;
 
+    // The host fallbacks by operation counted while someone listens at TelemetryLevel.Devices (Kernels.HostCallsByOperation).
+    private ConcurrentDictionary<string, long>? _hostCallsByOperation;
+
     // RetryOnHost: 1 on, 0 off, -1 not read yet from IDRAK_RETRY_ON_HOST (read on first use, when Kind is safe to call).
     private int _retryOnHost = -1;
 
@@ -456,6 +459,10 @@ public abstract partial class Backend
     /// <summary>Operations run through the host fallback so far.</summary>
     internal long HostCalls => Interlocked.Read(ref _hostCalls);
 
+    /// <summary>The host fallbacks by operation counted while someone listened at <see cref="TelemetryLevel.Devices"/>.</summary>
+    internal IReadOnlyDictionary<string, long> HostCallsByOperation =>
+        Volatile.Read(ref _hostCallsByOperation) is { } counts ? new Dictionary<string, long>(counts, StringComparer.Ordinal) : new Dictionary<string, long>(StringComparer.Ordinal);
+
     /// <summary>
     /// Counts one host fallback of the operation named <paramref name="operation"/>, and reports its first to telemetry.
     /// </summary>
@@ -463,10 +470,13 @@ public abstract partial class Backend
     {
         Interlocked.Increment(ref _hostCalls);
         Volatile.Read(ref _trace)?.HostCalled(operation);
-        if (Telemetry.IsEnabled(TelemetryLevel.Devices)
-            && LazyInitializer.EnsureInitialized(ref _hostFallbacksReported, static () => new(StringComparer.Ordinal)).TryAdd(operation, true))
+        if (Telemetry.IsEnabled(TelemetryLevel.Devices))
         {
-            Telemetry.HostFallback(new HostFallback(Kind, operation));         // once per operation, while someone listens
+            LazyInitializer.EnsureInitialized(ref _hostCallsByOperation, static () => new(StringComparer.Ordinal)).AddOrUpdate(operation, 1, static (_, n) => n + 1);
+            if (LazyInitializer.EnsureInitialized(ref _hostFallbacksReported, static () => new(StringComparer.Ordinal)).TryAdd(operation, true))
+            {
+                Telemetry.HostFallback(new HostFallback(Kind, operation));     // once per operation, while someone listens
+            }
         }
     }
 

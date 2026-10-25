@@ -148,6 +148,9 @@ internal static class CommandLine
         }
 
         CommandContext? context = null;
+        Shared.CommandProfile? profile = null;
+        int exit = ExitCodes.Failed;
+        string? failure = null;
         try
         {
             var (positional, options, flags) = Parse(command, args.Skip(used).ToList());
@@ -158,21 +161,24 @@ internal static class CommandLine
             }
 
             context = new CommandContext(command, positional, options, flags, output, error);
+            profile = Shared.CommandProfile.Start(context, args);              // --profile: watched from here to the end
             RegisterPluginPackages();
             command.BeforePlugins(context);
             context.LoadPlugins();
-            return command.Run(context);
+            return exit = command.Run(context);
         }
         catch (UsageException e)
         {
             error.WriteLine(e.Message);
             error.WriteLine(Messages.T("Usage: {0}", $"idrak {command.Name} {command.Usage.Split('\n')[0]}".TrimEnd()));
+            (exit, failure) = (ExitCodes.Usage, e.Message);
             return ExitCodes.Usage;
         }
         catch (Exception e) when (e is not OutOfMemoryException && context?.Timeout is { } limit && context.TimeoutToken.IsCancellationRequested)
         {
             // Whatever the cancelled call threw (a cancelled task, a closed connection), the reason is the time limit.
             error.WriteLine(Messages.T("idrak {0}: gave up after --timeout {1} ({2})", command.Name, Units.Duration(limit), e.Message.Split('\n')[0]));
+            failure = $"gave up after --timeout {Units.Duration(limit)}";
             return ExitCodes.Failed;
         }
         catch (Exception e) when (e is not OutOfMemoryException)
@@ -183,10 +189,12 @@ internal static class CommandLine
                 error.WriteLine(e.ToString());
             }
 
+            failure = e.Message;
             return ExitCodes.Failed;
         }
         finally
         {
+            profile?.End(exit, failure);                                        // the report, however the command ended
             context?.Dispose();
         }
     }
@@ -413,6 +421,7 @@ internal static class Help
         "      --offline       use only what is cached; a download is an error\n" +
         "      --threads N     CPU threads; --seed N: one seed for sampling, shuffling and initialization\n" +
         "      --timeout D     give up after a duration (30s, 5m, 1h30m)\n" +
+        "      --profile       report where the command's time and memory went, at its end (stderr; IDRAK_PROFILE_OUT: a file)\n" +
         "      --lang L        messages in en or ar (config \"lang\", IDRAK_LANG); --lang-render auto, visual or logical\n" +
         "  -h, --help          this help; idrak -V, --version: the versions; idrak help topics: concept pages\n";
 }

@@ -21,7 +21,7 @@ internal sealed class CommandContext : IDisposable
     // Options every command accepts; the value-taking ones are listed for the parser.
     internal static readonly string[] CommonValueOptions =
         ["--device", "--plugin", "--cache", "--config", "--log", "--threads", "--seed", "--format", "--output", "--color", "--timeout", "--lang", "--lang-render"];
-    internal static readonly string[] CommonFlags = ["--json", "--quiet", "--verbose", "--help", "--offline", "--plain"];
+    internal static readonly string[] CommonFlags = ["--json", "--quiet", "--verbose", "--help", "--offline", "--plain", "--profile"];
 
     /// <summary>Short forms every command accepts (plans/done/idrak-cli.md, "Short forms").</summary>
     internal static readonly IReadOnlyDictionary<string, string> CommonShortForms = new Dictionary<string, string>

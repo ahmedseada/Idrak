@@ -52,6 +52,7 @@ internal static partial class Messages
             "      --offline       استخدام المخزن فقط؛ وأي تنزيل خطأ\n" +
             "      --threads N     عدد خيوط المعالج؛ --seed N: بذرة واحدة لأخذ العينات والخلط والتهيئة\n" +
             "      --timeout D     التوقف بعد مدة (30s أو 5m أو 1h30m)\n" +
+            "      --profile       تقرير بما استغرقه الأمر من وقت وذاكرة عند انتهائه (إلى مخرج الأخطاء؛ IDRAK_PROFILE_OUT: ملف)\n" +
             "      --lang L        لغة الرسائل: en أو ar (و \"lang\" في الإعدادات، IDRAK_LANG)؛ --lang-render auto أو visual أو logical\n" +
             "  -h, --help          هذه المساعدة؛ idrak -V, --version: الإصدارات؛ idrak help topics: صفحات المفاهيم\n",
 

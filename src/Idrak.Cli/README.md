@@ -77,6 +77,7 @@ Common options (every command):
 | `--threads N` | CPU threads |
 | `--color auto\|always\|never`, `--plain` | Colour control (`NO_COLOR` still wins); no Unicode or progress characters |
 | `--log FILE` | Also write every line, verbose ones included, to a file |
+| `--profile` | Profile the command as it runs (also `IDRAK_PROFILE=1`): it runs as it would without the flag, and when it ends (normally, by an error or by Ctrl+C) one report says where its time and memory went: wall and processor time, the managed heap and its collections, device memory, the kernel choices the device measured (by operation), host fallbacks (by operation), and the prompt passes (their pieces), decoding chunks and other stages of reading answers. Written to the error stream, so the output and `--json` stay as they are; `IDRAK_PROFILE_OUT` appends it to a file (`test-output\profile.txt`), `IDRAK_PROFILE_FORMAT` picks table, markdown, csv or json, `IDRAK_PROFILE_PROBES` the probes (the intrusive ones, `operations,kernels,stages,timings`, only when named: their cost is then in the times) |
 | `@FILE` | Read arguments from a file, one per line |
 | `--lang en\|ar` | The language of the messages (default: the config's `lang`, `IDRAK_LANG`, else English); see "Arabic messages" |
 | `--lang-render auto\|visual\|visual-right\|logical` | How Arabic reaches the terminal (default auto) |
@@ -718,6 +719,7 @@ stored by `idrak login`, not here. The most used:
 | `IDRAK_API_KEY` | The key `serve` requires and the client commands send |
 | `IDRAK_PORT` | The port `serve` and `ui` listen on and the client commands call (`--port` wins; default 7317) |
 | `IDRAK_TRACE`, `NO_COLOR` | Error stacks; no colour |
+| `IDRAK_PROFILE`, `IDRAK_PROFILE_OUT`, `IDRAK_PROFILE_FORMAT`, `IDRAK_PROFILE_PROBES` | 1: `--profile` for every command; the file its report is appended to (default the error stream); the report's writer (table, markdown, csv, json); its probes |
 | `IDRAK_LANG`, `IDRAK_LANG_RENDER` | The language of the messages; how Arabic reaches the terminal |
 | `VK_ICD_FILENAMES`, `DOTNET_GCHeapHardLimit` | The Vulkan driver file and the heap limit a phone needs |
 

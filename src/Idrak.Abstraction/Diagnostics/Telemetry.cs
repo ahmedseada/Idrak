@@ -31,7 +31,8 @@ public enum TelemetryLevel
     /// <summary>
     /// Every <see cref="Module.Predict(Tensor)"/> call: batch size, latency and throughput; and each stage of reading an
     /// answer (<see cref="InferenceStage"/>: an image decoded, transformed and encoded, the prompt's pass, each chunk of
-    /// decoding, a step recorded as a graph, each cache allocated).
+    /// decoding, a step recorded as a graph, each cache allocated). <see cref="Stages"/> gives the stages alone, without
+    /// the wait for the device each <c>Predict</c> event costs.
     /// </summary>
     Inference = 1 << 5,
 
@@ -70,8 +71,16 @@ public enum TelemetryLevel
     /// </summary>
     Network = 1 << 11,
 
+    /// <summary>
+    /// The stages of reading an answer alone (<see cref="InferenceStage"/>: the prompt's pass and its pieces, each chunk of
+    /// decoding, a step recorded as a graph, each cache allocated, an image or a sound decoded and encoded), without the
+    /// per-call <see cref="InferenceCompleted"/> of <see cref="Inference"/>, which waits for the device after every
+    /// <c>Module.Predict</c>: listening here leaves a run's timing as it is (the profile probe "inference").
+    /// </summary>
+    Stages = 1 << 12,
+
     /// <summary>Everything.</summary>
-    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Devices | Overrides | Suggestions | Network,
+    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Devices | Overrides | Suggestions | Network | Stages,
 }
 
 /// <summary>
@@ -283,6 +292,14 @@ public static class Telemetry
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static long Start(TelemetryLevel level) => IsEnabled(level) ? Stopwatch.GetTimestamp() : 0;
 
+    /// <summary>
+    /// The start of a stage of reading an answer (<see cref="InferenceStage(InferenceStageKind, Device?, long, long, long, int, int, int)"/>):
+    /// a timestamp when a hook listens at <see cref="TelemetryLevel.Inference"/> or <see cref="TelemetryLevel.Stages"/>,
+    /// otherwise 0 (one static read and a bitwise AND).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static long StartStage() => Start(TelemetryLevel.Inference | TelemetryLevel.Stages);
+
     internal static TimeSpan Elapsed(long start, Device? device)
     {
         if (SynchronizeForTiming)
@@ -354,22 +371,23 @@ public static class Telemetry
     }
 
     /// <summary>
-    /// Reports a stage of reading an answer that began at <paramref name="start"/> (<see cref="Start"/> with
-    /// <see cref="TelemetryLevel.Inference"/>; 0 when nobody listened then, and nothing is reported), to the hooks listening
-    /// at <see cref="TelemetryLevel.Inference"/>: its duration to now (the device's queued work waited for first under
-    /// <see cref="SynchronizeForTiming"/>), what it counts and its bytes.
+    /// Reports a stage of reading an answer that began at <paramref name="start"/> (<see cref="StartStage"/>; 0 when nobody
+    /// listened then, and nothing is reported), to the hooks listening at <see cref="TelemetryLevel.Inference"/> or
+    /// <see cref="TelemetryLevel.Stages"/>: its duration to now (the device's queued work waited for first under
+    /// <see cref="SynchronizeForTiming"/>), what it counts, its bytes, the rows read together and, for a prompt's pass,
+    /// the pieces it went through and their positions.
     /// </summary>
-    public static void InferenceStage(InferenceStageKind stage, Device? device, long start, long count = 0, long bytes = 0)
+    public static void InferenceStage(InferenceStageKind stage, Device? device, long start, long count = 0, long bytes = 0, int rows = 1, int pieces = 1, int pieceSize = 0)
     {
         if (start == 0)
         {
             return;
         }
 
-        var e = new InferenceStage(stage, device?.Backend.Kind ?? "cpu", Elapsed(start, device), count, bytes);
+        var e = new InferenceStage(stage, device?.Backend.Kind ?? "cpu", Elapsed(start, device), count, bytes, rows, pieces, pieceSize);
         foreach (var h in s_hooks)
         {
-            if ((h.Levels & TelemetryLevel.Inference) != 0)
+            if ((h.Levels & (TelemetryLevel.Inference | TelemetryLevel.Stages)) != 0)
             {
                 h.OnInferenceStage(in e);
             }

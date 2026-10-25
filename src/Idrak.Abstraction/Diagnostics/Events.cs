@@ -191,10 +191,13 @@ public enum InferenceStageKind
     /// <summary>Images through the vision encoder: Count the images, Bytes their features.</summary>
     Encoder,
 
-    /// <summary>The prompt's pass, to its first token read back: Count the prompt tokens fed.</summary>
+    /// <summary>
+    /// The prompt's pass, to its first token read back: Count the prompt positions fed (every row's, padding included, for
+    /// rows decoded together), Pieces and PieceSize the pieces it went through.
+    /// </summary>
     Prefill,
 
-    /// <summary>Decoding steps since the last chunk, to their tokens read back: Count the tokens.</summary>
+    /// <summary>Decoding steps since the last chunk, to their tokens read back: Count the tokens (every row's).</summary>
     DecodeChunk,
 
     /// <summary>A decoding step recorded as a device graph: Bytes the memory the graph keeps.</summary>
@@ -214,9 +217,9 @@ public enum InferenceStageKind
 }
 
 /// <summary>
-/// Published at <c>TelemetryLevel.Inference</c> for each stage of reading an answer (a read of a page: its image decoded and
-/// transformed, encoded, the prompt's pass, each chunk of decoding steps, a step recorded as a graph, each cache
-/// allocated), with its sizes. Durations are host time: device work still queued at the end of a stage counts in the next
+/// Published at <c>TelemetryLevel.Inference</c> and <c>TelemetryLevel.Stages</c> for each stage of reading an answer (a
+/// read of a page: its image decoded and transformed, encoded, the prompt's pass, each chunk of decoding steps, a step
+/// recorded as a graph, each cache allocated), with its sizes. Durations are host time: device work still queued at the end of a stage counts in the next
 /// one unless <c>Telemetry.SynchronizeForTiming</c> waits for it (the prefill and decode chunks end with their tokens read
 /// back, so they are complete).
 /// </summary>
@@ -225,7 +228,10 @@ public enum InferenceStageKind
 /// <param name="Duration">How long it took.</param>
 /// <param name="Count">What the stage counts (<see cref="InferenceStageKind"/> says what): images, tokens, positions, values.</param>
 /// <param name="Bytes">The bytes it made or read (<see cref="InferenceStageKind"/> says which), or 0.</param>
-public readonly record struct InferenceStage(InferenceStageKind Stage, string Device, TimeSpan Duration, long Count, long Bytes);
+/// <param name="Rows">The rows (prompts) read together: 1 for one prompt, the batch's rows for prompts decoded together.</param>
+/// <param name="Pieces">The passes the stage ran in: a long prompt's pass goes through the cache in pieces (<c>GenerationOptions.PrefillChunk</c>); 1 otherwise.</param>
+/// <param name="PieceSize">The positions of each piece of a prompt's pass (the last can be shorter), or 0 where the stage has no pieces.</param>
+public readonly record struct InferenceStage(InferenceStageKind Stage, string Device, TimeSpan Duration, long Count, long Bytes, int Rows = 1, int Pieces = 1, int PieceSize = 0);
 
 /// <summary>
 /// Published at <c>TelemetryLevel.Suggestions</c>: a setting worth changing, computed from what the device reports (its

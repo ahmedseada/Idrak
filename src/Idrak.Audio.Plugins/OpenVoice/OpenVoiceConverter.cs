@@ -126,7 +126,7 @@ public sealed class OpenVoiceConverter : IVoiceConverter
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 int from = (int)((long)samples.Length * k / count), to = (int)((long)samples.Length * (k + 1) / count);
-                long started = Telemetry.Start(TelemetryLevel.Inference);
+                long started = Telemetry.StartStage();
                 using var noGrad = Autograd.NoGrad();
                 using var scope = new TensorScope();
                 var embedding = _reference.Forward(Spectrogram(samples.AsSpan(from, to - from))).ToArray();
@@ -201,7 +201,7 @@ public sealed class OpenVoiceConverter : IVoiceConverter
     // One piece: [samples / hop · hop] samples of it in the target's voice.
     private float[] ConvertPiece(ReadOnlySpan<float> samples, float[] source, float[] target, float tau, Random random, double decoderSeconds)
     {
-        long started = Telemetry.Start(TelemetryLevel.Inference);
+        long started = Telemetry.StartStage();
         using var noGrad = Autograd.NoGrad();
         using var scope = new TensorScope();
         var spectrogram = Spectrogram(samples).Transpose();                     // [bins, T]

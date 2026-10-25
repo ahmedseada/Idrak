@@ -2190,6 +2190,7 @@ public readonly record struct Idrak.Abstraction.Diagnostics.HostFallback : Syste
   public string Operation { get; init; }
 
 public interface Idrak.Abstraction.Diagnostics.IProfileProbe
+  public (default) bool Watched { get; }
   public System.Action Begin(Idrak.Abstraction.Diagnostics.ProfileRun run)
   public bool Intrusive { get; }
   public bool Supports(Idrak.Abstraction.Device device)
@@ -2260,8 +2261,11 @@ public readonly record struct Idrak.Abstraction.Diagnostics.InferenceCompleted :
 
 public readonly record struct Idrak.Abstraction.Diagnostics.InferenceStage : System.IEquatable<Idrak.Abstraction.Diagnostics.InferenceStage>
   public Idrak.Abstraction.Diagnostics.InferenceStageKind Stage { get; init; }
-  public InferenceStage(Idrak.Abstraction.Diagnostics.InferenceStageKind Stage, string Device, System.TimeSpan Duration, long Count, long Bytes)
+  public InferenceStage(Idrak.Abstraction.Diagnostics.InferenceStageKind Stage, string Device, System.TimeSpan Duration, long Count, long Bytes, int Rows = 1, int Pieces = 1, int PieceSize = 0)
   public System.TimeSpan Duration { get; init; }
+  public int PieceSize { get; init; }
+  public int Pieces { get; init; }
+  public int Rows { get; init; }
   public long Bytes { get; init; }
   public long Count { get; init; }
   public string Device { get; init; }
@@ -2429,8 +2433,10 @@ public sealed class Idrak.Abstraction.Diagnostics.ProfileReport
   public Idrak.Abstraction.Diagnostics.ProfileSummary? this[string name] { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.ProfileRun> Runs { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.ProfileSummary> Summary { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Notes { get; }
   public System.Collections.Generic.IReadOnlyList<string> Probes { get; }
   public System.Collections.Generic.IReadOnlyList<string> Skipped { get; }
+  public bool Watched { get; }
   public string Name { get; }
   public void Write()
   public void Write(System.IO.TextWriter output, string? format = null)
@@ -2451,8 +2457,16 @@ public sealed class Idrak.Abstraction.Diagnostics.ProfileRun
 
 public enum Idrak.Abstraction.Diagnostics.ProfileRunKind : int
   Cold = 0
+  Once = 3
   Probe = 2
   Warm = 1
+
+public sealed class Idrak.Abstraction.Diagnostics.ProfileSession : System.IDisposable
+  public Idrak.Abstraction.Diagnostics.ProfileReport End()
+  public Idrak.Abstraction.Diagnostics.ProfileRun Run { get; }
+  public bool Ended { get; }
+  public void Dispose()
+  public void Note(string line)
 
 public enum Idrak.Abstraction.Diagnostics.ProfileStatistic : int
   Max = 3
@@ -2500,6 +2514,7 @@ public static class Idrak.Abstraction.Diagnostics.ProfileWriters
 
 public static class Idrak.Abstraction.Diagnostics.Profiler
   public static Idrak.Abstraction.Diagnostics.ProfileReport Run(string name, Idrak.Abstraction.Device device, System.Action<Idrak.Abstraction.Diagnostics.ProfileRun> workload, Idrak.Abstraction.Diagnostics.ProfileOptions? options = null)
+  public static Idrak.Abstraction.Diagnostics.ProfileSession Watch(string name, Idrak.Abstraction.Device device, Idrak.Abstraction.Diagnostics.ProfileOptions? options = null)
 
 public sealed record Idrak.Abstraction.Diagnostics.ProgressOptions : System.IEquatable<Idrak.Abstraction.Diagnostics.ProgressOptions>
   public ProgressOptions()
@@ -2589,6 +2604,7 @@ public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static bool IsEnabled(Idrak.Abstraction.Diagnostics.TelemetryLevel level)
   public static bool SynchronizeForTiming { get; set; }
   public static long Start(Idrak.Abstraction.Diagnostics.TelemetryLevel level)
+  public static long StartStage()
   public static void BatchCompleted(in Idrak.Abstraction.Diagnostics.BatchCompleted e)
   public static void Calibrated(in Idrak.Abstraction.Diagnostics.ProfileCalibrated e)
   public static void ChoicesShared(in Idrak.Abstraction.Diagnostics.MeasuredChoicesShared e)
@@ -2598,7 +2614,7 @@ public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static void EpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public static void Fault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
   public static void GradientSync(in Idrak.Abstraction.Diagnostics.GradientsSynced e)
-  public static void InferenceStage(Idrak.Abstraction.Diagnostics.InferenceStageKind stage, Idrak.Abstraction.Device? device, long start, long count = 0, long bytes = 0)
+  public static void InferenceStage(Idrak.Abstraction.Diagnostics.InferenceStageKind stage, Idrak.Abstraction.Device? device, long start, long count = 0, long bytes = 0, int rows = 1, int pieces = 1, int pieceSize = 0)
   public static void PipelineStep(in Idrak.Abstraction.Diagnostics.PipelineStepped e)
   public static void RankState(in Idrak.Abstraction.Diagnostics.RankStateChanged e)
   public static void Suggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
@@ -2621,7 +2637,7 @@ public static class Idrak.Abstraction.Diagnostics.TelemetryJson
   public static void Write(System.Text.Json.Utf8JsonWriter w, Idrak.Abstraction.Diagnostics.TelemetryRecord record)
 
 [Flags] public enum Idrak.Abstraction.Diagnostics.TelemetryLevel : int
-  All = 4095
+  All = 8191
   Batches = 2
   Devices = 256
   Engine = 128
@@ -2632,6 +2648,7 @@ public static class Idrak.Abstraction.Diagnostics.TelemetryJson
   None = 0
   Operations = 16
   Overrides = 512
+  Stages = 4096
   Suggestions = 1024
   Tools = 64
   Training = 1
@@ -4179,6 +4196,7 @@ public sealed class Idrak.Abstraction.Operations.KernelTrace : System.IDisposabl
 
 public static class Idrak.Abstraction.Operations.Kernels
   public static Idrak.Abstraction.Operations.KernelTrace Trace(Idrak.Abstraction.Devices.Backend backend)
+  public static System.Collections.Generic.IReadOnlyDictionary<string, long> HostCallsByOperation(Idrak.Abstraction.Devices.Backend backend)
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Operations.KernelChoice> Chain(Idrak.Abstraction.Devices.Backend backend)
   public static System.IDisposable Register(Idrak.Abstraction.Operations.Operation operation, string deviceKind, System.Delegate kernel, System.Func<Idrak.Abstraction.Devices.Backend, bool>? requirement = null)
   public static System.IDisposable Register<TKernel>(Idrak.Abstraction.Operations.PluginOperation<TKernel> operation, string deviceKind, TKernel kernel, System.Func<Idrak.Abstraction.Devices.Backend, bool>? requirement = null) where TKernel : System.Delegate

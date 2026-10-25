@@ -24,8 +24,76 @@ internal static partial class Tests
         ("generation: a kept KV cache reuses shared prompt prefixes without changing the output", PromptCacheReuse),
         ("generation: a windowed decoder generating far past its window with sliding windows' caches gives the texts of caches holding the whole reply (one row through recorded steps, a batch of two)", SlidingWindowGeneration),
         ("generation: ReuseDecoding keeps the decoding context, sampler and recorded step between generations (the same objects while the size and sampling match, new ones otherwise, no sampler without a seed) and every text is a fresh generator's; ReleaseCache frees them", DecodingReuse),
+        ("generation: the prompt's pass (its rows, pieces and piece size) and each decoding chunk reach telemetry's Stages level from one prompt and from a batch (GenerateBatch), nothing waited for", GenerationStagesReported),
         ("generation: a long prompt's pass in pieces (PrefillChunk) gives one pass's last logits within float rounding, its cache length and its greedy tokens: one row, after a kept cache's prefix, with sliding windows' caches, and rows of different lengths padded on the left (row starts)", PrefillInPieces),
     ];
+
+    // The stages a generation reports (InferenceStage at TelemetryLevel.Stages): the prompt's pass with its rows and the
+    // pieces it went through (PrefillChunk), then the decoding chunks, every row's tokens counted; one prompt and a batch.
+    private static void GenerationStagesReported(Device device)
+    {
+        var (tiny, tokenizer) = TinyLanguageModel(device, context: 64);
+        tiny.Dispose();
+        var spec = new DecoderSpec
+        {
+            Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 64,
+            Rope = new RopeSettings(500f, null, false, null),
+        };
+        using var decoder = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 3 });
+        var generator = new TextGenerator(decoder, tokenizer, 64) { KeepCache = false };
+        var options = new GenerationOptions { Seed = 0, NumPredict = 10, Temperature = 1f, TopK = 1, RepeatPenalty = 1f, RepeatStop = 0, ChunkSize = 4, NumCtx = 64, PrefillChunk = 3 };
+        string[] prompts = generator.SupportsBatches ? ["the quick brown fox", "a short one"] : ["one two three", "four five six"];
+        var hook = new StageList();
+        using (Telemetry.Subscribe(hook))
+        {
+            generator.Generate(prompts[0], options);
+            var single = hook.Take();
+            int length = tokenizer.Encode(prompts[0]).Count;
+            Check(single.Count(e => e.Stage == InferenceStageKind.Prefill) == 1
+                  && single.Single(e => e.Stage == InferenceStageKind.Prefill) is { Rows: 1, Count: var fed, Pieces: var pieces, PieceSize: > 0 and <= 3 } && pieces == (length + 2) / 3 && fed == length,
+                $"one prompt of {length} tokens in pieces of 3: {string.Join("; ", single)}");
+            Check(single.Where(e => e.Stage == InferenceStageKind.DecodeChunk).Sum(e => e.Count) is > 0 and <= 10, $"one prompt's decoding chunks: {string.Join("; ", single)}");
+
+            generator.GenerateBatch(prompts, options);
+            var batch = hook.Take();
+            int longest = prompts.Max(p => tokenizer.Encode(p).Count);
+            var prefill = batch.Where(e => e.Stage == InferenceStageKind.Prefill).ToList();
+            var chunks = batch.Where(e => e.Stage == InferenceStageKind.DecodeChunk).ToList();
+            Check(prefill is [{ Rows: 2, PieceSize: > 0 and <= 3 } p] && p.Count == 2L * longest && p.Pieces == (longest + 2) / 3 && p.Duration > TimeSpan.Zero,
+                $"the batch's prompt pass, 2 rows of {longest} positions in pieces of 3: {string.Join("; ", prefill)}");
+            Check(chunks.Count >= 2 && chunks.All(c => c.Rows == 2 && c.Count > 0 && c.Count % 2 == 0) && chunks.Sum(c => c.Count) == 2L * (options.NumPredict - 1),
+                $"the batch's decoding chunks, every row's tokens: {string.Join("; ", chunks)}");
+        }
+
+        generator.GenerateBatch(prompts, options);
+        Check(hook.Take().Count == 0, "nothing reported once nobody listens");
+    }
+
+    // The stage events seen, taken in order.
+    private sealed class StageList : ITelemetryHook
+    {
+        private readonly List<InferenceStage> _seen = [];
+
+        public TelemetryLevel Levels => TelemetryLevel.Stages;
+
+        public void OnInferenceStage(in InferenceStage e)
+        {
+            lock (_seen)
+            {
+                _seen.Add(e);
+            }
+        }
+
+        public List<InferenceStage> Take()
+        {
+            lock (_seen)
+            {
+                var taken = _seen.ToList();
+                _seen.Clear();
+                return taken;
+            }
+        }
+    }
 
     // A long prompt's pass in pieces (PrefillChunk, ForwardPieces): each piece cached before the next attends to it, so
     // the last position's logits are one pass's within float rounding, the cache as long, and greedy generation gives the

@@ -107,7 +107,7 @@ public sealed class WhisperRecognizer : ISequenceSpeechModel
     {
         ArgumentNullException.ThrowIfNull(features);
         ThrowIfDisposed();
-        long start = Telemetry.Start(TelemetryLevel.Inference);
+        long start = Telemetry.StartStage();
         using var noGrad = Autograd.NoGrad();
         using var scope = new TensorScope();
         var input = features.Device == Device ? features : features.To(Device);

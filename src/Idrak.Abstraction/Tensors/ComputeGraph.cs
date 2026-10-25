@@ -90,7 +90,7 @@ public sealed class ComputeGraph : IDisposable
             return new ComputeGraph(device, step, IntPtr.Zero, IntPtr.Zero, [], [], null);
         }
 
-        long started = Telemetry.Start(TelemetryLevel.Inference);
+        long started = Telemetry.StartStage();
         var scope = new TensorScope();
         backend.BeginCapture();
         try

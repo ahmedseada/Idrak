@@ -201,8 +201,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(piece);
         int layers = CachedLayers;
-        piece = layers == 0 ? length : piece;                             // nothing cached between pieces: one pass
-        int pieces = (length + piece - 1) / piece, size = (length + pieces - 1) / pieces;
+        var (_, size) = PieceShape(length, piece);
         float[] buffer = ArrayPool<float>.Shared.Rent(rows * size);
         try
         {
@@ -228,6 +227,19 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         {
             ArrayPool<float>.Shared.Return(buffer);
         }
+    }
+
+    // The pieces a prompt's pass of `length` positions goes through at most `piece` at a time (ForwardPieces) and the
+    // positions of each (as equal as they can be: few shapes); one pass when nothing is cached between pieces.
+    private (int Pieces, int Size) PieceShape(int length, int piece)
+    {
+        if (CachedLayers == 0 || piece >= length)
+        {
+            return (1, length);
+        }
+
+        int pieces = (length + piece - 1) / piece;
+        return (pieces, (length + pieces - 1) / pieces);
     }
 
     // Whether a decoding step can be recorded: not with experts, whose routing is read back to the host on every step.
@@ -623,6 +635,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         TimeSpan promptDuration;
         // A long prompt goes through in pieces (PrefillChunk); one with images in one pass, never cut inside an image.
         int prefillPiece = images.Count == 0 ? PrefillPiece(options, decoding, promptLength) : promptLength;
+        long prefillStart = Telemetry.StartStage();
         using (Autograd.NoGrad())
         using (var scope = new TensorScope())
         {
@@ -643,8 +656,17 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             sampler.Sample(logits);
         }
 
+        if (prefillStart != 0)
+        {
+            // As the single prompt's pass, to its first tokens read back (only while someone listens: one read).
+            sampler.Read(0, 1);
+            var (prefillPieces, pieceSize) = PieceShape(promptLength, prefillPiece);
+            Telemetry.InferenceStage(InferenceStageKind.Prefill, Device, prefillStart, (long)rows * promptLength, 0, rows, prefillPieces, pieceSize);
+        }
+
         promptDuration = total.Elapsed;
-        int produced = 1, read = 0;
+        int produced = 1, read = 0, chunkFrom = 1;
+        long chunkStart = Telemetry.StartStage();
         var pieces = new List<BatchChunk>();
 
         // Reads the new tokens, finds stop sequences and loops, and collects each row's new text (the tail that could still
@@ -726,6 +748,12 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 if (produced % Math.Max(1, options.ChunkSize) == 0)
                 {
                     bool done = Finished(final: false);
+                    if (produced > chunkFrom)
+                    {
+                        Telemetry.InferenceStage(InferenceStageKind.DecodeChunk, Device, chunkStart, (long)(produced - chunkFrom) * rows, 0, rows);
+                    }
+
+                    (chunkFrom, chunkStart) = (produced, Telemetry.StartStage());
                     foreach (var piece in pieces)
                     {
                         yield return piece;
@@ -766,6 +794,11 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         }
 
         Finished(final: true);
+        if (produced > chunkFrom)
+        {
+            Telemetry.InferenceStage(InferenceStageKind.DecodeChunk, Device, chunkStart, (long)(produced - chunkFrom) * rows, 0, rows);
+        }
+
         foreach (var piece in pieces)
         {
             yield return piece;
@@ -1055,6 +1088,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             // A long prompt goes through the cache in pieces (PrefillChunk); one with images in one pass, never cut inside an image.
             int prefillPiece = options.UseCache && images.Count == 0 ? PrefillPiece(options, decoding, history.Count) : int.MaxValue;
             bool keep = false, steppedOnce = false;
+            int fed = history.Count;                                            // the positions the prompt's pass fed (its pieces' telemetry)
             try
             {
                 float[] WindowValues(int keep)
@@ -1074,6 +1108,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 // The cached pass over the last `keep` ids (from position `start`): in pieces when they are more than one.
                 Tensor Feed(int keep, int start)
                 {
+                    fed = keep;
                     if (keep <= prefillPiece)
                     {
                         return WithImages(Window(keep), ImagesFrom(start), decoding);
@@ -1098,6 +1133,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     }
                     else
                     {
+                        fed = keep;
                         sampler.Sample(WithImages(Window(keep), ImagesFrom(start), null));
                     }
                 }
@@ -1112,7 +1148,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 }
 
                 // Reuse the kept cache for the prompt's shared prefix (at least one token is fed, for the next logits).
-                long prefillStart = Telemetry.Start(TelemetryLevel.Inference);
+                long prefillStart = Telemetry.StartStage();
                 int shared = 0;
                 while (shared < keptIds.Count && shared < history.Count && keptIds[shared] == history[shared])
                 {
@@ -1135,9 +1171,13 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
                 sampler.Read(0, 1);
                 promptDuration = total.Elapsed;
-                Telemetry.InferenceStage(InferenceStageKind.Prefill, Device, prefillStart, history.Count);
+                if (prefillStart != 0)
+                {
+                    var (prefillPieces, pieceSize) = PieceShape(fed, prefillPiece);
+                    Telemetry.InferenceStage(InferenceStageKind.Prefill, Device, prefillStart, history.Count, 0, 1, prefillPieces, pieceSize);
+                }
                 int produced = 1, chunkFrom = 1;
-                long chunkStart = Telemetry.Start(TelemetryLevel.Inference);
+                long chunkStart = Telemetry.StartStage();
                 while (doneReason is null && !cancellationToken.IsCancellationRequested)
                 {
                     bool flush = produced % Math.Max(1, options.ChunkSize) == 0 || produced >= limit;
@@ -1145,7 +1185,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     {
                         string piece = Collect(produced, final: false);
                         Telemetry.InferenceStage(InferenceStageKind.DecodeChunk, Device, chunkStart, produced - chunkFrom);
-                        (chunkFrom, chunkStart) = (produced, Telemetry.Start(TelemetryLevel.Inference));
+                        (chunkFrom, chunkStart) = (produced, Telemetry.StartStage());
                         if (piece.Length > 0)
                         {
                             yield return new GenerationChunk(piece);
