@@ -748,7 +748,8 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         }
 
         // The decoding step: run as it is first (the device measures its choices for these shapes, which it cannot while
-        // recording), then recorded once and replayed, for rows of one length (rows with starts upload positions each step).
+        // recording), then recorded once and replayed, rows of one length and rows with starts alike (a one-token step's
+        // positions advance on the device).
         void Step() => sampler.Sample(Model.ForwardCached(sampler.Ids.Reshape(rows, 1), decoding));
         ComputeGraph? graph = null;
         bool steppedOnce = false;
@@ -777,7 +778,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     }
                 }
 
-                if (graph is null && !padded && options.UseGraph && steppedOnce && sampler.Recordable && decoding.Recordable && StepsRecordable)
+                if (graph is null && options.UseGraph && steppedOnce && sampler.Recordable && decoding.Recordable && StepsRecordable)
                 {
                     graph = decoding.CaptureStep(Step);
                 }

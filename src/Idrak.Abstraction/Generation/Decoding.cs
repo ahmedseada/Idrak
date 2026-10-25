@@ -185,6 +185,13 @@ public sealed class DecodingContext : IDisposable
     private bool _rotaryOwned;
     private readonly List<(int From, int End, int[]? Before)> _rotaryPasses = [];
 
+    // With RowStarts: the starts on the device, [batch] (uploaded once by SetRowStarts), and the buffer a one-token step's
+    // positions are computed into from Position (written in place, so a recorded step reads the position it is replayed at);
+    // whether the step's TokenPositions and TokenStarts are its own uploads (a step of several positions) to free.
+    private Tensor? _rowStarts;
+    private Tensor? _rowPositions;
+    private bool _tokensOwned;
+
     /// <summary>Creates an empty context.</summary>
     /// <param name="device">Where caches and counters live (the model's device).</param>
     /// <param name="batch">Sequences decoded together.</param>
@@ -539,13 +546,36 @@ public sealed class DecodingContext : IDisposable
             throw new InvalidOperationException("Rows of different lengths do not attend from sliding windows' caches (SlidingWindowSteps): make the context without them.");
         }
 
+        if (InStep)
+        {
+            throw new InvalidOperationException("Set the row starts between steps.");
+        }
+
         RowStarts = starts?.ToArray();
+        _rowStarts?.Dispose();
+        _rowPositions?.Dispose();
+        (_rowStarts, _rowPositions) = (null, null);
+        if (starts is not null)
+        {
+            // Fixed for the generation: on the device once, read by every one-token step (recorded or not).
+            var values = new float[Batch];
+            for (int b = 0; b < Batch; b++)
+            {
+                values[b] = starts[b];
+            }
+
+            _rowStarts = Tensor.Persistent(values, [Batch], Device, requiresGrad: false);
+            _rowPositions = Tensor.PersistentZeros([Batch], Device, requiresGrad: false);
+        }
     }
 
-    /// <summary>With <see cref="RowStarts"/>: the current step's position of each new token within its row's sequence, [batch · newSteps].</summary>
+    /// <summary>
+    /// With <see cref="RowStarts"/>: the current step's position of each new token within its row's sequence, [batch · newSteps]
+    /// (padding: 0). A one-token step computes them on the device from <see cref="Position"/>, so it can be recorded.
+    /// </summary>
     public Tensor? TokenPositions { get; private set; }
 
-    /// <summary>With <see cref="RowStarts"/>: each new token's row start, [batch · newSteps].</summary>
+    /// <summary>With <see cref="RowStarts"/>: each new token's row start, [batch · newSteps] (a one-token step: the starts uploaded once by <see cref="SetRowStarts"/>).</summary>
     public Tensor? TokenStarts { get; private set; }
 
     /// <summary>
@@ -604,8 +634,13 @@ public sealed class DecodingContext : IDisposable
         }
     }
 
-    /// <summary>Whether a step can be recorded (<see cref="CaptureStep"/>): rows start together and share one rotary offset, and the cache format is recordable.</summary>
-    public bool Recordable => RowStarts is null && Layout.Recordable && (_rotary is null || _rotary.All(o => o == _rotary[0]));
+    /// <summary>
+    /// Whether a step can be recorded (<see cref="CaptureStep"/>): the cache format is recordable, and the rows share one
+    /// rotary offset (or have none). Rows with <see cref="RowStarts"/> are recordable too (a one-token step reads its
+    /// positions and starts on the device), except with rotary offsets: their per-token rotary positions are computed on
+    /// the host each step.
+    /// </summary>
+    public bool Recordable => Layout.Recordable && (_rotary is null || RowStarts is null && _rotary.All(o => o == _rotary[0]));
 
     /// <summary>Prepares mask and positions for <paramref name="steps"/> new positions (all computed on the device).</summary>
     public void BeginStep(int steps)
@@ -618,8 +653,24 @@ public sealed class DecodingContext : IDisposable
         Slide(steps);
         _steps = steps;
         InStep = true;
-        if (RowStarts is { } starts)
+        if (RowStarts is { } && steps == 1)
         {
+            // One token a row (a decoding step): its position max(0, Position - start) on the device from the counter and
+            // the starts uploaded once, so the step records and replays at every position as the cache fills.
+            var backend = _rowPositions!.Backend;
+            backend.Affine(_rowStarts!.Storage, _rowPositions.Storage, Batch, -1f, 0f);
+            backend.AddBroadcastScalar(Position.Storage, _rowPositions.Storage, Batch, 1f);
+            backend.Clamp(_rowPositions.Storage, _rowPositions.Storage, Batch, 0f, Capacity);      // padding: position 0 (it attends to nothing)
+            (TokenPositions, TokenStarts, _tokensOwned) = (_rowPositions, _rowStarts, false);
+        }
+        else if (RowStarts is { } starts)
+        {
+            // Several positions (a prompt's pass, run as it is): uploaded from the host.
+            if (ComputeGraph.IsCapturing)
+            {
+                throw new InvalidOperationException("A step of several positions over rows with starts uploads its positions from the host and cannot be recorded; record one-token steps.");
+            }
+
             var positions = new float[Batch * steps];
             var first = new float[Batch * steps];
             for (int b = 0; b < Batch; b++)
@@ -633,6 +684,7 @@ public sealed class DecodingContext : IDisposable
 
             TokenPositions = Tensor.Persistent(positions, [Batch * steps], Device, requiresGrad: false);
             TokenStarts = Tensor.Persistent(first, [Batch * steps], Device, requiresGrad: false);
+            _tokensOwned = true;
         }
 
         if (steps == 1)
@@ -706,16 +758,12 @@ public sealed class DecodingContext : IDisposable
     /// <summary>
     /// Records one decoding step (which must call <see cref="BeginStep"/>/<see cref="EndStep"/>, e.g. via
     /// <c>Sequential.ForwardCached</c>) as a <see cref="ComputeGraph"/>. Because positions, masks and cache
-    /// offsets are computed on the device from <see cref="Position"/>, the same graph is valid at every position. Needs a
+    /// offsets are computed on the device from <see cref="Position"/>, the same graph is valid at every position; with
+    /// <see cref="RowStarts"/>, a one-token step's positions are too (from the starts uploaded once). Needs a
     /// <see cref="KeyValueLayout.Recordable"/> cache format.
     /// </summary>
     public ComputeGraph CaptureStep(Action step)
     {
-        if (RowStarts is not null)
-        {
-            throw new InvalidOperationException("Steps with row starts upload positions from the host and cannot be recorded.");
-        }
-
         if (!Layout.Recordable)
         {
             throw new InvalidOperationException($"The key/value cache format '{Layout.Name}' is not recordable (KeyValueLayout.Recordable); run its steps as they are.");
@@ -723,7 +771,7 @@ public sealed class DecodingContext : IDisposable
 
         if (!Recordable)
         {
-            throw new InvalidOperationException("Rows with different rotary offsets (images placed differently) upload their rotary positions from the host and cannot be recorded.");
+            throw new InvalidOperationException("Rows with different rotary offsets (images placed differently), or rotary offsets with row starts, upload their rotary positions from the host and cannot be recorded.");
         }
 
         Slide(1);                                     // a sliding window moves now: the recording cannot
@@ -744,9 +792,14 @@ public sealed class DecodingContext : IDisposable
             window.Mask = null;
         }
 
-        TokenPositions?.Dispose();
+        if (_tokensOwned)
+        {
+            TokenPositions?.Dispose();
+            TokenStarts?.Dispose();
+            _tokensOwned = false;
+        }
+
         TokenPositions = null;
-        TokenStarts?.Dispose();
         TokenStarts = null;
         if (_rotaryOwned)
         {
@@ -894,6 +947,8 @@ public sealed class DecodingContext : IDisposable
         _windows.Clear();
         _iota?.Dispose();
         _rotaryOffset?.Dispose();
+        _rowStarts?.Dispose();
+        _rowPositions?.Dispose();
         Position.Dispose();
     }
 }
