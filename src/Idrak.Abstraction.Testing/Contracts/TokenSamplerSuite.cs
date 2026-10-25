@@ -6,70 +6,10 @@ using System.Text.Json.Nodes;
 
 namespace Idrak.Abstraction.Testing;
 
-/// <summary>What a sampler check asks a token sampler for: where it runs, its shape and its settings (as a generation's request carries them).</summary>
-/// <param name="Device">Where the logits live.</param>
-/// <param name="Rows">Sequences sampled per step.</param>
-/// <param name="Vocabulary">Vocabulary size.</param>
-/// <param name="Steps">Steps whose statistics are kept.</param>
-/// <param name="HistoryCapacity">Recent tokens per row the penalties may look at.</param>
-/// <param name="Temperature">Softmax temperature.</param>
-/// <param name="TopK">Sample among the k most likely tokens (0: all).</param>
-/// <param name="TopP">Nucleus sampling (1: off).</param>
-/// <param name="MinP">Drop tokens less than this fraction as likely as the best (0: off).</param>
-/// <param name="RepeatPenalty">Repetition penalty (1: off).</param>
-/// <param name="RepeatLastN">Recent tokens the penalties look at.</param>
-/// <param name="PresencePenalty">Subtracted from every token in the window.</param>
-/// <param name="FrequencyPenalty">Subtracted once per occurrence in the window.</param>
-/// <param name="Seed">The random seed.</param>
-public sealed record SamplerSettings(Device Device, int Rows, int Vocabulary, int Steps, int HistoryCapacity, float Temperature, int TopK, float TopP,
-    float MinP, float RepeatPenalty, int RepeatLastN, float PresencePenalty, float FrequencyPenalty, int Seed);
-
-/// <summary>One sampled token's statistics, as a sampler reports them.</summary>
-/// <param name="Id">The token.</param>
-/// <param name="Probability">Its probability.</param>
-/// <param name="Entropy">The entropy of the distribution sampled from, in bits.</param>
-public readonly record struct SampledStatistics(int Id, float Probability, float Entropy);
-
 /// <summary>
-/// A token sampler as the sampler checks drive it. The token-sampler contract lives with the package that uses it
-/// (<c>ITokenSampler</c> in Idrak.Text) and this kit depends on Idrak.Abstraction alone, so a test wraps the sampler it
-/// checks, and the library's one it compares with, in these few delegates.
-/// </summary>
-/// <param name="rows">Sequences sampled per step.</param>
-/// <param name="vocabulary">Vocabulary size.</param>
-/// <param name="setHistory">Sets the recent tokens of every row (<c>SetHistory</c>).</param>
-/// <param name="sample">Samples one step from [rows, vocabulary] logits and returns the ids, [rows].</param>
-/// <param name="reset">Restarts from step 0 (<c>Reset</c>).</param>
-/// <param name="read">The statistics of steps [from, to) as [step][row] (<c>Read</c>).</param>
-/// <param name="owner">Disposed with this (the sampler itself), or null.</param>
-public sealed class SamplerUnderTest(int rows, int vocabulary, Action<IReadOnlyList<int>> setHistory, Func<Tensor, float[]> sample, Action reset,
-    Func<int, int, SampledStatistics[][]> read, IDisposable? owner = null) : IDisposable
-{
-    /// <summary>Sequences sampled per step.</summary>
-    public int Rows { get; } = rows;
-
-    /// <summary>Vocabulary size.</summary>
-    public int Vocabulary { get; } = vocabulary;
-
-    /// <summary>Sets the recent tokens of every row.</summary>
-    public void SetHistory(IReadOnlyList<int> tokens) => setHistory(tokens);
-
-    /// <summary>Samples one step; returns the ids, [rows].</summary>
-    public float[] Sample(Tensor logits) => sample(logits);
-
-    /// <summary>Restarts from step 0.</summary>
-    public void Reset() => reset();
-
-    /// <summary>The statistics of steps [<paramref name="from"/>, <paramref name="to"/>).</summary>
-    public SampledStatistics[][] Read(int from, int to) => read(from, to);
-
-    /// <summary>Disposes the sampler.</summary>
-    public void Dispose() => owner?.Dispose();
-}
-
-/// <summary>
-/// The checks of a token sampler against a reference sampler (the library's <c>TokenSampler</c>), both wrapped as
-/// <see cref="SamplerUnderTest"/>, on the same settings, logits and history:
+/// The checks of a token sampler kind (<see cref="ITokenSamplerKind"/>, whose samplers are called as generation calls them)
+/// against a reference kind (the library's default sampler), each sampler made from the same request, on the same logits
+/// and history:
 /// <list type="bullet">
 /// <item>the sampler has the asked rows and vocabulary, and its ids are [rows] tokens in [0, vocabulary);</item>
 /// <item>greedy settings (top-k 1) choose the reference's tokens, penalties included;</item>
@@ -83,11 +23,12 @@ public sealed class SamplerUnderTest(int rows, int vocabulary, Action<IReadOnlyL
 /// their count, and a row with nothing finite is reported as an error (by <c>Sample</c> or <c>Read</c>).</item>
 /// </list>
 /// </summary>
-/// <param name="reference">Makes the reference sampler for a case's settings.</param>
+/// <param name="reference">The kind the samplers are compared with (the library's <see cref="TokenSamplers.DefaultName"/> when null).</param>
 /// <param name="device">Where the logits and the samplers live (the CPU when null).</param>
-public sealed class TokenSamplerSuite(Func<SamplerSettings, SamplerUnderTest> reference, Device? device = null)
-    : ContractSuite<Func<SamplerSettings, SamplerUnderTest>>
+public sealed class TokenSamplerSuite(ITokenSamplerKind? reference = null, Device? device = null) : ContractSuite<ITokenSamplerKind>
 {
+    private readonly ITokenSamplerKind _reference = reference ?? TokenSamplers.Default(TokenSamplers.DefaultName)!;
+
     /// <summary>Where the logits and the samplers live.</summary>
     public override Device Device { get; } = device ?? Device.Cpu;
 
@@ -96,6 +37,9 @@ public sealed class TokenSamplerSuite(Func<SamplerSettings, SamplerUnderTest> re
 
     /// <inheritdoc />
     public override string Name => "token-sampler";
+
+    /// <inheritdoc />
+    protected override string Describe(ITokenSamplerKind implementation) => implementation.Name;
 
     /// <inheritdoc />
     public override IEnumerable<ContractCase> FixedCases()
@@ -147,25 +91,30 @@ public sealed class TokenSamplerSuite(Func<SamplerSettings, SamplerUnderTest> re
     }
 
     /// <inheritdoc />
-    public override void Run(Func<SamplerSettings, SamplerUnderTest> implementation, ContractCase @case, CaseChecks checks)
+    public override void Run(ITokenSamplerKind implementation, ContractCase @case, CaseChecks checks)
     {
         ArgumentNullException.ThrowIfNull(implementation);
         ArgumentNullException.ThrowIfNull(@case);
         ArgumentNullException.ThrowIfNull(checks);
         var d = @case.Data;
         int rows = (int)d["rows"]!, vocabulary = (int)d["vocabulary"]!, steps = (int)d["steps"]!;
-        var settings = new SamplerSettings(Device, rows, vocabulary, steps, 64, (float)d["temperature"]!, (int)d["topK"]!, (float)d["topP"]!,
-            (float)d["minP"]!, (float)d["repeatPenalty"]!, (int)d["repeatLastN"]!, (float)d["presencePenalty"]!, (float)d["frequencyPenalty"]!, (int)d["seed"]!);
+        var settings = new GenerationOptions
+        {
+            Temperature = (float)d["temperature"]!, TopK = (int)d["topK"]!, TopP = (float)d["topP"]!, MinP = (float)d["minP"]!,
+            RepeatPenalty = (float)d["repeatPenalty"]!, RepeatLastN = (int)d["repeatLastN"]!, PresencePenalty = (float)d["presencePenalty"]!,
+            FrequencyPenalty = (float)d["frequencyPenalty"]!, Seed = (int)d["seed"]!,
+        };
+        var request = new SamplerRequest(Device, rows, vocabulary, steps, 64, settings);
         int[] history = [.. d["history"]!.AsArray().Select(n => (int)n!)];
         float[] logits = MemoryMarshal.Cast<byte, float>(Convert.FromBase64String((string)d["logits"]!)).ToArray();
         if (d["expect"] is { } expect)
         {
-            RunNonFinite(implementation(settings), Enum.Parse<NonFiniteExpectation>((string)expect!), logits, rows, vocabulary, checks);
+            RunNonFinite(implementation.Create(request), Enum.Parse<NonFiniteExpectation>((string)expect!), logits, rows, vocabulary, checks);
             return;
         }
 
-        using var mine = implementation(settings);
-        using var library = reference(settings);
+        using var mine = implementation.Create(request);
+        using var library = _reference.Create(request);
         checks.Check("the asked rows and vocabulary", mine.Rows == rows && mine.Vocabulary == vocabulary,
             $"{mine.Rows} rows and {mine.Vocabulary} tokens, {rows} and {vocabulary} asked for");
         var ids = Sample(mine, history, logits, rows, vocabulary, steps, checks);
@@ -209,11 +158,11 @@ public sealed class TokenSamplerSuite(Func<SamplerSettings, SamplerUnderTest> re
     }
 
     // One step over logits that are not all finite, checked against the rule (no reference needed: the rule says the answer).
-    private void RunNonFinite(SamplerUnderTest sampler, NonFiniteExpectation expect, float[] logits, int rows, int vocabulary, CaseChecks checks)
+    private void RunNonFinite(ITokenSampler sampler, NonFiniteExpectation expect, float[] logits, int rows, int vocabulary, CaseChecks checks)
     {
         using var mine = sampler;
         int[]? ids = null;
-        SampledStatistics[][]? statistics = null;
+        SampledToken[][]? statistics = null;
         Exception? error = null;
         try
         {
@@ -279,14 +228,15 @@ public sealed class TokenSamplerSuite(Func<SamplerSettings, SamplerUnderTest> re
     }
 
     // The ids sampled at each step (after the history is set), [steps][rows].
-    private int[][] Sample(SamplerUnderTest sampler, int[] history, float[] logits, int rows, int vocabulary, int steps, CaseChecks? checks)
+    private int[][] Sample(ITokenSampler sampler, int[] history, float[] logits, int rows, int vocabulary, int steps, CaseChecks? checks)
     {
         sampler.SetHistory(history);
         var ids = new int[steps][];
         for (int s = 0; s < steps; s++)
         {
             using var step = Tensor.From(logits.AsSpan(s * rows * vocabulary, rows * vocabulary), [rows, vocabulary], Device);
-            var values = sampler.Sample(step);
+            sampler.Sample(step);
+            var values = sampler.Ids.ToArray();
             checks?.Check("ids are [rows]", values.Length == rows, $"{values.Length} ids for {rows} rows");
             ids[s] = [.. values.Take(rows).Select(v => (int)v)];
         }
@@ -296,7 +246,7 @@ public sealed class TokenSamplerSuite(Func<SamplerSettings, SamplerUnderTest> re
 
     // Null when every sampled token is among the top k, in the top-p nucleus and at least min-p as likely as the best
     // token (each with a little slack for rounding); else the first that is not.
-    private static string? Allowed(float[] logits, int[][] ids, int rows, int vocabulary, SamplerSettings settings)
+    private static string? Allowed(float[] logits, int[][] ids, int rows, int vocabulary, GenerationOptions settings)
     {
         for (int s = 0; s < ids.Length; s++)
         {

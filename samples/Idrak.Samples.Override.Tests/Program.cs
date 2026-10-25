@@ -9,11 +9,10 @@
 //   dotnet run -c Release --project samples/Idrak.Samples.Override.Tests
 
 using Idrak.Abstraction.Testing;
-using Idrak.Generation;
 
-// The token-sampler contract is Idrak.Text's; the kit drives a sampler through a few delegates (Drive, below).
-var current = Drive(TokenSamplers.Create);
-var samplers = new TokenSamplerSuite(Drive(TokenSampler.Create));
+// The kit checks a sampler kind (ITokenSamplerKind) against the library's default: the one the app's generations make now.
+var current = TokenSamplers.Get(TokenSamplers.DefaultName);
+var samplers = new TokenSamplerSuite();
 
 (string Name, Action Run)[] tests =
 [
@@ -35,7 +34,7 @@ var samplers = new TokenSamplerSuite(Drive(TokenSampler.Create));
     {
         var version1 = TokenSamplers.Default(TokenSamplers.DefaultName, 1);
         Check(version1 is not null, "no version 1");
-        Check(!Conformance.Check(Drive(version1!.Create), samplers, new ContractCheckOptions { RandomCases = 0 }).Passed, "version 1 passes the non-finite cases");
+        Check(!Conformance.Check(version1!, samplers, new ContractCheckOptions { RandomCases = 0 }).Passed, "version 1 passes the non-finite cases");
     }),
 ];
 
@@ -56,21 +55,6 @@ foreach (var (name, run) in tests)
 
 Console.WriteLine($"{tests.Length - failed} passed, {failed} failed");
 return failed == 0 ? 0 : 1;
-
-// An ITokenSampler factory as the kit's sampler checks drive it.
-static Func<SamplerSettings, SamplerUnderTest> Drive(Func<SamplerRequest, ITokenSampler> create) => settings =>
-{
-    var sampler = create(new SamplerRequest(settings.Device, settings.Rows, settings.Vocabulary, settings.Steps, settings.HistoryCapacity, new GenerationOptions
-    {
-        Temperature = settings.Temperature, TopK = settings.TopK, TopP = settings.TopP, MinP = settings.MinP, RepeatPenalty = settings.RepeatPenalty,
-        RepeatLastN = settings.RepeatLastN, PresencePenalty = settings.PresencePenalty, FrequencyPenalty = settings.FrequencyPenalty, Seed = settings.Seed,
-    }));
-    return new SamplerUnderTest(sampler.Rows, sampler.Vocabulary, sampler.SetHistory, logits =>
-    {
-        sampler.Sample(logits);
-        return sampler.Ids.ToArray();
-    }, sampler.Reset, (from, to) => [.. sampler.Read(from, to).Select(step => step.Select(t => new SampledStatistics(t.Id, t.Probability, t.Entropy)).ToArray())], sampler);
-};
 
 static void Check(bool condition, string message)
 {

@@ -28,6 +28,12 @@ public interface IAnnotationFormat
     /// <summary>What the format reads (a file or a folder, and its layout), for listings and error messages.</summary>
     string Summary { get; }
 
+    /// <summary>
+    /// What a dataset written and read back keeps (the class names, flags, areas, ids, masks it stores, and how far a box
+    /// may move): what a caller may count on, and what the testing kit's annotation format suite checks.
+    /// </summary>
+    AnnotationFormatTraits Keeps { get; }
+
     /// <summary>Whether <paramref name="path"/> looks like a dataset of this format (by its name and first bytes; nothing is read in full).</summary>
     bool CanRead(string path);
 
@@ -106,6 +112,8 @@ public static class AnnotationFormats
         public string Name => app.Name;
 
         public string Summary => app.Summary;
+
+        public AnnotationFormatTraits Keeps => app.Keeps;
 
         public bool CanRead(string path) => slot.Call(() => app.CanRead(path), () => library.CanRead(path), Comparisons.Exact);
 

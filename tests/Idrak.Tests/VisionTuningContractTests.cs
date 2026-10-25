@@ -459,23 +459,17 @@ internal static partial class Tests
 
     // ------------------------------------------------------------------------------------------------ feature caches
 
-    private static FeatureCacheUnderTest Wrap(IFeatureCache cache)
-    {
-        static FeatureCacheKey Key(FeatureKeyFields f) => new(f.Image, f.Transforms, f.VisionOptions, f.Family, f.Checkpoint, f.DType, f.Stage);
-        return new FeatureCacheUnderTest((k, v) => cache.Put(Key(k), v), (k, d) => cache.TryGet(Key(k), d, out var v) ? v : null, cache.Clear, cache);
-    }
-
     private static void FeatureCacheRoundTrips(Device device)
     {
         string folder = TempFolder();
         try
         {
-            using (var memory = Wrap(FeatureCaches.Create("memory")))
+            using (var memory = FeatureCaches.Create("memory"))
             {
                 Conformance.CheckFeatureCache(memory, device).ThrowIfFailed();
             }
 
-            using (var disk = Wrap(FeatureCaches.Create(FeatureCaches.Disk, new FeatureCacheOptions { Folder = Path.Combine(folder, "disk") })))
+            using (var disk = FeatureCaches.Create(FeatureCaches.Disk, new FeatureCacheOptions { Folder = Path.Combine(folder, "disk") }))
             {
                 Conformance.CheckFeatureCache(disk, device).ThrowIfFailed();
             }

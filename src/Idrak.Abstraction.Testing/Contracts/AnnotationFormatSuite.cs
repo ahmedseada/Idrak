@@ -8,51 +8,15 @@ using Idrak.Abstraction.Data;
 
 namespace Idrak.Abstraction.Testing;
 
-/// <summary>What an annotation format keeps of a dataset, so <see cref="AnnotationFormatSuite"/> checks those parts and no others.</summary>
-public sealed record AnnotationFormatTraits
-{
-    /// <summary>The file the format writes in the dataset's folder ("annotations.json"), or null when it writes the folder itself.</summary>
-    public string? FileName { get; init; }
-
-    /// <summary>The class names (in order) survive a round trip.</summary>
-    public bool ClassNames { get; init; } = true;
-
-    /// <summary>COCO's crowd flag survives.</summary>
-    public bool Crowd { get; init; }
-
-    /// <summary>VOC's difficult flag survives.</summary>
-    public bool Difficult { get; init; }
-
-    /// <summary>VOC's truncated flag survives.</summary>
-    public bool Truncated { get; init; }
-
-    /// <summary>VOC's pose survives.</summary>
-    public bool Pose { get; init; }
-
-    /// <summary>An object's area survives (where it had one).</summary>
-    public bool Area { get; init; }
-
-    /// <summary>Image and object ids survive (where they had them).</summary>
-    public bool Ids { get; init; }
-
-    /// <summary>A mask of one polygon survives (its points within <see cref="BoxTolerance"/>).</summary>
-    public bool Polygons { get; init; }
-
-    /// <summary>A run-length mask survives exactly.</summary>
-    public bool RunLength { get; init; }
-
-    /// <summary>How far a box edge or polygon point may move in a round trip, in pixels (formats that normalize lose a little).</summary>
-    public double BoxTolerance { get; init; } = 1e-3;
-}
-
 /// <summary>
 /// An annotation format as the suite drives it: its reading (a path in, a dataset out) and writing. The format contract
 /// lives with the package that uses it (<c>IAnnotationFormat</c> in Idrak.Data) and this kit depends on Idrak.Abstraction
-/// alone, so a test wraps the format in these delegates.
+/// alone, so a test wraps the format in these delegates, with what the format declares it keeps (its <c>Keeps</c>):
+/// <c>new AnnotationFormatUnderTest(path =&gt; format.Read(path), format.Write, format.Keeps)</c>.
 /// </summary>
 /// <param name="read">Reads the dataset at a path.</param>
 /// <param name="write">Writes a dataset at a path.</param>
-/// <param name="traits">What the format keeps.</param>
+/// <param name="traits">What the format keeps (the format's <c>Keeps</c>).</param>
 public sealed class AnnotationFormatUnderTest(Func<string, AnnotatedDataset> read, Action<AnnotatedDataset, string> write, AnnotationFormatTraits traits)
 {
     /// <summary>Reads the dataset at <paramref name="path"/>.</summary>

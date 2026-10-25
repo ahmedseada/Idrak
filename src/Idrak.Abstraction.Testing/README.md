@@ -25,7 +25,7 @@ Conformance.CheckRopeScaling("yarn", MyYarn).ThrowIfFailed();        // against 
 | Check | What it compares |
 |---|---|
 | Devices (`Check(Device)`, `Check(Backend)`) | The built-in cases (`DeviceCases.All`: element-wise, products, norms, rotary positions, convolution, layout, optimizer steps, packed weights and their fused products, gated activations, key/value caches, every attention kernel, sampling, autograd) run on the CPU with every operation call recorded; each call then runs on your device through its dispatcher (`Backend.Name(...)`: a registered kernel, the device's own, a composition, or the host fallback) on copies of the same values, and everything it writes must agree with the CPU within the operation's tolerance. Operations the CPU has no single kernel for (the fused products) are compared with their composition, and those it has none for at all (FP8 weights and products, attention read in place from strided rows and its gradients) with plain-loop references written from their contracts. The report has one entry per operation with the kernel that ran (`Kernels.Chain`); operations with no kernel on the device, or that no case reaches, are listed as skipped. |
-| Token samplers (`TokenSamplerSuite`) | The asked shape; ids in range; greedy tokens identical to the reference's (the library's `TokenSampler`), penalties included; sampled tokens among those top-k, top-p and min-p allow; a reset reproducing the same tokens; statistics matching the tokens; with `Exact`, the reference's very tokens and probabilities; logits that are not finite (NaN and -∞ never sampled, greedy takes the best finite token, +∞ wins and shares the probability evenly, a row with nothing finite is reported by `Sample` or `Read`), wide rows included. Pass a device to run it there. |
+| Token samplers (`TokenSamplerSuite`, a sampler kind) | The asked shape; ids in range; greedy tokens identical to the reference's (the library's `TokenSampler`), penalties included; sampled tokens among those top-k, top-p and min-p allow; a reset reproducing the same tokens; statistics matching the tokens; with `Exact`, the reference's very tokens and probabilities; logits that are not finite (NaN and -∞ never sampled, greedy takes the best finite token, +∞ wins and shares the probability evenly, a row with nothing finite is reported by `Sample` or `Read`), wide rows included. Pass a device to run it there. |
 | Tokenizers (`TokenizerSuite`) | Ids in range; the same ids every time; decoding a span as a list; the round trip (exact, or stable); `TokenOf` past the end; with a reference, the same ids and text. Texts: empty, whitespace, accents, Arabic, Chinese, emoji, combining marks, control characters, long runs, random Unicode, and yours (`ExtraTexts`). |
 | Plug-in operations (`Check(PluginOperation<TKernel>, Device, run)`) | The kernel the operation runs on your device (`KernelFor`: the one registered for its kind, or the default) against the operation's default kernel on the CPU, on cases your `run(backend, kernel, seed)` makes from a seed (inputs uploaded, the kernel called, outputs read back); the entry names the kernel that ran. |
 | RoPE scalings (`RopeScalingSuite`) | As many frequencies, finite and positive; the library method's frequencies and attention factor (`RopeScalings.Default`); the same per position; safe from several threads. |
@@ -38,33 +38,36 @@ Conformance.CheckRopeScaling("yarn", MyYarn).ThrowIfFailed();        // against 
 | Advantage estimators (`AdvantageEstimatorSuite`, `Conformance.CheckAdvantageEstimator`) | Episodes in groups, with and without values and truncated episodes: every step's advantage and return written and finite; the same output bit for bit again and from several threads (a fixed summation order); wrong lengths, a missing critic and options refused; the library estimator's output (`AdvantageEstimators.Default`). |
 | Policy losses (`PolicyLossSuite`, `Conformance.CheckPolicyLoss`) | On- and off-policy mini-batches, with and without a reference and a value head: a finite one-element loss, the same every time; a gradient that reaches the log-probabilities and agrees with central differences where the loss is smooth (a clip's kinks left out); options refused; the library loss's value (`PolicyLosses.Default`). |
 
-The token-sampler contract (`ITokenSampler`) lives in Idrak.Text, and this kit depends on Idrak.Abstraction alone, so
-a test passes the sampler it checks and the reference as delegates (`SamplerUnderTest`: set the history, sample a step,
-reset, read the statistics):
+A suite whose contract is in Idrak.Abstraction takes the contract itself and calls it as the library does, so it
+measures the implementation's real work and allocations. The token samplers are checked by their kind
+(`ITokenSamplerKind`, as registered in `TokenSamplers`), against the library's default unless another reference is given:
 
 ```csharp
-static Func<SamplerSettings, SamplerUnderTest> Drive(Func<SamplerRequest, ITokenSampler> create) => settings =>
-{
-    var sampler = create(new SamplerRequest(settings.Device, settings.Rows, settings.Vocabulary, settings.Steps, settings.HistoryCapacity,
-        new GenerationOptions { Temperature = settings.Temperature, TopK = settings.TopK, /* ... */ Seed = settings.Seed }));
-    return new SamplerUnderTest(sampler.Rows, sampler.Vocabulary, sampler.SetHistory, logits => { sampler.Sample(logits); return sampler.Ids.ToArray(); },
-        sampler.Reset, (from, to) => [.. sampler.Read(from, to).Select(s => s.Select(t => new SampledStatistics(t.Id, t.Probability, t.Entropy)).ToArray())], sampler);
-};
-
-Conformance.Check(Drive(MySampler.Create), new TokenSamplerSuite(Drive(TokenSampler.Create))).ThrowIfFailed();
+Conformance.Check(new MySamplerKind(), new TokenSamplerSuite()).ThrowIfFailed();
+Conformance.Check(new MySamplerKind(), new TokenSamplerSuite(device: Device.Get("cuda")) { Exact = true }).ThrowIfFailed();
 ```
 
-The fine-tuning data formats (`ITuningDataFormat`) live in Idrak.Text too, and the feature caches (`IFeatureCache`, in
-Idrak.Abstraction with Idrak.Text's built-ins) are checked the same way: a format as its reading, a cache wrapped in `FeatureCacheUnderTest`:
+The feature caches (`IFeatureCache`, in Idrak.Abstraction with Idrak.Text's built-ins) and the progress reporters
+(`IProgressReporterKind`) are checked the same way. A contract that lives in another package (the fine-tuning data
+formats, `ITuningDataFormat`, in Idrak.Text) is given as its methods, since this kit depends on Idrak.Abstraction alone:
+a format as its reading.
 
 ```csharp
+using var cache = FeatureCaches.Create("disk", new FeatureCacheOptions { Folder = "cache" });
+Conformance.CheckFeatureCache(cache).ThrowIfFailed();
+Conformance.CheckProgressReporter("console").ThrowIfFailed();
+
 var format = TuningDataFormats.Get("sharegpt");
 Conformance.CheckTuningDataFormat(path => format.Read(path, new TuningDataOptions { Images = "images.zip" }).Select(t => t.Messages),
     [new TuningDataSample("train.json"), new TuningDataSample("bad.json", Error: "markers")]).ThrowIfFailed();
+```
 
-using var cache = FeatureCaches.Create("disk", new FeatureCacheOptions { Folder = "cache" });
-static FeatureCacheKey Key(FeatureKeyFields f) => new(f.Image, f.Transforms, f.VisionOptions, f.Family, f.Checkpoint, f.DType, f.Stage);
-Conformance.CheckFeatureCache(new FeatureCacheUnderTest((k, v) => cache.Put(Key(k), v), (k, d) => cache.TryGet(Key(k), d, out var v) ? v : null, cache.Clear)).ThrowIfFailed();
+An annotation format (Idrak.Data's `IAnnotationFormat`) is given as its reading and writing, with what it declares it
+keeps (`Keeps`, an `AnnotationFormatTraits`), so the suite checks those parts and no others:
+
+```csharp
+var coco = AnnotationFormats.Get("coco");
+Conformance.Check(new AnnotationFormatUnderTest(path => coco.Read(path), coco.Write, coco.Keeps), new AnnotationFormatSuite()).ThrowIfFailed();
 ```
 
 An image model family (Idrak.Vision's `IImageModelFamily`, registered in `ImageModelFamilies`) is checked as its loading: a
@@ -118,7 +121,7 @@ number of iterations, compared as the conformance check compares; the memory in 
 var report = Conformance.Check(device);
 report.SaveFailures("regressions");                         // one small JSON file per failing case
 Regression.Replay("regressions", device).ThrowIfFailed();   // in your tests from then on
-Regression.Replay("regressions", Drive(MySampler.Create), new TokenSamplerSuite(Drive(TokenSampler.Create))).ThrowIfFailed();
+Regression.Replay("regressions", new MySamplerKind(), new TokenSamplerSuite()).ThrowIfFailed();
 ```
 
 A saved operation call holds the operation, its arguments and the values of its storages before and after (exact

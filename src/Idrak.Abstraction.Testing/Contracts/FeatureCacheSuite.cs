@@ -6,45 +6,8 @@ using System.Text.Json.Nodes;
 namespace Idrak.Abstraction.Testing;
 
 /// <summary>
-/// The fields of a feature cache's key, as the cache checks see them (Idrak.Abstraction's <c>FeatureCacheKey</c>, field for field):
-/// the image's hash, its transforms and vision options, the encoder's family, checkpoint and precision, and the stage.
-/// </summary>
-/// <param name="Image">The SHA-256 of the image's bytes.</param>
-/// <param name="Transforms">The image transforms' text.</param>
-/// <param name="VisionOptions">The vision options' text.</param>
-/// <param name="Family">The vision family.</param>
-/// <param name="Checkpoint">The checkpoint's hash.</param>
-/// <param name="DType">The encoder's precision.</param>
-/// <param name="Stage">Which output is cached.</param>
-public sealed record FeatureKeyFields(string Image, string Transforms, string VisionOptions, string Family, string Checkpoint, string DType, string Stage);
-
-/// <summary>
-/// A feature cache as the cache checks drive it (<c>IFeatureCache</c> in Idrak.Abstraction): a test wraps the cache it
-/// checks in these delegates (its key made from <see cref="FeatureKeyFields"/>).
-/// </summary>
-/// <param name="put">Keeps a copy of a tensor under a key (<c>Put</c>); false when not kept.</param>
-/// <param name="get">The tensor kept under a key, made on the device given, or null on a miss (<c>TryGet</c>).</param>
-/// <param name="clear">Forgets every entry (<c>Clear</c>).</param>
-/// <param name="owner">Disposed with this (the cache itself), or null.</param>
-public sealed class FeatureCacheUnderTest(Func<FeatureKeyFields, Tensor, bool> put, Func<FeatureKeyFields, Device, Tensor?> get, Action clear, IDisposable? owner = null)
-    : IDisposable
-{
-    /// <summary>Keeps a copy of <paramref name="value"/> under <paramref name="key"/>; false when not kept.</summary>
-    public bool Put(FeatureKeyFields key, Tensor value) => put(key, value);
-
-    /// <summary>The tensor kept under <paramref name="key"/>, on <paramref name="device"/> (the caller's), or null.</summary>
-    public Tensor? Get(FeatureKeyFields key, Device device) => get(key, device);
-
-    /// <summary>Forgets every entry.</summary>
-    public void Clear() => clear();
-
-    /// <summary>Disposes the cache.</summary>
-    public void Dispose() => owner?.Dispose();
-}
-
-/// <summary>
-/// The checks of a feature cache (Idrak.Abstraction's <c>IFeatureCache</c>), wrapped as <see cref="FeatureCacheUnderTest"/>, on
-/// small tensors of many shapes (each case clears the cache first):
+/// The checks of a feature cache (<see cref="IFeatureCache"/>, called as the library calls it) on small tensors of many
+/// shapes (each case clears the cache first):
 /// <list type="bullet">
 /// <item>an empty cache misses;</item>
 /// <item>a small value is kept, and a hit gives back exactly its values and shape, on the device asked for;</item>
@@ -57,7 +20,7 @@ public sealed class FeatureCacheUnderTest(Func<FeatureKeyFields, Tensor, bool> p
 /// </list>
 /// </summary>
 /// <param name="device">Where the values put live and hits are asked for (the CPU when null).</param>
-public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<FeatureCacheUnderTest>
+public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<IFeatureCache>
 {
     private static readonly string[] FieldNames = ["image", "transforms", "vision options", "family", "checkpoint", "dtype", "stage"];
 
@@ -84,13 +47,13 @@ public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<Fea
         int rank = random.Next(1, 4), limit = large ? 64 : 9;
         int[] shape = [.. Enumerable.Range(0, rank).Select(_ => random.Next(1, limit))];
         string Text() => new([.. Enumerable.Range(0, random.Next(0, 12)).Select(_ => (char)(random.Next(3) == 0 ? random.Next(0x600, 0x6FF) : random.Next(0x20, 0x7F)))]);
-        var fields = new FeatureKeyFields(Convert.ToHexStringLower(BitConverter.GetBytes(random.NextInt64())), Text(), Text(), Text(), Text(), random.Next(2) == 0 ? "float32" : "bfloat16",
+        var fields = new FeatureCacheKey(Convert.ToHexStringLower(BitConverter.GetBytes(random.NextInt64())), Text(), Text(), Text(), Text(), random.Next(2) == 0 ? "float32" : "bfloat16",
             random.Next(4) == 0 ? "features" : "tower");
         return Case($"random [{string.Join(", ", shape)}]", shape, random.Next(), fields, threads: random.Next(1, 5));
     }
 
     /// <inheritdoc />
-    public override void Run(FeatureCacheUnderTest implementation, ContractCase @case, CaseChecks checks)
+    public override void Run(IFeatureCache implementation, ContractCase @case, CaseChecks checks)
     {
         ArgumentNullException.ThrowIfNull(implementation);
         ArgumentNullException.ThrowIfNull(@case);
@@ -101,7 +64,7 @@ public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<Fea
         float[] values = Values(shape, seed);
 
         implementation.Clear();
-        using (var missed = implementation.Get(key, Device))
+        using (var missed = Get(implementation, key))
         {
             checks.Check("an empty cache misses", missed is null, "a cleared cache gave a value");
         }
@@ -115,8 +78,8 @@ public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<Fea
             return;
         }
 
-        var first = implementation.Get(key, Device);
-        var second = implementation.Get(key, Device);
+        var first = Get(implementation, key);
+        var second = Get(implementation, key);
         try
         {
             checks.Check("hits after a put", first is not null && second is not null, "missed right after the put");
@@ -141,7 +104,7 @@ public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<Fea
 
         for (int f = 0; f < FieldNames.Length; f++)
         {
-            using var other = implementation.Get(Change(key, f), Device);
+            using var other = Get(implementation, Change(key, f));
             checks.Check($"a key differing in its {FieldNames[f]} misses", other is null, $"a key with another {FieldNames[f]} hit");
         }
 
@@ -151,7 +114,7 @@ public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<Fea
             implementation.Put(key, again);
         }
 
-        using (var now = implementation.Get(key, Device))
+        using (var now = Get(implementation, key))
         {
             checks.Check("a second put replaces the first", now is not null && Comparisons.Difference(replaced, now.ToArray(), 0f) is null, "the key gave the first value, or missed");
         }
@@ -170,7 +133,7 @@ public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<Fea
 
             for (int round = 0; round < 3; round++)
             {
-                using var got = implementation.Get(mine, Device);
+                using var got = Get(implementation, mine);
                 if (got is null)
                 {
                     continue;
@@ -187,18 +150,21 @@ public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<Fea
         checks.Check("from several threads, values put are found", hits > 0, "no thread found its value");
 
         implementation.Clear();
-        using (var cleared = implementation.Get(key, Device))
+        using (var cleared = Get(implementation, key))
         {
             checks.Check("misses after a clear", cleared is null, "the key hit after Clear");
         }
     }
 
-    private static FeatureKeyFields Fields(string image, string transforms, string options) =>
+    // The value kept under `key`, on the suite's device, or null on a miss.
+    private Tensor? Get(IFeatureCache cache, FeatureCacheKey key) => cache.TryGet(key, Device, out var value) ? value : null;
+
+    private static FeatureCacheKey Fields(string image, string transforms, string options) =>
         new(Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(image))), transforms, options,
             "TinyFamilyForConditionalGeneration", "0123abcd", "float32", "tower");
 
     // The key with field `f` changed (a character added).
-    private static FeatureKeyFields Change(FeatureKeyFields key, int f) => f switch
+    private static FeatureCacheKey Change(FeatureCacheKey key, int f) => f switch
     {
         0 => key with { Image = key.Image + "0" },
         1 => key with { Transforms = key.Transforms + "," },
@@ -215,7 +181,7 @@ public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<Fea
         return [.. Enumerable.Range(0, shape.Aggregate(1, (a, b) => a * b)).Select(_ => (float)(random.NextDouble() * 20 - 10))];
     }
 
-    private static ContractCase Case(string name, int[] shape, int seed, FeatureKeyFields fields, int threads) => new(name, new JsonObject
+    private static ContractCase Case(string name, int[] shape, int seed, FeatureCacheKey fields, int threads) => new(name, new JsonObject
     {
         ["shape"] = new JsonArray([.. shape.Select(d => (JsonNode)d)]),
         ["seed"] = seed,
@@ -227,7 +193,7 @@ public sealed class FeatureCacheSuite(Device? device = null) : ContractSuite<Fea
         },
     });
 
-    private static FeatureKeyFields ReadFields(JsonObject json) =>
+    private static FeatureCacheKey ReadFields(JsonObject json) =>
         new((string)json["image"]!, (string)json["transforms"]!, (string)json["vision_options"]!, (string)json["family"]!, (string)json["checkpoint"]!,
             (string)json["dtype"]!, (string)json["stage"]!);
 }

@@ -871,6 +871,20 @@ public sealed class Idrak.Abstraction.Data.AnnotatedImage
   public int[]? PixelClasses { get; }
   public static byte[] Fill(Idrak.Abstraction.Data.BoundingBox box, int width, int height)
 
+public sealed record Idrak.Abstraction.Data.AnnotationFormatTraits : System.IEquatable<Idrak.Abstraction.Data.AnnotationFormatTraits>
+  public AnnotationFormatTraits()
+  public bool Area { get; init; }
+  public bool ClassNames { get; init; }
+  public bool Crowd { get; init; }
+  public bool Difficult { get; init; }
+  public bool Ids { get; init; }
+  public bool Polygons { get; init; }
+  public bool Pose { get; init; }
+  public bool RunLength { get; init; }
+  public bool Truncated { get; init; }
+  public double BoxTolerance { get; init; }
+  public string? FileName { get; init; }
+
 public sealed class Idrak.Abstraction.Data.AugmentationContext
   public AugmentationContext(System.Random random, System.Func<System.Random, Idrak.Abstraction.Data.AnnotatedImage>? draw = null)
   public Idrak.Abstraction.Data.AnnotatedImage Draw()

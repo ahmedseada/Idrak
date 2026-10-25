@@ -91,6 +91,9 @@ public sealed class CocoFormat : IAnnotationFormat
     public string Summary => "COCO instances JSON (a .json file with images, categories and annotations: boxes, polygon or RLE masks, crowds)";
 
     /// <inheritdoc />
+    public AnnotationFormatTraits Keeps { get; } = new() { FileName = "instances.json", Crowd = true, Area = true, Ids = true, Polygons = true, RunLength = true };
+
+    /// <inheritdoc />
     public bool CanRead(string path)
     {
         if (!File.Exists(path) || !path.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
@@ -347,6 +350,9 @@ public sealed class YoloFormat : IAnnotationFormat
     public string Summary => "YOLO text (a folder of images/ and labels/: a .txt per image, normalized class cx cy w h or polygons; classes.txt or data.yaml names)";
 
     /// <inheritdoc />
+    public AnnotationFormatTraits Keeps { get; } = new() { Polygons = true };
+
+    /// <inheritdoc />
     public bool CanRead(string path) =>
         Directory.Exists(path) && (Directory.Exists(Path.Combine(path, "labels")) || File.Exists(Path.Combine(path, "classes.txt")) && !Directory.Exists(Path.Combine(path, "Annotations")));
 
@@ -527,6 +533,9 @@ public sealed class VocFormat : IAnnotationFormat
 
     /// <inheritdoc />
     public string Summary => "Pascal VOC XML (a folder with Annotations/*.xml: filename, size, objects with name, pose, truncated, difficult, bndbox)";
+
+    /// <inheritdoc />
+    public AnnotationFormatTraits Keeps { get; } = new() { Difficult = true, Truncated = true, Pose = true };
 
     /// <inheritdoc />
     public bool CanRead(string path) => Directory.Exists(Path.Combine(path, "Annotations"))

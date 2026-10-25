@@ -20,7 +20,7 @@ internal static partial class Tests
         ("vision augment: every library augmentation passes the testing kit's suite (well formed, deterministic, boxes hold their masks, pixel classes and pixels move with the masks)", AugmentationsConformant),
         ("vision augment: flip and shift move boxes, masks and pixel classes exactly with the pixels, drawing what the sample-transform path draws; crops and letterboxes scale boxes; a wrong augmentation fails the kit", AugmentationsAligned),
         ("vision augment: AugmentedImageLoader batches augmented samples off the training thread (workers from the machine's cores, batches ahead from its free memory); the same batches whatever the workers; letterbox, channels, pixel classes, leaving early", AugmentedLoaderBatches),
-        ("vision data: COCO, YOLO and VOC are registered in AnnotationFormats and pass the testing kit's round-trip suite; hand-written files read as expected (RLE and polygon masks, crowds, data.yaml names, difficult objects); errors name the file", AnnotationFormatsRoundTrip),
+        ("vision data: COCO, YOLO and VOC are registered in AnnotationFormats, declare what they keep (Keeps) and pass the testing kit's round-trip suite on it; hand-written files read as expected (RLE and polygon masks, crowds, data.yaml names, difficult objects); errors name the file", AnnotationFormatsRoundTrip),
         ("vision data: a COCO dataset with masks loads into augmented batches (decoded, letterboxed, boxes and masks moved)", AnnotatedDatasetIntoLoader),
     ];
 
@@ -255,7 +255,8 @@ internal static partial class Tests
                  })
         {
             var format = AnnotationFormats.Get(name);
-            Conformance.Check(new AnnotationFormatUnderTest(path => format.Read(path), format.Write, traits), new AnnotationFormatSuite(), options).ThrowIfFailed();
+            Check(format.Keeps == traits, $"{name} declares what it keeps: {format.Keeps}, expected {traits}");
+            Conformance.Check(new AnnotationFormatUnderTest(path => format.Read(path), format.Write, format.Keeps), new AnnotationFormatSuite(), options).ThrowIfFailed();
         }
 
         string root = Path.Combine(Path.GetTempPath(), "idrak-formats-" + Guid.NewGuid().ToString("N"));

@@ -66,6 +66,7 @@ public sealed class Idrak.Data.Abstractions.DatasetSpec
 
 public interface Idrak.Data.Abstractions.IAnnotationFormat
   public Idrak.Abstraction.Data.AnnotatedDataset Read(string path, Idrak.Data.Abstractions.AnnotationReadOptions? options = null)
+  public Idrak.Abstraction.Data.AnnotationFormatTraits Keeps { get; }
   public bool CanRead(string path)
   public string Name { get; }
   public string Summary { get; }
@@ -143,6 +144,7 @@ public static class Idrak.Data.ChatRows
 public sealed class Idrak.Data.CocoFormat : Idrak.Data.Abstractions.IAnnotationFormat
   public CocoFormat()
   public Idrak.Abstraction.Data.AnnotatedDataset Read(string path, Idrak.Data.Abstractions.AnnotationReadOptions? options = null)
+  public Idrak.Abstraction.Data.AnnotationFormatTraits Keeps { get; }
   public bool CanRead(string path)
   public string Name { get; }
   public string Summary { get; }
@@ -308,6 +310,7 @@ public static class Idrak.Data.TableSamples
 
 public sealed class Idrak.Data.VocFormat : Idrak.Data.Abstractions.IAnnotationFormat
   public Idrak.Abstraction.Data.AnnotatedDataset Read(string path, Idrak.Data.Abstractions.AnnotationReadOptions? options = null)
+  public Idrak.Abstraction.Data.AnnotationFormatTraits Keeps { get; }
   public VocFormat()
   public bool CanRead(string path)
   public string Name { get; }
@@ -316,6 +319,7 @@ public sealed class Idrak.Data.VocFormat : Idrak.Data.Abstractions.IAnnotationFo
 
 public sealed class Idrak.Data.YoloFormat : Idrak.Data.Abstractions.IAnnotationFormat
   public Idrak.Abstraction.Data.AnnotatedDataset Read(string path, Idrak.Data.Abstractions.AnnotationReadOptions? options = null)
+  public Idrak.Abstraction.Data.AnnotationFormatTraits Keeps { get; }
   public YoloFormat()
   public bool CanRead(string path)
   public string Name { get; }

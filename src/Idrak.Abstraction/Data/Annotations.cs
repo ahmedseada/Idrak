@@ -383,6 +383,47 @@ public sealed record AnnotatedDataset(IReadOnlyList<string> Classes, IReadOnlyLi
 }
 
 /// <summary>
+/// What an annotation format keeps of an <see cref="AnnotatedDataset"/> written and read back (its <c>Keeps</c>, declared by
+/// every format), so a caller knows what survives a round trip and the testing kit's <c>AnnotationFormatSuite</c> checks
+/// those parts and no others.
+/// </summary>
+public sealed record AnnotationFormatTraits
+{
+    /// <summary>The file the format writes in the dataset's folder ("annotations.json"), or null when it writes the folder itself.</summary>
+    public string? FileName { get; init; }
+
+    /// <summary>The class names (in order) survive a round trip.</summary>
+    public bool ClassNames { get; init; } = true;
+
+    /// <summary>COCO's crowd flag survives.</summary>
+    public bool Crowd { get; init; }
+
+    /// <summary>VOC's difficult flag survives.</summary>
+    public bool Difficult { get; init; }
+
+    /// <summary>VOC's truncated flag survives.</summary>
+    public bool Truncated { get; init; }
+
+    /// <summary>VOC's pose survives.</summary>
+    public bool Pose { get; init; }
+
+    /// <summary>An object's area survives (where it had one).</summary>
+    public bool Area { get; init; }
+
+    /// <summary>Image and object ids survive (where they had them).</summary>
+    public bool Ids { get; init; }
+
+    /// <summary>A mask of one polygon survives (its points within <see cref="BoxTolerance"/>).</summary>
+    public bool Polygons { get; init; }
+
+    /// <summary>A run-length mask survives exactly.</summary>
+    public bool RunLength { get; init; }
+
+    /// <summary>How far a box edge or polygon point may move in a round trip, in pixels (formats that normalize lose a little).</summary>
+    public double BoxTolerance { get; init; } = 1e-3;
+}
+
+/// <summary>
 /// A training sample for detection and segmentation: an image with its objects' boxes and classes and, when known, one
 /// mask per object and a class per pixel. Augmentations (<see cref="IAugmentation"/>) take one and give a new one with
 /// the boxes and masks moved with the pixels. Immutable: the arrays are not copied, and are not to be changed.

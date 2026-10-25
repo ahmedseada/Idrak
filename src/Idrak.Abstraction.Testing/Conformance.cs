@@ -127,13 +127,13 @@ public static class Conformance
         Check(method ?? RopeScalings.Get(type), new RopeScalingSuite(type), options);
 
     /// <summary>
-    /// Checks the progress reporter registered as <paramref name="name"/> (or <paramref name="factory"/>, when given;
+    /// Checks the progress reporter registered as <paramref name="name"/> (or <paramref name="kind"/>, when given;
     /// <see cref="ProgressReporterSuite"/>): it starts as asked, reports and advances (from several threads too) add up,
     /// a report between showings allocates nothing and does not ask for the detail, the next stage starts afresh, and
     /// nothing is written after the end. Eight random cases unless <paramref name="options"/> says otherwise.
     /// </summary>
-    public static ConformanceReport CheckProgressReporter(string name, Func<ProgressRequest, IProgressReporter>? factory = null, ContractCheckOptions? options = null) =>
-        Check(factory ?? new Func<ProgressRequest, IProgressReporter>(ProgressReporters.Get(name).Create), new ProgressReporterSuite(), options ?? new ContractCheckOptions { RandomCases = 8 });
+    public static ConformanceReport CheckProgressReporter(string name, IProgressReporterKind? kind = null, ContractCheckOptions? options = null) =>
+        Check(kind ?? ProgressReporters.Get(name), new ProgressReporterSuite(), options ?? new ContractCheckOptions { RandomCases = 8 });
 
     /// <summary>
     /// Checks a keyword index (Idrak.Text's <c>KeywordIndexes</c>, given as <see cref="KeywordIndexUnderTest"/>;
@@ -360,15 +360,20 @@ public static class Conformance
     }
 
     /// <summary>
-    /// Checks a feature cache (Idrak.Abstraction's <c>IFeatureCache</c>, wrapped as <see cref="FeatureCacheUnderTest"/>) with
-    /// <see cref="FeatureCacheSuite"/>: misses when empty or cleared, exact values and shapes back on the device asked for,
-    /// its own copy, a miss for a key differing in any field, a put replacing the last, and many threads at once. Six random
-    /// cases unless <paramref name="options"/> says otherwise.
+    /// Checks a feature cache (<see cref="IFeatureCache"/>) with <see cref="FeatureCacheSuite"/>: misses when empty or cleared,
+    /// exact values and shapes back on the device asked for, its own copy, a miss for a key differing in any field, a put
+    /// replacing the last, and many threads at once. Six random cases unless <paramref name="options"/> says otherwise.
     /// </summary>
-    /// <param name="cache">The cache, wrapped.</param>
+    /// <example>
+    /// <code>
+    /// using var cache = FeatureCaches.Create("disk", new FeatureCacheOptions { Folder = "cache" });
+    /// Conformance.CheckFeatureCache(cache).ThrowIfFailed();
+    /// </code>
+    /// </example>
+    /// <param name="cache">The cache.</param>
     /// <param name="device">Where values are put and hits asked for (the CPU when null).</param>
     /// <param name="options">The cases to run.</param>
-    public static ConformanceReport CheckFeatureCache(FeatureCacheUnderTest cache, Device? device = null, ContractCheckOptions? options = null)
+    public static ConformanceReport CheckFeatureCache(IFeatureCache cache, Device? device = null, ContractCheckOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(cache);
         return Check(cache, new FeatureCacheSuite(device), options ?? new ContractCheckOptions { RandomCases = 6 });

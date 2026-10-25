@@ -6,9 +6,9 @@ using System.Text.Json.Nodes;
 namespace Idrak.Abstraction.Testing;
 
 /// <summary>
-/// The checks of a progress reporter (a factory registered in <see cref="ProgressReporters"/>), each case one piece of
-/// work reported to a <see cref="StringWriter"/> with an interval of an hour (so only the first report and explicit
-/// showings show anything):
+/// The checks of a progress reporter kind (<see cref="IProgressReporterKind"/>, registered in
+/// <see cref="ProgressReporters"/>), each case one piece of work reported to a <see cref="StringWriter"/> with an interval
+/// of an hour (so only the first report and explicit showings show anything):
 /// <list type="bullet">
 /// <item>it starts with the label, total and unit asked for and nothing done;</item>
 /// <item>reports set the amount and advances add to it, from one thread or several at once;</item>
@@ -18,12 +18,15 @@ namespace Idrak.Abstraction.Testing;
 /// <item>a reporter that is not enabled writes nothing.</item>
 /// </list>
 /// </summary>
-public sealed class ProgressReporterSuite : ContractSuite<Func<ProgressRequest, IProgressReporter>>
+public sealed class ProgressReporterSuite : ContractSuite<IProgressReporterKind>
 {
     private static readonly ProgressUnit[] Units = [ProgressUnit.Items, ProgressUnit.Bytes, ProgressUnit.Elapsed];
 
     /// <inheritdoc />
     public override string Name => "progress-reporter";
+
+    /// <inheritdoc />
+    protected override string Describe(IProgressReporterKind implementation) => implementation.Name;
 
     /// <inheritdoc />
     public override IEnumerable<ContractCase> FixedCases()
@@ -49,7 +52,7 @@ public sealed class ProgressReporterSuite : ContractSuite<Func<ProgressRequest, 
     }
 
     /// <inheritdoc />
-    public override void Run(Func<ProgressRequest, IProgressReporter> implementation, ContractCase @case, CaseChecks checks)
+    public override void Run(IProgressReporterKind implementation, ContractCase @case, CaseChecks checks)
     {
         ArgumentNullException.ThrowIfNull(implementation);
         ArgumentNullException.ThrowIfNull(@case);
@@ -59,7 +62,7 @@ public sealed class ProgressReporterSuite : ContractSuite<Func<ProgressRequest, 
         long? total = (long?)data["total"];
         int reports = (int)data["reports"]!, threads = (int)data["threads"]!;
         var output = new StringWriter();
-        var reporter = implementation(new ProgressRequest("work", total, unit, output, TimeSpan.FromHours(1)));
+        var reporter = implementation.Create(new ProgressRequest("work", total, unit, output, TimeSpan.FromHours(1)));
         try
         {
             checks.Check("starts as asked", reporter.Label == "work" && reporter.Total == total && reporter.Unit == unit && reporter.Done == 0,
