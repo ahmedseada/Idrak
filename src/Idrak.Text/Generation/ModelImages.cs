@@ -19,7 +19,7 @@ public sealed class ModelImages : IDisposable
 {
     private readonly LazyEncoder _encoder;
 
-    private ModelImages(PretrainedModel model, PretrainedVision vision, VisionEncoderOptions options, ImageTransformPipeline? transforms,
+    private ModelImages(PretrainedModel model, IPretrainedVision vision, VisionEncoderOptions options, ImageTransformPipeline? transforms,
         Func<PretrainedModel, VisionEncoderOptions, IVisionEncoder>? encoderFactory)
     {
         Options = options;

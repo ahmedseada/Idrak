@@ -41,7 +41,7 @@ public static class ChatCorpus
         return sb.ToString();
     }
 
-    private static (string Prompt, string Answer) Sample(Random random, ChatTemplate template)
+    private static (string Prompt, string Answer) Sample(Random random, IChatTemplate template)
     {
         string system = Systems[random.Next(Systems.Length)];
         bool tools = random.Next(3) > 0;                     // two thirds offer the tool

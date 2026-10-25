@@ -56,27 +56,42 @@ public static class TableSamples
     }
 
     /// <summary>
-    /// A factory for <see cref="SampleSources.Register"/> (register it as "table"): options <c>features</c> and
+    /// A sample source kind for <see cref="SampleSources.Register"/>, named "table": options <c>features</c> and
     /// <c>target</c> (comma-separated column names; <c>features</c> defaults to every other column of the first row) and
     /// <c>classes</c> (comma-separated class names).
     /// </summary>
-    public static SampleSourceFactory Factory { get; } = (path, options) =>
-    {
-        foreach (string key in options.Keys)
-        {
-            if (key is not ("features" or "target" or "classes"))
-            {
-                throw new ArgumentException($"The table source has no option '{key}' (features, target, classes).");
-            }
-        }
+    public static ISampleSourceKind Kind { get; } = new TableKind();
 
-        string[] List(string text) => text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        string[] targets = List(options.GetValueOrDefault("target") ?? throw new ArgumentException("The table source needs the option 'target' (the target columns, comma-separated)."));
-        var rows = DataFiles.Read(path, ReadOptions.Default);
-        string[] features = options.TryGetValue("features", out var f) ? List(f)
-            : [.. (rows.FirstOrDefault() ?? throw new InvalidDataException($"{path} has no rows.")).Select(p => p.Key).Where(k => !targets.Contains(k, StringComparer.Ordinal))];
-        return FromRows(rows, features, targets, options.TryGetValue("classes", out var c) ? List(c) : null, path);
-    };
+    private sealed class TableKind : ISampleSourceKind
+    {
+        private static readonly OptionKeys Options = new("features", "target", "classes");
+
+        public string Name => "table";
+
+        public string Summary => "rows of a JSON Lines, Parquet or CSV file by column names (target required; features, classes)";
+
+        public IReadOnlySet<string> Keys => Options;
+
+        public ISampleSource Create(SampleSourceRequest request)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            var (path, options) = (request.Path, request.Options);
+            foreach (string key in options.Keys)
+            {
+                if (key is not ("features" or "target" or "classes"))
+                {
+                    throw new ArgumentException($"The table source has no option '{key}' (features, target, classes).");
+                }
+            }
+
+            string[] List(string text) => text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            string[] targets = List(options.GetValueOrDefault("target") ?? throw new ArgumentException("The table source needs the option 'target' (the target columns, comma-separated)."));
+            var rows = DataFiles.Read(path, ReadOptions.Default);
+            string[] features = options.TryGetValue("features", out var f) ? List(f)
+                : [.. (rows.FirstOrDefault() ?? throw new InvalidDataException($"{path} has no rows.")).Select(p => p.Key).Where(k => !targets.Contains(k, StringComparer.Ordinal))];
+            return FromRows(rows, features, targets, options.TryGetValue("classes", out var c) ? List(c) : null, path);
+        }
+    }
 
     private static Dataset FromRows(IEnumerable<JsonObject> rows, IReadOnlyList<string> features, IReadOnlyList<string> targets, IReadOnlyList<string>? classes, string source)
     {

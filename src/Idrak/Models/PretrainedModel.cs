@@ -126,8 +126,8 @@ public sealed record PretrainedOptions
     public bool Int4 { get; init; }
 
     /// <summary>
-    /// Store the projections in the packed format registered under this name (<see cref="PackedWeight.FormatNames"/>; a
-    /// format of your own is added with <see cref="PackedWeight.Register"/>). Takes precedence over Int8, Int4 and BFloat16.
+    /// Store the projections in the packed format registered under this name (<see cref="PackedWeightFormats.Names"/>; a
+    /// format of your own is added with <see cref="PackedWeightFormats.Register"/>). Takes precedence over Int8, Int4 and BFloat16.
     /// </summary>
     public string? PackedFormatName { get; init; }
 
@@ -224,8 +224,8 @@ public sealed record PretrainedLoadTimes(TimeSpan Open, TimeSpan Read, TimeSpan 
 /// </summary>
 public sealed class PretrainedModel : IDisposable
 {
-    private PretrainedModel(string folder, JsonObject config, DecoderSpec spec, Sequential network, ITokenizer? tokenizer, ChatTemplate? template,
-        IReadOnlyList<string> notes, int maxPositions, PretrainedArchitecture architecture, Device device, PretrainedVision? vision)
+    private PretrainedModel(string folder, JsonObject config, DecoderSpec spec, Sequential network, ITokenizer? tokenizer, IChatTemplate? template,
+        IReadOnlyList<string> notes, int maxPositions, IPretrainedArchitecture architecture, Device device, IPretrainedVision? vision)
     {
         Architecture = architecture;
         Vision = vision;
@@ -259,7 +259,7 @@ public sealed class PretrainedModel : IDisposable
     /// The model's own chat template (from tokenizer_config.json, read by a reader registered with
     /// <see cref="ChatTemplates"/>: Idrak.Text's Jinja templates), or null when the model has none or no reader reads it.
     /// </summary>
-    public ChatTemplate? ChatTemplate { get; }
+    public IChatTemplate? ChatTemplate { get; }
 
     /// <summary>Anything approximated while reading the model (see <see cref="PretrainedFamilies.CommonSpec"/>).</summary>
     public IReadOnlyList<string> Notes { get; }
@@ -268,7 +268,7 @@ public sealed class PretrainedModel : IDisposable
     public int MaxPositions { get; }
 
     /// <summary>How the model's checkpoint names map to Idrak's (used to save adapters and weights back).</summary>
-    public PretrainedArchitecture Architecture { get; }
+    public IPretrainedArchitecture Architecture { get; }
 
     /// <summary>Where the model lives.</summary>
     public Device Device { get; }
@@ -278,7 +278,7 @@ public sealed class PretrainedModel : IDisposable
     /// encoder it builds, its prompt format and attention rule; read and checked but not built), or null for a text-only
     /// model. <see cref="Network"/> is the text decoder alone.
     /// </summary>
-    public PretrainedVision? Vision { get; }
+    public IPretrainedVision? Vision { get; }
 
     /// <summary>
     /// Reads the model in <paramref name="folder"/> (a model folder, a .gguf file, or any path a format registered with
@@ -308,9 +308,9 @@ public sealed class PretrainedModel : IDisposable
         var visionFamily = VisionFamilies.For(name, config);
 
         using var reader = format.Open(folder);
-        if (architecture.ForCheckpoint is { } fit)
+        if (architecture is ICheckpointFittedArchitecture fitted)
         {
-            architecture = fit(reader.Names.ToHashSet(StringComparer.Ordinal));     // the naming this checkpoint uses
+            architecture = fitted.ForCheckpoint(reader.Names.ToHashSet(StringComparer.Ordinal));     // the naming this checkpoint uses
         }
 
         var notes = new List<string>();
@@ -327,8 +327,8 @@ public sealed class PretrainedModel : IDisposable
         using (options.Deferred ? DeferredTensors.Build() : null)
         {
             // The weights live as long as the model: the device may place them together (Backend.LongLivedAllocations).
-            network = architecture.Build is { } build
-                ? build(new PretrainedBuildContext(config, spec, weights, reader, buildOptions, notes)) switch
+            network = architecture is INetworkBuildingArchitecture ownNetwork
+                ? ownNetwork.Build(new PretrainedBuildContext(config, spec, weights, reader, buildOptions, notes)) switch
                 {
                     null => throw new InvalidOperationException($"The architecture '{name}' built no network."),
                     Sequential built => built,
@@ -443,7 +443,7 @@ public sealed class PretrainedModel : IDisposable
     /// Makes a model that did not exist: the network of <paramref name="spec"/> with weights drawn from
     /// <see cref="CreateOptions.Seed"/>, written to <paramref name="folder"/> as a checkpoint of
     /// <paramref name="architecture"/> (config.json in the family's keys, through its
-    /// <see cref="PretrainedArchitecture.Config"/>, with the spec kept as "idrak_spec"; model.safetensors; the tokenizer,
+    /// <see cref="IConfigWritingArchitecture.Config"/>, with the spec kept as "idrak_spec"; model.safetensors; the tokenizer,
     /// template and special-token files of <paramref name="files"/>), then loaded from there, so it is a model like any
     /// other: it runs, chats, serves, tunes and trains (plan 19).
     /// </summary>
@@ -457,9 +457,9 @@ public sealed class PretrainedModel : IDisposable
         ArgumentNullException.ThrowIfNull(files);
         options ??= new CreateOptions();
         var family = PretrainedArchitectures.Get(architecture);
-        var write = family.Config ?? throw new NotSupportedException(
+        var write = family is IConfigWritingArchitecture writing ? writing : throw new NotSupportedException(
             $"Architecture '{architecture}' cannot be written from a spec (it reads checkpoints only); choose one that can "
-            + $"({string.Join(", ", PretrainedArchitectures.Names.Where(n => PretrainedArchitectures.Get(n).Config is not null))}).");
+            + $"({string.Join(", ", PretrainedArchitectures.Names.Where(n => PretrainedArchitectures.Get(n) is IConfigWritingArchitecture))}).");
         var tokenizer = files.Tokenizer;
         if (tokenizer.VocabularySize > spec.Vocabulary)
         {
@@ -480,7 +480,7 @@ public sealed class PretrainedModel : IDisposable
             _ = Id("<|im_end|>", "ChatML");
         }
 
-        var config = write(spec);
+        var config = write.Config(spec);
         var parts = new List<CreatedModelPart>();
         foreach (var (kind, partDescription) in options.Parts ?? new Dictionary<string, JsonObject>())
         {
@@ -536,7 +536,7 @@ public sealed class PretrainedModel : IDisposable
             }
 
             using var reader = format.Open(decoderFolder);
-            var fitted = decoderFamily.ForCheckpoint is { } fit ? fit(reader.Names.ToHashSet(StringComparer.Ordinal)) : decoderFamily;
+            var fitted = decoderFamily is ICheckpointFittedArchitecture fit ? fit.ForCheckpoint(reader.Names.ToHashSet(StringComparer.Ordinal)) : decoderFamily;
             network = spec.Build(new CheckpointWeights(reader, fitted), new DecoderBuildOptions { Device = cpu });
         }
         else
@@ -851,7 +851,7 @@ public sealed class PretrainedModel : IDisposable
     /// <summary>
     /// The model's weights as its checkpoint stores them, in the order a save writes them: each one's checkpoint name, its
     /// stored shape and the model's tensor (a tied head's table once, under the embedding's name). The names are the
-    /// architecture's (<see cref="PretrainedArchitecture.TensorName"/>), so this holds for any registered family.
+    /// architecture's (<see cref="IPretrainedArchitecture.TensorName"/>), so this holds for any registered family.
     /// </summary>
     public IReadOnlyList<StoredTensor> StoredTensors()
     {

@@ -116,12 +116,12 @@ public sealed class ModelPackageWriter
         _ => throw new NotSupportedException($"{scaler.GetType().Name} cannot be stored; StandardScaler and MinMaxScaler can."),
     };
 
-    /// <summary>A <see cref="CharTokenizer"/> or <see cref="WordTokenizer"/>.</summary>
+    /// <summary>A tokenizer that saves itself (<see cref="ISavableTokenizer"/>: <see cref="CharTokenizer"/>, <see cref="WordTokenizer"/>, one of one's own with its reader registered).</summary>
     public ModelPackageWriter Tokenizer(string name, ITokenizer tokenizer)
     {
-        if (tokenizer is not (CharTokenizer or WordTokenizer))
+        if (tokenizer is not ISavableTokenizer)
         {
-            throw new NotSupportedException($"{tokenizer.GetType().Name} cannot be stored; CharTokenizer and WordTokenizer can.");
+            throw new NotSupportedException($"{tokenizer.GetType().Name} cannot be stored; a tokenizer that saves itself (ISavableTokenizer: CharTokenizer, WordTokenizer) can.");
         }
 
         return Add(PackageEntryKind.Tokenizer, name, s => Tokenizers.Save(tokenizer, s));

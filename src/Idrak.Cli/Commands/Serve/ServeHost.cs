@@ -36,7 +36,7 @@ namespace Idrak.Cli.Commands.Serve;
 /// One model of a server: the name clients use, what was asked for, and what is read at startup (the template, and
 /// whether it reads images: a vision-language model whose vision family is registered and whose template renders images).
 /// </summary>
-internal sealed record ServedModel(string Name, string Source, ModelChoices.ModelChoice Choice, string Path, string Folder, ChatTemplate? Template, JsonObject? Config)
+internal sealed record ServedModel(string Name, string Source, ModelChoices.ModelChoice Choice, string Path, string Folder, IChatTemplate? Template, JsonObject? Config)
 {
     /// <summary>Whether its chat takes images.</summary>
     public bool ReadsImages => Config is not null && VisionFamilies.HasVision(Config) && Architecture(Config) is { } architecture

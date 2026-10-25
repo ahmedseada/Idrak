@@ -209,16 +209,16 @@ public sealed class IdrakAudioLanguageFamily : IAudioFamily
     private static int? Index(JsonObject config, string key) => config[key] is JsonValue value ? (int)value : null;
 
     // The text side: Llama's spec from text_config, its tensors under language_model., a spec written as text_config.
-    internal static PretrainedArchitecture TextDecoder()
+    internal static IPretrainedArchitecture TextDecoder() => new TextDecoderArchitecture(PretrainedFamilies.CommonArchitecture((_, spec, _) => spec, "llama"));
+
+    private sealed class TextDecoderArchitecture(IConfigWritingArchitecture llama) : PretrainedArchitecture, IConfigWritingArchitecture
     {
-        var llama = PretrainedFamilies.CommonArchitecture((_, spec, _) => spec, "llama");
-        return new PretrainedArchitecture
-        {
-            Spec = (config, notes) => llama.Spec(config["text_config"] as JsonObject
-                ?? throw new InvalidDataException($"An {Architecture} config.json has a \"text_config\"."), notes),
-            TensorName = name => PretrainedFamilies.CommonTensorName(name) is { } stored ? "language_model." + stored : null,
-            Config = spec => new JsonObject { ["text_config"] = llama.Config!(spec), ["tie_word_embeddings"] = spec.TieEmbeddings },
-        };
+        public override DecoderSpec Spec(JsonObject config, List<string> notes) => llama.Spec(config["text_config"] as JsonObject
+            ?? throw new InvalidDataException($"An {Architecture} config.json has a \"text_config\"."), notes);
+
+        public override string? TensorName(string name) => PretrainedFamilies.CommonTensorName(name) is { } stored ? "language_model." + stored : null;
+
+        public JsonObject Config(DecoderSpec spec) => new() { ["text_config"] = llama.Config(spec), ["tie_word_embeddings"] = spec.TieEmbeddings };
     }
 }
 

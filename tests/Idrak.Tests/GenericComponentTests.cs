@@ -89,7 +89,7 @@ internal static partial class Tests
         AssertClose(StoredWeights.FoldWeightNorm([3f, 5f], [3f, 4, 0, 2], [2, 1, 2]), renamed.Read("decoder.conv.weight"), 0f, "weight_g and weight_v folded");
         AssertClose([0f, 2f], renamed.Read("decoder.mlp.weight"), 1e-6f, "parametrizations folded");
         Check(renamed.ShapeOf("decoder.conv.weight").SequenceEqual([2, 1, 2]) && renamed.Read("plain.weight").SequenceEqual([9f, 10f]), "a folded weight has the directions' shape; others pass through");
-        Check(view.FormatOf("decoder.conv.weight") is null && !view.ReadBFloat16("decoder.conv.weight", false, new ushort[4], 2), "a folded weight is float32");
+        Check(view.FormatOf("decoder.conv.weight") is null && !((IBFloat16TensorStore)view).ReadBFloat16("decoder.conv.weight", false, new ushort[4], 2), "a folded weight is float32");
         AssertClose([0f, 2f], view.ReadTransposed("decoder.mlp.weight"), 1e-6f, "a folded weight read transposed");
         Check(renamed.Read("dec.conv.weight_g").SequenceEqual([3f, 5f]), "the gains themselves pass through");
         ThrowsNaming<InvalidDataException>(() => renamed.Read("decoder.none.weight"), "a missing tensor", ["'dec.none.weight'", "'decoder.none.weight'"]);
@@ -220,7 +220,7 @@ internal static partial class Tests
 
         // console: redrawn in place, as the tool's line was.
         var screen = new StringWriter();
-        var console = ProgressReporters.Get("console")(new ProgressRequest("work", 10, ProgressUnit.Items, screen, null));
+        var console = ProgressReporters.Get("console").Create(new ProgressRequest("work", 10, ProgressUnit.Items, screen, null));
         console.Report(5);
         Check(screen.ToString() == "\rwork   50%  5 / 10", $"console: '{screen}'");
         console.Erase();
@@ -232,7 +232,7 @@ internal static partial class Tests
 
         // plain: a line, then none until the interval passes; json: records.
         var lines = new StringWriter();
-        using (var plain = ProgressReporters.Get("plain")(new ProgressRequest("copy", 1 << 20, ProgressUnit.Bytes, lines, TimeSpan.FromHours(1))))
+        using (var plain = ProgressReporters.Get("plain").Create(new ProgressRequest("copy", 1 << 20, ProgressUnit.Bytes, lines, TimeSpan.FromHours(1))))
         {
             plain.Report(512 << 10);
             plain.Report(600 << 10);
@@ -242,7 +242,7 @@ internal static partial class Tests
 
         Check(lines.ToString().Split('\n') is [var first, "copied", "done", ""] && first.StartsWith("copy   50%  512 KB / 1 MB", StringComparison.Ordinal), $"plain: '{lines}'");
         var records = new StringWriter();
-        using (var json = ProgressReporters.Get("json")(new ProgressRequest("load", 4, ProgressUnit.Items, records, TimeSpan.FromHours(1))))
+        using (var json = ProgressReporters.Get("json").Create(new ProgressRequest("load", 4, ProgressUnit.Items, records, TimeSpan.FromHours(1))))
         {
             json.Report(1);
             json.Report(2);
@@ -253,7 +253,7 @@ internal static partial class Tests
         Check(parsed.Count == 2 && (string?)parsed[0]["label"] == "load" && (long?)parsed[0]["done"] == 1 && (long?)parsed[0]["total"] == 4 && (string?)parsed[0]["unit"] == "items"
               && (bool?)parsed[1]["end"] == true && (string?)parsed[1]["message"] == "loaded" && (long?)parsed[1]["done"] == 2, $"json: '{records}'");
         var quiet = new StringWriter();
-        using (var none = ProgressReporters.Get("quiet")(new ProgressRequest("x", 3, ProgressUnit.Items, quiet, null)))
+        using (var none = ProgressReporters.Get("quiet").Create(new ProgressRequest("x", 3, ProgressUnit.Items, quiet, null)))
         {
             none.Report(2);
             none.Show();
@@ -288,11 +288,11 @@ internal static partial class Tests
 
         // An app's reporter, over a library name and of its own; unknown names refused.
         int made = 0;
-        ProgressReporters.Register("plain", request =>
+        ProgressReporters.Register(TestKinds.ProgressReporter("plain", request =>
         {
             made++;
-            return ProgressReporters.Default("quiet")!(request);
-        }, "mine");
+            return ProgressReporters.Default("quiet")!.Create(request);
+        }));
         try
         {
             Check(ProgressReporters.Origin("plain") == "Idrak.Tests" && ProgressReporters.Start("x", options: new ProgressOptions { Reporter = "plain" }) is { Enabled: false } && made == 1,

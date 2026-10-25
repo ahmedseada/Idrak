@@ -37,10 +37,17 @@ public sealed record CtcDecodeOptions
 }
 
 /// <summary>
-/// Reads one sequence's log-probabilities, <paramref name="steps"/> rows of <paramref name="classes"/> (a log-softmax per
-/// step, as a network trained with CTC gives them), as label sequences, the most likely first.
+/// A CTC decoder, registered by its <see cref="IKind.Name"/> in <see cref="CtcDecoders"/> ("greedy", "beam", a lexicon or a
+/// language model of one's own).
 /// </summary>
-public delegate IReadOnlyList<CtcHypothesis> CtcDecoder(ReadOnlyMemory<float> logProbs, int steps, int classes, CtcDecodeOptions options);
+public interface ICtcDecoder : IKind
+{
+    /// <summary>
+    /// Reads one sequence's log-probabilities, <paramref name="steps"/> rows of <paramref name="classes"/> (a log-softmax per
+    /// step, as a network trained with CTC gives them), as label sequences, the most likely first.
+    /// </summary>
+    IReadOnlyList<CtcHypothesis> Decode(ReadOnlyMemory<float> logProbs, int steps, int classes, CtcDecodeOptions options);
+}
 
 /// <summary>
 /// The CTC decoders, by name: the library registers "greedy" (best path: the most likely class at each step, repeats
@@ -57,38 +64,33 @@ public static class CtcDecoders
     /// <summary>"beam": prefix beam search.</summary>
     public const string Beam = "beam";
 
-    private static readonly SlotTable<string, CtcDecoder> Registry = BuiltIn();
+    private static readonly KindTable<ICtcDecoder> Registry = BuiltIn();
 
-    private static SlotTable<string, CtcDecoder> BuiltIn()
+    private static KindTable<ICtcDecoder> BuiltIn()
     {
-        var table = new SlotTable<string, CtcDecoder>(nameof(CtcDecoders), Guard, StringComparer.Ordinal);
-        table.RegisterDefault(Greedy, CtcDecoding.Greedy);
-        table.RegisterDefault(Beam, CtcDecoding.BeamSearch);
+        var table = new KindTable<ICtcDecoder>(nameof(CtcDecoders), "CTC decoder", "add it with CtcDecoders.Register", Guard, StringComparer.Ordinal);
+        table.RegisterDefault(new BuiltInDecoder(Greedy, "the best path: the most likely class at each step, repeats collapsed and blanks dropped", CtcDecoding.Greedy));
+        table.RegisterDefault(new BuiltInDecoder(Beam, "prefix beam search, with per-step pruning", CtcDecoding.BeamSearch));
         return table;
     }
 
-    /// <summary>Registers the decoder <paramref name="name"/>; under a built-in name it replaces the library's, which stays behind it (see <see cref="SetPolicy"/>).</summary>
+    /// <summary>Registers <paramref name="decoder"/> under its <see cref="IKind.Name"/>; under a built-in name it replaces the library's, which stays behind it (see <see cref="SetPolicy"/>).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string name, CtcDecoder decoder)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(name);
-        ArgumentNullException.ThrowIfNull(decoder);
-        Registry.Register(name, decoder, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(ICtcDecoder decoder) => Registry.Register(decoder, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's decoder <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered decoder names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
+    public static IReadOnlyCollection<string> Names => Registry.Names;
 
     /// <summary>The decoder <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    public static CtcDecoder Get(string name) =>
+    public static ICtcDecoder Get(ReadOnlySpan<char> name) =>
         Registry.TryGet(name, out var decoder) ? decoder
-            : throw new NotSupportedException($"No CTC decoder '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with CtcDecoders.Register.");
+            : throw new NotSupportedException($"No CTC decoder '{name}' is registered ({string.Join(", ", Registry.Names)}); add it with CtcDecoders.Register.");
 
     /// <summary>The library's decoder <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static CtcDecoder? Default(string name) => Registry.Default(name);
+    public static ICtcDecoder? Default(string name) => Registry.Default(name);
 
     /// <summary>Who registered the decoder <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
@@ -104,7 +106,7 @@ public static class CtcDecoders
     public static IReadOnlyList<CtcHypothesis> Decode(ReadOnlyMemory<float> logProbs, int steps, int classes, string name = Greedy, CtcDecodeOptions? options = null)
     {
         Check(logProbs.Length, steps, classes, options ??= new());
-        return Get(name)(logProbs, steps, classes, options);
+        return Get(name).Decode(logProbs, steps, classes, options);
     }
 
     /// <summary>
@@ -149,7 +151,7 @@ public static class CtcDecoders
             }
 
             Check(rows.Length, length, classes, options);
-            results[n] = decoder(rows, length, classes, options);
+            results[n] = decoder.Decode(rows, length, classes, options);
         }
 
         return results;
@@ -169,9 +171,28 @@ public static class CtcDecoders
         }
     }
 
+    private static ICtcDecoder Guard(Slot slot, ICtcDecoder app, ICtcDecoder library) => new GuardedDecoder(slot, app, library);
+
+    // A library decoder.
+    private sealed class BuiltInDecoder(string name, string summary, Func<ReadOnlyMemory<float>, int, int, CtcDecodeOptions, IReadOnlyList<CtcHypothesis>> decode) : ICtcDecoder
+    {
+        public string Name => name;
+
+        public string Summary => summary;
+
+        public IReadOnlyList<CtcHypothesis> Decode(ReadOnlyMemory<float> logProbs, int steps, int classes, CtcDecodeOptions options) => decode(logProbs, steps, classes, options);
+    }
+
     // An app's decoder under its policy: Throw and FallBack per call; Shadow answers with the library's and compares the labels.
-    private static CtcDecoder Guard(Slot slot, CtcDecoder app, CtcDecoder library) => (logProbs, steps, classes, options) =>
-        slot.Call(() => app(logProbs, steps, classes, options), () => library(logProbs, steps, classes, options), (a, b) =>
-            a.Count == b.Count && a.Zip(b).All(p => p.First.Labels.SequenceEqual(p.Second.Labels)) ? null
-                : $"labels [{string.Join(" | ", a.Select(h => string.Join(",", h.Labels)))}] and [{string.Join(" | ", b.Select(h => string.Join(",", h.Labels)))}]");
+    private sealed class GuardedDecoder(Slot slot, ICtcDecoder app, ICtcDecoder library) : ICtcDecoder
+    {
+        public string Name => app.Name;
+
+        public string Summary => app.Summary;
+
+        public IReadOnlyList<CtcHypothesis> Decode(ReadOnlyMemory<float> logProbs, int steps, int classes, CtcDecodeOptions options) =>
+            slot.Call(() => app.Decode(logProbs, steps, classes, options), () => library.Decode(logProbs, steps, classes, options), (a, b) =>
+                a.Count == b.Count && a.Zip(b).All(p => p.First.Labels.SequenceEqual(p.Second.Labels)) ? null
+                    : $"labels [{string.Join(" | ", a.Select(h => string.Join(",", h.Labels)))}] and [{string.Join(" | ", b.Select(h => string.Join(",", h.Labels)))}]");
+    }
 }

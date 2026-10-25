@@ -256,7 +256,7 @@ internal static partial class Tests
         using var model = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 5 });
         var layout = KeyValueLayouts.For(KeyValueFormat.BFloat16);
         var generator = new TextGenerator(model, tokenizer, 64) { CacheFormat = KeyValueFormat.BFloat16, KeepCache = false };
-        Check(layout.RowStarts && generator.SupportsBatches, $"bfloat16 attends from per-row starts ({layout.RowStarts}) and the model batches rows ({generator.SupportsBatches})");
+        Check(layout is IRowStartsLayout && generator.SupportsBatches, $"bfloat16 attends from per-row starts ({layout is IRowStartsLayout}) and the model batches rows ({generator.SupportsBatches})");
         var options = new GenerationOptions { Temperature = 0f, TopK = 1, RepeatPenalty = 1f, NumPredict = 14, ChunkSize = 3 };
         string[] prompts = ["abc", "hello there", "a much longer prompt of words"];
         var alone = prompts.Select(p => generator.Generate(p, options).Text).ToArray();

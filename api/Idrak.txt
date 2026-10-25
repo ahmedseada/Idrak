@@ -265,8 +265,8 @@ public sealed record Idrak.Diagnostics.MemoryPart : System.IEquatable<Idrak.Diag
 public static class Idrak.Diagnostics.ModelMemory
   public static Idrak.Diagnostics.MemoryPart Activations(System.Collections.Generic.IEnumerable<Idrak.Diagnostics.MemoryPart> parts, Idrak.Abstraction.MemoryUsage usage)
   public static System.Collections.Generic.IReadOnlyList<Idrak.Diagnostics.MemoryPart> Decoder(Idrak.Abstraction.Module decoder)
-  public static System.Collections.Generic.IReadOnlyList<Idrak.Diagnostics.MemoryPart> Generation(Idrak.Abstraction.Module decoder, Idrak.Abstraction.Generation.DecoderSpec spec, int capacity, Idrak.Abstraction.Generation.KeyValueLayout layout, Idrak.Abstraction.Generation.IVisionEncoder? encoder = null, int batch = 1)
-  public static long KeyValueCacheBytes(Idrak.Abstraction.Generation.DecoderSpec spec, int capacity, Idrak.Abstraction.Generation.KeyValueLayout layout, int batch = 1)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Diagnostics.MemoryPart> Generation(Idrak.Abstraction.Module decoder, Idrak.Abstraction.Generation.DecoderSpec spec, int capacity, Idrak.Abstraction.Generation.IKeyValueLayout layout, Idrak.Abstraction.Generation.IVisionEncoder? encoder = null, int batch = 1)
+  public static long KeyValueCacheBytes(Idrak.Abstraction.Generation.DecoderSpec spec, int capacity, Idrak.Abstraction.Generation.IKeyValueLayout layout, int batch = 1)
   public static long TensorBytes(Idrak.Abstraction.Module module)
   public static long WeightCount(Idrak.Abstraction.Module module)
 
@@ -306,9 +306,9 @@ public delegate void Idrak.Generation.LogitsFilter(int step, System.ReadOnlySpan
 
 public sealed class Idrak.Generation.Seq2SeqGenerator : Idrak.Abstraction.Generation.ITextModel
   public (string, string, Idrak.Abstraction.Generation.GenerationStats) Generate(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Abstraction.Generation.IKeyValueLayout? CacheLayout { get; init; }
   public Idrak.Abstraction.Generation.ISeq2SeqModel Model { get; }
   public Idrak.Abstraction.Generation.ITokenizer Tokenizer { get; }
-  public Idrak.Abstraction.Generation.KeyValueLayout? CacheLayout { get; init; }
   public Seq2SeqGenerator(Idrak.Abstraction.Generation.ISeq2SeqModel model, Idrak.Abstraction.Generation.ITokenizer tokenizer)
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.GenerationChunk> StreamAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.GenerationChunk> Stream(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
@@ -323,9 +323,9 @@ public sealed class Idrak.Generation.Seq2SeqGenerator : Idrak.Abstraction.Genera
 public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generation.ITextModel
   public (string, string, Idrak.Abstraction.Generation.GenerationStats) Generate(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
   public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.IKeyValueLayout? CacheLayout { get; init; }
   public Idrak.Abstraction.Generation.ITokenizer Tokenizer { get; }
   public Idrak.Abstraction.Generation.KeyValueFormat CacheFormat { get; init; }
-  public Idrak.Abstraction.Generation.KeyValueLayout? CacheLayout { get; init; }
   public Idrak.Abstraction.MatMulPrecision? PrefillPrecision { get; set; }
   public Idrak.Layers.Sequential Model { get; }
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.GenerationChunk> StreamAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
@@ -535,13 +535,14 @@ public sealed class Idrak.Layers.Abstractions.GraphOpContext
   public string? String(string name)
 
 public static class Idrak.Layers.Abstractions.GraphOps
-  public static Idrak.Layers.Abstractions.GraphOp Get(string name)
-  public static Idrak.Layers.Abstractions.GraphOp? Default(string name)
-  public static Idrak.Layers.Abstractions.GraphOp? TryGet(string name)
+  public static Idrak.Layers.Abstractions.IGraphOp Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Layers.Abstractions.IGraphOp? Default(string name)
+  public static Idrak.Layers.Abstractions.IGraphOp? TryGet(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static bool Contains(string name)
   public static bool Unregister(string name)
   public static string? Origin(string name)
+  public static void Register(Idrak.Layers.Abstractions.IGraphOp op)
   public static void Register(string name, Idrak.Layers.Abstractions.GraphOp op)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
@@ -557,11 +558,29 @@ public sealed record Idrak.Layers.Abstractions.GraphValues.HostValue : System.IE
 public interface Idrak.Layers.Abstractions.ICachedModule
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
 
+public interface Idrak.Layers.Abstractions.IGraphOp : Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Tensor Run(Idrak.Layers.Abstractions.GraphOpContext context)
+
+public interface Idrak.Layers.Abstractions.ILayerType : Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Module Create(System.Text.Json.Nodes.JsonObject description, Idrak.Abstraction.Device device)
+  public System.Text.Json.Nodes.JsonObject Describe(Idrak.Abstraction.Module module)
+  public System.Type ModuleType { get; }
+
+public interface Idrak.Layers.Abstractions.ILayerType<T> : Idrak.Abstraction.IKind, Idrak.Layers.Abstractions.ILayerType where T : Idrak.Abstraction.Module
+  public System.Text.Json.Nodes.JsonObject Describe(T module)
+  public T Create(System.Text.Json.Nodes.JsonObject description, Idrak.Abstraction.Device device)
+
+public interface Idrak.Layers.Abstractions.INamedLambda
+  public string Name { get; }
+
 public interface Idrak.Layers.Abstractions.INetworkBuilder
   public Idrak.Layers.Abstractions.INetworkBuilder Add(System.Func<Idrak.Abstraction.Device?, System.Random?, Idrak.Abstraction.Module> create, int[] outputShape)
   public Idrak.Layers.Abstractions.INetworkBuilder Lambda(System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> function, string name, int[] outputShape)
   public Idrak.Layers.Abstractions.INetworkBuilder Op(string name, System.Text.Json.Nodes.JsonObject? arguments = null)
   public System.Collections.Generic.IReadOnlyList<int> CurrentShape { get; }
+
+public interface Idrak.Layers.Abstractions.INetworkOp : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
+  public Idrak.Layers.Abstractions.INetworkBuilder Add(Idrak.Layers.Abstractions.INetworkBuilder builder, Idrak.Layers.Abstractions.NetworkOpArguments arguments)
 
 public interface Idrak.Layers.Abstractions.INetworkRecipe
   public Idrak.Layers.NetworkBuilder Build(Idrak.Layers.Abstractions.NetworkRecipeArguments arguments)
@@ -577,6 +596,7 @@ public static class Idrak.Layers.Abstractions.LayerTypes
   public static bool HasDefault(string type)
   public static bool Unregister(string type)
   public static string? Origin(string type)
+  public static void Register(Idrak.Layers.Abstractions.ILayerType type)
   public static void Register<T>(string type, System.Func<T, System.Text.Json.Nodes.JsonObject> describe, System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Device, T> create) where T : Idrak.Abstraction.Module
   public static void SetPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
@@ -595,13 +615,14 @@ public sealed class Idrak.Layers.Abstractions.NetworkOpArguments
   public string Op { get; }
 
 public static class Idrak.Layers.Abstractions.NetworkOps
-  public static Idrak.Layers.Abstractions.NetworkOp Get(string name)
-  public static Idrak.Layers.Abstractions.NetworkOp? Default(string name)
+  public static Idrak.Layers.Abstractions.INetworkOp Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Layers.Abstractions.INetworkOp? Default(string name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static bool Contains(string name)
+  public static bool Contains(System.ReadOnlySpan<char> name)
   public static bool Unregister(string name)
   public static string? Origin(string name)
-  public static void Register(string name, Idrak.Layers.Abstractions.NetworkOp op)
+  public static void Register(Idrak.Layers.Abstractions.INetworkOp op)
+  public static void Register(string name, Idrak.Layers.Abstractions.NetworkOp op, scoped params System.ReadOnlySpan<string> keys)
 
 public sealed class Idrak.Layers.Abstractions.NetworkRecipeArguments
   public NetworkRecipeArguments(string recipe, System.Text.Json.Nodes.JsonObject json)
@@ -1056,7 +1077,7 @@ public sealed class Idrak.Layers.LSTM : Idrak.Layers.Abstractions.RecurrentModul
   public LSTM(int inputSize, int hiddenSize, bool returnSequences, bool bidirectional, int layers = 1, Idrak.Abstraction.Device? device = null, System.Random? random = null)
   public override string ToString()
 
-public sealed class Idrak.Layers.Lambda : Idrak.Abstraction.Module
+public sealed class Idrak.Layers.Lambda : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.INamedLambda
   public Lambda(System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor> function, string name = "Lambda")
   public override string ToString()
 
@@ -1072,9 +1093,10 @@ public sealed class Idrak.Layers.LayerNorm : Idrak.Abstraction.Module
 
 public sealed class Idrak.Layers.Linear : Idrak.Abstraction.Module, Idrak.Abstraction.Modules.ILinearLayer
   public Idrak.Abstraction.Generation.BFloat16Weight? BFloat16 { get; }
+  public Idrak.Abstraction.Generation.IKernelPackedWeight? KernelWeight { get; }
+  public Idrak.Abstraction.Generation.IPackedWeight? PackedWeight { get; }
   public Idrak.Abstraction.Generation.Int4Weight? Int4 { get; }
   public Idrak.Abstraction.Generation.Int8Weight? Int8 { get; }
-  public Idrak.Abstraction.Generation.PackedWeight? PackedWeight { get; }
   public Idrak.Abstraction.Modules.ILinearAdapter? Adapter { get; set; }
   public Idrak.Abstraction.Modules.LoraAdapter? Lora { get; }
   public Idrak.Abstraction.Tensor Weight { get; }
@@ -1092,7 +1114,7 @@ public sealed class Idrak.Layers.Linear : Idrak.Abstraction.Module, Idrak.Abstra
   public static Idrak.Layers.Linear FromBFloat16(Idrak.Abstraction.Generation.BFloat16Weight weight, Idrak.Abstraction.Tensor? bias = null)
   public static Idrak.Layers.Linear FromInt4(Idrak.Abstraction.Generation.Int4Weight weight, Idrak.Abstraction.Tensor? bias = null)
   public static Idrak.Layers.Linear FromInt8(Idrak.Abstraction.Generation.Int8Weight weight, Idrak.Abstraction.Tensor? bias = null)
-  public static Idrak.Layers.Linear FromPacked(Idrak.Abstraction.Generation.PackedWeight weight, Idrak.Abstraction.Tensor? bias = null)
+  public static Idrak.Layers.Linear FromPacked(Idrak.Abstraction.Generation.IPackedWeight weight, Idrak.Abstraction.Tensor? bias = null)
   public static Idrak.Layers.Linear FromWeights(Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Tensor? bias = null)
   public static Idrak.Layers.Linear Tied(Idrak.Layers.Embedding embedding, Idrak.Abstraction.Tensor? bias = null)
 
@@ -1503,49 +1525,49 @@ public static class Idrak.Models.Abstractions.EncoderHeads
   public const string MaskedLanguageModel = "masked-lm"
   public const string Pooler = "pooler"
   public const string SequenceClassification = "sequence-classification"
-  public static Idrak.Models.EncoderHead Create(string name, Idrak.Models.Abstractions.EncoderHeadRequest request)
+  public static Idrak.Models.Abstractions.IEncoderHeadKind Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Models.Abstractions.IEncoderHeadKind? Default(string name)
+  public static Idrak.Models.EncoderHead Create(System.ReadOnlySpan<char> name, Idrak.Models.Abstractions.EncoderHeadRequest request)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static System.Func<Idrak.Models.Abstractions.EncoderHeadRequest, Idrak.Models.EncoderHead> Get(string name)
-  public static System.Func<Idrak.Models.Abstractions.EncoderHeadRequest, Idrak.Models.EncoderHead>? Default(string name)
   public static bool Unregister(string name)
   public static string? Origin(string name)
-  public static void Register(string name, System.Func<Idrak.Models.Abstractions.EncoderHeadRequest, Idrak.Models.EncoderHead> create)
+  public static void Register(Idrak.Models.Abstractions.IEncoderHeadKind kind)
 
-public sealed class Idrak.Models.Abstractions.GgufArchitecture
+public class Idrak.Models.Abstractions.GgufArchitecture : Idrak.Models.Abstractions.IGgufArchitecture
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public GgufArchitecture()
-  public System.Action<Idrak.Models.GgufFile, System.Text.Json.Nodes.JsonObject, System.Collections.Generic.List<string>>? Configure { get; init; }
-  public System.Func<string, float>? StoredOffset { get; init; }
-  public System.Func<string, string?>? TensorName { get; init; }
   public bool InterleavedQueryKeys { get; init; }
   public bool? NormalizeTopK { get; init; }
   public required string HuggingFace { get; init; }
   public static string? CommonTensorName(string name)
   public string ExpertCountKey { get; init; }
   public string? WithExperts { get; init; }
+  public virtual float StoredOffset(string name)
+  public virtual string? TensorName(string name)
+  public virtual void Configure(Idrak.Models.GgufFile file, System.Text.Json.Nodes.JsonObject config, System.Collections.Generic.List<string> notes)
 
 public static class Idrak.Models.Abstractions.GgufArchitectures
-  public static Idrak.Models.Abstractions.GgufArchitecture Get(string name)
-  public static Idrak.Models.Abstractions.GgufArchitecture? Default(string name)
-  public static Idrak.Models.Abstractions.GgufArchitecture? Find(string name)
+  public static Idrak.Models.Abstractions.IGgufArchitecture Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Models.Abstractions.IGgufArchitecture? Default(string name)
+  public static Idrak.Models.Abstractions.IGgufArchitecture? Find(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static bool Unregister(string name)
   public static string? Origin(string name)
-  public static void Register(string name, Idrak.Models.Abstractions.GgufArchitecture architecture)
+  public static void Register(string name, Idrak.Models.Abstractions.IGgufArchitecture architecture)
 
-public sealed class Idrak.Models.Abstractions.GgufChatTemplate
+public sealed class Idrak.Models.Abstractions.GgufChatTemplate : Idrak.Models.Abstractions.IGgufChatTemplate
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public GgufChatTemplate()
   public required System.Func<Idrak.Models.GgufFile, System.Collections.Generic.IReadOnlyList<string>, bool> Matches { get; init; }
   public required string Template { get; init; }
 
 public static class Idrak.Models.Abstractions.GgufChatTemplates
-  public static (string, Idrak.Models.Abstractions.GgufChatTemplate)? For(Idrak.Models.GgufFile file, System.Collections.Generic.IReadOnlyList<string> tokens)
-  public static Idrak.Models.Abstractions.GgufChatTemplate Get(string name)
-  public static Idrak.Models.Abstractions.GgufChatTemplate? Default(string name)
-  public static Idrak.Models.Abstractions.GgufChatTemplate? Find(string name)
+  public static (string, Idrak.Models.Abstractions.IGgufChatTemplate)? For(Idrak.Models.GgufFile file, System.Collections.Generic.IReadOnlyList<string> tokens)
+  public static Idrak.Models.Abstractions.IGgufChatTemplate Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Models.Abstractions.IGgufChatTemplate? Default(string name)
+  public static Idrak.Models.Abstractions.IGgufChatTemplate? Find(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static bool Unregister(string name)
   public static string? Origin(string name)
-  public static void Register(string name, Idrak.Models.Abstractions.GgufChatTemplate template)
+  public static void Register(string name, Idrak.Models.Abstractions.IGgufChatTemplate template)
 
 public delegate void Idrak.Models.Abstractions.GgufDequantizer(System.ReadOnlySpan<byte> raw, System.Span<float> values)
 
@@ -1558,38 +1580,77 @@ public static class Idrak.Models.Abstractions.GgufPreTokenizers
   public static string? Origin(string name)
   public static void Register(string name, string? pattern)
 
+public sealed record Idrak.Models.Abstractions.GgufTokenizerRequest : System.IEquatable<Idrak.Models.Abstractions.GgufTokenizerRequest>
+  public GgufTokenizerRequest(Idrak.Models.GgufFile File, System.Collections.Generic.IReadOnlyList<string> Tokens, System.Collections.Generic.List<string> Notes)
+  public Idrak.Models.GgufFile File { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Tokens { get; init; }
+  public System.Collections.Generic.List<string> Notes { get; init; }
+
 public static class Idrak.Models.Abstractions.GgufTokenizers
+  public static Idrak.Models.Abstractions.IGgufTokenizer Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Models.Abstractions.IGgufTokenizer? Default(string name)
+  public static Idrak.Models.Abstractions.IGgufTokenizer? Find(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static System.Func<Idrak.Models.GgufFile, System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.List<string>, Idrak.Models.Abstractions.TokenizerDefinition> Get(string name)
-  public static System.Func<Idrak.Models.GgufFile, System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.List<string>, Idrak.Models.Abstractions.TokenizerDefinition>? Default(string name)
-  public static System.Func<Idrak.Models.GgufFile, System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.List<string>, Idrak.Models.Abstractions.TokenizerDefinition>? Find(string name)
   public static bool Unregister(string name)
   public static string Describe()
   public static string? Origin(string name)
-  public static void Register(string name, System.Func<Idrak.Models.GgufFile, System.Collections.Generic.IReadOnlyList<string>, System.Collections.Generic.List<string>, Idrak.Models.Abstractions.TokenizerDefinition> convert)
+  public static void Register(Idrak.Models.Abstractions.IGgufTokenizer converter)
 
-public sealed class Idrak.Models.Abstractions.GgufType
-  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public GgufType()
-  public override string ToString()
-  public required Idrak.Models.Abstractions.GgufDequantizer Dequantize { get; init; }
-  public required int BlockBytes { get; init; }
-  public required int BlockValues { get; init; }
-  public required string Name { get; init; }
-  public static Idrak.Models.Abstractions.GgufType Blockwise(string name, int blockValues, int blockBytes, Idrak.Models.Abstractions.GgufDequantizer block)
+public static class Idrak.Models.Abstractions.GgufType
+  public static Idrak.Models.Abstractions.IGgufType Blockwise(string name, int blockValues, int blockBytes, Idrak.Models.Abstractions.GgufDequantizer block)
 
 public static class Idrak.Models.Abstractions.GgufTypes
-  public static Idrak.Models.Abstractions.GgufType Get(int id)
-  public static Idrak.Models.Abstractions.GgufType? Default(int id)
-  public static Idrak.Models.Abstractions.GgufType? Find(int id)
+  public static Idrak.Models.Abstractions.IGgufType Get(int id)
+  public static Idrak.Models.Abstractions.IGgufType? Default(int id)
+  public static Idrak.Models.Abstractions.IGgufType? Find(int id)
   public static System.Collections.Generic.IReadOnlyCollection<int> Ids { get; }
   public static bool Unregister(int id)
   public static string? Origin(int id)
-  public static void Register(int id, Idrak.Models.Abstractions.GgufType type)
+  public static void Register(int id, Idrak.Models.Abstractions.IGgufType type)
   public static void SetPolicy(int id, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public interface Idrak.Models.Abstractions.ICheckpointFittedArchitecture : Idrak.Models.Abstractions.IPretrainedArchitecture
+  public Idrak.Models.Abstractions.IPretrainedArchitecture ForCheckpoint(System.Collections.Generic.IReadOnlySet<string> names)
+
+public interface Idrak.Models.Abstractions.IConfigWritingArchitecture : Idrak.Models.Abstractions.IPretrainedArchitecture
+  public System.Text.Json.Nodes.JsonObject Config(Idrak.Abstraction.Generation.DecoderSpec spec)
+
+public interface Idrak.Models.Abstractions.IEncoderHeadKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Models.Abstractions.EncoderHeadRequest, Idrak.Models.EncoderHead>
+  public System.Collections.Generic.IReadOnlyList<string> Weights { get; }
+
+public interface Idrak.Models.Abstractions.IGgufArchitecture
+  public bool InterleavedQueryKeys { get; }
+  public bool? NormalizeTopK { get; }
+  public float StoredOffset(string name)
+  public string ExpertCountKey { get; }
+  public string HuggingFace { get; }
+  public string? TensorName(string name)
+  public string? WithExperts { get; }
+  public void Configure(Idrak.Models.GgufFile file, System.Text.Json.Nodes.JsonObject config, System.Collections.Generic.List<string> notes)
+
+public interface Idrak.Models.Abstractions.IGgufChatTemplate
+  public bool Matches(Idrak.Models.GgufFile file, System.Collections.Generic.IReadOnlyList<string> tokens)
+  public string Template { get; }
+
+public interface Idrak.Models.Abstractions.IGgufTokenizer : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Models.Abstractions.GgufTokenizerRequest, Idrak.Models.Abstractions.TokenizerDefinition>
+
+public interface Idrak.Models.Abstractions.IGgufType
+  public int BlockBytes { get; }
+  public int BlockValues { get; }
+  public string Name { get; }
+  public void Dequantize(System.ReadOnlySpan<byte> raw, System.Span<float> values)
+
+public interface Idrak.Models.Abstractions.INetworkBuildingArchitecture : Idrak.Models.Abstractions.IPretrainedArchitecture
+  public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Build(Idrak.Models.Abstractions.PretrainedBuildContext context)
 
 public interface Idrak.Models.Abstractions.IPreTokenizer
   public (default) void PreTokenize(Idrak.Models.Abstractions.PreTokenizedText text, bool atStart)
   public System.Collections.Generic.IReadOnlyList<string> PreTokenize(System.Collections.Generic.IReadOnlyList<string> pieces, bool atStart)
+
+public interface Idrak.Models.Abstractions.IPretrainedArchitecture
+  public Idrak.Abstraction.Generation.DecoderSpec Spec(System.Text.Json.Nodes.JsonObject config, System.Collections.Generic.List<string> notes)
+  public bool Transposed(string name)
+  public string? TensorName(string name)
 
 public interface Idrak.Models.Abstractions.IPretrainedEncoderFamily
   public (default) System.Collections.Generic.IReadOnlyList<Idrak.Models.EncoderHead> Heads(Idrak.Models.Abstractions.PretrainedCheckpoint checkpoint, Idrak.Abstraction.Generation.ISequenceEncoder encoder)
@@ -1606,6 +1667,8 @@ public interface Idrak.Models.Abstractions.ITokenizerCompanionFiles
   public System.Collections.Generic.IReadOnlyList<string> CompanionFiles { get; }
   public void SaveCompanion(string name, string path)
 
+public interface Idrak.Models.Abstractions.ITokenizerComponentKind<out T> : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<System.Text.Json.Nodes.JsonObject, T> where T : class
+
 public interface Idrak.Models.Abstractions.ITokenizerDecoder
   public System.Collections.Generic.IReadOnlyList<string> Decode(System.Collections.Generic.IReadOnlyList<string> tokens)
 
@@ -1614,6 +1677,8 @@ public interface Idrak.Models.Abstractions.ITokenizerFileReader
   public string Name { get; }
   public string Summary { get; }
   public string? Find(string path)
+
+public interface Idrak.Models.Abstractions.ITokenizerModelKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Models.Abstractions.TokenizerModelRequest, Idrak.Abstraction.Generation.IPretrainedTokenizer>
 
 public interface Idrak.Models.Abstractions.ITokenizerNormalizer
   public (default) void Normalize(Idrak.Models.Abstractions.NormalizedText text)
@@ -1630,7 +1695,7 @@ public interface Idrak.Models.Abstractions.ITokenizerTrainer
 
 public interface Idrak.Models.Abstractions.IVisionFamily
   public (default) Idrak.Models.Abstractions.CreatedVision Create(System.Text.Json.Nodes.JsonObject vision, int textDim, Idrak.Abstraction.Generation.ITokenizer tokenizer, int seed)
-  public Idrak.Abstraction.Generation.PretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
+  public Idrak.Abstraction.Generation.IPretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
   public string Name { get; }
 
 public interface Idrak.Models.Abstractions.IWeightSource
@@ -1672,22 +1737,20 @@ public sealed class Idrak.Models.Abstractions.PreTokenizedText : System.IDisposa
   public void Dispose()
   public void OnePiece()
 
-public sealed class Idrak.Models.Abstractions.PretrainedArchitecture
-  [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public PretrainedArchitecture()
-  public System.Func<Idrak.Abstraction.Generation.DecoderSpec, System.Text.Json.Nodes.JsonObject>? Config { get; init; }
-  public System.Func<Idrak.Models.Abstractions.PretrainedBuildContext, System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module>>? Build { get; init; }
-  public System.Func<System.Collections.Generic.IReadOnlySet<string>, Idrak.Models.Abstractions.PretrainedArchitecture>? ForCheckpoint { get; init; }
-  public System.Func<string, bool> Transposed { get; init; }
-  public required System.Func<System.Text.Json.Nodes.JsonObject, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> Spec { get; init; }
-  public required System.Func<string, string?> TensorName { get; init; }
+public abstract class Idrak.Models.Abstractions.PretrainedArchitecture : Idrak.Models.Abstractions.IPretrainedArchitecture
+  protected PretrainedArchitecture()
+  public abstract Idrak.Abstraction.Generation.DecoderSpec Spec(System.Text.Json.Nodes.JsonObject config, System.Collections.Generic.List<string> notes)
+  public abstract string? TensorName(string name)
+  public static bool TransposedProjection(string name)
+  public virtual bool Transposed(string name)
 
 public static class Idrak.Models.Abstractions.PretrainedArchitectures
-  public static Idrak.Models.Abstractions.PretrainedArchitecture Get(string name)
-  public static Idrak.Models.Abstractions.PretrainedArchitecture? Default(string name)
+  public static Idrak.Models.Abstractions.IPretrainedArchitecture Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Models.Abstractions.IPretrainedArchitecture? Default(string name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static bool Unregister(string name)
   public static string? Origin(string name)
-  public static void Register(string name, Idrak.Models.Abstractions.PretrainedArchitecture architecture)
+  public static void Register(string name, Idrak.Models.Abstractions.IPretrainedArchitecture architecture)
 
 public sealed record Idrak.Models.Abstractions.PretrainedBuildContext : System.IEquatable<Idrak.Models.Abstractions.PretrainedBuildContext>
   public Idrak.Abstraction.Formats.ITensorStore Checkpoint { get; init; }
@@ -1724,18 +1787,18 @@ public static class Idrak.Models.Abstractions.PretrainedSeq2Seq
   public static void Register(Idrak.Models.Abstractions.IPretrainedSeq2SeqFamily family)
 
 public static class Idrak.Models.Abstractions.TokenizerComponents
+  public static Idrak.Models.Abstractions.ITokenizerComponentKind<Idrak.Models.Abstractions.IPreTokenizer>? DefaultPreTokenizer(string type)
+  public static Idrak.Models.Abstractions.ITokenizerComponentKind<Idrak.Models.Abstractions.IPreTokenizer>? FindPreTokenizer(string? type)
+  public static Idrak.Models.Abstractions.ITokenizerComponentKind<Idrak.Models.Abstractions.ITokenizerDecoder>? DefaultDecoder(string type)
+  public static Idrak.Models.Abstractions.ITokenizerComponentKind<Idrak.Models.Abstractions.ITokenizerDecoder>? FindDecoder(string? type)
+  public static Idrak.Models.Abstractions.ITokenizerComponentKind<Idrak.Models.Abstractions.ITokenizerNormalizer>? DefaultNormalizer(string type)
+  public static Idrak.Models.Abstractions.ITokenizerComponentKind<Idrak.Models.Abstractions.ITokenizerNormalizer>? FindNormalizer(string? type)
+  public static Idrak.Models.Abstractions.ITokenizerComponentKind<Idrak.Models.Abstractions.ITokenizerPostProcessor>? DefaultPostProcessor(string type)
+  public static Idrak.Models.Abstractions.ITokenizerComponentKind<Idrak.Models.Abstractions.ITokenizerPostProcessor>? FindPostProcessor(string? type)
   public static System.Collections.Generic.IReadOnlyCollection<string> DecoderTypes { get; }
   public static System.Collections.Generic.IReadOnlyCollection<string> NormalizerTypes { get; }
   public static System.Collections.Generic.IReadOnlyCollection<string> PostProcessorTypes { get; }
   public static System.Collections.Generic.IReadOnlyCollection<string> PreTokenizerTypes { get; }
-  public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.IPreTokenizer>? DefaultPreTokenizer(string type)
-  public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.IPreTokenizer>? FindPreTokenizer(string? type)
-  public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerDecoder>? DefaultDecoder(string type)
-  public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerDecoder>? FindDecoder(string? type)
-  public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerNormalizer>? DefaultNormalizer(string type)
-  public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerNormalizer>? FindNormalizer(string? type)
-  public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerPostProcessor>? DefaultPostProcessor(string type)
-  public static System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerPostProcessor>? FindPostProcessor(string? type)
   public static bool UnregisterDecoder(string type)
   public static bool UnregisterNormalizer(string type)
   public static bool UnregisterPostProcessor(string type)
@@ -1744,10 +1807,10 @@ public static class Idrak.Models.Abstractions.TokenizerComponents
   public static string? NormalizerOrigin(string type)
   public static string? PostProcessorOrigin(string type)
   public static string? PreTokenizerOrigin(string type)
-  public static void RegisterDecoder(string type, System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerDecoder> create)
-  public static void RegisterNormalizer(string type, System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerNormalizer> create)
-  public static void RegisterPostProcessor(string type, System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.ITokenizerPostProcessor> create)
-  public static void RegisterPreTokenizer(string type, System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Models.Abstractions.IPreTokenizer> create)
+  public static void RegisterDecoder(Idrak.Models.Abstractions.ITokenizerComponentKind<Idrak.Models.Abstractions.ITokenizerDecoder> kind)
+  public static void RegisterNormalizer(Idrak.Models.Abstractions.ITokenizerComponentKind<Idrak.Models.Abstractions.ITokenizerNormalizer> kind)
+  public static void RegisterPostProcessor(Idrak.Models.Abstractions.ITokenizerComponentKind<Idrak.Models.Abstractions.ITokenizerPostProcessor> kind)
+  public static void RegisterPreTokenizer(Idrak.Models.Abstractions.ITokenizerComponentKind<Idrak.Models.Abstractions.IPreTokenizer> kind)
   public static void SetDecoderPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
   public static void SetNormalizerPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
   public static void SetPostProcessorPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
@@ -1777,19 +1840,24 @@ public static class Idrak.Models.Abstractions.TokenizerFiles
   public static string? Origin(string name)
   public static void Register(Idrak.Models.Abstractions.ITokenizerFileReader reader)
 
+public sealed record Idrak.Models.Abstractions.TokenizerModelRequest : System.IEquatable<Idrak.Models.Abstractions.TokenizerModelRequest>
+  public Idrak.Models.Abstractions.TokenizerDefinition Definition { get; init; }
+  public Idrak.Models.Abstractions.TokenizerOptions Options { get; init; }
+  public TokenizerModelRequest(Idrak.Models.Abstractions.TokenizerDefinition Definition, Idrak.Models.Abstractions.TokenizerOptions Options)
+
 public static class Idrak.Models.Abstractions.TokenizerModels
   public const string Bpe = "BPE"
   public const string Unigram = "Unigram"
   public const string WordPiece = "WordPiece"
   public static Idrak.Abstraction.Generation.IPretrainedTokenizer Create(Idrak.Models.Abstractions.TokenizerDefinition definition, Idrak.Models.Abstractions.TokenizerOptions? options = null)
+  public static Idrak.Models.Abstractions.ITokenizerModelKind Get(System.ReadOnlySpan<char> type)
+  public static Idrak.Models.Abstractions.ITokenizerModelKind? Default(string type)
+  public static Idrak.Models.Abstractions.ITokenizerModelKind? Find(System.ReadOnlySpan<char> type)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static System.Func<Idrak.Models.Abstractions.TokenizerDefinition, Idrak.Models.Abstractions.TokenizerOptions, Idrak.Abstraction.Generation.IPretrainedTokenizer> Get(string type)
-  public static System.Func<Idrak.Models.Abstractions.TokenizerDefinition, Idrak.Models.Abstractions.TokenizerOptions, Idrak.Abstraction.Generation.IPretrainedTokenizer>? Default(string type)
-  public static System.Func<Idrak.Models.Abstractions.TokenizerDefinition, Idrak.Models.Abstractions.TokenizerOptions, Idrak.Abstraction.Generation.IPretrainedTokenizer>? Find(string type)
   public static bool Unregister(string type)
   public static string Describe()
   public static string? Origin(string type)
-  public static void Register(string type, System.Func<Idrak.Models.Abstractions.TokenizerDefinition, Idrak.Models.Abstractions.TokenizerOptions, Idrak.Abstraction.Generation.IPretrainedTokenizer> create)
+  public static void Register(Idrak.Models.Abstractions.ITokenizerModelKind kind)
   public static void SetPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed record Idrak.Models.Abstractions.TokenizerOptions : System.IEquatable<Idrak.Models.Abstractions.TokenizerOptions>
@@ -2048,13 +2116,14 @@ public sealed record Idrak.Models.PretrainedEncoderOptions : System.IEquatable<I
   public string? Pooler { get; init; }
 
 public static class Idrak.Models.PretrainedFamilies
-  [Obsolete("Renamed CommonArchitecture: it reads the common decoder keys and checkpoint names, whichever family uses them.")] public static Idrak.Models.Abstractions.PretrainedArchitecture LlamaStyle(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust)
-  [Obsolete("Renamed CommonArchitecture: it reads the common decoder keys and checkpoint names, whichever family uses them.")] public static Idrak.Models.Abstractions.PretrainedArchitecture LlamaStyle(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust, string modelType)
+  [Obsolete("Renamed CommonArchitecture: it reads the common decoder keys and checkpoint names, whichever family uses them.")] public static Idrak.Models.Abstractions.IConfigWritingArchitecture LlamaStyle(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust, string modelType)
+  [Obsolete("Renamed CommonArchitecture: it reads the common decoder keys and checkpoint names, whichever family uses them.")] public static Idrak.Models.Abstractions.IPretrainedArchitecture LlamaStyle(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust)
   [Obsolete("Renamed CommonTensorName: the checkpoint names are the common ones, whichever family uses them.")] public static string? LlamaTensorName(string name)
   public static Idrak.Abstraction.Generation.DecoderSpec CommonSpec(System.Text.Json.Nodes.JsonObject c, System.Collections.Generic.List<string> notes)
   public static Idrak.Abstraction.Generation.DecoderSpec ExpertSpec(System.Text.Json.Nodes.JsonObject c, System.Collections.Generic.List<string> notes, bool normalizeTopK)
-  public static Idrak.Models.Abstractions.PretrainedArchitecture CommonArchitecture(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust)
-  public static Idrak.Models.Abstractions.PretrainedArchitecture CommonArchitecture(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust, string modelType)
+  public static Idrak.Models.Abstractions.IConfigWritingArchitecture CommonArchitecture(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust, string modelType)
+  public static Idrak.Models.Abstractions.IPretrainedArchitecture Architecture(System.Func<System.Text.Json.Nodes.JsonObject, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> spec, System.Func<string, string?> tensorName)
+  public static Idrak.Models.Abstractions.IPretrainedArchitecture CommonArchitecture(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust)
   public static System.Text.Json.Nodes.JsonObject CommonConfig(Idrak.Abstraction.Generation.DecoderSpec spec, string modelType)
   public static string? CommonTensorName(string name)
 
@@ -2075,14 +2144,14 @@ public sealed record Idrak.Models.PretrainedLoadTimes : System.IEquatable<Idrak.
 public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Formats.WeightFormat? CheckpointFormat { get; }
-  public Idrak.Abstraction.Generation.ChatTemplate? ChatTemplate { get; }
   public Idrak.Abstraction.Generation.DecoderSpec Spec { get; }
+  public Idrak.Abstraction.Generation.IChatTemplate? ChatTemplate { get; }
+  public Idrak.Abstraction.Generation.IPretrainedVision? Vision { get; }
   public Idrak.Abstraction.Generation.ITokenizer? Tokenizer { get; }
   public Idrak.Abstraction.Generation.ITrainableSoftParts OpenPart(string kind, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Generation.IFeatureCache? cache = null)
   public Idrak.Abstraction.Generation.IVisionEncoder CreateVisionEncoder(Idrak.Abstraction.Generation.VisionEncoderOptions? options = null)
-  public Idrak.Abstraction.Generation.PretrainedVision? Vision { get; }
   public Idrak.Layers.Sequential Network { get; }
-  public Idrak.Models.Abstractions.PretrainedArchitecture Architecture { get; }
+  public Idrak.Models.Abstractions.IPretrainedArchitecture Architecture { get; }
   public Idrak.Models.PretrainedLoadTimes LoadTimes { get; }
   public System.Collections.Generic.IEnumerable<(string, Idrak.Abstraction.Module)> NamedModules()
   public System.Collections.Generic.IReadOnlyCollection<string> Parts { get; }
@@ -2128,7 +2197,7 @@ public sealed class Idrak.Models.PretrainedSeq2SeqModel : System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
   public Idrak.Abstraction.Generation.IPretrainedTokenizer? Tokenizer { get; }
   public Idrak.Abstraction.Generation.ISeq2SeqModel Model { get; }
-  public Idrak.Generation.Seq2SeqGenerator CreateGenerator(Idrak.Abstraction.Generation.ITokenizer? tokenizer = null, Idrak.Abstraction.Generation.KeyValueLayout? cacheLayout = null)
+  public Idrak.Generation.Seq2SeqGenerator CreateGenerator(Idrak.Abstraction.Generation.ITokenizer? tokenizer = null, Idrak.Abstraction.Generation.IKeyValueLayout? cacheLayout = null)
   public System.Collections.Generic.IReadOnlyList<string> Notes { get; }
   public System.Text.Json.Nodes.JsonObject Config { get; }
   public bool EndsSource { get; }
@@ -2158,7 +2227,7 @@ public sealed class Idrak.Models.PyTorchCheckpointReader : Idrak.Abstraction.For
   public string? Root { get; }
   public void Dispose()
 
-public sealed class Idrak.Models.RenamedTensorStore : Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
+public sealed class Idrak.Models.RenamedTensorStore : Idrak.Abstraction.Formats.IBFloat16TensorStore, Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
   public Idrak.Abstraction.Formats.ITensorStore Inner { get; }
   public Idrak.Abstraction.Formats.WeightFormat? FormatOf(string name)
   public RenamedTensorStore(Idrak.Abstraction.Formats.ITensorStore inner, System.Collections.Generic.IReadOnlyDictionary<string, string> names, bool foldWeightNorm = false, bool ownsInner = true)
@@ -2189,7 +2258,7 @@ public enum Idrak.Models.SafeTensorType : int
   F16 = 1
   F32 = 0
 
-public sealed class Idrak.Models.SafeTensorsReader : Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
+public sealed class Idrak.Models.SafeTensorsReader : Idrak.Abstraction.Formats.IBFloat16TensorStore, Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
   public System.Collections.Generic.Dictionary<string, string> Metadata { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Models.SafeTensorInfo> Tensors { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, string> LeftOut { get; }
@@ -2278,6 +2347,22 @@ public static class Idrak.ModuleFiles
   public static void Save(this Idrak.Abstraction.Module module, string path)
   public static void Save(this Idrak.Abstraction.Module module, string path, Idrak.Abstraction.Formats.WeightFormat format)
 
+public interface Idrak.Onnx.Abstractions.IOnnxExportOp
+  public Idrak.Onnx.Abstractions.OnnxValue Export(Idrak.Onnx.Abstractions.OnnxGraph graph, Idrak.Abstraction.Module module, Idrak.Onnx.Abstractions.OnnxValue input, System.Collections.Generic.IReadOnlyList<int> outputShape)
+  public System.Type ModuleType { get; }
+
+public interface Idrak.Onnx.Abstractions.IOnnxExportOp<T> : Idrak.Onnx.Abstractions.IOnnxExportOp where T : Idrak.Abstraction.Module
+  public Idrak.Onnx.Abstractions.OnnxValue Export(Idrak.Onnx.Abstractions.OnnxGraph graph, T module, Idrak.Onnx.Abstractions.OnnxValue input, System.Collections.Generic.IReadOnlyList<int> outputShape)
+
+public interface Idrak.Onnx.Abstractions.IOnnxGraphOpExport : Idrak.Abstraction.IKind
+  public Idrak.Onnx.Abstractions.OnnxValue Export(Idrak.Onnx.Abstractions.OnnxGraphOpContext context)
+
+public interface Idrak.Onnx.Abstractions.IOnnxImportOp : Idrak.Abstraction.IKind
+  public string Translate(Idrak.Onnx.Abstractions.OnnxImportContext context)
+
+public interface Idrak.Onnx.Abstractions.IOnnxLambdaExport : Idrak.Abstraction.IKind
+  public Idrak.Onnx.Abstractions.OnnxValue Export(Idrak.Onnx.Abstractions.OnnxGraph graph, Idrak.Abstraction.Module module, Idrak.Onnx.Abstractions.OnnxValue input, System.Collections.Generic.IReadOnlyList<int> outputShape)
+
 public sealed class Idrak.Onnx.Abstractions.OnnxAttribute
   public object Value { get; }
   public static Idrak.Onnx.Abstractions.OnnxAttribute Of(string name, float value)
@@ -2288,14 +2373,14 @@ public sealed class Idrak.Onnx.Abstractions.OnnxAttribute
   public string Name { get; }
 
 public static class Idrak.Onnx.Abstractions.OnnxExportOps
-  public static Idrak.Onnx.Abstractions.OnnxGraphOpTranslator GetGraphOp(string op)
-  public static Idrak.Onnx.Abstractions.OnnxGraphOpTranslator? DefaultGraphOp(string op)
-  public static Idrak.Onnx.Abstractions.OnnxGraphOpTranslator? FindGraphOp(string op)
-  public static Idrak.Onnx.Abstractions.OnnxTranslator<Idrak.Abstraction.Module>? DefaultLambda(string name)
-  public static Idrak.Onnx.Abstractions.OnnxTranslator<Idrak.Abstraction.Module>? Find(System.Type type)
-  public static Idrak.Onnx.Abstractions.OnnxTranslator<Idrak.Abstraction.Module>? FindLambda(string name)
-  public static Idrak.Onnx.Abstractions.OnnxTranslator<T> Get<T>() where T : Idrak.Abstraction.Module
-  public static Idrak.Onnx.Abstractions.OnnxTranslator<T>? Default<T>() where T : Idrak.Abstraction.Module
+  public static Idrak.Onnx.Abstractions.IOnnxExportOp Get<T>() where T : Idrak.Abstraction.Module
+  public static Idrak.Onnx.Abstractions.IOnnxExportOp? Default<T>() where T : Idrak.Abstraction.Module
+  public static Idrak.Onnx.Abstractions.IOnnxExportOp? Find(System.Type type)
+  public static Idrak.Onnx.Abstractions.IOnnxGraphOpExport GetGraphOp(System.ReadOnlySpan<char> op)
+  public static Idrak.Onnx.Abstractions.IOnnxGraphOpExport? DefaultGraphOp(string op)
+  public static Idrak.Onnx.Abstractions.IOnnxGraphOpExport? FindGraphOp(System.ReadOnlySpan<char> op)
+  public static Idrak.Onnx.Abstractions.IOnnxLambdaExport? DefaultLambda(string name)
+  public static Idrak.Onnx.Abstractions.IOnnxLambdaExport? FindLambda(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<System.Type> Types { get; }
   public static System.Collections.Generic.IReadOnlyCollection<string> GraphOpNames { get; }
   public static System.Collections.Generic.IReadOnlyCollection<string> LambdaNames { get; }
@@ -2305,8 +2390,11 @@ public static class Idrak.Onnx.Abstractions.OnnxExportOps
   public static string? GraphOpOrigin(string op)
   public static string? LambdaOrigin(string name)
   public static string? Origin<T>() where T : Idrak.Abstraction.Module
+  public static void Register(Idrak.Onnx.Abstractions.IOnnxExportOp op)
   public static void Register<T>(Idrak.Onnx.Abstractions.OnnxTranslator<T> translate) where T : Idrak.Abstraction.Module
+  public static void RegisterGraphOp(Idrak.Onnx.Abstractions.IOnnxGraphOpExport translate)
   public static void RegisterGraphOp(string op, Idrak.Onnx.Abstractions.OnnxGraphOpTranslator translate)
+  public static void RegisterLambda(Idrak.Onnx.Abstractions.IOnnxLambdaExport translate)
   public static void RegisterLambda(string name, Idrak.Onnx.Abstractions.OnnxTranslator<Idrak.Abstraction.Module> translate)
 
 public abstract class Idrak.Onnx.Abstractions.OnnxGraph
@@ -2356,12 +2444,13 @@ public abstract class Idrak.Onnx.Abstractions.OnnxImportContext
   public abstract void Note(string note)
 
 public static class Idrak.Onnx.Abstractions.OnnxImportOps
-  public static Idrak.Onnx.Abstractions.OnnxImportTranslator Get(string opType)
-  public static Idrak.Onnx.Abstractions.OnnxImportTranslator? Default(string opType)
-  public static Idrak.Onnx.Abstractions.OnnxImportTranslator? Find(string opType)
+  public static Idrak.Onnx.Abstractions.IOnnxImportOp Get(System.ReadOnlySpan<char> opType)
+  public static Idrak.Onnx.Abstractions.IOnnxImportOp? Default(string opType)
+  public static Idrak.Onnx.Abstractions.IOnnxImportOp? Find(System.ReadOnlySpan<char> opType)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static bool Unregister(string opType)
   public static string? Origin(string opType)
+  public static void Register(Idrak.Onnx.Abstractions.IOnnxImportOp op)
   public static void Register(string opType, Idrak.Onnx.Abstractions.OnnxImportTranslator translate)
 
 public delegate string Idrak.Onnx.Abstractions.OnnxImportTranslator(Idrak.Onnx.Abstractions.OnnxImportContext context)

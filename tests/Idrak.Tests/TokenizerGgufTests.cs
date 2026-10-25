@@ -151,7 +151,7 @@ internal static partial class Tests
             List<KeyValuePair<string, object>> metadata = [new("tokenizer.ggml.model", "imaginary"), new("tokenizer.ggml.tokens", new[] { "a", "b" })];
             Expect<NotSupportedException>(() => PrepareGgufTokenizer(root.FullName, "unknown", metadata), "GGUF tokenizer 'imaginary' is not registered", "an unregistered tokenizer");
             Expect<NotSupportedException>(() => PrepareGgufTokenizer(root.FullName, "unknown2", metadata), "add it with GgufTokenizers.Register", "the hint");
-            GgufTokenizers.Register("imaginary", (file, tokens, notes) => GgufTokenizers.Default("bert")!(file, ["[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]", "▁a"], notes));
+            GgufTokenizers.Register(TestKinds.GgufTokenizer("imaginary", request => GgufTokenizers.Default("bert")!.Create(request with { Tokens = ["[UNK]", "[CLS]", "[SEP]", "[PAD]", "[MASK]", "▁a"] })));
             try
             {
                 string folder = PrepareGgufTokenizer(root.FullName, "app", metadata);

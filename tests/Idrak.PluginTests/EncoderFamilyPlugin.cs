@@ -56,7 +56,7 @@ public static class ToyEncoderPlugin
     {
         PretrainedEncoders.Register(Encoders);
         PretrainedSeq2Seq.Register(Seq2Seq);
-        AttentionPositionBiases.Register(DistanceBias, request => new Distance(request.Heads));
+        AttentionPositionBiases.Register(DistanceKind.Instance);
     }
 
     /// <summary>Removes both families and the bias kind.</summary>
@@ -301,6 +301,22 @@ public static class ToyEncoderPlugin
             modules.Add(Dense(store, "dec.head", device));
             return new Seq2SeqNetwork(encoder, new Sequential(modules), Int(config, "start_token"), Int(config, "end_token"));
         }
+    }
+
+    // The bias kind of its own: no settings, no trained tensors.
+    private sealed class DistanceKind : IPositionBiasKind
+    {
+        public static readonly DistanceKind Instance = new();
+
+        public string Name => DistanceBias;
+
+        public string Summary => "a slope per head times the distance";
+
+        public IReadOnlySet<string> Keys => OptionKeys.None;
+
+        public IReadOnlyList<string> Weights => [];
+
+        public IAttentionPositionBias Create(PositionBiasRequest request) => new Distance(request.Heads);
     }
 
     // -slope(h) · |key - query|, slope(h) = 0.5 / (h + 1): computed by position, no parameters (a kind of its own on the

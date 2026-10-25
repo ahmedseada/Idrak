@@ -138,7 +138,7 @@ public static class KernelPluginTests
             Check(calls == 1 && host.ContainsKey(unpack.Name) == (expected == KernelSource.Host), $"installed {installed}: {calls} calls, host fallbacks {string.Join(", ", host.Keys)}");
 
             // Through a Linear layer: the same product either way, with the input's gradient.
-            using var linear = Linear.FromPacked(PackedWeight.Pack((v, r, c, d) => RoundedWeight.Pack(v, r, c, d), RoundedWeight.FormatName, values, Rows, Columns, device), null);
+            using var linear = Linear.FromPacked(PackedWeightFormats.Pack(RoundedFormat.Instance, values, Rows, Columns, device), null);
             var x = Tensor.From(inputs, [Batch, Rows], device, requiresGrad: true);
             var y = linear.Forward(x);
             var reference = Tensor.From(inputs, [Batch, Rows], device).MatMul(Tensor.From(rounded, [Rows, Columns], device)).ToArray();

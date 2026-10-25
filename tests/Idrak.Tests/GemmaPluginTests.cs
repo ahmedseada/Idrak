@@ -59,10 +59,10 @@ internal static partial class Tests
                   && GemmaGguf.TensorName("blk.2.post_attention_norm.weight") == "model.layers.2.post_attention_layernorm.weight"
                   && GemmaGguf.TensorName("blk.0.attn_q.weight") == GgufArchitecture.CommonTensorName("blk.0.attn_q.weight")
                   && GemmaGguf.StoredOffset("model.layers.0.self_attn.q_norm.weight") == 1f && GemmaGguf.StoredOffset("model.norm.weight") == 1f
-                  && GemmaGguf.StoredOffset("model.layers.0.mlp.up_proj.weight") == 0f && GgufArchitectures.Get("gemma").TensorName is null,
+                  && GemmaGguf.StoredOffset("model.layers.0.mlp.up_proj.weight") == 0f && GgufArchitectures.Get("gemma").TensorName("blk.0.ffn_norm.weight") == GgufArchitecture.CommonTensorName("blk.0.ffn_norm.weight"),
                 "llama.cpp's Gemma 2 and 3 norm names, the rest the common ones (Gemma's too); the 1 added to every norm gain, to nothing else");
-            Check(PretrainedArchitectures.Get(GemmaPlugin.GemmaForCausalLM).Config is not null && PretrainedArchitectures.Get(GemmaPlugin.Gemma3ForCausalLM).Config is null
-                  && PretrainedArchitectures.Get(GemmaPlugin.Gemma3ForConditionalGeneration).ForCheckpoint is not null,
+            Check(PretrainedArchitectures.Get(GemmaPlugin.GemmaForCausalLM) is IConfigWritingArchitecture && PretrainedArchitectures.Get(GemmaPlugin.Gemma3ForCausalLM) is not IConfigWritingArchitecture
+                  && PretrainedArchitectures.Get(GemmaPlugin.Gemma3ForConditionalGeneration) is ICheckpointFittedArchitecture,
                 "Gemma writes its configuration; Gemma 3 reads checkpoints only; Gemma 3 with images fits each checkpoint's naming");
             Check(GemmaArchitectures.TensorName("layers.3.post_mlp_norm.weight") == "model.layers.3.post_feedforward_layernorm.weight"
                   && GemmaArchitectures.TensorName("layers.0.mlp_norm.weight") == "model.layers.0.pre_feedforward_layernorm.weight"

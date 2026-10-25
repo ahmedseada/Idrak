@@ -117,8 +117,8 @@ internal static partial class Tests
         var biases = columns.Select(n => biased ? RandomArray(random, n) : null).ToArray();
         using var x = Tensor.From(xs, [m, k], device);
         using var xc = Tensor.From(xs, [m, k], cpu);
-        var packed = columns.Select((n, j) => PackedWeight.FromValues(format, weights[j], k, n, device)).ToArray();
-        var packedCpu = columns.Select((n, j) => PackedWeight.FromValues(format, weights[j], k, n, cpu)).ToArray();
+        var packed = columns.Select((n, j) => PackedWeightFormats.Pack(format, weights[j], k, n, device)).ToArray();
+        var packedCpu = columns.Select((n, j) => PackedWeightFormats.Pack(format, weights[j], k, n, cpu)).ToArray();
         var bias = biases.Select(b => b is null ? null : Tensor.From(b, device)).ToArray();
         var outputs = columns.Select(n => Tensor.Zeros([m, n], device)).ToArray();
         try
@@ -161,10 +161,10 @@ internal static partial class Tests
         var (bg, bu) = biased ? (RandomArray(random, n), RandomArray(random, n)) : (null, null);
         using var x = Tensor.From(xs, [m, k], device);
         using var xc = Tensor.From(xs, [m, k], cpu);
-        using var gate = PackedWeight.FromValues(format, wg, k, n, device);
-        using var up = PackedWeight.FromValues(format, wu, k, n, device);
-        using var gateCpu = PackedWeight.FromValues(format, wg, k, n, cpu);
-        using var upCpu = PackedWeight.FromValues(format, wu, k, n, cpu);
+        using var gate = PackedWeightFormats.Pack(format, wg, k, n, device);
+        using var up = PackedWeightFormats.Pack(format, wu, k, n, device);
+        using var gateCpu = PackedWeightFormats.Pack(format, wg, k, n, cpu);
+        using var upCpu = PackedWeightFormats.Pack(format, wu, k, n, cpu);
         using var gateBias = bg is null ? null : Tensor.From(bg, device);
         using var upBias = bu is null ? null : Tensor.From(bu, device);
         using var gateOut = Tensor.Zeros([m, n], device);
@@ -206,7 +206,7 @@ internal static partial class Tests
         var (gs, us, ws) = (RandomArray(random, m * k, 3f), RandomArray(random, m * k), RandomArray(random, k * n));
         using var gate = Tensor.From(gs, [m, k], device);
         using var up = Tensor.From(us, [m, k], device);
-        using var weight = PackedWeight.FromValues(format, ws, k, n, device);
+        using var weight = PackedWeightFormats.Pack(format, ws, k, n, device);
         using var y = Tensor.Zeros([m, n], device);
         var fused = RunFused(backend, () => backend.PackedMatMulGated(format, activation, gate.Storage, up.Storage, weight.PackedValues.Storage,
             weight.ScaleValues?.Storage, y.Storage, m, n, k), [y], what);
@@ -218,7 +218,7 @@ internal static partial class Tests
 
         using var gc = Tensor.From(gs, [m, k], cpu);
         using var uc = Tensor.From(us, [m, k], cpu);
-        using var wc = PackedWeight.FromValues(format, ws, k, n, cpu);
+        using var wc = PackedWeightFormats.Pack(format, ws, k, n, cpu);
         using var hc = Tensor.GatedActivation(gc, uc, (FeedForwardActivation)activation);
         using var pc = wc.MatMul(hc);
         AssertClose(pc.ToArray(), fused[0], 1e-4f, $"{what}: against the CPU");
@@ -230,7 +230,7 @@ internal static partial class Tests
         const float Eps = 1e-5f;
         var (xs, ws, rs, gs) = (RandomArray(random, m * k), RandomArray(random, k * n), RandomArray(random, m * n, 4f), RandomArray(random, n));
         using var x = Tensor.From(xs, [m, k], device);
-        using var weight = PackedWeight.FromValues(format, ws, k, n, device);
+        using var weight = PackedWeightFormats.Pack(format, ws, k, n, device);
         using var residual = Tensor.From(rs, [m, n], device);
         using var gain = Tensor.From(gs, device);
         using var y = Tensor.Zeros([m, n], device);
@@ -241,7 +241,7 @@ internal static partial class Tests
         foreach (var d in new[] { device, cpu })
         {
             using var xd = Tensor.From(xs, [m, k], d);
-            using var wd = PackedWeight.FromValues(format, ws, k, n, d);
+            using var wd = PackedWeightFormats.Pack(format, ws, k, n, d);
             using var rd = Tensor.From(rs, [m, n], d);
             using var gd = Tensor.From(gs, d);
             using var product = wd.MatMul(xd);

@@ -93,7 +93,7 @@ internal static partial class Tests
     private static T WithRecordedTokens<T>(List<int> sampled, Func<T> run)
     {
         var library = TokenSamplers.Default(TokenSamplers.DefaultName)!;
-        TokenSamplers.Register(TokenSamplers.DefaultName, request => new RecordingSampler(library(request), sampled));
+        TokenSamplers.Register(TestKinds.Sampler(TokenSamplers.DefaultName, request => new RecordingSampler(library.Create(request), sampled)));
         try
         {
             return run();

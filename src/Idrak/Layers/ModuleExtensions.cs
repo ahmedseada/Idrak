@@ -276,7 +276,7 @@ public static class ModuleExtensions
     }
 
     /// <summary>
-    /// Turns bfloat16, 4-bit and other packed weights (formats derived from <see cref="PackedWeight"/> outside Idrak) back
+    /// Turns bfloat16, 4-bit and other packed weights (formats of one's own, <see cref="IPackedWeight"/>) back
     /// into float32 weights (the rounding stays; int8 weights have <see cref="DequantizeInt8"/>). Returns how many layers changed.
     /// </summary>
     public static int ToFloat32(this Module model, bool trainable = true)

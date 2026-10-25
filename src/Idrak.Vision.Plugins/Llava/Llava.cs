@@ -71,22 +71,27 @@ internal static class LlavaText
          "hidden_act": "silu", "max_position_embeddings": 2048, "rms_norm_eps": 1e-6, "rope_theta": 10000.0, "tie_word_embeddings": false}
         """;
 
-    public static PretrainedArchitecture Architecture((string Text, string Head) layout) => new()
+    public static IPretrainedArchitecture Architecture((string Text, string Head) layout) => new Decoder(layout);
+
+    private sealed class Decoder((string Text, string Head) layout) : PretrainedArchitecture, ICheckpointFittedArchitecture
     {
-        Spec = (config, notes) =>
+        public override DecoderSpec Spec(JsonObject config, List<string> notes)
         {
             var (family, text) = TextConfig(config);
             return PretrainedArchitectures.Get(family).Spec(text, notes);
-        },
-        TensorName = name => PretrainedFamilies.CommonTensorName(name) switch
+        }
+
+        public override string? TensorName(string name) => PretrainedFamilies.CommonTensorName(name) switch
         {
             null => null,
             var stored when stored.StartsWith("model.", StringComparison.Ordinal) => layout.Text + stored["model.".Length..],
             var stored => layout.Head + stored["lm_head.".Length..],
-        },
-        ForCheckpoint = names => Architecture(Layouts.FirstOrDefault(l => names.Contains(l.Text + "embed_tokens.weight")) is { Text: not null } found ? found
-            : throw new InvalidDataException("This LLaVA checkpoint has no text decoder under a known name.")),
-    };
+        };
+
+        public IPretrainedArchitecture ForCheckpoint(IReadOnlySet<string> names) =>
+            Architecture(Layouts.FirstOrDefault(l => names.Contains(l.Text + "embed_tokens.weight")) is { Text: not null } found ? found
+                : throw new InvalidDataException("This LLaVA checkpoint has no text decoder under a known name."));
+    }
 
     // The text family's name and its config: text_config, LlamaConfig's defaults for a llama one, and transformers 5's
     // rope_parameters read as rope_theta and rope_scaling.
@@ -201,7 +206,7 @@ public sealed class LlavaVisionFamily : IVisionFamily
     public string Name => LlavaPlugin.Architecture;
 
     /// <inheritdoc />
-    public PretrainedVision? Read(VisionCheckpoint checkpoint)
+    public IPretrainedVision? Read(VisionCheckpoint checkpoint)
     {
         ArgumentNullException.ThrowIfNull(checkpoint);
         var config = checkpoint.Config;

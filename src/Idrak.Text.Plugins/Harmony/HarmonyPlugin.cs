@@ -29,6 +29,20 @@ public static class HarmonyPlugin
     private sealed class HarmonyRegistration() : IdrakPlugin("harmony")
     {
         protected override void RegisterParts() =>
-            Part(() => ToolCallFormats.Register(ToolCallFormat, p => p.Shows("to=functions."), _ => new HarmonyToolCallParser()), () => ToolCallFormats.Unregister(ToolCallFormat));
+            Part(() => ToolCallFormats.Register(new HarmonyToolCallFormat()), () => ToolCallFormats.Unregister(ToolCallFormat));
     }
+}
+
+// The family's tool-call format, registered in ToolCallFormats under its name.
+internal sealed class HarmonyToolCallFormat : IToolCallFormat
+{
+    public string Name => HarmonyPlugin.ToolCallFormat;
+
+    public string Summary => "the harmony channels: calls addressed to=functions.name";
+
+    public IReadOnlySet<string> Keys => OptionKeys.None;
+
+    public bool Detect(ToolCallProbe probe) => probe.Shows("to=functions.");
+
+    public IToolCallParser Create(ToolCallContext context) => new HarmonyToolCallParser();
 }

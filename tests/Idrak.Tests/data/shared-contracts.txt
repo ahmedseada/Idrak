@@ -20,3 +20,9 @@ Idrak.Abstraction.Reinforcement.AdvantageEstimators | the estimators by name, ov
 Idrak.Abstraction.Reinforcement.PolicyLosses | the policy losses by name, overridable once for every package whose policy trains with them
 Idrak.Abstraction.Reinforcement.RewardFunctions | the rewards by name for every package that scores text (Idrak.Text's, R3; the coding plug-in's, R4)
 Idrak.Abstraction.CommandSandboxes | the sandboxes by name, chosen once (IDRAK_SANDBOX) for every package that runs a command a model asked for
+Idrak.Abstraction.Generation.ITokenSamplerKind | the sampler kind every token-generating package takes from TokenSamplers, and the one an app or a plug-in registers over the library's
+Idrak.Abstraction.Formats.IBFloat16TensorStore | a tensor store's optional 16-bit read, beside ITensorStore: any package's store (a format plug-in's, a renaming view) offers it and any package that packs weights reads it
+Idrak.Abstraction.Generation.ChatTemplate | the base of a chat template (IChatTemplate) for any package that reads one: Text's Jinja templates today, a family plug-in's or an app's own tomorrow
+Idrak.Abstraction.Generation.IPackedFormat | a packed weight format any package may add (a plug-in's own quantization) and every package that builds layers packs with, by name
+Idrak.Abstraction.Generation.PackedWeightFormats | the packed weight formats by name, overridable once for every package that packs weights
+Idrak.Abstraction.Generation.ToolCallFormats | the tool-call formats by name, beside ChatTemplates: a family plug-in registers its own once for every package that parses a chat model's output

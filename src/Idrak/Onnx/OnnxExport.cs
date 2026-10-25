@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Layers;
+using Idrak.Layers.Abstractions;
 using Idrak.Onnx.Abstractions;
 
 namespace Idrak.Onnx;
@@ -84,7 +85,7 @@ public sealed class OnnxExporter
         return this;
     }
 
-    /// <summary>A translator for the lambdas named <paramref name="name"/> (their <c>ToString()</c>) in this export; it takes precedence over <see cref="OnnxExportOps"/>.</summary>
+    /// <summary>A translator for the lambdas named <paramref name="name"/> (<see cref="INamedLambda.Name"/>) in this export; it takes precedence over <see cref="OnnxExportOps"/>.</summary>
     public OnnxExporter Lambda(string name, OnnxTranslator<Module> translate)
     {
         _lambdas[name] = translate;
@@ -154,7 +155,8 @@ public sealed class OnnxExporter
         return Translate(graph, module, x, shape) with { Shape = shape };
     }
 
-    internal OnnxGraphOpTranslator? FindGraphOp(string op) => _graphOps.TryGetValue(op, out var translate) ? translate : OnnxExportOps.FindGraphOp(op);
+    internal OnnxGraphOpTranslator? FindGraphOp(string op) => _graphOps.TryGetValue(op, out var translate) ? translate
+        : OnnxExportOps.FindGraphOp(op) is { } registered ? registered.Export : null;
 
     private OnnxValue Translate(OnnxGraph g, Module module, OnnxValue x, int[] shape)
     {
@@ -166,14 +168,21 @@ public sealed class OnnxExporter
             }
         }
 
-        if (module is Layers.Lambda lambda && _lambdas.TryGetValue(lambda.ToString(), out var forLambda))
+        var named = module as INamedLambda;
+        if (named is not null && _lambdas.TryGetValue(named.Name, out var forLambda))
         {
-            return forLambda(g, lambda, x, shape);
+            return forLambda(g, module, x, shape);
         }
 
-        var registered = OnnxExportOps.Find(module.GetType()) ?? throw new NotSupportedException(
-            $"{module.GetType().Name} ({module.DisplayName}) cannot be exported (registered: {string.Join(", ", OnnxExportOps.Types.Select(t => t.Name).Order())}): "
-            + $"register a translator with OnnxExportOps.Register<{module.GetType().Name}>(...) or the exporter's Module<{module.GetType().Name}>(...).");
-        return registered(g, module, x, shape);
+        if (OnnxExportOps.Find(module.GetType()) is { } registered)
+        {
+            return registered.Export(g, module, x, shape);
+        }
+
+        // A lambda module of one's own (any INamedLambda): its name's translator.
+        return named is not null && OnnxExportOps.FindLambda(named.Name) is { } lambda ? lambda.Export(g, module, x, shape)
+            : throw new NotSupportedException(
+                $"{module.GetType().Name} ({module.DisplayName}) cannot be exported (registered: {string.Join(", ", OnnxExportOps.Types.Select(t => t.Name).Order())}): "
+                + $"register a translator with OnnxExportOps.Register<{module.GetType().Name}>(...) or the exporter's Module<{module.GetType().Name}>(...).");
     }
 }

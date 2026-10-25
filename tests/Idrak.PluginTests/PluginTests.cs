@@ -186,14 +186,14 @@ public static class PluginTests
 
     private static void PackedFormat(Device device)
     {
-        PackedWeight.Register(RoundedWeight.FormatName, RoundedWeight.Pack);
-        Check(PackedWeight.FormatNames.Contains(RoundedWeight.FormatName), "registered");
+        PackedWeightFormats.Register(RoundedFormat.Instance);
+        Check(PackedWeightFormats.Names.Contains(RoundedWeight.FormatName), "registered");
         var random = new Random(7);
         const int Rows = 24, Columns = 10, Batch = 5;
         var values = Enumerable.Range(0, Rows * Columns).Select(_ => random.NextSingle() * 0.2f - 0.1f).ToArray();
         var inputs = Enumerable.Range(0, Batch * Rows).Select(_ => random.NextSingle() * 2f - 1f).ToArray();
         var bias = Enumerable.Range(0, Columns).Select(i => 0.01f * i).ToArray();
-        using var linear = Linear.FromPacked(PackedWeight.FromValues(RoundedWeight.FormatName, values, Rows, Columns, device), Tensor.Persistent(bias, [Columns], device));
+        using var linear = Linear.FromPacked(PackedWeightFormats.Pack(RoundedWeight.FormatName, values, Rows, Columns, device), Tensor.Persistent(bias, [Columns], device));
         var weight = (RoundedWeight)linear.PackedWeight!;
         using var scope = new TensorScope();
         var expanded = weight.Dequantize();
@@ -211,7 +211,7 @@ public static class PluginTests
     private static void CacheFormat(Device device)
     {
         var layout = new ScaledLayout();
-        KeyValueLayouts.Register(ScaledLayout.FormatName, layout);
+        KeyValueLayouts.Register(layout);
         Check(KeyValueLayouts.Get(ScaledLayout.FormatName) == layout, "registered");
         var tokenizer = new CharTokenizer("abcdefghijklmnopqrstuvwxyz .,");
         var random = new Random(4);

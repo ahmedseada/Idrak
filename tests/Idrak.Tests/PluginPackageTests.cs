@@ -122,7 +122,7 @@ internal static partial class Tests
                 Part(() =>
                 {
                     Interlocked.Increment(ref Parts);
-                    TokenSamplers.Register(sampler, TokenSamplers.Default(TokenSamplers.DefaultName)!);
+                    TokenSamplers.Register(TestKinds.Sampler(sampler, TokenSamplers.Default(TokenSamplers.DefaultName)!.Create));
                 }, () => TokenSamplers.Unregister(sampler));
             }
 

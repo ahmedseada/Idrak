@@ -108,9 +108,9 @@ internal static partial class Tests
         foreach (var format in Enum.GetValues<KeyValueFormat>().Where(f => f != KeyValueFormat.Custom))
         {
             var layout = KeyValueLayouts.For(format);
-            Check(layout.Format == format && KeyValueLayouts.Get(format.ToString()) == layout, $"{format}: its own layout, registered by name");
+            Check(KeyValueLayouts.FormatOf(layout) == format && KeyValueLayouts.Get(format.ToString()) == layout, $"{format}: its own layout, registered by name");
             using var cache = new KeyValueCache(2, 5, 6, device, format);
-            Check(cache.Keys.Shape[2] == layout.RowWidth(6) && (cache.KeyScales is not null) == layout.HasScales, $"{format}: cache sized by its layout");
+            Check(cache.Keys.Shape[2] == layout.RowWidth(6) && (cache.KeyScales is not null) == layout is IScaledLayout, $"{format}: cache sized by its layout");
         }
 
         // A decoder (rotary, grouped heads) and a multi-head attention model, each decoded token by token through every
@@ -174,9 +174,9 @@ internal static partial class Tests
         var inputs = Enumerable.Range(0, 70 * Rows).Select(_ => (float)(r.NextDouble() * 2 - 1)).ToArray();
         foreach (var format in Enum.GetValues<PackedFormat>())
         {
-            using var linear = Linear.FromPacked(PackedWeight.FromValues(format, values, Rows, Columns, device));
-            var weight = linear.PackedWeight!;
-            Check(weight.Format == format && weight.Rows == Rows && weight.Columns == Columns, $"{format}: format and shape");
+            using var linear = Linear.FromPacked(PackedWeightFormats.Pack(format, values, Rows, Columns, device));
+            var weight = linear.KernelWeight!;
+            Check(weight.Format == format && linear.PackedWeight == weight && weight.Rows == Rows && weight.Columns == Columns, $"{format}: format and shape");
             Check((format == PackedFormat.Int8) == (linear.Int8 is not null) && (format == PackedFormat.Int4) == (linear.Int4 is not null)
                   && (format == PackedFormat.BFloat16) == (linear.BFloat16 is not null), $"{format}: the typed view matches");
             Check(linear.Buffers().Count() == (format == PackedFormat.BFloat16 ? 1 : 2), $"{format}: packed words (and scales) as buffers");

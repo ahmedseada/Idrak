@@ -100,29 +100,19 @@ public sealed record ToolCallFormat(string Open, string Close, bool List = false
     public static ToolCallFormat Tagged { get; } = new("<tool_call>", "</tool_call>");
 }
 
-/// <summary>Formats a conversation (and the available tools) as the prompt text a chat model was trained on.</summary>
-public abstract class ChatTemplate
+/// <summary>
+/// Formats a conversation (and the available tools) as the prompt text a chat model was trained on, and says how the
+/// model's answers are read back: the text that ends a turn, the reasoning tags, and the registered tool-call format its
+/// calls are parsed in (<see cref="ToolCallFormats"/>). Models carry one (a loaded model's from its folder, read by
+/// <see cref="ChatTemplates"/>); <see cref="ChatTemplate"/> is a base with the common defaults.
+/// </summary>
+public interface IChatTemplate
 {
-    /// <summary>Opening and closing tags of the reasoning block.</summary>
-    public virtual (string Open, string Close) ThinkTags => ("<think>", "</think>");
-
-    /// <summary>
-    /// The shape of JSON tool calls, used by the "json" format (by default
-    /// &lt;tool_call&gt;{"name": …, "arguments": {…}}&lt;/tool_call&gt;).
-    /// </summary>
-    public virtual ToolCallFormat ToolCalls => ToolCallFormat.Tagged;
-
-    /// <summary>The name of the registered tool-call format (see <see cref="ToolCallFormats"/>) the model writes calls in; "json" by default.</summary>
-    public virtual string ToolCallFormatName => ToolCallFormats.Json;
-
-    /// <summary>
-    /// A parser for the tool calls of one reply: by default one of the format named by <see cref="ToolCallFormatName"/>.
-    /// Override it to parse calls without registering a format.
-    /// </summary>
-    public virtual IToolCallParser CreateToolCallParser(ToolCallContext context) => ToolCallFormats.Create(ToolCallFormatName, context);
-
     /// <summary>Text that ends an assistant turn; used as a stop sequence.</summary>
-    public abstract IReadOnlyList<string> StopSequences { get; }
+    IReadOnlyList<string> StopSequences { get; }
+
+    /// <summary>Opening and closing tags of the reasoning block.</summary>
+    (string Open, string Close) ThinkTags { get; }
 
     /// <summary>
     /// The text a model's tokenizer adds in front when it encodes with its special tokens (transformers'
@@ -130,21 +120,68 @@ public abstract class ChatTemplate
     /// calling a processor or tokenizer on an already rendered prompt adds once more (Gemma's: a second &lt;bos&gt;); ""
     /// when it adds none. Used by <see cref="ChatRequest.AddSpecialTokens"/>.
     /// </summary>
-    public virtual string AddedPrefix => "";
+    string AddedPrefix { get; }
 
     /// <summary>
-    /// The kinds of message parts (<see cref="ChatPart.Kind"/>) the template renders: text only by default. A template
-    /// given a part of another kind throws (<see cref="ChatParts.ThrowIfUnsupported(IReadOnlyList{ChatMessage}, IReadOnlySet{string}, string)"/>
+    /// The kinds of message parts (<see cref="ChatPart.Kind"/>) the template renders. A template given a part of another
+    /// kind throws (<see cref="ChatParts.ThrowIfUnsupported(IReadOnlyList{ChatMessage}, IReadOnlySet{string}, string)"/>
     /// at the start of <see cref="Render"/>); it never drops one.
     /// </summary>
-    public virtual IReadOnlySet<string> PartKinds => ChatParts.TextOnly;
+    IReadOnlySet<string> PartKinds { get; }
 
     /// <summary>
-    /// The prompt for the next assistant turn. <paramref name="think"/>: true asks for reasoning, false suppresses it
-    /// (the template closes an empty reasoning block), null leaves it to the model. Throws
-    /// <see cref="NotSupportedException"/> for a message part whose kind is not in <see cref="PartKinds"/>.
+    /// The shape of JSON tool calls the template writes and the "json" format reads
+    /// (&lt;tool_call&gt;{"name": …, "arguments": {…}}&lt;/tool_call&gt; for most).
     /// </summary>
-    public abstract string Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think);
+    ToolCallFormat ToolCalls { get; }
+
+    /// <summary>
+    /// The name of the registered tool-call format (<see cref="ToolCallFormats"/>) the model writes calls in: each reply's
+    /// calls are parsed by that format's parser. A template whose calls no registered format reads registers a format of
+    /// its own (an <see cref="IToolCallFormat"/>).
+    /// </summary>
+    string ToolCallFormatName { get; }
+
+    /// <summary>
+    /// Appends the prompt for the next assistant turn to <paramref name="prompt"/> (the caller's buffer: what it holds
+    /// already is kept, and nothing else is copied). <paramref name="think"/>: true asks for reasoning, false suppresses
+    /// it (the template closes an empty reasoning block), null leaves it to the model.
+    /// </summary>
+    /// <exception cref="NotSupportedException">A message part whose kind is not in <see cref="PartKinds"/>.</exception>
+    void Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think, StringBuilder prompt);
+}
+
+/// <summary>
+/// A base for a chat template (<see cref="IChatTemplate"/>): reasoning in &lt;think&gt;&lt;/think&gt;, JSON tool calls
+/// in &lt;tool_call&gt;&lt;/tool_call&gt; read by the "json" format, no added prefix and text parts only, unless the
+/// template says otherwise.
+/// </summary>
+public abstract class ChatTemplate : IChatTemplate
+{
+    /// <inheritdoc />
+    public virtual (string Open, string Close) ThinkTags => ("<think>", "</think>");
+
+    /// <inheritdoc />
+    public virtual ToolCallFormat ToolCalls => ToolCallFormat.Tagged;
+
+    /// <summary>The name of the registered tool-call format (see <see cref="ToolCallFormats"/>) the model writes calls in; "json" by default.</summary>
+    public virtual string ToolCallFormatName => ToolCallFormats.Json;
+
+    /// <inheritdoc />
+    public abstract IReadOnlyList<string> StopSequences { get; }
+
+    /// <inheritdoc />
+    public virtual string AddedPrefix => "";
+
+    /// <summary>The kinds of message parts (<see cref="ChatPart.Kind"/>) the template renders: text only by default.</summary>
+    public virtual IReadOnlySet<string> PartKinds => ChatParts.TextOnly;
+
+    /// <inheritdoc />
+    public abstract void Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think, StringBuilder prompt);
+
+    /// <summary>The prompt for the next assistant turn, as a string (see <see cref="Render(IReadOnlyList{ChatMessage}, IReadOnlyList{ToolDefinition}, bool?, StringBuilder)"/>).</summary>
+    /// <exception cref="NotSupportedException">A message part whose kind is not in <see cref="PartKinds"/>.</exception>
+    public string Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think) => ChatTemplates.Render(this, messages, tools, think);
 }
 
 /// <summary>
@@ -160,10 +197,11 @@ public sealed class ChatMLTemplate : ChatTemplate
     public override IReadOnlyList<string> StopSequences { get; } = [End, Start];
 
     /// <inheritdoc />
-    public override string Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think)
+    public override void Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think, StringBuilder prompt)
     {
+        ArgumentNullException.ThrowIfNull(prompt);
         ChatParts.ThrowIfUnsupported(messages, PartKinds, "The chat template " + nameof(ChatMLTemplate));
-        var sb = new StringBuilder();
+        var sb = prompt;
         using var json = new JsonText(sb);
         string system = messages.FirstOrDefault(m => m.Role == "system")?.Content ?? "";
         if (system.Length > 0 || tools.Count > 0)
@@ -235,8 +273,6 @@ public sealed class ChatMLTemplate : ChatTemplate
         {
             sb.Append(ThinkTags.Open).Append("\n\n").Append(ThinkTags.Close).Append("\n\n");
         }
-
-        return sb.ToString();
     }
 
     // Writes JSON (as JsonNode.ToJsonString would) straight into the prompt, reusing one buffer and writer.
@@ -303,8 +339,9 @@ public sealed record ChatDelta(string Content, string Thinking, IReadOnlyList<To
 
 /// <summary>
 /// Splits streamed assistant text into reasoning (inside the think tags), answer text and tool calls. The reasoning is
-/// taken out here; the answer goes through the template's tool-call parser (<see cref="ChatTemplate.CreateToolCallParser"/>,
-/// one of the <see cref="ToolCallFormats"/>), which finds the calls in the model's format. Feed text as it arrives;
+/// taken out here; the answer goes through a parser of the template's tool-call format
+/// (<see cref="IChatTemplate.ToolCallFormatName"/>, one of the <see cref="ToolCallFormats"/>), which finds the calls in the
+/// model's format. Feed text as it arrives;
 /// partial tags are held back until they can be decided. In the default JSON format without opening text (the answer
 /// is the call's JSON), an answer that starts with '{' or '[' is held to the end of the turn and becomes calls if it
 /// parses as calls to one of the request's tools (any name when none are known).
@@ -313,7 +350,7 @@ public sealed class ChatOutputParser
 {
     private enum Mode { Start, Content, Thinking }
 
-    private readonly ChatTemplate _template;
+    private readonly IChatTemplate _template;
     private readonly bool _separateThinking;
     private readonly IReadOnlyCollection<string>? _toolNames;
     private readonly IToolCallParser _calls;
@@ -321,13 +358,12 @@ public sealed class ChatOutputParser
     private readonly StringBuilder _content = new(), _thinking = new();
     private Mode _mode = Mode.Start;
     private bool _afterThinking;
-    private string? _fed;                                      // the piece being drained, when it alone is pending (passed on uncopied)
 
     /// <summary>A parser for one reply rendered with <paramref name="template"/>.</summary>
     /// <param name="template">The template the prompt was rendered with.</param>
     /// <param name="separateThinking">false: reasoning is returned as answer text.</param>
     /// <param name="toolNames">The names calls may have (any name when null).</param>
-    public ChatOutputParser(ChatTemplate template, bool separateThinking = true, IReadOnlyCollection<string>? toolNames = null)
+    public ChatOutputParser(IChatTemplate template, bool separateThinking = true, IReadOnlyCollection<string>? toolNames = null)
         : this(template, null, toolNames, separateThinking)
     {
     }
@@ -339,34 +375,29 @@ public sealed class ChatOutputParser
     /// <param name="template">The template the prompt was rendered with.</param>
     /// <param name="tools">The request's tools; null when it has none (calls may then name anything).</param>
     /// <param name="separateThinking">false: reasoning is returned as answer text.</param>
-    public ChatOutputParser(ChatTemplate template, IReadOnlyList<ToolDefinition>? tools, bool separateThinking = true)
+    public ChatOutputParser(IChatTemplate template, IReadOnlyList<ToolDefinition>? tools, bool separateThinking = true)
         : this(template, tools, tools?.Select(t => t.Name).ToHashSet(), separateThinking)
     {
     }
 
-    private ChatOutputParser(ChatTemplate template, IReadOnlyList<ToolDefinition>? tools, IReadOnlyCollection<string>? toolNames, bool separateThinking)
+    private ChatOutputParser(IChatTemplate template, IReadOnlyList<ToolDefinition>? tools, IReadOnlyCollection<string>? toolNames, bool separateThinking)
     {
         ArgumentNullException.ThrowIfNull(template);
         _template = template;
         _separateThinking = separateThinking;
         _toolNames = toolNames;
-        _calls = template.CreateToolCallParser(new ToolCallContext(template, tools ?? [], toolNames));
+        _calls = ToolCallFormats.Create(template.ToolCallFormatName, new ToolCallContext(template, tools ?? [], toolNames));
     }
 
     /// <summary>Processes new text.</summary>
-    public ChatDelta Feed(string text)
+    public ChatDelta Feed(ReadOnlySpan<char> text)
     {
-        _fed = _pending.Length == 0 ? text : null;
         _pending.Append(text);
         return Drain(final: false);
     }
 
     /// <summary>Flushes everything held back at the end of the stream.</summary>
-    public ChatDelta Finish()
-    {
-        _fed = null;
-        return Drain(final: true);
-    }
+    public ChatDelta Finish() => Drain(final: true);
 
     private ChatDelta Drain(bool final)
     {
@@ -430,10 +461,8 @@ public sealed class ChatOutputParser
                 p = _pending.Span;
             }
 
-            // The answer: the tool-call parser decides what is text and what is a call. The pending text only shrinks from
-            // the front while draining, so when it is as long as the piece fed alone, it is that piece: no copy is made.
-            Add(_calls.Feed(_fed is { } fed && fed.Length == p.Length ? fed : p.ToString()));
-            _fed = null;
+            // The answer: the tool-call parser decides what is text and what is a call (it reads the pending text in place).
+            Add(_calls.Feed(p));
             _pending.Clear();
         }
 

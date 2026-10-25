@@ -25,7 +25,7 @@ internal static class PostProcessors
             return null;
         }
 
-        return TokenizerComponents.FindPostProcessor((string?)spec["type"]) is { } create ? create(spec) : BuiltIn(spec);
+        return TokenizerComponents.FindPostProcessor((string?)spec["type"]) is { } create ? create.Create(spec) : BuiltIn(spec);
     }
 
     // The library's post-processor of the spec's type.

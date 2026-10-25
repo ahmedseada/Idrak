@@ -15,40 +15,40 @@ internal static class LibraryNetworkOps
 {
     public static void RegisterAll()
     {
-        NetworkOps.Register("linear", (b, a) => Of(b).Linear(a.Int("out"), a.Bool("bias")));
+        NetworkOps.Register("linear", (b, a) => Of(b).Linear(a.Int("out"), a.Bool("bias")), "out", "bias");
         NetworkOps.Register("relu", (b, _) => Of(b).ReLU());
         NetworkOps.Register("tanh", (b, _) => Of(b).Tanh());
         NetworkOps.Register("sigmoid", (b, _) => Of(b).Sigmoid());
         NetworkOps.Register("gelu", (b, _) => Of(b).GELU());
         NetworkOps.Register("softmax", (b, _) => Of(b).Softmax());
-        NetworkOps.Register("dropout", (b, a) => Of(b).Dropout(a.Float("p")));
-        NetworkOps.Register("batchnorm", (b, a) => Of(b).BatchNorm(a.Float("momentum"), a.Float("epsilon")));
-        NetworkOps.Register("layernorm", (b, a) => Of(b).LayerNorm(a.Float("epsilon")));
-        NetworkOps.Register("normalize", (b, a) => Of(b).Normalize(a.Floats("mean"), a.Floats("std")));
+        NetworkOps.Register("dropout", (b, a) => Of(b).Dropout(a.Float("p")), "p");
+        NetworkOps.Register("batchnorm", (b, a) => Of(b).BatchNorm(a.Float("momentum"), a.Float("epsilon")), "momentum", "epsilon");
+        NetworkOps.Register("layernorm", (b, a) => Of(b).LayerNorm(a.Float("epsilon")), "epsilon");
+        NetworkOps.Register("normalize", (b, a) => Of(b).Normalize(a.Floats("mean"), a.Floats("std")), "mean", "std");
         NetworkOps.Register("conv2d", (b, a) => Pairs(a, "kernel", "stride", "padding") || a.Has("dilation") || a.Has("groups")
             ? Of(b).Conv2d(a.Int("out"), Pair(a, "kernel"), Pair(a, "stride"), Pair(a, "padding"), OptionalPair(a, "dilation"), a.OptionalInt("groups") ?? 1, a.Bool("bias"))
-            : Of(b).Conv2d(a.Int("out"), a.Int("kernel"), a.Int("stride"), a.Int("padding"), a.Bool("bias")));
+            : Of(b).Conv2d(a.Int("out"), a.Int("kernel"), a.Int("stride"), a.Int("padding"), a.Bool("bias")), "out", "kernel", "stride", "padding", "dilation", "groups", "bias");
         NetworkOps.Register("maxpool2d", (b, a) => Pairs(a, "kernel", "stride", "padding") || a.Has("ceilMode") || a.Has("paddingEnd")
             ? Of(b).MaxPool2d(Pair(a, "kernel"), OptionalPair(a, "stride"), Pair(a, "padding"), CeilMode(a), OptionalPair(a, "paddingEnd"))
-            : Of(b).MaxPool2d(a.Int("kernel"), a.OptionalInt("stride"), a.Int("padding")));
+            : Of(b).MaxPool2d(a.Int("kernel"), a.OptionalInt("stride"), a.Int("padding")), "kernel", "stride", "padding", "ceilMode", "paddingEnd");
         NetworkOps.Register("avgpool2d", (b, a) => Of(b).AvgPool2d(Pair(a, "kernel"), OptionalPair(a, "stride"), Pair(a, "padding"), a.Bool("countIncludePad"), CeilMode(a),
-            OptionalPair(a, "paddingEnd")));
-        NetworkOps.Register("adaptiveavgpool2d", (b, a) => Of(b).AdaptiveAvgPool2d(Pair(a, "size")));
-        NetworkOps.Register("adaptivemaxpool2d", (b, a) => Of(b).AdaptiveMaxPool2d(Pair(a, "size")));
+            OptionalPair(a, "paddingEnd")), "kernel", "stride", "padding", "countIncludePad", "ceilMode", "paddingEnd");
+        NetworkOps.Register("adaptiveavgpool2d", (b, a) => Of(b).AdaptiveAvgPool2d(Pair(a, "size")), "size");
+        NetworkOps.Register("adaptivemaxpool2d", (b, a) => Of(b).AdaptiveMaxPool2d(Pair(a, "size")), "size");
         NetworkOps.Register("convtranspose2d", (b, a) => Of(b).ConvTranspose2d(a.Int("out"), Pair(a, "kernel"), Pair(a, "stride"), Pair(a, "padding"), OptionalPair(a, "outputPadding"),
-            OptionalPair(a, "dilation"), a.OptionalInt("groups") ?? 1, a.Bool("bias")));
+            OptionalPair(a, "dilation"), a.OptionalInt("groups") ?? 1, a.Bool("bias")), "out", "kernel", "stride", "padding", "outputPadding", "dilation", "groups", "bias");
         NetworkOps.Register("upsample", (b, a) =>
         {
             var mode = Interpolation(a);
             bool align = a.Has("alignCorners") && a.Bool("alignCorners");
             return a.Has("size") ? Of(b).UpsampleToSize(Pair(a, "size"), mode, align) : Of(b).Upsample(FloatPair(a, "scale"), mode, align);
-        });
-        NetworkOps.Register("groupnorm", (b, a) => Of(b).GroupNorm(a.Int("groups"), a.Float("epsilon"), !a.Has("affine") || a.Bool("affine")));
+        }, "size", "scale", "mode", "alignCorners");
+        NetworkOps.Register("groupnorm", (b, a) => Of(b).GroupNorm(a.Int("groups"), a.Float("epsilon"), !a.Has("affine") || a.Bool("affine")), "groups", "epsilon", "affine");
         NetworkOps.Register("columnsToSequence", (b, _) => Of(b).ColumnsToSequence());
         NetworkOps.Register("globalavgpool2d", (b, _) => Of(b).GlobalAveragePool2d());
         NetworkOps.Register("flatten", (b, _) => Of(b).Flatten());
-        NetworkOps.Register("embedding", (b, a) => Of(b).Embedding(a.Int("vocabulary"), a.Int("dim")));
-        NetworkOps.Register("positional", (b, a) => Of(b).PositionalEncoding(a.OptionalInt("maxLength")));
+        NetworkOps.Register("embedding", (b, a) => Of(b).Embedding(a.Int("vocabulary"), a.Int("dim")), "vocabulary", "dim");
+        NetworkOps.Register("positional", (b, a) => Of(b).PositionalEncoding(a.OptionalInt("maxLength")), "maxLength");
         NetworkOps.Register("transformer", (b, a) => Of(b).TransformerEncoderLayer(a.Int("heads"), a.OptionalInt("ffDim"), a.Float("dropout"), a.Bool("causal"),
             (string?)a.Json["norms"] switch
             {
@@ -61,18 +61,18 @@ internal static class LibraryNetworkOps
                 null or "layer" => BlockNormalization.LayerNorm,
                 "rms" => BlockNormalization.RmsNorm,
                 var other => throw new InvalidDataException($"The network step 'transformer' takes norm \"layer\" or \"rms\"; got \"{other}\"."),
-            }));
-        NetworkOps.Register("attention", (b, a) => Of(b).MultiHeadAttention(a.Int("heads"), a.Bool("causal"), a.Float("dropout")));
+            }), "heads", "ffDim", "dropout", "causal", "norms", "norm");
+        NetworkOps.Register("attention", (b, a) => Of(b).MultiHeadAttention(a.Int("heads"), a.Bool("causal"), a.Float("dropout")), "heads", "causal", "dropout");
         NetworkOps.Register("lstm", (b, a) => a.Has("bidirectional")
             ? Of(b).LSTM(a.Int("hidden"), a.Bool("returnSequences"), a.Bool("bidirectional"), a.OptionalInt("layers") ?? 1)
-            : Of(b).LSTM(a.Int("hidden"), a.Bool("returnSequences")));
+            : Of(b).LSTM(a.Int("hidden"), a.Bool("returnSequences")), "hidden", "returnSequences", "bidirectional", "layers");
         NetworkOps.Register("gru", (b, a) => a.Has("bidirectional")
             ? Of(b).GRU(a.Int("hidden"), a.Bool("returnSequences"), a.Bool("bidirectional"), a.OptionalInt("layers") ?? 1, a.Has("candidateBias") && a.Bool("candidateBias"))
-            : Of(b).GRU(a.Int("hidden"), a.Bool("returnSequences")));
+            : Of(b).GRU(a.Int("hidden"), a.Bool("returnSequences")), "hidden", "returnSequences", "bidirectional", "layers", "candidateBias");
         NetworkOps.Register("meanOverTime", (b, _) => Of(b).MeanOverTime());
         NetworkOps.Register("lastStep", (b, _) => Of(b).LastStep());
         NetworkOps.Register("firstStep", (b, _) => Of(b).FirstStep());
-        NetworkOps.Register("reshape", (b, a) => Of(b).Reshape(a.Ints("shape")));
+        NetworkOps.Register("reshape", (b, a) => Of(b).Reshape(a.Ints("shape")), "shape");
     }
 
     // A (height, width) pair: one number for both, or [height, width].

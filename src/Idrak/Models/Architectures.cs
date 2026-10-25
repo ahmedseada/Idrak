@@ -24,37 +24,68 @@ public static class PretrainedFamilies
     /// post_attention_layernorm, mlp.gate_proj/up_proj/down_proj, model.norm, lm_head), which many families share.
     /// <paramref name="adjust"/> changes the spec read from the common keys (for example biases or q/k norm).
     /// </summary>
-    public static PretrainedArchitecture CommonArchitecture(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust) => new()
+    public static IPretrainedArchitecture CommonArchitecture(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust)
     {
-        Spec = (config, notes) => adjust(config, CommonSpec(config, notes), notes),
-        TensorName = CommonTensorName,
-    };
+        ArgumentNullException.ThrowIfNull(adjust);
+        return new CommonDecoder(adjust);
+    }
 
     /// <summary>
     /// <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec})"/> that can also write a
-    /// spec as config.json (<see cref="PretrainedArchitecture.Config"/>, through <see cref="CommonConfig"/> with
+    /// spec as config.json (<see cref="IConfigWritingArchitecture.Config"/>, through <see cref="CommonConfig"/> with
     /// <paramref name="modelType"/>), so models of the family can be made from a spec.
     /// </summary>
-    public static PretrainedArchitecture CommonArchitecture(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType)
+    public static IConfigWritingArchitecture CommonArchitecture(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType)
     {
+        ArgumentNullException.ThrowIfNull(adjust);
         ArgumentException.ThrowIfNullOrWhiteSpace(modelType);
-        var architecture = CommonArchitecture(adjust);
-        return new PretrainedArchitecture
-        {
-            Spec = architecture.Spec,
-            TensorName = architecture.TensorName,
-            Config = spec => CheckedConfig(spec, CommonConfig(spec, modelType), architecture.Spec, modelType),
-        };
+        return new CommonDecoderWithConfig(adjust, modelType);
+    }
+
+    /// <summary>
+    /// An architecture from its spec reader and its checkpoint names, with the usual layout
+    /// (<see cref="PretrainedArchitecture.TransposedProjection"/>): for a family that only reads its configuration its own way
+    /// or names its tensors its own way. A family with more to say implements <see cref="IPretrainedArchitecture"/> and the
+    /// capabilities it has.
+    /// </summary>
+    public static IPretrainedArchitecture Architecture(Func<JsonObject, List<string>, DecoderSpec> spec, Func<string, string?> tensorName)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(tensorName);
+        return new ReadDecoder(spec, tensorName);
     }
 
     /// <summary>The former name of <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec})"/>, kept for one release.</summary>
     [Obsolete("Renamed CommonArchitecture: it reads the common decoder keys and checkpoint names, whichever family uses them.")]
-    public static PretrainedArchitecture LlamaStyle(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust) => CommonArchitecture(adjust);
+    public static IPretrainedArchitecture LlamaStyle(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust) => CommonArchitecture(adjust);
 
     /// <summary>The former name of <see cref="CommonArchitecture(Func{JsonObject, DecoderSpec, List{string}, DecoderSpec}, string)"/>, kept for one release.</summary>
     [Obsolete("Renamed CommonArchitecture: it reads the common decoder keys and checkpoint names, whichever family uses them.")]
-    public static PretrainedArchitecture LlamaStyle(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType) =>
+    public static IConfigWritingArchitecture LlamaStyle(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType) =>
         CommonArchitecture(adjust, modelType);
+
+    // The common keys and names, the spec adjusted by the family.
+    private class CommonDecoder(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust) : PretrainedArchitecture
+    {
+        public override DecoderSpec Spec(JsonObject config, List<string> notes) => adjust(config, CommonSpec(config, notes), notes);
+
+        public override string? TensorName(string name) => CommonTensorName(name);
+    }
+
+    // The common architecture that writes a spec back as the common keys, checked by reading them again.
+    private sealed class CommonDecoderWithConfig(Func<JsonObject, DecoderSpec, List<string>, DecoderSpec> adjust, string modelType)
+        : CommonDecoder(adjust), IConfigWritingArchitecture
+    {
+        public JsonObject Config(DecoderSpec spec) => CheckedConfig(spec, CommonConfig(spec, modelType), Spec, modelType);
+    }
+
+    // A family's own spec reader and names.
+    private sealed class ReadDecoder(Func<JsonObject, List<string>, DecoderSpec> spec, Func<string, string?> tensorName) : PretrainedArchitecture
+    {
+        public override DecoderSpec Spec(JsonObject config, List<string> notes) => spec(config, notes);
+
+        public override string? TensorName(string name) => tensorName(name);
+    }
 
     /// <summary>
     /// A spec as the common configuration keys (the inverse of <see cref="CommonSpec"/>): hidden_size,
@@ -62,7 +93,7 @@ public static class PretrainedFamilies
     /// max_position_embeddings, rms_norm_eps, rope_theta (and partial_rotary_factor, rope_scaling), hidden_act,
     /// attention_bias, mlp_bias, tie_word_embeddings and the sliding window (sliding_window, layer_types), with
     /// <paramref name="modelType"/> as "model_type". What the keys cannot say (a norm other than RMS, learned positions,
-    /// experts, …) is the caller's to check (a family's <see cref="PretrainedArchitecture.Config"/> reads the result back).
+    /// experts, …) is the caller's to check (a family's <see cref="IConfigWritingArchitecture.Config"/> reads the result back).
     /// </summary>
     public static JsonObject CommonConfig(DecoderSpec spec, string modelType)
     {
@@ -341,7 +372,7 @@ public static class PretrainedFamilies
 /// bfloat16 tensors as their stored bits (<see cref="ReadBFloat16"/>). Keeps the time spent reading and merging, for
 /// <see cref="PretrainedModel.LoadTimes"/>.
 /// </summary>
-internal sealed class CheckpointWeights(ITensorStore reader, PretrainedArchitecture architecture) : IWeightSource
+internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitecture architecture) : IWeightSource
 {
     private long _readTicks, _mergeTicks, _uploadTicks;
 
@@ -405,14 +436,14 @@ internal sealed class CheckpointWeights(ITensorStore reader, PretrainedArchitect
         bool storedTransposed = architecture.Transposed(name);
         bool merged = storedTransposed && Adapter is not null && stored.EndsWith(".weight", StringComparison.Ordinal)
             && Adapter.Updates(stored[..^".weight".Length]);
-        if (!merged && shape.Count == 2 && reader.FormatOf(stored) == WeightFormat.BFloat16)
+        if (!merged && shape.Count == 2 && reader is IBFloat16TensorStore bits16 && reader.FormatOf(stored) == WeightFormat.BFloat16)
         {
             int rows = transposed ? shape[1] : shape[0], columns = transposed ? shape[0] : shape[1];
             long begun = Stopwatch.GetTimestamp(), reading = 0;
             var weight = BFloat16Weight.FromBits(rows, columns, device, (Span<ushort> bits, int stride) =>
             {
                 long start = Stopwatch.GetTimestamp();
-                bool copied = reader.ReadBFloat16(stored, storedTransposed != transposed, bits, stride);
+                bool copied = bits16.ReadBFloat16(stored, storedTransposed != transposed, bits, stride);
                 reading = Stopwatch.GetTimestamp() - start;
                 return copied;
             });

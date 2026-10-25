@@ -460,7 +460,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         if (context.RowStarts is not null)
         {
             // Rows of different lengths: positions per token, and each row attends from its own start.
-            if (cache.Layout is not IRowStartsLayout rowLayout)
+            if (cache.RowStartsLayout is not { } rowLayout)
             {
                 throw new NotSupportedException($"Rows of different lengths need a key/value cache format that attends from per-row starts (IRowStartsLayout: float32, bfloat16), not {cache.Layout.Name}.");
             }
@@ -490,7 +490,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         // kernels compute each query's window start on the device, from the position).
         if (_softcap is not null || Windowed && (ComputeGraph.IsCapturing || Composed(context.Length + t)))
         {
-            var windowed = WindowKernels ? cache.Layout.AttendVariant(q, cache, context, t, scale, Variant) : null;
+            var windowed = WindowKernels ? cache.SlidingWindowLayout?.AttendVariant(q, cache, context, t, scale, Variant) : null;
             return MergeHeads(windowed ?? AttendComposed(q, cache, context, t, scale), n, t);
         }
 
@@ -507,7 +507,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         int n = input.Shape[0], t = input.Shape[1];
         if (context.RowStarts is not null)
         {
-            if (!cache.Layout.RowStarts)
+            if (cache.RowStartsLayout is null)
             {
                 throw new NotSupportedException($"Rows of different lengths need a key/value cache format that attends from per-row starts (IRowStartsLayout: float32, bfloat16), not {cache.Layout.Name}.");
             }
@@ -639,7 +639,7 @@ public sealed class CausalSelfAttention : Module, ICachedModule
         var projected = Linear.ForwardMany(input, _projections);
         if (!Autograd.IsEnabled && !packed && RMSNorm.NormRopeHeads(projected[0], projected[1], projected[2], Heads, KvHeads, d, QueryNorm, KeyNorm,
                 Rope is null ? null : cosTable, Rope is null ? null : sinTable, positions, Rope?.Interleaved ?? false,
-                cache is { Layout.FusedWrite: true } ? cache : null, cache is { Layout.FusedWrite: true } ? position : null) is { } heads)
+                cache is { FusedWriteLayout: not null } ? cache : null, cache is { FusedWriteLayout: not null } ? position : null) is { } heads)
         {
             return heads;                           // normalization, rotation and head layout (or cache writes) in one pass
         }
@@ -848,7 +848,7 @@ public sealed class FeedForward : Module
         {
             hidden = Activate(Up.Forward(input));
         }
-        else if (!Autograd.IsEnabled && Down.PackedWeight is not { ActivationInDownProjection: true } && Linear.MatMulPackedGatedPair(input, Gate, Up, (int)Activation) is { } pair)
+        else if (!Autograd.IsEnabled && Down.KernelWeight is not { ActivationInDownProjection: true } && Linear.MatMulPackedGatedPair(input, Gate, Up, (int)Activation) is { } pair)
         {
             hidden = pair;                                          // act(gate) · up written by the gate/up product
         }
@@ -904,7 +904,7 @@ public sealed class FeedForward : Module
     /// format of one's own qualifies too: its down projection is its own product, and the residual addition and the next
     /// normalization after it still run as one pass.
     /// </summary>
-    internal bool DownFusable => Down.PackedWeight is { ActivationInDownProjection: false } && Down.Bias is null && Down.Adapter is null;
+    internal bool DownFusable => Down.KernelWeight is { ActivationInDownProjection: false } && Down.Bias is null && Down.Adapter is null;
 
     // The down projection's input at inference: act(gate) · up, or act(up).
     internal Tensor DownInput(Tensor input)
@@ -1280,7 +1280,7 @@ internal static class RopeTables
                 var sin = new float[maxPositions * half];
                 Parallel.For(0, maxPositions, ComputeResources.ParallelOptions, p =>
                 {
-                    var frequencies = scaled.FrequenciesAt?.Invoke(p) ?? scaled.Frequencies;
+                    var frequencies = scaled.FrequenciesAt?.At(p) ?? scaled.Frequencies;
                     for (int i = 0; i < half; i++)
                     {
                         double angle = p * frequencies[i];

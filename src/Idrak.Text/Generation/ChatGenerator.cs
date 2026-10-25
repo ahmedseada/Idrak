@@ -105,13 +105,13 @@ public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format
 /// Chat on top of a <see cref="TextGenerator"/>: renders the conversation with a <see cref="ChatTemplate"/>, generates
 /// until the end-of-turn marker, and splits the output into reasoning, answer and tool calls as it streams.
 /// </summary>
-public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? template = null) : IChatModel
+public sealed class ChatGenerator(TextGenerator generator, IChatTemplate? template = null) : IChatModel
 {
     /// <summary>The underlying text generator.</summary>
     public TextGenerator Generator { get; } = generator;
 
     /// <summary>The prompt format.</summary>
-    public ChatTemplate Template { get; } = template ?? new ChatMLTemplate();
+    public IChatTemplate Template { get; } = template ?? new ChatMLTemplate();
 
     /// <summary>
     /// How it reads images (a vision-language model); null (the default): text only. Each request's images are encoded
@@ -175,7 +175,32 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
     private string RenderPrompt(ChatRequest request, IReadOnlyList<IReadOnlyList<ImageTokenLayout>> layouts, IReadOnlyList<(ISoftPartSource Source, List<IReadOnlyList<ImageTokenLayout>> Layouts)>? soft = null)
     {
         ChatParts.ThrowIfUnsupported(this, request);
-        string prompt = Template.Render(request.Messages, request.Tools ?? [], request.Think);
+        bool expands = Images is not null && layouts.Count > 0 || soft is { Count: > 0 };
+        string prompt;
+        var text = Interlocked.Exchange(ref _promptText, null) ?? new System.Text.StringBuilder();
+        try
+        {
+            // The prompt is rendered into a builder kept between turns, after the added prefix when nothing is expanded
+            // (the prompt is then copied once, into the string the tokenizer reads).
+            if (request.AddSpecialTokens && !expands)
+            {
+                text.Append(Template.AddedPrefix);
+            }
+
+            Template.Render(request.Messages, request.Tools ?? [], request.Think, text);
+            prompt = text.ToString();
+        }
+        finally
+        {
+            text.Clear();
+            _promptText = text;
+        }
+
+        if (!expands)
+        {
+            return prompt;
+        }
+
         prompt = Images is { } images && layouts.Count > 0 ? images.Format.Expand(prompt, layouts, Generator.Tokenizer) : prompt;
         foreach (var (source, own) in soft ?? [])
         {
@@ -184,6 +209,9 @@ public sealed class ChatGenerator(TextGenerator generator, ChatTemplate? templat
 
         return request.AddSpecialTokens ? Template.AddedPrefix + prompt : prompt;
     }
+
+    // The builder prompts are rendered into, kept between turns (taken while one renders, so concurrent renders each get one).
+    private System.Text.StringBuilder? _promptText;
 
     // The image parts of a request, in the order the template renders them.
     private static List<ChatImage> ImagesOf(ChatRequest request) => [.. request.Messages.SelectMany(m => m.Parts).OfType<ChatImage>()];

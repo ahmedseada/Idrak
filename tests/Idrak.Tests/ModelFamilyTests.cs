@@ -110,17 +110,17 @@ internal static partial class Tests
         // Dynamic NTK: unchanged within max_position_embeddings; beyond, b' = b · (factor · s / M - (factor - 1))^(d / (d - 2)).
         var dynamic = new RopeSettings(10000f, Scaling: RopeScaling.Dynamic(2, 16)).Scaled(8);
         var plain = new RopeSettings(10000f).Frequencies(8);
-        Check(dynamic.FrequenciesAt is not null && dynamic.Frequencies.SequenceEqual(plain) && dynamic.FrequenciesAt(15).SequenceEqual(plain), "dynamic: unchanged within the context");
+        Check(dynamic.FrequenciesAt is not null && dynamic.Frequencies.SequenceEqual(plain) && dynamic.FrequenciesAt.At(15).SequenceEqual(plain), "dynamic: unchanged within the context");
         foreach (int position in new[] { 16, 40 })
         {
             double length = position + 1, grownBase = 10000 * Math.Pow(2 * length / 16 - 1, 8.0 / 6);
             var expected = Enumerable.Range(0, 4).Select(i => 1 / Math.Pow(grownBase, 2.0 * i / 8)).ToArray();
-            var actual = dynamic.FrequenciesAt!(position);
+            var actual = dynamic.FrequenciesAt!.At(position);
             Check(actual.Zip(expected).All(p => Math.Abs(p.First - p.Second) <= 1e-12 * p.Second), $"dynamic at {position}: [{string.Join(", ", actual)}], expected [{string.Join(", ", expected)}]");
         }
 
         // Registered, replaced, removed; names ignore case; unknown types list the registered ones.
-        RopeScalings.Register("Test-Halve", input => new RopeScalingResult([.. input.Frequencies.Select(f => f / 2)], 1.5));
+        RopeScalings.Register(TestKinds.RopeScaling("Test-Halve", input => new RopeScalingResult([.. input.Frequencies.Select(f => f / 2)], 1.5)));
         try
         {
             var halved = new RopeSettings(10000f, Scaling: new RopeScaling("test-halve")).Scaled(8);
@@ -173,8 +173,8 @@ internal static partial class Tests
     {
         int[] ids = [3, 17, 5, 5, 22, 0, 9, 13, 2, 8, 19, 1];
         using var input = Tensor.From([.. ids.Select(i => (float)i)], [1, ids.Length], device);
-        RopeScalings.Register("test-halve", input => new RopeScalingResult([.. input.Frequencies.Select(f => f / 2)]));
-        RopeScalings.Register("test-loud", input => new RopeScalingResult(input.Frequencies, 1.25));
+        RopeScalings.Register(TestKinds.RopeScaling("test-halve", input => new RopeScalingResult([.. input.Frequencies.Select(f => f / 2)])));
+        RopeScalings.Register(TestKinds.RopeScaling("test-loud", input => new RopeScalingResult(input.Frequencies, 1.25)));
         try
         {
             // A registered method makes the same tables as the built-in it imitates.
@@ -407,17 +407,15 @@ internal static partial class Tests
 
             // A family building its own network: here the spec's network with logits capped at 1, so the result shows it was used.
             PretrainedBuildContext? seen = null;
-            PretrainedArchitectures.Register("TestOwnBuildForCausalLM", new PretrainedArchitecture
-            {
-                Spec = (config, notes) => GemmaSpecOf(config, notes),
-                TensorName = GemmaArchitectures.TensorName,
-                Build = context =>
+            PretrainedArchitectures.Register("TestOwnBuildForCausalLM", TestKinds.BuildingArchitecture(
+                (config, notes) => GemmaSpecOf(config, notes),
+                GemmaArchitectures.TensorName,
+                context =>
                 {
                     seen = context;
                     context.Notes.Add("built by the test family");
                     return (context.Spec with { LogitSoftcap = 1f }).Build(context.Weights, context.Options);
-                },
-            });
+                }));
             try
             {
                 using var own = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Architecture = "TestOwnBuildForCausalLM", MaxPositions = 16 });

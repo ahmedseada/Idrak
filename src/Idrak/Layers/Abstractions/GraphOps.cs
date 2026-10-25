@@ -7,10 +7,17 @@ using System.Text.Json.Nodes;
 namespace Idrak.Layers.Abstractions;
 
 /// <summary>
-/// Computes one node of a <c>GraphModule</c> from its inputs and attributes (<see cref="GraphOpContext"/>) and
-/// returns the output tensor. Register it with <see cref="GraphOps.Register"/>; build it from public tensor operations
-/// so it runs on every device and gradients flow through it.
+/// A <c>GraphModule</c> node's operation, registered by its <see cref="IKind.Name"/> in <see cref="GraphOps"/>: computes
+/// the node from its inputs and attributes (<see cref="GraphOpContext"/>) and returns the output tensor. Build it from
+/// public tensor operations so it runs on every device and gradients flow through it.
 /// </summary>
+public interface IGraphOp : IKind
+{
+    /// <summary>The node's output for its inputs and attributes.</summary>
+    Tensor Run(GraphOpContext context);
+}
+
+/// <summary>An operation as a function (see <see cref="GraphOps.Register(string, GraphOp)"/>, which makes it an <see cref="IGraphOp"/>).</summary>
 public delegate Tensor GraphOp(GraphOpContext context);
 
 /// <summary>The node being run and its input values, for a <see cref="GraphOp"/>.</summary>
@@ -60,8 +67,9 @@ public sealed class GraphOpContext
 }
 
 /// <summary>
-/// The operations a <c>GraphModule</c> node can run, by name. The element-wise and tensor operations are
-/// registered here (relu, exp, softmax, transpose, clip, pow, ...); add your own with <see cref="Register"/>, so a graph
+/// The operations a <c>GraphModule</c> node can run, by name (<see cref="IGraphOp"/>). The element-wise and tensor
+/// operations are registered here (relu, exp, softmax, transpose, clip, pow, ...); add your own with
+/// <see cref="Register(IGraphOp)"/>, so a graph
 /// using them runs, is written to JSON and is read back. The structural operations that also work on integer values
 /// computed on the host (shapes, axes, indices) are part of <c>GraphModule</c> and cannot be replaced: layer,
 /// identity, cast, add, sub, mul, div, concat, shape, gather, slice, unsqueeze, squeeze and reshape.
@@ -73,45 +81,58 @@ public static class GraphOps
         "layer", "identity", "cast", "add", "sub", "mul", "div", "concat", "shape", "gather", "slice", "unsqueeze", "squeeze", "reshape",
     };
 
-    private static readonly SlotTable<string, GraphOp> Registry = new(nameof(GraphOps),
-        (slot, app, library) => context => slot.Call(() => app(context), () => library(context), (a, b) => Comparisons.Tensors(a, b)),
-        StringComparer.Ordinal);
+    private static readonly KindTable<IGraphOp> Registry = new(nameof(GraphOps), "Graph operation", "add it with GraphOps.Register",
+        (slot, app, library) => new GuardedOp(slot, app, library), StringComparer.Ordinal);
 
     // Idrak's operations (the element-wise and tensor operations ONNX names) are registered before the first use.
     static GraphOps() => Overrides.AsLibraryDefaults(LibraryGraphOps.RegisterAll);   // the built-in operations, on first use
 
     /// <summary>
-    /// Registers the graph operation <paramref name="name"/>; under a built-in name it overrides the library's, which stays
-    /// behind it (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
+    /// Registers <paramref name="op"/> under its <see cref="IKind.Name"/>; under a built-in name it overrides the library's,
+    /// which stays behind it (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
     /// </summary>
+    /// <exception cref="ArgumentException">The name is one of the structural operations of <c>GraphModule</c>.</exception>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
+    public static void Register(IGraphOp op)
+    {
+        ArgumentNullException.ThrowIfNull(op);
+        ThrowIfCore(op.Name);
+        Registry.Register(op, System.Reflection.Assembly.GetCallingAssembly());
+    }
+
+    /// <summary>Registers the operation <paramref name="name"/> computed by <paramref name="op"/> (made into an <see cref="IGraphOp"/>; see <see cref="Register(IGraphOp)"/>).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string name, GraphOp op)
     {
         ArgumentException.ThrowIfNullOrEmpty(name);
         ArgumentNullException.ThrowIfNull(op);
+        ThrowIfCore(name);
+        Registry.Slots.Register(name, new FunctionOp(name, op), System.Reflection.Assembly.GetCallingAssembly(), op);
+    }
+
+    private static void ThrowIfCore(string name)
+    {
         if (Core.Contains(name))
         {
             throw new ArgumentException($"'{name}' is a structural operation of GraphModule and cannot be replaced.", nameof(name));
         }
-
-        Registry.Register(name, op, System.Reflection.Assembly.GetCallingAssembly());
     }
 
     /// <summary>Removes the app's graph operation <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The operation names a graph node can use: the structural ones and the registered ones.</summary>
-    public static IReadOnlyCollection<string> Names => [.. Core, .. Registry.Keys];
+    public static IReadOnlyCollection<string> Names => [.. Core, .. Registry.Names];
 
     /// <summary>The operation registered as <paramref name="name"/>.</summary>
-    public static GraphOp Get(string name) =>
+    public static IGraphOp Get(ReadOnlySpan<char> name) =>
         TryGet(name) ?? throw new NotSupportedException($"No graph operation '{name}' is registered ({string.Join(", ", Names)}); add it with GraphOps.Register.");
 
     /// <summary>The operation registered as <paramref name="name"/>, or null.</summary>
-    public static GraphOp? TryGet(string name) => Registry.Find(name);
+    public static IGraphOp? TryGet(ReadOnlySpan<char> name) => Registry.Find(name);
 
     /// <summary>The library's operation <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static GraphOp? Default(string name) => Registry.Default(name);
+    public static IGraphOp? Default(string name) => Registry.Default(name);
 
     /// <summary>Who registered the operation <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
@@ -119,8 +140,27 @@ public static class GraphOps
     /// <summary>What happens when the app's operation <paramref name="name"/> fails (<see cref="SlotPolicy.Throw"/> unless set: the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the library's).</summary>
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(name, policy, shadowRate);
 
+    // An operation from a function.
+    private sealed class FunctionOp(string name, GraphOp op) : IGraphOp
+    {
+        public string Name => name;
+
+        public string Summary => name;
+
+        public Tensor Run(GraphOpContext context) => op(context);
+    }
+
+    private sealed class GuardedOp(Slot slot, IGraphOp app, IGraphOp library) : IGraphOp
+    {
+        public string Name => app.Name;
+
+        public string Summary => app.Summary;
+
+        public Tensor Run(GraphOpContext context) => slot.Call(() => app.Run(context), () => library.Run(context), (a, b) => Comparisons.Tensors(a, b));
+    }
+
     /// <summary>Whether <paramref name="name"/> is an operation graphs can use: a structural one of GraphModule or a registered one.</summary>
-    public static bool Contains(string name) => Core.Contains(name) || TryGet(name) is not null;
+    public static bool Contains(string name) => Core.Contains(name) || Registry.Contains(name);
 }
 
 /// <summary>

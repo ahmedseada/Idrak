@@ -230,12 +230,16 @@ public sealed record DecoderSpec
 
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Module, DecoderSpec> Specs = [];
 
-    /// <summary>The spec <paramref name="model"/> was built from (see <see cref="Describe"/>), or null.</summary>
-    public static DecoderSpec? Of(Module model) => Specs.TryGetValue(model, out var spec) ? spec : null;
+    /// <summary>
+    /// The spec <paramref name="model"/> was built from, or null: its own (<see cref="IDescribedModel.Spec"/>) when it
+    /// describes itself, else the one a build recorded for it (see <see cref="Describe"/>).
+    /// </summary>
+    public static DecoderSpec? Of(Module model) => model is IDescribedModel described ? described.Spec : Specs.TryGetValue(model, out var spec) ? spec : null;
 
     /// <summary>
     /// Records that <paramref name="model"/> is the network this spec describes, so <see cref="Of"/> finds it (the inference
-    /// engine reads the model's sizes from it). Building a spec records it; a family that builds its own network may too.
+    /// engine reads the model's sizes from it). Building a spec records it for the network it builds (a library container
+    /// that cannot describe itself); a family's own network implements <see cref="IDescribedModel"/> instead.
     /// </summary>
     public void Describe(Module model)
     {
@@ -381,4 +385,18 @@ public sealed record DecoderSpec
 
     /// <summary>Whether <paramref name="json"/> is a decoder description.</summary>
     public static bool IsDescription(JsonObject json) => (string?)json["format"] == Format;
+}
+
+/// <summary>
+/// A network that says what it is: the architecture it was built as and the <see cref="DecoderSpec"/> it follows, which
+/// the inference engine, generation and tools read the model's sizes from (<see cref="DecoderSpec.Of"/>). A family that
+/// builds its own network implements it on the network's module; a network built from a spec is described by the build.
+/// </summary>
+public interface IDescribedModel
+{
+    /// <summary>The architecture the network was built as: its registered name (config.json's "architectures"), or the family's own.</summary>
+    string Architecture { get; }
+
+    /// <summary>The spec the network follows: its sizes (vocabulary, width, layers, heads, context length) and layout.</summary>
+    DecoderSpec Spec { get; }
 }

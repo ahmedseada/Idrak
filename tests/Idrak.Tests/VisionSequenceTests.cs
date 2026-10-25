@@ -200,9 +200,9 @@ internal static partial class Tests
         Check(CtcDecoders.Names.Contains(CtcDecoders.Greedy) && CtcDecoders.Names.Contains(CtcDecoders.Beam), "built-in decoders");
         try
         {
-            CtcDecoders.Register("first-class", (values, n, k, _) => [new CtcHypothesis([1], 0f)]);
+            CtcDecoders.Register(TestKinds.CtcDecoder("first-class", (values, n, k, _) => [new CtcHypothesis([1], 0f)]));
             Check(CtcDecoders.Decode(logProbs, steps, classes, "first-class")[0].Labels is [1], "an app's decoder");
-            CtcDecoders.Register(CtcDecoders.Greedy, (_, _, _, _) => throw new InvalidOperationException("broken"));
+            CtcDecoders.Register(TestKinds.CtcDecoder(CtcDecoders.Greedy, (_, _, _, _) => throw new InvalidOperationException("broken")));
             Check(CtcDecoders.Origin(CtcDecoders.Greedy) != Overrides.Library && CtcDecoders.Default(CtcDecoders.Greedy) is not null, "replaced greedy");
             CtcDecoders.SetPolicy(CtcDecoders.Greedy, SlotPolicy.FallBack);
             Check(CtcDecoders.Decode(rows, path.Length, 3)[0].Labels.SequenceEqual([1, 2, 1, 2]), "falls back to the library's greedy");

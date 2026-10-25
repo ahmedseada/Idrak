@@ -16,47 +16,41 @@ namespace Idrak.Abstraction.Data;
 /// (uint16, int32 or uint32).</item>
 /// <item><c>npy</c>: <c>NpySource</c> (Idrak); options <c>targets</c> (a second .npy file), <c>classes</c>.</item>
 /// </list>
-/// Add your own with <see cref="Register"/> (Idrak.Data offers <c>TableSamples.Factory</c> for JSON Lines, Parquet
+/// Add your own with <see cref="Register"/> (Idrak.Data offers <c>TableSamples.Kind</c> for JSON Lines, Parquet
 /// and CSV columns).
 /// </summary>
 public static class SampleSources
 {
     // Opening a source falls back when it fails; under Shadow both open the data and agree when their sizes and shapes do.
-    private static readonly SlotTable<string, SampleSourceFactory> Registry = new(nameof(SampleSources),
-        (slot, app, library) => (path, options) => slot.Call(() => app(path, options), () => library(path, options), (a, b) => Comparisons.Exact(Shape(a), Shape(b))),
-        StringComparer.OrdinalIgnoreCase);
+    private static readonly KindTable<ISampleSourceKind> Registry = new(nameof(SampleSources), "Sample source", "add it with SampleSources.Register",
+        (slot, app, library) => new GuardedKind(slot, app, library), StringComparer.OrdinalIgnoreCase);
 
     // The packages' built-in sources (Idrak's csv, tokens and npy, Idrak.Imaging's images), registered before the first use.
     static SampleSources() => LibraryDefaults.Ensure(typeof(SampleSources));
 
     /// <summary>
-    /// Registers the source <paramref name="name"/> (names ignore case); under a built-in name it overrides the library's,
-    /// which stays behind it (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
+    /// Registers <paramref name="kind"/> under its <see cref="IKind.Name"/> (names ignore case); under a built-in name it
+    /// overrides the library's, which stays behind it (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string name, SampleSourceFactory factory)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ArgumentNullException.ThrowIfNull(factory);
-        Registry.Register(name, factory, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(ISampleSourceKind kind) => Registry.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's source <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered source names.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
+    public static IReadOnlyCollection<string> Names => Registry.Names;
 
     /// <summary>Whether a source is registered as <paramref name="name"/>.</summary>
-    public static bool Contains(string name) => Registry.Contains(name);
+    public static bool Contains(ReadOnlySpan<char> name) => Registry.Contains(name);
 
-    /// <summary>The factory registered as <paramref name="name"/> (any case).</summary>
-    public static SampleSourceFactory Get(string name) =>
-        Registry.TryGet(name, out var factory) ? factory
-            : throw new NotSupportedException($"No sample source '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with SampleSources.Register.");
+    /// <summary>The source kind registered as <paramref name="name"/> (any case).</summary>
+    public static ISampleSourceKind Get(ReadOnlySpan<char> name) =>
+        Registry.TryGet(name, out var kind) ? kind
+            : throw new NotSupportedException($"No sample source '{name}' is registered ({string.Join(", ", Registry.Names)}); add it with SampleSources.Register.");
 
-    /// <summary>The library's factory <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static SampleSourceFactory? Default(string name) => Registry.Default(name);
+    /// <summary>The library's source kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static ISampleSourceKind? Default(string name) => Registry.Default(name);
 
     /// <summary>Who registered the source <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
@@ -68,7 +62,19 @@ public static class SampleSources
         $"{source.Count} samples of [{string.Join(", ", source.FeatureShape)}] -> [{string.Join(", ", source.TargetShape)}]";
 
     /// <summary>Opens <paramref name="path"/> with the source registered as <paramref name="name"/>.</summary>
-    public static ISampleSource Open(string name, string path, IReadOnlyDictionary<string, string>? options = null) =>
-        Get(name)(path, options is null ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, string>(options, StringComparer.OrdinalIgnoreCase));
+    public static ISampleSource Open(ReadOnlySpan<char> name, string path, IReadOnlyDictionary<string, string>? options = null) =>
+        Get(name).Create(new SampleSourceRequest(path, options is null ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, string>(options, StringComparer.OrdinalIgnoreCase)));
+
+    private sealed class GuardedKind(Slot slot, ISampleSourceKind app, ISampleSourceKind library) : ISampleSourceKind
+    {
+        public string Name => app.Name;
+
+        public string Summary => app.Summary;
+
+        public IReadOnlySet<string> Keys => app.Keys;
+
+        public ISampleSource Create(SampleSourceRequest request) =>
+            slot.Call(() => app.Create(request), () => library.Create(request), (a, b) => Comparisons.Exact(Shape(a), Shape(b)));
+    }
 }

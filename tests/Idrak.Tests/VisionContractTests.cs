@@ -231,7 +231,7 @@ internal static partial class Tests
             Check(e.Message.Contains("2 blocks", StringComparison.Ordinal) && e.Message.Contains("Join", StringComparison.Ordinal), e.Message);
         }
 
-        var views = new ImageTokenFormat("views", image, image, before: "[", after: "]") { Join = blocks => "whole " + blocks[0] + " parts " + string.Join(" ", blocks.Skip(1)) };
+        var views = new ViewsFormat(image);
         string several = views.Expand("A <image>, <image>.", [[new ImageTokenLayout(1), new ImageTokenLayout(2), new ImageTokenLayout(1)], [new ImageTokenLayout(2)]], tokenizer);
         Check(several == "A whole [<image>] parts [<image><image>] [<image>], [<image><image>].", $"several blocks joined: {several}");
         Check(views.Block(new ImageTokenLayout(3), tokenizer) == "[<image><image><image>]", "one block's text");
@@ -313,5 +313,11 @@ internal static partial class Tests
         }
 
         Check(VisionFamilies.For("Gemma3ForCausalLM", new System.Text.Json.Nodes.JsonObject()) is null, "a text checkpoint needs no vision family");
+    }
+
+    // Views of an image joined as "whole … parts …".
+    private sealed class ViewsFormat(int image) : ImageTokenFormat("views", image, image, before: "[", after: "]"), IImageBlocksJoin
+    {
+        public string Join(IReadOnlyList<string> blocks) => "whole " + blocks[0] + " parts " + string.Join(" ", blocks.Skip(1));
     }
 }

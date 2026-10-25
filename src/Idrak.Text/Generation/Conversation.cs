@@ -169,7 +169,7 @@ public sealed class ConversationBuilder
         return this;
     }
 
-    /// <summary>Uses a ready-made registry (cannot be combined with <see cref="Tool(Abstraction.Generation.Tool)"/>).</summary>
+    /// <summary>Uses a ready-made registry (cannot be combined with <see cref="Tool(ITool)"/>).</summary>
     public ConversationBuilder Tools(IToolRegistry tools)
     {
         _tools = tools;
@@ -177,7 +177,7 @@ public sealed class ConversationBuilder
     }
 
     /// <summary>Adds one tool (collected into a registry without rules).</summary>
-    public ConversationBuilder Tool(Tool tool)
+    public ConversationBuilder Tool(ITool tool)
     {
         (_toolBuilder ??= ToolRegistry.Create()).Add(tool);
         return this;

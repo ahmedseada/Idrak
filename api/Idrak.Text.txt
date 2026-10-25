@@ -607,7 +607,7 @@ public sealed class Idrak.Text.FineTuningSession : System.IDisposable
   public Idrak.Models.PretrainedModel Model { get; }
   public Idrak.Text.FineTuningOptions Options { get; }
   public Idrak.Text.FineTuningStepStats Step(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, Idrak.Text.FineTuningLoss? loss = null, System.Threading.CancellationToken cancellationToken = default)
-  public Idrak.Text.Generation.ChatGenerator Generator(Idrak.Abstraction.Generation.KeyValueLayout cacheLayout, int? contextLength = null)
+  public Idrak.Text.Generation.ChatGenerator Generator(Idrak.Abstraction.Generation.IKeyValueLayout cacheLayout, int? contextLength = null)
   public Idrak.Text.Generation.ChatGenerator Generator(int? contextLength = null, Idrak.Abstraction.Generation.KeyValueFormat cacheFormat = (Idrak.Abstraction.Generation.KeyValueFormat)0)
   public bool SaveOnce(string folder)
   public float LearningRate { get; }
@@ -645,9 +645,9 @@ public enum Idrak.Text.Generation.BatchFit : int
   Split = 0
 
 public sealed class Idrak.Text.Generation.ChatGenerator : Idrak.Abstraction.Generation.IChatModel
-  public ChatGenerator(Idrak.Generation.TextGenerator generator, Idrak.Abstraction.Generation.ChatTemplate? template = null)
+  public ChatGenerator(Idrak.Generation.TextGenerator generator, Idrak.Abstraction.Generation.IChatTemplate? template = null)
   public Idrak.Abstraction.Generation.ChatChunk Chat(Idrak.Abstraction.Generation.ChatRequest request, System.Threading.CancellationToken cancellationToken = default)
-  public Idrak.Abstraction.Generation.ChatTemplate Template { get; }
+  public Idrak.Abstraction.Generation.IChatTemplate Template { get; }
   public Idrak.Generation.TextGenerator Generator { get; }
   public Idrak.Text.Generation.ChatImages? Images { get; init; }
   public System.Collections.Generic.IAsyncEnumerable<(int, Idrak.Abstraction.Generation.ChatChunk)> StreamBatchAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatRequest> requests, System.Threading.CancellationToken cancellationToken = default)
@@ -773,7 +773,7 @@ public sealed class Idrak.Text.Generation.ConversationBuilder
   public Idrak.Text.Generation.ConversationBuilder Options(Idrak.Abstraction.Generation.GenerationOptions options)
   public Idrak.Text.Generation.ConversationBuilder System(string text)
   public Idrak.Text.Generation.ConversationBuilder Think(bool? think)
-  public Idrak.Text.Generation.ConversationBuilder Tool(Idrak.Abstraction.Generation.Tool tool)
+  public Idrak.Text.Generation.ConversationBuilder Tool(Idrak.Abstraction.Generation.ITool tool)
   public Idrak.Text.Generation.ConversationBuilder Tool(string name, string description, System.Text.Json.Nodes.JsonNode parameters, System.Func<System.Text.Json.Nodes.JsonObject, System.Threading.CancellationToken, System.Threading.Tasks.Task<string>> invoke)
   public Idrak.Text.Generation.ConversationBuilder Tools(Idrak.Abstraction.Generation.IToolRegistry tools)
 
@@ -817,7 +817,7 @@ public sealed record Idrak.Text.Generation.ImageReadRequest : System.IEquatable<
 
 public sealed class Idrak.Text.Generation.ImageReader : System.IDisposable
   public Idrak.Abstraction.Data.ImageData Prepared(Idrak.Text.Generation.ImageReadRequest request)
-  public Idrak.Abstraction.Generation.PretrainedVision Vision { get; }
+  public Idrak.Abstraction.Generation.IPretrainedVision Vision { get; }
   public Idrak.Models.PretrainedModel Model { get; }
   public Idrak.Text.Generation.ImageReaderOptions Options { get; }
   public Idrak.Text.Generation.ImageReading Read(Idrak.Text.Generation.ImageReadRequest request, System.Action<string>? onText = null, System.Threading.CancellationToken cancellationToken = default)
@@ -881,7 +881,7 @@ public sealed class Idrak.Text.Inference.GenerativeModelBuilder
   public Idrak.Text.Inference.GenerativeModelBuilder KeepAlive(System.TimeSpan? idle)
   public Idrak.Text.Inference.GenerativeModelBuilder Parts(System.Collections.Generic.IReadOnlyCollection<string> kinds, System.Func<Idrak.Generation.TextGenerator, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource>> parts)
   public Idrak.Text.Inference.GenerativeModelBuilder QueueLimit(int waiting)
-  public Idrak.Text.Inference.GenerativeModelBuilder Template(Idrak.Abstraction.Generation.ChatTemplate template)
+  public Idrak.Text.Inference.GenerativeModelBuilder Template(Idrak.Abstraction.Generation.IChatTemplate template)
   public Idrak.Text.Inference.GenerativeModelBuilder Timeout(System.TimeSpan limit)
   public Idrak.Text.Inference.GenerativeModelBuilder Tools(Idrak.Abstraction.Generation.IToolRegistry tools)
   public Idrak.Text.Inference.GenerativeModelBuilder WarmUp(string prompt)
@@ -913,19 +913,21 @@ public sealed class Idrak.Text.JinjaChatTemplate : Idrak.Abstraction.Generation.
   public override System.Collections.Generic.IReadOnlyList<string> StopSequences { get; }
   public override System.Collections.Generic.IReadOnlySet<string> PartKinds { get; }
   public override string AddedPrefix { get; }
-  public override string Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think)
   public override string ToolCallFormatName { get; }
+  public override void Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think, System.Text.StringBuilder prompt)
   public static Idrak.Text.JinjaChatTemplate? Load(string folder, Idrak.Abstraction.Generation.ITokenizer? tokenizer = null)
   public string BosToken { get; }
   public string EosToken { get; }
   public string Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think, bool addGenerationPrompt)
   public string Source { get; }
   public string? CallFormatName { get; init; }
+  public void Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think, bool addGenerationPrompt, System.Text.StringBuilder prompt)
 
 public sealed class Idrak.Text.JinjaTemplate
   nested Idrak.Text.JinjaTemplate.Undefined (below)
   public static Idrak.Text.JinjaTemplate Parse(string source)
   public string Render(System.Collections.Generic.IReadOnlyDictionary<string, object?> variables)
+  public void Render(System.Collections.Generic.IReadOnlyDictionary<string, object?> variables, System.Text.StringBuilder output)
 
 public sealed class Idrak.Text.JinjaTemplate.Undefined
   public override string ToString()
@@ -946,10 +948,10 @@ public sealed record Idrak.Text.PreferencePair : System.IEquatable<Idrak.Text.Pr
   public PreferencePair(Idrak.Text.Abstractions.TrainingSequence Chosen, Idrak.Text.Abstractions.TrainingSequence Rejected)
 
 public static class Idrak.Text.PretrainedModelExtensions
+  public static Idrak.Generation.TextGenerator CreateGenerator(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.IKeyValueLayout cacheLayout, int? contextLength = null)
   public static Idrak.Generation.TextGenerator CreateGenerator(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.KeyValueFormat cacheFormat = (Idrak.Abstraction.Generation.KeyValueFormat)0, int? contextLength = null)
-  public static Idrak.Generation.TextGenerator CreateGenerator(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.KeyValueLayout cacheLayout, int? contextLength = null)
+  public static Idrak.Text.Generation.ChatGenerator CreateChat(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.IKeyValueLayout cacheLayout, int? contextLength = null)
   public static Idrak.Text.Generation.ChatGenerator CreateChat(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.KeyValueFormat cacheFormat = (Idrak.Abstraction.Generation.KeyValueFormat)0, int? contextLength = null)
-  public static Idrak.Text.Generation.ChatGenerator CreateChat(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.KeyValueLayout cacheLayout, int? contextLength = null)
   public static Idrak.Text.JinjaChatTemplate? get_JinjaTemplate(Idrak.Models.PretrainedModel model)
 
 public static class Idrak.Text.Pretrainer
@@ -1536,9 +1538,9 @@ public sealed class Idrak.Text.TuningVision : System.IDisposable
   public Idrak.Abstraction.Generation.IFeatureCache Cache { get; }
   public Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
   public Idrak.Abstraction.Generation.IImagePromptFormat Format { get; }
+  public Idrak.Abstraction.Generation.IPretrainedVision Vision { get; }
   public Idrak.Abstraction.Generation.IVisionEncoder Encoder { get; }
   public Idrak.Abstraction.Generation.IVisionTuningPart? Tuning { get; }
-  public Idrak.Abstraction.Generation.PretrainedVision Vision { get; }
   public Idrak.Models.PretrainedModel Model { get; }
   public Idrak.Text.TuningImages Images { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout> Blocks(Idrak.Abstraction.Generation.ChatImage image, Idrak.Text.TuningImages? preparation = null)

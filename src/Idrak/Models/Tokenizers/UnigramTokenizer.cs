@@ -1100,7 +1100,7 @@ internal sealed class UnigramTokenizer : IPretrainedTokenizer, ITokenizerCompani
     {
         if (TokenizerComponents.FindDecoder((string?)spec["type"]) is { } create)
         {
-            var part = create(spec);
+            var part = create.Create(spec);
             return tokens => part.Decode(tokens) is var result && result is List<string> list ? list : [.. result];
         }
 

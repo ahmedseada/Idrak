@@ -178,12 +178,18 @@ public static class VisionFamilyPluginTests
     {
         public string Name => Architecture;
 
-        public PretrainedVision? Read(VisionCheckpoint checkpoint)
+        public IPretrainedVision? Read(VisionCheckpoint checkpoint)
         {
             int imageToken = (int?)checkpoint.Config["image_token_index"] ?? throw new InvalidDataException("no image_token_index");
             int width = PretrainedArchitectures.Get(checkpoint.Architecture).Spec(checkpoint.Config, []).Dim;
-            return new ToyVision(width, new ImageTokenFormat("outside-toy", imageToken, imageToken) { Join = blocks => string.Join(" and ", blocks) });
+            return new ToyVision(width, new ToyPromptFormat(imageToken));
         }
+    }
+
+    // One image token; an image of several blocks has " and " between them.
+    private sealed class ToyPromptFormat(int imageToken) : ImageTokenFormat("outside-toy", imageToken, imageToken), IImageBlocksJoin
+    {
+        public string Join(IReadOnlyList<string> blocks) => string.Join(" and ", blocks);
     }
 
     private sealed class ToyVision(int width, IImagePromptFormat format) : PretrainedVision
@@ -198,7 +204,7 @@ public static class VisionFamilyPluginTests
 
         public override IReadOnlyCollection<string> StoredTensors => [];
 
-        public override IReadOnlyCollection<string> VisionOptionKeys => [ToyEncoder.Halves];
+        public override IReadOnlySet<string> VisionOptionKeys { get; } = new OptionKeys(ToyEncoder.Halves);
 
         public override IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null) => new ToyEncoder(width, options?.Device ?? Device.Default, options?.VisionOptions);
     }

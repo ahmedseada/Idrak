@@ -61,7 +61,7 @@ internal static partial class Tests
             "a store name with an owner is the store's, an owner/name id the Hub's");
         Check(Idrak.Abstraction.Generation.ChatTemplates.Names.SequenceEqual(["jinja"]), $"chat-template readers: {string.Join(", ", Idrak.Abstraction.Generation.ChatTemplates.Names)}");
         string missing = Path.Combine(Path.GetTempPath(), "idrak-no-model-" + Guid.NewGuid().ToString("N"));
-        Idrak.Abstraction.Generation.ChatTemplates.Register("test-chatml", (folder, _) => folder == missing ? new ChatMLTemplate() : null);
+        Idrak.Abstraction.Generation.ChatTemplates.Register(TestKinds.ChatTemplateReader("test-chatml", request => request.Folder == missing ? new ChatMLTemplate() : null));
         try
         {
             Check(Idrak.Abstraction.Generation.ChatTemplates.Load(missing) is ChatMLTemplate && Idrak.Abstraction.Generation.ChatTemplates.Load(missing + "-other") is null,
@@ -441,9 +441,9 @@ internal static partial class Tests
             Check(ex.Message.Contains("RegisterPreTokenizer", StringComparison.Ordinal), ex.Message);
         }
 
-        TokenizerComponents.RegisterNormalizer("TestNoDashes", n => new LambdaNormalizer(s => s.Replace((string?)n["remove"] ?? "-", "", StringComparison.Ordinal)));
-        TokenizerComponents.RegisterPreTokenizer("TestCharacters", p => new CharacterSplitter((string)p["keep"]!));
-        TokenizerComponents.RegisterDecoder("TestBrackets", _ => new Brackets());
+        TokenizerComponents.RegisterNormalizer(TestKinds.Normalizer("TestNoDashes", n => new LambdaNormalizer(s => s.Replace((string?)n["remove"] ?? "-", "", StringComparison.Ordinal))));
+        TokenizerComponents.RegisterPreTokenizer(TestKinds.PreTokenizer("TestCharacters", p => new CharacterSplitter((string)p["keep"]!)));
+        TokenizerComponents.RegisterDecoder(TestKinds.Decoder("TestBrackets", _ => new Brackets()));
         try
         {
             Check(TokenizerComponents.NormalizerTypes.Contains("TestNoDashes") && TokenizerComponents.PreTokenizerTypes.Contains("TestCharacters")
@@ -465,7 +465,7 @@ internal static partial class Tests
             // A registered built-in name replaces the built-in, until it is removed.
             var lower = Json(Type("Lowercase"), null, null);
             Check(BpeTokenizer.FromJson(lower).Encode("AB").SequenceEqual([6]), "built-in Lowercase");
-            TokenizerComponents.RegisterNormalizer("Lowercase", _ => new LambdaNormalizer(s => s));
+            TokenizerComponents.RegisterNormalizer(TestKinds.Normalizer("Lowercase", _ => new LambdaNormalizer(s => s)));
             Check(BpeTokenizer.FromJson(lower).Encode("AB").SequenceEqual([4, 5]), "Lowercase replaced");
             Check(TokenizerComponents.UnregisterNormalizer("Lowercase") && !TokenizerComponents.UnregisterNormalizer("Lowercase")
                   && TokenizerComponents.NormalizerTypes.Contains("Lowercase") && BpeTokenizer.FromJson(lower).Encode("AB").SequenceEqual([6]), "the built-in back");

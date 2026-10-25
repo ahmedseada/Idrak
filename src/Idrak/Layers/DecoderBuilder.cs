@@ -70,7 +70,7 @@ public static class DecoderBuilder
             // in the options is looked up before anything is read.
             PackedFormat? packed = options.Int8 ? PackedFormat.Int8 : options.Int4 ? PackedFormat.Int4 : options.BFloat16 ? PackedFormat.BFloat16 : null;
             string? packedName = options.PackedFormatName;
-            var factory = packedName is null ? null : PackedWeight.Factory(packedName);
+            var factory = packedName is null ? null : PackedWeightFormats.Get(packedName);
             // The head's own format (a bfloat16 head beside int8 or int4 projections keeps the checkpoint's scores).
             string? headName = options.HeadFormatName;
             if (headName is not null && packed is null && factory is null)
@@ -78,13 +78,13 @@ public static class DecoderBuilder
                 throw new ArgumentException($"HeadFormatName '{headName}' packs the head of a build whose projections are packed (Int8, Int4, BFloat16 or PackedFormatName); this build keeps float32 weights.", nameof(options));
             }
 
-            var headFactory = headName is null ? null : PackedWeight.Factory(headName);
+            var headFactory = headName is null ? null : PackedWeightFormats.Get(headName);
 
             // Whether weights packed as `format` (by name) are the library's bfloat16 ones: those are read through
             // IWeightSource.ReadBFloat16, which a bfloat16 checkpoint answers with its stored bits (the same weights, with
             // no float32 copy of the matrix). A format an app registered under that name packs float values itself.
             static bool LibraryBFloat16(string format) =>
-                string.Equals(format, "bfloat16", StringComparison.OrdinalIgnoreCase) && PackedWeight.Origin(format) == Overrides.Library;
+                string.Equals(format, "bfloat16", StringComparison.OrdinalIgnoreCase) && PackedWeightFormats.Origin(format) == Overrides.Library;
             bool headBFloat16 = headName is not null ? LibraryBFloat16(headName) : packedName is not null ? LibraryBFloat16(packedName) : packed == PackedFormat.BFloat16;
             bool projectionsBFloat16 = packedName is not null ? LibraryBFloat16(packedName) : packed == PackedFormat.BFloat16;
 
@@ -106,9 +106,9 @@ public static class DecoderBuilder
                     return Linear.FromPacked(bits ?? throw new InvalidDataException($"The weights have no '{(tiedTable is not null ? "embed" : name)}.weight'."), b);
                 }
 
-                return isHead && headFactory is not null ? Linear.FromPacked(PackedWeight.Pack(headFactory, headName!, Values(), inputs, outputs, device), b)
-                    : factory is not null ? Linear.FromPacked(PackedWeight.Pack(factory, packedName!, Values(), inputs, outputs, device), b)
-                    : packed is { } format ? Linear.FromPacked(PackedWeight.FromValues(format, Values(), inputs, outputs, device), b)
+                return isHead && headFactory is not null ? Linear.FromPacked(PackedWeightFormats.Pack(headFactory, Values(), inputs, outputs, device), b)
+                    : factory is not null ? Linear.FromPacked(PackedWeightFormats.Pack(factory, Values(), inputs, outputs, device), b)
+                    : packed is { } format ? Linear.FromPacked(PackedWeightFormats.Pack(format, Values(), inputs, outputs, device), b)
                     : Linear.FromWeights(Idrak.Abstraction.Tensor.Persistent(Values(), shape, device, requiresGrad: true), b);
             }
 

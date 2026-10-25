@@ -8,10 +8,23 @@ using Idrak.Layers.Abstractions;
 namespace Idrak.Onnx.Abstractions;
 
 /// <summary>
+/// How nodes of one ONNX operator are imported, registered by its <see cref="IKind.Name"/> (the operator type, "Relu")
+/// in <see cref="OnnxImportOps"/>. The import counterpart of <see cref="IOnnxExportOp"/>.
+/// </summary>
+public interface IOnnxImportOp : IKind
+{
+    /// <summary>
+    /// Translates one node of a chain into network steps (<see cref="OnnxImportContext.Add"/>) and returns the value the
+    /// chain continues from, usually <see cref="OnnxImportContext.Add"/>'s result (or <see cref="OnnxImportContext.Output"/>
+    /// for a node that is skipped).
+    /// </summary>
+    string Translate(OnnxImportContext context);
+}
+
+/// <summary>
 /// Translates one ONNX node of a chain into network steps (<see cref="OnnxImportContext.Add"/>) and returns the value
-/// the chain continues from, usually <see cref="OnnxImportContext.Add"/>'s result (or <see cref="OnnxImportContext.Output"/>
-/// for a node that is skipped). The import counterpart of <see cref="OnnxTranslator{T}"/>; register it with
-/// <see cref="OnnxImportOps.Register"/>.
+/// the chain continues from: a translator as a function (see <see cref="OnnxImportOps.Register(string, OnnxImportTranslator)"/>,
+/// which makes it an <see cref="IOnnxImportOp"/>).
 /// </summary>
 public delegate string OnnxImportTranslator(OnnxImportContext context);
 
@@ -98,7 +111,7 @@ public abstract class OnnxImportContext
 /// <summary>
 /// The ONNX operators the importer (<c>OnnxImport</c> in Idrak) turns into Idrak layers one node at a time, by
 /// operator type. Idrak registers the built-in ones (Relu, Conv, BatchNormalization, Reshape, ...); add or replace
-/// one with <see cref="Register"/>. Patterns of several nodes (Linear, GELU, attention, transformer layers, LSTM and
+/// one with <see cref="Register(IOnnxImportOp)"/>. Patterns of several nodes (Linear, GELU, attention, transformer layers, LSTM and
 /// GRU) are matched before a node is looked up. A model that is not a chain of layers is imported as a graph: there the
 /// built-in operators become graph operations (<see cref="GraphOps"/>), and a translator you registered (a new operator
 /// or one replacing a built-in) runs as well, its network steps becoming layer nodes and its
@@ -106,36 +119,50 @@ public abstract class OnnxImportContext
 /// </summary>
 public static class OnnxImportOps
 {
-    private static readonly SlotTable<string, OnnxImportTranslator> Registry = new(nameof(OnnxImportOps), comparer: StringComparer.Ordinal,
+    private static readonly KindTable<IOnnxImportOp> Registry = new(nameof(OnnxImportOps), "ONNX import op", "add it with OnnxImportOps.Register", comparer: StringComparer.Ordinal,
         unguarded: "a translator adds steps to the imported network as it runs, and a half-run translator cannot be undone");
 
     static OnnxImportOps() => Overrides.AsLibraryDefaults(OnnxBuiltIns.RegisterImports);   // the built-in translators, on first use
 
-    /// <summary>Registers how to import nodes of the operator type <paramref name="opType"/>; under a built-in type it overrides the library's until <see cref="Unregister"/>.</summary>
+    /// <summary>Registers <paramref name="op"/> under its <see cref="IKind.Name"/> (the operator type); under a built-in type it overrides the library's until <see cref="Unregister"/>.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
+    public static void Register(IOnnxImportOp op) => Registry.Register(op, System.Reflection.Assembly.GetCallingAssembly());
+
+    /// <summary>Registers how to import nodes of the operator type <paramref name="opType"/> (made into an <see cref="IOnnxImportOp"/>; see <see cref="Register(IOnnxImportOp)"/>).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
     public static void Register(string opType, OnnxImportTranslator translate)
     {
         ArgumentException.ThrowIfNullOrEmpty(opType);
         ArgumentNullException.ThrowIfNull(translate);
-        Registry.Register(opType, translate, System.Reflection.Assembly.GetCallingAssembly());
+        Registry.Slots.Register(opType, new FunctionOp(opType, translate), System.Reflection.Assembly.GetCallingAssembly(), translate);
     }
 
     /// <summary>Removes the app's translator of <paramref name="opType"/> (a built-in type gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string opType) => Registry.Unregister(opType);
 
     /// <summary>The registered operator types.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
+    public static IReadOnlyCollection<string> Names => Registry.Names;
 
     /// <summary>The translator registered for <paramref name="opType"/>.</summary>
-    public static OnnxImportTranslator Get(string opType) =>
+    public static IOnnxImportOp Get(ReadOnlySpan<char> opType) =>
         Find(opType) ?? throw new NotSupportedException($"No ONNX import op '{opType}' is registered ({string.Join(", ", Names)}); add it with OnnxImportOps.Register.");
 
     /// <summary>The translator registered for <paramref name="opType"/>, or null.</summary>
-    public static OnnxImportTranslator? Find(string opType) => Registry.Find(opType);
+    public static IOnnxImportOp? Find(ReadOnlySpan<char> opType) => Registry.Find(opType);
 
     /// <summary>The library's translator of <paramref name="opType"/>, whatever an app registered over it (for an app's to delegate to); null when the library has none.</summary>
-    public static OnnxImportTranslator? Default(string opType) => Registry.Default(opType);
+    public static IOnnxImportOp? Default(string opType) => Registry.Default(opType);
 
     /// <summary>Who registered the translator of <paramref name="opType"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string opType) => Registry.Origin(opType);
+
+    // A translator from a function.
+    private sealed class FunctionOp(string name, OnnxImportTranslator translate) : IOnnxImportOp
+    {
+        public string Name => name;
+
+        public string Summary => name;
+
+        public string Translate(OnnxImportContext context) => translate(context);
+    }
 }

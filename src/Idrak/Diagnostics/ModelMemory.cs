@@ -37,7 +37,7 @@ public static class ModelMemory
     {
         ArgumentNullException.ThrowIfNull(module);
         var counted = new HashSet<Storage>(ReferenceEqualityComparer.Instance);
-        var packed = new HashSet<PackedWeight>(ReferenceEqualityComparer.Instance);
+        var packed = new HashSet<IPackedWeight>(ReferenceEqualityComparer.Instance);
         long total = 0;
         foreach (var linear in module.Descendants().Prepend(module).OfType<Linear>())
         {
@@ -101,12 +101,12 @@ public static class ModelMemory
     /// <see cref="DecoderSpec.KvHeads"/> heads for the whole capacity (windowed layers too), plus per-row scales when
     /// the layout has them.
     /// </summary>
-    public static long KeyValueCacheBytes(DecoderSpec spec, int capacity, KeyValueLayout layout, int batch = 1)
+    public static long KeyValueCacheBytes(DecoderSpec spec, int capacity, IKeyValueLayout layout, int batch = 1)
     {
         ArgumentNullException.ThrowIfNull(spec);
         ArgumentNullException.ThrowIfNull(layout);
         long rows = (long)batch * spec.KvHeads * capacity;
-        long perLayer = 2 * rows * (layout.RowWidth(spec.HeadDim) + (layout.HasScales ? 1 : 0)) * 4;
+        long perLayer = 2 * rows * (layout.RowWidth(spec.HeadDim) + (layout is IScaledLayout ? 1 : 0)) * 4;
         return spec.Layers * perLayer;
     }
 
@@ -116,7 +116,7 @@ public static class ModelMemory
     /// note), and the key/value cache of <paramref name="capacity"/> positions in <paramref name="layout"/>
     /// (<see cref="KeyValueCacheBytes"/>). Storage shared between the decoder and the encoder is counted once.
     /// </summary>
-    public static IReadOnlyList<MemoryPart> Generation(Module decoder, DecoderSpec spec, int capacity, KeyValueLayout layout,
+    public static IReadOnlyList<MemoryPart> Generation(Module decoder, DecoderSpec spec, int capacity, IKeyValueLayout layout,
         IVisionEncoder? encoder = null, int batch = 1)
     {
         ArgumentNullException.ThrowIfNull(decoder);

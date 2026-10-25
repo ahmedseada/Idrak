@@ -415,7 +415,7 @@ public sealed class FineTuningSession : IDisposable
     /// <param name="cacheLayout">How its key/value cache stores keys and values while a reply is generated.</param>
     /// <param name="contextLength">Its context window (the model's, by default).</param>
     /// <exception cref="InvalidOperationException">The model has no chat template.</exception>
-    public ChatGenerator Generator(KeyValueLayout cacheLayout, int? contextLength = null)
+    public ChatGenerator Generator(IKeyValueLayout cacheLayout, int? contextLength = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(cacheLayout);

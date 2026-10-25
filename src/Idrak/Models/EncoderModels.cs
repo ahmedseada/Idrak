@@ -529,7 +529,7 @@ public sealed class PretrainedSeq2SeqModel : IDisposable
     /// (<see cref="EndsSource"/>).
     /// </summary>
     /// <exception cref="InvalidOperationException">No tokenizer is given and the folder has none.</exception>
-    public Seq2SeqGenerator CreateGenerator(ITokenizer? tokenizer = null, KeyValueLayout? cacheLayout = null) =>
+    public Seq2SeqGenerator CreateGenerator(ITokenizer? tokenizer = null, IKeyValueLayout? cacheLayout = null) =>
         new(Model, tokenizer ?? Tokenizer ?? throw new InvalidOperationException($"The model in {Folder} has no tokenizer: pass one."))
         {
             CacheLayout = cacheLayout,

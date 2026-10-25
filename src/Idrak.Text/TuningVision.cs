@@ -137,7 +137,7 @@ public sealed class TuningVision : IDisposable
     public PretrainedModel Model { get; }
 
     /// <summary>The model's vision part (its family's registration).</summary>
-    public PretrainedVision Vision { get; }
+    public IPretrainedVision Vision { get; }
 
     /// <summary>The family's encoder, on the model's device (owned: disposed with this).</summary>
     public IVisionEncoder Encoder { get; }

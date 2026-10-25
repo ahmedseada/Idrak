@@ -12,7 +12,7 @@ public static partial class DeviceCases
     private static readonly PackedFormat[] Formats = [PackedFormat.Int8, PackedFormat.Int4, PackedFormat.BFloat16];
 
     // y = x · w for packed weights, on the CPU (the reference of the fused products).
-    private static void PackedProduct(Backend cpu, PackedWeight weight, Storage x, Storage y, int m)
+    private static void PackedProduct(Backend cpu, IKernelPackedWeight weight, Storage x, Storage y, int m)
     {
         int k = weight.Rows, n = weight.Columns;
         switch (weight.Format)
@@ -36,7 +36,7 @@ public static partial class DeviceCases
         var w = c.Values(k * n, 0.5f);
         foreach (var format in Formats)
         {
-            using var weight = PackedWeight.FromValues(format, w, k, n, c.Device);
+            using var weight = PackedWeightFormats.Pack(format, w, k, n, c.Device);
             var scales = weight.ScaleValues?.Storage;
             foreach (int m in new[] { 1, c.Size(2, 8), c.Size(9, 40) })
             {
@@ -71,7 +71,7 @@ public static partial class DeviceCases
         int k = 8 * c.Size(1, 12), n = 2 * c.Size(1, 40);
         foreach (var format in Formats)
         {
-            using var weight = PackedWeight.FromValues(format, c.Values(k * n, 0.5f), k, n, c.Device);
+            using var weight = PackedWeightFormats.Pack(format, c.Values(k * n, 0.5f), k, n, c.Device);
             Storage packed = weight.PackedValues.Storage;
             Storage? scales = weight.ScaleValues?.Storage;
 
@@ -116,8 +116,8 @@ public static partial class DeviceCases
                     });
 
                 // Several products of one input, then a gate and up pair with its activation.
-                using var second = PackedWeight.FromValues(format, c.Values(k * n, 0.5f), k, n, c.Device);
-                PackedWeight[] weights = [weight, second];
+                using var second = PackedWeightFormats.Pack(format, c.Values(k * n, 0.5f), k, n, c.Device);
+                IKernelPackedWeight[] weights = [weight, second];
                 var products = weights.Select((p, i) => (Packed: p.PackedValues.Storage, Scales: p.ScaleValues?.Storage, Bias: i == 0 ? Random(c, n) : null, Output: c.Zeros(m * n), Columns: n)).ToArray();
                 c.Composed(Ops.PackedMatMulMany, cpu => cpu.PackedMatMulMany(format, input, m, k, products), cpu =>
                 {

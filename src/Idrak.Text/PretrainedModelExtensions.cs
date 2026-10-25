@@ -21,7 +21,7 @@ public static class PretrainedModelExtensions
         }
 
         /// <summary>A text generator for the model whose KV cache is stored by <paramref name="cacheLayout"/> (see <see cref="KeyValueLayouts"/>).</summary>
-        public TextGenerator CreateGenerator(KeyValueLayout cacheLayout, int? contextLength = null)
+        public TextGenerator CreateGenerator(IKeyValueLayout cacheLayout, int? contextLength = null)
         {
             ArgumentNullException.ThrowIfNull(cacheLayout);
             model.Network.Eval();
@@ -34,7 +34,7 @@ public static class PretrainedModelExtensions
             new(model.CreateGenerator(cacheFormat, contextLength), model.ChatTemplate ?? throw new InvalidOperationException("The model has no chat template."));
 
         /// <summary>A chat model using the model's own chat template, its KV cache stored by <paramref name="cacheLayout"/>.</summary>
-        public ChatGenerator CreateChat(KeyValueLayout cacheLayout, int? contextLength = null) =>
+        public ChatGenerator CreateChat(IKeyValueLayout cacheLayout, int? contextLength = null) =>
             new(model.CreateGenerator(cacheLayout, contextLength), model.ChatTemplate ?? throw new InvalidOperationException("The model has no chat template."));
 
         /// <summary>

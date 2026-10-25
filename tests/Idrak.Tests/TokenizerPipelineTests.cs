@@ -307,9 +307,9 @@ internal static partial class Tests
         using var output = new PreTokenizedText();
         try
         {
-            TokenizerComponents.RegisterNormalizer("TestUpper", spec => new UpperNormalizer());
-            TokenizerComponents.RegisterPreTokenizer("TestPairs", spec => new PairsPreTokenizer());
-            TokenizerComponents.RegisterPreTokenizer("TestEcho", spec => new EchoPreTokenizer());
+            TokenizerComponents.RegisterNormalizer(TestKinds.Normalizer("TestUpper", spec => new UpperNormalizer()));
+            TokenizerComponents.RegisterPreTokenizer(TestKinds.PreTokenizer("TestPairs", spec => new PairsPreTokenizer()));
+            TokenizerComponents.RegisterPreTokenizer(TestKinds.PreTokenizer("TestEcho", spec => new EchoPreTokenizer()));
             var pipeline = new TokenizerPipeline(JsonNode.Parse("""
                 {"normalizer": {"type": "TestUpper"}, "pre_tokenizer": {"type": "Sequence", "pretokenizers": [{"type": "WhitespaceSplit"}, {"type": "TestPairs"}]}}
                 """)!.AsObject());
@@ -343,10 +343,10 @@ internal static partial class Tests
         // The post-processor table: the built-in types (T2), an app's type registered, guarded and removed.
         Check(new[] { "TemplateProcessing", "BertProcessing", "RobertaProcessing", "ByteLevel", "Sequence" }.All(TokenizerComponents.PostProcessorTypes.Contains),
             $"the built-in post-processors (registered: {string.Join(", ", TokenizerComponents.PostProcessorTypes)})");
-        TokenizerComponents.RegisterPostProcessor("TestWrap", spec => new WrapPostProcessor((int)spec["id"]!));
+        TokenizerComponents.RegisterPostProcessor(TestKinds.PostProcessor("TestWrap", spec => new WrapPostProcessor((int)spec["id"]!)));
         try
         {
-            var processor = TokenizerComponents.FindPostProcessor("TestWrap")!(JsonNode.Parse("""{"type": "TestWrap", "id": 9}""")!.AsObject());
+            var processor = TokenizerComponents.FindPostProcessor("TestWrap")!.Create(JsonNode.Parse("""{"type": "TestWrap", "id": 9}""")!.AsObject());
             var single = TokenizerEncoding.Of([5, 6], [(0, 1), (1, 2)]);
             var wrapped = processor.Process(single, null, addSpecialTokens: true);
             Check(processor.AddedTokens(pair: false) == 2 && wrapped.Ids.SequenceEqual([9, 5, 6, 9]) && wrapped.SpecialTokensMask.SequenceEqual([1, 0, 0, 1]),

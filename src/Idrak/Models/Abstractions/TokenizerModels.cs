@@ -5,6 +5,17 @@ using System.Runtime.CompilerServices;
 
 namespace Idrak.Models.Abstractions;
 
+/// <summary>What a tokenizer model is built from (<see cref="ITokenizerModelKind"/>): what a reader found, and the read's settings.</summary>
+/// <param name="Definition">The tokenizer's definition (its tables, components and special tokens).</param>
+/// <param name="Options">The read's settings.</param>
+public sealed record TokenizerModelRequest(TokenizerDefinition Definition, TokenizerOptions Options);
+
+/// <summary>
+/// A tokenizer model, registered by its <see cref="IKind.Name"/> (the type a tokenizer.json names, <c>model.type</c>) in
+/// <see cref="TokenizerModels"/>: the tokenizer built from a definition (<see cref="IKind{TRequest, T}.Create"/>).
+/// </summary>
+public interface ITokenizerModelKind : IKind<TokenizerModelRequest, IPretrainedTokenizer>;
+
 /// <summary>
 /// The tokenizer models, by the type a tokenizer.json names (<c>model.type</c>): each builds a tokenizer from what a reader
 /// (<see cref="TokenizerFiles"/>) found. Built in: "BPE" (<see cref="BpeTokenizer"/>: byte-level BPE, and SentencePiece-style
@@ -29,52 +40,34 @@ public static class TokenizerModels
     /// <summary>The library's unigram language model (SentencePiece's: T5, ALBERT, XLNet, XLM-R).</summary>
     public const string Unigram = "Unigram";
 
-    private static readonly SlotTable<string, Func<TokenizerDefinition, TokenizerOptions, IPretrainedTokenizer>> Table = new(nameof(TokenizerModels),
-        (slot, app, library) => (definition, options) =>
-        {
-            // The built-in gets its own copy of the tables, made only when it is needed (the app's model may take them).
-            var original = definition.Copy();
-            var builtIn = new Later(() => library(original, options));
-            try
-            {
-                return new GuardedTokenizer(slot, app(definition, options), builtIn);
-            }
-            catch (Exception e) when (slot.Policy == SlotPolicy.Shadow ? ShadowFailed(slot, e) : slot.Failed(e))
-            {
-                return builtIn.Value;
-            }
-        }, StringComparer.Ordinal);
+    private static readonly KindTable<ITokenizerModelKind> Table = new(nameof(TokenizerModels), "Tokenizer model", "add it with TokenizerModels.Register",
+        (slot, app, library) => new GuardedKind(slot, app, library), StringComparer.Ordinal);
 
     static TokenizerModels() => Overrides.AsLibraryDefaults(LibraryModelFormats.RegisterTokenizerModels);   // the built-in models, on first use
 
     /// <summary>
-    /// Registers the model type <paramref name="type"/> (as tokenizer.json's <c>model.type</c> names it), built by
-    /// <paramref name="create"/> from a definition and the read's settings; a built-in name overrides the built-in.
+    /// Registers <paramref name="kind"/> under its <see cref="IKind.Name"/> (the model type, as tokenizer.json's
+    /// <c>model.type</c> names it), built from a definition and the read's settings; a built-in name overrides the built-in.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string type, Func<TokenizerDefinition, TokenizerOptions, IPretrainedTokenizer> create)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(type);
-        ArgumentNullException.ThrowIfNull(create);
-        Table.Register(type, create, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(ITokenizerModelKind kind) => Table.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's model type <paramref name="type"/> (a built-in name gets the built-in back); false when the app registered none.</summary>
     public static bool Unregister(string type) => Table.Unregister(type);
 
     /// <summary>The model types: the built-in ones and those registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
+    public static IReadOnlyCollection<string> Names => Table.Names;
 
-    /// <summary>The factory of the model type <paramref name="type"/> (guarded by its policy when an app's overrides a built-in), or null.</summary>
-    public static Func<TokenizerDefinition, TokenizerOptions, IPretrainedTokenizer>? Find(string type) => Table.Find(type);
+    /// <summary>The model type <paramref name="type"/> (guarded by its policy when an app's overrides a built-in), or null.</summary>
+    public static ITokenizerModelKind? Find(ReadOnlySpan<char> type) => Table.Find(type);
 
-    /// <summary>The factory of the model type <paramref name="type"/>.</summary>
+    /// <summary>The model type <paramref name="type"/>.</summary>
     /// <exception cref="NotSupportedException">No model of that type is registered.</exception>
-    public static Func<TokenizerDefinition, TokenizerOptions, IPretrainedTokenizer> Get(string type) => Table.Find(type)
-        ?? throw new NotSupportedException($"Tokenizer model '{type}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TokenizerModels.Register.");
+    public static ITokenizerModelKind Get(ReadOnlySpan<char> type) => Table.Find(type)
+        ?? throw new NotSupportedException($"Tokenizer model '{type}' is not registered (registered: {string.Join(", ", Table.Names)}); add it with TokenizerModels.Register.");
 
-    /// <summary>The library's factory of the model type <paramref name="type"/>, or null when it is not built in.</summary>
-    public static Func<TokenizerDefinition, TokenizerOptions, IPretrainedTokenizer>? Default(string type) => Table.Default(type);
+    /// <summary>The library's model type <paramref name="type"/>, or null when it is not built in.</summary>
+    public static ITokenizerModelKind? Default(string type) => Table.Default(type);
 
     /// <summary>Who registered the model type <paramref name="type"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string type) => Table.Origin(type);
@@ -83,7 +76,7 @@ public static class TokenizerModels
     public static void SetPolicy(string type, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(type, policy, shadowRate);
 
     /// <summary>The model types, one a line, with who registered each.</summary>
-    public static string Describe() => string.Join("\n", Table.Keys.Select(type => $"{type}: {Table.Origin(type)}"));
+    public static string Describe() => string.Join("\n", Table.Names.Select(type => $"{type}: {Table.Origin(type)}"));
 
     /// <summary>
     /// The tokenizer the model type <paramref name="definition"/> names builds from it (<see cref="TokenizerDefinition.ModelType"/>).
@@ -98,7 +91,7 @@ public static class TokenizerModels
             throw new InvalidDataException($"{definition.Source}: the tokenizer names no model type (model.type).");
         }
 
-        return Get(type)(definition, options ?? new TokenizerOptions());
+        return Get(type).Create(new TokenizerModelRequest(definition, options ?? new TokenizerOptions()));
     }
 
     // Under Shadow the built-in answers anyway: an app's model that cannot be built is reported, if sampled.
@@ -111,6 +104,31 @@ public static class TokenizerModels
 
         slot.Shadow()?.Failed(error);
         return true;
+    }
+
+    // An app's model type overriding a built-in: the app's tokenizer, guarded on each call (the built-in made only when needed).
+    private sealed class GuardedKind(Slot slot, ITokenizerModelKind app, ITokenizerModelKind library) : ITokenizerModelKind
+    {
+        public string Name => app.Name;
+
+        public string Summary => app.Summary;
+
+        public IReadOnlySet<string> Keys => app.Keys;
+
+        public IPretrainedTokenizer Create(TokenizerModelRequest request)
+        {
+            // The built-in gets its own copy of the tables, made only when it is needed (the app's model may take them).
+            var original = request.Definition.Copy();
+            var builtIn = new Later(() => library.Create(request with { Definition = original }));
+            try
+            {
+                return new GuardedTokenizer(slot, app.Create(request), builtIn);
+            }
+            catch (Exception e) when (slot.Policy == SlotPolicy.Shadow ? ShadowFailed(slot, e) : slot.Failed(e))
+            {
+                return builtIn.Value;
+            }
+        }
     }
 
     // The built-in tokenizer, built the first time it is needed (an app's model that works never needs it).

@@ -386,7 +386,7 @@ internal static partial class Tests
             "PretrainedTokenizers.Load", "BpeTokenizer pointing to the loader for other model types");
 
         // An app's model type: built for files naming it, gone when unregistered.
-        TokenizerModels.Register("Imaginary", (d, o) => BpeTokenizer.Load(folder));
+        TokenizerModels.Register(TestKinds.TokenizerModel("Imaginary", (d, o) => BpeTokenizer.Load(folder)));
         try
         {
             Check(TokenizerModels.Origin("Imaginary") is { } origin && origin != Overrides.Library, "the app's model type is the app's");
@@ -520,12 +520,12 @@ internal static partial class Tests
         var expected = BpeTokenizer.Load(folder).Encode("guarded models answer");
         try
         {
-            TokenizerModels.Register(TokenizerModels.Bpe, (d, o) => throw new InvalidOperationException("the app's model cannot be built"));
+            TokenizerModels.Register(TestKinds.TokenizerModel(TokenizerModels.Bpe, (d, o) => throw new InvalidOperationException("the app's model cannot be built")));
             Expect<InvalidOperationException>(() => PretrainedTokenizers.Load(folder), "cannot be built", "under Throw, the app's failure");
             TokenizerModels.SetPolicy(TokenizerModels.Bpe, SlotPolicy.FallBack);
             Check(PretrainedTokenizers.Load(folder).Encode("guarded models answer").SequenceEqual(expected), "under FallBack, the built-in builds the tokenizer");
 
-            TokenizerModels.Register(TokenizerModels.Bpe, (d, o) => new FailingEncoder(BpeTokenizer.FromDefinition(d, o)));
+            TokenizerModels.Register(TestKinds.TokenizerModel(TokenizerModels.Bpe, (d, o) => new FailingEncoder(BpeTokenizer.FromDefinition(d, o))));
             var tokenizer = PretrainedTokenizers.Load(folder);
             Check(tokenizer.Encode("guarded models answer").SequenceEqual(expected), "under FallBack, the built-in answers an encode that throws");
             var ranged = new List<int>();

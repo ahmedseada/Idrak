@@ -64,7 +64,7 @@ internal sealed class MemoryCommand : Command
             throw new UsageException("--context and --batch need positive numbers.");
         }
 
-        var weightFormats = List(context.Options("--weights"), alias.Weights, ["float32", .. PackedWeight.FormatNames.Order(StringComparer.Ordinal)]);
+        var weightFormats = List(context.Options("--weights"), alias.Weights, ["float32", .. PackedWeightFormats.Names.Order(StringComparer.Ordinal)]);
         var kvFormats = List(context.Options("--kv"), alias.Kv, [.. KeyValueLayouts.Names]);
 
         // Projections (2-D weights other than the embeddings) take the weight format; the rest stays float32.
@@ -94,7 +94,7 @@ internal sealed class MemoryCommand : Command
             foreach (string kv in kvFormats)
             {
                 var layout = KeyValueLayouts.Get(Kv(kv));
-                long perPosition = (long)spec.Layers * spec.KvHeads * 2 * (layout.RowWidth(spec.HeadDim) * 4L + (layout.HasScales ? 4 : 0));
+                long perPosition = (long)spec.Layers * spec.KvHeads * 2 * (layout.RowWidth(spec.HeadDim) * 4L + (layout is IScaledLayout ? 4 : 0));
                 rows.Add((w, kv, weightBytes, perPosition * contextLength * batch));
             }
         }
@@ -169,9 +169,9 @@ internal sealed class MemoryCommand : Command
             return 4;
         }
 
-        if (!PackedWeight.FormatNames.Contains(name, StringComparer.OrdinalIgnoreCase))
+        if (!PackedWeightFormats.Names.Contains(name, StringComparer.OrdinalIgnoreCase))
         {
-            throw new UsageException($"Unknown weight format '{format}'; registered: float32, {string.Join(", ", PackedWeight.FormatNames)} (plug-ins add more with --plugin).");
+            throw new UsageException($"Unknown weight format '{format}'; registered: float32, {string.Join(", ", PackedWeightFormats.Names)} (plug-ins add more with --plugin).");
         }
 
         const int Side = 256;
@@ -182,7 +182,7 @@ internal sealed class MemoryCommand : Command
             values[i] = (float)(random.NextDouble() * 2 - 1);
         }
 
-        using var weight = PackedWeight.FromValues(name, values, Side, Side, Device.Cpu);
+        using var weight = PackedWeightFormats.Pack(name, values, Side, Side, Device.Cpu);
         return weight.Bytes / (double)values.Length;
     }
 

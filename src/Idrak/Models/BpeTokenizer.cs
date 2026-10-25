@@ -1534,7 +1534,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
                 return;
             case JsonObject n when TokenizerComponents.FindNormalizer((string?)n["type"]) is { } create:
                 _normalizerSteps = null;                                          // a registered type: the string pipeline runs
-                _normalizers.Add(create(n).Normalize);
+                _normalizers.Add(create.Create(n).Normalize);
                 return;
             case JsonObject n when (string?)n["type"] == "Sequence":
                 foreach (var inner in n["normalizers"]!.AsArray())
@@ -1572,7 +1572,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         return type switch
         {
             "Sequence" => Chain([.. n["normalizers"]!.AsArray().OfType<JsonObject>().Select(inner =>
-                TokenizerComponents.FindNormalizer((string?)inner["type"]) is { } create ? create(inner).Normalize : NormalizerStep(inner))]),
+                TokenizerComponents.FindNormalizer((string?)inner["type"]) is { } create ? create.Create(inner).Normalize : NormalizerStep(inner))]),
             "NFC" => s => UnicodeNormalization.Normalize(s, NormalizationForm.FormC),
             "NFKC" => s => UnicodeNormalization.Normalize(s, NormalizationForm.FormKC),
             "NFD" => s => UnicodeNormalization.Normalize(s, NormalizationForm.FormD),
@@ -1629,7 +1629,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         string type = (string)p["type"]!;
         if (TokenizerComponents.FindPreTokenizer(type) is { } create)
         {
-            _preTokenizers.Add(Stage(create(p)));
+            _preTokenizers.Add(Stage(create.Create(p)));
             _splits = null;                                                       // a registered type: the string pipeline runs
             return false;
         }
@@ -1715,7 +1715,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         {
             case "Sequence":
                 Func<List<string>, bool, List<string>>[] stages = [.. p["pretokenizers"]!.AsArray().OfType<JsonObject>().Select(inner =>
-                    TokenizerComponents.FindPreTokenizer((string?)inner["type"]) is { } create ? Stage(create(inner)) : PreTokenizerStage(inner))];
+                    TokenizerComponents.FindPreTokenizer((string?)inner["type"]) is { } create ? Stage(create.Create(inner)) : PreTokenizerStage(inner))];
                 return (pieces, atStart) =>
                 {
                     foreach (var stage in stages)
@@ -1902,7 +1902,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         if (TokenizerComponents.FindDecoder(type) is { } create)
         {
             // A registered type: named so that no built-in stage (or the fused decoding) takes it for one of its own.
-            _decoders.Add(("Registered:" + type, Stage(create(d)), null));
+            _decoders.Add(("Registered:" + type, Stage(create.Create(d)), null));
             return;
         }
 
@@ -1941,7 +1941,7 @@ public sealed class BpeTokenizer : IPretrainedTokenizer
         {
             case "Sequence":
                 Func<List<string>, List<string>>[] stages = [.. d["decoders"]!.AsArray().OfType<JsonObject>().Select(inner =>
-                    TokenizerComponents.FindDecoder((string?)inner["type"]) is { } create ? Stage(create(inner)) : DecoderStage(inner))];
+                    TokenizerComponents.FindDecoder((string?)inner["type"]) is { } create ? Stage(create.Create(inner)) : DecoderStage(inner))];
                 return tokens =>
                 {
                     foreach (var stage in stages)

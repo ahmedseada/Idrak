@@ -175,6 +175,17 @@ public sealed record EncoderHeadRequest(int Width, int Outputs, JsonObject Setti
 }
 
 /// <summary>
+/// A head kind an encoder's checkpoint may hold, registered by its <see cref="IKind.Name"/> in <see cref="EncoderHeads"/>:
+/// the settings it reads (<see cref="IConfigurableKind.Keys"/>), the tensors it reads by name in its own naming
+/// (<see cref="Weights"/>, through <see cref="EncoderHeadRequest.Weights"/>), and the head it makes for a request.
+/// </summary>
+public interface IEncoderHeadKind : IKind<EncoderHeadRequest, EncoderHead>
+{
+    /// <summary>The names of the tensors it reads ("dense.weight", "out.bias", …), in Idrak's layout.</summary>
+    IReadOnlyList<string> Weights { get; }
+}
+
+/// <summary>
 /// The head kinds an encoder's checkpoint may hold, by name. The library registers three generic ones:
 /// <list type="bullet">
 /// <item>"sequence-classification": the pooled vector [batch, width] → logits [batch, outputs]: an optional dense layer
@@ -202,50 +213,63 @@ public static class EncoderHeads
     /// <summary>The pooled vector's projection (a dense layer and an activation, the vector a classifier reads): "pooler".</summary>
     public const string Pooler = "pooler";
 
-    private static readonly SlotTable<string, Func<EncoderHeadRequest, EncoderHead>> Registry = BuiltIn();
+    private static readonly KindTable<IEncoderHeadKind> Registry = BuiltIn();
 
-    private static SlotTable<string, Func<EncoderHeadRequest, EncoderHead>> BuiltIn()
+    private static KindTable<IEncoderHeadKind> BuiltIn()
     {
-        var table = new SlotTable<string, Func<EncoderHeadRequest, EncoderHead>>(nameof(EncoderHeads), comparer: StringComparer.Ordinal,
+        var table = new KindTable<IEncoderHeadKind>(nameof(EncoderHeads), "Encoder head", "add it with EncoderHeads.Register", comparer: StringComparer.Ordinal,
             unguarded: "a head is trained with its encoder and read from its checkpoint, so an app's kind and the library's cannot be mixed");
-        table.RegisterDefault(SequenceClassification, request => EncoderHead.Classification(request));
-        table.RegisterDefault(MaskedLanguageModel, request => EncoderHead.MaskedLanguageModel(request));
-        table.RegisterDefault(Pooler, request => EncoderHead.Pooler(request));
+        table.RegisterDefault(new BuiltInKind(SequenceClassification, "the pooled vector to logits: an optional dense layer and activation, then the output layer",
+            new OptionKeys("dense", "activation"), ["dense.weight", "dense.bias", "out.weight", "out.bias"], request => EncoderHead.Classification(request)));
+        table.RegisterDefault(new BuiltInKind(MaskedLanguageModel, "the states to logits: an optional transform (dense, activation, layer norm), then the output layer",
+            new OptionKeys("transform", "activation", "norm_epsilon"), ["dense.weight", "dense.bias", "norm.weight", "norm.bias", "out.weight", "out.bias"],
+            request => EncoderHead.MaskedLanguageModel(request)));
+        table.RegisterDefault(new BuiltInKind(Pooler, "the pooled vector's projection: a dense layer and an activation", new OptionKeys("activation"), ["dense.weight", "dense.bias"],
+            request => EncoderHead.Pooler(request)));
         return table;
     }
 
-    /// <summary>Registers the head kind <paramref name="name"/>; under a library name it takes the library's place until <see cref="Unregister"/>.</summary>
+    /// <summary>Registers <paramref name="kind"/> under its <see cref="IKind.Name"/>; under a library name it takes the library's place until <see cref="Unregister"/>.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string name, Func<EncoderHeadRequest, EncoderHead> create)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(name);
-        ArgumentNullException.ThrowIfNull(create);
-        Registry.Register(name, create, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(IEncoderHeadKind kind) => Registry.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's kind <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered head kinds.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
+    public static IReadOnlyCollection<string> Names => Registry.Names;
 
-    /// <summary>What makes the head kind <paramref name="name"/>.</summary>
+    /// <summary>The head kind <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name; the message lists the registered ones.</exception>
-    public static Func<EncoderHeadRequest, EncoderHead> Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"Encoder head '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with EncoderHeads.Register.");
+    public static IEncoderHeadKind Get(ReadOnlySpan<char> name) => Registry.Find(name)
+        ?? throw new NotSupportedException($"Encoder head '{name}' is not registered (registered: {string.Join(", ", Registry.Names)}); add it with EncoderHeads.Register.");
 
     /// <summary>A head of the kind <paramref name="name"/> for <paramref name="request"/>.</summary>
     /// <exception cref="NotSupportedException">The kind is not registered.</exception>
     /// <exception cref="ArgumentException">A setting is invalid; the message names it.</exception>
-    public static EncoderHead Create(string name, EncoderHeadRequest request)
+    public static EncoderHead Create(ReadOnlySpan<char> name, EncoderHeadRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return Get(name)(request);
+        return Get(name).Create(request);
     }
 
     /// <summary>The library's kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static Func<EncoderHeadRequest, EncoderHead>? Default(string name) => Registry.Default(name);
+    public static IEncoderHeadKind? Default(string name) => Registry.Default(name);
 
     /// <summary>Who registered the kind <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
+
+    // A library head: its settings' keys and its tensors' names.
+    private sealed class BuiltInKind(string name, string summary, OptionKeys keys, string[] weights, Func<EncoderHeadRequest, EncoderHead> create) : IEncoderHeadKind
+    {
+        public string Name => name;
+
+        public string Summary => summary;
+
+        public IReadOnlySet<string> Keys => keys;
+
+        public IReadOnlyList<string> Weights => weights;
+
+        public EncoderHead Create(EncoderHeadRequest request) => create(request);
+    }
 }

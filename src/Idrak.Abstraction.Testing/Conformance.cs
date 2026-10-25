@@ -118,12 +118,12 @@ public static class Conformance
         Check(tokenizer, new PretrainedTokenizerSuite(reference), options);
 
     /// <summary>
-    /// Checks the RoPE scaling method registered as <paramref name="type"/> (or <paramref name="method"/>, when given)
+    /// Checks the RoPE scaling registered as <paramref name="type"/> (or <paramref name="method"/>, when given)
     /// against the library's method of that name (<see cref="RopeScalings.Default"/>): as many frequencies, finite and
     /// positive, the same frequencies and attention factor within a tolerance, the same per position, and safe to call
     /// from several threads (<see cref="RopeScalingSuite"/>).
     /// </summary>
-    public static ConformanceReport CheckRopeScaling(string type, RopeScalingMethod? method = null, ContractCheckOptions? options = null) =>
+    public static ConformanceReport CheckRopeScaling(string type, IRopeScaling? method = null, ContractCheckOptions? options = null) =>
         Check(method ?? RopeScalings.Get(type), new RopeScalingSuite(type), options);
 
     /// <summary>
@@ -133,7 +133,7 @@ public static class Conformance
     /// nothing is written after the end. Eight random cases unless <paramref name="options"/> says otherwise.
     /// </summary>
     public static ConformanceReport CheckProgressReporter(string name, Func<ProgressRequest, IProgressReporter>? factory = null, ContractCheckOptions? options = null) =>
-        Check(factory ?? ProgressReporters.Get(name), new ProgressReporterSuite(), options ?? new ContractCheckOptions { RandomCases = 8 });
+        Check(factory ?? new Func<ProgressRequest, IProgressReporter>(ProgressReporters.Get(name).Create), new ProgressReporterSuite(), options ?? new ContractCheckOptions { RandomCases = 8 });
 
     /// <summary>
     /// Checks a keyword index (Idrak.Text's <c>KeywordIndexes</c>, given as <see cref="KeywordIndexUnderTest"/>;

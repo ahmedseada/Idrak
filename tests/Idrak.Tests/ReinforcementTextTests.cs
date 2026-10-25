@@ -336,7 +336,7 @@ internal static partial class Tests
 
             // The ids of two turns under a template: turn 1's prompt and sampled reply, then turn 2's prompt rendered from the
             // conversation with the reply parsed back (its reasoning apart).
-            IReadOnlyList<ActionRecord> Episode(ChatTemplate template)
+            IReadOnlyList<ActionRecord> Episode(IChatTemplate template)
             {
                 string replyText = "<think>\nr\n</think>\n\nA<|im_end|>";
                 var first = new List<ChatMessage> { new("user", "Q") };

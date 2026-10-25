@@ -28,7 +28,7 @@ public sealed class Seq2SeqGenerator(ISeq2SeqModel model, ITokenizer tokenizer) 
     public ITokenizer Tokenizer { get; } = tokenizer ?? throw new ArgumentNullException(nameof(tokenizer));
 
     /// <summary>How the decoder's keys and values are cached (null: float32).</summary>
-    public KeyValueLayout? CacheLayout { get; init; }
+    public IKeyValueLayout? CacheLayout { get; init; }
 
     /// <summary>
     /// Whether a pretrained tokenizer (<see cref="IPretrainedTokenizer"/>) gives the source its post-processor's special

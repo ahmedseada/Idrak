@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak.Generation;
@@ -235,8 +236,8 @@ public sealed class JinjaChatTemplate : ChatTemplate
     public IReadOnlyDictionary<string, object?> Variables { get; init; } = new Dictionary<string, object?>();
 
     /// <inheritdoc />
-    public override string Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think) =>
-        Render(messages, tools, think, addGenerationPrompt: true);
+    public override void Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think, StringBuilder prompt) =>
+        Render(messages, tools, think, addGenerationPrompt: true, prompt);
 
     /// <summary>
     /// Renders the conversation. With <paramref name="addGenerationPrompt"/> false the text ends after the last message,
@@ -244,9 +245,21 @@ public sealed class JinjaChatTemplate : ChatTemplate
     /// </summary>
     public string Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think, bool addGenerationPrompt)
     {
+        var text = new StringBuilder();
+        Render(messages, tools, think, addGenerationPrompt, text);
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// Appends the conversation to <paramref name="prompt"/> (the caller's buffer). With <paramref name="addGenerationPrompt"/>
+    /// false the text ends after the last message, as training data is rendered.
+    /// </summary>
+    public void Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think, bool addGenerationPrompt, StringBuilder prompt)
+    {
         ArgumentNullException.ThrowIfNull(messages);
+        ArgumentNullException.ThrowIfNull(prompt);
         ChatParts.ThrowIfUnsupported(messages, PartKinds, "The chat template " + nameof(JinjaChatTemplate));
-        return RenderValues(ToValues(messages), tools, think, addGenerationPrompt);
+        RenderValues(ToValues(messages), tools, think, addGenerationPrompt, prompt);
     }
 
     /// <summary>
@@ -306,6 +319,13 @@ public sealed class JinjaChatTemplate : ChatTemplate
 
     private string RenderValues(List<object?> messages, IReadOnlyList<ToolDefinition> tools, bool? think, bool addGenerationPrompt)
     {
+        var text = new StringBuilder();
+        RenderValues(messages, tools, think, addGenerationPrompt, text);
+        return text.ToString();
+    }
+
+    private void RenderValues(List<object?> messages, IReadOnlyList<ToolDefinition> tools, bool? think, bool addGenerationPrompt, StringBuilder output)
+    {
         var variables = new Dictionary<string, object?>(Variables)
         {
             ["messages"] = messages,
@@ -319,7 +339,7 @@ public sealed class JinjaChatTemplate : ChatTemplate
             variables["enable_thinking"] = enabled;
         }
 
-        return (tools.Count > 0 && _toolTemplate is not null ? _toolTemplate : _template).Render(variables);
+        (tools.Count > 0 && _toolTemplate is not null ? _toolTemplate : _template).Render(variables, output);
     }
 
     /// <summary>
@@ -508,4 +528,19 @@ public sealed class JinjaChatTemplate : ChatTemplate
         return long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long n)
             ? (object)n : double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture);
     }
+}
+
+/// <summary>
+/// The reader of a model's own Jinja chat template ("jinja" in <see cref="ChatTemplates"/>): tokenizer_config.json,
+/// chat_template.jinja or chat_template.json (<see cref="JinjaChatTemplate.Load"/>).
+/// </summary>
+internal sealed class JinjaTemplateReader : IChatTemplateReader
+{
+    public string Name => "jinja";
+
+    public string Summary => "the model folder's Jinja chat template (tokenizer_config.json, chat_template.jinja or chat_template.json)";
+
+    public IReadOnlySet<string> Keys => OptionKeys.None;
+
+    public IChatTemplate? Create(ChatTemplateRequest request) => JinjaChatTemplate.Load(request.Folder, request.Tokenizer);
 }

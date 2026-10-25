@@ -43,7 +43,7 @@ internal static partial class Tests
         string[] panScan = ["--vision-option", "do_pan_and_scan=true", "--vision-option", "pan_and_scan_min_crop_size=32"];
         var sampled = new List<int>();
         var library = TokenSamplers.Default(TokenSamplers.DefaultName)!;
-        TokenSamplers.Register(TokenSamplers.DefaultName, request => new RecordingSampler(library(request), sampled));
+        TokenSamplers.Register(TestKinds.Sampler(TokenSamplers.DefaultName, request => new RecordingSampler(library.Create(request), sampled)));
         int code;
         string text, error;
         try
@@ -223,7 +223,7 @@ internal static partial class Tests
         // The real encoder (SigLIP and the projector of phase 3b) through the CLI; the tokens seen by a sampler that records them.
         var sampled = new List<int>();
         var library = TokenSamplers.Default(TokenSamplers.DefaultName)!;
-        TokenSamplers.Register(TokenSamplers.DefaultName, request => new RecordingSampler(library(request), sampled));
+        TokenSamplers.Register(TestKinds.Sampler(TokenSamplers.DefaultName, request => new RecordingSampler(library.Create(request), sampled)));
         int code;
         string text, error;
         JsonObject json;

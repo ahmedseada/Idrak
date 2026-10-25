@@ -30,7 +30,7 @@ public interface IVisionFamily
     /// this checkpoint of the family has no vision weights (a note says so).
     /// </summary>
     /// <exception cref="InvalidDataException">A tensor is missing or its shape disagrees with the configuration.</exception>
-    PretrainedVision? Read(VisionCheckpoint checkpoint);
+    IPretrainedVision? Read(VisionCheckpoint checkpoint);
 
     /// <summary>
     /// A vision part that did not exist, for a model made from a spec (<c>PretrainedModel.Create</c> with

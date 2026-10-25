@@ -25,7 +25,7 @@ public enum KeyValueFormat
     BFloat16,
 
     /// <summary>
-    /// A format of one's own (a <see cref="KeyValueLayout"/> registered with <see cref="KeyValueLayouts.Register"/>): what
+    /// A format of one's own (an <see cref="IKeyValueLayout"/> registered with <see cref="KeyValueLayouts.Register"/>): what
     /// <see cref="KeyValueCache.Format"/> and <see cref="DecodingContext.Format"/> report for it. Not a format to choose;
     /// pass the layout itself.
     /// </summary>
@@ -36,7 +36,7 @@ public enum KeyValueFormat
 /// Keys and values of one attention layer for every position decoded so far, [batch·heads, capacity, headDim]. With
 /// <see cref="KeyValueFormat.Int8"/>, <see cref="Keys"/> and <see cref="Values"/> hold packed bytes
 /// ([batch·heads, capacity, ceil(headDim / 4)] elements of four bytes) and <see cref="KeyScales"/>/<see cref="ValueScales"/>
-/// one scale per row. A format of one's own (<see cref="KeyValueLayout"/>) chooses its row width and scales.
+/// one scale per row. A format of one's own (<see cref="IKeyValueLayout"/>) chooses its row width and scales.
 /// </summary>
 public sealed class KeyValueCache : IDisposable
 {
@@ -54,7 +54,7 @@ public sealed class KeyValueCache : IDisposable
     /// <param name="headDim">Values per head.</param>
     /// <param name="device">Where the cache lives.</param>
     /// <param name="layout">How keys and values are stored and attended over.</param>
-    public KeyValueCache(int rows, int capacity, int headDim, Device device, KeyValueLayout layout)
+    public KeyValueCache(int rows, int capacity, int headDim, Device device, IKeyValueLayout layout)
     {
         ArgumentNullException.ThrowIfNull(layout);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(rows);
@@ -63,7 +63,10 @@ public sealed class KeyValueCache : IDisposable
 
         // Created outside any TensorScope: caches are usually created lazily inside a scoped prefill step.
         Layout = layout;
-        Format = layout.Format;
+        Format = KeyValueLayouts.FormatOf(layout);
+        RowStartsLayout = layout as IRowStartsLayout;
+        SlidingWindowLayout = layout as ISlidingWindowLayout;
+        FusedWriteLayout = layout as IFusedWriteLayout;
         HeadDim = headDim;
         int width = layout.RowWidth(headDim);
         if (width <= 0)
@@ -73,7 +76,7 @@ public sealed class KeyValueCache : IDisposable
 
         Keys = Tensor.Empty([rows, capacity, width], device, zeroed: true, track: false);
         Values = Tensor.Empty([rows, capacity, width], device, zeroed: true, track: false);
-        if (Layout.HasScales)
+        if (layout is IScaledLayout)
         {
             KeyScales = Tensor.Empty([rows, capacity], device, zeroed: true, track: false);
             ValueScales = Tensor.Empty([rows, capacity], device, zeroed: true, track: false);
@@ -87,21 +90,30 @@ public sealed class KeyValueCache : IDisposable
     public int HeadDim { get; }
 
     /// <summary>How keys and values are written and attended over.</summary>
-    public KeyValueLayout Layout { get; }
+    public IKeyValueLayout Layout { get; }
+
+    /// <summary>The layout's attention over rows of different lengths, or null when it has none (tested once, when the cache is made).</summary>
+    public IRowStartsLayout? RowStartsLayout { get; }
+
+    /// <summary>The layout's sliding-window and soft-capped attention, or null when it has none (tested once, when the cache is made).</summary>
+    public ISlidingWindowLayout? SlidingWindowLayout { get; }
+
+    /// <summary>The layout's fused writes from the projection kernel, or null when it takes none (tested once, when the cache is made).</summary>
+    public IFusedWriteLayout? FusedWriteLayout { get; }
 
     /// <summary>
     /// Cached keys, [batch·heads, capacity, headDim] (packed bytes for int8, bfloat16 pairs for bfloat16; a format of one's
-    /// own: [batch·heads, capacity, <see cref="KeyValueLayout.RowWidth"/>]).
+    /// own: [batch·heads, capacity, <see cref="IKeyValueLayout.RowWidth"/>]).
     /// </summary>
     public Tensor Keys { get; }
 
     /// <summary>Cached values, [batch·heads, capacity, headDim] (packed bytes for int8).</summary>
     public Tensor Values { get; }
 
-    /// <summary>For int8 (or a format with <see cref="KeyValueLayout.HasScales"/>): the scale of each cached key row, [batch·heads, capacity].</summary>
+    /// <summary>For int8 (or another <see cref="IScaledLayout"/>): the scale of each cached key row, [batch·heads, capacity].</summary>
     public Tensor? KeyScales { get; }
 
-    /// <summary>For int8 (or a format with <see cref="KeyValueLayout.HasScales"/>): the scale of each cached value row, [batch·heads, capacity].</summary>
+    /// <summary>For int8 (or another <see cref="IScaledLayout"/>): the scale of each cached value row, [batch·heads, capacity].</summary>
     public Tensor? ValueScales { get; }
 
     /// <summary>Device memory used, in bytes.</summary>
@@ -164,6 +176,9 @@ public sealed class KeyValueCache : IDisposable
 public sealed class DecodingContext : IDisposable
 {
     private readonly Dictionary<object, KeyValueCache> _caches = new(ReferenceEqualityComparer.Instance);
+
+    // What the layout can do, tested once (IRecordableLayout, ISlidingWindowLayout).
+    private readonly bool _recordableLayout, _slidingLayout;
     private Tensor? _iota;
 
     // The memory of the cross-attention layers (an encoder's output projected to each layer's keys and values, once per
@@ -207,10 +222,13 @@ public sealed class DecodingContext : IDisposable
     /// <param name="batch">Sequences decoded together.</param>
     /// <param name="capacity">Maximum positions (the model's context length).</param>
     /// <param name="layout">How the attention layers' keys and values are cached (e.g. <see cref="KeyValueLayouts.Get"/>).</param>
-    public DecodingContext(Device device, int batch, int capacity, KeyValueLayout layout)
+    public DecodingContext(Device device, int batch, int capacity, IKeyValueLayout layout)
     {
         ArgumentNullException.ThrowIfNull(layout);
         Layout = layout;
+        Format = KeyValueLayouts.FormatOf(layout);
+        _recordableLayout = layout is IRecordableLayout;
+        _slidingLayout = layout is ISlidingWindowLayout;
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(batch);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(capacity);
         Device = device;
@@ -220,10 +238,10 @@ public sealed class DecodingContext : IDisposable
     }
 
     /// <summary>How keys and values are cached: a built-in format, or <see cref="KeyValueFormat.Custom"/> (see <see cref="Layout"/>).</summary>
-    public KeyValueFormat Format => Layout.Format;
+    public KeyValueFormat Format { get; }
 
     /// <summary>How keys and values are cached and attended over.</summary>
-    public KeyValueLayout Layout { get; }
+    public IKeyValueLayout Layout { get; }
 
     /// <summary>Device memory used by the key/value caches created so far, in bytes.</summary>
     public long CacheBytes => _caches.Values.Sum(c => c.Bytes);
@@ -419,7 +437,7 @@ public sealed class DecodingContext : IDisposable
     /// once every SlidingWindowSteps positions or so), so every key a query can see is there, in order. Memory in
     /// proportion to the window instead of the context, and the attention reads the same keys in the same order. Each
     /// step then feeds at most SlidingWindowSteps positions (<see cref="BeginStep"/> refuses more). Only formats that read
-    /// a cache's own position (<see cref="KeyValueLayout.SlidingWindows"/>), never with <see cref="RowStarts"/>, and
+    /// a cache's own position (an <see cref="ISlidingWindowLayout"/>), never with <see cref="RowStarts"/>, and
     /// <see cref="Truncate"/> only before the first move. Default 0: every cache holds <see cref="Capacity"/> positions.
     /// Set before the first step.
     /// </summary>
@@ -640,9 +658,65 @@ public sealed class DecodingContext : IDisposable
     /// positions and starts on the device), except with rotary offsets: their per-token rotary positions are computed on
     /// the host each step.
     /// </summary>
-    public bool Recordable => Layout.Recordable && (_rotary is null || RowStarts is null && _rotary.All(o => o == _rotary[0]));
+    public bool Recordable => _recordableLayout && (_rotary is null || RowStarts is null && _rotary.All(o => o == _rotary[0]));
 
-    /// <summary>Prepares mask and positions for <paramref name="steps"/> new positions (all computed on the device).</summary>
+    /// <summary>
+    /// Opens a step of <paramref name="steps"/> new positions, or joins the step already open (a module inside a network
+    /// that opened it): the scope a cached pass runs in (see <c>ICachedModule</c>). The scope that opened the step counts
+    /// its positions when it is completed (<see cref="IDecodingStep.Complete"/>) and withdraws the step when it is disposed
+    /// without that (a pass stopped part-way); one that joined does neither. So any module may open its step and only the
+    /// outermost one brackets it. The scope is the context's own (one step is open at a time): nothing is allocated per step.
+    /// </summary>
+    public IDecodingStep OpenStep(int steps)
+    {
+        if (InStep)
+        {
+            return _joinedStep ??= new StepScope(this, owner: false);
+        }
+
+        BeginStep(steps);
+        var scope = _ownStep ??= new StepScope(this, owner: true);
+        scope.Open(steps);
+        return scope;
+    }
+
+    // The scopes OpenStep hands out: the step's opener (reused for every step) and a joiner.
+    private StepScope? _ownStep, _joinedStep;
+
+    private sealed class StepScope(DecodingContext context, bool owner) : IDecodingStep
+    {
+        private int _steps;
+        private bool _open;
+
+        public int Steps => owner ? _steps : context._steps;
+
+        public bool Opened => owner;
+
+        public void Open(int steps) => (_steps, _open) = (steps, true);
+
+        public void Complete()
+        {
+            if (owner && _open)
+            {
+                _open = false;
+                context.EndStep(_steps);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (owner && _open)
+            {
+                _open = false;
+                context.CancelStep();                                    // the stopped step's positions are not counted
+            }
+        }
+    }
+
+    /// <summary>
+    /// Prepares mask and positions for <paramref name="steps"/> new positions (all computed on the device). The primitive
+    /// under <see cref="OpenStep"/>: a step begun here is ended with <see cref="EndStep"/> or <see cref="CancelStep"/>.
+    /// </summary>
     public void BeginStep(int steps)
     {
         if (Length + steps > Capacity)
@@ -760,13 +834,13 @@ public sealed class DecodingContext : IDisposable
     /// <c>Sequential.ForwardCached</c>) as a <see cref="ComputeGraph"/>. Because positions, masks and cache
     /// offsets are computed on the device from <see cref="Position"/>, the same graph is valid at every position; with
     /// <see cref="RowStarts"/>, a one-token step's positions are too (from the starts uploaded once). Needs a
-    /// <see cref="KeyValueLayout.Recordable"/> cache format.
+    /// recordable cache format (<see cref="IRecordableLayout"/>).
     /// </summary>
     public ComputeGraph CaptureStep(Action step)
     {
-        if (!Layout.Recordable)
+        if (!_recordableLayout)
         {
-            throw new InvalidOperationException($"The key/value cache format '{Layout.Name}' is not recordable (KeyValueLayout.Recordable); run its steps as they are.");
+            throw new InvalidOperationException($"The key/value cache format '{Layout.Name}' is not recordable (IRecordableLayout); run its steps as they are.");
         }
 
         if (!Recordable)
@@ -913,7 +987,7 @@ public sealed class DecodingContext : IDisposable
         }
 
         int slots = window - 1 + _slidingSteps;
-        if (_slidingSteps <= 0 || window <= 0 || slots >= Capacity || Length > 0 || RowStarts is not null || !Layout.SlidingWindows)
+        if (_slidingSteps <= 0 || window <= 0 || slots >= Capacity || Length > 0 || RowStarts is not null || !_slidingLayout)
         {
             return CacheFor(owner, rows, headDim);
         }
@@ -975,4 +1049,20 @@ internal sealed class SlidingWindow(int length, int capacity, Device device) : I
         Mask?.Dispose();
         Position.Dispose();
     }
+}
+
+/// <summary>
+/// One decoding step over a <see cref="DecodingContext"/>, opened by <see cref="DecodingContext.OpenStep"/>: the scope a
+/// cached pass runs in. Dispose it when the pass ends; complete it first when the pass ran to its end.
+/// </summary>
+public interface IDecodingStep : IDisposable
+{
+    /// <summary>The new positions of the step.</summary>
+    int Steps { get; }
+
+    /// <summary>Whether this scope opened the step (it counts or withdraws it); false when it joined a step already open.</summary>
+    bool Opened { get; }
+
+    /// <summary>The pass ran to its end: the scope that opened the step counts its positions (<see cref="DecodingContext.EndStep"/>).</summary>
+    void Complete();
 }

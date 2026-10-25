@@ -48,7 +48,7 @@ public abstract class MarkedToolCallParser : IToolCallParser
     protected virtual int Decide(ReadOnlySpan<char> start) => 0;
 
     /// <inheritdoc/>
-    public ChatDelta Feed(string text)
+    public ChatDelta Feed(ReadOnlySpan<char> text)
     {
         _pending.Append(text);
         return Drain(final: false);

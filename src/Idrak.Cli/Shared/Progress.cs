@@ -35,7 +35,7 @@ internal sealed class ProgressLine : IProgressReporter
         string reporter = enabled is { } on ? on ? ProgressReporters.ConsoleReporter : ProgressReporters.QuietReporter
             : context.Quiet ? ProgressReporters.QuietReporter
             : Chosen() ?? (!context.Json && !context.Plain && Terminal.IsTerminal(writer) ? ProgressReporters.ConsoleReporter : ProgressReporters.QuietReporter);
-        _reporter = ProgressReporters.Get(reporter)(new ProgressRequest(label, total, unit, writer, null));
+        _reporter = ProgressReporters.Get(reporter).Create(new ProgressRequest(label, total, unit, writer, null));
     }
 
     /// <summary>The reporter <c>IDRAK_PROGRESS</c> names, or null when it is not set.</summary>

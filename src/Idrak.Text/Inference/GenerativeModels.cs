@@ -147,7 +147,7 @@ public sealed class GenerativeModelBuilder
     internal TimeSpan? TimeoutLimit { get; private set; }
     internal string? WarmUpPrompt { get; private set; }
     internal Device? TargetDevice { get; private set; }
-    internal ChatTemplate? ChatTemplate { get; private set; }
+    internal IChatTemplate? ChatTemplate { get; private set; }
     internal IToolRegistry? ToolRegistry { get; private set; }
     internal Func<TextGenerator, ChatImages>? ImageReader { get; private set; }
     internal Func<TextGenerator, IReadOnlyList<ISoftPartSource>>? PartReader { get; private set; }
@@ -199,7 +199,7 @@ public sealed class GenerativeModelBuilder
     }
 
     /// <summary>Chat models: the prompt format (the <see cref="ChatGenerator"/> constructor's <c>template</c>).</summary>
-    public GenerativeModelBuilder Template(ChatTemplate template)
+    public GenerativeModelBuilder Template(IChatTemplate template)
     {
         ChatTemplate = template;
         return this;

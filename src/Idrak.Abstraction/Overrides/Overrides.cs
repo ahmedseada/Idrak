@@ -67,7 +67,7 @@ public sealed record SlotOverride(string Registry, string Name, string Implement
 /// </summary>
 /// <example>
 /// <code>
-/// RopeScalings.Register("yarn", MyYarn);                                  // the app's version; the library's stays behind it
+/// RopeScalings.Register(new MyYarn());                                   // the app's "yarn"; the library's stays behind it
 /// RopeScalings.SetPolicy("yarn", SlotPolicy.FallBack);                   // a call that throws is answered by the library's
 /// RopeScalings.SetPolicy("yarn", SlotPolicy.Shadow, shadowRate: 0.05);   // or: the default answers, 5% of calls compared
 /// foreach (var o in Overrides.Report()) Console.WriteLine(o);             // at startup: every override, origin and policy

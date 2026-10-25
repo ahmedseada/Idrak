@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Layers.Abstractions;
+
 namespace Idrak.Layers;
 
 /// <summary>Logistic sigmoid activation; squashes values into (0, 1).</summary>
@@ -145,8 +147,11 @@ public sealed class Softmax : Module
 /// <summary>Wraps any tensor function as a layer, e.g. <c>new Lambda(x =&gt; x.Mean(1), "MeanOverTime")</c>.</summary>
 /// <param name="function">The computation; it may use any tensor operation and is differentiated automatically.</param>
 /// <param name="name">Display name for summaries.</param>
-public sealed class Lambda(Func<Tensor, Tensor> function, string name = "Lambda") : Module
+public sealed class Lambda(Func<Tensor, Tensor> function, string name = "Lambda") : Module, INamedLambda
 {
+    /// <inheritdoc />
+    string INamedLambda.Name => name;
+
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input) => function(input);
 

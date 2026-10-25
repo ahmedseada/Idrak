@@ -80,14 +80,14 @@ public sealed record RopeScaling
             : fallback ?? throw new ArgumentException($"RoPE scaling needs the parameter '{key}'.");
 }
 
-/// <summary>What a RoPE scaling method receives (see <see cref="RopeScalings.Register"/>).</summary>
+/// <summary>What a RoPE scaling receives (<see cref="IRopeScaling"/>).</summary>
 /// <param name="Frequencies">The unscaled rotation frequency of each pair, θ^(-2i / rotaryDim) (a copy the method may change and return).</param>
 /// <param name="Theta">The base θ of the frequencies.</param>
 /// <param name="RotaryDim">The dimensions of each head that rotate (twice the number of frequencies).</param>
 /// <param name="Parameters">The scaling's parameters (<see cref="RopeScaling.Parameters"/>).</param>
 public sealed record RopeScalingInput(double[] Frequencies, double Theta, int RotaryDim, JsonObject Parameters);
 
-/// <summary>What a RoPE scaling method returns.</summary>
+/// <summary>What a RoPE scaling returns.</summary>
 /// <param name="Frequencies">The scaled frequency of each pair.</param>
 /// <param name="AttentionFactor">
 /// A factor on the rotary cos and sin tables (YaRN's attention scaling, mscale), so every query·key product of the rotated
@@ -97,13 +97,24 @@ public sealed record RopeScalingResult(double[] Frequencies, double AttentionFac
 {
     /// <summary>
     /// The frequencies used for the token at a position, when they depend on it (dynamic NTK scaling); null when every
-    /// position uses <see cref="Frequencies"/>. Called once per position, possibly from several threads at once, when the rotary tables are made.
+    /// position uses <see cref="Frequencies"/>. Asked once per position, possibly from several threads at once, when the rotary tables are made.
     /// </summary>
-    public Func<int, double[]>? FrequenciesAt { get; init; }
+    public IPositionFrequencies? FrequenciesAt { get; init; }
 }
 
-/// <summary>Scales rotary frequencies; register it with <see cref="RopeScalings.Register"/>.</summary>
-public delegate RopeScalingResult RopeScalingMethod(RopeScalingInput input);
+/// <summary>Rotary frequencies that depend on the token's position (<see cref="RopeScalingResult.FrequenciesAt"/>).</summary>
+public interface IPositionFrequencies
+{
+    /// <summary>The frequency of each pair for the token at <paramref name="position"/>; safe to call from several threads at once.</summary>
+    double[] At(int position);
+}
+
+/// <summary>
+/// A RoPE scaling method, registered by its <see cref="IKind.Name"/> in <see cref="RopeScalings"/> (as Hugging Face's
+/// <c>rope_scaling.rope_type</c> names it): the parameters it reads (<see cref="IConfigurableKind.Keys"/>) and the scaled
+/// frequencies (and attention factor) it makes from the unscaled ones (<see cref="IKind{TRequest, T}.Create"/>).
+/// </summary>
+public interface IRopeScaling : IKind<RopeScalingInput, RopeScalingResult>;
 
 /// <summary>
 /// The RoPE scaling methods by name (<see cref="RopeScaling.Type"/>, ignoring case), as Hugging Face's
@@ -122,48 +133,44 @@ public delegate RopeScalingResult RopeScalingMethod(RopeScalingInput input);
 /// </summary>
 public static class RopeScalings
 {
-    private static readonly SlotTable<string, RopeScalingMethod> Table = BuiltIn();
+    private static readonly KindTable<IRopeScaling> Table = BuiltIn();
 
-    private static SlotTable<string, RopeScalingMethod> BuiltIn()
+    private static KindTable<IRopeScaling> BuiltIn()
     {
-        var table = new SlotTable<string, RopeScalingMethod>(nameof(RopeScalings), Guard, StringComparer.OrdinalIgnoreCase);
-        table.RegisterDefault("linear", Linear);
-        table.RegisterDefault("yarn", Yarn);
-        table.RegisterDefault("dynamic", Dynamic);
+        var table = new KindTable<IRopeScaling>(nameof(RopeScalings), "RoPE scaling", "add it with RopeScalings.Register", Guard, StringComparer.OrdinalIgnoreCase);
+        table.RegisterDefault(new BuiltInScaling("linear", "every frequency divided by factor", new OptionKeys("factor"), Linear));
+        table.RegisterDefault(new BuiltInScaling("yarn", "YaRN: slow frequencies divided by factor, fast ones kept, a ramp between, and an attention factor",
+            new OptionKeys("factor", "original_max_position_embeddings", "max_position_embeddings", "beta_fast", "beta_slow", "truncate", "attention_factor", "mscale", "mscale_all_dim"), Yarn));
+        table.RegisterDefault(new BuiltInScaling("dynamic", "dynamic NTK: the base grows with the position beyond max_position_embeddings",
+            new OptionKeys("factor", "max_position_embeddings"), Dynamic));
         return table;
     }
 
     /// <summary>
-    /// Registers the scaling method <paramref name="type"/> (names ignore case). Under a built-in name it shadows the
-    /// library's method, which stays behind it (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
+    /// Registers <paramref name="scaling"/> under its <see cref="IKind.Name"/> (names ignore case: the name configurations
+    /// use, <c>rope_scaling.rope_type</c>). Under a built-in name it shadows the library's method, which stays behind it
+    /// (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
     /// </summary>
-    /// <param name="type">The name configurations use (<c>rope_scaling.rope_type</c>).</param>
-    /// <param name="method">The frequencies (and attention factor) from the unscaled ones and the parameters.</param>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string type, RopeScalingMethod method)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(type);
-        ArgumentNullException.ThrowIfNull(method);
-        Table.Register(type, method, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(IRopeScaling scaling) => Table.Register(scaling, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's method <paramref name="type"/> (a built-in name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string type) => Table.Unregister(type);
 
     /// <summary>The registered method names.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
+    public static IReadOnlyCollection<string> Names => Table.Names;
 
     /// <summary>Whether a method is registered as <paramref name="type"/>.</summary>
-    public static bool Contains(string type) => Table.Contains(type);
+    public static bool Contains(ReadOnlySpan<char> type) => Table.Contains(type);
 
     /// <summary>The method registered as <paramref name="type"/> (any case); an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    public static RopeScalingMethod Get(string type) =>
+    public static IRopeScaling Get(ReadOnlySpan<char> type) =>
         Table.TryGet(type, out var method) ? method
-            : throw new NotSupportedException($"No RoPE scaling '{type}' is registered ({string.Join(", ", Table.Keys)}); add it with RopeScalings.Register, "
+            : throw new NotSupportedException($"No RoPE scaling '{type}' is registered ({string.Join(", ", Table.Names)}); add it with RopeScalings.Register, "
                 + "or reference Idrak.Text.Plugins (a family's own scaling) and call TextPlugins.RegisterAll().");
 
     /// <summary>The library's method <paramref name="type"/>, whatever an app registered over it (for an app's method to delegate to); null when the library has none.</summary>
-    public static RopeScalingMethod? Default(string type) => Table.Default(type);
+    public static IRopeScaling? Default(string type) => Table.Default(type);
 
     /// <summary>Who registered the method <paramref name="type"/> resolves to: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string type) => Table.Origin(type);
@@ -176,11 +183,7 @@ public static class RopeScalings
 
     // The app's method gets a copy of the frequencies (a method may change them in place), so the library's can still run
     // on the originals; outputs agree when frequencies, attention factor and per-position frequencies do.
-    private static RopeScalingMethod Guard(Slot slot, RopeScalingMethod app, RopeScalingMethod library) => input =>
-    {
-        var copy = input with { Frequencies = (double[])input.Frequencies.Clone() };
-        return slot.Call(() => app(copy), () => library(input), Compare);
-    };
+    private static IRopeScaling Guard(Slot slot, IRopeScaling app, IRopeScaling library) => new GuardedScaling(slot, app, library);
 
     private static string? Compare(RopeScalingResult library, RopeScalingResult other)
     {
@@ -201,13 +204,40 @@ public static class RopeScalings
 
         foreach (int position in (int[])[0, 1 << 16])
         {
-            if (library.FrequenciesAt is { } at && Comparisons.Difference(at(position), other.FrequenciesAt!(position), 1e-9) is { } moved)
+            if (library.FrequenciesAt is { } at && Comparisons.Difference(at.At(position), other.FrequenciesAt!.At(position), 1e-9) is { } moved)
             {
                 return $"frequencies at position {position}: {moved}";
             }
         }
 
         return null;
+    }
+
+    // A library method: its parameters' keys and its computation.
+    private sealed class BuiltInScaling(string name, string summary, OptionKeys keys, Func<RopeScalingInput, RopeScalingResult> scale) : IRopeScaling
+    {
+        public string Name => name;
+
+        public string Summary => summary;
+
+        public IReadOnlySet<string> Keys => keys;
+
+        public RopeScalingResult Create(RopeScalingInput request) => scale(request);
+    }
+
+    private sealed class GuardedScaling(Slot slot, IRopeScaling app, IRopeScaling library) : IRopeScaling
+    {
+        public string Name => app.Name;
+
+        public string Summary => app.Summary;
+
+        public IReadOnlySet<string> Keys => app.Keys;
+
+        public RopeScalingResult Create(RopeScalingInput request)
+        {
+            var copy = request with { Frequencies = (double[])request.Frequencies.Clone() };
+            return slot.Call(() => app.Create(copy), () => library.Create(request), Compare);
+        }
     }
 
     // transformers _compute_linear_scaling_rope_parameters: inv_freq /= factor.
@@ -289,27 +319,30 @@ public static class RopeScalings
         double factor = RopeScaling.Number(p, "factor"), max = RopeScaling.Number(p, "max_position_embeddings");
         int dim = input.RotaryDim;
         var unscaled = input.Frequencies;
-        return new(unscaled)
+        return new(unscaled) { FrequenciesAt = new DynamicFrequencies(unscaled, factor, max, dim) };
+    }
+
+    // Dynamic NTK's frequencies at a position: the unscaled ones within max_position_embeddings, the grown base beyond.
+    private sealed class DynamicFrequencies(double[] unscaled, double factor, double max, int dim) : IPositionFrequencies
+    {
+        public double[] At(int position)
         {
-            FrequenciesAt = position =>
+            double length = position + 1;
+            if (length <= max)
             {
-                double length = position + 1;
-                if (length <= max)
-                {
-                    return unscaled;
-                }
+                return unscaled;
+            }
 
-                // f_i · (b' / b)^(-2i / d): the unscaled frequencies with the grown base.
-                double growth = Math.Pow(factor * length / max - (factor - 1), (double)dim / (dim - 2));
-                var frequencies = new double[unscaled.Length];
-                for (int i = 0; i < frequencies.Length; i++)
-                {
-                    frequencies[i] = unscaled[i] * Math.Pow(growth, -2.0 * i / dim);
-                }
+            // f_i · (b' / b)^(-2i / d): the unscaled frequencies with the grown base.
+            double growth = Math.Pow(factor * length / max - (factor - 1), (double)dim / (dim - 2));
+            var frequencies = new double[unscaled.Length];
+            for (int i = 0; i < frequencies.Length; i++)
+            {
+                frequencies[i] = unscaled[i] * Math.Pow(growth, -2.0 * i / dim);
+            }
 
-                return frequencies;
-            },
-        };
+            return frequencies;
+        }
     }
 }
 
@@ -349,7 +382,7 @@ public sealed record RopeSettings(float Theta, int? RotaryDim = null, bool Inter
             return new RopeScalingResult(frequencies);
         }
 
-        var result = RopeScalings.Get(Scaling.Type)(new RopeScalingInput(frequencies, Theta, rotary, Scaling.Parameters));
+        var result = RopeScalings.Get(Scaling.Type).Create(new RopeScalingInput(frequencies, Theta, rotary, Scaling.Parameters));
         if (result.Frequencies.Length != half)
         {
             throw new InvalidOperationException($"RoPE scaling '{Scaling.Type}' returned {result.Frequencies.Length} frequencies; {half} expected.");

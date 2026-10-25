@@ -79,7 +79,7 @@ public static class LlamaPlugin
 
                 _fallback = false;
             });
-            Part(() => RopeScalings.Register(LlamaRopeScaling.Name, LlamaRopeScaling.Scale), () => RopeScalings.Unregister(LlamaRopeScaling.Name));
+            Part(() => RopeScalings.Register(LlamaRopeScaling.Kind), () => RopeScalings.Unregister(LlamaRopeScaling.Name));
             Part(() => GgufChatTemplates.Register(ChatTemplateName, LlamaArchitectures.ChatTemplateFallback()), () => GgufChatTemplates.Unregister(ChatTemplateName));
         }
     }

@@ -6,6 +6,25 @@ using Idrak.Layers;
 
 namespace Idrak.PluginTests;
 
+/// <summary>The packed format of <see cref="RoundedWeight"/>, registered by its name.</summary>
+public sealed class RoundedFormat : IPackedFormat
+{
+    /// <summary>The format.</summary>
+    public static RoundedFormat Instance { get; } = new();
+
+    /// <inheritdoc />
+    public string Name => RoundedWeight.FormatName;
+
+    /// <inheritdoc />
+    public string Summary => "values rounded to bfloat16, two to a word";
+
+    /// <inheritdoc />
+    public IReadOnlySet<string> Keys => OptionKeys.None;
+
+    /// <inheritdoc />
+    public IPackedWeight Create(PackRequest request) => RoundedWeight.Pack(request.Values, request.Rows, request.Columns, request.Device);
+}
+
 /// <summary>
 /// A packed weight format of one's own: values rounded to bfloat16, two to a four-byte word (low half first) in a tensor
 /// no scope captures, multiplied through the base class's expanded product. The weights are expanded by the plug-in
@@ -84,7 +103,7 @@ public sealed class RoundedWeight : PackedWeight
 /// default kernel (composed of the library's operations), or a device kernel registered for it
 /// (<see cref="PluginKernels.Install"/>).
 /// </summary>
-public sealed class ScaledLayout : KeyValueLayout
+public sealed class ScaledLayout : KeyValueLayout, IScaledLayout
 {
     /// <summary>The name it is registered under.</summary>
     public const string FormatName = "outside-scaled";
@@ -97,9 +116,6 @@ public sealed class ScaledLayout : KeyValueLayout
 
     /// <inheritdoc />
     public override int RowWidth(int headDim) => headDim;
-
-    /// <inheritdoc />
-    public override bool HasScales => true;
 
     /// <inheritdoc />
     public override void Write(Tensor keys, Tensor values, KeyValueCache cache, Tensor position)

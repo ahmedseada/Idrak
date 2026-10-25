@@ -23,12 +23,7 @@ namespace Idrak.Text.Plugins.Gemma;
 public static class GemmaGguf
 {
     /// <summary>llama.cpp's "gemma": <c>GemmaForCausalLM</c>, the common tensor names, gains stored with the 1 added, GELU.</summary>
-    public static GgufArchitecture Gemma() => new()
-    {
-        HuggingFace = GemmaPlugin.GemmaForCausalLM,
-        StoredOffset = StoredOffset,
-        Configure = (file, config, notes) => Configure(file, config, notes, version: 1, ImpliedQueryScalar),
-    };
+    public static IGgufArchitecture Gemma() => new Mapping(1, ImpliedQueryScalar, ownNorms: false) { HuggingFace = GemmaPlugin.GemmaForCausalLM };
 
     /// <summary>
     /// llama.cpp's "gemma2": <c>Gemma2ForCausalLM</c> with its four norms per layer (<see cref="TensorName"/>), gains stored
@@ -38,13 +33,8 @@ public static class GemmaGguf
     /// The query scalar (query_pre_attn_scalar: scores are scaled by its inverse square root) of a file, given the file
     /// and the configuration read so far; null takes <see cref="ImpliedQueryScalar"/>.
     /// </param>
-    public static GgufArchitecture Gemma2(Func<GgufFile, JsonObject, float>? queryScalar = null) => new()
-    {
-        HuggingFace = GemmaPlugin.Gemma2ForCausalLM,
-        TensorName = TensorName,
-        StoredOffset = StoredOffset,
-        Configure = (file, config, notes) => Configure(file, config, notes, version: 2, queryScalar ?? ImpliedQueryScalar),
-    };
+    public static IGgufArchitecture Gemma2(Func<GgufFile, JsonObject, float>? queryScalar = null) =>
+        new Mapping(2, queryScalar ?? ImpliedQueryScalar, ownNorms: true) { HuggingFace = GemmaPlugin.Gemma2ForCausalLM };
 
     /// <summary>
     /// llama.cpp's "gemma3": <c>Gemma3ForCausalLM</c> with its four norms per layer and its query and key norms, gains
@@ -52,13 +42,18 @@ public static class GemmaGguf
     /// when it has them (the global layers' base and scaling are the file's usual RoPE keys).
     /// </summary>
     /// <param name="queryScalar">As for <see cref="Gemma2"/>.</param>
-    public static GgufArchitecture Gemma3(Func<GgufFile, JsonObject, float>? queryScalar = null) => new()
+    public static IGgufArchitecture Gemma3(Func<GgufFile, JsonObject, float>? queryScalar = null) =>
+        new Mapping(3, queryScalar ?? ImpliedQueryScalar, ownNorms: true) { HuggingFace = GemmaPlugin.Gemma3ForCausalLM };
+
+    // A Gemma version's mapping: gains stored with the 1 added, its keys read from the file, its own norms' names (2 and 3).
+    private sealed class Mapping(int version, Func<GgufFile, JsonObject, float> queryScalar, bool ownNorms) : GgufArchitecture
     {
-        HuggingFace = GemmaPlugin.Gemma3ForCausalLM,
-        TensorName = TensorName,
-        StoredOffset = StoredOffset,
-        Configure = (file, config, notes) => Configure(file, config, notes, version: 3, queryScalar ?? ImpliedQueryScalar),
-    };
+        public override void Configure(GgufFile file, JsonObject config, List<string> notes) => GemmaGguf.Configure(file, config, notes, version, queryScalar);
+
+        public override string? TensorName(string name) => ownNorms ? GemmaGguf.TensorName(name) : CommonTensorName(name);
+
+        public override float StoredOffset(string name) => GemmaGguf.StoredOffset(name);
+    }
 
     /// <summary>
     /// llama.cpp's names of Gemma 2 and Gemma 3 tensors → the Hugging Face ones: the norm after attention

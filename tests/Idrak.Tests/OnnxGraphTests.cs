@@ -84,7 +84,7 @@ internal static partial class Tests
             AssertClose([.. expected.ToArray().Select(v => v * 1.5f)], actual.ToArray(), 1e-4f, "the exporter's translator takes precedence");
 
             // A built-in can be replaced, and restored.
-            OnnxExportOps.Register<Linear>((g, l, v, shape) => g.Node("Mul", [linear(g, l, v, shape), g.Scalar("twice", 2f)], shape));
+            OnnxExportOps.Register<Linear>((g, l, v, shape) => g.Node("Mul", [linear.Export(g, l, v, shape), g.Scalar("twice", 2f)], shape));
             using var replaced = OnnxModule.Load(OnnxExport.For(model).Input(4).ToBytes());
             using var doubled = replaced.Predict(x);
             AssertClose([.. expected.ToArray().Select(v => v * 2f)], doubled.ToArray(), 1e-4f, "the replaced Linear is used");

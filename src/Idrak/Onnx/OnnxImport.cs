@@ -208,7 +208,7 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
         var node = users[0];
         Consume(node);
         var translate = OnnxImportOps.Find(node.Op) ?? throw UnknownOperator(node);
-        return translate(new ImportContext(this, node, x));
+        return translate.Translate(new ImportContext(this, node, x));
     }
 
     // The single-node operators, registered in OnnxImportOps (a translator returns the value the chain continues from).
@@ -412,7 +412,7 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
                 Consume(node);
                 var translate = OnnxImportOps.Find(node.Op);
                 bool primitive = Primitives.ContainsKey(node.Op) && node.Domain is "" or "ai.onnx";
-                bool replaced = translate is not null && !(BuiltInOps.TryGetValue(node.Op, out var builtIn) && builtIn == translate);
+                bool replaced = translate is not null && !(BuiltInOps.ContainsKey(node.Op) && OnnxImportOps.Default(node.Op) == translate);
                 if (replaced && x is not null)
                 {
                     Translate(node, x, translate!);
@@ -475,11 +475,11 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
 
     // A node imported through a translator of your own: its builder steps become layer nodes, its graph operations
     // (OnnxImportContext.AddGraphOp) operation nodes; a node that adds nothing passes its input through.
-    private void Translate(OnnxNode node, string x, OnnxImportTranslator translate)
+    private void Translate(OnnxNode node, string x, IOnnxImportOp translate)
     {
         CheckExtraOutputs(node);
         var context = new ImportContext(this, node, x, graph: true);
-        translate(context);
+        translate.Translate(context);
         if (!_graphNodes.Any(n => n.Output == node.Outputs[0]))
         {
             _graphNodes.Add(new GraphNode("identity", [context.Current], node.Outputs[0]));

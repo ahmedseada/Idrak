@@ -8,7 +8,7 @@
 // (samples/Idrak.Samples.Override.Tests) check that default with the kit. Version 1 stays reachable for one more release,
 // a one-line way back if the new default ever misbehaves for this app:
 //
-//   TokenSamplers.Register(TokenSamplers.DefaultName, TokenSamplers.Default(TokenSamplers.DefaultName, version: 1)!);
+//   TokenSamplers.Register(TokenSamplers.Default(TokenSamplers.DefaultName, version: 1)!);
 //
 //   dotnet run -c Release --project samples/Idrak.Samples.Override
 //   dotnet run -c Release --project samples/Idrak.Samples.Override.Tests      the kit, run from the app's tests

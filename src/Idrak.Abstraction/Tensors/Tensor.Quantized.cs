@@ -158,19 +158,19 @@ public sealed partial class Tensor
     /// residual + y). Records no gradient.
     /// </summary>
     /// <param name="input">[..., k] on the weights' device.</param>
-    /// <param name="weight">The weights, in a built-in packed format (<see cref="PackedWeight.Format"/> not null).</param>
+    /// <param name="weight">The weights, in a built-in packed format (an <see cref="IKernelPackedWeight"/>).</param>
     /// <param name="bias">[n], or null (gelu needs it).</param>
     /// <param name="gelu">Gelu of the biased product (no residual then).</param>
     /// <param name="residual">Added after the bias: the output's shape, or null.</param>
     /// <exception cref="ArgumentException">The weights are not a built-in format, or the shapes or options do not fit.</exception>
     /// <exception cref="InvalidOperationException">A gradient would be recorded.</exception>
-    public static Tensor MatMulPackedEpilogue(Tensor input, PackedWeight weight, Tensor? bias, bool gelu = false, Tensor? residual = null)
+    public static Tensor MatMulPackedEpilogue(Tensor input, IPackedWeight weight, Tensor? bias, bool gelu = false, Tensor? residual = null)
     {
         ArgumentNullException.ThrowIfNull(input);
         ArgumentNullException.ThrowIfNull(weight);
         input.ThrowIfDisposed();
         int k = weight.Rows, n = weight.Columns;
-        if (weight.Format is not { } format || input.Rank < 2 || input._shape[^1] != k || bias is not null && bias.Size != n || gelu && (bias is null || residual is not null)
+        if (weight is not IKernelPackedWeight { Format: var format } kernel || input.Rank < 2 || input._shape[^1] != k || bias is not null && bias.Size != n || gelu && (bias is null || residual is not null)
             || residual is not null && (residual.Rank != input.Rank || !residual._shape.AsSpan(0, input.Rank - 1).SequenceEqual(input._shape.AsSpan(0, input.Rank - 1)) || residual._shape[^1] != n))
         {
             throw new ArgumentException($"MatMulPackedEpilogue takes [..., {k}] through built-in [{k}, {n}] weights, a bias [{n}] (gelu needs it), and a residual of the "
@@ -191,7 +191,7 @@ public sealed partial class Tensor
         long start = Telemetry.Start(TelemetryLevel.Operations);
         int m = input.Size / Math.Max(1, k);
         var y = Empty([.. input._shape[..^1], n], input.Device);
-        input.Backend.PackedMatMulEpilogue(format, input.Storage, weight.PackedValues.Storage, weight.ScaleValues?.Storage, y.Storage, m, n, k, bias?.Storage,
+        input.Backend.PackedMatMulEpilogue(format, input.Storage, kernel.PackedValues.Storage, kernel.ScaleValues?.Storage, y.Storage, m, n, k, bias?.Storage,
             residual?.Storage, gelu);
         return Traced("matmul_packed_epilogue", y, start);
     }
@@ -237,11 +237,11 @@ public sealed partial class Tensor
 
     /// <summary>
     /// [..., k] × <paramref name="weight"/> ([k, n], a format without a product of its own) → [..., n]: the weights
-    /// expanded with <see cref="PackedWeight.Dequantize"/> for the product (and again for the gradient), freed after it.
+    /// expanded with <see cref="IPackedWeight.Dequantize"/> for the product (and again for the gradient), freed after it.
     /// Gradients flow to this tensor (the weights are fixed). Not recordable into a device graph: the expansion may read
     /// the host, which a replay would not repeat.
     /// </summary>
-    internal Tensor MatMulExpanded(PackedWeight weight)
+    internal Tensor MatMulExpanded(IPackedWeight weight)
     {
         this.ThrowIfDisposed();
         int k = weight.Rows, n = weight.Columns;
@@ -252,7 +252,7 @@ public sealed partial class Tensor
 
         if (ComputeGraph.IsCapturing)
         {
-            throw new NotSupportedException($"{weight.Name} weights have no product of their own (PackedWeight.MatMul), so the step is not recorded as a graph.");
+            throw new NotSupportedException($"{weight.Name} weights have no product of their own (IPackedWeight.MatMul), so the step is not recorded as a graph.");
         }
 
         long start = Telemetry.Start(TelemetryLevel.Operations);
@@ -394,7 +394,7 @@ public sealed partial class Tensor
 
 
     // The weights as float32 [rows, columns], checked: on `device`, the shape the format reports.
-    private static Tensor Expanded(PackedWeight weight, Device device)
+    private static Tensor Expanded(IPackedWeight weight, Device device)
     {
         var w = weight.Dequantize();
         if (w.Device != device || w.Rank != 2 || w.Shape[0] != weight.Rows || w.Shape[1] != weight.Columns)

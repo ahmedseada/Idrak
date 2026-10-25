@@ -23,7 +23,10 @@ public static class LlamaRopeScaling
             ["original_max_position_embeddings"] = originalMaxPositions,
         });
 
-    /// <summary>The method (registered as <see cref="Name"/> by <see cref="LlamaPlugin"/>).</summary>
+    /// <summary>The scaling as a kind (registered as <see cref="Name"/> by <see cref="LlamaPlugin"/>).</summary>
+    public static IRopeScaling Kind { get; } = new LlamaScaling();
+
+    /// <summary>The method (<see cref="Kind"/>'s).</summary>
     // transformers _compute_llama3_parameters: wavelength = 2π / f; f / factor above original / low_freq_factor, f below
     // original / high_freq_factor, else (1 - s) · f / factor + s · f with s = (original / wavelength - low) / (high - low).
     public static RopeScalingResult Scale(RopeScalingInput input)
@@ -49,5 +52,18 @@ public static class LlamaRopeScaling
         }
 
         return new(frequencies);
+    }
+
+    private sealed class LlamaScaling : IRopeScaling
+    {
+        private static readonly OptionKeys Parameters = new("factor", "low_freq_factor", "high_freq_factor", "original_max_position_embeddings");
+
+        public string Name => LlamaRopeScaling.Name;
+
+        public string Summary => "Llama 3's: long wavelengths stretched by factor, short ones kept, a smooth blend between";
+
+        public IReadOnlySet<string> Keys => Parameters;
+
+        public RopeScalingResult Create(RopeScalingInput request) => Scale(request);
     }
 }

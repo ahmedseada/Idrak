@@ -8,123 +8,128 @@ using Idrak.Abstraction.Devices;
 namespace Idrak.Abstraction.Generation;
 
 /// <summary>
-/// Packs float weights [rows, columns] (host values, row-major) into a <see cref="PackedWeight"/> on
-/// <paramref name="device"/>; registered under a format name with <see cref="PackedWeight.Register"/>.
+/// What a packed format packs (<see cref="IPackedFormat"/>): float weights [rows, columns] (host values, row-major) and the
+/// device the packed weights are made on.
 /// </summary>
 /// <param name="values">The float weights, <paramref name="rows"/> × <paramref name="columns"/> values.</param>
 /// <param name="rows">Input features (rows of the weight matrix).</param>
 /// <param name="columns">Output features (columns).</param>
 /// <param name="device">Where the packed weights are created.</param>
-public delegate PackedWeight PackedWeightFactory(ReadOnlySpan<float> values, int rows, int columns, Device device);
+public readonly ref struct PackRequest(ReadOnlySpan<float> values, int rows, int columns, Device device)
+{
+    /// <summary>The float weights, <see cref="Rows"/> × <see cref="Columns"/> values.</summary>
+    public ReadOnlySpan<float> Values { get; } = values;
+
+    /// <summary>Input features (rows of the weight matrix).</summary>
+    public int Rows { get; } = rows;
+
+    /// <summary>Output features (columns).</summary>
+    public int Columns { get; } = columns;
+
+    /// <summary>Where the packed weights are created.</summary>
+    public Device Device { get; } = device;
+}
+
+/// <summary>
+/// A packed weight format, registered by its <see cref="IKind.Name"/> in <see cref="PackedWeightFormats"/> ("int8", "int4",
+/// "bfloat16", or one of your own): how float weights are packed (<see cref="IKind{TRequest, T}.Create"/>), so options and
+/// tools choose the format by name (<c>DecoderBuildOptions.PackedFormatName</c>).
+/// </summary>
+public interface IPackedFormat : IKind<PackRequest, IPackedWeight>;
 
 /// <summary>
 /// Weights of a <c>Linear</c> layer held in a packed format: the built-in <see cref="Int8Weight"/>,
 /// <see cref="Int4Weight"/> and <see cref="BFloat16Weight"/>, or a format defined outside Idrak (NF4, FP8, …). The layer
-/// and the fused products go through this type instead of checking which format a layer holds: each format says how it
-/// multiplies, expands and moves, and which fused paths it takes.
-/// <para>
-/// A format of your own derives from this class and implements <see cref="Name"/>, <see cref="Rows"/>,
-/// <see cref="Columns"/>, <see cref="Bytes"/>, <see cref="Dequantize"/>, <see cref="Buffers"/>, <see cref="MoveTo"/> and
-/// <see cref="Dispose"/>; <see cref="MatMul"/> expands the weights for each product unless it is overridden with a
-/// product that reads the packed form. Its <see cref="Format"/> is null: the device kernels for the built-in formats
-/// (fused projections, gate/up pairs, LoRA products, the activation read by the down projection) never see it, and every
-/// layer holding it runs <see cref="MatMul"/>. Register a factory with <see cref="Register"/> to create it by name
-/// (<see cref="FromValues(string, ReadOnlySpan{float}, int, int, Device)"/>, <c>DecoderBuildOptions.PackedFormatName</c>).
-/// </para>
+/// and the fused products go through this contract instead of checking which format a layer holds: each format says how
+/// it multiplies, expands and moves. What a format can do beyond it is an interface of its own, tested once when the
+/// layer takes the weights: <see cref="IRecordable"/> when its <see cref="MatMul"/> only issues device work (a decoding
+/// step recorded as a device graph records it), <see cref="IKernelPackedWeight"/> for the built-in formats the device
+/// kernels read directly. <see cref="PackedWeight"/> is a base that expands the weights for each product.
 /// </summary>
-public abstract class PackedWeight : IDisposable
+public interface IPackedWeight : IDisposable
 {
-    /// <summary>A format defined outside Idrak (<see cref="Format"/> is null).</summary>
-    protected PackedWeight()
-    {
-    }
-
-    private protected PackedWeight(PackedFormat format) => Format = format;
-
-    /// <summary>
-    /// The built-in format (which the device kernels read directly), or null for a format defined outside Idrak, which
-    /// layers multiply through <see cref="MatMul"/>.
-    /// </summary>
-    public PackedFormat? Format { get; }
-
-    /// <summary>The format's name, as registered with <see cref="Register"/> ("int8", "int4", "bfloat16" for the built-in ones).</summary>
-    public abstract string Name { get; }
+    /// <summary>The format's name, as registered in <see cref="PackedWeightFormats"/> ("int8", "int4", "bfloat16" for the built-in ones).</summary>
+    string Name { get; }
 
     /// <summary>Input features (rows of the [rows, columns] weight).</summary>
-    public abstract int Rows { get; }
+    int Rows { get; }
 
     /// <summary>Output features (columns).</summary>
-    public abstract int Columns { get; }
+    int Columns { get; }
 
     /// <summary>Device memory used, in bytes.</summary>
-    public abstract long Bytes { get; }
+    long Bytes { get; }
 
-    /// <summary>The device the weights are on (by default, that of the first of <see cref="Buffers"/>).</summary>
-    public virtual Device Device => Buffers().First().Device;
+    /// <summary>The device the weights are on.</summary>
+    Device Device { get; }
 
-    /// <summary>
-    /// The float weights, [rows, columns], on the same device, as a new tensor the caller disposes.
-    /// </summary>
-    public abstract Tensor Dequantize();
+    /// <summary>The format in messages: "int8", "4-bit", "bfloat16".</summary>
+    string Description { get; }
+
+    /// <summary>The format's short name, as summaries show it.</summary>
+    string ShortName { get; }
+
+    /// <summary>How to get float weights back, as messages name it ("ToFloat32()").</summary>
+    string FloatMethod { get; }
+
+    /// <summary>The float weights, [rows, columns], on the same device, as a new tensor the caller disposes.</summary>
+    Tensor Dequantize();
+
+    /// <summary>Writes the float weights [rows, columns] into <paramref name="destination"/> (on the same device).</summary>
+    void DequantizeInto(Storage destination);
 
     /// <summary>
     /// The tensors holding the weights (packed words, scales): the layer lists them as its <see cref="Module.Buffers"/>, so
     /// <c>Idrak.ModuleFiles.Save</c> writes them exactly as they are (and <c>Idrak.ModuleFiles.Load</c> reads them
     /// back into a model holding the same format), and offloading treats them as frozen weights.
     /// </summary>
-    public abstract IEnumerable<Tensor> Buffers();
+    IEnumerable<Tensor> Buffers();
 
     /// <summary>
-    /// Moves the weights to <paramref name="device"/> (<see cref="Module.To"/>): replace each tensor held by
-    /// <c>move(tensor, device)</c>, which returns it on the device and releases the old one.
+    /// Moves the weights to <paramref name="device"/> (what a layer holding them calls from its own <c>MoveTo</c>): each
+    /// tensor held is replaced by <c>move(tensor, device)</c>, which returns it on the device and releases the old one.
     /// </summary>
     /// <param name="device">The destination.</param>
-    /// <param name="move">Moves one tensor.</param>
-    protected abstract void MoveTo(Device device, Func<Tensor, Device, Tensor> move);
-
-    /// <summary>Moves the weights to <paramref name="device"/> (what a layer holding them calls from its own <c>MoveTo</c>).</summary>
-    /// <param name="device">The destination.</param>
     /// <param name="move">Moves one tensor: returns it on the device and releases the old one.</param>
-    public void MoveWeights(Device device, Func<Tensor, Device, Tensor> move) => MoveTo(device, move);
+    void MoveWeights(Device device, Func<Tensor, Device, Tensor> move);
 
     /// <summary>
     /// input [..., <see cref="Rows"/>] · W → [..., <see cref="Columns"/>], gradients flowing to the input (the weights are
-    /// frozen). By default the weights are expanded with <see cref="Dequantize"/> for the product (and again for the
-    /// input's gradient) and freed after it, so a format works without a kernel of its own; override this with a product
-    /// that reads the packed form. A decoding step recorded as a device graph (CUDA) records this product, so an override
-    /// must only issue device work (no host round trip); the default refuses to be recorded, since it cannot tell whether
-    /// <see cref="Dequantize"/> does, and such steps run without a graph.
+    /// frozen). A format that only issues device work here implements <see cref="IRecordable"/>, so a decoding step
+    /// recorded as a device graph records the product; one that does not runs such steps without a graph.
     /// </summary>
     /// <param name="input">[..., <see cref="Rows"/>] on the weights' device.</param>
-    public virtual Tensor MatMul(Tensor input) => input.MatMulExpanded(this);
+    Tensor MatMul(Tensor input);
+}
 
-    /// <inheritdoc />
-    public abstract void Dispose();
+/// <summary>
+/// Packed weights in a built-in <see cref="PackedFormat"/>, which the device kernels read directly: the fused projections,
+/// gate/up pairs, low-rank (LoRA) products and the activation read by the down projection take them. Their products only
+/// issue device work (<see cref="IRecordable"/>). A format defined outside Idrak is not one: every layer holding it runs
+/// its <see cref="IPackedWeight.MatMul"/>.
+/// </summary>
+public interface IKernelPackedWeight : IPackedWeight, IRecordable
+{
+    /// <summary>The built-in format the device kernels read.</summary>
+    PackedFormat Format { get; }
 
-    /// <summary>
-    /// The packed words the device kernels read (a built-in <see cref="Format"/> only; callers check it first).
-    /// </summary>
-    /// <exception cref="InvalidOperationException">The weights are not in a built-in format.</exception>
-    public virtual Tensor PackedValues => throw new InvalidOperationException($"{Name} weights are not a built-in format; the device kernels cannot read them.");
+    /// <summary>The packed words the device kernels read.</summary>
+    Tensor PackedValues { get; }
 
     /// <summary>The scales the device kernels read with <see cref="PackedValues"/>, or null when the format has none.</summary>
-    public virtual Tensor? ScaleValues => null;
-
-    /// <summary>Writes the float weights [rows, columns] into <paramref name="destination"/> (on the same device).</summary>
-    public virtual void DequantizeInto(Storage destination)
-    {
-        using var w = Dequantize();
-        w.Backend.Copy(w.Storage, destination, Rows * Columns);
-    }
+    Tensor? ScaleValues { get; }
 
     /// <summary>Whether the fused low-rank (LoRA) products read this format packed; otherwise the base product runs on its own.</summary>
-    public virtual bool LowRankProducts => false;
+    bool LowRankProducts { get; }
+
+    /// <summary>Whether an FP8 copy may be made for training products (the fused low-rank products read one).</summary>
+    bool Float8Copy { get; }
 
     /// <summary>
-    /// Whether an FP8 copy may be made for training products: only the fused low-rank products read one, and they take
-    /// built-in formats only.
+    /// Whether a gated feed-forward block applies the activation as the down projection reads its input (4-bit: eight
+    /// columns per word repay that work), rather than in the gate/up product.
     /// </summary>
-    public virtual bool Float8Copy => Format is not null;
+    bool ActivationInDownProjection { get; }
 
     /// <summary>
     /// dx = beta·dx + g · Wᵀ (+ dt · Aᵀ when <paramref name="dt"/> is given) for g [m, n], reading W [k, n] as stored: the
@@ -139,144 +144,71 @@ public abstract class PackedWeight : IDisposable
     /// <param name="dt">The low-rank term's gradient [m, rank], or null.</param>
     /// <param name="a">The adapter's down projection [k, rank], or null.</param>
     /// <param name="rank">The adapter's rank.</param>
-    public virtual bool TransposedProduct(Tensor g, Storage dx, int m, int k, int n, float beta, Storage? dt, Storage? a, int rank) => false;
+    bool TransposedProduct(Tensor g, Storage dx, int m, int k, int n, float beta, Storage? dt, Storage? a, int rank);
+}
+
+/// <summary>
+/// A base for a packed weight format of one's own (<see cref="IPackedWeight"/>): it implements <see cref="Name"/>,
+/// <see cref="Rows"/>, <see cref="Columns"/>, <see cref="Bytes"/>, <see cref="Dequantize"/>, <see cref="Buffers"/>,
+/// <see cref="MoveTo"/> and <see cref="Dispose"/>; <see cref="MatMul"/> expands the weights for each product unless it is
+/// overridden with a product that reads the packed form (a product that only issues device work makes the format an
+/// <see cref="IRecordable"/>). Register the format (<see cref="IPackedFormat"/>) with <see cref="PackedWeightFormats.Register"/>
+/// to create it by name (<see cref="PackedWeightFormats.Pack(string, ReadOnlySpan{float}, int, int, Device)"/>,
+/// <c>DecoderBuildOptions.PackedFormatName</c>).
+/// </summary>
+public abstract class PackedWeight : IPackedWeight
+{
+    /// <inheritdoc />
+    public abstract string Name { get; }
+
+    /// <inheritdoc />
+    public abstract int Rows { get; }
+
+    /// <inheritdoc />
+    public abstract int Columns { get; }
+
+    /// <inheritdoc />
+    public abstract long Bytes { get; }
+
+    /// <summary>The device the weights are on (by default, that of the first of <see cref="Buffers"/>).</summary>
+    public virtual Device Device => Buffers().First().Device;
+
+    /// <inheritdoc />
+    public abstract Tensor Dequantize();
+
+    /// <inheritdoc />
+    public abstract IEnumerable<Tensor> Buffers();
 
     /// <summary>
-    /// Whether a gated feed-forward block applies the activation as the down projection reads its input (4-bit: eight
-    /// columns per word repay that work), rather than in the gate/up product.
+    /// Moves the weights to <paramref name="device"/> (<see cref="Module.To"/>): replace each tensor held by
+    /// <c>move(tensor, device)</c>, which returns it on the device and releases the old one.
     /// </summary>
-    public virtual bool ActivationInDownProjection => false;
+    /// <param name="device">The destination.</param>
+    /// <param name="move">Moves one tensor.</param>
+    protected abstract void MoveTo(Device device, Func<Tensor, Device, Tensor> move);
 
-    /// <summary>Packs [rows, columns] float values in <paramref name="format"/> on <paramref name="device"/>.</summary>
-    public static PackedWeight FromValues(PackedFormat format, ReadOnlySpan<float> values, int rows, int columns, Device device) =>
-        (BuiltIn.TryGetValue(format, out var builtIn) ? builtIn.Factory
-            : throw new ArgumentOutOfRangeException(nameof(format), format, "Not a built-in packed format."))(values, rows, columns, device);
-
-    // The built-in formats, by enum and name: the enum overload above always makes these (a registered name may replace
-    // its entry in the registry below, not here), and the registry starts from them.
-    private static readonly IReadOnlyDictionary<PackedFormat, (string Name, PackedWeightFactory Factory)> BuiltIn =
-        new Dictionary<PackedFormat, (string, PackedWeightFactory)>
-        {
-            [PackedFormat.Int8] = ("int8", Int8Weight.Quantize),
-            [PackedFormat.Int4] = ("int4", Int4Weight.Quantize),
-            [PackedFormat.BFloat16] = ("bfloat16", BFloat16Weight.FromValues),
-        };
+    /// <inheritdoc />
+    public void MoveWeights(Device device, Func<Tensor, Device, Tensor> move) => MoveTo(device, move);
 
     /// <summary>
-    /// Packs [rows, columns] float values in the format registered as <paramref name="format"/> (see
-    /// <see cref="FormatNames"/>) on <paramref name="device"/>.
+    /// input [..., <see cref="Rows"/>] · W → [..., <see cref="Columns"/>], gradients flowing to the input (the weights are
+    /// frozen). By default the weights are expanded with <see cref="Dequantize"/> for the product (and again for the
+    /// input's gradient) and freed after it, so a format works without a kernel of its own; override this with a product
+    /// that reads the packed form. The default refuses to be recorded into a device graph, since it cannot tell whether
+    /// <see cref="Dequantize"/> reads the host: such steps run without a graph.
     /// </summary>
-    public static PackedWeight FromValues(string format, ReadOnlySpan<float> values, int rows, int columns, Device device) =>
-        Pack(Factory(format), format, values, rows, columns, device);
+    /// <param name="input">[..., <see cref="Rows"/>] on the weights' device.</param>
+    public virtual Tensor MatMul(Tensor input) => input.MatMulExpanded(this);
 
-    /// <summary>The weights <paramref name="factory"/> packs, checked against the [rows, columns] shape asked for.</summary>
-    /// <exception cref="ArgumentException">The values do not fill the shape.</exception>
-    /// <exception cref="InvalidOperationException">The factory made weights of another shape.</exception>
-    public static PackedWeight Pack(PackedWeightFactory factory, string format, ReadOnlySpan<float> values, int rows, int columns, Device device)
+    /// <inheritdoc />
+    public abstract void Dispose();
+
+    /// <summary>Writes the float weights [rows, columns] into <paramref name="destination"/> (on the same device).</summary>
+    public virtual void DequantizeInto(Storage destination)
     {
-        if (values.Length != rows * columns)
-        {
-            throw new ArgumentException($"{values.Length} values do not fill [{rows}, {columns}].", nameof(values));
-        }
-
-        var weight = factory(values, rows, columns, device);
-        if (weight.Rows != rows || weight.Columns != columns)
-        {
-            weight.Dispose();
-            throw new InvalidOperationException($"The '{format}' factory made [{weight.Rows}, {weight.Columns}] weights for [{rows}, {columns}] values.");
-        }
-
-        return weight;
+        using var w = Dequantize();
+        w.Backend.Copy(w.Storage, destination, Rows * Columns);
     }
-
-    private static readonly SlotTable<string, PackedWeightFactory> Registry = Formats();
-
-    private static SlotTable<string, PackedWeightFactory> Formats()
-    {
-        var table = new SlotTable<string, PackedWeightFactory>(nameof(PackedWeight), GuardFactory, StringComparer.OrdinalIgnoreCase);
-        foreach (var (name, factory) in BuiltIn.Values)
-        {
-            table.RegisterDefault(name, factory);
-        }
-
-        return table;
-    }
-
-    // Packing makes the weights once: an app's factory falls back when it fails to make them. Under Shadow both pack the
-    // sampled weights, which agree when their shapes do; the app's are then freed.
-    private static PackedWeightFactory GuardFactory(Slot slot, PackedWeightFactory app, PackedWeightFactory library) => (values, rows, columns, device) =>
-    {
-        if (slot.Policy == SlotPolicy.Shadow)
-        {
-            var run = slot.Shadow();
-            var answer = library(values, rows, columns, device);
-            if (run is not null)
-            {
-                run.Answered();
-                try
-                {
-                    using var other = app(values, rows, columns, device);
-                    run.Done(Comparisons.Exact((answer.Rows, answer.Columns), (other.Rows, other.Columns)));
-                }
-                catch (Exception e) when (e is not OperationCanceledException)
-                {
-                    run.Failed(e);
-                }
-            }
-
-            return answer;
-        }
-
-        try
-        {
-            return app(values, rows, columns, device);
-        }
-        catch (Exception e) when (slot.Failed(e))
-        {
-            return library(values, rows, columns, device);
-        }
-    };
-
-    /// <summary>
-    /// Registers how to pack weights in the format <paramref name="format"/> (names ignore case), so options and tools can
-    /// choose it by name. "int8", "int4" and "bfloat16" are registered; under one of their names the app's factory
-    /// overrides the library's, which stays behind it (see <see cref="SetPolicy"/>). The overload of
-    /// <see cref="FromValues(PackedFormat, ReadOnlySpan{float}, int, int, Device)"/> taking a <see cref="PackedFormat"/>
-    /// always makes the built-in weights.
-    /// </summary>
-    /// <param name="format">The name to choose the format by.</param>
-    /// <param name="factory">Packs float values in the format.</param>
-    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string format, PackedWeightFactory factory)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(format);
-        ArgumentNullException.ThrowIfNull(factory);
-        Registry.Register(format, factory, System.Reflection.Assembly.GetCallingAssembly());
-    }
-
-    /// <summary>Removes the app's format <paramref name="format"/> (a built-in name gets the library's back); false when the app registered none.</summary>
-    public static bool Unregister(string format) => Registry.Unregister(format);
-
-    /// <summary>The registered format names.</summary>
-    public static IReadOnlyCollection<string> FormatNames => Registry.Keys;
-
-    /// <summary>The factory registered as <paramref name="format"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    /// <exception cref="NotSupportedException">No format of that name is registered.</exception>
-    public static PackedWeightFactory Factory(string format) =>
-        Registry.TryGet(format, out var factory) ? factory
-            : throw new NotSupportedException($"No packed format '{format}' is registered ({string.Join(", ", Registry.Keys)}); add it with PackedWeight.Register.");
-
-    /// <summary>The library's factory of <paramref name="format"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static PackedWeightFactory? Default(string format) => Registry.Default(format);
-
-    /// <summary>Who registered the format <paramref name="format"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
-    public static string? Origin(string format) => Registry.Origin(format);
-
-    /// <summary>
-    /// What happens when the app's factory <paramref name="format"/> fails to pack (<see cref="SlotPolicy.Throw"/> unless set:
-    /// the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the library's). Packed weights are made once, so the fallback is at packing; their products do not fall back.
-    /// </summary>
-    public static void SetPolicy(string format, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(format, policy, shadowRate);
 
     /// <summary>The format in messages: "int8", "4-bit", "bfloat16".</summary>
     public virtual string Description => Name;
@@ -289,29 +221,198 @@ public abstract class PackedWeight : IDisposable
 }
 
 /// <summary>
+/// The packed weight formats by name (ignoring case): "int8", "int4" and "bfloat16" are registered; add a format of one's
+/// own (<see cref="IPackedFormat"/>) with <see cref="Register"/>, so options and tools can choose it by name. Under a
+/// built-in name the app's format overrides the library's, which stays behind it (see <see cref="SetPolicy"/>). The
+/// overload of <see cref="Pack(PackedFormat, ReadOnlySpan{float}, int, int, Device)"/> taking a
+/// <see cref="PackedFormat"/> always makes the built-in weights.
+/// </summary>
+public static class PackedWeightFormats
+{
+    // The built-in formats, by enum: the enum overload of Pack always makes these (a registered name may replace its entry
+    // in the registry below, not here), and the registry starts from them.
+    private static readonly IReadOnlyDictionary<PackedFormat, IPackedFormat> BuiltIn = new Dictionary<PackedFormat, IPackedFormat>
+    {
+        [PackedFormat.Int8] = new BuiltInFormat("int8", "one signed byte a weight and a scale a column", request => Int8Weight.Quantize(request.Values, request.Rows, request.Columns, request.Device)),
+        [PackedFormat.Int4] = new BuiltInFormat("int4", "4-bit weights, a scale per 32 rows of a column", request => Int4Weight.Quantize(request.Values, request.Rows, request.Columns, request.Device)),
+        [PackedFormat.BFloat16] = new BuiltInFormat("bfloat16", "bfloat16 weights, half the float32 memory", request => BFloat16Weight.FromValues(request.Values, request.Rows, request.Columns, request.Device)),
+    };
+
+    private static readonly KindTable<IPackedFormat> Registry = Formats();
+
+    private static KindTable<IPackedFormat> Formats()
+    {
+        var table = new KindTable<IPackedFormat>(nameof(PackedWeightFormats), "Packed format", "add it with PackedWeightFormats.Register", Guard, StringComparer.OrdinalIgnoreCase);
+        foreach (var format in BuiltIn.Values)
+        {
+            table.RegisterDefault(format);
+        }
+
+        return table;
+    }
+
+    // Packing makes the weights once: an app's format falls back when it fails to make them. Under Shadow both pack the
+    // sampled weights, which agree when their shapes do; the app's are then freed.
+    private static IPackedFormat Guard(Slot slot, IPackedFormat app, IPackedFormat library) => new GuardedFormat(slot, app, library);
+
+    /// <summary>Packs [rows, columns] float values in the built-in <paramref name="format"/> on <paramref name="device"/>.</summary>
+    public static IKernelPackedWeight Pack(PackedFormat format, ReadOnlySpan<float> values, int rows, int columns, Device device) =>
+        (IKernelPackedWeight)Pack(BuiltIn.TryGetValue(format, out var builtIn) ? builtIn
+            : throw new ArgumentOutOfRangeException(nameof(format), format, "Not a built-in packed format."), values, rows, columns, device);
+
+    /// <summary>
+    /// Packs [rows, columns] float values in the format registered as <paramref name="format"/> (see <see cref="Names"/>)
+    /// on <paramref name="device"/>.
+    /// </summary>
+    public static IPackedWeight Pack(string format, ReadOnlySpan<float> values, int rows, int columns, Device device) =>
+        Pack(Get(format), values, rows, columns, device);
+
+    /// <summary>The weights <paramref name="format"/> packs, checked against the [rows, columns] shape asked for.</summary>
+    /// <exception cref="ArgumentException">The values do not fill the shape.</exception>
+    /// <exception cref="InvalidOperationException">The format made weights of another shape.</exception>
+    public static IPackedWeight Pack(IPackedFormat format, ReadOnlySpan<float> values, int rows, int columns, Device device)
+    {
+        ArgumentNullException.ThrowIfNull(format);
+        if (values.Length != rows * columns)
+        {
+            throw new ArgumentException($"{values.Length} values do not fill [{rows}, {columns}].", nameof(values));
+        }
+
+        var weight = format.Create(new PackRequest(values, rows, columns, device));
+        if (weight.Rows != rows || weight.Columns != columns)
+        {
+            weight.Dispose();
+            throw new InvalidOperationException($"The '{format.Name}' format made [{weight.Rows}, {weight.Columns}] weights for [{rows}, {columns}] values.");
+        }
+
+        return weight;
+    }
+
+    /// <summary>
+    /// Registers <paramref name="format"/> under its <see cref="IKind.Name"/> (names ignore case), so options and tools can
+    /// choose it by name; under a built-in name it overrides the library's format, which stays behind it (see
+    /// <see cref="SetPolicy"/>).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
+    public static void Register(IPackedFormat format) => Registry.Register(format, System.Reflection.Assembly.GetCallingAssembly());
+
+    /// <summary>Removes the app's format <paramref name="format"/> (a built-in name gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string format) => Registry.Unregister(format);
+
+    /// <summary>The registered format names.</summary>
+    public static IReadOnlyCollection<string> Names => Registry.Names;
+
+    /// <summary>The format registered as <paramref name="format"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
+    /// <exception cref="NotSupportedException">No format of that name is registered.</exception>
+    public static IPackedFormat Get(ReadOnlySpan<char> format) =>
+        Registry.TryGet(format, out var found) ? found
+            : throw new NotSupportedException($"No packed format '{format}' is registered ({string.Join(", ", Registry.Names)}); add it with PackedWeightFormats.Register.");
+
+    /// <summary>The library's format <paramref name="format"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static IPackedFormat? Default(string format) => Registry.Default(format);
+
+    /// <summary>Who registered the format <paramref name="format"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string format) => Registry.Origin(format);
+
+    /// <summary>
+    /// What happens when the app's format <paramref name="format"/> fails to pack (<see cref="SlotPolicy.Throw"/> unless set:
+    /// the error reaches the caller; <see cref="SlotPolicy.FallBack"/> retries on the library's). Packed weights are made once, so the fallback is at packing; their products do not fall back.
+    /// </summary>
+    public static void SetPolicy(string format, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(format, policy, shadowRate);
+
+    // A built-in format: its weights from the request.
+    private sealed class BuiltInFormat(string name, string summary, Func<PackRequest, IPackedWeight> pack) : IPackedFormat
+    {
+        public string Name => name;
+
+        public string Summary => summary;
+
+        public IReadOnlySet<string> Keys => OptionKeys.None;
+
+        public IPackedWeight Create(PackRequest request) => pack(request);
+
+        public override string ToString() => name;
+    }
+
+    private sealed class GuardedFormat(Slot slot, IPackedFormat app, IPackedFormat library) : IPackedFormat
+    {
+        public string Name => app.Name;
+
+        public string Summary => app.Summary;
+
+        public IReadOnlySet<string> Keys => app.Keys;
+
+        public IPackedWeight Create(PackRequest request)
+        {
+            if (slot.Policy == SlotPolicy.Shadow)
+            {
+                var run = slot.Shadow();
+                var answer = library.Create(request);
+                if (run is not null)
+                {
+                    run.Answered();
+                    try
+                    {
+                        using var other = app.Create(request);
+                        run.Done(Comparisons.Exact((answer.Rows, answer.Columns), (other.Rows, other.Columns)));
+                    }
+                    catch (Exception e) when (e is not OperationCanceledException)
+                    {
+                        run.Failed(e);
+                    }
+                }
+
+                return answer;
+            }
+
+            try
+            {
+                return app.Create(request);
+            }
+            catch (Exception e) when (slot.Failed(e))
+            {
+                return library.Create(request);
+            }
+        }
+    }
+}
+
+/// <summary>
 /// The int8 weights of a quantized <c>Linear</c> layer: each weight is a signed byte times its output column's
 /// scale (symmetric, per-column: scale = max |w| / 127). A quarter of the float32 memory; created by
 /// <c>ModuleExtensions.QuantizeInt8</c>. Inputs, outputs, biases and LoRA adapters stay float32.
 /// </summary>
-public sealed class Int8Weight : PackedWeight
+public sealed class Int8Weight : PackedWeight, IKernelPackedWeight
 {
     /// <inheritdoc />
     public override string Name => "int8";
 
     /// <inheritdoc />
+    public PackedFormat Format => PackedFormat.Int8;
+
+    /// <inheritdoc />
     public override Device Device => Packed.Device;
 
     /// <inheritdoc />
-    public override Tensor PackedValues => Packed;
+    public Tensor PackedValues => Packed;
 
     /// <inheritdoc />
-    public override Tensor? ScaleValues => Scales;
+    public Tensor? ScaleValues => Scales;
 
     /// <summary>input [..., rows] · W → [..., columns], reading the bytes (few rows) or expanding them once (more).</summary>
     public override Tensor MatMul(Tensor input) => input.MatMulInt8(this);
 
     /// <inheritdoc />
-    public override bool Float8Copy => false;
+    public bool LowRankProducts => false;
+
+    /// <inheritdoc />
+    public bool Float8Copy => false;
+
+    /// <inheritdoc />
+    public bool ActivationInDownProjection => false;
+
+    /// <inheritdoc />
+    public bool TransposedProduct(Tensor g, Storage dx, int m, int k, int n, float beta, Storage? dt, Storage? a, int rank) => false;
 
     /// <inheritdoc />
     public override string Description => "int8";
@@ -323,7 +424,6 @@ public sealed class Int8Weight : PackedWeight
     public override string FloatMethod => "DequantizeInt8()";
 
     private Int8Weight(Tensor packed, Tensor scales, int rows, int columns)
-        : base(PackedFormat.Int8)
     {
         Packed = packed;
         Scales = scales;
@@ -473,28 +573,37 @@ public sealed class Int8Weight : PackedWeight
 /// 5 bits per weight; decoding reads 8× less than float32. Created by <c>ModuleExtensions.QuantizeInt4</c> or when
 /// loading with 4-bit weights; inputs, outputs, biases and LoRA adapters stay float32 (QLoRA-style fine-tuning).
 /// </summary>
-public sealed class Int4Weight : PackedWeight
+public sealed class Int4Weight : PackedWeight, IKernelPackedWeight
 {
     /// <inheritdoc />
     public override string Name => "int4";
 
     /// <inheritdoc />
+    public PackedFormat Format => PackedFormat.Int4;
+
+    /// <inheritdoc />
     public override Device Device => Packed.Device;
 
     /// <inheritdoc />
-    public override Tensor PackedValues => Packed;
+    public Tensor PackedValues => Packed;
 
     /// <inheritdoc />
-    public override Tensor? ScaleValues => Scales;
+    public Tensor? ScaleValues => Scales;
 
     /// <summary>input [..., rows] · W → [..., columns], reading the nibbles.</summary>
     public override Tensor MatMul(Tensor input) => input.MatMulInt4(this);
 
     /// <inheritdoc />
-    public override bool LowRankProducts => true;
+    public bool LowRankProducts => true;
 
     /// <inheritdoc />
-    public override bool ActivationInDownProjection => true;
+    public bool Float8Copy => true;
+
+    /// <inheritdoc />
+    public bool ActivationInDownProjection => true;
+
+    /// <inheritdoc />
+    public bool TransposedProduct(Tensor g, Storage dx, int m, int k, int n, float beta, Storage? dt, Storage? a, int rank) => false;
 
     /// <inheritdoc />
     public override string Description => "4-bit";
@@ -506,7 +615,6 @@ public sealed class Int4Weight : PackedWeight
     public const int GroupSize = 32;
 
     private Int4Weight(Tensor packed, Tensor scales, int rows, int columns)
-        : base(PackedFormat.Int4)
     {
         Packed = packed;
         Scales = scales;
@@ -682,25 +790,37 @@ public sealed class Int4Weight : PackedWeight
 /// usually stored this way, so loading them as bfloat16 is exact. Created by <c>ModuleExtensions.ToBFloat16</c>
 /// or when loading with bfloat16 weights; inputs, outputs, biases and LoRA adapters stay float32.
 /// </summary>
-public sealed class BFloat16Weight : PackedWeight
+public sealed class BFloat16Weight : PackedWeight, IKernelPackedWeight
 {
     /// <inheritdoc />
     public override string Name => "bfloat16";
 
     /// <inheritdoc />
+    public PackedFormat Format => PackedFormat.BFloat16;
+
+    /// <inheritdoc />
     public override Device Device => Packed.Device;
 
     /// <inheritdoc />
-    public override Tensor PackedValues => Packed;
+    public Tensor PackedValues => Packed;
+
+    /// <inheritdoc />
+    public Tensor? ScaleValues => null;
 
     /// <summary>input [..., rows] · W → [..., columns], reading the bfloat16 values.</summary>
     public override Tensor MatMul(Tensor input) => input.MatMulBFloat16(this);
 
     /// <inheritdoc />
-    public override bool LowRankProducts => true;
+    public bool LowRankProducts => true;
 
     /// <inheritdoc />
-    public override bool TransposedProduct(Tensor g, Storage dx, int m, int k, int n, float beta, Storage? dt, Storage? a, int rank) =>
+    public bool Float8Copy => true;
+
+    /// <inheritdoc />
+    public bool ActivationInDownProjection => false;
+
+    /// <inheritdoc />
+    public bool TransposedProduct(Tensor g, Storage dx, int m, int k, int n, float beta, Storage? dt, Storage? a, int rank) =>
         g.Backend.BFloat16TransposedMatMul(g.Storage, Packed.Storage, dx, m, k, n, beta, dt, a, rank);
 
     /// <inheritdoc />
@@ -710,7 +830,6 @@ public sealed class BFloat16Weight : PackedWeight
     public override string ShortName => "bf16";
 
     private BFloat16Weight(Tensor packed, int rows, int columns)
-        : base(PackedFormat.BFloat16)
     {
         Packed = packed;
         Rows = rows;
@@ -904,11 +1023,12 @@ public sealed class BFloat16Weight : PackedWeight
 /// IEEE half-precision weights of a <c>Linear</c> layer, as a float16 checkpoint stores them (about 3 significant
 /// digits, range ±65504), in half the memory of float32. Every product widens them exactly
 /// (<c>Backend.Float16Dequantize</c>) and runs the float32 one, so the layer computes what a float32 layer holding the
-/// checkpoint's values computes, bit for bit. Not a built-in <see cref="PackedWeight.Format"/>: the fused projections
-/// of the built-in formats never see it, and every layer holding it runs <see cref="MatMul"/>. Two values per 32-bit
+/// checkpoint's values computes, bit for bit. Not an <see cref="IKernelPackedWeight"/>: the fused projections of the
+/// built-in formats never see it, and every layer holding it runs <see cref="MatMul"/>, which only issues device work
+/// (<see cref="IRecordable"/>). Two values per 32-bit
 /// word along each row, as <see cref="BFloat16Weight"/> packs bfloat16.
 /// </summary>
-public sealed class Float16Weight : PackedWeight
+public sealed class Float16Weight : PackedWeight, IRecordable
 {
     /// <summary>The format's name.</summary>
     public const string FormatName = "float16";

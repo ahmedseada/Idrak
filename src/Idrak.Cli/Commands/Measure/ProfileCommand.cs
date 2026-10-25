@@ -98,7 +98,7 @@ internal sealed class ProfileCommand : Command
         using (var scope = new TensorScope())
         {
             var x = Tensor.From([Token()], [1, 1], device);
-            decoding.BeginStep(1);
+            using var step = decoding.OpenStep(1);
             for (int i = 0; i < network.Count; i++)
             {
                 var module = network[i];
@@ -109,7 +109,7 @@ internal sealed class ProfileCommand : Command
                 layers.Add((module.DisplayName, module.GetType().Name, watch.Elapsed.TotalMilliseconds));
             }
 
-            decoding.EndStep(1);
+            step.Complete();
         }
 
         double stepMs = stepWatch.Elapsed.TotalMilliseconds;

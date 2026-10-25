@@ -35,7 +35,7 @@ var samplers = new TokenSamplerSuite(Drive(TokenSampler.Create));
     {
         var version1 = TokenSamplers.Default(TokenSamplers.DefaultName, 1);
         Check(version1 is not null, "no version 1");
-        Check(!Conformance.Check(Drive(version1!), samplers, new ContractCheckOptions { RandomCases = 0 }).Passed, "version 1 passes the non-finite cases");
+        Check(!Conformance.Check(Drive(version1!.Create), samplers, new ContractCheckOptions { RandomCases = 0 }).Passed, "version 1 passes the non-finite cases");
     }),
 ];
 

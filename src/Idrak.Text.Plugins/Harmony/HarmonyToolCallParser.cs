@@ -27,7 +27,7 @@ internal sealed class HarmonyToolCallParser : IToolCallParser
     private string _recipient = "";
     private int _searched;                                      // leading characters of _call known not to hold an end tag
 
-    public ChatDelta Feed(string text)
+    public ChatDelta Feed(ReadOnlySpan<char> text)
     {
         _pending.Append(text);
         return Drain(final: false);

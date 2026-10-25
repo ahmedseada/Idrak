@@ -60,9 +60,9 @@ internal static class OnnxBuiltIns
         OnnxExportOps.Register<GRU>((g, gru, x, shape) => Recurrent(g, "GRU", gru, [1, 0, 2], x, shape));            // ONNX z, r, h; ours r, z, h
         OnnxExportOps.Register<Sequential>((g, sequential, x, _) => sequential.Aggregate(x, (value, child) => g.Module(child, value)));
         OnnxExportOps.Register<GraphModule>(Graph);
-        OnnxExportOps.Register<Layers.Lambda>((g, lambda, x, shape) => (OnnxExportOps.FindLambda(lambda.ToString())
+        OnnxExportOps.Register<Layers.Lambda>((g, lambda, x, shape) => (OnnxExportOps.FindLambda(((INamedLambda)lambda).Name)
             ?? throw new NotSupportedException($"The lambda '{lambda}' cannot be exported (registered: {string.Join(", ", OnnxExportOps.LambdaNames)}): "
-                + $"register a translator with OnnxExportOps.RegisterLambda(\"{lambda}\", ...) or the exporter's Lambda(\"{lambda}\", ...)."))(g, lambda, x, shape));
+                + $"register a translator with OnnxExportOps.RegisterLambda(\"{lambda}\", ...) or the exporter's Lambda(\"{lambda}\", ...).")).Export(g, lambda, x, shape));
 
         OnnxExportOps.RegisterLambda("MeanOverTime", OnnxExport.MeanOverTime);
         OnnxExportOps.RegisterLambda("FirstStep", OnnxExport.FirstStep);

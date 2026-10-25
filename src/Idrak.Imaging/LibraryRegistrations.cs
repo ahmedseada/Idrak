@@ -28,7 +28,7 @@ internal static class LibraryRegistrations
             ImageEncoders.Register(new PngEncoder());
             ImageEncoders.Register(new NetpbmEncoder());
         },                            // png, jpeg, bmp, netpbm (asked newest first)
-        [typeof(SampleSources)] = () => SampleSources.Register("images", OpenImages),
+        [typeof(SampleSources)] = () => SampleSources.Register(new ImagesSource()),
         [typeof(FontFormats)] = () => FontFormats.Register(new OpenTypeFormat()),            // TrueType outlines, single fonts and collections
         [typeof(OutlineRasterizers)] = () => OutlineRasterizers.Register(new CoverageRasterizer()),
         [typeof(TextShapers)] = RegisterShapers,                                 // general for every script, arabic for the joining scripts
@@ -62,21 +62,47 @@ internal static class LibraryRegistrations
         }
     }
 
-    private static readonly string[] ImageOptions = ["channels", "height", "width"];
+    private static readonly OptionKeys ImageOptions = new("channels", "height", "width");
 
     // "images": ImageFolderSource over class folders; options channels, height, width (each the first image's by default).
-    private static ImageFolderSource OpenImages(string path, IReadOnlyDictionary<string, string> options)
+    // "images": ImageFolderSource over class folders; channels, height and width default to the first image's.
+    private sealed class ImagesSource : ISampleSourceKind
     {
-        foreach (string key in options.Keys)
+        public string Name => "images";
+
+        public string Summary => "ImageFolderSource over class folders (channels, height, width: the first image's unless set)";
+
+        public IReadOnlySet<string> Keys => ImageOptions;
+
+        public ISampleSource Create(SampleSourceRequest request)
         {
-            if (!ImageOptions.Contains(key, StringComparer.OrdinalIgnoreCase))
+            ArgumentNullException.ThrowIfNull(request);
+            var options = request.Options;
+            foreach (string key in options.Keys)
             {
-                throw new ArgumentException($"The images source has no option '{key}' ({string.Join(", ", ImageOptions)}).");
+                if (!Known(key))
+                {
+                    throw new ArgumentException($"The images source has no option '{key}' ({ImageOptions}).");
+                }
             }
+
+            int? Number(string name) => options.TryGetValue(name, out var v) ? int.Parse(v, CultureInfo.InvariantCulture) : null;
+            return ImageFolderSource.Open(request.Path, Number("channels"), Number("height"), Number("width"));
         }
 
-        int? Number(string name) => options.TryGetValue(name, out var v) ? int.Parse(v, CultureInfo.InvariantCulture) : null;
-        return ImageFolderSource.Open(path, Number("channels"), Number("height"), Number("width"));
+        // Option names ignore case.
+        private static bool Known(string key)
+        {
+            foreach (string name in ImageOptions.Ordered)
+            {
+                if (string.Equals(name, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
     }
 
     private static void RegisterFor(Type registry)

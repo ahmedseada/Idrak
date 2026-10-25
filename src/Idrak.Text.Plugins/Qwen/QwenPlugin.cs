@@ -68,8 +68,22 @@ public static class QwenPlugin
                 Part(() => GgufPreTokenizers.Register(name, QwenArchitectures.SplitPattern), () => GgufPreTokenizers.Unregister(name));
             }
 
-            Part(() => ToolCallFormats.Register(ToolCallFormat, p => p.Call is { } call ? call.Contains("<function=" + ToolCallProbe.FunctionName + ">", StringComparison.Ordinal)
-                : p.Shows("<function=") && p.Shows("<parameter="), c => new Qwen3CoderToolCallParser(c)), () => ToolCallFormats.Unregister(ToolCallFormat));
+            Part(() => ToolCallFormats.Register(new Qwen3CoderToolCallFormat()), () => ToolCallFormats.Unregister(ToolCallFormat));
         }
     }
+}
+
+// The family's tool-call format, registered in ToolCallFormats under its name.
+internal sealed class Qwen3CoderToolCallFormat : IToolCallFormat
+{
+    public string Name => QwenPlugin.ToolCallFormat;
+
+    public string Summary => "Qwen3-Coder's XML calls: <function=name><parameter=key>value</parameter></function>";
+
+    public IReadOnlySet<string> Keys => OptionKeys.None;
+
+    public bool Detect(ToolCallProbe probe) => probe.Call is { } call ? call.Contains("<function=" + ToolCallProbe.FunctionName + ">", StringComparison.Ordinal)
+        : probe.Shows("<function=") && probe.Shows("<parameter=");
+
+    public IToolCallParser Create(ToolCallContext context) => new Qwen3CoderToolCallParser(context);
 }

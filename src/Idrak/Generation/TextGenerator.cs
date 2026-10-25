@@ -59,10 +59,10 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     /// The KV cache's layout when set (a format of one's own, or a built-in one by name with <see cref="KeyValueLayouts.Get"/>);
     /// it takes precedence over <see cref="CacheFormat"/>. Default null: the layout of <see cref="CacheFormat"/>.
     /// </summary>
-    public KeyValueLayout? CacheLayout { get; init; }
+    public IKeyValueLayout? CacheLayout { get; init; }
 
     // The layout caches are created with.
-    private KeyValueLayout Layout => CacheLayout ?? KeyValueLayouts.For(CacheFormat);
+    private IKeyValueLayout Layout => CacheLayout ?? KeyValueLayouts.For(CacheFormat);
 
     /// <summary>
     /// Creates the sampler each generation chooses tokens with (default <see cref="TokenSamplers.Create"/>: the sampler
@@ -127,7 +127,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         }
 
         var layout = decoding.Layout;
-        long Bytes(long rows, int headDim) => rows * (2L * layout.RowWidth(headDim) + (layout.HasScales ? 2 : 0)) * sizeof(float);
+        long Bytes(long rows, int headDim) => rows * (2L * layout.RowWidth(headDim) + (layout is IScaledLayout ? 2 : 0)) * sizeof(float);
         long bytes = 0;
         foreach (var module in Model.Descendants())
         {
@@ -620,9 +620,9 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 .Select(i => i with { Position = i.Position + starts[r] }))]
             : [];
         using var sampler = CreateSampler(new SamplerRequest(Device, rows, Tokenizer.VocabularySize, limit + 1, 1, options));   // no penalties here
-        // Rows of different lengths need a cache whose format attends from per-row starts (KeyValueLayout.RowStarts: float32,
+        // Rows of different lengths need a cache whose format attends from per-row starts (IRowStartsLayout: float32,
         // bfloat16); another format decodes them in float32.
-        var batchLayout = !padded || Layout.RowStarts ? Layout : KeyValueLayouts.For(KeyValueFormat.Float32);
+        var batchLayout = !padded || Layout is IRowStartsLayout ? Layout : KeyValueLayouts.For(KeyValueFormat.Float32);
         using var decoding = new DecodingContext(Device, rows, promptLength + limit, batchLayout)
         {
             LastPositionOnly = true, Cancellation = cancellationToken, SlidingWindowSteps = padded ? 0 : SlidingSteps(promptLength),

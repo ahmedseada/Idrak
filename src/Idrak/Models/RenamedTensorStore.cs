@@ -19,7 +19,7 @@ namespace Idrak.Models;
 /// var renamed = new RenamedTensorStore(checkpoint, name => name.Replace("decoder.", "dec."), foldWeightNorm: true, ownsInner: false);
 /// </code>
 /// </example>
-public sealed class RenamedTensorStore : ITensorStore
+public sealed class RenamedTensorStore : IBFloat16TensorStore
 {
     private const string Weight = ".weight";
     private readonly ITensorStore _inner;
@@ -113,7 +113,7 @@ public sealed class RenamedTensorStore : ITensorStore
 
     /// <inheritdoc />
     public bool ReadBFloat16(string name, bool transposed, Span<ushort> destination, int stride) =>
-        Resolve(name) is (var stored, null) && _inner.ReadBFloat16(stored, transposed, destination, stride);
+        _inner is IBFloat16TensorStore inner && Resolve(name) is (var stored, null) && inner.ReadBFloat16(stored, transposed, destination, stride);
 
     /// <inheritdoc />
     public TimeSpan? ReadTime => _inner.ReadTime;

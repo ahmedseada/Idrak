@@ -21,7 +21,7 @@ internal static partial class Tests
 
     // Each cached row divided by its mean magnitude, the magnitude kept as the row's scale: device work only, from
     // public operations; expanded back by one product.
-    private sealed class ScaledLayout : KeyValueLayout
+    private sealed class ScaledLayout : KeyValueLayout, IScaledLayout
     {
         public int Writes { get; private set; }
 
@@ -30,8 +30,6 @@ internal static partial class Tests
         public override string Name => KeyValuePluginName;
 
         public override int RowWidth(int headDim) => headDim;
-
-        public override bool HasScales => true;
 
         public override void Write(Tensor keys, Tensor values, KeyValueCache cache, Tensor position)
         {
@@ -78,7 +76,7 @@ internal static partial class Tests
             Check(e.Message.Contains("int8", StringComparison.Ordinal) && e.Message.Contains("KeyValueLayouts.Register", StringComparison.Ordinal), $"the error lists the formats: {e.Message}");
         }
 
-        Check(KeyValueLayouts.Get("BFloat16").Format == KeyValueFormat.BFloat16, "names ignore case");
+        Check(KeyValueLayouts.FormatOf(KeyValueLayouts.Get("BFloat16")) == KeyValueFormat.BFloat16, "names ignore case");
 
         // Every built-in format expands what it wrote back to float32 (the composed fallback's input).
         var r = new Random(7);
@@ -101,7 +99,7 @@ internal static partial class Tests
             }
         }
         var layout = new ScaledLayout();
-        KeyValueLayouts.Register(KeyValuePluginName, layout);
+        KeyValueLayouts.Register(layout);
         try
         {
             Check(KeyValueLayouts.Names.Contains(KeyValuePluginName) && KeyValueLayouts.Get(KeyValuePluginName) == layout, "a format of one's own registered");
@@ -130,7 +128,7 @@ internal static partial class Tests
     private static void KeyValuePluginDecoding(Device device)
     {
         var layout = new ScaledLayout();
-        float[][] Decode(Sequential model, KeyValueLayout cacheLayout, int[] ids, int vocabulary, bool prompt)
+        float[][] Decode(Sequential model, IKeyValueLayout cacheLayout, int[] ids, int vocabulary, bool prompt)
         {
             using var context = new DecodingContext(device, 1, 16, cacheLayout);
             var steps = new List<float[]>();

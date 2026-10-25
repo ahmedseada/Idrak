@@ -47,12 +47,12 @@ public interface IToolRegistry
 /// </summary>
 public sealed class ToolRegistry : IToolRegistry
 {
-    private readonly Dictionary<string, Tool> _tools;
+    private readonly Dictionary<string, ITool> _tools;
     private readonly Dictionary<string, Func<JsonObject, bool>> _allow;
     private readonly Dictionary<string, Func<ToolCall, CancellationToken, ValueTask<bool>>> _approval;
     private readonly TimeSpan? _timeout;
 
-    internal ToolRegistry(Dictionary<string, Tool> tools, Dictionary<string, Func<JsonObject, bool>> allow,
+    internal ToolRegistry(Dictionary<string, ITool> tools, Dictionary<string, Func<JsonObject, bool>> allow,
         Dictionary<string, Func<ToolCall, CancellationToken, ValueTask<bool>>> approval, TimeSpan? timeout, bool parallel)
     {
         _tools = tools;
@@ -107,7 +107,7 @@ public sealed class ToolRegistry : IToolRegistry
 
                 try
                 {
-                    content = await tool!.Invoke(call.Arguments, limit.Token).ConfigureAwait(false);
+                    content = await tool!.InvokeAsync(call.Arguments, limit.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
@@ -161,7 +161,7 @@ public sealed class ToolRegistry : IToolRegistry
 /// <summary>Collects tools and rules for a <see cref="ToolRegistry"/>. Nothing is restricted unless a rule is added.</summary>
 public sealed class ToolRegistryBuilder
 {
-    private readonly Dictionary<string, Tool> _tools = [];
+    private readonly Dictionary<string, ITool> _tools = [];
     private readonly Dictionary<string, Func<JsonObject, bool>> _allow = [];
     private readonly Dictionary<string, Func<ToolCall, CancellationToken, ValueTask<bool>>> _approval = [];
     private TimeSpan? _timeout;
@@ -171,9 +171,10 @@ public sealed class ToolRegistryBuilder
     {
     }
 
-    /// <summary>Adds a tool.</summary>
-    public ToolRegistryBuilder Add(Tool tool)
+    /// <summary>Adds a tool, under its definition's name.</summary>
+    public ToolRegistryBuilder Add(ITool tool)
     {
+        ArgumentNullException.ThrowIfNull(tool);
         if (!_tools.TryAdd(tool.Definition.Name, tool))
         {
             throw new ArgumentException($"A tool named '{tool.Definition.Name}' was already added.", nameof(tool));
@@ -183,7 +184,7 @@ public sealed class ToolRegistryBuilder
     }
 
     /// <summary>Adds several tools (for example those of an MCP server).</summary>
-    public ToolRegistryBuilder Add(IEnumerable<Tool> tools)
+    public ToolRegistryBuilder Add(IEnumerable<ITool> tools)
     {
         foreach (var tool in tools)
         {

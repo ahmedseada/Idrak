@@ -169,7 +169,7 @@ public sealed class GgufFile : IDisposable
 
     /// <summary>
     /// Dequantizes blocks of <paramref name="type"/> into float32 values (in parallel over blocks): the type is looked up
-    /// once in <see cref="GgufTypes"/>, then its <see cref="GgufType.Dequantize"/> runs on all the blocks.
+    /// once in <see cref="GgufTypes"/>, then its <see cref="IGgufType.Dequantize"/> runs on all the blocks.
     /// </summary>
     public static void Dequantize(int type, ReadOnlySpan<byte> raw, Span<float> values)
     {
@@ -184,17 +184,27 @@ public sealed class GgufFile : IDisposable
     }
 
     // The built-in types, which LibraryRegistrations registers in GgufTypes: id, name, values and bytes per block.
-    internal static IEnumerable<(int Id, GgufType Type)> BuiltInTypes() =>
+    internal static IEnumerable<(int Id, IGgufType Type)> BuiltInTypes() =>
         new (int Id, string Name, int BlockValues, int BlockBytes)[]
         {
             (0, "F32", 1, 4), (1, "F16", 1, 2), (30, "BF16", 1, 2), (2, "Q4_0", 32, 18), (3, "Q4_1", 32, 20), (6, "Q5_0", 32, 22),
             (7, "Q5_1", 32, 24), (8, "Q8_0", 32, 34), (10, "Q2_K", 256, 84), (11, "Q3_K", 256, 110), (12, "Q4_K", 256, 144),
             (13, "Q5_K", 256, 176), (14, "Q6_K", 256, 210), (20, "IQ4_NL", 32, 18), (23, "IQ4_XS", 256, 136),
-        }.Select(t => (t.Id, new GgufType
-        {
-            Name = t.Name, BlockValues = t.BlockValues, BlockBytes = t.BlockBytes,
-            Dequantize = (raw, values) => DequantizeBuiltIn(t.Id, t.BlockValues, t.BlockBytes, raw, values),
-        }));
+        }.Select(t => (t.Id, (IGgufType)new BuiltInType(t.Id, t.Name, t.BlockValues, t.BlockBytes)));
+
+    // A built-in ggml type (DequantizeBuiltIn).
+    private sealed class BuiltInType(int id, string name, int blockValues, int blockBytes) : IGgufType
+    {
+        public string Name => name;
+
+        public int BlockValues => blockValues;
+
+        public int BlockBytes => blockBytes;
+
+        public void Dequantize(ReadOnlySpan<byte> raw, Span<float> values) => DequantizeBuiltIn(id, blockValues, blockBytes, raw, values);
+
+        public override string ToString() => name;
+    }
 
     // A built-in type's blocks (see BuiltInTypes).
     internal static unsafe void DequantizeBuiltIn(int type, int blockValues, int blockBytes, ReadOnlySpan<byte> raw, Span<float> values)
@@ -216,14 +226,8 @@ public sealed class GgufFile : IDisposable
             {
                 case 1:
                     Idrak.Abstraction.Devices.HostParallel.For(values.Length, 1 << 16, (first, last) =>
-                    {
-                        var from = new ReadOnlySpan<byte>((byte*)source + 2L * first, 2 * (last - first));
-                        var to = new Span<float>((float*)target + first, last - first);
-                        for (int i = 0; i < to.Length; i++)
-                        {
-                            to[i] = (float)BinaryPrimitives.ReadHalfLittleEndian(from[(2 * i)..]);
-                        }
-                    });
+                        StoredFloats.WidenFloat16(new ReadOnlySpan<byte>((byte*)source + 2L * first, 2 * (last - first)),
+                            new Span<float>((float*)target + first, last - first)));
                     return;
                 case 30:
                     Idrak.Abstraction.Devices.HostParallel.For(values.Length, 1 << 16, (first, last) =>

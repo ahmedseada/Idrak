@@ -288,7 +288,7 @@ internal static class ModelChoices
     /// The KV cache layout named by <c>--kv</c>: float32 (f32), int8, bfloat16 (bf16) or any registered format; float32
     /// when not given.
     /// </summary>
-    public static Idrak.Abstraction.Generation.KeyValueLayout CacheLayout(ModelChoice choice)
+    public static Idrak.Abstraction.Generation.IKeyValueLayout CacheLayout(ModelChoice choice)
     {
         string name = choice.Kv?.ToLowerInvariant() switch { null or "f32" or "fp32" => "float32", "bf16" => "bfloat16", var other => other };
         try

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -170,7 +171,7 @@ public sealed record CharTokenizerOptions
 /// point (<see cref="CharTokenizerOptions.CodePoints"/>, a surrogate pair one token). Characters outside the alphabet are
 /// dropped when encoding, or replaced by the unknown character when it is part of the alphabet.
 /// </summary>
-public sealed class CharTokenizer : ITokenizer
+public sealed class CharTokenizer : ISavableTokenizer
 {
     private readonly Dictionary<char, int> _index;              // per UTF-16 unit (empty with code points)
     private readonly Dictionary<int, int>? _points;             // per code point, or null
@@ -420,6 +421,9 @@ public sealed class CharTokenizer : ITokenizer
         Save(stream);
     }
 
+    /// <summary>The type its saved JSON names: "char".</summary>
+    public string Type => "char";
+
     /// <summary>Writes the tokenizer as JSON to <paramref name="stream"/>; the stream stays open.</summary>
     public void Save(Stream stream)
     {
@@ -454,7 +458,7 @@ public sealed class CharTokenizer : ITokenizer
 /// vocabulary become <see cref="UnknownToken"/>. Decoding puts a space before every token except closing punctuation,
 /// so decoding a sequence piece by piece gives the same text as decoding it at once (streaming-safe).
 /// </summary>
-public sealed partial class WordTokenizer : ITokenizer
+public sealed partial class WordTokenizer : ISavableTokenizer
 {
     private static readonly System.Buffers.SearchValues<char> ClosingPunctuation = System.Buffers.SearchValues.Create(".,!?;:%)'");
 
@@ -576,6 +580,9 @@ public sealed partial class WordTokenizer : ITokenizer
         Save(stream);
     }
 
+    /// <summary>The type its saved JSON names: "word".</summary>
+    public string Type => "word";
+
     /// <summary>Writes the tokenizer as JSON to <paramref name="stream"/>; the stream stays open.</summary>
     public void Save(Stream stream) => Tokenizers.Write(stream, new JsonObject
     {
@@ -641,39 +648,105 @@ public sealed partial class WordTokenizer : ITokenizer
     }
 }
 
-/// <summary>Reads either tokenizer from the JSON written by <see cref="CharTokenizer.Save(string)"/> or <see cref="WordTokenizer.Save(string)"/>.</summary>
+/// <summary>
+/// A tokenizer that saves itself as a JSON object naming its <see cref="Type"/>, which <see cref="Tokenizers.Load(Stream)"/>
+/// reads back through the loader registered for that type (<see cref="TokenizerLoaders"/>).
+/// </summary>
+public interface ISavableTokenizer : ITokenizer
+{
+    /// <summary>The type its saved JSON names ("char", "word"): the name of its loader in <see cref="TokenizerLoaders"/>.</summary>
+    string Type { get; }
+
+    /// <summary>Writes the tokenizer to <paramref name="stream"/> as one JSON object with "type": <see cref="Type"/>.</summary>
+    void Save(Stream stream);
+}
+
+/// <summary>
+/// A reader of saved tokenizers of one type (<see cref="ISavableTokenizer.Type"/>), registered by its
+/// <see cref="IKind.Name"/> (that type) in <see cref="TokenizerLoaders"/>: the tokenizer from its saved JSON object.
+/// </summary>
+public interface ITokenizerLoader : IKind<JsonObject, ITokenizer>;
+
+/// <summary>
+/// The readers of saved tokenizers, by the "type" their JSON names: "char" (<see cref="CharTokenizer"/>) and "word"
+/// (<see cref="WordTokenizer"/>) are the library's; a tokenizer of one's own that saves itself
+/// (<see cref="ISavableTokenizer"/>) registers its reader with <see cref="Register"/>.
+/// </summary>
+public static class TokenizerLoaders
+{
+    private static readonly KindTable<ITokenizerLoader> Table = BuiltIn();
+
+    private static KindTable<ITokenizerLoader> BuiltIn()
+    {
+        var table = new KindTable<ITokenizerLoader>(nameof(TokenizerLoaders), "Tokenizer type", "add its reader with TokenizerLoaders.Register", comparer: StringComparer.Ordinal,
+            unguarded: "a saved tokenizer is read by its own type's reader, whose vocabulary another cannot stand in for");
+        table.RegisterDefault(new BuiltInLoader("char", "CharTokenizer: one id per character (or code point)", json =>
+            json["code_points"] is JsonValue points && (bool)points
+                ? new CharTokenizer((string)json["vocabulary"]!, new CharTokenizerOptions { CodePoints = true, UnknownCharacter = (string?)json["unknown"] })
+                : new CharTokenizer((string)json["vocabulary"]!, ((string?)json["unknown"]) is { Length: 1 } u ? u[0] : null)));
+        table.RegisterDefault(new BuiltInLoader("word", "WordTokenizer: one id per word of its vocabulary", json =>
+            new WordTokenizer([.. json["words"]!.AsArray().Select(w => (string)w!)], (string)json["unknown"]!, (bool)json["lowercase"]!)));
+        return table;
+    }
+
+    /// <summary>Registers <paramref name="loader"/> under its <see cref="IKind.Name"/> (the type it reads); under a library type it takes the library's place until <see cref="Unregister"/>.</summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
+    public static void Register(ITokenizerLoader loader) => Table.Register(loader, System.Reflection.Assembly.GetCallingAssembly());
+
+    /// <summary>Removes the app's reader of <paramref name="type"/> (a library type gets the library's back); false when the app registered none.</summary>
+    public static bool Unregister(string type) => Table.Unregister(type);
+
+    /// <summary>The types a reader is registered for.</summary>
+    public static IReadOnlyCollection<string> Names => Table.Names;
+
+    /// <summary>The reader of <paramref name="type"/>, or null.</summary>
+    public static ITokenizerLoader? Find(ReadOnlySpan<char> type) => Table.Find(type);
+
+    /// <summary>Who registered the reader of <paramref name="type"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
+    public static string? Origin(string type) => Table.Origin(type);
+
+    private sealed class BuiltInLoader(string name, string summary, Func<JsonObject, ITokenizer> read) : ITokenizerLoader
+    {
+        public string Name => name;
+
+        public string Summary => summary;
+
+        public IReadOnlySet<string> Keys => OptionKeys.None;
+
+        public ITokenizer Create(JsonObject request) => read(request);
+    }
+}
+
+/// <summary>Reads a saved tokenizer (<see cref="ISavableTokenizer"/>) from its JSON, through the reader of its type (<see cref="TokenizerLoaders"/>).</summary>
 public static class Tokenizers
 {
-    /// <summary>Loads a character or word tokenizer from a file.</summary>
+    /// <summary>Loads a saved tokenizer from a file.</summary>
     public static ITokenizer Load(string path)
     {
         using var stream = File.OpenRead(path);
         return Load(stream);
     }
 
-    /// <summary>Reads a character or word tokenizer from <paramref name="stream"/>.</summary>
+    /// <summary>Reads a saved tokenizer from <paramref name="stream"/>.</summary>
+    /// <exception cref="InvalidDataException">The JSON is not an object, or names a type no reader is registered for.</exception>
     public static ITokenizer Load(Stream stream)
     {
         var json = JsonNode.Parse(stream) as JsonObject ?? throw new InvalidDataException("A tokenizer file must contain a JSON object.");
-        return (string?)json["type"] switch
-        {
-            "char" when json["code_points"] is JsonValue points && (bool)points =>
-                new CharTokenizer((string)json["vocabulary"]!, new CharTokenizerOptions { CodePoints = true, UnknownCharacter = (string?)json["unknown"] }),
-            "char" => new CharTokenizer((string)json["vocabulary"]!, ((string?)json["unknown"]) is { Length: 1 } u ? u[0] : null),
-            "word" => new WordTokenizer([.. json["words"]!.AsArray().Select(w => (string)w!)], (string)json["unknown"]!, (bool)json["lowercase"]!),
-            var type => throw new InvalidDataException($"Unknown tokenizer type '{type}'."),
-        };
+        var type = (string?)json["type"];
+        return (type is null ? null : TokenizerLoaders.Find(type))?.Create(json) ?? throw new InvalidDataException($"Unknown tokenizer type '{type}'.");
     }
 
-    /// <summary>Saves a <see cref="CharTokenizer"/> or <see cref="WordTokenizer"/>.</summary>
+    /// <summary>Saves <paramref name="tokenizer"/>, one that saves itself (<see cref="ISavableTokenizer"/>: the library's <see cref="CharTokenizer"/> and <see cref="WordTokenizer"/>).</summary>
+    /// <exception cref="NotSupportedException">The tokenizer does not save itself.</exception>
     public static void Save(ITokenizer tokenizer, Stream stream)
     {
-        switch (tokenizer)
+        ArgumentNullException.ThrowIfNull(tokenizer);
+        if (tokenizer is not ISavableTokenizer savable)
         {
-            case CharTokenizer c: c.Save(stream); break;
-            case WordTokenizer w: w.Save(stream); break;
-            default: throw new NotSupportedException($"{tokenizer.GetType().Name} cannot be saved; only CharTokenizer and WordTokenizer can.");
+            throw new NotSupportedException($"{tokenizer.GetType().Name} cannot be saved; only a tokenizer that saves itself (ISavableTokenizer: CharTokenizer, WordTokenizer) can.");
         }
+
+        savable.Save(stream);
     }
 
     internal static void Write(Stream stream, JsonObject json)

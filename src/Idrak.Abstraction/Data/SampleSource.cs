@@ -69,7 +69,13 @@ public interface ISampleTransform
     void Apply(Span<float> features, Span<float> targets, IReadOnlyList<int> featureShape, Random random);
 }
 
-/// <summary>Opens a sample source from a path and named options (see <c>SampleSources</c> in Idrak).</summary>
-/// <param name="path">The file or folder.</param>
-/// <param name="options">Options by name (names ignore case); a factory rejects names it does not know.</param>
-public delegate ISampleSource SampleSourceFactory(string path, IReadOnlyDictionary<string, string> options);
+/// <summary>What a sample source kind opens (<see cref="ISampleSourceKind"/>): a path and named options.</summary>
+/// <param name="Path">The file or folder.</param>
+/// <param name="Options">Options by name (names ignore case); a kind refuses names it does not take (<see cref="IConfigurableKind.Keys"/>).</param>
+public sealed record SampleSourceRequest(string Path, IReadOnlyDictionary<string, string> Options);
+
+/// <summary>
+/// A kind of sample source, registered by its <see cref="IKind.Name"/> in <see cref="SampleSources"/>: the options it
+/// takes (<see cref="IConfigurableKind.Keys"/>) and the source it opens from a path and those options.
+/// </summary>
+public interface ISampleSourceKind : IKind<SampleSourceRequest, ISampleSource>;

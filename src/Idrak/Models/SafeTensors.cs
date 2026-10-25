@@ -36,7 +36,7 @@ public sealed record SafeTensorInfo(string Name, SafeTensorType Type, int[] Shap
 /// copied as their 16-bit values (<see cref="ReadBFloat16"/>). Tensors of integer or boolean types (buffers a checkpoint
 /// may carry beside its weights, such as position ids) are left out (<see cref="LeftOut"/>), not refused.
 /// </summary>
-public sealed class SafeTensorsReader : IDisposable, ITensorStore
+public sealed class SafeTensorsReader : IDisposable, IBFloat16TensorStore
 {
     IEnumerable<string> ITensorStore.Names => _tensors.Keys;
 
@@ -277,7 +277,7 @@ public sealed class SafeTensorsReader : IDisposable, ITensorStore
         return values;
     }
 
-    /// <inheritdoc cref="ITensorStore.ReadBFloat16"/>
+    /// <inheritdoc cref="IBFloat16TensorStore.ReadBFloat16"/>
     /// <exception cref="ArgumentException">The tensor is not a matrix, or the destination or stride cannot hold the result.</exception>
     public unsafe bool ReadBFloat16(string name, bool transposed, Span<ushort> destination, int stride)
     {
@@ -630,8 +630,9 @@ public static class SafeTensorsWriter
 }
 
 // Stored little-endian floats read into float32 (the checkpoint readers and the weight codecs): on a little-endian machine
-// float32 bytes are copied as they are and bfloat16 is widened whole vectors at a time (its bits are the high half of a
-// float32) with a scalar tail; elsewhere value by value. The same values either way.
+// float32 bytes are copied as they are, and bfloat16 and float16 are widened whole vectors at a time (bfloat16's bits are
+// the high half of a float32; float16 by .NET's own branch-free rebias) with a scalar tail; elsewhere value by value. The
+// same values either way.
 internal static class StoredFloats
 {
     public static void ReadFloat32(ReadOnlySpan<byte> bytes, Span<float> values)
@@ -666,6 +667,44 @@ internal static class StoredFloats
         for (; i < values.Length; i++)
         {
             values[i] = BitConverter.UInt32BitsToSingle((uint)BinaryPrimitives.ReadUInt16LittleEndian(bytes[(i * 2)..]) << 16);
+        }
+    }
+
+    // IEEE halves widened exactly as .NET's (float)Half widens one (every bit pattern: subnormals, infinities and NaNs with
+    // their payload), a vector at a time, the rest value by value.
+    public static void WidenFloat16(ReadOnlySpan<byte> bytes, Span<float> values)
+    {
+        int i = 0;
+        if (BitConverter.IsLittleEndian && System.Numerics.Vector.IsHardwareAccelerated)
+        {
+            var halves = MemoryMarshal.Cast<byte, ushort>(bytes[..(values.Length * 2)]);
+            var bits = MemoryMarshal.Cast<float, uint>(values);
+            for (; i <= values.Length - System.Numerics.Vector<ushort>.Count; i += System.Numerics.Vector<ushort>.Count)
+            {
+                System.Numerics.Vector.Widen(new System.Numerics.Vector<ushort>(halves[i..]), out var low, out var high);
+                Widen(low).CopyTo(bits[i..]);
+                Widen(high).CopyTo(bits[(i + System.Numerics.Vector<uint>.Count)..]);
+            }
+        }
+
+        for (; i < values.Length; i++)
+        {
+            values[i] = (float)BinaryPrimitives.ReadHalfLittleEndian(bytes[(i * 2)..]);
+        }
+
+        // The bits of each half (in the low 16 bits of a lane) as a float32's: the exponent rebiased, a subnormal through
+        // one subtraction of the smallest normal, an infinity or NaN given the top exponent, the sign put back.
+        static System.Numerics.Vector<uint> Widen(System.Numerics.Vector<uint> half)
+        {
+            var exponent = half & new System.Numerics.Vector<uint>(0x7C00u);
+            var subnormal = System.Numerics.Vector.Equals(exponent, System.Numerics.Vector<uint>.Zero);
+            var special = System.Numerics.Vector.Equals(exponent, new System.Numerics.Vector<uint>(0x7C00u));
+            var lowerBound = subnormal & new System.Numerics.Vector<uint>(0x3880_0000u);   // the smallest normal half, as a float32
+            var offset = new System.Numerics.Vector<uint>(0x3800_0000u) | lowerBound;
+            offset = System.Numerics.Vector.ConditionalSelect(special, offset << 1, offset);
+            var value = ((half << 13) & new System.Numerics.Vector<uint>(0x0FFF_E000u)) + offset;
+            var magnitude = System.Numerics.Vector.AsVectorUInt32(System.Numerics.Vector.AsVectorSingle(value) - System.Numerics.Vector.AsVectorSingle(lowerBound));
+            return magnitude | ((half & new System.Numerics.Vector<uint>(0x8000u)) << 16);
         }
     }
 }

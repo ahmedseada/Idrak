@@ -90,11 +90,24 @@ internal static partial class Tests
 
     private const string PluginExpanded = "test-bf16-expanded", PluginOwnProduct = "test-bf16-own-product";
 
-    // bfloat16-rounded values held as float32: the same weights as the built-in bfloat16 format, multiplied either by
-    // the base class's expanded product or by a product of its own (a plain float product, device work only).
-    private sealed class RoundedWeight : PackedWeight
+    // A packed format of the tests: its name, and what it packs.
+    private sealed class TestPackedFormat(string name, Func<PackRequest, IPackedWeight> pack) : IPackedFormat
     {
-        private RoundedWeight(Tensor values, string name, bool ownProduct)
+        public string Name => name;
+
+        public string Summary => name;
+
+        public IReadOnlySet<string> Keys => OptionKeys.None;
+
+        public IPackedWeight Create(PackRequest request) => pack(request);
+    }
+
+    // bfloat16-rounded values held as float32: the same weights as the built-in bfloat16 format, multiplied either by
+    // the base class's expanded product or by a product of its own (a plain float product, device work only, so
+    // recordable).
+    private class RoundedWeight : PackedWeight
+    {
+        protected RoundedWeight(Tensor values, string name, bool ownProduct)
         {
             Values = values;
             Name = name;
@@ -123,7 +136,8 @@ internal static partial class Tests
                 rounded[i] = BitConverter.UInt32BitsToSingle((uint)BFloat16Bits(values[i]) << 16);
             }
 
-            return new RoundedWeight(Tensor.Persistent(rounded, [rows, columns], device, requiresGrad: false), name, ownProduct);
+            var tensor = Tensor.Persistent(rounded, [rows, columns], device, requiresGrad: false);
+            return ownProduct ? new RecordableRoundedWeight(tensor, name) : new RoundedWeight(tensor, name, ownProduct: false);
         }
 
         private static ushort BFloat16Bits(float value)
@@ -147,41 +161,44 @@ internal static partial class Tests
         public override void Dispose() => Values.Dispose();
     }
 
+    // The rounded weights with a product of their own, which only issues device work.
+    private sealed class RecordableRoundedWeight(Tensor values, string name) : RoundedWeight(values, name, ownProduct: true), IRecordable;
+
     private static void RegisterPlugins()
     {
-        PackedWeight.Register(PluginExpanded, (values, rows, columns, device) => RoundedWeight.Pack(values, rows, columns, device, PluginExpanded, ownProduct: false));
-        PackedWeight.Register(PluginOwnProduct, (values, rows, columns, device) => RoundedWeight.Pack(values, rows, columns, device, PluginOwnProduct, ownProduct: true));
+        PackedWeightFormats.Register(new TestPackedFormat(PluginExpanded, request => RoundedWeight.Pack(request.Values, request.Rows, request.Columns, request.Device, PluginExpanded, ownProduct: false)));
+        PackedWeightFormats.Register(new TestPackedFormat(PluginOwnProduct, request => RoundedWeight.Pack(request.Values, request.Rows, request.Columns, request.Device, PluginOwnProduct, ownProduct: true)));
     }
 
     private static void PackedPluginRegistry(Device device)
     {
-        Check(new[] { "int8", "int4", "bfloat16" }.All(PackedWeight.FormatNames.Contains), $"built-in formats registered: {string.Join(", ", PackedWeight.FormatNames)}");
+        Check(new[] { "int8", "int4", "bfloat16" }.All(PackedWeightFormats.Names.Contains), $"built-in formats registered: {string.Join(", ", PackedWeightFormats.Names)}");
         try
         {
-            PackedWeight.FromValues("no-such-format", [1f], 1, 1, device);
+            PackedWeightFormats.Pack("no-such-format", [1f], 1, 1, device);
             Check(false, "an unknown format is refused");
         }
         catch (NotSupportedException ex)
         {
-            Check(ex.Message.Contains("int4", StringComparison.Ordinal) && ex.Message.Contains("PackedWeight.Register", StringComparison.Ordinal), $"the message lists the formats and how to add one: {ex.Message}");
+            Check(ex.Message.Contains("int4", StringComparison.Ordinal) && ex.Message.Contains("PackedWeightFormats.Register", StringComparison.Ordinal), $"the message lists the formats and how to add one: {ex.Message}");
         }
 
         float[] values = [.. Enumerable.Range(0, 12 * 8).Select(i => MathF.Sin(i) * 0.3f)];
         foreach (var (name, format) in new[] { ("INT8", PackedFormat.Int8), ("int4", PackedFormat.Int4), ("BFloat16", PackedFormat.BFloat16) })
         {
-            using var builtIn = PackedWeight.FromValues(name, values, 12, 8, device);
-            Check(builtIn.Format == format && builtIn.Name == name.ToLowerInvariant() && builtIn.Device == device, $"'{name}' (any case) packs the built-in {format} weights");
+            using var builtIn = PackedWeightFormats.Pack(name, values, 12, 8, device);
+            Check(builtIn is IKernelPackedWeight { Format: var packed } && packed == format && builtIn.Name == name.ToLowerInvariant() && builtIn.Device == device, $"'{name}' (any case) packs the built-in {format} weights");
         }
 
         RegisterPlugins();
-        Check(PackedWeight.FormatNames.Contains(PluginExpanded) && PackedWeight.FormatNames.Contains(PluginOwnProduct), "formats of one's own registered");
-        using var plugin = PackedWeight.FromValues(PluginExpanded, values, 12, 8, device);
-        Check(plugin is RoundedWeight && plugin.Format is null && plugin.Name == PluginExpanded && plugin.Rows == 12 && plugin.Columns == 8
+        Check(PackedWeightFormats.Names.Contains(PluginExpanded) && PackedWeightFormats.Names.Contains(PluginOwnProduct), "formats of one's own registered");
+        using var plugin = PackedWeightFormats.Pack(PluginExpanded, values, 12, 8, device);
+        Check(plugin is RoundedWeight and not IKernelPackedWeight && plugin.Name == PluginExpanded && plugin.Rows == 12 && plugin.Columns == 8
               && plugin.Bytes == 4 * 12 * 8 && plugin.Device == device, "a format of one's own: its class, no built-in Format, its name and shape");
         try
         {
-            PackedWeight.Register("test-wrong-shape", (v, r, c, d) => RoundedWeight.Pack(v, c, r, d, "test-wrong-shape", false));
-            PackedWeight.FromValues("test-wrong-shape", values, 12, 8, device);
+            PackedWeightFormats.Register(new TestPackedFormat("test-wrong-shape", request => RoundedWeight.Pack(request.Values, request.Columns, request.Rows, request.Device, "test-wrong-shape", false)));
+            PackedWeightFormats.Pack("test-wrong-shape", values, 12, 8, device);
             Check(false, "a factory making the wrong shape is refused");
         }
         catch (InvalidOperationException)
@@ -199,7 +216,7 @@ internal static partial class Tests
         var bias = Enumerable.Range(0, Columns).Select(i => 0.01f * i).ToArray();
         foreach (string name in new[] { PluginExpanded, PluginOwnProduct })
         {
-            using var linear = Linear.FromPacked(PackedWeight.FromValues(name, values, Rows, Columns, device), Tensor.Persistent(bias, [Columns], device, requiresGrad: false));
+            using var linear = Linear.FromPacked(PackedWeightFormats.Pack(name, values, Rows, Columns, device), Tensor.Persistent(bias, [Columns], device, requiresGrad: false));
             var weight = (RoundedWeight)linear.PackedWeight!;
             Check(linear.Int8 is null && linear.Int4 is null && linear.BFloat16 is null, $"{name}: none of the built-in typed views");
             Check(linear.Buffers().Single() == weight.Values && linear.ToString().Contains(name, StringComparison.Ordinal), $"{name}: its buffer and its name in {linear}");
@@ -238,7 +255,7 @@ internal static partial class Tests
         using (var scope = new TensorScope())
         {
             var x = Tensor.From(inputs.AsSpan(0, 3 * Rows), [3, Rows], device);
-            var model = new Sequential(Linear.FromPacked(PackedWeight.FromValues(PluginExpanded, values, Rows, Columns, device)));
+            var model = new Sequential(Linear.FromPacked(PackedWeightFormats.Pack(PluginExpanded, values, Rows, Columns, device)));
             var source = (RoundedWeight)model.Descendants().OfType<Linear>().Single().PackedWeight!;
             var stored = values.Select(v => v + 1e-6f).ToArray();             // not bfloat16 values: a bfloat16 file would round them
             source.Values.Load(stored);
@@ -248,7 +265,7 @@ internal static partial class Tests
             {
                 model.Save(path, WeightFormat.BFloat16);
                 var other = values.Select(v => v * 0.5f + 0.0123f).ToArray();
-                using var reloaded = new Sequential(Linear.FromPacked(PackedWeight.FromValues(PluginExpanded, other, Rows, Columns, device)));
+                using var reloaded = new Sequential(Linear.FromPacked(PackedWeightFormats.Pack(PluginExpanded, other, Rows, Columns, device)));
                 reloaded.Load(path);
                 var reloadedWeight = (RoundedWeight)reloaded.Descendants().OfType<Linear>().Single().PackedWeight!;
                 Check(reloadedWeight.Values.ToArray().SequenceEqual(stored), "Save/Load: the format's buffers stored exactly");
@@ -270,7 +287,7 @@ internal static partial class Tests
         if (other2 is not null)
         {
             using var scope = new TensorScope();
-            using var model = new Sequential(Linear.FromPacked(PackedWeight.FromValues(PluginOwnProduct, values, Rows, Columns, device)));
+            using var model = new Sequential(Linear.FromPacked(PackedWeightFormats.Pack(PluginOwnProduct, values, Rows, Columns, device)));
             var x = Tensor.From(inputs.AsSpan(0, 2 * Rows), [2, Rows], device);
             var expected = model.Forward(x).ToArray();
             model.To(other2);
@@ -323,7 +340,7 @@ internal static partial class Tests
         {
             using var model = spec.Build(new RandomWeights(41), new DecoderBuildOptions { Device = device, PackedFormatName = name, Int4 = true });
             var linears = model.Descendants().OfType<Linear>().ToList();
-            Check(linears.Count > 0 && linears.All(l => l.PackedWeight is RoundedWeight { Format: null }), $"{name}: every projection in the named format (over Int4)");
+            Check(linears.Count > 0 && linears.All(l => l.PackedWeight is RoundedWeight && l.KernelWeight is null), $"{name}: every projection in the named format (over Int4)");
             var steps = Decode(model);
             for (int i = 0; i < ids.Length; i++)
             {
@@ -403,9 +420,9 @@ internal static partial class Tests
         float[] values = [.. Enumerable.Range(0, 64 * 48).Select(_ => r.NextSingle() * 2 - 1)];
         foreach (var (format, name) in new[] { (PackedFormat.Int8, "int8"), (PackedFormat.Int4, "int4"), (PackedFormat.BFloat16, "bfloat16") })
         {
-            using var byEnum = PackedWeight.FromValues(format, values, 64, 48, device);
-            using var byName = PackedWeight.FromValues(name, values, 64, 48, device);
-            Check(byEnum.Format == format && byName.Format == format, $"{name}: the built-in format both ways");
+            using var byEnum = PackedWeightFormats.Pack(format, values, 64, 48, device);
+            using var byName = PackedWeightFormats.Pack(name, values, 64, 48, device);
+            Check(byEnum.Format == format && byName is IKernelPackedWeight { Format: var named } && named == format, $"{name}: the built-in format both ways");
             using var a = byEnum.Dequantize();
             using var b = byName.Dequantize();
             AssertClose(a.ToArray(), b.ToArray(), 0f, $"{name}: the same weights by enum and by name");
@@ -413,7 +430,7 @@ internal static partial class Tests
 
         try
         {
-            using var invalid = PackedWeight.FromValues((PackedFormat)99, values, 64, 48, device);
+            using var invalid = PackedWeightFormats.Pack((PackedFormat)99, values, 64, 48, device);
             Check(false, "an undefined PackedFormat should fail");
         }
         catch (ArgumentOutOfRangeException)
@@ -421,16 +438,16 @@ internal static partial class Tests
         }
 
         // A registered "int8" replaces the name, not the enum's built-in.
-        PackedWeight.Register("int8", BFloat16Weight.FromValues);
+        PackedWeightFormats.Register(new TestPackedFormat("int8", request => BFloat16Weight.FromValues(request.Values, request.Rows, request.Columns, request.Device)));
         try
         {
-            using var byName = PackedWeight.FromValues("int8", values, 64, 48, device);
-            using var byEnum = PackedWeight.FromValues(PackedFormat.Int8, values, 64, 48, device);
-            Check(byName.Format == PackedFormat.BFloat16 && byEnum.Format == PackedFormat.Int8, "a replaced name; the enum still makes int8");
+            using var byName = PackedWeightFormats.Pack("int8", values, 64, 48, device);
+            using var byEnum = PackedWeightFormats.Pack(PackedFormat.Int8, values, 64, 48, device);
+            Check(byName is IKernelPackedWeight { Format: PackedFormat.BFloat16 } && byEnum.Format == PackedFormat.Int8, "a replaced name; the enum still makes int8");
         }
         finally
         {
-            PackedWeight.Unregister("int8");
+            PackedWeightFormats.Unregister("int8");
         }
 
         if (device.Type != DeviceType.Cpu)

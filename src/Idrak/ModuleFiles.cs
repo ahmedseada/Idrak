@@ -50,7 +50,7 @@ public static class ModuleFiles
         var exact = int8.SelectMany(p => new[] { p.l.Int8!.Packed, p.l.Int8.Scales }).Concat(half.Select(p => p.l.BFloat16!.Packed))
             .Concat(int4.SelectMany(p => new[] { p.l.Int4!.Packed, p.l.Int4.Scales }))
             .Concat(tables.Select(p => p.e.BFloat16!.Packed))
-            .Concat(linears.Where(l => l.PackedWeight is { Format: null }).SelectMany(l => l.PackedWeight!.Buffers()))   // formats of one's own
+            .Concat(linears.Where(l => l.PackedWeight is not null && l.KernelWeight is null).SelectMany(l => l.PackedWeight!.Buffers()))   // formats of one's own
             .ToHashSet(ReferenceEqualityComparer.Instance);
         using var writer = new BinaryWriter(stream, Encoding.UTF8, leaveOpen: true);
         var parameters = module.Parameters().Concat(module.Buffers()).ToList();

@@ -8,7 +8,7 @@ using Idrak.Models.Abstractions;
 namespace Idrak.Text.Plugins.Gemma;
 
 /// <summary>
-/// The Gemma families as <see cref="PretrainedArchitecture"/>s (what <see cref="GemmaPlugin"/> registers): Gemma
+/// The Gemma families as <see cref="IPretrainedArchitecture"/>s (what <see cref="GemmaPlugin"/> registers): Gemma
 /// (<see cref="Gemma"/>, the Llama naming with (1 + w) gains, scaled and tied embeddings, written from a spec too), Gemma 2
 /// and Gemma 3 text (<see cref="Gemma2"/>, <see cref="Gemma3"/>, on the common keys read by
 /// <see cref="PretrainedFamilies.CommonSpec"/>), and the text decoder of Gemma 3 with images (<see cref="Gemma3VisionLanguage()"/>,
@@ -19,7 +19,7 @@ namespace Idrak.Text.Plugins.Gemma;
 public static class GemmaArchitectures
 {
     /// <summary>Gemma (<c>GemmaForCausalLM</c>): the Llama naming, gains stored as a difference from 1, embeddings scaled by √dim and tied; writes its configuration from a spec ("gemma").</summary>
-    public static PretrainedArchitecture Gemma() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec with
+    public static IPretrainedArchitecture Gemma() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec with
     {
         NormOffset = 1f,                                                  // Gemma scales by (1 + weight)
         EmbeddingScale = MathF.Sqrt(spec.Dim),
@@ -27,17 +27,17 @@ public static class GemmaArchitectures
     }, "gemma");
 
     /// <summary>Gemma 2 (<c>Gemma2ForCausalLM</c>): read from checkpoints only.</summary>
-    public static PretrainedArchitecture Gemma2() => new() { Spec = (config, notes) => GemmaSpec(config, PretrainedFamilies.CommonSpec(config, notes), version: 2), TensorName = TensorName };
+    public static IPretrainedArchitecture Gemma2() => PretrainedFamilies.Architecture((config, notes) => GemmaSpec(config, PretrainedFamilies.CommonSpec(config, notes), version: 2), TensorName);
 
     /// <summary>Gemma 3 text (<c>Gemma3ForCausalLM</c>): read from checkpoints only, transformers 5's rope_parameters too.</summary>
-    public static PretrainedArchitecture Gemma3() => new() { Spec = (config, notes) => Gemma3Spec(Gemma3Keys(config), notes), TensorName = TensorName };
+    public static IPretrainedArchitecture Gemma3() => PretrainedFamilies.Architecture((config, notes) => Gemma3Spec(Gemma3Keys(config), notes), TensorName);
 
     /// <summary>
     /// The text decoder of Gemma 3 with images (<c>Gemma3ForConditionalGeneration</c>): Gemma 3's, read from text_config,
     /// never soft-capping its logits, in whichever of its two namings the checkpoint uses
-    /// (<see cref="PretrainedArchitecture.ForCheckpoint"/>).
+    /// (<see cref="ICheckpointFittedArchitecture.ForCheckpoint"/>).
     /// </summary>
-    public static PretrainedArchitecture Gemma3VisionLanguage() => Gemma3VisionLanguage(Gemma3Layouts[0]);
+    public static IPretrainedArchitecture Gemma3VisionLanguage() => Gemma3VisionLanguage(Gemma3Layouts[0]);
 
     // Gemma 2 and Gemma 3 (text) on top of the common keys: gains stored as a difference from 1, embeddings scaled by √dim
     // and tied, normalizations after attention and the feed-forward block too, scores scaled by query_pre_attn_scalar^-1/2,
@@ -136,22 +136,26 @@ public static class GemmaArchitectures
     // The text decoder of Gemma 3 with images: Gemma 3's, read from text_config, never soft-capping its logits
     // (Gemma3ForConditionalGeneration does not, whatever final_logit_softcapping says), in whichever naming the checkpoint
     // uses. The vision part is read by a registered vision family of the same name (Idrak.Vision.Plugins').
-    private static PretrainedArchitecture Gemma3VisionLanguage(Gemma3Layout layout) => new()
+    private static IPretrainedArchitecture Gemma3VisionLanguage(Gemma3Layout layout) => new Gemma3VisionLanguageDecoder(layout);
+
+    private sealed class Gemma3VisionLanguageDecoder(Gemma3Layout layout) : PretrainedArchitecture, ICheckpointFittedArchitecture
     {
-        Spec = (config, notes) =>
+        public override DecoderSpec Spec(JsonObject config, List<string> notes)
         {
             var text = Gemma3TextConfig(config);
             var spec = Gemma3Spec(text, notes);
             // Text embeddings are scaled by √width held in the weights' type (Gemma3TextScaledWordEmbedding): √2560 rounds in bfloat16.
             return spec with { LogitSoftcap = null, EmbeddingScale = InType(MathF.Sqrt(spec.Dim), (string?)text["dtype"] ?? (string?)text["torch_dtype"]) };
-        },
-        TensorName = name => TensorName(name) switch
+        }
+
+        public override string? TensorName(string name) => GemmaArchitectures.TensorName(name) switch
         {
             null => null,
             var stored when stored.StartsWith("model.", StringComparison.Ordinal) => layout.Text + stored["model.".Length..],
             var stored => layout.Head + stored["lm_head.".Length..],
-        },
-        ForCheckpoint = names =>
+        };
+
+        public IPretrainedArchitecture ForCheckpoint(IReadOnlySet<string> names)
         {
             var texts = Gemma3Layouts.Where(l => names.Contains(l.Text + "embed_tokens.weight")).ToList();
             if (texts.Count == 0)
@@ -161,8 +165,8 @@ public static class GemmaArchitectures
             }
 
             return Gemma3VisionLanguage(texts[0]);
-        },
-    };
+        }
+    }
 
     // text_config read as a Gemma3ForCausalLM configuration: the keys transformers keeps at the top level (tied embeddings,
     // the weights' type) when text_config lacks them, then Gemma3TextConfig's defaults for absent keys (the original

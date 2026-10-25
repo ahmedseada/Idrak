@@ -39,8 +39,22 @@ public static class DeepSeekPlugin
         protected override void RegisterParts()
         {
             Part(() => GgufPreTokenizers.Register(PreTokenizer, QwenArchitectures.SplitPattern), () => GgufPreTokenizers.Unregister(PreTokenizer));
-            Part(() => ToolCallFormats.Register(ToolCallFormat, p => p.Shows(DeepSeekToolCallParser.CallBegin), c => new DeepSeekToolCallParser(c)),
+            Part(() => ToolCallFormats.Register(new DeepSeekToolCallFormat()),
                 () => ToolCallFormats.Unregister(ToolCallFormat));
         }
     }
+}
+
+// The family's tool-call format, registered in ToolCallFormats under its name.
+internal sealed class DeepSeekToolCallFormat : IToolCallFormat
+{
+    public string Name => DeepSeekPlugin.ToolCallFormat;
+
+    public string Summary => "DeepSeek's tool calls between its call markers";
+
+    public IReadOnlySet<string> Keys => OptionKeys.None;
+
+    public bool Detect(ToolCallProbe probe) => probe.Shows(DeepSeekToolCallParser.CallBegin);
+
+    public IToolCallParser Create(ToolCallContext context) => new DeepSeekToolCallParser(context);
 }

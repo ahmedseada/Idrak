@@ -15,6 +15,18 @@ namespace Idrak.Models;
 /// </summary>
 internal static class GgufTokenizerFormats
 {
+    // One of the built-in converters, registered in GgufTokenizers under its tokenizer model's name.
+    internal sealed class Converter(string name, string summary, Func<GgufFile, IReadOnlyList<string>, List<string>, TokenizerDefinition> convert) : IGgufTokenizer
+    {
+        public string Name => name;
+
+        public string Summary => summary;
+
+        public IReadOnlySet<string> Keys => OptionKeys.None;
+
+        public TokenizerDefinition Create(GgufTokenizerRequest request) => convert(request.File, request.Tokens, request.Notes);
+    }
+
     // Byte-level BPE: the vocabulary and merges, token types 3 and 4 as added tokens (3 special), the pre-tokenizer's split
     // pattern by tokenizer.ggml.pre (GgufPreTokenizers, or its fallback for a name nobody registered), the ByteLevel decoder.
     public static TokenizerDefinition Gpt2(GgufFile file, IReadOnlyList<string> tokens, List<string> notes)

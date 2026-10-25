@@ -97,7 +97,7 @@ public sealed class QwenVisionFamily : IVisionFamily
     public static string ArchitectureOf(QwenVlVariant variant) => variant == QwenVlVariant.Qwen25Vl ? Qwen25VlArchitecture : Qwen2VlArchitecture;
 
     /// <inheritdoc />
-    public PretrainedVision? Read(VisionCheckpoint checkpoint)
+    public IPretrainedVision? Read(VisionCheckpoint checkpoint)
     {
         ArgumentNullException.ThrowIfNull(checkpoint);
         var store = checkpoint.Tensors;
@@ -166,7 +166,7 @@ public sealed class QwenVision : PretrainedVision, IVisionTuningPart
     }
 
     /// <summary>The vision option keys Qwen-VL takes: the smart resize's pixel budget.</summary>
-    public static IReadOnlyCollection<string> Keys { get; } = [QwenImageProcessor.MinPixelsKey, QwenImageProcessor.MaxPixelsKey];
+    public static OptionKeys Keys { get; } = new(QwenImageProcessor.MinPixelsKey, QwenImageProcessor.MaxPixelsKey);
 
     /// <summary>Which family.</summary>
     public QwenVlVariant Variant { get; }
@@ -202,7 +202,7 @@ public sealed class QwenVision : PretrainedVision, IVisionTuningPart
     public override IReadOnlyCollection<string> StoredTensors => [.. Tensors.Values.Select(t => t.Stored)];
 
     /// <inheritdoc />
-    public override IReadOnlyCollection<string> VisionOptionKeys => Keys;
+    public override IReadOnlySet<string> VisionOptionKeys => Keys;
 
     /// <inheritdoc />
     public override string Describe() => $"{Family}: {Config}, {TextDim}-wide image tokens";

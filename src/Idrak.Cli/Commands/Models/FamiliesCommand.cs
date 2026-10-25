@@ -46,7 +46,7 @@ internal sealed class FamiliesCommand : Command
         foreach (string name in PretrainedArchitectures.Names.Order(StringComparer.Ordinal).Where(n => filter is null || n.Contains(filter, StringComparison.OrdinalIgnoreCase)))
         {
             var architecture = PretrainedArchitectures.Get(name);
-            var row = new JsonObject { ["family"] = name, ["ownNetwork"] = architecture.Build is not null };
+            var row = new JsonObject { ["family"] = name, ["ownNetwork"] = architecture is INetworkBuildingArchitecture };
             var withExperts = ExpertSpec(architecture, name);
             try
             {
@@ -95,7 +95,7 @@ internal sealed class FamiliesCommand : Command
 
     // The family's spec of the probe with Mixtral's and Qwen's expert keys added, when it reads them into a spec with
     // experts; null for families without experts, which refuse such a configuration.
-    private static DecoderSpec? ExpertSpec(PretrainedArchitecture architecture, string name)
+    private static DecoderSpec? ExpertSpec(IPretrainedArchitecture architecture, string name)
     {
         var probe = Probe(name);
         probe["num_local_experts"] = 4;

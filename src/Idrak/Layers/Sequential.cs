@@ -158,8 +158,8 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
 
     /// <summary>
     /// Incremental forward pass: layers implementing <see cref="ICachedModule"/> use their cached path, others run
-    /// normally on the new positions only. Brackets the pass with <see cref="DecodingContext.BeginStep"/> /
-    /// <see cref="DecodingContext.EndStep"/> when called at the top level.
+    /// normally on the new positions only. Runs in a step of the context (<see cref="DecodingContext.OpenStep"/>), which it
+    /// opens and counts when called at the top level.
     /// </summary>
     public Tensor ForwardCached(Tensor input, DecodingContext context) => ForwardCached(input, context, _modules.Count);
 
@@ -173,12 +173,9 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
     {
         ArgumentOutOfRangeException.ThrowIfNegative(layers);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(layers, _modules.Count);
-        bool outermost = !context.InStep;
         int steps = input.Shape[1];
-        if (outermost)
-        {
-            context.BeginStep(steps);
-        }
+        using var step = context.OpenStep(steps);
+        bool outermost = step.Opened;
 
         // With LastPositionOnly, the layers after the last cached one see only the last position.
         int lastCached = outermost && context.LastPositionOnly && steps > 1 ? _modules.FindLastIndex(m => m is ICachedModule) : -1;
@@ -198,22 +195,9 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
             return i == lastCached && x.Rank == 3 ? x.Narrow(1, x.Shape[1] - 1, 1) : x;
         }
 
-        Tensor x;
-        try
-        {
-            x = Autograd.IsEnabled || ComputeGraph.IsCapturing ? RunLayers(input, layers, Layer) : RunFreeing(input, layers, Layer);
-        }
-        catch (OperationCanceledException) when (outermost)
-        {
-            context.CancelStep();                                              // the stopped step's positions are not counted
-            throw;
-        }
-
-        if (outermost)
-        {
-            context.EndStep(steps);
-        }
-
+        // A pass stopped part-way (cancelled) leaves the step uncompleted: disposing its scope withdraws it.
+        var x = Autograd.IsEnabled || ComputeGraph.IsCapturing ? RunLayers(input, layers, Layer) : RunFreeing(input, layers, Layer);
+        step.Complete();
         return x;
     }
 

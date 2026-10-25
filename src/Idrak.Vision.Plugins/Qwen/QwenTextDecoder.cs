@@ -24,19 +24,21 @@ public static class QwenTextDecoder
     /// The decoder as <see cref="PretrainedArchitectures"/> takes it (registered under each variant's architecture name by
     /// <see cref="QwenVisionPlugin"/>): the hub's tensor naming, or transformers 5's nested one when the checkpoint has it.
     /// </summary>
-    public static PretrainedArchitecture Architecture() => For(nested: false);
+    public static IPretrainedArchitecture Architecture() => new Decoder(nested: false);
 
     // The architecture in one tensor naming; the checkpoint's names choose the other when it has them.
-    private static PretrainedArchitecture For(bool nested) => new()
+    private sealed class Decoder(bool nested) : PretrainedArchitecture, ICheckpointFittedArchitecture
     {
-        Spec = Spec,
-        TensorName = name => PretrainedFamilies.CommonTensorName(name) switch
+        public override DecoderSpec Spec(JsonObject config, List<string> notes) => QwenTextDecoder.Spec(config, notes);
+
+        public override string? TensorName(string name) => PretrainedFamilies.CommonTensorName(name) switch
         {
             string stored when nested && stored.StartsWith("model.", StringComparison.Ordinal) => Nested + stored["model.".Length..],
             var stored => stored,
-        },
-        ForCheckpoint = names => For(nested: names.Contains(Nested + "embed_tokens.weight")),
-    };
+        };
+
+        public IPretrainedArchitecture ForCheckpoint(IReadOnlySet<string> names) => new Decoder(nested: names.Contains(Nested + "embed_tokens.weight"));
+    }
 
     /// <summary>The decoder's spec from a Qwen-VL config.json (either layout).</summary>
     /// <exception cref="InvalidDataException">The configuration gives no <c>mrope_section</c>.</exception>

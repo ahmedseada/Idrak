@@ -6,7 +6,7 @@ using System.Text.Json.Nodes;
 namespace Idrak.Abstraction.Testing;
 
 /// <summary>
-/// The checks of a RoPE scaling method (<see cref="RopeScalingMethod"/>, registered in <see cref="RopeScalings"/>) for one
+/// The checks of a RoPE scaling method (<see cref="IRopeScaling"/>, registered in <see cref="RopeScalings"/>) for one
 /// scaling type: given the unscaled frequencies of a head (a base θ and the rotating dimensions) and the scaling's
 /// parameters, it returns as many frequencies, finite and positive, with a finite positive attention factor; it agrees
 /// with the library's method of the same type (<see cref="RopeScalings.Default"/>) within <see cref="Tolerance"/>,
@@ -18,7 +18,7 @@ namespace Idrak.Abstraction.Testing;
 /// The parameters to try (as <see cref="RopeScaling.Parameters"/>); the library's types ("linear", "yarn", "dynamic") have
 /// their own, a plug-in's type or one of your own needs some.
 /// </param>
-public sealed class RopeScalingSuite(string type, IReadOnlyList<JsonObject>? parameterSets = null) : ContractSuite<RopeScalingMethod>
+public sealed class RopeScalingSuite(string type, IReadOnlyList<JsonObject>? parameterSets = null) : ContractSuite<IRopeScaling>
 {
     private readonly IReadOnlyList<JsonObject> _parameterSets = parameterSets ?? BuiltInParameters(type)
         ?? throw new ArgumentException($"RoPE scaling '{type}' is not the library's: give the parameter sets to check it with.", nameof(parameterSets));
@@ -61,7 +61,7 @@ public sealed class RopeScalingSuite(string type, IReadOnlyList<JsonObject>? par
     }
 
     /// <inheritdoc />
-    public override void Run(RopeScalingMethod implementation, ContractCase @case, CaseChecks checks)
+    public override void Run(IRopeScaling implementation, ContractCase @case, CaseChecks checks)
     {
         ArgumentNullException.ThrowIfNull(implementation);
         ArgumentNullException.ThrowIfNull(@case);
@@ -72,14 +72,14 @@ public sealed class RopeScalingSuite(string type, IReadOnlyList<JsonObject>? par
         var parameters = data["parameters"]!.AsObject();
         int[] positions = [.. data["positions"]!.AsArray().Select(p => (int)p!)];
 
-        var result = implementation(Input(theta, rotary, parameters));
+        var result = implementation.Create(Input(theta, rotary, parameters));
         int half = rotary / 2;
         checks.Check("as many frequencies as pairs", result.Frequencies.Length == half, $"{result.Frequencies.Length} frequencies, {half} expected");
         checks.Check("frequencies finite and positive", result.Frequencies.All(f => double.IsFinite(f) && f > 0),
             $"frequencies {string.Join(", ", result.Frequencies.Take(8))}…");
         checks.Check("attention factor finite and positive", double.IsFinite(result.AttentionFactor) && result.AttentionFactor > 0, $"attention factor {result.AttentionFactor}");
 
-        var reference = RopeScalings.Default(Type)?.Invoke(Input(theta, rotary, parameters));
+        var reference = RopeScalings.Default(Type)?.Create(Input(theta, rotary, parameters));
         if (reference is null)
         {
             checks.Skip("agrees with the library's method", $"the library has no '{Type}' scaling");
@@ -99,10 +99,10 @@ public sealed class RopeScalingSuite(string type, IReadOnlyList<JsonObject>? par
 
         foreach (int position in positions)
         {
-            var at = result.FrequenciesAt?.Invoke(position) ?? result.Frequencies;
+            var at = result.FrequenciesAt?.At(position) ?? result.Frequencies;
             if (reference is not null)
             {
-                var expected = reference.FrequenciesAt?.Invoke(position) ?? reference.Frequencies;
+                var expected = reference.FrequenciesAt?.At(position) ?? reference.Frequencies;
                 checks.Compare("per-position frequencies agree with the library's method", Relative(expected, at) is { } d ? $"position {position}: {d}" : null);
             }
             else
@@ -112,9 +112,9 @@ public sealed class RopeScalingSuite(string type, IReadOnlyList<JsonObject>? par
         }
 
         // Called once per position, possibly from several threads at once, when the rotary tables are made.
-        var sequential = positions.Select(p => result.FrequenciesAt?.Invoke(p) ?? result.Frequencies).ToArray();
+        var sequential = positions.Select(p => result.FrequenciesAt?.At(p) ?? result.Frequencies).ToArray();
         var parallel = new double[positions.Length][];
-        Parallel.For(0, positions.Length * 8, i => parallel[i % positions.Length] = result.FrequenciesAt?.Invoke(positions[i % positions.Length]) ?? result.Frequencies);
+        Parallel.For(0, positions.Length * 8, i => parallel[i % positions.Length] = result.FrequenciesAt?.At(positions[i % positions.Length]) ?? result.Frequencies);
         checks.Compare("per-position frequencies from several threads", Enumerable.Range(0, positions.Length)
             .Select(i => Comparisons.Difference(sequential[i], parallel[i], 0) is { } d ? $"position {positions[i]}: {d}" : null).FirstOrDefault(d => d is not null));
     }

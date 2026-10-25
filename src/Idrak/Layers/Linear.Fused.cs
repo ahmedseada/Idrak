@@ -30,13 +30,13 @@ public sealed partial class Linear
 
         // One weight form for all: float32 (one frozen, untied layer), or one built-in packed format the low-rank products
         // read (formats of one's own have no Format: their layers run their own products).
-        var packedFormat = layers[0].PackedWeight?.Format;
+        var packedFormat = layers[0].KernelWeight?.Format;
         bool dense = layers[0].PackedWeight is null;
         foreach (var layer in layers)
         {
             bool fits = dense
                 ? layer.PackedWeight is null && layer.TiedTo is null && layers.Count == 1 && !layer.Weight.RequiresGrad
-                : layer.PackedWeight is { LowRankProducts: true, Format: { } own } && own == packedFormat;
+                : layer.KernelWeight is { LowRankProducts: true, Format: var own } && own == packedFormat;
             if (!fits || layer.InFeatures != k || layer.Lora is not { } adapter || adapter.Rank != first.Rank
                 || adapter.A.Device != input.Device || withBias && layer.Bias is { RequiresGrad: true })
             {
@@ -80,7 +80,7 @@ public sealed partial class Linear
         else if (!done)
         {
             done = backend.PackedMatMulLowRank(packedFormat!.Value, flat.Storage, m, k,
-                [.. layers.Select((l, j) => (l.PackedWeight!.PackedValues.Storage, l.PackedWeight.ScaleValues?.Storage,
+                [.. layers.Select((l, j) => (l.KernelWeight!.PackedValues.Storage, l.KernelWeight.ScaleValues?.Storage,
                     outputs[j].Storage, l.OutFeatures, us[j].Storage, l.Lora!.B.Storage))], rank);
         }
 
@@ -130,7 +130,7 @@ public sealed partial class Linear
 
                     float beta = 1f;
                     var dx = flat.RequiresGrad ? flat.GradientTarget(out beta) : null;         // the first gradient written, not added
-                    if (dx is not null && layer.PackedWeight is { } stored && stored.TransposedProduct(g, dx, m, k, n, beta, dt.Storage, a.Storage, rank))
+                    if (dx is not null && layer.KernelWeight is { } stored && stored.TransposedProduct(g, dx, m, k, n, beta, dt.Storage, a.Storage, rank))
                     {
                         // dx (+)= g·Wᵀ + dt·Aᵀ with W read as the words it is stored in (bfloat16).
                     }
@@ -193,7 +193,7 @@ public sealed partial class Linear
             int n = layer.OutFeatures;
             outputs[j].Record("matmul_packed", g =>
             {
-                var weight = layer.PackedWeight!;
+                var weight = layer.KernelWeight!;
                 if (weight.TransposedProduct(g, input.GradStorage(), m, k, n, 1f, null, null, 0))
                 {
                     return;                                                                        // dx += g · Wᵀ, W as stored
@@ -217,7 +217,7 @@ public sealed partial class Linear
         gate.ThrowIfDisposed();
         up.ThrowIfDisposed();
         int k = gate.Shape[^1], m = gate.Size / Math.Max(1, k);
-        if (layer.PackedWeight is not { Format: { } format } weight || k != layer.InFeatures || up.Size != gate.Size || m > gate.Backend.Capabilities.FewRows)
+        if (layer.KernelWeight is not { Format: var format } weight || k != layer.InFeatures || up.Size != gate.Size || m > gate.Backend.Capabilities.FewRows)
         {
             return null;                                                // not packed, or a format the kernels do not read
         }
@@ -250,7 +250,7 @@ public sealed partial class Linear
         x.ThrowIfDisposed();
         residual.ThrowIfDisposed();
         int k = x.Shape[^1], m = x.Size / Math.Max(1, k), n = layer.OutFeatures;
-        if (layer.PackedWeight is not { Format: { } format } weight || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > x.Backend.Capabilities.FewRows
+        if (layer.KernelWeight is not { Format: var format } weight || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > x.Backend.Capabilities.FewRows
             || residual.Size != m * n || residual.Shape[^1] != n || norm.Features != n || !x.Backend.FusedKernels)
         {
             return null;
@@ -293,7 +293,7 @@ public sealed partial class Linear
         x.ThrowIfDisposed();
         residual.ThrowIfDisposed();
         int k = x.Shape[^1], m = x.Size / Math.Max(1, k), n = layer.OutFeatures;
-        if (layer.PackedWeight is not { Format: { } format } weight || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > x.Backend.Capabilities.FewRows
+        if (layer.KernelWeight is not { Format: var format } weight || layer.Bias is not null || layer.Adapter is not null || k != layer.InFeatures || m > x.Backend.Capabilities.FewRows
             || residual.Size != m * n || residual.Shape[^1] != n || norm.Features != n || yNorm.Features != n || !x.Backend.FusedKernels)
         {
             return null;
@@ -332,7 +332,7 @@ public sealed partial class Linear
         using var offload = input.Device.Backend.Offload is null ? default : Offloading.EnterMany([gate, up], input);   // no array without offloading
         input.ThrowIfDisposed();
         int k = input.Shape[^1], m = input.Size / Math.Max(1, k), n = gate.OutFeatures;
-        if (gate.PackedWeight is not { Format: { } format } gateWeight || up.PackedWeight is not { } upWeight || upWeight.Format != format
+        if (gate.KernelWeight is not { Format: var format } gateWeight || up.KernelWeight is not { } upWeight || upWeight.Format != format
             || m > input.Backend.Capabilities.FewRows || !input.Backend.FusedKernels || up.OutFeatures != n
             || gate.InFeatures != k || up.InFeatures != k || gate.Bias is not null || up.Bias is not null || gate.Adapter is not null
             || up.Adapter is not null)
@@ -379,7 +379,7 @@ public sealed partial class Linear
         for (int j = 0; j < layers.Count; j++)
         {
             var layer = layers[j];
-            var weight = layer.PackedWeight!;                                  // the caller checked: one format for all
+            var weight = layer.KernelWeight!;                                  // the caller checked: one format for all
             if (weight.Format != format)
             {
                 return null;                                                   // never reached: a format the kernels do not read

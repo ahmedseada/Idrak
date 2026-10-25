@@ -35,7 +35,7 @@ internal static class Registries
         static IReadOnlyList<string> Sorted(IEnumerable<string> names) => [.. names.Order(StringComparer.OrdinalIgnoreCase)];
         return
         [
-            new("weights", "Weight (packed) formats", true, Sorted(PackedWeight.FormatNames)),
+            new("weights", "Weight (packed) formats", true, Sorted(PackedWeightFormats.Names)),
             new("kv", "KV cache formats", true, Sorted(KeyValueLayouts.Names)),
             new("checkpoints", "Checkpoint formats", true, Sorted(CheckpointFormats.Names)),
             new("datafiles", "Dataset file formats", true, Sorted(DataFileFormats.Names)),

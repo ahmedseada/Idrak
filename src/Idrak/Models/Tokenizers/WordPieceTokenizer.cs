@@ -128,7 +128,7 @@ internal sealed class WordPieceTokenizer : IPretrainedTokenizer
             return BpeTokenizer.DecoderStage(spec);
         }
 
-        var component = create(spec);
+        var component = create.Create(spec);
         return tokens => component.Decode(tokens) is var result && result is List<string> list ? list : [.. result];
     }
 

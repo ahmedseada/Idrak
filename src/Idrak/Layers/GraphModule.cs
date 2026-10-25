@@ -225,7 +225,7 @@ public sealed class GraphModule : Module
                 return Squeeze(arg(0), Axes(1));
             default:
                 var op = GraphOps.TryGet(node.Op) ?? throw new NotSupportedException($"unknown operation '{node.Op}'; register it with GraphOps.Register");
-                return op(new GraphOpContext(node, arg));
+                return op.Run(new GraphOpContext(node, arg));
         }
     }
 

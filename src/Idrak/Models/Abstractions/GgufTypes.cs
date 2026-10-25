@@ -11,36 +11,51 @@ namespace Idrak.Models.Abstractions;
 public delegate void GgufDequantizer(ReadOnlySpan<byte> raw, Span<float> values);
 
 /// <summary>
-/// A ggml tensor type: its name, its block (values and bytes) and how blocks become float32. Register new ones with
-/// <see cref="GgufTypes.Register"/>.
+/// A ggml tensor type: its name, its block (values and bytes) and how blocks become float32. Registered by type id in
+/// <see cref="GgufTypes"/>; <see cref="GgufType.Blockwise"/> makes one from a function of one block.
 /// </summary>
-public sealed class GgufType
+public interface IGgufType
 {
     /// <summary>Its name (Q4_0, Q6_K, …), as in llama.cpp.</summary>
-    public required string Name { get; init; }
+    string Name { get; }
 
     /// <summary>Values per block (1 for plain number types).</summary>
-    public required int BlockValues { get; init; }
+    int BlockValues { get; }
 
     /// <summary>Stored bytes per block.</summary>
-    public required int BlockBytes { get; init; }
+    int BlockBytes { get; }
 
     /// <summary>
-    /// Dequantizes whole blocks (called once per tensor or per chunk of rows, with many blocks; split the work across
-    /// threads here, as <see cref="Blockwise"/> does).
+    /// Dequantizes whole blocks: <paramref name="raw"/> holds values.Length / <see cref="BlockValues"/> blocks. Called once
+    /// per tensor or per chunk of rows, with many blocks: a type splits the work across threads here, and reads the bytes
+    /// with vector instructions where it can (a scalar tail for what is left), giving the values a value-by-value read gives.
     /// </summary>
-    public required GgufDequantizer Dequantize { get; init; }
+    void Dequantize(ReadOnlySpan<byte> raw, Span<float> values);
+}
 
+/// <summary>Ggml tensor types made from a function of one block (<see cref="Blockwise"/>).</summary>
+public static class GgufType
+{
     /// <summary>
     /// A type whose blocks <paramref name="block"/> dequantizes one at a time (one block of bytes into
     /// <paramref name="blockValues"/> values); the blocks are split across threads.
     /// </summary>
-    public static unsafe GgufType Blockwise(string name, int blockValues, int blockBytes, GgufDequantizer block) => new()
+    public static IGgufType Blockwise(string name, int blockValues, int blockBytes, GgufDequantizer block)
     {
-        Name = name,
-        BlockValues = blockValues,
-        BlockBytes = blockBytes,
-        Dequantize = (raw, values) =>
+        ArgumentException.ThrowIfNullOrEmpty(name);
+        ArgumentNullException.ThrowIfNull(block);
+        return new BlockwiseType(name, blockValues, blockBytes, block);
+    }
+
+    private sealed class BlockwiseType(string name, int blockValues, int blockBytes, GgufDequantizer block) : IGgufType
+    {
+        public string Name => name;
+
+        public int BlockValues => blockValues;
+
+        public int BlockBytes => blockBytes;
+
+        public unsafe void Dequantize(ReadOnlySpan<byte> raw, Span<float> values)
         {
             int blocks = values.Length / blockValues;
             // The workers cannot capture spans: they read and write the pinned memory through pointers.
@@ -58,11 +73,10 @@ public sealed class GgufType
                     }
                 });
             }
-        },
-    };
+        }
 
-    /// <inheritdoc />
-    public override string ToString() => Name;
+        public override string ToString() => name;
+    }
 }
 
 /// <summary>
@@ -72,7 +86,7 @@ public sealed class GgufType
 /// </summary>
 public static class GgufTypes
 {
-    private static readonly SlotTable<int, GgufType> Registry = new(nameof(GgufTypes), Guard);
+    private static readonly SlotTable<int, IGgufType> Registry = new(nameof(GgufTypes), Guard);
 
     static GgufTypes() => Overrides.AsLibraryDefaults(LibraryModelFormats.RegisterGgufTypes);   // the built-in types, on first use
 
@@ -81,7 +95,7 @@ public static class GgufTypes
     /// stays behind it (see <see cref="SetPolicy"/>) until <see cref="Unregister"/>.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(int id, GgufType type)
+    public static void Register(int id, IGgufType type)
     {
         ArgumentNullException.ThrowIfNull(type);
         if (type.BlockValues <= 0 || type.BlockBytes <= 0)
@@ -99,14 +113,14 @@ public static class GgufTypes
     public static IReadOnlyCollection<int> Ids => [.. Registry.Keys.Order()];
 
     /// <summary>The type registered with id <paramref name="id"/>.</summary>
-    public static GgufType Get(int id) => Find(id)
+    public static IGgufType Get(int id) => Find(id)
         ?? throw new NotSupportedException($"No ggml type #{id} is registered ({string.Join(", ", Ids.Select(i => $"{Find(i)?.Name} ({i})"))}); add it with GgufTypes.Register.");
 
     /// <summary>The type registered with id <paramref name="id"/>, or null when there is none.</summary>
-    public static GgufType? Find(int id) => Registry.Find(id);
+    public static IGgufType? Find(int id) => Registry.Find(id);
 
     /// <summary>The library's type with id <paramref name="id"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static GgufType? Default(int id) => Registry.Default(id);
+    public static IGgufType? Default(int id) => Registry.Default(id);
 
     /// <summary>Who registered the type with id <paramref name="id"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(int id) => Registry.Origin(id);
@@ -118,44 +132,49 @@ public static class GgufTypes
     public static void SetPolicy(int id, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Registry.SetPolicy(id, policy, shadowRate);
 
     // A type with other block sizes reads other bytes: the library's cannot stand in for it.
-    private static GgufType Guard(Slot slot, GgufType app, GgufType library) =>
-        app.BlockValues != library.BlockValues || app.BlockBytes != library.BlockBytes ? app : new GgufType
+    private static IGgufType Guard(Slot slot, IGgufType app, IGgufType library) =>
+        app.BlockValues != library.BlockValues || app.BlockBytes != library.BlockBytes ? app : new GuardedType(slot, app, library);
+
+    private sealed class GuardedType(Slot slot, IGgufType app, IGgufType library) : IGgufType
+    {
+        public string Name => app.Name;
+
+        public int BlockValues => app.BlockValues;
+
+        public int BlockBytes => app.BlockBytes;
+
+        public void Dequantize(ReadOnlySpan<byte> raw, Span<float> values)
         {
-            Name = app.Name,
-            BlockValues = app.BlockValues,
-            BlockBytes = app.BlockBytes,
-            Dequantize = (raw, values) =>
+            if (slot.Policy == SlotPolicy.Shadow)
             {
-                if (slot.Policy == SlotPolicy.Shadow)
+                var run = slot.Shadow();
+                library.Dequantize(raw, values);
+                if (run is not null)
                 {
-                    var run = slot.Shadow();
-                    library.Dequantize(raw, values);
-                    if (run is not null)
+                    run.Answered();
+                    var other = new float[values.Length];
+                    try
                     {
-                        run.Answered();
-                        var other = new float[values.Length];
-                        try
-                        {
-                            app.Dequantize(raw, other);
-                            run.Done(Comparisons.Difference(values, other, 1e-5f));
-                        }
-                        catch (Exception e) when (e is not OperationCanceledException)
-                        {
-                            run.Failed(e);
-                        }
+                        app.Dequantize(raw, other);
+                        run.Done(Comparisons.Difference(values, other, 1e-5f));
                     }
-
-                    return;
+                    catch (Exception e) when (e is not OperationCanceledException)
+                    {
+                        run.Failed(e);
+                    }
                 }
 
-                try
-                {
-                    app.Dequantize(raw, values);
-                }
-                catch (Exception e) when (slot.Failed(e))
-                {
-                    library.Dequantize(raw, values);
-                }
-            },
-        };
+                return;
+            }
+
+            try
+            {
+                app.Dequantize(raw, values);
+            }
+            catch (Exception e) when (slot.Failed(e))
+            {
+                library.Dequantize(raw, values);
+            }
+        }
+    }
 }

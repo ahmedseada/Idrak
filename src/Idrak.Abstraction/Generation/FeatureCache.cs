@@ -99,6 +99,12 @@ public interface IFeatureCache : IDisposable
 }
 
 /// <summary>
+/// A kind of feature cache, registered by its <see cref="IKind.Name"/> in <see cref="FeatureCaches"/>: makes a cache from
+/// <see cref="FeatureCacheOptions"/> (<see cref="IKind{TRequest, T}.Create"/>).
+/// </summary>
+public interface IFeatureCacheKind : IKind<FeatureCacheOptions, IFeatureCache>;
+
+/// <summary>
 /// The kinds of feature cache, by name (ignoring case). The library's (Idrak.Text registers them):
 /// <list type="bullet">
 /// <item><see cref="Memory"/>: in this process's memory, least recently used entries evicted to stay within a byte
@@ -120,8 +126,8 @@ public static class FeatureCaches
     /// <summary>The cache on disk.</summary>
     public const string Disk = "disk";
 
-    private static readonly SlotTable<string, Func<FeatureCacheOptions, IFeatureCache>> Table = new(nameof(FeatureCaches),
-        (slot, app, library) => options => slot.Call(() => app(options), () => library(options), effects: true), StringComparer.OrdinalIgnoreCase);
+    private static readonly KindTable<IFeatureCacheKind> Table = new(nameof(FeatureCaches), "Feature cache", "add it with FeatureCaches.Register",
+        (slot, app, library) => new GuardedKind(slot, app, library), StringComparer.OrdinalIgnoreCase);
 
     static FeatureCaches() => LibraryDefaults.Ensure(typeof(FeatureCaches));
 
@@ -135,35 +141,41 @@ public static class FeatureCaches
             : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile, Environment.SpecialFolderOption.DoNotVerify), ".cache", "idrak"),
         "features");
 
-    /// <summary>Registers the cache <paramref name="name"/>, made by <paramref name="create"/> (over the library's of that name, which stays behind it).</summary>
+    /// <summary>Registers <paramref name="kind"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string name, Func<FeatureCacheOptions, IFeatureCache> create)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(name);
-        ArgumentNullException.ThrowIfNull(create);
-        Table.Register(name, create, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(IFeatureCacheKind kind) => Table.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's cache <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Table.Unregister(name);
 
     /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
+    public static IReadOnlyCollection<string> Names => Table.Names;
 
-    /// <summary>What makes the cache <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
+    /// <summary>The cache kind <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name: the message names the registered ones.</exception>
-    public static Func<FeatureCacheOptions, IFeatureCache> Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Feature cache '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with FeatureCaches.Register.");
+    public static IFeatureCacheKind Get(ReadOnlySpan<char> name) => Table.Find(name)
+        ?? throw new NotSupportedException($"Feature cache '{name}' is not registered (registered: {string.Join(", ", Table.Names)}); add it with FeatureCaches.Register.");
 
     /// <summary>A new cache of the kind <paramref name="name"/>, made with <paramref name="options"/> (the kind's defaults when null). Dispose it when done.</summary>
-    public static IFeatureCache Create(string name, FeatureCacheOptions? options = null) => Get(name)(options ?? new FeatureCacheOptions());
+    public static IFeatureCache Create(ReadOnlySpan<char> name, FeatureCacheOptions? options = null) => Get(name).Create(options ?? new FeatureCacheOptions());
 
-    /// <summary>The library's cache <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static Func<FeatureCacheOptions, IFeatureCache>? Default(string name) => Table.Default(name);
+    /// <summary>The library's cache kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
+    public static IFeatureCacheKind? Default(string name) => Table.Default(name);
 
     /// <summary>Who registered the cache <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Table.Origin(name);
 
     /// <summary>What happens when the app's cache <paramref name="name"/> cannot be made (<see cref="SlotPolicy.Throw"/> unless set; <see cref="SlotPolicy.FallBack"/> makes the library's).</summary>
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
+
+    private sealed class GuardedKind(Slot slot, IFeatureCacheKind app, IFeatureCacheKind library) : IFeatureCacheKind
+    {
+        public string Name => app.Name;
+
+        public string Summary => app.Summary;
+
+        public IReadOnlySet<string> Keys => app.Keys;
+
+        public IFeatureCache Create(FeatureCacheOptions request) => slot.Call(() => app.Create(request), () => library.Create(request), effects: true);
+    }
 }

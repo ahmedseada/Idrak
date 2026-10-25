@@ -205,12 +205,26 @@ public interface IImagePromptFormat
 }
 
 /// <summary>
+/// An <see cref="ImageTokenFormat"/> that writes an image of several blocks (views) as one text: a family whose processor
+/// puts text between an image's views derives its format from <see cref="ImageTokenFormat"/> and implements this.
+/// </summary>
+public interface IImageBlocksJoin
+{
+    /// <summary>
+    /// The text of an image given each block's text (as <see cref="ImageTokenFormat.Block"/> writes it) in order. It keeps
+    /// every block's text whole and in order, with something between any two.
+    /// </summary>
+    string Join(IReadOnlyList<string> blocks);
+}
+
+/// <summary>
 /// An image prompt format built from token ids: each marker token the chat template wrote (in order, one per image)
 /// becomes its block (<see cref="Block"/>): <see cref="Before"/>, the begin token (if any), the block's count of image
 /// tokens, the end token (if any) and <see cref="After"/>. Gemma 3's processor is the marker <c>&lt;start_of_image&gt;</c>,
 /// begin and end <c>&lt;start_of_image&gt;</c> and <c>&lt;end_of_image&gt;</c>, "\n\n" around; LLaVA's is the marker
 /// <c>&lt;image&gt;</c> replaced by the image tokens alone (the marker is the image token). An image of several blocks
-/// is written by <see cref="Join"/> from its blocks' texts.
+/// is written from its blocks' texts by a format that implements <see cref="IImageBlocksJoin"/> (a family's own format
+/// derives from this class); any other writes one block per image.
 /// </summary>
 /// <param name="name">A name for messages.</param>
 /// <param name="marker">The token the chat template writes once per image.</param>
@@ -219,8 +233,9 @@ public interface IImagePromptFormat
 /// <param name="end">The token after the image tokens, or null for none.</param>
 /// <param name="before">Text before the begin token.</param>
 /// <param name="after">Text after the end token.</param>
-public sealed class ImageTokenFormat(string name, int marker, int imageToken, int? begin = null, int? end = null, string before = "", string after = "") : IImagePromptFormat
+public class ImageTokenFormat(string name, int marker, int imageToken, int? begin = null, int? end = null, string before = "", string after = "") : IImagePromptFormat
 {
+
     /// <inheritdoc />
     public string Name { get; } = name ?? throw new ArgumentNullException(nameof(name));
 
@@ -241,14 +256,6 @@ public sealed class ImageTokenFormat(string name, int marker, int imageToken, in
 
     /// <summary>Text after the end token.</summary>
     public string After { get; } = after ?? "";
-
-    /// <summary>
-    /// How an image of several blocks is written, given each block's text (as <see cref="Block"/> writes it) in order:
-    /// a family whose processor puts text between an image's views gives it. Its text keeps every block's text whole and
-    /// in order, with something between any two. Null (the default): an image takes one block, and several are a
-    /// <see cref="NotSupportedException"/>.
-    /// </summary>
-    public Func<IReadOnlyList<string>, string>? Join { get; init; }
 
     /// <summary>One block's text: <see cref="Before"/>, the begin token, <paramref name="layout"/>'s image tokens, the end token, <see cref="After"/>.</summary>
     public string Block(ImageTokenLayout layout, ITokenizer tokenizer)
@@ -285,6 +292,7 @@ public sealed class ImageTokenFormat(string name, int marker, int imageToken, in
         }
 
         var text = new StringBuilder(prompt.Length);
+        var joiner = this as IImageBlocksJoin;                                // tested once per prompt
         int from = 0;
         for (int k = 0; k < at.Count; k++)
         {
@@ -293,8 +301,8 @@ public sealed class ImageTokenFormat(string name, int marker, int imageToken, in
             {
                 null or 0 => throw new ArgumentException($"Image {k} has no blocks of image tokens.", nameof(images)),
                 1 => Block(blocks[0], tokenizer),
-                _ when Join is { } join => join([.. blocks.Select(block => Block(block, tokenizer))]),
-                _ => throw new NotSupportedException($"Image {k} has {blocks.Count} blocks of image tokens; the prompt format {Name} writes one per image (it has no Join)."),
+                _ when joiner is not null => joiner.Join([.. blocks.Select(block => Block(block, tokenizer))]),
+                _ => throw new NotSupportedException($"Image {k} has {blocks.Count} blocks of image tokens; the prompt format {Name} writes one per image (it is no IImageBlocksJoin)."),
             };
             text.Append(prompt, from, at[k] - from).Append(written);
             from = at[k] + markerText.Length;

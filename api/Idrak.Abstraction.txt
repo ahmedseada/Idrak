@@ -893,13 +893,14 @@ public sealed class Idrak.Abstraction.Data.AugmentationOptions
 
 public static class Idrak.Abstraction.Data.Augmentations
   public static Idrak.Abstraction.Data.AnnotatedImage Apply(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IAugmentation> pipeline, Idrak.Abstraction.Data.AnnotatedImage sample, Idrak.Abstraction.Data.AugmentationContext context)
-  public static Idrak.Abstraction.Data.AugmentationFactory Get(string name)
-  public static Idrak.Abstraction.Data.AugmentationFactory? Default(string name)
   public static Idrak.Abstraction.Data.IAugmentation Create(string name, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>>? options = null)
+  public static Idrak.Abstraction.Data.IAugmentationKind Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Data.IAugmentationKind? Default(string name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IAugmentation> Parse(string? text)
   public static bool Unregister(string name)
   public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Data.IAugmentationKind kind)
   public static void Register(string name, Idrak.Abstraction.Data.AugmentationFactory create)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
@@ -956,6 +957,9 @@ public sealed class Idrak.Abstraction.Data.GlyphOutline
 public interface Idrak.Abstraction.Data.IAugmentation
   public Idrak.Abstraction.Data.AnnotatedImage Apply(Idrak.Abstraction.Data.AnnotatedImage sample, Idrak.Abstraction.Data.AugmentationContext context)
   public string Name { get; }
+
+public interface Idrak.Abstraction.Data.IAugmentationKind : Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Data.IAugmentation Create(Idrak.Abstraction.Data.AugmentationOptions options)
 
 public interface Idrak.Abstraction.Data.IDownloader
   public (default) string Download(string url, System.Collections.Generic.IReadOnlyDictionary<string, string>? headers = null, string? cachePath = null)
@@ -1025,6 +1029,8 @@ public interface Idrak.Abstraction.Data.ISampleSource
   public System.Collections.Generic.IReadOnlyList<int> TargetShape { get; }
   public int Count { get; }
   public void Read(int index, System.Span<float> features, System.Span<float> targets)
+
+public interface Idrak.Abstraction.Data.ISampleSourceKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Data.SampleSourceRequest, Idrak.Abstraction.Data.ISampleSource>
 
 public interface Idrak.Abstraction.Data.ISampleStream
   public Idrak.Abstraction.Data.ISampleReader Open()
@@ -1286,17 +1292,20 @@ public sealed record Idrak.Abstraction.Data.RenderedPage : System.IEquatable<Idr
   public string Description { get; init; }
   public string Text { get; init; }
 
-public delegate Idrak.Abstraction.Data.ISampleSource Idrak.Abstraction.Data.SampleSourceFactory(string path, System.Collections.Generic.IReadOnlyDictionary<string, string> options)
+public sealed record Idrak.Abstraction.Data.SampleSourceRequest : System.IEquatable<Idrak.Abstraction.Data.SampleSourceRequest>
+  public SampleSourceRequest(string Path, System.Collections.Generic.IReadOnlyDictionary<string, string> Options)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Options { get; init; }
+  public string Path { get; init; }
 
 public static class Idrak.Abstraction.Data.SampleSources
-  public static Idrak.Abstraction.Data.ISampleSource Open(string name, string path, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
-  public static Idrak.Abstraction.Data.SampleSourceFactory Get(string name)
-  public static Idrak.Abstraction.Data.SampleSourceFactory? Default(string name)
+  public static Idrak.Abstraction.Data.ISampleSource Open(System.ReadOnlySpan<char> name, string path, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public static Idrak.Abstraction.Data.ISampleSourceKind Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Data.ISampleSourceKind? Default(string name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static bool Contains(string name)
+  public static bool Contains(System.ReadOnlySpan<char> name)
   public static bool Unregister(string name)
   public static string? Origin(string name)
-  public static void Register(string name, Idrak.Abstraction.Data.SampleSourceFactory factory)
+  public static void Register(Idrak.Abstraction.Data.ISampleSourceKind kind)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed class Idrak.Abstraction.Data.ScanProfile : Idrak.Abstraction.Data.IScanProfile
@@ -2307,6 +2316,8 @@ public interface Idrak.Abstraction.Diagnostics.IProgressReporter : System.IDispo
   public void NextStage(string label, long? total, Idrak.Abstraction.Diagnostics.ProgressUnit unit, string? message = null, bool keepLine = true)
   public void Show()
 
+public interface Idrak.Abstraction.Diagnostics.IProgressReporterKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Diagnostics.ProgressRequest, Idrak.Abstraction.Diagnostics.IProgressReporter>
+
 public interface Idrak.Abstraction.Diagnostics.ISettingAdvisor
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Diagnostics.SettingSuggestion> Suggest(Idrak.Abstraction.Diagnostics.AdviceSituation situation)
   public string Name { get; }
@@ -2620,17 +2631,17 @@ public static class Idrak.Abstraction.Diagnostics.ProgressReporters
   public const string PlainReporter = "plain"
   public const string QuietReporter = "quiet"
   public static Idrak.Abstraction.Diagnostics.IProgressReporter Start(string label, long? total = null, Idrak.Abstraction.Diagnostics.ProgressUnit unit = (Idrak.Abstraction.Diagnostics.ProgressUnit)0, Idrak.Abstraction.Diagnostics.ProgressOptions? options = null)
+  public static Idrak.Abstraction.Diagnostics.IProgressReporterKind Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Diagnostics.IProgressReporterKind? Default(string name)
+  public static Idrak.Abstraction.Diagnostics.IProgressReporterKind? Find(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static System.Func<Idrak.Abstraction.Diagnostics.ProgressRequest, Idrak.Abstraction.Diagnostics.IProgressReporter> Get(string name)
-  public static System.Func<Idrak.Abstraction.Diagnostics.ProgressRequest, Idrak.Abstraction.Diagnostics.IProgressReporter>? Default(string name)
-  public static System.Func<Idrak.Abstraction.Diagnostics.ProgressRequest, Idrak.Abstraction.Diagnostics.IProgressReporter>? Find(string name)
   public static bool Unregister(string name)
   public static string Choose(Idrak.Abstraction.Diagnostics.ProgressOptions? options = null)
   public static string Describe()
   public static string? FromEnvironment()
   public static string? Origin(string name)
   public static void EraseOn(System.IO.TextWriter writer)
-  public static void Register(string name, System.Func<Idrak.Abstraction.Diagnostics.ProgressRequest, Idrak.Abstraction.Diagnostics.IProgressReporter> factory, string? summary = null)
+  public static void Register(Idrak.Abstraction.Diagnostics.IProgressReporterKind kind)
 
 public sealed record Idrak.Abstraction.Diagnostics.ProgressRequest : System.IEquatable<Idrak.Abstraction.Diagnostics.ProgressRequest>
   public Idrak.Abstraction.Diagnostics.ProgressUnit Unit { get; init; }
@@ -2842,6 +2853,9 @@ public static class Idrak.Abstraction.Formats.CheckpointFormats
   public static void Register(Idrak.Abstraction.Formats.ICheckpointFormat format)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public interface Idrak.Abstraction.Formats.IBFloat16TensorStore : Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
+  public bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
+
 public interface Idrak.Abstraction.Formats.ICheckpointFormat
   public Idrak.Abstraction.Formats.ITensorStore Open(string folder)
   public System.Collections.Generic.IEnumerable<string> Notes(string folder)
@@ -2857,7 +2871,6 @@ public interface Idrak.Abstraction.Formats.IModelSource
 public interface Idrak.Abstraction.Formats.ITensorStore : System.IDisposable
   public (default) Idrak.Abstraction.Formats.WeightFormat? FormatOf(string name)
   public (default) System.TimeSpan? ReadTime { get; }
-  public (default) bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
   public (default) bool SameValues(string first, string second)
   public (default) float[] ReadTransposed(string name)
   public (default) long? BytesRead { get; }
@@ -2925,23 +2938,27 @@ public abstract class Idrak.Abstraction.Generation.AttentionPositionBias : Idrak
   public void Invalidate()
 
 public static class Idrak.Abstraction.Generation.AttentionPositionBiases
-  public static Idrak.Abstraction.Generation.IAttentionPositionBias Create(string name, Idrak.Abstraction.Generation.PositionBiasRequest request)
+  public static Idrak.Abstraction.Generation.IAttentionPositionBias Create(System.ReadOnlySpan<char> name, Idrak.Abstraction.Generation.PositionBiasRequest request)
+  public static Idrak.Abstraction.Generation.IPositionBiasKind Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Generation.IPositionBiasKind? Default(string name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static System.Func<Idrak.Abstraction.Generation.PositionBiasRequest, Idrak.Abstraction.Generation.IAttentionPositionBias> Get(string name)
-  public static System.Func<Idrak.Abstraction.Generation.PositionBiasRequest, Idrak.Abstraction.Generation.IAttentionPositionBias>? Default(string name)
   public static bool Unregister(string name)
   public static string? Origin(string name)
-  public static void Register(string name, System.Func<Idrak.Abstraction.Generation.PositionBiasRequest, Idrak.Abstraction.Generation.IAttentionPositionBias> create)
+  public static void Register(Idrak.Abstraction.Generation.IPositionBiasKind kind)
 
-public sealed class Idrak.Abstraction.Generation.BFloat16Weight : Idrak.Abstraction.Generation.PackedWeight
+public sealed class Idrak.Abstraction.Generation.BFloat16Weight : Idrak.Abstraction.Generation.PackedWeight, Idrak.Abstraction.Generation.IKernelPackedWeight, Idrak.Abstraction.IRecordable
+  public Idrak.Abstraction.PackedFormat Format { get; }
   public Idrak.Abstraction.Tensor Packed { get; }
+  public Idrak.Abstraction.Tensor PackedValues { get; }
+  public Idrak.Abstraction.Tensor? ScaleValues { get; }
+  public bool ActivationInDownProjection { get; }
+  public bool Float8Copy { get; }
+  public bool LowRankProducts { get; }
+  public bool TransposedProduct(Idrak.Abstraction.Tensor g, Idrak.Abstraction.Devices.Storage dx, int m, int k, int n, float beta, Idrak.Abstraction.Devices.Storage? dt, Idrak.Abstraction.Devices.Storage? a, int rank)
   public override Idrak.Abstraction.Device Device { get; }
   public override Idrak.Abstraction.Tensor Dequantize()
   public override Idrak.Abstraction.Tensor MatMul(Idrak.Abstraction.Tensor input)
-  public override Idrak.Abstraction.Tensor PackedValues { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
-  public override bool LowRankProducts { get; }
-  public override bool TransposedProduct(Idrak.Abstraction.Tensor g, Idrak.Abstraction.Devices.Storage dx, int m, int k, int n, float beta, Idrak.Abstraction.Devices.Storage? dt, Idrak.Abstraction.Devices.Storage? a, int rank)
   public override int Columns { get; }
   public override int Rows { get; }
   public override long Bytes { get; }
@@ -2975,7 +2992,7 @@ public sealed class Idrak.Abstraction.Generation.CharBuffer
   public void Clear()
   public void Remove(int count)
 
-public sealed class Idrak.Abstraction.Generation.CharTokenizer : Idrak.Abstraction.Generation.ITokenizer
+public sealed class Idrak.Abstraction.Generation.CharTokenizer : Idrak.Abstraction.Generation.ISavableTokenizer, Idrak.Abstraction.Generation.ITokenizer
   public CharTokenizer(System.Collections.Generic.IEnumerable<string> characters, Idrak.Abstraction.Generation.CharTokenizerOptions options)
   public CharTokenizer(string vocabulary, Idrak.Abstraction.Generation.CharTokenizerOptions options)
   public CharTokenizer(string vocabulary, char? unknownCharacter = null)
@@ -2987,6 +3004,7 @@ public sealed class Idrak.Abstraction.Generation.CharTokenizer : Idrak.Abstracti
   public static Idrak.Abstraction.Generation.CharTokenizer Load(System.IO.Stream stream)
   public static Idrak.Abstraction.Generation.CharTokenizer Load(string path)
   public string Decode(System.Collections.Generic.IEnumerable<int> ids)
+  public string Type { get; }
   public string Vocabulary { get; }
   public void Save(System.IO.Stream stream)
   public void Save(string path)
@@ -3029,7 +3047,7 @@ public sealed record Idrak.Abstraction.Generation.ChatImage : Idrak.Abstraction.
 public sealed class Idrak.Abstraction.Generation.ChatMLTemplate : Idrak.Abstraction.Generation.ChatTemplate
   public ChatMLTemplate()
   public override System.Collections.Generic.IReadOnlyList<string> StopSequences { get; }
-  public override string Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think)
+  public override void Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think, System.Text.StringBuilder prompt)
 
 public sealed record Idrak.Abstraction.Generation.ChatMessage : System.IEquatable<Idrak.Abstraction.Generation.ChatMessage>
   public ChatMessage(string Role, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatPart> Parts, string? Thinking = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolCall>? ToolCalls = null, string? ToolName = null)
@@ -3053,9 +3071,9 @@ public sealed record Idrak.Abstraction.Generation.ChatObservation : System.IEqua
 
 public sealed class Idrak.Abstraction.Generation.ChatOutputParser
   public (System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolCall>, string)? CallsInAnswer(string answer)
-  public ChatOutputParser(Idrak.Abstraction.Generation.ChatTemplate template, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition>? tools, bool separateThinking = true)
-  public ChatOutputParser(Idrak.Abstraction.Generation.ChatTemplate template, bool separateThinking = true, System.Collections.Generic.IReadOnlyCollection<string>? toolNames = null)
-  public Idrak.Abstraction.Generation.ChatDelta Feed(string text)
+  public ChatOutputParser(Idrak.Abstraction.Generation.IChatTemplate template, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition>? tools, bool separateThinking = true)
+  public ChatOutputParser(Idrak.Abstraction.Generation.IChatTemplate template, bool separateThinking = true, System.Collections.Generic.IReadOnlyCollection<string>? toolNames = null)
+  public Idrak.Abstraction.Generation.ChatDelta Feed(System.ReadOnlySpan<char> text)
   public Idrak.Abstraction.Generation.ChatDelta Finish()
 
 public abstract record Idrak.Abstraction.Generation.ChatPart : System.IEquatable<Idrak.Abstraction.Generation.ChatPart>
@@ -3095,24 +3113,30 @@ public sealed record Idrak.Abstraction.Generation.ChatRequest : System.IEquatabl
   public bool AddSpecialTokens { get; init; }
   public bool? Think { get; init; }
 
-public abstract class Idrak.Abstraction.Generation.ChatTemplate
+public abstract class Idrak.Abstraction.Generation.ChatTemplate : Idrak.Abstraction.Generation.IChatTemplate
   protected ChatTemplate()
   public abstract System.Collections.Generic.IReadOnlyList<string> StopSequences { get; }
-  public abstract string Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think)
+  public abstract void Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think, System.Text.StringBuilder prompt)
+  public string Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think)
   public virtual (string, string) ThinkTags { get; }
-  public virtual Idrak.Abstraction.Generation.IToolCallParser CreateToolCallParser(Idrak.Abstraction.Generation.ToolCallContext context)
   public virtual Idrak.Abstraction.Generation.ToolCallFormat ToolCalls { get; }
   public virtual System.Collections.Generic.IReadOnlySet<string> PartKinds { get; }
   public virtual string AddedPrefix { get; }
   public virtual string ToolCallFormatName { get; }
 
+public sealed record Idrak.Abstraction.Generation.ChatTemplateRequest : System.IEquatable<Idrak.Abstraction.Generation.ChatTemplateRequest>
+  public ChatTemplateRequest(string Folder, Idrak.Abstraction.Generation.ITokenizer? Tokenizer = null)
+  public Idrak.Abstraction.Generation.ITokenizer? Tokenizer { get; init; }
+  public string Folder { get; init; }
+
 public static class Idrak.Abstraction.Generation.ChatTemplates
-  public static Idrak.Abstraction.Generation.ChatTemplate? Load(string folder, Idrak.Abstraction.Generation.ITokenizer? tokenizer = null)
+  public static Idrak.Abstraction.Generation.IChatTemplate? Load(string folder, Idrak.Abstraction.Generation.ITokenizer? tokenizer = null)
+  public static Idrak.Abstraction.Generation.IChatTemplateReader? Default(string name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static System.Func<string, Idrak.Abstraction.Generation.ITokenizer?, Idrak.Abstraction.Generation.ChatTemplate?>? Default(string name)
   public static bool Unregister(string name)
+  public static string Render(this Idrak.Abstraction.Generation.IChatTemplate template, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think)
   public static string? Origin(string name)
-  public static void Register(string name, System.Func<string, Idrak.Abstraction.Generation.ITokenizer?, Idrak.Abstraction.Generation.ChatTemplate?> load)
+  public static void Register(Idrak.Abstraction.Generation.IChatTemplateReader reader)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed record Idrak.Abstraction.Generation.ChatText : Idrak.Abstraction.Generation.ChatPart, System.IEquatable<Idrak.Abstraction.Generation.ChatText>
@@ -3143,19 +3167,17 @@ public sealed record Idrak.Abstraction.Generation.CtcDecodeOptions : System.IEqu
   public int Results { get; init; }
   public int? TopClasses { get; init; }
 
-public delegate System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.CtcHypothesis> Idrak.Abstraction.Generation.CtcDecoder(System.ReadOnlyMemory<float> logProbs, int steps, int classes, Idrak.Abstraction.Generation.CtcDecodeOptions options)
-
 public static class Idrak.Abstraction.Generation.CtcDecoders
   public const string Beam = "beam"
   public const string Greedy = "greedy"
-  public static Idrak.Abstraction.Generation.CtcDecoder Get(string name)
-  public static Idrak.Abstraction.Generation.CtcDecoder? Default(string name)
+  public static Idrak.Abstraction.Generation.ICtcDecoder Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Generation.ICtcDecoder? Default(string name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.CtcHypothesis> Decode(System.ReadOnlyMemory<float> logProbs, int steps, int classes, string name = "greedy", Idrak.Abstraction.Generation.CtcDecodeOptions? options = null)
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.CtcHypothesis>[] Decode(Idrak.Abstraction.Tensor logProbs, System.Collections.Generic.IReadOnlyList<int>? lengths = null, string name = "greedy", Idrak.Abstraction.Generation.CtcDecodeOptions? options = null, bool batchFirst = false)
   public static bool Unregister(string name)
   public static string? Origin(string name)
-  public static void Register(string name, Idrak.Abstraction.Generation.CtcDecoder decoder)
+  public static void Register(Idrak.Abstraction.Generation.ICtcDecoder decoder)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed record Idrak.Abstraction.Generation.CtcHypothesis : System.IEquatable<Idrak.Abstraction.Generation.CtcHypothesis>
@@ -3219,15 +3241,16 @@ public sealed record Idrak.Abstraction.Generation.DecoderSpec : System.IEquatabl
 
 public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDisposable
   public (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor)? MemoryOf(object owner)
+  public DecodingContext(Idrak.Abstraction.Device device, int batch, int capacity, Idrak.Abstraction.Generation.IKeyValueLayout layout)
   public DecodingContext(Idrak.Abstraction.Device device, int batch, int capacity, Idrak.Abstraction.Generation.KeyValueFormat format = (Idrak.Abstraction.Generation.KeyValueFormat)0)
-  public DecodingContext(Idrak.Abstraction.Device device, int batch, int capacity, Idrak.Abstraction.Generation.KeyValueLayout layout)
   public Idrak.Abstraction.ComputeGraph CaptureStep(System.Action step)
   public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.IDecodingStep OpenStep(int steps)
+  public Idrak.Abstraction.Generation.IKeyValueLayout Layout { get; }
   public Idrak.Abstraction.Generation.KeyValueCache CacheFor(object owner, int rows, int headDim)
   public Idrak.Abstraction.Generation.KeyValueCache CacheFor(object owner, int rows, int headDim, int window)
   public Idrak.Abstraction.Generation.KeyValueCache? this[Idrak.Abstraction.Module? layer] { get; }
   public Idrak.Abstraction.Generation.KeyValueFormat Format { get; }
-  public Idrak.Abstraction.Generation.KeyValueLayout Layout { get; }
   public Idrak.Abstraction.Tensor Position { get; }
   public Idrak.Abstraction.Tensor PositionOf(Idrak.Abstraction.Generation.KeyValueCache cache)
   public Idrak.Abstraction.Tensor? Mask { get; }
@@ -3308,14 +3331,14 @@ public sealed record Idrak.Abstraction.Generation.FeatureCacheOptions : System.I
 public static class Idrak.Abstraction.Generation.FeatureCaches
   public const string Disk = "disk"
   public const string Memory = "memory"
-  public static Idrak.Abstraction.Generation.IFeatureCache Create(string name, Idrak.Abstraction.Generation.FeatureCacheOptions? options = null)
+  public static Idrak.Abstraction.Generation.IFeatureCache Create(System.ReadOnlySpan<char> name, Idrak.Abstraction.Generation.FeatureCacheOptions? options = null)
+  public static Idrak.Abstraction.Generation.IFeatureCacheKind Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Generation.IFeatureCacheKind? Default(string name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static System.Func<Idrak.Abstraction.Generation.FeatureCacheOptions, Idrak.Abstraction.Generation.IFeatureCache> Get(string name)
-  public static System.Func<Idrak.Abstraction.Generation.FeatureCacheOptions, Idrak.Abstraction.Generation.IFeatureCache>? Default(string name)
   public static bool Unregister(string name)
   public static string DefaultFolder { get; }
   public static string? Origin(string name)
-  public static void Register(string name, System.Func<Idrak.Abstraction.Generation.FeatureCacheOptions, Idrak.Abstraction.Generation.IFeatureCache> create)
+  public static void Register(Idrak.Abstraction.Generation.IFeatureCacheKind kind)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public enum Idrak.Abstraction.Generation.FeedForwardActivation : int
@@ -3324,7 +3347,7 @@ public enum Idrak.Abstraction.Generation.FeedForwardActivation : int
   Silu = 0
   TanhSigmoid = 3
 
-public sealed class Idrak.Abstraction.Generation.Float16Weight : Idrak.Abstraction.Generation.PackedWeight
+public sealed class Idrak.Abstraction.Generation.Float16Weight : Idrak.Abstraction.Generation.PackedWeight, Idrak.Abstraction.IRecordable
   public Idrak.Abstraction.Tensor Packed { get; }
   public const string FormatName = "float16"
   public override Idrak.Abstraction.Device Device { get; }
@@ -3409,6 +3432,29 @@ public interface Idrak.Abstraction.Generation.IChatPartKind : Idrak.Abstraction.
   public Idrak.Abstraction.Generation.ChatPart Read(System.Text.Json.Nodes.JsonObject json)
   public void Write(Idrak.Abstraction.Generation.ChatPart part, System.Text.Json.Nodes.JsonObject json)
 
+public interface Idrak.Abstraction.Generation.IChatTemplate
+  public (string, string) ThinkTags { get; }
+  public Idrak.Abstraction.Generation.ToolCallFormat ToolCalls { get; }
+  public System.Collections.Generic.IReadOnlyList<string> StopSequences { get; }
+  public System.Collections.Generic.IReadOnlySet<string> PartKinds { get; }
+  public string AddedPrefix { get; }
+  public string ToolCallFormatName { get; }
+  public void Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think, System.Text.StringBuilder prompt)
+
+public interface Idrak.Abstraction.Generation.IChatTemplateReader : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Generation.ChatTemplateRequest, Idrak.Abstraction.Generation.IChatTemplate>
+
+public interface Idrak.Abstraction.Generation.ICtcDecoder : Idrak.Abstraction.IKind
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.CtcHypothesis> Decode(System.ReadOnlyMemory<float> logProbs, int steps, int classes, Idrak.Abstraction.Generation.CtcDecodeOptions options)
+
+public interface Idrak.Abstraction.Generation.IDecodingStep : System.IDisposable
+  public bool Opened { get; }
+  public int Steps { get; }
+  public void Complete()
+
+public interface Idrak.Abstraction.Generation.IDescribedModel
+  public Idrak.Abstraction.Generation.DecoderSpec Spec { get; }
+  public string Architecture { get; }
+
 public interface Idrak.Abstraction.Generation.IFeatureCache : System.IDisposable
   public bool Contains(Idrak.Abstraction.Generation.FeatureCacheKey key)
   public bool Put(Idrak.Abstraction.Generation.FeatureCacheKey key, Idrak.Abstraction.Tensor value)
@@ -3418,10 +3464,18 @@ public interface Idrak.Abstraction.Generation.IFeatureCache : System.IDisposable
   public string Name { get; }
   public void Clear()
 
+public interface Idrak.Abstraction.Generation.IFeatureCacheKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Generation.FeatureCacheOptions, Idrak.Abstraction.Generation.IFeatureCache>
+
+public interface Idrak.Abstraction.Generation.IFusedWriteLayout : Idrak.Abstraction.Generation.IKeyValueLayout, Idrak.Abstraction.IKind
+  public bool HalfWords { get; }
+
 public interface Idrak.Abstraction.Generation.IImageAttentionRule
   public Idrak.Abstraction.KeySpans Spans(int rows, System.Collections.Generic.IReadOnlyList<(int, int)> blocks, int window)
   public bool Causal { get; }
   public string Name { get; }
+
+public interface Idrak.Abstraction.Generation.IImageBlocksJoin
+  public string Join(System.Collections.Generic.IReadOnlyList<string> blocks)
 
 public interface Idrak.Abstraction.Generation.IImagePositionRule
   public int Place(int start, int count, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageRun> images, int axes, System.Span<float> positions)
@@ -3432,12 +3486,51 @@ public interface Idrak.Abstraction.Generation.IImagePromptFormat
   public string Expand(string prompt, System.Collections.Generic.IReadOnlyList<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ImageTokenLayout>> images, Idrak.Abstraction.Generation.ITokenizer tokenizer)
   public string Name { get; }
 
+public interface Idrak.Abstraction.Generation.IKernelPackedWeight : Idrak.Abstraction.Generation.IPackedWeight, Idrak.Abstraction.IRecordable, System.IDisposable
+  public Idrak.Abstraction.PackedFormat Format { get; }
+  public Idrak.Abstraction.Tensor PackedValues { get; }
+  public Idrak.Abstraction.Tensor? ScaleValues { get; }
+  public bool ActivationInDownProjection { get; }
+  public bool Float8Copy { get; }
+  public bool LowRankProducts { get; }
+  public bool TransposedProduct(Idrak.Abstraction.Tensor g, Idrak.Abstraction.Devices.Storage dx, int m, int k, int n, float beta, Idrak.Abstraction.Devices.Storage? dt, Idrak.Abstraction.Devices.Storage? a, int rank)
+
+public interface Idrak.Abstraction.Generation.IKeyValueLayout : Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Tensor Attend(Idrak.Abstraction.Tensor q, Idrak.Abstraction.Generation.KeyValueCache cache, Idrak.Abstraction.Generation.DecodingContext context, int steps, float scale, bool decoderKernels)
+  public Idrak.Abstraction.Tensor Expand(Idrak.Abstraction.Generation.KeyValueCache cache, bool keys)
+  public Idrak.Abstraction.Tensor ExpandPrefix(Idrak.Abstraction.Generation.KeyValueCache cache, bool keys, int positions)
+  public int RowWidth(int headDim)
+  public void Write(Idrak.Abstraction.Tensor keys, Idrak.Abstraction.Tensor values, Idrak.Abstraction.Generation.KeyValueCache cache, Idrak.Abstraction.Tensor position)
+
 public interface Idrak.Abstraction.Generation.IModelPart
   public Idrak.Abstraction.Generation.CreatedModelPart Create(Idrak.Abstraction.Generation.ModelPartRequest request)
   public Idrak.Abstraction.Generation.ITrainableSoftParts Open(Idrak.Abstraction.Generation.ModelPartCheckpoint checkpoint, Idrak.Abstraction.Generation.ModelPartOptions options)
   public System.Collections.Generic.IReadOnlySet<string> StoredTensors(Idrak.Abstraction.Generation.ModelPartCheckpoint checkpoint)
   public bool In(System.Text.Json.Nodes.JsonObject config)
   public string Kind { get; }
+
+public interface Idrak.Abstraction.Generation.IPackedFormat : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Generation.PackRequest, Idrak.Abstraction.Generation.IPackedWeight>
+
+public interface Idrak.Abstraction.Generation.IPackedWeight : System.IDisposable
+  public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Tensor Dequantize()
+  public Idrak.Abstraction.Tensor MatMul(Idrak.Abstraction.Tensor input)
+  public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
+  public int Columns { get; }
+  public int Rows { get; }
+  public long Bytes { get; }
+  public string Description { get; }
+  public string FloatMethod { get; }
+  public string Name { get; }
+  public string ShortName { get; }
+  public void DequantizeInto(Idrak.Abstraction.Devices.Storage destination)
+  public void MoveWeights(Idrak.Abstraction.Device device, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Device, Idrak.Abstraction.Tensor> move)
+
+public interface Idrak.Abstraction.Generation.IPositionBiasKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Generation.PositionBiasRequest, Idrak.Abstraction.Generation.IAttentionPositionBias>
+  public System.Collections.Generic.IReadOnlyList<string> Weights { get; }
+
+public interface Idrak.Abstraction.Generation.IPositionFrequencies
+  public double[] At(int position)
 
 public interface Idrak.Abstraction.Generation.IPretrainedTokenizer : Idrak.Abstraction.Generation.ITokenizer
   public (default) string Decode(System.ReadOnlySpan<int> ids, bool skipSpecialTokens)
@@ -3452,8 +3545,28 @@ public interface Idrak.Abstraction.Generation.IPretrainedTokenizer : Idrak.Abstr
   public void Save(string path)
   public void WriteTo(System.IO.Stream stream)
 
-public interface Idrak.Abstraction.Generation.IRowStartsLayout
+public interface Idrak.Abstraction.Generation.IPretrainedVision
+  public Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
+  public Idrak.Abstraction.Generation.IImagePromptFormat PromptFormat { get; }
+  public Idrak.Abstraction.Generation.IVisionEncoder CreateEncoder(Idrak.Abstraction.Generation.VisionEncoderOptions? options = null)
+  public System.Collections.Generic.IReadOnlyCollection<string> StoredTensors { get; }
+  public System.Collections.Generic.IReadOnlySet<string> VisionOptionKeys { get; }
+  public int Width { get; }
+  public string Describe()
+  public string Family { get; }
+
+public interface Idrak.Abstraction.Generation.IRecordableLayout : Idrak.Abstraction.Generation.IKeyValueLayout, Idrak.Abstraction.IKind, Idrak.Abstraction.IRecordable
+
+public interface Idrak.Abstraction.Generation.IRopeScaling : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Generation.RopeScalingInput, Idrak.Abstraction.Generation.RopeScalingResult>
+
+public interface Idrak.Abstraction.Generation.IRowStartsLayout : Idrak.Abstraction.Generation.IKeyValueLayout, Idrak.Abstraction.IKind
   public Idrak.Abstraction.Tensor? AttendRows(Idrak.Abstraction.Tensor q, Idrak.Abstraction.Generation.KeyValueCache cache, Idrak.Abstraction.Tensor position, int steps, float scale, Idrak.Abstraction.Tensor starts, int headsPerRow, Idrak.Abstraction.Devices.AttentionVariant variant)
+
+public interface Idrak.Abstraction.Generation.ISavableTokenizer : Idrak.Abstraction.Generation.ITokenizer
+  public string Type { get; }
+  public void Save(System.IO.Stream stream)
+
+public interface Idrak.Abstraction.Generation.IScaledLayout : Idrak.Abstraction.Generation.IKeyValueLayout, Idrak.Abstraction.IKind
 
 public interface Idrak.Abstraction.Generation.ISeq2SeqModel : System.IDisposable
   public Idrak.Abstraction.Device Device { get; }
@@ -3480,6 +3593,9 @@ public interface Idrak.Abstraction.Generation.ISequencePooler
   public Idrak.Abstraction.Tensor Pool(Idrak.Abstraction.Tensor hidden, System.Collections.Generic.IReadOnlyList<int>? lengths)
   public string Name { get; }
 
+public interface Idrak.Abstraction.Generation.ISlidingWindowLayout : Idrak.Abstraction.Generation.IKeyValueLayout, Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Tensor? AttendVariant(Idrak.Abstraction.Tensor q, Idrak.Abstraction.Generation.KeyValueCache cache, Idrak.Abstraction.Generation.DecodingContext context, int steps, float scale, Idrak.Abstraction.Devices.AttentionVariant variant)
+
 public interface Idrak.Abstraction.Generation.ISoftPartSource
   public Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
   public Idrak.Abstraction.Generation.IImagePromptFormat Format { get; }
@@ -3501,6 +3617,8 @@ public interface Idrak.Abstraction.Generation.ITokenSampler : System.IDisposable
   public void Sample(Idrak.Abstraction.Tensor logits)
   public void SetHistory(System.Collections.Generic.IReadOnlyList<int> tokens)
 
+public interface Idrak.Abstraction.Generation.ITokenSamplerKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Generation.SamplerRequest, Idrak.Abstraction.Generation.ITokenSampler>
+
 public interface Idrak.Abstraction.Generation.ITokenizer
   public (default) string Decode(System.ReadOnlySpan<int> ids)
   public (default) string TokenOf(int id)
@@ -3508,8 +3626,17 @@ public interface Idrak.Abstraction.Generation.ITokenizer
   public int VocabularySize { get; }
   public string Decode(System.Collections.Generic.IEnumerable<int> ids)
 
+public interface Idrak.Abstraction.Generation.ITokenizerLoader : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.ITokenizer>
+
+public interface Idrak.Abstraction.Generation.ITool
+  public Idrak.Abstraction.Generation.ToolDefinition Definition { get; }
+  public System.Threading.Tasks.Task<string> InvokeAsync(System.Text.Json.Nodes.JsonObject arguments, System.Threading.CancellationToken cancellationToken)
+
+public interface Idrak.Abstraction.Generation.IToolCallFormat : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Generation.ToolCallContext, Idrak.Abstraction.Generation.IToolCallParser>
+  public bool Detect(Idrak.Abstraction.Generation.ToolCallProbe probe)
+
 public interface Idrak.Abstraction.Generation.IToolCallParser
-  public Idrak.Abstraction.Generation.ChatDelta Feed(string text)
+  public Idrak.Abstraction.Generation.ChatDelta Feed(System.ReadOnlySpan<char> text)
   public Idrak.Abstraction.Generation.ChatDelta Finish()
 
 public interface Idrak.Abstraction.Generation.IToolChatModel : Idrak.Abstraction.Generation.IChatModel
@@ -3594,9 +3721,8 @@ public readonly record struct Idrak.Abstraction.Generation.ImageRun : System.IEq
   public int Length { get; init; }
   public int Offset { get; init; }
 
-public sealed class Idrak.Abstraction.Generation.ImageTokenFormat : Idrak.Abstraction.Generation.IImagePromptFormat
+public class Idrak.Abstraction.Generation.ImageTokenFormat : Idrak.Abstraction.Generation.IImagePromptFormat
   public ImageTokenFormat(string name, int marker, int imageToken, int? begin = null, int? end = null, string before = "", string after = "")
-  public System.Func<System.Collections.Generic.IReadOnlyList<string>, string>? Join { get; init; }
   public int ImageToken { get; }
   public int Marker { get; }
   public int? Begin { get; }
@@ -3616,18 +3742,21 @@ public sealed record Idrak.Abstraction.Generation.ImageTokenLayout : System.IEqu
   public override int GetHashCode()
   public override string ToString()
 
-public sealed class Idrak.Abstraction.Generation.Int4Weight : Idrak.Abstraction.Generation.PackedWeight
+public sealed class Idrak.Abstraction.Generation.Int4Weight : Idrak.Abstraction.Generation.PackedWeight, Idrak.Abstraction.Generation.IKernelPackedWeight, Idrak.Abstraction.IRecordable
+  public Idrak.Abstraction.PackedFormat Format { get; }
   public Idrak.Abstraction.Tensor Packed { get; }
+  public Idrak.Abstraction.Tensor PackedValues { get; }
   public Idrak.Abstraction.Tensor Scales { get; }
+  public Idrak.Abstraction.Tensor? ScaleValues { get; }
+  public bool ActivationInDownProjection { get; }
+  public bool Float8Copy { get; }
+  public bool LowRankProducts { get; }
+  public bool TransposedProduct(Idrak.Abstraction.Tensor g, Idrak.Abstraction.Devices.Storage dx, int m, int k, int n, float beta, Idrak.Abstraction.Devices.Storage? dt, Idrak.Abstraction.Devices.Storage? a, int rank)
   public const int GroupSize = 32
   public override Idrak.Abstraction.Device Device { get; }
   public override Idrak.Abstraction.Tensor Dequantize()
   public override Idrak.Abstraction.Tensor MatMul(Idrak.Abstraction.Tensor input)
-  public override Idrak.Abstraction.Tensor PackedValues { get; }
-  public override Idrak.Abstraction.Tensor? ScaleValues { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
-  public override bool ActivationInDownProjection { get; }
-  public override bool LowRankProducts { get; }
   public override int Columns { get; }
   public override int Rows { get; }
   public override long Bytes { get; }
@@ -3640,16 +3769,20 @@ public sealed class Idrak.Abstraction.Generation.Int4Weight : Idrak.Abstraction.
   public static Idrak.Abstraction.Generation.Int4Weight Quantize(Idrak.Abstraction.Tensor weight)
   public static Idrak.Abstraction.Generation.Int4Weight Quantize(System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
 
-public sealed class Idrak.Abstraction.Generation.Int8Weight : Idrak.Abstraction.Generation.PackedWeight
+public sealed class Idrak.Abstraction.Generation.Int8Weight : Idrak.Abstraction.Generation.PackedWeight, Idrak.Abstraction.Generation.IKernelPackedWeight, Idrak.Abstraction.IRecordable
+  public Idrak.Abstraction.PackedFormat Format { get; }
   public Idrak.Abstraction.Tensor Packed { get; }
+  public Idrak.Abstraction.Tensor PackedValues { get; }
   public Idrak.Abstraction.Tensor Scales { get; }
+  public Idrak.Abstraction.Tensor? ScaleValues { get; }
+  public bool ActivationInDownProjection { get; }
+  public bool Float8Copy { get; }
+  public bool LowRankProducts { get; }
+  public bool TransposedProduct(Idrak.Abstraction.Tensor g, Idrak.Abstraction.Devices.Storage dx, int m, int k, int n, float beta, Idrak.Abstraction.Devices.Storage? dt, Idrak.Abstraction.Devices.Storage? a, int rank)
   public override Idrak.Abstraction.Device Device { get; }
   public override Idrak.Abstraction.Tensor Dequantize()
   public override Idrak.Abstraction.Tensor MatMul(Idrak.Abstraction.Tensor input)
-  public override Idrak.Abstraction.Tensor PackedValues { get; }
-  public override Idrak.Abstraction.Tensor? ScaleValues { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
-  public override bool Float8Copy { get; }
   public override int Columns { get; }
   public override int Rows { get; }
   public override long Bytes { get; }
@@ -3664,13 +3797,16 @@ public sealed class Idrak.Abstraction.Generation.Int8Weight : Idrak.Abstraction.
   public static Idrak.Abstraction.Generation.Int8Weight Quantize(System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
 
 public sealed class Idrak.Abstraction.Generation.KeyValueCache : System.IDisposable
+  public Idrak.Abstraction.Generation.IFusedWriteLayout? FusedWriteLayout { get; }
+  public Idrak.Abstraction.Generation.IKeyValueLayout Layout { get; }
+  public Idrak.Abstraction.Generation.IRowStartsLayout? RowStartsLayout { get; }
+  public Idrak.Abstraction.Generation.ISlidingWindowLayout? SlidingWindowLayout { get; }
   public Idrak.Abstraction.Generation.KeyValueFormat Format { get; }
-  public Idrak.Abstraction.Generation.KeyValueLayout Layout { get; }
   public Idrak.Abstraction.Tensor Keys { get; }
   public Idrak.Abstraction.Tensor Values { get; }
   public Idrak.Abstraction.Tensor? KeyScales { get; }
   public Idrak.Abstraction.Tensor? ValueScales { get; }
-  public KeyValueCache(int rows, int capacity, int headDim, Idrak.Abstraction.Device device, Idrak.Abstraction.Generation.KeyValueLayout layout)
+  public KeyValueCache(int rows, int capacity, int headDim, Idrak.Abstraction.Device device, Idrak.Abstraction.Generation.IKeyValueLayout layout)
   public int Capacity { get; }
   public int HeadDim { get; }
   public long Bytes { get; }
@@ -3682,33 +3818,27 @@ public enum Idrak.Abstraction.Generation.KeyValueFormat : int
   Float32 = 0
   Int8 = 1
 
-public abstract class Idrak.Abstraction.Generation.KeyValueLayout
+public abstract class Idrak.Abstraction.Generation.KeyValueLayout : Idrak.Abstraction.Generation.IKeyValueLayout, Idrak.Abstraction.IKind
   protected KeyValueLayout()
   protected static void WriteRows(Idrak.Abstraction.Tensor rows, Idrak.Abstraction.Tensor target, Idrak.Abstraction.Tensor position)
-  public Idrak.Abstraction.Generation.KeyValueFormat Format { get; }
   public abstract Idrak.Abstraction.Tensor Expand(Idrak.Abstraction.Generation.KeyValueCache cache, bool keys)
   public abstract int RowWidth(int headDim)
   public abstract string Name { get; }
   public abstract void Write(Idrak.Abstraction.Tensor keys, Idrak.Abstraction.Tensor values, Idrak.Abstraction.Generation.KeyValueCache cache, Idrak.Abstraction.Tensor position)
-  public bool RowStarts { get; }
   public override string ToString()
   public virtual Idrak.Abstraction.Tensor Attend(Idrak.Abstraction.Tensor q, Idrak.Abstraction.Generation.KeyValueCache cache, Idrak.Abstraction.Generation.DecodingContext context, int steps, float scale, bool decoderKernels)
   public virtual Idrak.Abstraction.Tensor ExpandPrefix(Idrak.Abstraction.Generation.KeyValueCache cache, bool keys, int positions)
-  public virtual Idrak.Abstraction.Tensor? AttendVariant(Idrak.Abstraction.Tensor q, Idrak.Abstraction.Generation.KeyValueCache cache, Idrak.Abstraction.Generation.DecodingContext context, int steps, float scale, Idrak.Abstraction.Devices.AttentionVariant variant)
-  public virtual bool FusedWrite { get; }
-  public virtual bool HalfWords { get; }
-  public virtual bool HasScales { get; }
-  public virtual bool Recordable { get; }
-  public virtual bool SlidingWindows { get; }
+  public virtual string Summary { get; }
 
 public static class Idrak.Abstraction.Generation.KeyValueLayouts
-  public static Idrak.Abstraction.Generation.KeyValueLayout For(Idrak.Abstraction.Generation.KeyValueFormat format)
-  public static Idrak.Abstraction.Generation.KeyValueLayout Get(string name)
-  public static Idrak.Abstraction.Generation.KeyValueLayout? Default(string name)
+  public static Idrak.Abstraction.Generation.IKeyValueLayout For(Idrak.Abstraction.Generation.KeyValueFormat format)
+  public static Idrak.Abstraction.Generation.IKeyValueLayout Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Generation.IKeyValueLayout? Default(string name)
+  public static Idrak.Abstraction.Generation.KeyValueFormat FormatOf(Idrak.Abstraction.Generation.IKeyValueLayout layout)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static bool Unregister(string name)
   public static string? Origin(string name)
-  public static void Register(string name, Idrak.Abstraction.Generation.KeyValueLayout layout)
+  public static void Register(Idrak.Abstraction.Generation.IKeyValueLayout layout)
 
 public abstract class Idrak.Abstraction.Generation.MarkedToolCallParser : Idrak.Abstraction.Generation.IToolCallParser
   protected Idrak.Abstraction.Generation.ToolCallContext Context { get; }
@@ -3717,7 +3847,7 @@ public abstract class Idrak.Abstraction.Generation.MarkedToolCallParser : Idrak.
   protected abstract string Close { get; }
   protected abstract string Open { get; }
   protected virtual int Decide(System.ReadOnlySpan<char> start)
-  public Idrak.Abstraction.Generation.ChatDelta Feed(string text)
+  public Idrak.Abstraction.Generation.ChatDelta Feed(System.ReadOnlySpan<char> text)
   public Idrak.Abstraction.Generation.ChatDelta Finish()
 
 public sealed record Idrak.Abstraction.Generation.ModelPartCheckpoint : System.IEquatable<Idrak.Abstraction.Generation.ModelPartCheckpoint>
@@ -3753,10 +3883,16 @@ public static class Idrak.Abstraction.Generation.ModelParts
   public static string? Origin(string kind)
   public static void Register(Idrak.Abstraction.Generation.IModelPart part)
 
-public abstract class Idrak.Abstraction.Generation.PackedWeight : System.IDisposable
+[Obsolete("Types with embedded references are not supported in this version of your compiler.", true)] public readonly ref struct Idrak.Abstraction.Generation.PackRequest
+  public Idrak.Abstraction.Device Device { get; }
+  public PackRequest(System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
+  public System.ReadOnlySpan<float> Values { get; }
+  public int Columns { get; }
+  public int Rows { get; }
+
+public abstract class Idrak.Abstraction.Generation.PackedWeight : Idrak.Abstraction.Generation.IPackedWeight, System.IDisposable
   protected PackedWeight()
   protected abstract void MoveTo(Idrak.Abstraction.Device device, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Device, Idrak.Abstraction.Tensor> move)
-  public Idrak.Abstraction.PackedFormat? Format { get; }
   public abstract Idrak.Abstraction.Tensor Dequantize()
   public abstract System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> Buffers()
   public abstract int Columns { get; }
@@ -3764,31 +3900,25 @@ public abstract class Idrak.Abstraction.Generation.PackedWeight : System.IDispos
   public abstract long Bytes { get; }
   public abstract string Name { get; }
   public abstract void Dispose()
-  public static Idrak.Abstraction.Generation.PackedWeight FromValues(Idrak.Abstraction.PackedFormat format, System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
-  public static Idrak.Abstraction.Generation.PackedWeight FromValues(string format, System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
-  public static Idrak.Abstraction.Generation.PackedWeight Pack(Idrak.Abstraction.Generation.PackedWeightFactory factory, string format, System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
-  public static Idrak.Abstraction.Generation.PackedWeightFactory Factory(string format)
-  public static Idrak.Abstraction.Generation.PackedWeightFactory? Default(string format)
-  public static System.Collections.Generic.IReadOnlyCollection<string> FormatNames { get; }
-  public static bool Unregister(string format)
-  public static string? Origin(string format)
-  public static void Register(string format, Idrak.Abstraction.Generation.PackedWeightFactory factory)
-  public static void SetPolicy(string format, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
   public virtual Idrak.Abstraction.Device Device { get; }
   public virtual Idrak.Abstraction.Tensor MatMul(Idrak.Abstraction.Tensor input)
-  public virtual Idrak.Abstraction.Tensor PackedValues { get; }
-  public virtual Idrak.Abstraction.Tensor? ScaleValues { get; }
-  public virtual bool ActivationInDownProjection { get; }
-  public virtual bool Float8Copy { get; }
-  public virtual bool LowRankProducts { get; }
-  public virtual bool TransposedProduct(Idrak.Abstraction.Tensor g, Idrak.Abstraction.Devices.Storage dx, int m, int k, int n, float beta, Idrak.Abstraction.Devices.Storage? dt, Idrak.Abstraction.Devices.Storage? a, int rank)
   public virtual string Description { get; }
   public virtual string FloatMethod { get; }
   public virtual string ShortName { get; }
   public virtual void DequantizeInto(Idrak.Abstraction.Devices.Storage destination)
   public void MoveWeights(Idrak.Abstraction.Device device, System.Func<Idrak.Abstraction.Tensor, Idrak.Abstraction.Device, Idrak.Abstraction.Tensor> move)
 
-public delegate Idrak.Abstraction.Generation.PackedWeight Idrak.Abstraction.Generation.PackedWeightFactory(System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
+public static class Idrak.Abstraction.Generation.PackedWeightFormats
+  public static Idrak.Abstraction.Generation.IKernelPackedWeight Pack(Idrak.Abstraction.PackedFormat format, System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
+  public static Idrak.Abstraction.Generation.IPackedFormat Get(System.ReadOnlySpan<char> format)
+  public static Idrak.Abstraction.Generation.IPackedFormat? Default(string format)
+  public static Idrak.Abstraction.Generation.IPackedWeight Pack(Idrak.Abstraction.Generation.IPackedFormat format, System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
+  public static Idrak.Abstraction.Generation.IPackedWeight Pack(string format, System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string format)
+  public static string? Origin(string format)
+  public static void Register(Idrak.Abstraction.Generation.IPackedFormat format)
+  public static void SetPolicy(string format, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed record Idrak.Abstraction.Generation.PositionBiasRequest : System.IEquatable<Idrak.Abstraction.Generation.PositionBiasRequest>
   public Idrak.Abstraction.Device? Device { get; init; }
@@ -3798,7 +3928,7 @@ public sealed record Idrak.Abstraction.Generation.PositionBiasRequest : System.I
   public int Heads { get; init; }
   public int Seed { get; init; }
 
-public abstract class Idrak.Abstraction.Generation.PretrainedVision
+public abstract class Idrak.Abstraction.Generation.PretrainedVision : Idrak.Abstraction.Generation.IPretrainedVision
   protected PretrainedVision()
   public abstract Idrak.Abstraction.Generation.IImageAttentionRule Attention { get; }
   public abstract Idrak.Abstraction.Generation.IImagePromptFormat PromptFormat { get; }
@@ -3807,7 +3937,7 @@ public abstract class Idrak.Abstraction.Generation.PretrainedVision
   public abstract int Width { get; }
   public abstract string Family { get; }
   public override string ToString()
-  public virtual System.Collections.Generic.IReadOnlyCollection<string> VisionOptionKeys { get; }
+  public virtual System.Collections.Generic.IReadOnlySet<string> VisionOptionKeys { get; }
   public virtual string Describe()
 
 public sealed class Idrak.Abstraction.Generation.RelativePositionBias : Idrak.Abstraction.Generation.DistancePositionBias
@@ -3840,22 +3970,20 @@ public sealed record Idrak.Abstraction.Generation.RopeScalingInput : System.IEqu
   public double[] Frequencies { get; init; }
   public int RotaryDim { get; init; }
 
-public delegate Idrak.Abstraction.Generation.RopeScalingResult Idrak.Abstraction.Generation.RopeScalingMethod(Idrak.Abstraction.Generation.RopeScalingInput input)
-
 public sealed record Idrak.Abstraction.Generation.RopeScalingResult : System.IEquatable<Idrak.Abstraction.Generation.RopeScalingResult>
+  public Idrak.Abstraction.Generation.IPositionFrequencies? FrequenciesAt { get; init; }
   public RopeScalingResult(double[] Frequencies, double AttentionFactor = 1)
-  public System.Func<int, double[]>? FrequenciesAt { get; init; }
   public double AttentionFactor { get; init; }
   public double[] Frequencies { get; init; }
 
 public static class Idrak.Abstraction.Generation.RopeScalings
-  public static Idrak.Abstraction.Generation.RopeScalingMethod Get(string type)
-  public static Idrak.Abstraction.Generation.RopeScalingMethod? Default(string type)
+  public static Idrak.Abstraction.Generation.IRopeScaling Get(System.ReadOnlySpan<char> type)
+  public static Idrak.Abstraction.Generation.IRopeScaling? Default(string type)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static bool Contains(string type)
+  public static bool Contains(System.ReadOnlySpan<char> type)
   public static bool Unregister(string type)
   public static string? Origin(string type)
-  public static void Register(string type, Idrak.Abstraction.Generation.RopeScalingMethod method)
+  public static void Register(Idrak.Abstraction.Generation.IRopeScaling scaling)
   public static void SetPolicy(string type, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed record Idrak.Abstraction.Generation.RopeSettings : System.IEquatable<Idrak.Abstraction.Generation.RopeSettings>
@@ -3935,14 +4063,14 @@ public sealed class Idrak.Abstraction.Generation.TokenSampler : Idrak.Abstractio
 public static class Idrak.Abstraction.Generation.TokenSamplers
   public const string DefaultName = "default"
   public static Idrak.Abstraction.Generation.ITokenSampler Create(Idrak.Abstraction.Generation.SamplerRequest request)
+  public static Idrak.Abstraction.Generation.ITokenSamplerKind Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Generation.ITokenSamplerKind? Default(string name)
+  public static Idrak.Abstraction.Generation.ITokenSamplerKind? Default(string name, int version)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static System.Func<Idrak.Abstraction.Generation.SamplerRequest, Idrak.Abstraction.Generation.ITokenSampler> Get(string name)
-  public static System.Func<Idrak.Abstraction.Generation.SamplerRequest, Idrak.Abstraction.Generation.ITokenSampler>? Default(string name)
-  public static System.Func<Idrak.Abstraction.Generation.SamplerRequest, Idrak.Abstraction.Generation.ITokenSampler>? Default(string name, int version)
   public static bool Unregister(string name)
   public static int DefaultVersion(string name)
   public static string? Origin(string name)
-  public static void Register(string name, System.Func<Idrak.Abstraction.Generation.SamplerRequest, Idrak.Abstraction.Generation.ITokenSampler> create)
+  public static void Register(Idrak.Abstraction.Generation.ITokenSamplerKind kind)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed record Idrak.Abstraction.Generation.TokenizerEncodeOptions : System.IEquatable<Idrak.Abstraction.Generation.TokenizerEncodeOptions>
@@ -3967,15 +4095,23 @@ public sealed class Idrak.Abstraction.Generation.TokenizerEncoding
   public static Idrak.Abstraction.Generation.TokenizerEncoding Of(int[] ids, (int, int)[] offsets, int sequence = 0, int typeId = 0)
   public string[] Tokens { get; init; }
 
+public static class Idrak.Abstraction.Generation.TokenizerLoaders
+  public static Idrak.Abstraction.Generation.ITokenizerLoader? Find(System.ReadOnlySpan<char> type)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string type)
+  public static string? Origin(string type)
+  public static void Register(Idrak.Abstraction.Generation.ITokenizerLoader loader)
+
 public static class Idrak.Abstraction.Generation.Tokenizers
   public static Idrak.Abstraction.Generation.ITokenizer Load(System.IO.Stream stream)
   public static Idrak.Abstraction.Generation.ITokenizer Load(string path)
   public static void Save(Idrak.Abstraction.Generation.ITokenizer tokenizer, System.IO.Stream stream)
 
-public sealed record Idrak.Abstraction.Generation.Tool : System.IEquatable<Idrak.Abstraction.Generation.Tool>
+public sealed record Idrak.Abstraction.Generation.Tool : Idrak.Abstraction.Generation.ITool, System.IEquatable<Idrak.Abstraction.Generation.Tool>
   [RequiresDynamicCode("Reads parameter types and serializes values with reflection; use Tool.Create with an explicit schema for trimmed or AOT apps.")] [RequiresUnreferencedCode("Reads parameter types and serializes values with reflection; use Tool.Create with an explicit schema for trimmed or AOT apps.")] public static Idrak.Abstraction.Generation.Tool FromDelegate(string name, string description, System.Delegate function)
   public Idrak.Abstraction.Generation.ToolDefinition Definition { get; init; }
   public System.Func<System.Text.Json.Nodes.JsonObject, System.Threading.CancellationToken, System.Threading.Tasks.Task<string>> Invoke { get; init; }
+  public System.Threading.Tasks.Task<string> InvokeAsync(System.Text.Json.Nodes.JsonObject arguments, System.Threading.CancellationToken cancellationToken)
   public Tool(Idrak.Abstraction.Generation.ToolDefinition Definition, System.Func<System.Text.Json.Nodes.JsonObject, System.Threading.CancellationToken, System.Threading.Tasks.Task<string>> Invoke)
   public static Idrak.Abstraction.Generation.Tool Create(string name, string description, System.Text.Json.Nodes.JsonNode parameters, System.Func<System.Text.Json.Nodes.JsonObject, System.Threading.CancellationToken, System.Threading.Tasks.Task<string>> invoke)
 
@@ -3990,11 +4126,11 @@ public sealed record Idrak.Abstraction.Generation.ToolCall : System.IEquatable<I
   public string Name { get; init; }
 
 public sealed record Idrak.Abstraction.Generation.ToolCallContext : System.IEquatable<Idrak.Abstraction.Generation.ToolCallContext>
-  public Idrak.Abstraction.Generation.ChatTemplate Template { get; init; }
+  public Idrak.Abstraction.Generation.IChatTemplate Template { get; init; }
   public Idrak.Abstraction.Generation.ToolDefinition? Tool(string name)
   public System.Collections.Generic.IReadOnlyCollection<string>? ToolNames { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Tools { get; init; }
-  public ToolCallContext(Idrak.Abstraction.Generation.ChatTemplate Template, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Tools, System.Collections.Generic.IReadOnlyCollection<string>? ToolNames)
+  public ToolCallContext(Idrak.Abstraction.Generation.IChatTemplate Template, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Tools, System.Collections.Generic.IReadOnlyCollection<string>? ToolNames)
   public bool Allows(string name)
 
 public sealed record Idrak.Abstraction.Generation.ToolCallFormat : System.IEquatable<Idrak.Abstraction.Generation.ToolCallFormat>
@@ -4008,18 +4144,19 @@ public sealed record Idrak.Abstraction.Generation.ToolCallFormat : System.IEquat
 public static class Idrak.Abstraction.Generation.ToolCallFormats
   public const string Json = "json"
   public const string Pythonic = "pythonic"
-  public static Idrak.Abstraction.Generation.IToolCallParser Create(string name, Idrak.Abstraction.Generation.ToolCallContext context)
-  public static Idrak.Abstraction.Generation.IToolCallParser? Default(string name, Idrak.Abstraction.Generation.ToolCallContext context)
+  public static Idrak.Abstraction.Generation.IToolCallFormat Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Generation.IToolCallFormat? Default(string name)
+  public static Idrak.Abstraction.Generation.IToolCallParser Create(System.ReadOnlySpan<char> name, Idrak.Abstraction.Generation.ToolCallContext context)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static bool Unregister(string name)
   public static string Detect(Idrak.Abstraction.Generation.ToolCallProbe probe)
   public static string? Origin(string name)
-  public static void Register(string name, System.Func<Idrak.Abstraction.Generation.ToolCallProbe, bool> detect, System.Func<Idrak.Abstraction.Generation.ToolCallContext, Idrak.Abstraction.Generation.IToolCallParser> create)
+  public static void Register(Idrak.Abstraction.Generation.IToolCallFormat format)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public sealed record Idrak.Abstraction.Generation.ToolCallProbe : System.IEquatable<Idrak.Abstraction.Generation.ToolCallProbe>
   public ToolCallProbe(string? Source, string? Call)
-  public bool Shows(string text)
+  public bool Shows(System.ReadOnlySpan<char> text)
   public const string ArgumentName = "ns_probe_argument"
   public const string ArgumentValue = "ns-probe-value"
   public const string FunctionName = "ns_probe_function"
@@ -4053,8 +4190,8 @@ public sealed class Idrak.Abstraction.Generation.ToolRegistryBuilder
   [RequiresDynamicCode("See Tool.FromDelegate.")] [RequiresUnreferencedCode("See Tool.FromDelegate.")] public Idrak.Abstraction.Generation.ToolRegistryBuilder Add(string name, string description, System.Delegate function)
   [RequiresDynamicCode("See Tool.FromDelegate.")] [RequiresUnreferencedCode("See Tool.FromDelegate.")] public Idrak.Abstraction.Generation.ToolRegistryBuilder Add<T>() where T : new()
   public Idrak.Abstraction.Generation.ToolRegistry Build()
-  public Idrak.Abstraction.Generation.ToolRegistryBuilder Add(Idrak.Abstraction.Generation.Tool tool)
-  public Idrak.Abstraction.Generation.ToolRegistryBuilder Add(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.Tool> tools)
+  public Idrak.Abstraction.Generation.ToolRegistryBuilder Add(Idrak.Abstraction.Generation.ITool tool)
+  public Idrak.Abstraction.Generation.ToolRegistryBuilder Add(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.ITool> tools)
   public Idrak.Abstraction.Generation.ToolRegistryBuilder Add(string name, string description, System.Text.Json.Nodes.JsonNode parameters, System.Func<System.Text.Json.Nodes.JsonObject, System.Threading.CancellationToken, System.Threading.Tasks.Task<string>> invoke)
   public Idrak.Abstraction.Generation.ToolRegistryBuilder Allow(string name, System.Func<System.Text.Json.Nodes.JsonObject, bool> allowed)
   public Idrak.Abstraction.Generation.ToolRegistryBuilder Parallel(bool parallel = true)
@@ -4132,11 +4269,11 @@ public sealed class Idrak.Abstraction.Generation.VisionOptions : System.Collecti
 public static class Idrak.Abstraction.Generation.VisionTuningParts
   public const string Projector = "projector"
   public const string Tower = "tower"
-  public static Idrak.Abstraction.Generation.IVisionTuningPart? For(Idrak.Abstraction.Generation.PretrainedVision vision, System.Collections.Generic.IEnumerable<string> parts)
+  public static Idrak.Abstraction.Generation.IVisionTuningPart? For(Idrak.Abstraction.Generation.IPretrainedVision vision, System.Collections.Generic.IEnumerable<string> parts)
   public static Idrak.Abstraction.Tensor? FrozenTower(Idrak.Abstraction.Generation.IVisionEncoder encoder, Idrak.Abstraction.Data.ImageData image, Idrak.Abstraction.Generation.VisionOptions? options = null)
-  public static System.Collections.Generic.IReadOnlyList<string> Offered(Idrak.Abstraction.Generation.PretrainedVision vision)
+  public static System.Collections.Generic.IReadOnlyList<string> Offered(Idrak.Abstraction.Generation.IPretrainedVision vision)
 
-public sealed class Idrak.Abstraction.Generation.WordTokenizer : Idrak.Abstraction.Generation.ITokenizer
+public sealed class Idrak.Abstraction.Generation.WordTokenizer : Idrak.Abstraction.Generation.ISavableTokenizer, Idrak.Abstraction.Generation.ITokenizer
   nested Idrak.Abstraction.Generation.WordTokenizer.Units (below)
   public System.Collections.Generic.IReadOnlyList<int> Encode(string text)
   public System.Collections.Generic.IReadOnlyList<string> Vocabulary { get; }
@@ -4150,6 +4287,7 @@ public sealed class Idrak.Abstraction.Generation.WordTokenizer : Idrak.Abstracti
   public static Idrak.Abstraction.Generation.WordTokenizer.Units SplitSpans(string text, bool lowercase = true)
   public static System.Collections.Generic.IEnumerable<string> Split(string text, bool lowercase = true)
   public string Decode(System.Collections.Generic.IEnumerable<int> ids)
+  public string Type { get; }
   public string UnknownToken { get; }
   public void Save(System.IO.Stream stream)
   public void Save(string path)
@@ -4175,6 +4313,8 @@ public interface Idrak.Abstraction.IKind
 
 public interface Idrak.Abstraction.IKind<in TRequest, out T> : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind where TRequest : allows ref struct
   public T Create(TRequest request)
+
+public interface Idrak.Abstraction.IRecordable
 
 public sealed class Idrak.Abstraction.KeySpans
   public (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor) ToTensors(Idrak.Abstraction.Device? device = null)
@@ -5609,7 +5749,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public static Idrak.Abstraction.Tensor Indices(System.ReadOnlySpan<int> indices, Idrak.Abstraction.Device device)
   public static Idrak.Abstraction.Tensor MatMulBias(Idrak.Abstraction.Tensor x, Idrak.Abstraction.Tensor w, Idrak.Abstraction.Tensor bias)
   public static Idrak.Abstraction.Tensor MatMulFrozenTransposed(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Generation.BFloat16Weight transposed)
-  public static Idrak.Abstraction.Tensor MatMulPackedEpilogue(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.PackedWeight weight, Idrak.Abstraction.Tensor? bias, bool gelu = false, Idrak.Abstraction.Tensor? residual = null)
+  public static Idrak.Abstraction.Tensor MatMulPackedEpilogue(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.IPackedWeight weight, Idrak.Abstraction.Tensor? bias, bool gelu = false, Idrak.Abstraction.Tensor? residual = null)
   public static Idrak.Abstraction.Tensor MatchRate(Idrak.Abstraction.Tensor predictions, Idrak.Abstraction.Tensor targets, float threshold)
   public static Idrak.Abstraction.Tensor Normal(System.ReadOnlySpan<int> shape, float mean = 0f, float std = 1f, System.Random? random = null, Idrak.Abstraction.Device? device = null, bool requiresGrad = false)
   public static Idrak.Abstraction.Tensor OneHot(Idrak.Abstraction.Tensor indices, int classes)

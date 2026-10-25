@@ -34,27 +34,32 @@ public static class LlamaArchitectures
     public static GgufChatTemplate ChatTemplateFallback() => new() { Matches = (_, tokens) => tokens.Contains("<|start_header_id|>"), Template = ChatTemplateText };
 
     /// <summary>LlamaForCausalLM: the common keys and names as they are, written back as config.json with model_type "llama".</summary>
-    public static PretrainedArchitecture Llama() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec, "llama");
+    public static IPretrainedArchitecture Llama() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec, "llama");
 
     /// <summary>
     /// llama.cpp's "llama": LlamaForCausalLM (Mistral's files too), MixtralForCausalLM when the file has experts (counted
     /// as num_local_experts), each head's query and key rows interleaved, and Llama 3's RoPE scaling recovered from the
     /// per-frequency divisors it stores (rope_freqs.weight).
     /// </summary>
-    public static GgufArchitecture Gguf() => new()
+    public static IGgufArchitecture Gguf() => new LlamaGguf
     {
         HuggingFace = LlamaPlugin.LlamaForCausalLM,
         InterleavedQueryKeys = true,
         WithExperts = "MixtralForCausalLM",
         ExpertCountKey = "num_local_experts",
-        Configure = (file, config, notes) =>
+    };
+
+    // llama.cpp's "llama": Llama 3's RoPE scaling recovered from rope_freqs.weight when the file has it.
+    private sealed class LlamaGguf : GgufArchitecture
+    {
+        public override void Configure(GgufFile file, JsonObject config, List<string> notes)
         {
             if (file.Tensors.ContainsKey("rope_freqs.weight"))
             {
                 config["rope_scaling"] = Llama3Scaling(file, config, notes);
             }
-        },
-    };
+        }
+    }
 
     // Llama 3.1+ stores its RoPE scaling as per-frequency divisors (rope_freqs.weight): recover the parameters and check them.
     private static JsonObject Llama3Scaling(GgufFile file, JsonObject config, List<string> notes)

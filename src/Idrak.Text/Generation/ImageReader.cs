@@ -286,7 +286,7 @@ public sealed class ImageReader : IDisposable
     public ImageReaderOptions Options { get; }
 
     /// <summary>The model's vision family.</summary>
-    public PretrainedVision Vision => Model.Vision!;
+    public IPretrainedVision Vision => Model.Vision!;
 
     /// <summary>
     /// The image as the family's encoder reads it for <paramref name="request"/>: decoded, then the read's transforms (or

@@ -135,7 +135,7 @@ internal sealed class TuneTool(ToolConsole console)
     private readonly TextWriter _out = console.Out;
     private readonly TextWriter _error = console.Error;
     private readonly List<string> positional = [];
-    private KeyValueLayout? kvLayout;
+    private IKeyValueLayout? kvLayout;
     private bool int8, bf16, int4, kv8, kv16, noThink, profileTraining, offload;
     private bool shuffleRows = true, dedupRows = true, mixByWeight;
     private int context = 4096, samples = 100, maxNew = 512, evaluationBatch = 8, seed, minChars, maxChars;
@@ -165,7 +165,7 @@ internal sealed class TuneTool(ToolConsole console)
     private TuningImages preparation = TuningImages.None;
 
     // Set by Execute.
-    private KeyValueLayout cacheLayout = null!;
+    private IKeyValueLayout cacheLayout = null!;
     private Downloader downloads = null!;
     private readonly JsonSerializerOptions readable = new() { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
     private string baseModel = "";

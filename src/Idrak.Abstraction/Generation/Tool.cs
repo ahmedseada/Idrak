@@ -24,13 +24,34 @@ public sealed class ToolAttribute(string name, string description) : Attribute
 }
 
 /// <summary>
-/// A tool: the definition shown to the model and the function that runs it. Build one with <see cref="Create"/>
-/// (explicit JSON schema, trimming and AOT safe) or <see cref="FromDelegate"/> (schema read from the parameters).
+/// A tool a chat model may call: the definition shown to it and what runs a call. <see cref="ToolRegistry"/> holds tools
+/// by their definition's name, validates each call's arguments against the definition's schema, applies its rules and
+/// then invokes the tool. <see cref="Tool"/> makes one from a function or a delegate.
+/// </summary>
+public interface ITool
+{
+    /// <summary>Name, description and JSON-schema parameters.</summary>
+    ToolDefinition Definition { get; }
+
+    /// <summary>
+    /// Runs the tool with validated <paramref name="arguments"/>; returns the text sent back to the model. Only the waiting
+    /// is asynchronous: an implementation reads its arguments in a synchronous step before it awaits anything.
+    /// </summary>
+    Task<string> InvokeAsync(JsonObject arguments, CancellationToken cancellationToken);
+}
+
+/// <summary>
+/// A tool (<see cref="ITool"/>) from a function: the definition shown to the model and the function that runs it. Build
+/// one with <see cref="Create"/> (explicit JSON schema, trimming and AOT safe) or <see cref="FromDelegate"/> (schema read
+/// from the parameters).
 /// </summary>
 /// <param name="Definition">Name, description and JSON-schema parameters.</param>
 /// <param name="Invoke">Runs the tool with validated arguments; returns the text sent back to the model.</param>
-public sealed record Tool(ToolDefinition Definition, Func<JsonObject, CancellationToken, Task<string>> Invoke)
+public sealed record Tool(ToolDefinition Definition, Func<JsonObject, CancellationToken, Task<string>> Invoke) : ITool
 {
+    /// <inheritdoc />
+    public Task<string> InvokeAsync(JsonObject arguments, CancellationToken cancellationToken) => Invoke(arguments, cancellationToken);
+
     /// <summary>A tool with an explicit JSON schema (an object schema with "properties" and "required").</summary>
     public static Tool Create(string name, string description, JsonNode parameters, Func<JsonObject, CancellationToken, Task<string>> invoke) =>
         new(new ToolDefinition(name, description, parameters), invoke);
@@ -70,31 +91,42 @@ public sealed record Tool(ToolDefinition Definition, Func<JsonObject, Cancellati
         }
 
         var parametersSchema = new JsonObject { ["type"] = "object", ["properties"] = properties, ["required"] = required };
+        var awaitResult = ToolSchema.Awaiter(method.ReturnType);           // how the method's result is awaited, found once
         return Create(name, description, parametersSchema, async (args, token) =>
         {
-            var values = parameters.Select(p =>
-                p.ParameterType == typeof(CancellationToken) ? token
-                : args[p.Name!] is { } node ? node.Deserialize(p.ParameterType, ToolSchema.Json)
-                : p.HasDefaultValue ? p.DefaultValue : null).ToArray();
-            object? result;
-            try
+            object? result = Call(method, target, parameters, args, token);
+            if (awaitResult is not null)
             {
-                result = method.Invoke(target, values);
-            }
-            catch (TargetInvocationException ex) when (ex.InnerException is not null)
-            {
-                throw ex.InnerException;
+                result = await awaitResult(result).ConfigureAwait(false);
             }
 
-            result = await ToolSchema.AwaitResult(result).ConfigureAwait(false);
-            return result switch
-            {
-                null => "",
-                string text => text,
-                JsonNode json => json.ToJsonString(),
-                _ => JsonSerializer.Serialize(result, result.GetType(), ToolSchema.Json),
-            };
+            return ToolSchema.Text(result);
         });
+    }
+
+    // The synchronous core of a call: the arguments read from their JSON, the method called (a task it returns is awaited by the caller).
+    [RequiresUnreferencedCode("Reflection.")]
+    [RequiresDynamicCode("Reflection.")]
+    private static object? Call(MethodInfo method, object? target, ParameterInfo[] parameters, JsonObject args, CancellationToken token)
+    {
+        var values = new object?[parameters.Length];
+        for (int i = 0; i < parameters.Length; i++)
+        {
+            var p = parameters[i];
+            values[i] = p.ParameterType == typeof(CancellationToken) ? token
+                : args[p.Name!] is { } node ? node.Deserialize(p.ParameterType, ToolSchema.Json)
+                : p.HasDefaultValue ? p.DefaultValue : null;
+        }
+
+        try
+        {
+            return method.Invoke(target, values);
+        }
+        catch (TargetInvocationException ex) when (ex.InnerException is not null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex.InnerException).Throw();
+            throw;
+        }
     }
 }
 
@@ -152,36 +184,89 @@ internal static class ToolSchema
         return Json.GetJsonSchemaAsNode(type) as JsonObject ?? new JsonObject { ["type"] = "object" };
     }
 
+    /// <summary>
+    /// How a method returning <paramref name="returnType"/> is awaited: a function from its result to the awaited value
+    /// (null for a task without one), made once from the type; null when the result is not awaitable (it is the value).
+    /// </summary>
     [RequiresUnreferencedCode("Reflection.")]
     [RequiresDynamicCode("Reflection.")]
-    public static async Task<object?> AwaitResult(object? result)
+    public static Func<object?, Task<object?>>? Awaiter(Type returnType)
     {
-        if (result is null)
+        if (returnType == typeof(Task) || returnType == typeof(ValueTask))
         {
-            return null;
+            return returnType == typeof(Task) ? AwaitTask : AwaitValueTask;
         }
 
-        var type = result.GetType();
-        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(ValueTask<>))
+        if (returnType.IsGenericType && (returnType.GetGenericTypeDefinition() == typeof(Task<>) || returnType.GetGenericTypeDefinition() == typeof(ValueTask<>)))
         {
-            result = type.GetMethod("AsTask")!.Invoke(result, null);
+            var helper = returnType.GetGenericTypeDefinition() == typeof(Task<>) ? nameof(AwaitTaskOf) : nameof(AwaitValueTaskOf);
+            return typeof(ToolSchema).GetMethod(helper, BindingFlags.NonPublic | BindingFlags.Static)!.MakeGenericMethod(returnType.GetGenericArguments()[0])
+                .CreateDelegate<Func<object?, Task<object?>>>();
         }
-        else if (result is ValueTask valueTask)
+
+        // A method declared to return object (or a base type) may still hand back a task: awaited by what it is.
+        return returnType.IsAssignableFrom(typeof(Task)) || returnType.IsAssignableFrom(typeof(ValueTask)) ? AwaitAny : null;
+    }
+
+    private static async Task<object?> AwaitTask(object? result)
+    {
+        await ((Task)result!).ConfigureAwait(false);
+        return null;
+    }
+
+    private static async Task<object?> AwaitValueTask(object? result)
+    {
+        await ((ValueTask)result!).ConfigureAwait(false);
+        return null;
+    }
+
+    private static async Task<object?> AwaitTaskOf<T>(object? result) => await ((Task<T>)result!).ConfigureAwait(false);
+
+    private static async Task<object?> AwaitValueTaskOf<T>(object? result) => await ((ValueTask<T>)result!).ConfigureAwait(false);
+
+    // A result whose declared type does not say whether it is a task (a method returning object): awaited by what it is.
+    [RequiresUnreferencedCode("Reflection.")]
+    [RequiresDynamicCode("Reflection.")]
+    private static async Task<object?> AwaitAny(object? result)
+    {
+        if (result is ValueTask valueTask)
         {
             await valueTask.ConfigureAwait(false);
             return null;
         }
 
-        if (result is Task task)
+        if (result?.GetType() is { IsGenericType: true } type && type.GetGenericTypeDefinition() == typeof(ValueTask<>))
         {
-            await task.ConfigureAwait(false);
-            var taskType = task.GetType();
-            return taskType.IsGenericType && taskType.GetGenericArguments()[0].Name != "VoidTaskResult"
-                ? taskType.GetProperty("Result")!.GetValue(task) : null;
+            return await Awaiter(type)!(result).ConfigureAwait(false);
         }
 
-        return result;
+        if (result is not Task task)
+        {
+            return result;
+        }
+
+        await task.ConfigureAwait(false);
+        for (var t = task.GetType(); t is not null && t != typeof(Task); t = t.BaseType)
+        {
+            if (t.IsGenericType && t.GetGenericTypeDefinition() == typeof(Task<>))
+            {
+                return t.GetGenericArguments()[0].Name == "VoidTaskResult" ? null : await Awaiter(t)!(task).ConfigureAwait(false);   // an async method's Task
+            }
+        }
+
+        return null;
     }
+
+    /// <summary>The text sent to the model for a tool's result: a string as is, JSON otherwise ("" for none).</summary>
+    [RequiresUnreferencedCode("Reflection.")]
+    [RequiresDynamicCode("Reflection.")]
+    public static string Text(object? result) => result switch
+    {
+        null => "",
+        string text => text,
+        JsonNode json => json.ToJsonString(),
+        _ => JsonSerializer.Serialize(result, result.GetType(), ToolSchema.Json),
+    };
 
     /// <summary>Checks required properties and basic types; returns an error message, or null when the arguments are valid.</summary>
     public static string? Validate(JsonNode? schema, JsonObject arguments)

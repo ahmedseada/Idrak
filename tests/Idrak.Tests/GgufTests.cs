@@ -26,7 +26,36 @@ internal static partial class Tests
         ("gguf: gemma2: a Gemma 2 file written by llama.cpp's converter reads as its Hugging Face folder (post-norms under llama.cpp's names, GELU, soft-capping and window from the file, the query scalar llama.cpp takes): spec, tokens, chat template, logits over more positions than the window, greedy tokens", device => GgufGemma(device, "tiny-gemma2", "Gemma2ForCausalLM")),
         ("gguf: gemma3: a Gemma 3 file written by llama.cpp's converter reads as its Hugging Face folder (q/k norms, five windowed layers in six as llama.cpp assumes, the windowed layers' RoPE base from the file and the global one scaled): spec, tokens, chat template, logits over more positions than the window, greedy tokens", device => GgufGemma(device, "tiny-gemma3", "Gemma3ForCausalLM")),
         ("gguf: chat templates: a file without one gets the first registered fallback for its tokens (the library's ChatML, then Llama 3's from Idrak.Text.Plugins), an app's too; with none for its tokens it has no template, as a folder without one, and the note names GgufChatTemplates; a name nobody registered is refused as not registered", GgufChatTemplateFallbacks),
+        ("gguf: F16 widened whole vectors at a time (IGgufType.Dequantize) gives .NET's own conversion bit for bit for every half (zeros, subnormals, infinities, NaNs), at a vector boundary and in the scalar tail", GgufHalfWidening),
     ];
+
+    private static void GgufHalfWidening(Device device)
+    {
+        _ = device;
+        var bytes = new byte[65536 * 2];
+        for (int h = 0; h < 65536; h++)
+        {
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(h * 2), (ushort)h);
+        }
+
+        var f16 = GgufTypes.Get(1);
+        foreach (int start in new[] { 0, 1, 3 })
+        {
+            int count = 65536 - start - start;
+            var values = new float[count];
+            f16.Dequantize(bytes.AsSpan(start * 2, count * 2), values);
+            for (int i = 0; i < count; i++)
+            {
+                ushort h = (ushort)(start + i);
+                uint expected = BitConverter.SingleToUInt32Bits((float)BitConverter.UInt16BitsToHalf(h)), actual = BitConverter.SingleToUInt32Bits(values[i]);
+                if (expected != actual)
+                {
+                    Check(false, $"half 0x{h:X4} from {start}: 0x{actual:X8}, expected 0x{expected:X8}");
+                    return;
+                }
+            }
+        }
+    }
 
     private static void EvaluationMetrics(Device device)
     {
@@ -208,7 +237,7 @@ internal static partial class Tests
 
                 var chat = new[] { new ChatMessage("user", "hi there") };
                 Check(fromGguf.ChatTemplate!.Render(chat, [], null) == fromHf.ChatTemplate!.Render(chat, [], null)
-                      && fromGguf.ChatTemplate.StopSequences.Contains("<|im_end|>"), $"{name}: chat template and stop");
+                      && fromGguf.ChatTemplate!.StopSequences.Contains("<|im_end|>"), $"{name}: chat template and stop");
 
                 int[] ids = [.. fromHf.Tokenizer!.Encode("the answer is in the thin rain, and then another answer")];
                 TrainingSequence[] probe = [new TrainingSequence(ids, [.. ids.Select(_ => true)])];

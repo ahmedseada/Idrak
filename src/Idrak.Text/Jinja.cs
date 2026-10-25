@@ -28,6 +28,14 @@ public sealed partial class JinjaTemplate
     public string Render(IReadOnlyDictionary<string, object?> variables)
     {
         var output = new StringBuilder();
+        Render(variables, output);
+        return output.ToString();
+    }
+
+    /// <summary>Renders the template with <paramref name="variables"/>, appending the text to <paramref name="output"/>.</summary>
+    public void Render(IReadOnlyDictionary<string, object?> variables, StringBuilder output)
+    {
+        ArgumentNullException.ThrowIfNull(output);
         var scope = new Scope(null);
         foreach (var (name, value) in variables)
         {
@@ -43,7 +51,6 @@ public sealed partial class JinjaTemplate
         }
 
         Interpreter.Execute(_nodes, scope, output);
-        return output.ToString();
     }
 
     // ------------------------------------------------------------------ values

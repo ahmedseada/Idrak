@@ -156,7 +156,7 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport CheckProgressReporter(string name, System.Func<Idrak.Abstraction.Diagnostics.ProgressRequest, Idrak.Abstraction.Diagnostics.IProgressReporter>? factory = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckReadingOrder(string name, Idrak.Abstraction.Data.IReadingOrder? order = null, bool invertible = false, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckRewardFunction(Idrak.Abstraction.Reinforcement.IRewardFunction reward, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.RewardInput> samples, System.Collections.Generic.IReadOnlyDictionary<string, string>? rewardOptions = null, Idrak.Abstraction.Reinforcement.IRewardFunction? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
-  public static Idrak.Abstraction.Testing.ConformanceReport CheckRopeScaling(string type, Idrak.Abstraction.Generation.RopeScalingMethod? method = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckRopeScaling(string type, Idrak.Abstraction.Generation.IRopeScaling? method = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckSpeechRecognizer(Idrak.Abstraction.Testing.SpeechRecognizerUnderTest recognizer, int? silenceMaxChars = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckStft(Idrak.Abstraction.Testing.StftUnderTest stft, int sampleRate = 16000, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckTextLineSegmenter(System.Func<Idrak.Abstraction.Data.ImageData, Idrak.Abstraction.Testing.SegmentedPage> segmenter, System.Func<Idrak.Abstraction.Data.ImageData, Idrak.Abstraction.Testing.SegmentedPage>? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
@@ -469,13 +469,13 @@ public sealed class Idrak.Abstraction.Testing.RewardFunctionSuite : Idrak.Abstra
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Reinforcement.IRewardFunction implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
-public sealed class Idrak.Abstraction.Testing.RopeScalingSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Generation.RopeScalingMethod>
+public sealed class Idrak.Abstraction.Testing.RopeScalingSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Generation.IRopeScaling>
   public RopeScalingSuite(string type, System.Collections.Generic.IReadOnlyList<System.Text.Json.Nodes.JsonObject>? parameterSets = null)
   public double Tolerance { get; init; }
   public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
-  public override void Run(Idrak.Abstraction.Generation.RopeScalingMethod implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+  public override void Run(Idrak.Abstraction.Generation.IRopeScaling implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
   public string Type { get; }
 
 public readonly record struct Idrak.Abstraction.Testing.SampledStatistics : System.IEquatable<Idrak.Abstraction.Testing.SampledStatistics>

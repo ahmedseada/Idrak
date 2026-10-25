@@ -26,7 +26,7 @@ public sealed partial class RMSNorm
         k.ThrowIfDisposed();
         v.ThrowIfDisposed();
         if ((queryNorm is null) != (keyNorm is null) || (cos is null) != (sin is null) || (cache is null) != (position is null)
-            || cache is { Layout.FusedWrite: false } || !q.Backend.FusedKernels)
+            || cache is { FusedWriteLayout: null } || !q.Backend.FusedKernels)
         {
             return null;
         }
@@ -36,7 +36,7 @@ public sealed partial class RMSNorm
         var yq = Tensor.Empty([n * kvHeads, heads / kvHeads * t, dim], q.Device);
         Tensor? yk = null, yv = null;
         int capacity = t, stride = dim;
-        bool bfloat16 = cache is { Layout.HalfWords: true };
+        bool bfloat16 = cache is { FusedWriteLayout.HalfWords: true };
         if (cache is null)
         {
             yk = Tensor.Empty([n * kvHeads, t, dim], q.Device);

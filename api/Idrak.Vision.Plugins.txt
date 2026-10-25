@@ -139,7 +139,7 @@ public sealed class Idrak.Vision.Plugins.Gemma.Gemma3Vision : Idrak.Abstraction.
   public override Idrak.Abstraction.Generation.IImagePromptFormat PromptFormat { get; }
   public override Idrak.Abstraction.Generation.IVisionEncoder CreateEncoder(Idrak.Abstraction.Generation.VisionEncoderOptions? options = null)
   public override System.Collections.Generic.IReadOnlyCollection<string> StoredTensors { get; }
-  public override System.Collections.Generic.IReadOnlyCollection<string> VisionOptionKeys { get; }
+  public override System.Collections.Generic.IReadOnlySet<string> VisionOptionKeys { get; }
   public override int Width { get; }
   public override string Describe()
   public override string Family { get; }
@@ -147,7 +147,7 @@ public sealed class Idrak.Vision.Plugins.Gemma.Gemma3Vision : Idrak.Abstraction.
 
 public sealed class Idrak.Vision.Plugins.Gemma.Gemma3VisionFamily : Idrak.Models.Abstractions.IVisionFamily
   public Gemma3VisionFamily()
-  public Idrak.Abstraction.Generation.PretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
+  public Idrak.Abstraction.Generation.IPretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
   public const string Architecture = "Gemma3ForConditionalGeneration"
   public string Name { get; }
 
@@ -221,7 +221,7 @@ public sealed class Idrak.Vision.Plugins.IdrakVision.IdrakVisionEncoder : Idrak.
   public override void Dispose()
 
 public sealed class Idrak.Vision.Plugins.IdrakVision.IdrakVisionFamily : Idrak.Models.Abstractions.IVisionFamily
-  public Idrak.Abstraction.Generation.PretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
+  public Idrak.Abstraction.Generation.IPretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
   public Idrak.Models.Abstractions.CreatedVision Create(System.Text.Json.Nodes.JsonObject vision, int textDim, Idrak.Abstraction.Generation.ITokenizer tokenizer, int seed)
   public IdrakVisionFamily()
   public const string Architecture = "IdrakVisionForConditionalGeneration"
@@ -339,7 +339,7 @@ public sealed class Idrak.Vision.Plugins.Llava.LlavaVision : Idrak.Abstraction.G
   public string ProjectorActivation { get; }
 
 public sealed class Idrak.Vision.Plugins.Llava.LlavaVisionFamily : Idrak.Models.Abstractions.IVisionFamily
-  public Idrak.Abstraction.Generation.PretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
+  public Idrak.Abstraction.Generation.IPretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
   public LlavaVisionFamily()
   public string Name { get; }
 
@@ -407,7 +407,7 @@ public sealed record Idrak.Vision.Plugins.Qwen.QwenTensor : System.IEquatable<Id
 
 public static class Idrak.Vision.Plugins.Qwen.QwenTextDecoder
   public static Idrak.Abstraction.Generation.DecoderSpec Spec(System.Text.Json.Nodes.JsonObject config, System.Collections.Generic.List<string> notes)
-  public static Idrak.Models.Abstractions.PretrainedArchitecture Architecture()
+  public static Idrak.Models.Abstractions.IPretrainedArchitecture Architecture()
 
 public sealed class Idrak.Vision.Plugins.Qwen.QwenVision : Idrak.Abstraction.Generation.PretrainedVision, Idrak.Abstraction.Generation.IVisionTuningPart
   public Idrak.Abstraction.Formats.ITensorStore OpenTensors()
@@ -428,12 +428,12 @@ public sealed class Idrak.Vision.Plugins.Qwen.QwenVision : Idrak.Abstraction.Gen
   public override Idrak.Abstraction.Generation.IImagePromptFormat PromptFormat { get; }
   public override Idrak.Abstraction.Generation.IVisionEncoder CreateEncoder(Idrak.Abstraction.Generation.VisionEncoderOptions? options = null)
   public override System.Collections.Generic.IReadOnlyCollection<string> StoredTensors { get; }
-  public override System.Collections.Generic.IReadOnlyCollection<string> VisionOptionKeys { get; }
+  public override System.Collections.Generic.IReadOnlySet<string> VisionOptionKeys { get; }
   public override int Width { get; }
   public override string Describe()
   public override string Family { get; }
   public override string ToString()
-  public static System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+  public static Idrak.Abstraction.OptionKeys Keys { get; }
   public string Prefix { get; }
 
 public sealed record Idrak.Vision.Plugins.Qwen.QwenVisionConfig : System.IEquatable<Idrak.Vision.Plugins.Qwen.QwenVisionConfig>
@@ -458,7 +458,7 @@ public sealed record Idrak.Vision.Plugins.Qwen.QwenVisionConfig : System.IEquata
   public static Idrak.Vision.Plugins.Qwen.QwenVisionConfig FromJson(System.Text.Json.Nodes.JsonObject? config, Idrak.Vision.Plugins.Qwen.QwenVlVariant variant)
 
 public sealed class Idrak.Vision.Plugins.Qwen.QwenVisionFamily : Idrak.Models.Abstractions.IVisionFamily
-  public Idrak.Abstraction.Generation.PretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
+  public Idrak.Abstraction.Generation.IPretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
   public Idrak.Vision.Plugins.Qwen.QwenVlVariant Variant { get; }
   public QwenVisionFamily(Idrak.Vision.Plugins.Qwen.QwenVlVariant variant)
   public const string Qwen25VlArchitecture = "Qwen2_5_VLForConditionalGeneration"

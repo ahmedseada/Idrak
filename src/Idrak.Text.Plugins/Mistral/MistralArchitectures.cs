@@ -18,10 +18,10 @@ public static class MistralArchitectures
     public const string TekkenPattern = @"[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+";
 
     /// <summary>MistralForCausalLM: the common keys and names as they are, written back as config.json with model_type "mistral".</summary>
-    public static PretrainedArchitecture Mistral() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec, "mistral");
+    public static IPretrainedArchitecture Mistral() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec, "mistral");
 
     /// <summary>MixtralForCausalLM: the experts' keys (<see cref="PretrainedFamilies.ExpertSpec"/>, the chosen experts' weights renormalized unless norm_topk_prob says otherwise) and <see cref="MixtralTensorName"/>.</summary>
-    public static PretrainedArchitecture Mixtral() => new() { Spec = (config, notes) => PretrainedFamilies.ExpertSpec(config, notes, normalizeTopK: true), TensorName = MixtralTensorName };
+    public static IPretrainedArchitecture Mixtral() => PretrainedFamilies.Architecture((config, notes) => PretrainedFamilies.ExpertSpec(config, notes, normalizeTopK: true), MixtralTensorName);
 
     /// <summary>
     /// Idrak weight names → Mixtral checkpoint names: the common names (<see cref="PretrainedFamilies.CommonTensorName"/>),

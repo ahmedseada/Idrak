@@ -49,7 +49,7 @@ internal static partial class Tests
 
         var weather = ParsedCall("get_weather", """{"city": "San Francisco", "days": 3}""");
         var time = ParsedCall("get_time", """{"timezone": "Europe/Paris"}""");
-        var cases = new (string Name, ChatTemplate Template, string Output, string Content, string Thinking, ToolCall[] Calls)[]
+        var cases = new (string Name, IChatTemplate Template, string Output, string Content, string Thinking, ToolCall[] Calls)[]
         {
             ("llama, python tag", llama, "<|python_tag|>{\"name\": \"get_weather\", \"parameters\": {\"city\": \"San Francisco\", \"days\": 3}}", "", "", [weather]),
             ("llama, two calls", llama, "{\"name\": \"get_weather\", \"parameters\": {\"city\": \"San Francisco\", \"days\": 3}}; {\"name\": \"get_time\", \"parameters\": {\"timezone\": \"Europe/Paris\"}}", "", "", [weather, time]),
@@ -150,7 +150,7 @@ internal static partial class Tests
         Check(template.ToolCallFormatName == Formats.Json, $"before registering: {template.ToolCallFormatName}");
         try
         {
-            Formats.Register("angle", probe => probe.Call?.Contains("<<" + ToolCallProbe.FunctionName + "|", StringComparison.Ordinal) ?? false, context => new AngleParser(context));
+            Formats.Register(new TestToolCallFormat("angle", probe => probe.Call?.Contains("<<" + ToolCallProbe.FunctionName + "|", StringComparison.Ordinal) ?? false, context => new AngleParser(context)));
             Check(Formats.Names.First() == "angle", "a new format is asked first");
             var detected = new JinjaChatTemplate(Template, ["\n"]);
             Check(detected.ToolCallFormatName == "angle", $"detected: {detected.ToolCallFormatName}");
@@ -183,10 +183,32 @@ internal static partial class Tests
                   && ex.Message.Contains("Idrak.Text.Plugins", StringComparison.Ordinal), ex.Message);
         }
 
-        // A template may make its own parser without registering anything.
-        var own = new OwnParserTemplate();
-        var (ownContent, _, ownCalls) = ParseStreamed(own, "<think>ok</think>CALL get_time", 3, ParserTools);
-        Check(ownContent == "" && ownCalls is [{ Name: "get_time" }], $"template's own parser: '{ownContent}' {Show(ownCalls)}");
+        // A template names a format of its own (one IToolCallFormat: its detector and its parser).
+        Formats.Register(new TestToolCallFormat(OwnParserTemplate.Format, _ => false, _ => new OwnParserTemplate.Command()));
+        try
+        {
+            var own = new OwnParserTemplate();
+            var (ownContent, _, ownCalls) = ParseStreamed(own, "<think>ok</think>CALL get_time", 3, ParserTools);
+            Check(ownContent == "" && ownCalls is [{ Name: "get_time" }], $"template's own format: '{ownContent}' {Show(ownCalls)}");
+        }
+        finally
+        {
+            Formats.Unregister(OwnParserTemplate.Format);
+        }
+    }
+
+    // A tool-call format of the tests: its name, detector and parser.
+    private sealed class TestToolCallFormat(string name, Func<ToolCallProbe, bool> detect, Func<ToolCallContext, IToolCallParser> create) : IToolCallFormat
+    {
+        public string Name => name;
+
+        public string Summary => name;
+
+        public IReadOnlySet<string> Keys => OptionKeys.None;
+
+        public bool Detect(ToolCallProbe probe) => detect(probe);
+
+        public IToolCallParser Create(ToolCallContext context) => create(context);
     }
 
     // <<name|{json}>> anywhere in the answer; text around kept.
@@ -194,9 +216,9 @@ internal static partial class Tests
     {
         private string _text = "";
 
-        public ChatDelta Feed(string text)
+        public ChatDelta Feed(ReadOnlySpan<char> text)
         {
-            _text += text;
+            _text += text.ToString();
             return new ChatDelta("", "", []);
         }
 
@@ -219,19 +241,23 @@ internal static partial class Tests
 
     private sealed class OwnParserTemplate : ChatTemplate
     {
+        public const string Format = "test-command";
+
         public override IReadOnlyList<string> StopSequences => ["\n"];
 
-        public override string Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think) => "";
+        public override string ToolCallFormatName => Format;
 
-        public override IToolCallParser CreateToolCallParser(ToolCallContext context) => new Command();
+        public override void Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think, System.Text.StringBuilder prompt)
+        {
+        }
 
-        private sealed class Command : IToolCallParser
+        public sealed class Command : IToolCallParser
         {
             private string _text = "";
 
-            public ChatDelta Feed(string text)
+            public ChatDelta Feed(ReadOnlySpan<char> text)
             {
-                _text += text;
+                _text += text.ToString();
                 return new ChatDelta("", "", []);
             }
 
@@ -242,7 +268,7 @@ internal static partial class Tests
 
     private static ToolCall ParsedCall(string name, string arguments) => new(name, (JsonObject)JsonNode.Parse(arguments)!);
 
-    private static (string Content, string Thinking, List<ToolCall> Calls) ParseStreamed(ChatTemplate template, string output, int size, IReadOnlyList<ToolDefinition>? tools)
+    private static (string Content, string Thinking, List<ToolCall> Calls) ParseStreamed(IChatTemplate template, string output, int size, IReadOnlyList<ToolDefinition>? tools)
     {
         var parser = new ChatOutputParser(template, tools);
         string content = "", thinking = "";

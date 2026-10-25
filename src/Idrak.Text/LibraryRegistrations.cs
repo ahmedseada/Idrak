@@ -24,7 +24,7 @@ internal static class LibraryRegistrations
     {
         if (registry == typeof(ChatTemplates))
         {
-            ChatTemplates.Register("jinja", (folder, tokenizer) => JinjaChatTemplate.Load(folder, tokenizer));
+            ChatTemplates.Register(new JinjaTemplateReader());
         }
         else if (registry == typeof(SettingAdvisors))
         {
@@ -32,8 +32,10 @@ internal static class LibraryRegistrations
         }
         else if (registry == typeof(FeatureCaches))
         {
-            FeatureCaches.Register(FeatureCaches.Memory, options => new MemoryFeatureCache(options));
-            FeatureCaches.Register(FeatureCaches.Disk, options => new DiskFeatureCache(options));
+            FeatureCaches.Register(new FeatureCacheKind(FeatureCaches.Memory, "in this process's memory, least recently used entries evicted to stay within a byte budget",
+                options => new MemoryFeatureCache(options)));
+            FeatureCaches.Register(new FeatureCacheKind(FeatureCaches.Disk, "one safetensors file per entry in a folder, which serves later runs and other processes",
+                options => new DiskFeatureCache(options)));
         }
         else if (registry == typeof(EnvironmentKinds))
         {
@@ -51,4 +53,16 @@ internal static class LibraryRegistrations
             CommandSandboxes.Register(new ProcessCommandSandbox());
         }
     }
+}
+
+// One of this assembly's feature caches, registered in FeatureCaches under its name.
+internal sealed class FeatureCacheKind(string name, string summary, Func<FeatureCacheOptions, IFeatureCache> create) : IFeatureCacheKind
+{
+    public string Name => name;
+
+    public string Summary => summary;
+
+    public IReadOnlySet<string> Keys => OptionKeys.None;
+
+    public IFeatureCache Create(FeatureCacheOptions request) => create(request);
 }

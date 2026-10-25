@@ -949,7 +949,7 @@ internal static partial class Tests
 
     private static void LoaderRegistry(Device device)
     {
-        Check(new[] { "csv", "images", "tokens", "npy" }.All(SampleSources.Contains) && SampleSources.Contains("CSV"), "the built-ins, any case");
+        Check(new[] { "csv", "images", "tokens", "npy" }.All(n => SampleSources.Contains(n)) && SampleSources.Contains("CSV"), "the built-ins, any case");
         string folder = TempFolder();
         try
         {
@@ -964,12 +964,12 @@ internal static partial class Tests
             Throws<ArgumentException>(() => SampleSources.Open("csv", path, new Dictionary<string, string> { ["target"] = "c", ["colour"] = "red" }), "an unknown option");
 
             // A source of its own, by name; then removed.
-            SampleSources.Register("Squares", (p, options) =>
+            SampleSources.Register(TestKinds.SampleSource("Squares", (p, options) =>
             {
                 int n = int.Parse(options["count"], System.Globalization.CultureInfo.InvariantCulture);
                 float[] x = [.. Enumerable.Range(0, n).Select(i => (float)i)];
                 return Dataset.FromFlat(x, [.. x.Select(v => v * v)], n, ["x"], ["y"]);
-            });
+            }));
             var squares = SampleSources.Open("squares", "", new Dictionary<string, string> { ["count"] = "5" });
             Check(squares.Count == 5 && squares.ToDataset().GetTargets(4)[0] == 16 && SampleSources.Names.Contains("Squares"), "a registered source");
             Check(SampleSources.Unregister("SQUARES") && !SampleSources.Unregister("squares") && !SampleSources.Contains("squares"), "unregistered");
@@ -1030,7 +1030,7 @@ internal static partial class Tests
 
             string csv = Path.Combine(folder, "rows.csv");
             File.WriteAllText(csv, "a,b,y\n1,2,3\n4,5,6\n");
-            SampleSources.Register("table", TableSamples.Factory);
+            SampleSources.Register(TableSamples.Kind);
             try
             {
                 var table = SampleSources.Open("table", csv, new Dictionary<string, string> { ["target"] = "y" });

@@ -73,7 +73,7 @@ public sealed class Gemma3VisionFamily : IVisionFamily
     public string Name => Architecture;
 
     /// <inheritdoc />
-    public PretrainedVision? Read(VisionCheckpoint checkpoint)
+    public IPretrainedVision? Read(VisionCheckpoint checkpoint)
     {
         ArgumentNullException.ThrowIfNull(checkpoint);
         var store = checkpoint.Tensors;
@@ -187,10 +187,7 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
         // Gemma3Processor: each <start_of_image> the template writes becomes "\n\n" + boi + soft tokens + eoi + "\n\n" (its
         // full_image_sequence); with pan and scan, an image of crops becomes "Here is the original image " + the whole
         // image's block + " and here are some crops to help you see better " + the crops' blocks joined by spaces.
-        PromptFormat = new ImageTokenFormat("gemma3", tokens.BeginImage, tokens.ImageToken, tokens.BeginImage, tokens.EndImage, "\n\n", "\n\n")
-        {
-            Join = blocks => $"Here is the original image {blocks[0]} and here are some crops to help you see better " + string.Join(" ", blocks.Skip(1)),
-        };
+        PromptFormat = new Gemma3PromptFormat(tokens);
         PanAndScan = _folder is { } path && File.Exists(Path.Combine(path, "preprocessor_config.json"))
             ? Gemma3PanAndScan.FromConfig(File.ReadAllText(Path.Combine(path, "preprocessor_config.json")))
             : Gemma3PanAndScan.Default;
@@ -212,7 +209,10 @@ public sealed class Gemma3Vision : PretrainedVision, IVisionTuningPart
     public override IReadOnlyCollection<string> StoredTensors => [.. Tensors.Values.Select(t => t.Stored)];
 
     /// <summary>Gemma 3's vision options: pan and scan's (<see cref="Gemma3PanAndScan.Keys"/>).</summary>
-    public override IReadOnlyCollection<string> VisionOptionKeys => Gemma3PanAndScan.Keys;
+    public override IReadOnlySet<string> VisionOptionKeys => PanAndScanKeys;
+
+    // The pan-and-scan keys as a set made once.
+    private static readonly OptionKeys PanAndScanKeys = new(Gemma3PanAndScan.Keys);
 
     /// <summary>
     /// Pan and scan as the model folder's <c>preprocessor_config.json</c> sets it (its null or absent keys:
@@ -595,4 +595,12 @@ public sealed record SiglipVisionConfig
 
         return result;
     }
+}
+
+// Gemma 3's image prompt format: its tokens, "\n\n" around each image, and an image of crops written as its processor writes it.
+internal sealed class Gemma3PromptFormat(Gemma3ImageTokens tokens)
+    : ImageTokenFormat("gemma3", tokens.BeginImage, tokens.ImageToken, tokens.BeginImage, tokens.EndImage, "\n\n", "\n\n"), IImageBlocksJoin
+{
+    public string Join(IReadOnlyList<string> blocks) =>
+        $"Here is the original image {blocks[0]} and here are some crops to help you see better " + string.Join(" ", blocks.Skip(1));
 }

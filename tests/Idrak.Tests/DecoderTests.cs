@@ -490,7 +490,7 @@ internal static partial class Tests
             }
 
             var scaled = rope.Scaled(hd);
-            var freq = scaled.FrequenciesAt?.Invoke(position) ?? scaled.Frequencies;
+            var freq = scaled.FrequenciesAt?.At(position) ?? scaled.Frequencies;
             int half = freq.Length;
             var original = x.AsSpan(offset, hd).ToArray();
             for (int i = 0; i < half; i++)
@@ -999,7 +999,7 @@ internal static partial class Tests
                 foreach (var (k, n) in new[] { (128, 64), (192, 1000), (256, 2560) })
                 {
                     var weights = Make(k * n, 0.5f);
-                    using var weight = PackedWeight.FromValues(format, weights.ToArray(), k, n, device);
+                    using var weight = PackedWeightFormats.Pack(format, weights.ToArray(), k, n, device);
                     var (packed, scales) = (weight.PackedValues.Storage, weight.ScaleValues?.Storage);
                     foreach (int m in new[] { 1, 3, 8 })
                     {

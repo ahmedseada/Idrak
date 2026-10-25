@@ -39,7 +39,7 @@ internal static partial class Tests
         replay.ThrowIfFailed();
         Check(replay.Cases >= 1, $"no saved sampler case in {saved}");
 
-        var version1 = Conformance.Check(Drive(TokenSamplers.Default(TokenSamplers.DefaultName, 1)!), suite, new ContractCheckOptions { RandomCases = 0 });
+        var version1 = Conformance.Check(Drive(TokenSamplers.Default(TokenSamplers.DefaultName, 1)!.Create), suite, new ContractCheckOptions { RandomCases = 0 });
         Check(!version1.Passed && version1.Failures.All(f => f.Check == "non-finite logits do not break sampling")
               && version1.Failures.Any(f => f.Message.Contains("version 1", StringComparison.Ordinal)), $"version 1 refuses non-finite logits:\n{version1}");
     }
@@ -161,7 +161,7 @@ internal static partial class Tests
             [LlamaRopeScaling.Create(8).Parameters, LlamaRopeScaling.Create(32, 1, 4, 8192).Parameters, LlamaRopeScaling.Create(4, 2, 8, 4096).Parameters])).ThrowIfFailed();
 
         // A YaRN that forgets its attention factor differs from the library's.
-        RopeScalingMethod noFactor = input => RopeScalings.Default("yarn")!(input) with { AttentionFactor = 1.0 };
+        var noFactor = TestKinds.RopeScaling("yarn", input => RopeScalings.Default("yarn")!.Create(input) with { AttentionFactor = 1.0 });
         var yarn = Conformance.CheckRopeScaling("yarn", noFactor);
         Check(!yarn.Passed && yarn.Failures.All(f => f.Check == "agrees with the library's method"), yarn.ToString());
     }
@@ -181,8 +181,8 @@ internal static partial class Tests
 
         // A scaling of an app's own type, checked with its parameters; a broken one's failing case saved and replayed.
         var suite = new RopeScalingSuite("app-scaled", [new JsonObject { ["factor"] = 2.0 }]);
-        RopeScalingMethod good = input => new RopeScalingResult([.. input.Frequencies.Select(f => f / 2)]);
-        RopeScalingMethod broken = input => new RopeScalingResult([.. input.Frequencies.Select(f => input.RotaryDim > 100 ? double.NaN : f / 2)]);
+        var good = TestKinds.RopeScaling("app-scaled", input => new RopeScalingResult([.. input.Frequencies.Select(f => f / 2)]));
+        var broken = TestKinds.RopeScaling("app-scaled", input => new RopeScalingResult([.. input.Frequencies.Select(f => input.RotaryDim > 100 ? double.NaN : f / 2)]));
         Conformance.Check(good, suite).ThrowIfFailed();
         var failing = Conformance.Check(broken, suite, new ContractCheckOptions { RandomCases = 40, Large = true });
         Check(!failing.Passed && failing.Failures.All(f => f.Check == "frequencies finite and positive" && f.Repro is not null), failing.ToString());

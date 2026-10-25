@@ -78,7 +78,7 @@ internal static class KernelBench
                 foreach (string format in packedFormats)
                 {
                     progress?.Invoke($"gemv {format} {k}x{n}");
-                    using var packed = PackedWeight.FromValues(format, weights, k, n, device);
+                    using var packed = PackedWeightFormats.Pack(format, weights, k, n, device);
                     double us = Micros(device, () =>
                     {
                         using var scope = new TensorScope();
@@ -119,9 +119,9 @@ internal static class KernelBench
     private static void Cached(MultiHeadAttention layer, Tensor input, DecodingContext context)
     {
         using var scope = new TensorScope();
-        context.BeginStep(input.Shape[1]);
+        using var step = context.OpenStep(input.Shape[1]);
         layer.ForwardCached(input, context);
-        context.EndStep(input.Shape[1]);
+        step.Complete();
     }
 
     /// <summary>Average time of <paramref name="run"/> in µs over <paramref name="repeats"/> calls, after one warm-up, the device drained before and after.</summary>

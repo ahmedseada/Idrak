@@ -30,12 +30,12 @@ public sealed partial class Linear : Module, ILinearLayer
         Bias = bias ? CreateParameter(new float[outFeatures], [outFeatures], device) : null;
     }
 
-    private Linear(int inFeatures, int outFeatures, Tensor? weight, PackedWeight? packed, Tensor? bias)
+    private Linear(int inFeatures, int outFeatures, Tensor? weight, IPackedWeight? packed, Tensor? bias)
     {
         InFeatures = inFeatures;
         OutFeatures = outFeatures;
         _weight = weight;
-        _packed = packed;
+        SetPacked(packed);
         Bias = bias;
     }
 
@@ -54,10 +54,10 @@ public sealed partial class Linear : Module, ILinearLayer
     }
 
     /// <summary>
-    /// A layer around existing packed weights (int8, 4-bit, bfloat16, or a format of your own derived from
-    /// <see cref="Abstraction.Generation.PackedWeight"/>); the layer takes ownership.
+    /// A layer around existing packed weights (int8, 4-bit, bfloat16, or a format of your own, an
+    /// <see cref="IPackedWeight"/>); the layer takes ownership.
     /// </summary>
-    public static Linear FromPacked(PackedWeight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, weight, bias);
+    public static Linear FromPacked(IPackedWeight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, weight, bias);
 
     /// <summary>A layer around existing int8 weights (see <see cref="ModuleExtensions.QuantizeInt8"/>); the layer takes ownership.</summary>
     public static Linear FromInt8(Int8Weight weight, Tensor? bias = null) => new(weight.Rows, weight.Columns, null, weight, bias);
@@ -99,9 +99,18 @@ public sealed partial class Linear : Module, ILinearLayer
         : $"{this} holds {_packed!.Description} weights (see {_packed.GetType().Name}); call {_packed.FloatMethod} on the model to get float weights back.");
 
     /// <summary>The packed weights (int8, int4, bfloat16 or a format of your own) when the layer holds them, else null (float weights).</summary>
-    public PackedWeight? PackedWeight => _packed;
+    public IPackedWeight? PackedWeight => _packed;
 
-    private PackedWeight? _packed;
+    /// <summary>
+    /// The packed weights when they are in a built-in format the device kernels read (int8, int4, bfloat16), else null
+    /// (float weights, or a format of one's own, which runs its own product).
+    /// </summary>
+    public IKernelPackedWeight? KernelWeight => _kernel;
+
+    // The packed weights, and what they can do, tested once when the layer takes them (SetPacked).
+    private IPackedWeight? _packed;
+    private IKernelPackedWeight? _kernel;
+    private bool _recordable;
 
     /// <summary>The 4-bit weights when the layer holds them (see <see cref="ModuleExtensions.QuantizeInt4"/>), else null.</summary>
     public Int4Weight? Int4 => _packed as Int4Weight;
@@ -209,7 +218,7 @@ public sealed partial class Linear : Module, ILinearLayer
         // Packed weights of one built-in kind (int8, int4, bfloat16): one pass where the device has one (few rows; for
         // prompts, one tensor-core launch over all the layers' columns). Formats of one's own have no Format and no such
         // pass: each layer runs its own product.
-        var format = layers[0].PackedWeight?.Format;
+        var format = layers[0]._kernel?.Format;
         bool packed = format is not null && !Autograd.IsEnabled && layers.Length is > 1 and <= 3
             && (rows <= capabilities.FewRows || AllWithoutBias(layers))                            // prompts: one launch
             && AllPacked(layers, k, format, withoutAdapters: true);
@@ -294,7 +303,7 @@ public sealed partial class Linear : Module, ILinearLayer
     {
         foreach (var l in layers)
         {
-            if (withoutAdapters && l.Adapter is not null || l.InFeatures != k || l.PackedWeight?.Format != format)
+            if (withoutAdapters && l.Adapter is not null || l.InFeatures != k || l._kernel?.Format != format)
             {
                 return false;
             }
@@ -343,7 +352,7 @@ public sealed partial class Linear : Module, ILinearLayer
     // Bfloat16 or 4-bit weights of its own (their products are Backend.BFloat16MatMul / Int4MatMul, which the epilogue's
     // default runs too; int8's tensor product chooses among several), a bias, nothing else in the layer, and no gradient.
     private bool EpilogueReady(Tensor input, Tensor? residual) =>
-        _packed is { Format: PackedFormat.BFloat16 or PackedFormat.Int4 } && Bias is not null && Adapter is null && _tiedTo is null && _softcap is null
+        _kernel is { Format: PackedFormat.BFloat16 or PackedFormat.Int4 } && Bias is not null && Adapter is null && _tiedTo is null && _softcap is null
         && input.Rank >= 2 && !(Autograd.IsEnabled && (input.RequiresGrad || Bias.RequiresGrad || residual is { RequiresGrad: true }));
 
     /// <summary>x·W, adapted by the adapter when one is attached.</summary>
@@ -366,7 +375,12 @@ public sealed partial class Linear : Module, ILinearLayer
     float[] ILinearLayer.WeightValues() => WeightValues();
 
     internal Tensor BaseProduct(Tensor input) =>
-        _packed is { } packed ? packed.MatMul(input) : _tiedTo is { } e ? TiedProduct(input, e.Weight) : input.MatMul(Weight);
+        _packed is { } packed ? PackedProduct(packed, input) : _tiedTo is { } e ? TiedProduct(input, e.Weight) : input.MatMul(Weight);
+
+    // The packed weights' own product; while a step is recorded as a device graph, only one that queues device work alone
+    // (IRecordable), so a step with any other is run as it is.
+    private Tensor PackedProduct(IPackedWeight packed, Tensor input) => _recordable || !ComputeGraph.IsCapturing ? packed.MatMul(input)
+        : throw new NotSupportedException($"{packed.Name} weights are not recordable (IRecordable), so the step is not recorded as a graph.");
 
     // The tied head (x · Eᵀ). While the table is frozen, large products read a transposed bfloat16 copy made once (the
     // tensor-core kernels would otherwise copy the whole table transposed on every call; bfloat16 is what they multiply in
@@ -403,7 +417,7 @@ public sealed partial class Linear : Module, ILinearLayer
             return true;
         }
 
-        if (_tiedTo is not null || _packed is { Float8Copy: false } || _weight is { RequiresGrad: true })
+        if (_tiedTo is not null || _packed is not null && _kernel is not { Float8Copy: true } || _weight is { RequiresGrad: true })
         {
             return false;
         }
@@ -491,7 +505,7 @@ public sealed partial class Linear : Module, ILinearLayer
         Untie();
         DequantizeInt8(trainable: false);
         ToFloat32(trainable: false);
-        _packed = BFloat16Weight.Convert(Weight);
+        SetPacked(BFloat16Weight.Convert(Weight));
         _weight!.Dispose();
         _weight = null;
     }
@@ -512,7 +526,7 @@ public sealed partial class Linear : Module, ILinearLayer
         }
 
         _packed.Dispose();
-        _packed = null;
+        SetPacked(null);
     }
 
     // Loading packed weights (Module.Load): room for them, allocated without quantizing the current weights that the
@@ -521,7 +535,7 @@ public sealed partial class Linear : Module, ILinearLayer
     {
         if (Int8 is null)
         {
-            _packed = Int8Weight.Empty(InFeatures, OutFeatures, ReleaseWeights());
+            SetPacked(Int8Weight.Empty(InFeatures, OutFeatures, ReleaseWeights()));
         }
     }
 
@@ -529,7 +543,7 @@ public sealed partial class Linear : Module, ILinearLayer
     {
         if (Int4 is null)
         {
-            _packed = Int4Weight.Empty(InFeatures, OutFeatures, ReleaseWeights());
+            SetPacked(Int4Weight.Empty(InFeatures, OutFeatures, ReleaseWeights()));
         }
     }
 
@@ -537,8 +551,16 @@ public sealed partial class Linear : Module, ILinearLayer
     {
         if (BFloat16 is null)
         {
-            _packed = BFloat16Weight.Empty(InFeatures, OutFeatures, ReleaseWeights());
+            SetPacked(BFloat16Weight.Empty(InFeatures, OutFeatures, ReleaseWeights()));
         }
+    }
+
+    // Takes packed weights (or none), testing once what they can do.
+    private void SetPacked(IPackedWeight? packed)
+    {
+        _packed = packed;
+        _kernel = packed as IKernelPackedWeight;
+        _recordable = packed is IRecordable;
     }
 
     // Releases the weights (a tied layer only lets go of the table) and returns their device.
@@ -552,7 +574,7 @@ public sealed partial class Linear : Module, ILinearLayer
         _weight?.Dispose();
         _weight = null;
         _packed?.Dispose();
-        _packed = null;
+        SetPacked(null);
         return device;
     }
 
@@ -566,7 +588,7 @@ public sealed partial class Linear : Module, ILinearLayer
         Untie();
         DequantizeInt8(trainable: false);
         ToFloat32(trainable: false);
-        _packed = Int4Weight.Quantize(Weight);
+        SetPacked(Int4Weight.Quantize(Weight));
         _weight!.Dispose();
         _weight = null;
     }
@@ -580,7 +602,7 @@ public sealed partial class Linear : Module, ILinearLayer
 
         Untie();
         ToFloat32(trainable: false);
-        _packed = Int8Weight.Quantize(Weight);
+        SetPacked(Int8Weight.Quantize(Weight));
         _weight!.Dispose();
         _weight = null;
     }
@@ -598,7 +620,7 @@ public sealed partial class Linear : Module, ILinearLayer
         }
 
         q.Dispose();
-        _packed = null;
+        SetPacked(null);
     }
 
     internal void MergeAdapter()

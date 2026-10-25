@@ -721,7 +721,7 @@ public sealed class NetworkBuilder : INetworkBuilder
 
         bool describable = _describable;
         int count = _steps.Count;
-        op(this, new NetworkOpArguments(step));
+        op.Add(this, new NetworkOpArguments(step));
         if (_describable == describable && _steps.Skip(count).All(s => s.Step is not null))
         {
             return this;                                                    // made of described steps (the built-ins): they describe it

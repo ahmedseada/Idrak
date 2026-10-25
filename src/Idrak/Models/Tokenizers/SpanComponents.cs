@@ -20,11 +20,11 @@ internal static class SpanComponents
 {
     // The normalizer a tokenizer.json names: the app's component when one is registered for its type, else the built-in.
     public static Action<NormalizedText> Normalizer(JsonObject spec) =>
-        TokenizerComponents.FindNormalizer((string?)spec["type"]) is { } create ? create(spec).Normalize : BuiltInNormalizer(spec);
+        TokenizerComponents.FindNormalizer((string?)spec["type"]) is { } create ? create.Create(spec).Normalize : BuiltInNormalizer(spec);
 
     // The pre-tokenizer a tokenizer.json names: the app's component when one is registered for its type, else the built-in.
     public static Action<PreTokenizedText, bool> PreTokenizer(JsonObject spec) =>
-        TokenizerComponents.FindPreTokenizer((string?)spec["type"]) is { } create ? create(spec).PreTokenize : BuiltInPreTokenizer(spec);
+        TokenizerComponents.FindPreTokenizer((string?)spec["type"]) is { } create ? create.Create(spec).PreTokenize : BuiltInPreTokenizer(spec);
 
     // The library's own normalizer of the spec's type (inside a sequence, registered types still answer for themselves).
     public static Action<NormalizedText> BuiltInNormalizer(JsonObject spec)

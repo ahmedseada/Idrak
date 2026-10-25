@@ -551,7 +551,7 @@ internal static partial class Tests
                     using (Autograd.NoGrad())
                     using (var scope = new TensorScope())
                     {
-                        var together = Linear.MatMulPackedMany(input, layers[0].PackedWeight!.Format!.Value, layers);
+                        var together = Linear.MatMulPackedMany(input, layers[0].KernelWeight!.Format, layers);
                         Check(together is not null, $"{format} {string.Join('+', widths)}: one launch");
                         for (int j = 0; j < layers.Length; j++)
                         {
@@ -1629,7 +1629,7 @@ internal static partial class Tests
                     ("bfloat16 weights + bias + residual", () => Tensor.MatMulPackedEpilogue(input, bf16, bias, residual: residual).ToArray(), Width),
                     ("three bfloat16 layers in one launch", () =>
                     {
-                        var outputs = Linear.MatMulPackedMany(input, layers[0].PackedWeight!.Format!.Value, layers);
+                        var outputs = Linear.MatMulPackedMany(input, layers[0].KernelWeight!.Format, layers);
                         Check(outputs is not null, "three bfloat16 layers: one launch");
                         return [.. outputs!.SelectMany(y => y.ToArray())];
                     }, widths.Sum()),

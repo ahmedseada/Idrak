@@ -310,8 +310,8 @@ internal static partial class Tests
         foreach (var (name, spec) in specs)
         {
             var family = PretrainedArchitectures.Get(name);
-            Check(family.Config is not null, $"{name} writes configurations");
-            var config = family.Config!(spec);
+            Check(family is IConfigWritingArchitecture, $"{name} writes configurations");
+            var config = ((IConfigWritingArchitecture)family).Config(spec);
             var back = family.Spec(config, []);
             Check(JsonNode.DeepEquals(back.ToJson(), spec.ToJson()), $"{name}: the spec reads back the same\n{spec.ToJson()}\n{back.ToJson()}");
         }
@@ -324,10 +324,10 @@ internal static partial class Tests
             ("Qwen2ForCausalLM", llama, "Qwen2 without its q/k/v biases"),
         })
         {
-            Throws<NotSupportedException>(() => PretrainedArchitectures.Get(name).Config!(spec), what);
+            Throws<NotSupportedException>(() => ((IConfigWritingArchitecture)PretrainedArchitectures.Get(name)).Config(spec), what);
         }
 
-        Check(PretrainedArchitectures.Get("Gemma3ForCausalLM").Config is null && PretrainedArchitectures.Get("MixtralForCausalLM").Config is null,
+        Check(PretrainedArchitectures.Get("Gemma3ForCausalLM") is not IConfigWritingArchitecture && PretrainedArchitectures.Get("MixtralForCausalLM") is not IConfigWritingArchitecture,
             "families read from checkpoints only write no configuration");
         var template = JsonNode.Parse(File.ReadAllText(Path.Combine(TinyLlama, "tokenizer_config.json")))!["chat_template"]!.GetValue<string>();
         Check(template == ModelFiles.ChatMLWithParts, "the created models' template is the reference's");
@@ -438,12 +438,10 @@ internal static partial class Tests
                 QkvBias = true, OutputBias = true, FeedForwardBias = true, TieEmbeddings = true,
             };
             const string Name = "TestGptForCausalLM";
-            PretrainedArchitectures.Register(Name, new PretrainedArchitecture
-            {
-                Spec = (config, _) => DecoderSpec.FromJson(config["idrak_spec"]!.AsObject()),
-                TensorName = name => name,
-                Config = spec => new JsonObject { ["model_type"] = "test-gpt" },
-            });
+            PretrainedArchitectures.Register(Name, TestKinds.ConfigArchitecture(
+                (config, _) => DecoderSpec.FromJson(config["idrak_spec"]!.AsObject()),
+                name => name,
+                spec => new JsonObject { ["model_type"] = "test-gpt" }));
             try
             {
                 string gptFolder = Path.Combine(folder, "gpt");

@@ -109,10 +109,10 @@ public static class GgufModel
     internal static ITensorStore OpenTensors(string folder) => new GgufTensors(GgufFile.Open(SourceOf(folder)));
 
     // The Hugging Face architecture of a file: the family's, or its one with experts when the file has experts.
-    private static string HuggingFaceOf(GgufFile file, string arch, GgufArchitecture architecture) =>
+    private static string HuggingFaceOf(GgufFile file, string arch, IGgufArchitecture architecture) =>
         file.Get($"{arch}.expert_count", 0) > 0 ? architecture.WithExperts ?? architecture.HuggingFace : architecture.HuggingFace;
 
-    private static JsonObject Config(GgufFile file, string arch, GgufArchitecture architecture, int vocabulary, List<string> notes)
+    private static JsonObject Config(GgufFile file, string arch, IGgufArchitecture architecture, int vocabulary, List<string> notes)
     {
         string hfArchitecture = HuggingFaceOf(file, arch, architecture);
         int dim = file.Get($"{arch}.embedding_length", 0), heads = file.Get($"{arch}.attention.head_count", 0);
@@ -179,7 +179,7 @@ public static class GgufModel
         }
 
         // The family's own keys (a RoPE scaling it stores its own way, …); the file's generic scaling keys only when it set none.
-        architecture.Configure?.Invoke(file, config, notes);
+        architecture.Configure(file, config, notes);
         bool own = config["rope_scaling"] is not null;
         string scaling = file.Get($"{arch}.rope.scaling.type", "none");
         double factor = file.Get($"{arch}.rope.scaling.factor", 1.0);
@@ -221,7 +221,7 @@ public static class GgufModel
     internal static void WriteTokenizer(GgufFile file, string folder, string[] tokens, List<string> notes)
     {
         string model = file.Get("tokenizer.ggml.model", "");
-        var definition = GgufTokenizers.Get(model)(file, tokens, notes);
+        var definition = GgufTokenizers.Get(model).Create(new GgufTokenizerRequest(file, tokens, notes));
         TokenizerJsonReader.Write(definition, Path.Combine(folder, "tokenizer.json"));
 
         string? Token(string key) => file.Metadata.TryGetValue(key, out var v) && Convert.ToInt64(v, System.Globalization.CultureInfo.InvariantCulture) is var id
@@ -305,10 +305,9 @@ public static class GgufModel
             // Experts' tensors are named through the Hugging Face family's own names (Mixtral's and Qwen's differ).
             var family = architecture is null ? null
                 : PretrainedArchitectures.Names.Contains(HuggingFaceOf(file, _arch, architecture)) ? PretrainedArchitectures.Get(HuggingFaceOf(file, _arch, architecture)) : null;
-            var tensorName = architecture?.TensorName ?? GgufArchitecture.CommonTensorName;
             foreach (var (name, info) in file.Tensors)
             {
-                if (tensorName(name) is { } hf)
+                if ((architecture is null ? GgufArchitecture.CommonTensorName(name) : architecture.TensorName(name)) is { } hf)
                 {
                     _names[hf] = new Source(name, -1, info.Shape);
                 }
@@ -318,11 +317,11 @@ public static class GgufModel
                 }
             }
 
-            if (architecture?.StoredOffset is { } offset)
+            if (architecture is not null)
             {
                 foreach (var (hf, source) in _names.ToList())
                 {
-                    if (offset(hf) is var added && added != 0)
+                    if (architecture.StoredOffset(hf) is var added && added != 0)
                     {
                         _names[hf] = source with { Offset = added };
                     }
@@ -334,7 +333,7 @@ public static class GgufModel
         // (ffn_gate_exps, ffn_up_exps, ffn_down_exps: [experts, rows, columns], one Hugging Face tensor per expert) or one
         // by one (ffn_gate.j, older Mixtral files), and the shared expert (ffn_*_shexp) and its gate (ffn_gate_inp_shexp,
         // stored as a vector).
-        private void AddExperts(string name, GgufTensorInfo info, PretrainedArchitecture family)
+        private void AddExperts(string name, GgufTensorInfo info, IPretrainedArchitecture family)
         {
             void Add(string idrak, int expert, int[] shape)
             {

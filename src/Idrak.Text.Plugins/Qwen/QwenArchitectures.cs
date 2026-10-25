@@ -19,27 +19,27 @@ public static class QwenArchitectures
     public const string SplitPattern = @"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+";
 
     /// <summary>Qwen2ForCausalLM: the common keys with query, key and value biases, written back as config.json with model_type "qwen2".</summary>
-    public static PretrainedArchitecture Qwen2() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec with { QkvBias = true }, "qwen2");
+    public static IPretrainedArchitecture Qwen2() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec with { QkvBias = true }, "qwen2");
 
     /// <summary>Qwen3ForCausalLM: the common keys with q/k norm, written back as config.json with model_type "qwen3".</summary>
-    public static PretrainedArchitecture Qwen3() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec with { QkNorm = true }, "qwen3");
+    public static IPretrainedArchitecture Qwen3() => PretrainedFamilies.CommonArchitecture((config, spec, _) => spec with { QkNorm = true }, "qwen3");
 
     /// <summary>Qwen2MoeForCausalLM: the experts' keys (<see cref="PretrainedFamilies.ExpertSpec"/>, not renormalized unless norm_topk_prob says so) with query, key and value biases.</summary>
-    public static PretrainedArchitecture Qwen2Moe() => new() { Spec = (config, notes) => PretrainedFamilies.ExpertSpec(config, notes, normalizeTopK: false) with { QkvBias = true }, TensorName = MoeTensorName };
+    public static IPretrainedArchitecture Qwen2Moe() => PretrainedFamilies.Architecture((config, notes) => PretrainedFamilies.ExpertSpec(config, notes, normalizeTopK: false) with { QkvBias = true }, MoeTensorName);
 
     /// <summary>Qwen3MoeForCausalLM: the experts' keys (<see cref="PretrainedFamilies.ExpertSpec"/>, not renormalized unless norm_topk_prob says so) with q/k norm.</summary>
-    public static PretrainedArchitecture Qwen3Moe() => new() { Spec = (config, notes) => PretrainedFamilies.ExpertSpec(config, notes, normalizeTopK: false) with { QkNorm = true }, TensorName = MoeTensorName };
+    public static IPretrainedArchitecture Qwen3Moe() => PretrainedFamilies.Architecture((config, notes) => PretrainedFamilies.ExpertSpec(config, notes, normalizeTopK: false) with { QkNorm = true }, MoeTensorName);
 
     /// <summary>
     /// llama.cpp's architecture names and their mappings: "qwen2", "qwen3" (no interleaved query and key rows), "qwen2moe"
     /// (experts' weights not renormalized unless the file says so) and "qwen3moe" (renormalized unless the file says not).
     /// </summary>
-    public static IReadOnlyList<(string Name, GgufArchitecture Architecture)> Gguf() =>
+    public static IReadOnlyList<(string Name, IGgufArchitecture Architecture)> Gguf() =>
     [
-        ("qwen2", new() { HuggingFace = QwenPlugin.Qwen2ForCausalLM, InterleavedQueryKeys = false }),
-        ("qwen3", new() { HuggingFace = QwenPlugin.Qwen3ForCausalLM, InterleavedQueryKeys = false }),
-        ("qwen2moe", new() { HuggingFace = QwenPlugin.Qwen2MoeForCausalLM, InterleavedQueryKeys = false, NormalizeTopK = false }),
-        ("qwen3moe", new() { HuggingFace = QwenPlugin.Qwen3MoeForCausalLM, InterleavedQueryKeys = false, NormalizeTopK = true }),
+        ("qwen2", new GgufArchitecture { HuggingFace = QwenPlugin.Qwen2ForCausalLM, InterleavedQueryKeys = false }),
+        ("qwen3", new GgufArchitecture { HuggingFace = QwenPlugin.Qwen3ForCausalLM, InterleavedQueryKeys = false }),
+        ("qwen2moe", new GgufArchitecture { HuggingFace = QwenPlugin.Qwen2MoeForCausalLM, InterleavedQueryKeys = false, NormalizeTopK = false }),
+        ("qwen3moe", new GgufArchitecture { HuggingFace = QwenPlugin.Qwen3MoeForCausalLM, InterleavedQueryKeys = false, NormalizeTopK = true }),
     ];
 
     /// <summary>

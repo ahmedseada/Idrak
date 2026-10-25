@@ -52,8 +52,22 @@ public static class MistralPlugin
             Part(() => PretrainedArchitectures.Register(MistralForCausalLM, MistralArchitectures.Mistral()), () => PretrainedArchitectures.Unregister(MistralForCausalLM));
             Part(() => PretrainedArchitectures.Register(MixtralForCausalLM, MistralArchitectures.Mixtral()), () => PretrainedArchitectures.Unregister(MixtralForCausalLM));
             Part(() => GgufPreTokenizers.Register(PreTokenizer, MistralArchitectures.TekkenPattern), () => GgufPreTokenizers.Unregister(PreTokenizer));
-            Part(() => ToolCallFormats.Register(ToolCallFormat, p => p.Shows(MistralToolCallParser.Marker), c => new MistralToolCallParser(c)),
+            Part(() => ToolCallFormats.Register(new MistralToolCallFormat()),
                 () => ToolCallFormats.Unregister(ToolCallFormat));
         }
     }
+}
+
+// The family's tool-call format, registered in ToolCallFormats under its name.
+internal sealed class MistralToolCallFormat : IToolCallFormat
+{
+    public string Name => MistralPlugin.ToolCallFormat;
+
+    public string Summary => "Mistral's [TOOL_CALLS] marker before the calls";
+
+    public IReadOnlySet<string> Keys => OptionKeys.None;
+
+    public bool Detect(ToolCallProbe probe) => probe.Shows(MistralToolCallParser.Marker);
+
+    public IToolCallParser Create(ToolCallContext context) => new MistralToolCallParser(context);
 }

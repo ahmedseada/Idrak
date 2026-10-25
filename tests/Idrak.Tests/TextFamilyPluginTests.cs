@@ -245,7 +245,7 @@ internal static partial class Tests
             Check(MistralPlugin.IsRegistered && LlamaPlugin.IsRegistered && GgufArchitectures.Find(LlamaPlugin.GgufName) is { WithExperts: MistralPlugin.MixtralForCausalLM }
                   && MistralPlugin.Architectures.All(n => PretrainedArchitectures.Origin(n) == TextPlugins.Package && PretrainedArchitectures.Names.Count(m => m == n) == 1)
                   && GgufPreTokenizers.TryGet(MistralPlugin.PreTokenizer, out string? tekken) && tekken == MistralArchitectures.TekkenPattern
-                  && Formats.Names.Count(n => n == MistralPlugin.ToolCallFormat) == 1 && PretrainedArchitectures.Get(MistralPlugin.MistralForCausalLM).Config is not null,
+                  && Formats.Names.Count(n => n == MistralPlugin.ToolCallFormat) == 1 && PretrainedArchitectures.Get(MistralPlugin.MistralForCausalLM) is IConfigWritingArchitecture,
                 "Register (twice) adds the two architectures, tekken and the tool-call format once, and Llama's mapping it needs");
             using (var model = PretrainedModel.Load(TestData("gguf/tiny-llama-hf"), new PretrainedOptions { Device = Device.Cpu, Architecture = MistralPlugin.MistralForCausalLM }))
             {

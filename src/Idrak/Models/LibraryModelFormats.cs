@@ -41,9 +41,21 @@ internal static class LibraryModelFormats
 
     public static void RegisterTokenizerModels()
     {
-        TokenizerModels.Register(TokenizerModels.Bpe, BpeTokenizer.FromDefinition);
-        TokenizerModels.Register(TokenizerModels.WordPiece, WordPieceTokenizer.FromDefinition);
-        TokenizerModels.Register(UnigramTokenizer.Type, UnigramTokenizer.FromDefinition);
+        TokenizerModels.Register(new ModelKind(TokenizerModels.Bpe, "byte-pair encoding: byte-level, and SentencePiece-style with byte fallback", BpeTokenizer.FromDefinition));
+        TokenizerModels.Register(new ModelKind(TokenizerModels.WordPiece, "WordPiece (BERT)", WordPieceTokenizer.FromDefinition));
+        TokenizerModels.Register(new ModelKind(UnigramTokenizer.Type, "SentencePiece's unigram language model", UnigramTokenizer.FromDefinition));
+    }
+
+    // A built-in tokenizer model, registered under its model type.
+    private sealed class ModelKind(string name, string summary, Func<TokenizerDefinition, TokenizerOptions, IPretrainedTokenizer> build) : ITokenizerModelKind
+    {
+        public string Name => name;
+
+        public string Summary => summary;
+
+        public IReadOnlySet<string> Keys => OptionKeys.None;
+
+        public IPretrainedTokenizer Create(TokenizerModelRequest request) => build(request.Definition, request.Options);
     }
 
     // Asked in this order: a folder with several files reads tokenizer.json first, then a SentencePiece model, then vocab.txt.
@@ -56,10 +68,10 @@ internal static class LibraryModelFormats
 
     public static void RegisterGgufTokenizers()
     {
-        GgufTokenizers.Register("gpt2", GgufTokenizerFormats.Gpt2);
-        GgufTokenizers.Register("llama", GgufTokenizerFormats.Llama);
-        GgufTokenizers.Register("t5", GgufTokenizerFormats.T5);
-        GgufTokenizers.Register("bert", GgufTokenizerFormats.Bert);
+        GgufTokenizers.Register(new GgufTokenizerFormats.Converter("gpt2", "byte-level BPE (Llama 3, Qwen, Mistral Nemo, …)", GgufTokenizerFormats.Gpt2));
+        GgufTokenizers.Register(new GgufTokenizerFormats.Converter("llama", "SentencePiece BPE (Llama 2, Mistral 7B, TinyLlama, …)", GgufTokenizerFormats.Llama));
+        GgufTokenizers.Register(new GgufTokenizerFormats.Converter("t5", "SentencePiece Unigram", GgufTokenizerFormats.T5));
+        GgufTokenizers.Register(new GgufTokenizerFormats.Converter("bert", "WordPiece", GgufTokenizerFormats.Bert));
     }
 
     // ChatML: the turn layout Idrak's own created models use (ModelFiles.ChatMLWithParts) and many families share, so no

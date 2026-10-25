@@ -29,7 +29,7 @@ public sealed class IdrakVisionFamily : IVisionFamily
     public string Name => Architecture;
 
     /// <inheritdoc />
-    public PretrainedVision? Read(VisionCheckpoint checkpoint)
+    public IPretrainedVision? Read(VisionCheckpoint checkpoint)
     {
         ArgumentNullException.ThrowIfNull(checkpoint);
         var config = checkpoint.Config;

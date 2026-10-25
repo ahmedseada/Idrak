@@ -442,63 +442,89 @@ public sealed record PositionBiasRequest(int Heads, JsonObject Settings, Device?
     Func<string, IReadOnlyList<int>, float[]?>? Weights = null);
 
 /// <summary>
-/// The kinds of attention position bias, by name. The library registers "relative" (<see cref="RelativePositionBias"/>:
-/// settings <c>max_distance</c>, default 128, and <c>bidirectional</c>, default true) and "bucketed"
-/// (<see cref="BucketedPositionBias"/>: settings <c>num_buckets</c>, default 32, <c>max_distance</c>, default 128, and
-/// <c>bidirectional</c>, default true); a family that needs another registers its own from its plug-in. A kind is made
-/// once per model and its tensors trained with it, so an app's kind and the library's are never mixed in one model: the
-/// registry has no fallback.
+/// A kind of attention position bias, registered by its <see cref="IKind.Name"/> in <see cref="AttentionPositionBiases"/>:
+/// the settings it reads (<see cref="IConfigurableKind.Keys"/>), the trained tensors it reads by name
+/// (<see cref="Weights"/>, through <see cref="PositionBiasRequest.Weights"/>), and the bias it makes for a request.
+/// </summary>
+public interface IPositionBiasKind : IKind<PositionBiasRequest, IAttentionPositionBias>
+{
+    /// <summary>The names of the trained tensors it reads ("table" for the library's kinds), in the kind's own naming.</summary>
+    IReadOnlyList<string> Weights { get; }
+}
+
+/// <summary>
+/// The kinds of attention position bias, by name (<see cref="IPositionBiasKind"/>). The library registers "relative"
+/// (<see cref="RelativePositionBias"/>: settings <c>max_distance</c>, default 128, and <c>bidirectional</c>, default
+/// true) and "bucketed" (<see cref="BucketedPositionBias"/>: settings <c>num_buckets</c>, default 32,
+/// <c>max_distance</c>, default 128, and <c>bidirectional</c>, default true); a family that needs another registers its
+/// own from its plug-in. A kind is made once per model and its tensors trained with it, so an app's kind and the
+/// library's are never mixed in one model: the registry has no fallback.
 /// </summary>
 public static class AttentionPositionBiases
 {
-    private static readonly SlotTable<string, Func<PositionBiasRequest, IAttentionPositionBias>> Registry = BuiltIn();
+    private static readonly KindTable<IPositionBiasKind> Registry = BuiltIn();
 
-    private static SlotTable<string, Func<PositionBiasRequest, IAttentionPositionBias>> BuiltIn()
+    private static KindTable<IPositionBiasKind> BuiltIn()
     {
-        var table = new SlotTable<string, Func<PositionBiasRequest, IAttentionPositionBias>>(nameof(AttentionPositionBiases), comparer: StringComparer.Ordinal,
+        var table = new KindTable<IPositionBiasKind>(nameof(AttentionPositionBiases), "Attention position bias", "register it with AttentionPositionBiases.Register",
+            comparer: StringComparer.Ordinal,
             unguarded: "a bias is made once per model and its tensors trained with it, so an app's kind and the library's cannot be mixed in one model");
-        table.RegisterDefault(RelativePositionBias.KindName, Relative);
-        table.RegisterDefault(BucketedPositionBias.KindName, Bucketed);
+        table.RegisterDefault(new BuiltInKind(RelativePositionBias.KindName, "a learned bias per head for each distance up to max_distance (max_distance, bidirectional)",
+            new OptionKeys("max_distance", "bidirectional"), Relative));
+        table.RegisterDefault(new BuiltInKind(BucketedPositionBias.KindName, "T5's learned bias per head for each bucket of distances (num_buckets, max_distance, bidirectional)",
+            new OptionKeys("num_buckets", "max_distance", "bidirectional"), Bucketed));
         return table;
     }
 
-    /// <summary>Registers the kind <paramref name="name"/>; under a library name it takes the library's place until <see cref="Unregister"/>.</summary>
+    /// <summary>Registers <paramref name="kind"/> under its <see cref="IKind.Name"/>; under a library name it takes the library's place until <see cref="Unregister"/>.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(string name, Func<PositionBiasRequest, IAttentionPositionBias> create)
-    {
-        ArgumentException.ThrowIfNullOrEmpty(name);
-        ArgumentNullException.ThrowIfNull(create);
-        Registry.Register(name, create, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(IPositionBiasKind kind) => Registry.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's kind <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Registry.Unregister(name);
 
     /// <summary>The registered kinds.</summary>
-    public static IReadOnlyCollection<string> Names => Registry.Keys;
+    public static IReadOnlyCollection<string> Names => Registry.Names;
 
-    /// <summary>What makes the kind <paramref name="name"/>.</summary>
+    /// <summary>The kind <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name; the message lists the registered ones.</exception>
-    public static Func<PositionBiasRequest, IAttentionPositionBias> Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"Attention position bias '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); "
+    public static IPositionBiasKind Get(ReadOnlySpan<char> name) => Registry.Find(name)
+        ?? throw new NotSupportedException($"Attention position bias '{name}' is not registered (registered: {string.Join(", ", Registry.Names)}); "
                                            + "register it with AttentionPositionBiases.Register (the plug-in that brings the kind does).");
 
     /// <summary>A bias of the kind <paramref name="name"/> for <paramref name="request"/>.</summary>
     /// <exception cref="NotSupportedException">The kind is not registered.</exception>
     /// <exception cref="ArgumentException">A setting is invalid; the message names it.</exception>
-    public static IAttentionPositionBias Create(string name, PositionBiasRequest request)
+    public static IAttentionPositionBias Create(ReadOnlySpan<char> name, PositionBiasRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        var bias = Get(name)(request);
+        var kind = Get(name);
+        var bias = kind.Create(request);
         return bias.Heads == request.Heads ? bias
-            : throw new InvalidOperationException($"Attention position bias '{name}' made a bias of {bias.Heads} heads; {request.Heads} were asked for.");
+            : throw new InvalidOperationException($"Attention position bias '{kind.Name}' made a bias of {bias.Heads} heads; {request.Heads} were asked for.");
     }
 
     /// <summary>The library's kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
-    public static Func<PositionBiasRequest, IAttentionPositionBias>? Default(string name) => Registry.Default(name);
+    public static IPositionBiasKind? Default(string name) => Registry.Default(name);
 
     /// <summary>Who registered the kind <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
+
+    // A library kind: its settings' keys and its one trained tensor, "table".
+    private sealed class BuiltInKind(string name, string summary, OptionKeys keys, Func<PositionBiasRequest, IAttentionPositionBias> create) : IPositionBiasKind
+    {
+        private static readonly string[] Table = ["table"];
+
+        public string Name => name;
+
+        public string Summary => summary;
+
+        public IReadOnlySet<string> Keys => keys;
+
+        public IReadOnlyList<string> Weights => Table;
+
+        public IAttentionPositionBias Create(PositionBiasRequest request) => create(request);
+    }
 
     // "relative": max_distance (a positive whole number, default 128) and bidirectional (default true).
     private static RelativePositionBias Relative(PositionBiasRequest request)

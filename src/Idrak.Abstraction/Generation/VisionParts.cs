@@ -7,49 +7,81 @@ namespace Idrak.Abstraction.Generation;
 
 /// <summary>
 /// The vision part of a vision-language checkpoint as its family reads it (core's <c>IVisionFamily.Read</c>): everything
-/// the rest of the library needs to put images into the prompt, and nothing about how the family builds its encoder. A
-/// family derives from it and adds what is its own (Gemma 3's <c>Gemma3Vision</c>: SigLIP's configuration, the projector's
-/// pooling, the image token ids). The loaded model carries it (<c>PretrainedModel.Vision</c>); generation and fine-tuning
-/// read it.
+/// the rest of the library needs to put images into the prompt, and nothing about how the family builds its encoder. The
+/// loaded model carries it (<c>PretrainedModel.Vision</c>); generation and fine-tuning read it. A family that lets parts
+/// of it train implements <see cref="IVisionTuningPart"/> too. <see cref="PretrainedVision"/> is a base with the common
+/// defaults.
 /// </summary>
-public abstract class PretrainedVision
+public interface IPretrainedVision
 {
     /// <summary>The family it was read by: its name in core's <c>VisionFamilies</c> (the architecture name).</summary>
-    public abstract string Family { get; }
+    string Family { get; }
 
     /// <summary>The width of the image features: the text decoder's (one embedding per image token).</summary>
-    public abstract int Width { get; }
+    int Width { get; }
 
     /// <summary>How the rendered prompt's image markers expand to the image tokens, with the family's token ids.</summary>
-    public abstract IImagePromptFormat PromptFormat { get; }
+    IImagePromptFormat PromptFormat { get; }
 
     /// <summary>How the image tokens attend in the prompt (a rule of <see cref="ImageAttentionRules"/>, the family's choice).</summary>
-    public abstract IImageAttentionRule Attention { get; }
+    IImageAttentionRule Attention { get; }
 
     /// <summary>The checkpoint tensors (by their stored names) the vision part reads: they do not count as unused.</summary>
-    public abstract IReadOnlyCollection<string> StoredTensors { get; }
+    IReadOnlyCollection<string> StoredTensors { get; }
+
+    /// <summary>
+    /// The keys of the <see cref="VisionOptions"/> this family's encoder takes (at creation,
+    /// <see cref="VisionEncoderOptions.VisionOptions"/>, and per request), made once (an <see cref="OptionKeys"/>). Callers
+    /// check options against them early (<see cref="VisionOptions.ThrowIfUnknown"/>); the encoder checks the values.
+    /// </summary>
+    IReadOnlySet<string> VisionOptionKeys { get; }
 
     /// <summary>
     /// Builds the family's vision encoder (with its own preprocessing) from the checkpoint: decoded images in, each
     /// image's features out (<see cref="IVisionEncoder"/>). Dispose it when done.
     /// </summary>
-    public abstract IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null);
-
-    /// <summary>
-    /// The keys of the <see cref="VisionOptions"/> this family's encoder takes (at creation,
-    /// <see cref="VisionEncoderOptions.VisionOptions"/>, and per request); none unless the family says. Callers check
-    /// options against them early (<see cref="VisionOptions.ThrowIfUnknown"/>); the encoder checks the values.
-    /// </summary>
-    public virtual IReadOnlyCollection<string> VisionOptionKeys => [];
+    IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null);
 
     /// <summary>One line for <c>idrak show</c> and messages: the family's encoder and image tokens.</summary>
+    string Describe();
+}
+
+/// <summary>
+/// A base for a family's vision part (<see cref="IPretrainedVision"/>): a family derives from it and adds what is its own
+/// (Gemma 3's <c>Gemma3Vision</c>: SigLIP's configuration, the projector's pooling, the image token ids). It takes no
+/// vision options unless the family says.
+/// </summary>
+public abstract class PretrainedVision : IPretrainedVision
+{
+    /// <inheritdoc />
+    public abstract string Family { get; }
+
+    /// <inheritdoc />
+    public abstract int Width { get; }
+
+    /// <inheritdoc />
+    public abstract IImagePromptFormat PromptFormat { get; }
+
+    /// <inheritdoc />
+    public abstract IImageAttentionRule Attention { get; }
+
+    /// <inheritdoc />
+    public abstract IReadOnlyCollection<string> StoredTensors { get; }
+
+    /// <inheritdoc />
+    public abstract IVisionEncoder CreateEncoder(VisionEncoderOptions? options = null);
+
+    /// <summary>The keys of the <see cref="VisionOptions"/> this family's encoder takes; none unless the family says.</summary>
+    public virtual IReadOnlySet<string> VisionOptionKeys => OptionKeys.None;
+
+    /// <inheritdoc />
     public virtual string Describe() => $"{Family}, {PromptFormat.Name}, image tokens attend: {Attention.Name}";
 
     /// <inheritdoc />
     public override string ToString() => Describe();
 }
 
-/// <summary>How <see cref="PretrainedVision.CreateEncoder"/> builds an encoder.</summary>
+/// <summary>How <see cref="IPretrainedVision.CreateEncoder"/> builds an encoder.</summary>
 public sealed record VisionEncoderOptions
 {
     /// <summary>Where it runs (<see cref="Device.Default"/> when null; pass the language model's device).</summary>
@@ -59,7 +91,7 @@ public sealed record VisionEncoderOptions
     public bool Grayscale { get; init; }
 
     /// <summary>
-    /// The family's own options for every image the encoder reads (its keys, <see cref="PretrainedVision.VisionOptionKeys"/>),
+    /// The family's own options for every image the encoder reads (its keys, <see cref="IPretrainedVision.VisionOptionKeys"/>),
     /// over the family's defaults from the checkpoint's files; a request's options go over these per key. Null: none.
     /// </summary>
     /// <remarks>The family refuses a key it does not take, naming those it does, when it builds the encoder.</remarks>
@@ -111,13 +143,13 @@ public enum EncoderWeights
 
 /// <summary>
 /// The parts of a vision-language family's image side that may train in a fine-tune, for a family that allows it: a
-/// <see cref="PretrainedVision"/> implements it to offer them. A family that does not trains the language model only (its
+/// <see cref="IPretrainedVision"/> implements it to offer them. A family that does not trains the language model only (its
 /// tower and projector stay as loaded), and asking it for a part is an error naming that
 /// (<see cref="VisionTuningParts.For"/>). The parts are named <see cref="VisionTuningParts.Projector"/> (what maps the
 /// tower's output to the language model's width) and <see cref="VisionTuningParts.Tower"/> (the vision encoder itself);
 /// a family offers the ones it can train.
 /// <para>
-/// Every method takes an encoder the family built (<see cref="PretrainedVision.CreateEncoder"/>), whose modules hold the
+/// Every method takes an encoder the family built (<see cref="IPretrainedVision.CreateEncoder"/>), whose modules hold the
 /// parameters, and refuses another. The forward passes record gradients (when autograd is on) and give the same values as
 /// the encoder's stages (<see cref="IVisionEncoderStages"/>): <see cref="Tower"/> as <c>Tower</c>, and
 /// <see cref="Features"/> of the tower's output as <c>Features</c> of the pixel values. A tuner with a frozen tower keeps
@@ -161,7 +193,7 @@ public interface IVisionTuningPart
 
     /// <summary>
     /// The values of the part <paramref name="part"/> in <paramref name="encoder"/> as the checkpoint stores them: each
-    /// tensor under its name in the checkpoint (one of <see cref="PretrainedVision.StoredTensors"/>) and in the
+    /// tensor under its name in the checkpoint (one of <see cref="IPretrainedVision.StoredTensors"/>) and in the
     /// checkpoint's layout, as new tensors on the CPU that the caller disposes. What a fine-tune saves beside its adapters
     /// (PEFT's <c>modules_to_save</c>), so transformers reads the trained part as it reads the checkpoint's.
     /// </summary>
@@ -228,7 +260,7 @@ public static class VisionTuningParts
     }
 
     /// <summary>The parts <paramref name="vision"/>'s family lets train; none for a family that does not implement <see cref="IVisionTuningPart"/>.</summary>
-    public static IReadOnlyList<string> Offered(PretrainedVision vision)
+    public static IReadOnlyList<string> Offered(IPretrainedVision vision)
     {
         ArgumentNullException.ThrowIfNull(vision);
         return vision is IVisionTuningPart tuning ? tuning.TrainableParts : [];
@@ -244,7 +276,7 @@ public static class VisionTuningParts
     /// A part the family does not offer: the message names the family and the parts it offers (none for a family without
     /// <see cref="IVisionTuningPart"/>, which trains the language model only).
     /// </exception>
-    public static IVisionTuningPart? For(PretrainedVision vision, IEnumerable<string> parts)
+    public static IVisionTuningPart? For(IPretrainedVision vision, IEnumerable<string> parts)
     {
         ArgumentNullException.ThrowIfNull(vision);
         ArgumentNullException.ThrowIfNull(parts);
