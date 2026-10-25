@@ -24,18 +24,21 @@ internal static partial class VulkanKernels
 
     // The ranges of causal attention over packed sequences (Backend.AttentionSegmented), for the kernels above: row i of
     // table b (t = i % steps) sees the keys from its sequence's start, starts[b·steps + t], raised to t + 1 - window under
-    // a window, up to itself: spanStarts[b·rows + i] and spanEnds[b·rows + i] = t + 1, as floats.
+    // a window, up to itself: spanStarts[b·rows + i] and spanEnds[b·rows + i] = t + 1, and the sequence's start itself in
+    // spanOrigins[b·rows + i] (the grid attention_spans tiles the row's keys on, aligned), as floats.
     private static SpirvKernel SegmentSpans()
     {
         var k = new KernelBuilder("segment_spans", Block);
-        var (starts, spanStarts, spanEnds) = (k.Buffer("starts"), k.Buffer("spanStarts"), k.Buffer("spanEnds"));
+        var (starts, spanStarts, spanEnds, spanOrigins) = (k.Buffer("starts"), k.Buffer("spanStarts"), k.Buffer("spanEnds"), k.Buffer("spanOrigins"));
         var (tables, rows, steps, window) = (k.PushInt("tables"), k.PushInt("rows"), k.PushInt("steps"), k.PushInt("window"));
         Grid(k, tables * rows, idx =>
         {
             var (b, t) = (idx / rows, idx % rows % steps);
             var first = k.Select(window > 0, k.Max(t + 1 - window, k.Int(0)), k.Int(0)).ToFloat();
-            spanStarts[idx] = k.Max(starts[b * steps + t], first);
+            var start = starts[b * steps + t];
+            spanStarts[idx] = k.Max(start, first);
             spanEnds[idx] = (t + 1).ToFloat();
+            spanOrigins[idx] = start;
         });
         return k.Build();
     }
@@ -45,7 +48,8 @@ internal static partial class VulkanKernels
     // keyRows, dim]. A workgroup of W invocations takes R = TiledAttentionRows(W) consecutive rows of one head (a block)
     // and goes through the keys C = W / R at a time, from the smallest start of its rows to their largest end, exactly as
     // TiledAttention does (see there for the phases and the workgroup memory); a key outside a row's range scores -∞ for
-    // that row. A row whose range is empty keeps a max of -∞ and a total of 0: it gets zeros (and a log-sum-exp of -∞).
+    // that row. Aligned (packed sequences: each row's sequence start in origins), the rows of each start go through their
+    // own keys on that start's grid of tiles, so a row's result does not depend on its neighbours or its place. A row whose range is empty keeps a max of -∞ and a total of 0: it gets zeros (and a log-sum-exp of -∞).
     private static SpirvKernel SpanAttention(string name, bool logSumExp)
     {
         int width = Block, rows = TiledAttentionRows(width), tile = TiledAttentionPositions(width);
@@ -54,9 +58,11 @@ internal static partial class VulkanKernels
         var k = new KernelBuilder(name, width);
         var (q, keys, values, starts, ends, y) = (k.Buffer("q"), k.Buffer("keys"), k.Buffer("values"), k.Buffer("starts"), k.Buffer("ends"), k.Buffer("y"));
         var lse = logSumExp ? k.Buffer("logSumExp") : null;
+        var origins = k.Buffer("origins");
         var (heads, rowCount, keyRows, dim) = (k.PushInt("heads"), k.PushInt("rows"), k.PushInt("keyRows"), k.PushInt("dim"));
         var (group, headsPerTable) = (k.PushInt("group"), k.PushInt("headsPerTable"));
         var (scale, softcap) = (k.PushFloat("scale"), k.PushFloat("softcap"));
+        var aligned = k.PushInt("aligned");
         var queries = k.Shared("queries", rows * Stride);
         var staged = k.Shared("staged", tile * Stride);
         var scores = k.Shared("scores", width);
@@ -82,19 +88,8 @@ internal static partial class VulkanKernels
             var lo = k.Clamp(starts[table + mine].ToInt(), k.Int(0), keyRows);
             var hi = k.Clamp(ends[table + mine].ToInt(), k.Int(0), keyRows);
 
-            // The keys the block sees: from the smallest start of its rows that see any to their largest end.
-            var from = k.Local(keyRows);
-            var count = k.Local(0);
-            k.For(r0, k.Min(r0 + rows, rowCount), 1, row =>
-            {
-                var s = k.Clamp(starts[table + row].ToInt(), k.Int(0), keyRows);
-                var e = k.Clamp(ends[table + row].ToInt(), k.Int(0), keyRows);
-                k.If(e > s, () =>
-                {
-                    from.V = k.Min(from.V, s);
-                    count.V = k.Max(count.V, e);
-                });
-            });
+            // The row's sequence start (origins, aligned: packed sequences; 0 otherwise, one pass over every row).
+            var origin = k.Select(aligned.Ne(0), k.Clamp(origins[table + mine].ToInt(), k.Int(0), keyRows), k.Int(0));
 
             var queryBase = h * rowCount;
             foreach (var v in acc)
@@ -108,113 +103,146 @@ internal static partial class VulkanKernels
                 totals[tid] = k.Float(0f);
             });
 
-            var end = count.V;
-            k.For(from.V, end, tile, c0 =>
+            // The passes: aligned, one for each sequence start among the block's rows, in increasing order, its tiles on that
+            // start's grid (the start plus a multiple of the tile), the other rows' keys all masked (an exact no-op on them:
+            // their max stays, their sums shrink by 1 and gain 0), so a row's sums are those of its keys within its own
+            // sequence, wherever the sequence sits in the packed row and whichever rows share its block; otherwise one pass
+            // over every row, from the smallest start of the rows that see any keys to their largest end.
+            var done = k.Local(-1);
+            k.For(k.Int(0), k.Select(aligned.Ne(0), k.Int(rows), k.Int(1)), 1, _ =>
             {
-                // 1. Scores, a stage of 64 dimensions at a time.
-                var score = k.Local(0f);
-                k.For(k.Int(0), dim, Depth, d0 =>
+                var next = k.Local(keyRows + 1);
+                var from = k.Local(keyRows);
+                var count = k.Local(0);
+                k.For(r0, k.Min(r0 + rows, rowCount), 1, row =>
                 {
-                    k.For(tid, k.Int(rows * Depth), width, i =>
+                    var s = k.Clamp(starts[table + row].ToInt(), k.Int(0), keyRows);
+                    var e = k.Clamp(ends[table + row].ToInt(), k.Int(0), keyRows);
+                    var o = k.Select(aligned.Ne(0), k.Clamp(origins[table + row].ToInt(), k.Int(0), keyRows), k.Int(0));
+                    k.If((e > s) & (o > done.V), () => next.V = k.Min(next.V, o));
+                });
+                k.For(r0, k.Min(r0 + rows, rowCount), 1, row =>
+                {
+                    var s = k.Clamp(starts[table + row].ToInt(), k.Int(0), keyRows);
+                    var e = k.Clamp(ends[table + row].ToInt(), k.Int(0), keyRows);
+                    var o = k.Select(aligned.Ne(0), k.Clamp(origins[table + row].ToInt(), k.Int(0), keyRows), k.Int(0));
+                    k.If((e > s) & o.Eq(next.V), () =>
                     {
-                        var (qr, e) = (i / Depth, i % Depth);
-                        var value = k.Local(0f);
-                        k.If(d0 + e < dim, () => value.V = q[(queryBase + k.Min(r0 + qr, rowCount - 1)) * dim + d0 + e]);
-                        queries[qr * Stride + e] = value.V;
+                        from.V = k.Min(from.V, s);
+                        count.V = k.Max(count.V, e);
                     });
-                    k.For(tid, k.Int(tile * Depth), width, i =>
-                    {
-                        var (kc, e) = (i / Depth, i % Depth);
-                        var value = k.Local(0f);
-                        k.If((c0 + kc < end) & (d0 + e < dim), () => value.V = keys[(first + c0 + kc) * dim + d0 + e]);
-                        staged[kc * Stride + e] = value.V;
-                    });
-                    k.Barrier();
-                    var sum = score.V;
-                    for (int e = 0; e < Depth; e++)
-                    {
-                        sum = k.Fma(queries[r * Stride + e], staged[c * Stride + e], sum);
-                    }
-
-                    score.V = sum;
-                    k.Barrier();                                              // the stage is read before the next is written
                 });
-
-                var seen = (c0 + c < hi) & (c0 + c >= lo);
-                var scaled = Capped(k, score.V * scale, softcap);
-                scores[tid] = k.Select(seen, scaled, k.Float(float.NegativeInfinity));
-                k.Barrier();
-
-                // 2. Each row's max over the tile, and how much its earlier sums shrink (1 while the row has seen nothing).
-                k.If(tid < rows, () =>
+                k.If(aligned.Ne(0) & (count.V > from.V), () => from.V = next.V + (from.V - next.V) / tile * tile);
+                done.V = next.V;
+                var member = origin.Eq(next.V);
+                var end = count.V;
+                k.For(from.V, end, tile, c0 =>
                 {
-                    var tileMax = scores[tid * tile];
-                    for (int i = 1; i < tile; i++)
+                    // 1. Scores, a stage of 64 dimensions at a time.
+                    var score = k.Local(0f);
+                    k.For(k.Int(0), dim, Depth, d0 =>
                     {
-                        tileMax = k.Max(tileMax, scores[tid * tile + i]);
-                    }
-
-                    var old = maxes[tid];
-                    var updated = k.Max(old, tileMax);
-                    alphas[tid] = k.Select(updated > float.NegativeInfinity, k.Exp(old - updated), k.Float(1f));
-                    maxes[tid] = updated;
-                });
-                k.Barrier();
-
-                // 3. The weights, the totals and the rescaled outputs.
-                var weight = k.Local(0f);
-                k.If(seen, () => weight.V = k.Exp(scaled - maxes[r]));
-                scores[tid] = weight.V;
-                k.Barrier();
-                var alpha = alphas[r];
-                k.If(tid < rows, () =>
-                {
-                    var total = totals[tid] * alphas[tid];
-                    for (int i = 0; i < tile; i++)
-                    {
-                        total = total + scores[tid * tile + i];
-                    }
-
-                    totals[tid] = total;
-                });
-
-                for (int j = 0; j < outputs; j++)
-                {
-                    acc[j].V = acc[j].V * alpha;
-                }
-
-                // 4. The weighted values, a stage of 64 dimensions at a time.
-                var positions = k.Min(end - c0, k.Int(tile));
-                for (int s = 0; s < stages; s++)
-                {
-                    int stage = s;
-                    k.If(k.Int(stage * Depth) < dim, () =>
-                    {
+                        k.For(tid, k.Int(rows * Depth), width, i =>
+                        {
+                            var (qr, e) = (i / Depth, i % Depth);
+                            var value = k.Local(0f);
+                            k.If(d0 + e < dim, () => value.V = q[(queryBase + k.Min(r0 + qr, rowCount - 1)) * dim + d0 + e]);
+                            queries[qr * Stride + e] = value.V;
+                        });
                         k.For(tid, k.Int(tile * Depth), width, i =>
                         {
-                            var (vc, e) = (i / Depth, i % Depth);
+                            var (kc, e) = (i / Depth, i % Depth);
                             var value = k.Local(0f);
-                            k.If((vc < positions) & (stage * Depth + e < dim), () => value.V = values[(first + c0 + vc) * dim + stage * Depth + e]);
-                            staged[vc * Depth + e] = value.V;
+                            k.If((c0 + kc < end) & (d0 + e < dim), () => value.V = keys[(first + c0 + kc) * dim + d0 + e]);
+                            staged[kc * Stride + e] = value.V;
                         });
                         k.Barrier();
-                        var sums = new Var[perStage];
-                        for (int i = 0; i < perStage; i++)
+                        var sum = score.V;
+                        for (int e = 0; e < Depth; e++)
                         {
-                            sums[i] = acc[stage * perStage + i];
+                            sum = k.Fma(queries[r * Stride + e], staged[c * Stride + e], sum);
                         }
 
-                        k.For(k.Int(0), positions, 1, vc =>
+                        score.V = sum;
+                        k.Barrier();                                              // the stage is read before the next is written
+                    });
+
+                    var seen = (c0 + c < hi) & (c0 + c >= lo) & member;
+                    var scaled = Capped(k, score.V * scale, softcap);
+                    scores[tid] = k.Select(seen, scaled, k.Float(float.NegativeInfinity));
+                    k.Barrier();
+
+                    // 2. Each row's max over the tile, and how much its earlier sums shrink (1 while the row has seen nothing).
+                    k.If(tid < rows, () =>
+                    {
+                        var tileMax = scores[tid * tile];
+                        for (int i = 1; i < tile; i++)
                         {
-                            var p = scores[r * tile + vc];
+                            tileMax = k.Max(tileMax, scores[tid * tile + i]);
+                        }
+
+                        var old = maxes[tid];
+                        var updated = k.Max(old, tileMax);
+                        alphas[tid] = k.Select(updated > float.NegativeInfinity, k.Exp(old - updated), k.Float(1f));
+                        maxes[tid] = updated;
+                    });
+                    k.Barrier();
+
+                    // 3. The weights, the totals and the rescaled outputs.
+                    var weight = k.Local(0f);
+                    k.If(seen, () => weight.V = k.Exp(scaled - maxes[r]));
+                    scores[tid] = weight.V;
+                    k.Barrier();
+                    var alpha = alphas[r];
+                    k.If(tid < rows, () =>
+                    {
+                        var total = totals[tid] * alphas[tid];
+                        for (int i = 0; i < tile; i++)
+                        {
+                            total = total + scores[tid * tile + i];
+                        }
+
+                        totals[tid] = total;
+                    });
+
+                    for (int j = 0; j < outputs; j++)
+                    {
+                        acc[j].V = acc[j].V * alpha;
+                    }
+
+                    // 4. The weighted values, a stage of 64 dimensions at a time.
+                    var positions = k.Min(end - c0, k.Int(tile));
+                    for (int s = 0; s < stages; s++)
+                    {
+                        int stage = s;
+                        k.If(k.Int(stage * Depth) < dim, () =>
+                        {
+                            k.For(tid, k.Int(tile * Depth), width, i =>
+                            {
+                                var (vc, e) = (i / Depth, i % Depth);
+                                var value = k.Local(0f);
+                                k.If((vc < positions) & (stage * Depth + e < dim), () => value.V = values[(first + c0 + vc) * dim + stage * Depth + e]);
+                                staged[vc * Depth + e] = value.V;
+                            });
+                            k.Barrier();
+                            var sums = new Var[perStage];
                             for (int i = 0; i < perStage; i++)
                             {
-                                sums[i].V = k.Fma(p, staged[vc * Depth + c + i * tile], sums[i].V);
+                                sums[i] = acc[stage * perStage + i];
                             }
+
+                            k.For(k.Int(0), positions, 1, vc =>
+                            {
+                                var p = scores[r * tile + vc];
+                                for (int i = 0; i < perStage; i++)
+                                {
+                                    sums[i].V = k.Fma(p, staged[vc * Depth + c + i * tile], sums[i].V);
+                                }
+                            });
+                            k.Barrier();                                          // the stage (and the weights) read before reuse
                         });
-                        k.Barrier();                                          // the stage (and the weights) read before reuse
-                    });
-                }
+                    }
+                });
             });
 
             // A barrier before the totals are read: with no tile at all (every row of the block sees nothing), the

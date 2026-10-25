@@ -13,10 +13,17 @@ namespace Idrak.Gpu.Vulkan;
 internal sealed partial class VulkanBackend : IMemoryReport
 {
     public override void AttentionSpansKernel(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads,
-        int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant = default)
+        int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant = default) =>
+        Spans(q, keys, values, starts, ends, null, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+
+    // AttentionSpans, with each row's keys tiled on the grid of its origin when given (packed sequences: each row's
+    // sequence start, VulkanBackend.Segmented.cs), so a row's result does not depend on the rows beside it; without, the
+    // block's tiles start at its smallest start.
+    private void Spans(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage? origins, Storage y, Storage? logSumExp, int heads,
+        int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
     {
         if (dim <= 0 || dim > VulkanKernels.AttentionMaxDim || kvHeads <= 0 || headsPerTable <= 0 || !Fit(q, keys, values, starts, ends, y)
-            || logSumExp is not null && !Fit(logSumExp))
+            || logSumExp is not null && !Fit(logSumExp) || origins is not null && !Fit(origins))
         {
             base.AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
             return;
@@ -32,44 +39,46 @@ internal sealed partial class VulkanBackend : IMemoryReport
         // log-sum-exp (which only adds a store): a width sums in its own order, and a checkpoint's first pass and its
         // recompute, or an evaluation and a training step, must give the same outputs.
         int width = Width;
-        var key = new VulkanTuneKey(VulkanTuneOp.SpanAttention, 0, heads, rows, keyRows, dim, kvHeads, headsPerTable);
+        var key = new VulkanTuneKey(VulkanTuneOp.SpanAttention, origins is null ? 0 : 1, heads, rows, keyRows, dim, kvHeads, headsPerTable);
         if (TryTuned(key, out int stored) && Array.IndexOf(CandidateWidths, stored) >= 0)
         {
             width = stored;
         }
         else if (CanTune && CandidateWidths.Length > 1)
         {
-            width = MeasureSpans(key, q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+            width = MeasureSpans(key, q, keys, values, starts, ends, origins, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
         }
 
-        RunSpans(width, q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        RunSpans(width, q, keys, values, starts, ends, origins, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
     }
 
     // Measures the candidate widths on scratch outputs, apart from the operation so its usual calls make no closure.
-    private int MeasureSpans(VulkanTuneKey key, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads,
-        int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    private int MeasureSpans(VulkanTuneKey key, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage? origins, Storage y,
+        Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
     {
         bool lse = logSumExp is not null;
         int width = Width;
         WithScratch([y.Length, lse ? logSumExp!.Length : 0], scratch => width = Tune(key, CandidateWidths, Width,
-            w => RunSpans(w, q, keys, values, starts, ends, scratch[0], lse ? scratch[1] : null, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant)));
+            w => RunSpans(w, q, keys, values, starts, ends, origins, scratch[0], lse ? scratch[1] : null, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale,
+                variant)));
         return width;
     }
 
-    private void RunSpans(int width, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads,
-        int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    private void RunSpans(int width, Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage? origins, Storage y, Storage? logSumExp,
+        int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
     {
         int rowsPerBlock = VulkanKernels.TiledAttentionRows(width);
         long blocks = (long)heads * ((rows + rowsPerBlock - 1) / rowsPerBlock);
-        Span<byte> b = stackalloc byte[32];
-        var push = new Push(b).I(heads).I(rows).I(keyRows).I(dim).I(heads / kvHeads).I(headsPerTable).F(scale).F(variant.Softcap).Bytes;
+        Span<byte> b = stackalloc byte[36];
+        var push = new Push(b).I(heads).I(rows).I(keyRows).I(dim).I(heads / kvHeads).I(headsPerTable).F(scale).F(variant.Softcap).B(origins is not null).Bytes;
+        var aligned = origins ?? starts;                                       // bound, and not read, without origins
         if (logSumExp is null)
         {
-            RunAt("attention_spans", width, RowGroups(blocks), 1, 1, [q, keys, values, starts, ends, y], push);
+            RunAt("attention_spans", width, RowGroups(blocks), 1, 1, [q, keys, values, starts, ends, y, aligned], push);
         }
         else
         {
-            RunAt("attention_spans_lse", width, RowGroups(blocks), 1, 1, [q, keys, values, starts, ends, y, logSumExp], push);
+            RunAt("attention_spans_lse", width, RowGroups(blocks), 1, 1, [q, keys, values, starts, ends, y, logSumExp, aligned], push);
         }
     }
 

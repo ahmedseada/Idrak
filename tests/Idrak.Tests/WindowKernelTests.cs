@@ -17,6 +17,7 @@ internal static partial class Tests
     [
         ("window kernels: tiled, decoding (float32, int8, bfloat16 caches, split positions), per-row (float32 and bfloat16 caches, each CUDA path) and packed attention with windows inside and beyond the keys and soft-caps match a direct reference; a window beyond the keys is plain attention bit for bit", WindowedAttentionKernels),
         ("window kernels: gradients with windows and soft-caps (tiled and packed) match finite differences and the CPU; packed attention on a device with its own pass (Vulkan's span kernels) runs nothing on the host", WindowedAttentionGradients),
+        ("window kernels: packed attention gives each sequence the same values bit for bit wherever it is packed and whatever is packed beside it (plain, a window, a soft-cap; inference and training passes)", PackedAttentionPlaceIndependent),
         ("window kernels: vulkan decoding, tiled and gradient kernels with windows and soft-caps match the CPU as kernels at every width and split count", VulkanWindowedKernels),
         ("window kernels: Mistral, Gemma 2 and Gemma 3 style decoders give the composed path's logits through the kernels (prompt, training and gradients, cached decoding in every cache format, recorded steps, packed sequences, rows of different lengths)", WindowedDecodersMatchComposed),
     ];
@@ -236,6 +237,69 @@ internal static partial class Tests
                         (h, i) => ((int)packedStarts[h / Kv * Length + i % Length], i % Length + 1));
                     AssertClose(expected, y.ToArray(), 2e-4f, $"packed attention, window {variant.Window}, cap {variant.Softcap}");
                     y.Dispose();
+                }
+            }
+        }
+    }
+
+    // The same five sequences packed two ways (other rows, other offsets, other neighbours): each one's outputs are the same
+    // bits in both, as a behaviour pass and a training step that pack it apart need (their first ratio exactly 1).
+    private static void PackedAttentionPlaceIndependent(Device device)
+    {
+        const int Length = 16, Dim = 8;
+        int[] sizes = [5, 7, 4, 9, 6];
+        int[][][] layouts = [[[0, 1, 2], [3, 4]], [[4, 0, 2], [1, 3]]];
+        var r = new Random(31);
+        var data = sizes.Select(n => (Q: RandomArray(r, n * Dim, 1f), K: RandomArray(r, n * Dim, 1f), V: RandomArray(r, n * Dim, 1f))).ToArray();
+        foreach (var variant in new AttentionVariant[] { default, new(3, 0f), new(0, 0.7f) })
+        {
+            foreach (bool training in new[] { false, true })
+            {
+                var seen = new float[layouts.Length][][];
+                for (int l = 0; l < layouts.Length; l++)
+                {
+                    var layout = layouts[l];
+                    int heads = layout.Length;
+                    float[] q = new float[heads * Length * Dim], k = new float[heads * Length * Dim], v = new float[heads * Length * Dim];
+                    var at = new (int Head, int Offset)[sizes.Length];
+                    for (int h = 0; h < heads; h++)
+                    {
+                        int offset = 0;
+                        foreach (int i in layout[h])
+                        {
+                            at[i] = (h, offset);
+                            data[i].Q.CopyTo(q, (h * Length + offset) * Dim);
+                            data[i].K.CopyTo(k, (h * Length + offset) * Dim);
+                            data[i].V.CopyTo(v, (h * Length + offset) * Dim);
+                            offset += sizes[i];
+                        }
+                    }
+
+                    using var scope = new TensorScope();
+                    using var packing = PackedSequences.Create([.. layout.Select(row => row.Select(i => sizes[i]).ToArray())], Length, device);
+                    var tq = Tensor.From(q, [heads, Length, Dim], device, requiresGrad: training);
+                    var tk = Tensor.From(k, [heads, Length, Dim], device);
+                    var tv = Tensor.From(v, [heads, Length, Dim], device);
+                    Tensor? y;
+                    using (training ? null : (Autograd.NoGradScope?)Autograd.NoGrad())
+                    {
+                        y = PackedSequences.CausalAttentionSegmented(tq, tk, tv, packing, 1, 0.5f, variant);
+                    }
+
+                    if (y is null)
+                    {
+                        Check(!device.Backend.SupportsSegmentedAttention(Dim, variant), $"packed attention, window {variant.Window}, cap {variant.Softcap}: refused although supported");
+                        return;
+                    }
+
+                    var values = y.ToArray();
+                    seen[l] = [.. at.Select((p, i) => values.AsSpan((p.Head * Length + p.Offset) * Dim, sizes[i] * Dim).ToArray())];
+                }
+
+                for (int i = 0; i < sizes.Length; i++)
+                {
+                    Check(seen[0][i].AsSpan().SequenceEqual(seen[1][i]),
+                        $"window {variant.Window}, cap {variant.Softcap}, {(training ? "training" : "inference")}: sequence {i} packed apart gives other bits (largest gap {Gap(seen[0][i], seen[1][i]):E2})");
                 }
             }
         }

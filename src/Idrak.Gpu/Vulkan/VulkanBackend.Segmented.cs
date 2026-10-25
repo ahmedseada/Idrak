@@ -6,7 +6,7 @@ namespace Idrak.Gpu.Vulkan;
 // Causal attention over packed sequences (ISegmentedAttentionBackend) on the span kernels (VulkanBackend.Spans.cs): the
 // range each query row sees, from its sequence's start (raised to the window's first position) to itself, is written on
 // the device by segment_spans, so nothing is read back and nothing runs on the host (a training step with packed
-// sequences records as a graph). A head size the span kernels do not take, or heads that do not divide into packed rows,
+// sequences records as a graph), with each row's sequence start, on whose grid the forward pass tiles the row's keys. A head size the span kernels do not take, or heads that do not divide into packed rows,
 // go to the host fallback as before; the head sizes answered are the CPU's, which that fallback runs.
 internal sealed partial class VulkanBackend : ISegmentedAttentionBackend
 {
@@ -20,15 +20,18 @@ internal sealed partial class VulkanBackend : ISegmentedAttentionBackend
             return AttentionSegmentedOnHost(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
         }
 
-        var (spanStarts, spanEnds) = SegmentSpans(starts, heads / headsPerRow, rowsPerHead, steps, variant.Window);
+        var (spanStarts, spanEnds, origins) = SegmentSpans(starts, heads / headsPerRow, rowsPerHead, steps, variant.Window);
         try
         {
-            AttentionSpansKernel(q, keys, values, spanStarts, spanEnds, y, logSumExp, heads, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+            // Tiled on each sequence's own grid: a sequence's values do not depend on where it is packed or what is packed
+            // beside it (a behaviour pass and a training step that pack the same sequence apart agree to the bit).
+            Spans(q, keys, values, spanStarts, spanEnds, origins, y, logSumExp, heads, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
         }
         finally
         {
             spanStarts.Release();                                              // reused in queue order
             spanEnds.Release();
+            origins.Release();
         }
 
         return true;
@@ -44,7 +47,7 @@ internal sealed partial class VulkanBackend : ISegmentedAttentionBackend
                 rowsPerHead, steps, dim, scale, variant);
         }
 
-        var (spanStarts, spanEnds) = SegmentSpans(starts, heads / headsPerRow, rowsPerHead, steps, variant.Window);
+        var (spanStarts, spanEnds, origins) = SegmentSpans(starts, heads / headsPerRow, rowsPerHead, steps, variant.Window);
         try
         {
             AttentionSpansBackwardKernel(q, keys, values, spanStarts, spanEnds, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, heads, headsPerRow,
@@ -54,6 +57,7 @@ internal sealed partial class VulkanBackend : ISegmentedAttentionBackend
         {
             spanStarts.Release();
             spanEnds.Release();
+            origins.Release();
         }
 
         return true;
@@ -65,14 +69,16 @@ internal sealed partial class VulkanBackend : ISegmentedAttentionBackend
         !KernelsOff && dim > 0 && dim <= VulkanKernels.AttentionMaxDim && heads > 0 && headsPerRow > 0 && heads % headsPerRow == 0 && rowsPerHead > 0
         && steps > 0 && (long)heads / headsPerRow * rowsPerHead <= int.MaxValue;
 
-    // Each query row's range of keys ([tables, rows] starts and ends), written on the device from the packed rows' starts.
-    private (Storage Starts, Storage Ends) SegmentSpans(Storage starts, int tables, int rows, int steps, int window)
+    // Each query row's range of keys and its sequence's start ([tables, rows] starts, ends and origins), written on the
+    // device from the packed rows' starts.
+    private (Storage Starts, Storage Ends, Storage Origins) SegmentSpans(Storage starts, int tables, int rows, int steps, int window)
     {
         int count = tables * rows;
         var spanStarts = Allocate(count, zeroed: false);
         var spanEnds = Allocate(count, zeroed: false);
+        var origins = Allocate(count, zeroed: false);
         Span<byte> b = stackalloc byte[16];
-        Grid("segment_spans", count, [starts, spanStarts, spanEnds], new Push(b).I(tables).I(rows).I(steps).I(Math.Max(window, 0)).Bytes);
-        return (spanStarts, spanEnds);
+        Grid("segment_spans", count, [starts, spanStarts, spanEnds, origins], new Push(b).I(tables).I(rows).I(steps).I(Math.Max(window, 0)).Bytes);
+        return (spanStarts, spanEnds, origins);
     }
 }
