@@ -52,15 +52,20 @@ These are the owner's standing rules. They hold in every session, after every co
   fixes. 2. Update the tests the fixes touch (expectations, and failure messages that name the cause, e.g. which
   operation took a host fallback). 3. Build once, only the projects that changed. 4. Run the targeted filtered tests
   once with `--no-build` (CPU here). 5. Merge and push; a merge without conflicts gets no build and no tests (its
-  branch was built and tested already). 6. Hand the owner one targeted command list for only what changed: one
-  `dotnet build -c Release tests\Idrak.Tests`, then the CUDA filters with `--no-build`. At most two agents at a time,
+  branch was built and tested already). 6. Hand the owner one targeted command list for only what changed: the pull of
+  the working branch first, then one `dotnet build -c Release tests\Idrak.Tests`, then the CUDA filters with `--no-build`. At most two agents at a time,
   so builds do not compete for the machine. A slot never idles while work is ready: the moment an agent finishes, the
   slot takes the next piece of work whose inputs are already merged, without waiting for the current wave to end
   (waves are a dependency order, not a barrier).
 - **Keep the owner informed.** Before each step, say in a line what you are about to do and why; never go quiet while
   working. The same for the software: long work shows live progress (what it is doing, how far, how fast, time left).
-- **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`. Every
-  test run in them shows the live progress line and saves only the failed lines (each FAIL line with its message lines,
+- **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`. After
+  any change pushed to the repository, every command list starts by pulling the working branch (the one the branch
+  rule names, `main` today), before any build, test, run or app, so the owner never builds an old copy:
+  ```powershell
+  cd D:\Projects\Idrak; git checkout main; git pull origin main
+  ```
+  Every test run in them shows the live progress line and saves only the failed lines (each FAIL line with its message lines,
   the device headers and the summary) into `test-output\fails.txt` for the owner to paste:
   ```powershell
   dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails.txt
