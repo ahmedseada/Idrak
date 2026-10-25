@@ -56,20 +56,20 @@ void DeclaredPackage()
     var plugin = package!.All[0];
     Plugin.Unregister();
     IdrakPlugins.Register(plugin);
-    Check(plugin.IsRegistered && PackedWeight.FormatNames.Contains(Plugin.FormatName), "its plug-in registers the format");
+    Check(plugin.IsRegistered && PackedWeightFormats.Names.Contains(Plugin.FormatName), "its plug-in registers the format");
     IdrakPlugins.Unregister(plugin);
-    Check(!PackedWeight.FormatNames.Contains(Plugin.FormatName), "and takes it back");
+    Check(!PackedWeightFormats.Names.Contains(Plugin.FormatName), "and takes it back");
     Plugin.Register();
 }
 
 void PackedFormat()
 {
-    Check(PackedWeight.FormatNames.Contains(Plugin.FormatName), "the format is registered");
+    Check(PackedWeightFormats.Names.Contains(Plugin.FormatName), "the format is registered");
     var random = new Random(7);
     const int Rows = 24, Columns = 10, Batch = 5;
     var values = Enumerable.Range(0, Rows * Columns).Select(_ => random.NextSingle() * 0.2f - 0.1f).ToArray();
     var inputs = Enumerable.Range(0, Batch * Rows).Select(_ => random.NextSingle() * 2f - 1f).ToArray();
-    using var linear = Linear.FromPacked(PackedWeight.FromValues(Plugin.FormatName, values, Rows, Columns, device), Tensor.Persistent(new float[Columns], [Columns], device));
+    using var linear = Linear.FromPacked(PackedWeightFormats.Pack(Plugin.FormatName, values, Rows, Columns, device), Tensor.Persistent(new float[Columns], [Columns], device));
     var expanded = linear.PackedWeight!.Dequantize();
     var x = Tensor.From(inputs, [Batch, Rows], device, requiresGrad: true);
     var reference = Tensor.From(inputs, [Batch, Rows], device, requiresGrad: true);

@@ -60,3 +60,22 @@ public sealed class RoundedWeight : PackedWeight
     /// <inheritdoc />
     public override void Dispose() => Values.Dispose();
 }
+
+/// <summary>
+/// The format "__FORMAT__" as the library registers it (<see cref="PackedWeightFormats"/>): its name, a line about it,
+/// and how it packs (<see cref="RoundedWeight.Pack"/>).
+/// </summary>
+public sealed class RoundedFormat : IPackedFormat
+{
+    /// <inheritdoc />
+    public string Name => RoundedWeight.FormatName;
+
+    /// <inheritdoc />
+    public string Summary => "values rounded to bfloat16 precision, kept as float32";
+
+    /// <inheritdoc />
+    public IReadOnlySet<string> Keys => OptionKeys.None;
+
+    /// <inheritdoc />
+    public IPackedWeight Create(PackRequest request) => RoundedWeight.Pack(request.Values, request.Rows, request.Columns, request.Device);
+}
