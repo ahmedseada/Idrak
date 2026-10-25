@@ -12,7 +12,7 @@ internal readonly struct ClassicOptions
     private readonly IReadOnlyDictionary<string, string>? _options;
     private readonly string _kind;
 
-    public ClassicOptions(string kind, IReadOnlyCollection<string> keys, IReadOnlyDictionary<string, string>? options)
+    public ClassicOptions(string kind, IReadOnlySet<string> keys, IReadOnlyDictionary<string, string>? options)
     {
         _kind = kind;
         _options = options;

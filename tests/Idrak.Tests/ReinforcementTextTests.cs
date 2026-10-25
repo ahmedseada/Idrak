@@ -421,13 +421,13 @@ internal static partial class Tests
 
         public string Summary => "A question, then the same question again; rewarded at the end.";
 
-        public IReadOnlyCollection<string> Keys => [];
+        public IReadOnlySet<string> Keys => OptionKeys.None;
 
         public Type ObservationType => typeof(ChatObservation);
 
         public Type ActionType => typeof(ChatMessage);
 
-        public IEnvironment Create(IReadOnlyDictionary<string, string>? options = null, int seed = 0) => new TwoTurns();
+        public IEnvironment Create(EnvironmentRequest request) => new TwoTurns();
     }
 
     private static void ContextWindowEndsEpisode(Device device)
@@ -489,7 +489,7 @@ internal static partial class Tests
 
         public string Summary => $"{inner.Name}, recorded (the reinforcement text tests)";
 
-        public IReadOnlyCollection<string> Keys => inner.Keys;
+        public IReadOnlySet<string> Keys => inner.Keys;
 
         public bool NeedsReference(IReadOnlyDictionary<string, string>? options = null) => inner.NeedsReference(options);
 
@@ -508,7 +508,7 @@ internal static partial class Tests
 
         public string Summary => "a loss that does not answer NeedsReference";
 
-        public IReadOnlyCollection<string> Keys { get; } = [];
+        public IReadOnlySet<string> Keys => OptionKeys.None;
 
         public Tensor Loss(PolicyLossInput input, IReadOnlyDictionary<string, string>? options = null) => input.LogProbabilities.Sum();
     }
@@ -938,10 +938,10 @@ internal static partial class Tests
             var answer = observation.Messages[^1].Content.Contains("France", StringComparison.Ordinal) ? "Paris." : "4";
             var step = environment.StepAsync(new ChatMessage("assistant", answer)).AsTask().GetAwaiter().GetResult();
             Check(step is { Reward: 1f, Terminated: true } && step.Info!["rounds"] == "1", $"a task from the file, answered: {step.Reward}");
-            ThrowsNaming<ArgumentException>(() => EnvironmentKinds.Get("prompts").Create(), "no data", "data");
-            ThrowsNaming<ArgumentException>(() => EnvironmentKinds.Get("prompts").Create(new Dictionary<string, string> { ["data"] = data, ["reward"] = "exact", ["length.unit"] = "words" }),
+            ThrowsNaming<ArgumentException>(() => EnvironmentKinds.Get("prompts").Create(new EnvironmentRequest()), "no data", "data");
+            ThrowsNaming<ArgumentException>(() => EnvironmentKinds.Get("prompts").Create(new EnvironmentRequest(new Dictionary<string, string> { ["data"] = data, ["reward"] = "exact", ["length.unit"] = "words" })),
                 "an option of a term not in the expression", "length.unit");
-            ThrowsNaming<NotSupportedException>(() => EnvironmentKinds.Get("prompts").Create(new Dictionary<string, string> { ["data"] = data, ["reward"] = "nonsense" }),
+            ThrowsNaming<NotSupportedException>(() => EnvironmentKinds.Get("prompts").Create(new EnvironmentRequest(new Dictionary<string, string> { ["data"] = data, ["reward"] = "nonsense" })),
                 "an unknown reward", "neither a reward", "metric");
         }
         finally

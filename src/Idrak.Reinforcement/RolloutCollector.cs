@@ -63,8 +63,8 @@ public sealed class RolloutCollector<TObservation, TAction> : IDisposable
 
     /// <summary>A collector of episodes in environments of <paramref name="kind"/>.</summary>
     /// <param name="kind">The environment kind; its observations and actions must be <typeparamref name="TObservation"/> and <typeparamref name="TAction"/>.</param>
-    /// <param name="environmentOptions">The kind's options (<see cref="IEnvironmentKind.Keys"/>); null for its defaults.</param>
-    /// <param name="seed">What each environment is made with (<see cref="IEnvironmentKind.Create"/>), mixed with its slot.</param>
+    /// <param name="environmentOptions">The kind's options (<see cref="IConfigurableKind.Keys"/>); null for its defaults.</param>
+    /// <param name="seed">What each environment is made with (<see cref="IKind{TRequest, T}.Create"/>), mixed with its slot.</param>
     /// <param name="environments">The most environments stepped at once; 0 for <see cref="ComputeResources.MaxCpuThreads"/>. 1 steps them one after another.</param>
     /// <param name="parallelSteps">true always steps in parallel, false never; null measures which is faster.</param>
     /// <param name="shards">The shards a rollout is cut into (<see cref="RolloutSpread"/>); 0 for one per rank (1 in one process).</param>
@@ -340,7 +340,7 @@ public sealed class RolloutCollector<TObservation, TAction> : IDisposable
             return made;
         }
 
-        var created = _kind.Create(_options, Seeds.Derive(_seed, Seeds.Creation, k));
+        var created = _kind.Create(new EnvironmentRequest(_options, Seeds.Derive(_seed, Seeds.Creation, k)));
         if (created is not IEnvironment<TObservation, TAction> typed)
         {
             created.Dispose();

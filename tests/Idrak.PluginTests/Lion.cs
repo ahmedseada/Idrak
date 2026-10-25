@@ -78,8 +78,10 @@ public sealed class LionKind : IOptimizerKind
     public string Summary => "Lion: the sign of interpolated momentum and gradient, decoupled weight decay (beta1, beta2)";
 
     /// <inheritdoc />
-    public Optimizer Create(IReadOnlyList<Tensor> parameters, OptimizerSettings settings)
+    public Optimizer Create(OptimizerRequest request)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        var (parameters, settings) = request;
         ArgumentNullException.ThrowIfNull(settings);
         return new Lion(parameters, settings.LearningRate, settings.Beta1 ?? 0.9f, settings.Beta2 ?? 0.99f, settings.WeightDecay);
     }

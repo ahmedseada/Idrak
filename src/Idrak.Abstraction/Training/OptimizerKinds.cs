@@ -24,23 +24,22 @@ public sealed record OptimizerSettings(float LearningRate, float WeightDecay = 0
     public float? Epsilon { get; init; }
 }
 
+/// <summary>What an optimizer is made with (<see cref="IOptimizerKind.Create"/>): the tensors it updates and its settings.</summary>
+/// <param name="Parameters">The tensors it updates, in the order its state is saved.</param>
+/// <param name="Settings">The rate, decay and the kind's own settings.</param>
+public sealed record OptimizerRequest(IReadOnlyList<Tensor> Parameters, OptimizerSettings Settings);
+
 /// <summary>
-/// A kind of optimizer, made by name from the parameters it updates and <see cref="OptimizerSettings"/>. Registered in
-/// <see cref="OptimizerKinds"/> under <see cref="Name"/>. Thread-safe: one kind makes the optimizers of several runs.
+/// A kind of optimizer, made by name from an <see cref="OptimizerRequest"/>: the parameters it updates and its
+/// <see cref="OptimizerSettings"/>. Registered in <see cref="OptimizerKinds"/> under its <see cref="IKind.Name"/> ("adamw",
+/// "sgd"). Thread-safe: one kind makes the optimizers of several runs.
 /// </summary>
-public interface IOptimizerKind
+public interface IOptimizerKind : IKind
 {
-    /// <summary>The kind's name in <see cref="OptimizerKinds"/> ("adamw", "sgd").</summary>
-    string Name { get; }
-
-    /// <summary>One line for help and listings.</summary>
-    string Summary { get; }
-
-    /// <summary>A new optimizer over <paramref name="parameters"/>, starting at <see cref="OptimizerSettings.LearningRate"/>.</summary>
-    /// <param name="parameters">The tensors it updates, in the order its state is saved.</param>
-    /// <param name="settings">The rate, decay and the kind's own settings.</param>
+    /// <summary>A new optimizer over the request's parameters, starting at its <see cref="OptimizerSettings.LearningRate"/>.</summary>
+    /// <param name="request">The tensors it updates and its settings.</param>
     /// <exception cref="ArgumentException">A setting the kind cannot use (a negative rate, say).</exception>
-    Optimizer Create(IReadOnlyList<Tensor> parameters, OptimizerSettings settings);
+    Optimizer Create(OptimizerRequest request);
 }
 
 /// <summary>
@@ -60,42 +59,37 @@ public static class OptimizerKinds
 {
     // In the order adamw, adam, adamw8bit, sgd: core registers its 8-bit AdamW, as a library default, between the two it
     // builds on and SGD (Idrak.Abstraction cannot name it).
-    private static readonly SlotTable<string, IOptimizerKind> Table = new(nameof(OptimizerKinds), comparer: StringComparer.OrdinalIgnoreCase,
+    private static readonly KindTable<IOptimizerKind> Table = new(nameof(OptimizerKinds), "Optimizer", "add it with OptimizerKinds.Register",
+        comparer: StringComparer.OrdinalIgnoreCase,
         unguarded: "an optimizer holds its moments from the first step to the last and a checkpoint saves them under its own names, so another kind cannot take over a run");
 
     static OptimizerKinds()
     {
-        Table.RegisterDefault("adamw", new BuiltInKind("adamw", "AdamW: Adam with decoupled weight decay (beta1, beta2, epsilon)",
+        Table.RegisterDefault(new BuiltInKind("adamw", "AdamW: Adam with decoupled weight decay (beta1, beta2, epsilon)",
             (ps, s) => new AdamW(ps, s.LearningRate, s.Beta1 ?? 0.9f, s.Beta2 ?? 0.999f, s.Epsilon ?? 1e-8f, s.WeightDecay)));
-        Table.RegisterDefault("adam", new BuiltInKind("adam", "Adam: weight decay as an L2 term on the gradients (beta1, beta2, epsilon)",
+        Table.RegisterDefault(new BuiltInKind("adam", "Adam: weight decay as an L2 term on the gradients (beta1, beta2, epsilon)",
             (ps, s) => new Adam(ps, s.LearningRate, s.Beta1 ?? 0.9f, s.Beta2 ?? 0.999f, s.Epsilon ?? 1e-8f, s.WeightDecay)));
         LibraryDefaults.Ensure(typeof(OptimizerKinds));
-        Table.RegisterDefault("sgd", new BuiltInKind("sgd", "SGD with momentum and weight decay as an L2 term",
+        Table.RegisterDefault(new BuiltInKind("sgd", "SGD with momentum and weight decay as an L2 term",
             (ps, s) => new Sgd(ps, s.LearningRate, s.Momentum, s.WeightDecay)));
     }
 
-    /// <summary>Registers <paramref name="kind"/> under its <see cref="IOptimizerKind.Name"/> (over the library's of that name, which stays behind it).</summary>
+    /// <summary>Registers <paramref name="kind"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IOptimizerKind kind)
-    {
-        ArgumentNullException.ThrowIfNull(kind);
-        ArgumentException.ThrowIfNullOrWhiteSpace(kind.Name);
-        Table.Register(kind.Name, kind, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(IOptimizerKind kind) => Table.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's kind <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Table.Unregister(name);
 
     /// <summary>The registered names, in order.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
+    public static IReadOnlyCollection<string> Names => Table.Names;
 
     /// <summary>The kind registered as <paramref name="name"/>, or null.</summary>
-    public static IOptimizerKind? Find(string name) => Table.Find(name);
+    public static IOptimizerKind? Find(ReadOnlySpan<char> name) => Table.Find(name);
 
     /// <summary>The kind registered as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
-    public static IOptimizerKind Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Optimizer '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with OptimizerKinds.Register.");
+    public static IOptimizerKind Get(ReadOnlySpan<char> name) => Table.Get(name);
 
     /// <summary>The library's kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IOptimizerKind? Default(string name) => Table.Default(name);
@@ -104,7 +98,7 @@ public static class OptimizerKinds
     public static string? Origin(string name) => Table.Origin(name);
 
     /// <summary>Each registered kind as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(k => $"{k.Name}: {k.Summary}"));
+    public static string Describe() => Table.Describe();
 
     /// <summary>
     /// What makes the optimizer <paramref name="name"/> with <paramref name="settings"/> from a list of parameters (the
@@ -112,11 +106,11 @@ public static class OptimizerKinds
     /// fails here, not when training starts.
     /// </summary>
     /// <exception cref="NotSupportedException">The kind is not registered.</exception>
-    public static Func<IReadOnlyList<Tensor>, Optimizer> Factory(string name, OptimizerSettings settings)
+    public static Func<IReadOnlyList<Tensor>, Optimizer> Factory(ReadOnlySpan<char> name, OptimizerSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
         var kind = Get(name);
-        return parameters => kind.Create(parameters, settings) ?? throw new InvalidOperationException($"The optimizer kind '{kind.Name}' made no optimizer.");
+        return parameters => kind.Create(new OptimizerRequest(parameters, settings)) ?? throw new InvalidOperationException($"The optimizer kind '{kind.Name}' made no optimizer.");
     }
 
     private sealed class BuiltInKind(string name, string summary, Func<IReadOnlyList<Tensor>, OptimizerSettings, Optimizer> create) : IOptimizerKind
@@ -125,11 +119,12 @@ public static class OptimizerKinds
 
         public string Summary => summary;
 
-        public Optimizer Create(IReadOnlyList<Tensor> parameters, OptimizerSettings settings)
+        public Optimizer Create(OptimizerRequest request)
         {
-            ArgumentNullException.ThrowIfNull(parameters);
-            ArgumentNullException.ThrowIfNull(settings);
-            return create(parameters, settings);
+            ArgumentNullException.ThrowIfNull(request);
+            ArgumentNullException.ThrowIfNull(request.Parameters);
+            ArgumentNullException.ThrowIfNull(request.Settings);
+            return create(request.Parameters, request.Settings);
         }
 
         public override string ToString() => name;

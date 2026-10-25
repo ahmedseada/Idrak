@@ -107,22 +107,14 @@ public readonly ref struct AdvantageInput
 /// <summary>
 /// Turns a batch's rewards (and value estimates) into each step's advantage (how much better the action was than
 /// expected: what a policy loss weights its log-probability by) and return (a value head's target), registered in
-/// <see cref="AdvantageEstimators"/> under <see cref="Name"/>: GAE, a group's centred rewards (GRPO), leave-one-out
+/// <see cref="AdvantageEstimators"/> under its <see cref="IKind.Name"/>: GAE, a group's centred rewards (GRPO), leave-one-out
 /// (RLOO), discounted returns (REINFORCE). Every sum runs in a fixed order, episode by episode and step by step (a group's
 /// mean and spread over its episodes in their order), never by thread timing, so the same input gives the same output bit
-/// for bit, on every machine. Thread-safe: one estimator serves many trainers at once.
+/// for bit, on every machine. Its option keys (<see cref="IConfigurableKind.Keys"/>) are the ones <see cref="Estimate"/>
+/// takes: γ, λ, normalization. Thread-safe: one estimator serves many trainers at once.
 /// </summary>
-public interface IAdvantageEstimator
+public interface IAdvantageEstimator : IConfigurableKind
 {
-    /// <summary>The estimator's name in <see cref="AdvantageEstimators"/> ("gae", "group").</summary>
-    string Name { get; }
-
-    /// <summary>One line for help and listings.</summary>
-    string Summary { get; }
-
-    /// <summary>The option keys <see cref="Estimate"/> takes (γ, λ, normalization); any other is refused, naming these.</summary>
-    IReadOnlyCollection<string> Keys { get; }
-
     /// <summary>Whether it needs value estimates (a critic): an input without them is then refused.</summary>
     bool UsesValues { get; }
 
@@ -130,10 +122,10 @@ public interface IAdvantageEstimator
     /// <param name="input">The rewards, lengths, ends, values and groups.</param>
     /// <param name="advantages">Receives each step's advantage [<see cref="AdvantageInput.Steps"/>].</param>
     /// <param name="returns">Receives each step's return [<see cref="AdvantageInput.Steps"/>].</param>
-    /// <param name="options">The estimator's options by key (<see cref="Keys"/>), values as text; null for its defaults.</param>
+    /// <param name="options">The estimator's options by key (<see cref="IConfigurableKind.Keys"/>), values as text; null for its defaults.</param>
     /// <exception cref="ArgumentException">
     /// Outputs of another length than the steps, an input without values when <see cref="UsesValues"/>, an option the
-    /// estimator does not take (the message names it and <see cref="Keys"/>), or a bad value.
+    /// estimator does not take (the message names it and <see cref="IConfigurableKind.Keys"/>), or a bad value.
     /// </exception>
     void Estimate(AdvantageInput input, Span<float> advantages, Span<float> returns, IReadOnlyDictionary<string, string>? options = null);
 }
@@ -147,34 +139,28 @@ public interface IAdvantageEstimator
 /// </summary>
 public static class AdvantageEstimators
 {
-    private static readonly SlotTable<string, IAdvantageEstimator> Table =
-        new(nameof(AdvantageEstimators), (slot, app, library) => new GuardedEstimator(slot, app, library), StringComparer.OrdinalIgnoreCase);
+    private static readonly KindTable<IAdvantageEstimator> Table = new(nameof(AdvantageEstimators), "Advantage estimator",
+        "add it with AdvantageEstimators.Register, or reference Idrak.Reinforcement (its estimators register themselves when it ships with the application)",
+        (slot, app, library) => new GuardedEstimator(slot, app, library), StringComparer.OrdinalIgnoreCase);
 
     static AdvantageEstimators() => LibraryDefaults.Ensure(typeof(AdvantageEstimators));
 
-    /// <summary>Registers <paramref name="estimator"/> under its <see cref="IAdvantageEstimator.Name"/> (over the library's of that name, which stays behind it).</summary>
+    /// <summary>Registers <paramref name="estimator"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IAdvantageEstimator estimator)
-    {
-        ArgumentNullException.ThrowIfNull(estimator);
-        ArgumentException.ThrowIfNullOrWhiteSpace(estimator.Name);
-        Table.Register(estimator.Name, estimator, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(IAdvantageEstimator estimator) => Table.Register(estimator, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's estimator <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Table.Unregister(name);
 
     /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
+    public static IReadOnlyCollection<string> Names => Table.Names;
 
     /// <summary>The estimator registered as <paramref name="name"/>, or null.</summary>
-    public static IAdvantageEstimator? Find(string name) => Table.Find(name);
+    public static IAdvantageEstimator? Find(ReadOnlySpan<char> name) => Table.Find(name);
 
     /// <summary>The estimator registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones and the package to reference.</exception>
-    public static IAdvantageEstimator Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Advantage estimator '{name}' is not registered (registered: {(Table.Keys.Count == 0 ? "none" : string.Join(", ", Table.Keys))}); "
-                                           + "add it with AdvantageEstimators.Register, or reference Idrak.Reinforcement (its estimators register themselves when it ships with the application).");
+    public static IAdvantageEstimator Get(ReadOnlySpan<char> name) => Table.Get(name);
 
     /// <summary>The library's estimator <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IAdvantageEstimator? Default(string name) => Table.Default(name);
@@ -190,7 +176,7 @@ public static class AdvantageEstimators
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
 
     /// <summary>Each registered estimator as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(e => $"{e.Name}: {e.Summary}"));
+    public static string Describe() => Table.Describe();
 
     // An app's estimator over the library's: each call falls back on its own, or is compared with the library's (written
     // into pooled arrays of its own, so the caller's outputs hold the library's answer).
@@ -200,7 +186,7 @@ public static class AdvantageEstimators
 
         public string Summary => app.Summary;
 
-        public IReadOnlyCollection<string> Keys => app.Keys;
+        public IReadOnlySet<string> Keys => app.Keys;
 
         public bool UsesValues => app.UsesValues;
 

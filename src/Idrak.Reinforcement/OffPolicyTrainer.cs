@@ -109,7 +109,7 @@ public sealed class OffPolicyTrainer : IDisposable
         Options = options ?? OffPolicyOptions.FromEnvironment();
         Options.Validate();
         _kind = environmentKind;
-        using (var probe = environmentKind.Create(Options.EnvironmentOptions, 0))
+        using (var probe = environmentKind.Create(new EnvironmentRequest(Options.EnvironmentOptions)))
         {
             ObservationSpace = probe.ObservationSpace;
             ActionSpace = probe.ActionSpace;
@@ -675,7 +675,7 @@ public sealed class OffPolicyTrainer : IDisposable
 
     private IEnvironment<float[], int> Create(int seed)
     {
-        var made = _kind.Create(Options.EnvironmentOptions, seed);
+        var made = _kind.Create(new EnvironmentRequest(Options.EnvironmentOptions, seed));
         if (made is IEnvironment<float[], int> typed)
         {
             return typed;

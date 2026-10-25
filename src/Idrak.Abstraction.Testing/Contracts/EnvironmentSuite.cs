@@ -12,7 +12,7 @@ namespace Idrak.Abstraction.Testing;
 /// <c>act</c> (the suite cannot make an action of every type: the test chooses them, from a random source the suite seeds):
 /// <list type="bullet">
 /// <item>the kind has a name and a summary, says the observation and action types asked for, creates an environment of
-/// them, and refuses an option not in its <see cref="IEnvironmentKind.Keys"/>, naming it;</item>
+/// them, and refuses an option not in its <see cref="IConfigurableKind.Keys"/>, naming it;</item>
 /// <item>a step before the first reset is refused (<see cref="InvalidOperationException"/>), and so is a step after one
 /// that ended the episode: a finished episode must be reset;</item>
 /// <item>observations lie in the observation space, the chosen actions in the action space, rewards are finite;</item>
@@ -69,7 +69,7 @@ public sealed class EnvironmentSuite<TObservation, TAction>(Func<Random, TObserv
             $"the kind observes {kind.ObservationType.Name} and acts with {kind.ActionType.Name}, not {typeof(TObservation).Name} and {typeof(TAction).Name}");
         try
         {
-            kind.Create(new Dictionary<string, string>(StringComparer.Ordinal) { [UnknownOption] = "1" }, seed).Dispose();
+            kind.Create(new EnvironmentRequest(new Dictionary<string, string>(StringComparer.Ordinal) { [UnknownOption] = "1" }, seed)).Dispose();
             checks.Fail("an option not in Keys is refused, naming it", $"created an environment with the option '{UnknownOption}'");
         }
         catch (ArgumentException e)
@@ -120,7 +120,7 @@ public sealed class EnvironmentSuite<TObservation, TAction>(Func<Random, TObserv
         var parallel = new List<Episode>[2];
         Parallel.For(0, 2, i =>
         {
-            using var mine = kind.Create(options, seed);
+            using var mine = kind.Create(new EnvironmentRequest(options, seed));
             parallel[i] = [.. plan.Select(p => Play((IEnvironment<TObservation, TAction>)mine, p.Seed, p.Actions, null))];
         });
         checks.Compare("environments run at once give the steps of one alone", Differs(played, parallel[0]) ?? Differs(played, parallel[1]));
@@ -140,7 +140,7 @@ public sealed class EnvironmentSuite<TObservation, TAction>(Func<Random, TObserv
             }
         }
 
-        var disposed = kind.Create(options, seed);
+        var disposed = kind.Create(new EnvironmentRequest(options, seed));
         disposed.Dispose();
         try
         {
@@ -249,7 +249,7 @@ public sealed class EnvironmentSuite<TObservation, TAction>(Func<Random, TObserv
 
     private IEnvironment<TObservation, TAction>? Create(IEnvironmentKind kind, int seed, CaseChecks checks)
     {
-        var made = kind.Create(options, seed);
+        var made = kind.Create(new EnvironmentRequest(options, seed));
         if (made is IEnvironment<TObservation, TAction> typed)
         {
             checks.Pass("creates an environment of the types asked for");

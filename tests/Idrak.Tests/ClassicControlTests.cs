@@ -63,13 +63,13 @@ internal static partial class Tests
             }
         }
 
-        ThrowsNaming<ArgumentException>(() => ClassicControlPlugin.CartPoleKind.Create(new Dictionary<string, string> { ["gravity"] = "9" }), "an unknown option",
+        ThrowsNaming<ArgumentException>(() => ClassicControlPlugin.CartPoleKind.Create(new EnvironmentRequest(new Dictionary<string, string> { ["gravity"] = "9" })), "an unknown option",
             "'gravity'", "max-steps", "sutton-barto", "reset-low", "reset-high");
-        ThrowsNaming<ArgumentException>(() => ClassicControlPlugin.PendulumKind.Create(new Dictionary<string, string> { ["max-steps"] = "-1" }), "a bad value", "'max-steps'", "-1");
-        ThrowsNaming<ArgumentException>(() => ClassicControlPlugin.MountainCarKind.Create(new Dictionary<string, string> { ["reset-low"] = "-0.3", ["reset-high"] = "-0.5" }),
+        ThrowsNaming<ArgumentException>(() => ClassicControlPlugin.PendulumKind.Create(new EnvironmentRequest(new Dictionary<string, string> { ["max-steps"] = "-1" })), "a bad value", "'max-steps'", "-1");
+        ThrowsNaming<ArgumentException>(() => ClassicControlPlugin.MountainCarKind.Create(new EnvironmentRequest(new Dictionary<string, string> { ["reset-low"] = "-0.3", ["reset-high"] = "-0.5" })),
             "bounds the wrong way round", "reset-low", "reset-high");
-        ThrowsNaming<ArgumentException>(() => ClassicControlPlugin.BanditKind.Create(new Dictionary<string, string> { ["arms"] = "3", ["means"] = "1,2" }), "means for other arms", "means", "3 arms");
-        ThrowsNaming<ArgumentException>(() => ClassicControlPlugin.BanditKind.Create(new Dictionary<string, string> { ["spreads"] = "1,2" }), "spreads for other arms", "spreads");
+        ThrowsNaming<ArgumentException>(() => ClassicControlPlugin.BanditKind.Create(new EnvironmentRequest(new Dictionary<string, string> { ["arms"] = "3", ["means"] = "1,2" })), "means for other arms", "means", "3 arms");
+        ThrowsNaming<ArgumentException>(() => ClassicControlPlugin.BanditKind.Create(new EnvironmentRequest(new Dictionary<string, string> { ["spreads"] = "1,2" })), "spreads for other arms", "spreads");
         using var pendulum = new PendulumEnvironment();
         pendulum.Reset(1);
         ThrowsNaming<ArgumentException>(() => pendulum.Step([float.NaN]), "a NaN torque", "finite torque");
@@ -100,7 +100,7 @@ internal static partial class Tests
             {
                 string name = $"{kind}, {(string?)episode!["name"]}";
                 var options = episode["options"]!.AsObject().ToDictionary(p => p.Key, p => (string)p.Value!, StringComparer.Ordinal);
-                using var environment = ClassicControlPlugin.Kinds.Single(k => k.Name == kind).Create(options);
+                using var environment = ClassicControlPlugin.Kinds.Single(k => k.Name == kind).Create(new EnvironmentRequest(options));
                 double[] start = [.. episode["start"]!.AsArray().Select(v => (double)v!)];
                 float[] observation = environment switch
                 {
@@ -240,7 +240,7 @@ internal static partial class Tests
         }
 
         using var testbed = new BanditEnvironment();
-        using var again = (BanditEnvironment)ClassicControlPlugin.BanditKind.Create(seed: 5);
+        using var again = (BanditEnvironment)ClassicControlPlugin.BanditKind.Create(new EnvironmentRequest(Seed: 5));
         using var other = new BanditEnvironment(new BanditOptions { MeansSeed = 1 });
         Check(testbed.Means.Count == 10 && testbed.Means.SequenceEqual(again.Means) && !testbed.Means.SequenceEqual(other.Means) && testbed.Spreads.All(s => s == 1),
             $"the 10-armed testbed: its means from means-seed (the same in every environment of the kind): {string.Join(", ", testbed.Means.Select(m => m.ToString("0.##", CultureInfo.InvariantCulture)))}");

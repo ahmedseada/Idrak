@@ -36,14 +36,15 @@ internal static partial class Tests
 
         public string Summary => "a corridor walked to its right end (the reinforcement contract tests)";
 
-        public IReadOnlyCollection<string> Keys { get; } = ["length", "limit"];
+        public IReadOnlySet<string> Keys { get; } = new OptionKeys("length", "limit");
 
         public Type ObservationType => typeof(float[]);
 
         public Type ActionType => typeof(int);
 
-        public IEnvironment Create(IReadOnlyDictionary<string, string>? options = null, int seed = 0)
+        public IEnvironment Create(EnvironmentRequest request)
         {
+            var options = request.Options;
             int length = 6, limit = 12;
             foreach (var (key, value) in options ?? new Dictionary<string, string>())
             {
@@ -156,7 +157,7 @@ internal static partial class Tests
 
         public string Summary => "discounted returns, less a baseline when values are given (the reinforcement contract tests)";
 
-        public IReadOnlyCollection<string> Keys { get; } = ["gamma"];
+        public IReadOnlySet<string> Keys { get; } = new OptionKeys("gamma");
 
         public bool UsesValues => usesValues;
 
@@ -208,7 +209,7 @@ internal static partial class Tests
 
         public string Summary => "a clipped ratio with a KL penalty (the reinforcement contract tests)";
 
-        public IReadOnlyCollection<string> Keys { get; } = ["clip", "kl"];
+        public IReadOnlySet<string> Keys { get; } = new OptionKeys("clip", "kl");
 
         public Tensor Loss(PolicyLossInput input, IReadOnlyDictionary<string, string>? options = null)
         {
@@ -463,7 +464,7 @@ internal static partial class Tests
             return advantages;
         }
 
-        GuardedRegistry(nameof(AdvantageEstimators), Guarded, AdvantageEstimators.Register, AdvantageEstimators.Unregister, AdvantageEstimators.Get, AdvantageEstimators.Default,
+        GuardedRegistry(nameof(AdvantageEstimators), Guarded, AdvantageEstimators.Register, AdvantageEstimators.Unregister, n => AdvantageEstimators.Get(n), AdvantageEstimators.Default,
             AdvantageEstimators.Origin, AdvantageEstimators.SetPolicy, new ReturnsEstimator(Guarded), new ReturnsEstimator(Guarded, broken: true), new ReturnsEstimator(Guarded, shift: 1f),
             Estimated);
         float[] Lost(IPolicyLoss loss)
@@ -472,7 +473,7 @@ internal static partial class Tests
             return loss.Loss(new PolicyLossInput(Tensor.From([-1f, -2f], [2]), [2], Tensor.From([1f, -1f], [2]))).ToArray();
         }
 
-        GuardedRegistry(nameof(PolicyLosses), Guarded, PolicyLosses.Register, PolicyLosses.Unregister, PolicyLosses.Get, PolicyLosses.Default, PolicyLosses.Origin,
+        GuardedRegistry(nameof(PolicyLosses), Guarded, PolicyLosses.Register, PolicyLosses.Unregister, n => PolicyLosses.Get(n), PolicyLosses.Default, PolicyLosses.Origin,
             PolicyLosses.SetPolicy, new ClippedLoss(Guarded), new ClippedLoss(Guarded, broken: true), new ClippedLoss(Guarded, shift: 1f), Lost);
     }
 

@@ -160,6 +160,9 @@ public sealed class AudioPartKind : IBinaryPartKind
     public string Name => ChatParts.Audio;
 
     /// <inheritdoc />
+    public string Summary => "a sound's bytes as base64, with its media type: {\"type\": \"audio\", \"media_type\": …, \"data\": …}";
+
+    /// <inheritdoc />
     public void Write(ChatPart part, JsonObject json)
     {
         ArgumentNullException.ThrowIfNull(json);

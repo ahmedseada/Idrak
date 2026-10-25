@@ -140,7 +140,7 @@ internal sealed class GeneralizedAdvantageEstimator : IAdvantageEstimator
 
     public string Summary => "generalized advantage estimation (Schulman et al. 2015): TD errors of a critic summed with γλ; needs value estimates";
 
-    public IReadOnlyCollection<string> Keys { get; } = [ReinforcementNames.GammaKey, ReinforcementNames.LambdaKey, ReinforcementNames.NormalizeAdvantagesKey];
+    public IReadOnlySet<string> Keys { get; } = new OptionKeys(ReinforcementNames.GammaKey, ReinforcementNames.LambdaKey, ReinforcementNames.NormalizeAdvantagesKey);
 
     public bool UsesValues => true;
 
@@ -191,7 +191,7 @@ internal sealed class GroupAdvantageEstimator : IAdvantageEstimator
 
     public string Summary => "group-relative advantages (GRPO, Shao et al. 2024): an episode's return less its group's mean, over the group's deviation or not";
 
-    public IReadOnlyCollection<string> Keys { get; } = [ReinforcementNames.ScaleKey, ReinforcementNames.EpsilonKey];
+    public IReadOnlySet<string> Keys { get; } = new OptionKeys(ReinforcementNames.ScaleKey, ReinforcementNames.EpsilonKey);
 
     public bool UsesValues => false;
 
@@ -283,7 +283,7 @@ internal sealed class LeaveOneOutEstimator : IAdvantageEstimator
 
     public string Summary => "leave-one-out advantages (RLOO, Ahmadian et al. 2024): an episode's return less the mean of its group's others";
 
-    public IReadOnlyCollection<string> Keys { get; } = [];
+    public IReadOnlySet<string> Keys => OptionKeys.None;
 
     public bool UsesValues => false;
 
@@ -323,7 +323,7 @@ internal sealed class ReturnsEstimator : IAdvantageEstimator
 
     public string Summary => "discounted returns (REINFORCE, Williams 1992), less a baseline (none, the batch's mean, or the critic's value) or not";
 
-    public IReadOnlyCollection<string> Keys { get; } = [ReinforcementNames.GammaKey, ReinforcementNames.BaselineKey, ReinforcementNames.NormalizeAdvantagesKey];
+    public IReadOnlySet<string> Keys { get; } = new OptionKeys(ReinforcementNames.GammaKey, ReinforcementNames.BaselineKey, ReinforcementNames.NormalizeAdvantagesKey);
 
     public bool UsesValues => false;
 

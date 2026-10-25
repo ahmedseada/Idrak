@@ -196,7 +196,7 @@ public static class LinkProfiles
         }
 
         int dash = name.LastIndexOf('-');
-        if (dash > 0 && TryParseRate(name.AsSpan(dash + 1), out double bytesPerSecond) && Table.Find(name[..dash]) is { } named)
+        if (dash > 0 && TryParseRate(name.AsSpan(dash + 1), out double bytesPerSecond) && Table.Find(name.AsSpan(0, dash)) is { } named)
         {
             var rated = named.With(bandwidthBytesPerSecond: bytesPerSecond, name: name);
             return ClusterCache.Calibrated(name) is { } calibrated ? calibrated.Apply(rated) : rated;

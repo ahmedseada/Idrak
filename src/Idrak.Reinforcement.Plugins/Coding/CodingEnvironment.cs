@@ -79,6 +79,7 @@ public sealed class CodingEnvironmentKind : IEnvironmentKind
     public CodingEnvironmentKind()
     {
         Name = KindName;
+        Keys = KeysOf(null, null);
     }
 
     /// <summary>A kind of <paramref name="tasks"/> (the option <c>suite</c> is then refused).</summary>
@@ -95,6 +96,7 @@ public sealed class CodingEnvironmentKind : IEnvironmentKind
 
         _tasks = [.. tasks];
         Name = name;
+        Keys = KeysOf(null, _tasks);
     }
 
     /// <summary>The kind of <paramref name="variant"/>: the coding environment under the variant's name, with its defaults and options (its tasks from the option <c>suite</c>, or <paramref name="tasks"/>).</summary>
@@ -112,6 +114,7 @@ public sealed class CodingEnvironmentKind : IEnvironmentKind
         _variant = variant;
         _tasks = tasks is null ? null : [.. tasks];
         Name = variant.Name;
+        Keys = KeysOf(_variant, _tasks);
     }
 
     /// <inheritdoc />
@@ -124,7 +127,7 @@ public sealed class CodingEnvironmentKind : IEnvironmentKind
     public string Summary => _variant?.Summary ?? "coding tasks (suite=DIR): the agent works with the coding tools; the hidden tests' verification is the reward (reward=tests-passed)";
 
     /// <inheritdoc />
-    public IReadOnlyCollection<string> Keys => [.. OwnKeys.Concat(_variant?.Keys ?? []).Where(k => _tasks is null || k != "suite")];
+    public IReadOnlySet<string> Keys { get; }
 
     /// <inheritdoc />
     public Type ObservationType => typeof(ChatObservation);
@@ -133,19 +136,20 @@ public sealed class CodingEnvironmentKind : IEnvironmentKind
     public Type ActionType => typeof(ChatMessage);
 
     /// <inheritdoc />
-    public IEnvironment Create(IReadOnlyDictionary<string, string>? options = null, int seed = 0)
+    public IEnvironment Create(EnvironmentRequest request)
     {
-        var settings = CodingSettings.Parse(this, options);
+        ArgumentNullException.ThrowIfNull(request);
+        var settings = CodingSettings.Parse(this, request.Options);
         lock (_gate)
         {
             if (!_runs.TryGetValue(settings.Key, out var run))
             {
                 var tasks = _tasks ?? (settings.Suite is { } suite ? CodingSuite.Load(suite)
-                    : throw new ArgumentException($"The {Name} environment reads its tasks from the option suite (a folder of task folders with task.json).", nameof(options)));
+                    : throw new ArgumentException($"The {Name} environment reads its tasks from the option suite (a folder of task folders with task.json).", nameof(request)));
                 tasks = [.. tasks.Where(t => settings.Filter is null || t.Id.Contains(settings.Filter, StringComparison.OrdinalIgnoreCase))];
                 if (tasks.Count == 0)
                 {
-                    throw new ArgumentException($"The {Name} environment has no task{(settings.Filter is null ? "" : $" whose id holds '{settings.Filter}'")}.", nameof(options));
+                    throw new ArgumentException($"The {Name} environment has no task{(settings.Filter is null ? "" : $" whose id holds '{settings.Filter}'")}.", nameof(request));
                 }
 
                 string key = settings.Key;
@@ -156,6 +160,10 @@ public sealed class CodingEnvironmentKind : IEnvironmentKind
             return new CodingEnvironment(run, run.Acquire());
         }
     }
+
+    // The coding options and the variant's own, made once: a kind of fixed tasks takes no suite.
+    private static OptionKeys KeysOf(CodingEnvironmentVariant? variant, IReadOnlyList<CodingTask>? tasks) =>
+        new(OwnKeys.Concat(variant?.Keys ?? []).Where(k => tasks is null || k != "suite"));
 }
 
 // The parsed options of one Create call; equal options share a run (prepared copies, the workspace limit).

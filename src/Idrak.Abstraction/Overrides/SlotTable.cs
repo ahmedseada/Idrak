@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 
 namespace Idrak.Abstraction;
 
@@ -26,6 +27,14 @@ namespace Idrak.Abstraction;
 /// </list>
 /// Lookups take no lock. Entries keep their order: new names go last, or first for registries that ask the newest
 /// first; an app's registration takes the place of the default it shadows.
+/// <para>
+/// A table of string names also finds them by span (<see cref="TryGet(ReadOnlySpan{char}, out TValue)"/>,
+/// <see cref="Find(ReadOnlySpan{char})"/>, <see cref="Contains(ReadOnlySpan{char})"/>), so a name read from a command line,
+/// a settings file or an options dictionary is looked up without making a string. Each snapshot of the entries makes its
+/// span lookup once, under the comparer's own rules (ordinal, ignoring case). A comparer that cannot compare a span with a
+/// string (a custom one without <see cref="IAlternateEqualityComparer{TAlternate, T}"/> of <c>ReadOnlySpan&lt;char&gt;</c>)
+/// still finds the same entries, through a string made from the span on each lookup.
+/// </para>
 /// </summary>
 /// <typeparam name="TKey">The entry's name (or id, or type).</typeparam>
 /// <typeparam name="TValue">What is registered: a delegate, an object implementing the contract, a description.</typeparam>
@@ -53,15 +62,31 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
 
     private sealed record LibraryVersion(int Version, TValue Value, string? Since, string Assembly);
 
-    private sealed class State(Dictionary<TKey, Entry> map, Entry[] ordered)
+    private sealed class State
     {
-        public Dictionary<TKey, Entry> Map { get; } = map;
+        public State(Dictionary<TKey, Entry> map, Entry[] ordered)
+        {
+            Map = map;
+            Ordered = ordered;
+            Keys = [.. ordered.Select(e => e.Key)];
+            Values = [.. ordered.Select(e => e.Current)];
 
-        public Entry[] Ordered { get; } = ordered;
+            // String names: their lookup by span, made once per snapshot; null when the comparer cannot take spans.
+            if (typeof(TKey) == typeof(string) && map.TryGetAlternateLookup<ReadOnlySpan<char>>(out var byName))
+            {
+                ByName = byName;
+            }
+        }
 
-        public TKey[] Keys { get; } = [.. ordered.Select(e => e.Key)];
+        public Dictionary<TKey, Entry> Map { get; }
 
-        public TValue[] Values { get; } = [.. ordered.Select(e => e.Current)];
+        public Entry[] Ordered { get; }
+
+        public TKey[] Keys { get; }
+
+        public TValue[] Values { get; }
+
+        public Dictionary<TKey, Entry>.AlternateLookup<ReadOnlySpan<char>>? ByName { get; }
     }
 
     private readonly Lock _gate = new();
@@ -107,7 +132,7 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
     /// <summary>The names, in order.</summary>
     public IReadOnlyList<TKey> Keys => _state.Keys;
 
-    /// <summary>What each name hands out (see <see cref="TryGet"/>), in the order of <see cref="Keys"/>.</summary>
+    /// <summary>What each name hands out (see <see cref="TryGet(TKey, out TValue)"/>), in the order of <see cref="Keys"/>.</summary>
     public IReadOnlyList<TValue> Values => _state.Values;
 
     /// <summary>
@@ -207,11 +232,36 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
         return false;
     }
 
-    /// <summary>What <paramref name="key"/> hands out (see <see cref="TryGet"/>), or the type's default when nothing is registered.</summary>
+    /// <summary>What <paramref name="key"/> hands out (see <see cref="TryGet(TKey, out TValue)"/>), or the type's default when nothing is registered.</summary>
     public TValue? Find(TKey key) => _state.Map.TryGetValue(key, out var entry) ? entry.Current : default;
 
     /// <summary>Whether anything is registered as <paramref name="key"/>.</summary>
     public bool Contains(TKey key) => _state.Map.ContainsKey(key);
+
+    /// <summary>
+    /// What the name <paramref name="name"/> hands out (see <see cref="TryGet(TKey, out TValue)"/>), found without making a
+    /// string: for tables whose names are strings.
+    /// </summary>
+    /// <exception cref="NotSupportedException">The table's keys are not strings.</exception>
+    public bool TryGet(ReadOnlySpan<char> name, [MaybeNullWhen(false)] out TValue value)
+    {
+        if (Lookup(_state, name, out var entry))
+        {
+            value = entry.Current;
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
+    /// <summary>What the name <paramref name="name"/> hands out, or the type's default when nothing is registered (see <see cref="TryGet(ReadOnlySpan{char}, out TValue)"/>).</summary>
+    /// <exception cref="NotSupportedException">The table's keys are not strings.</exception>
+    public TValue? Find(ReadOnlySpan<char> name) => Lookup(_state, name, out var entry) ? entry.Current : default;
+
+    /// <summary>Whether anything is registered as the name <paramref name="name"/> (see <see cref="TryGet(ReadOnlySpan{char}, out TValue)"/>).</summary>
+    /// <exception cref="NotSupportedException">The table's keys are not strings.</exception>
+    public bool Contains(ReadOnlySpan<char> name) => Lookup(_state, name, out _);
 
     /// <summary>Whether the library has a default for <paramref name="key"/>.</summary>
     public bool HasDefault(TKey key) => _state.Map.TryGetValue(key, out var entry) && entry.HasLibrary;
@@ -290,6 +340,30 @@ public sealed class SlotTable<TKey, TValue> where TKey : notnull
                 BuiltAgainst = current is null ? null : Overrides.BuiltAgainst(e.Slot.AppAssembly, current.Assembly),
             };
         })];
+
+    // The entry of the name `name` in `state`: through the snapshot's span lookup, or, when the comparer cannot take
+    // spans, through a string made from the span.
+    private static bool Lookup(State state, ReadOnlySpan<char> name, [MaybeNullWhen(false)] out Entry entry)
+    {
+        if (state.ByName is { } byName)
+        {
+            return byName.TryGetValue(name, out entry);
+        }
+
+        return state.Map.TryGetValue(KeyOf(name), out entry);
+    }
+
+    // A name as a key, for a comparer without a span lookup. Tested by type, so a table of value-type keys boxes nothing.
+    private static TKey KeyOf(ReadOnlySpan<char> name)
+    {
+        if (typeof(TKey) != typeof(string))
+        {
+            throw new NotSupportedException($"A SlotTable finds entries by a span of characters only when its keys are strings; this one's are {typeof(TKey).Name}.");
+        }
+
+        string key = name.ToString();
+        return Unsafe.As<string, TKey>(ref key);
+    }
 
     // Replaces the entry of `key` with make(old) (null: removed), under the lock, and publishes a new state.
     private void Update(TKey key, Func<Entry, Entry?> make, Action<Slot>? touch)

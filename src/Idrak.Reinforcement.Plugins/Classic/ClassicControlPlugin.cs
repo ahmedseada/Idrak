@@ -65,19 +65,23 @@ public static class ClassicControlPlugin
 
     // A classic kind: its environments observe float arrays, draw nothing when they are made (every one of a kind with the
     // same options is the same environment) and keep no shared state, so creating one costs its arrays.
-    private sealed class ClassicKind(string name, string summary, IReadOnlyCollection<string> keys, Type actionType,
+    private sealed class ClassicKind(string name, string summary, IReadOnlySet<string> keys, Type actionType,
         Func<IReadOnlyDictionary<string, string>?, IEnvironment> create) : IEnvironmentKind
     {
         public string Name => name;
 
         public string Summary => summary;
 
-        public IReadOnlyCollection<string> Keys => keys;
+        public IReadOnlySet<string> Keys => keys;
 
         public Type ObservationType => typeof(float[]);
 
         public Type ActionType => actionType;
 
-        public IEnvironment Create(IReadOnlyDictionary<string, string>? options = null, int seed = 0) => create(options);
+        public IEnvironment Create(EnvironmentRequest request)
+        {
+            ArgumentNullException.ThrowIfNull(request);
+            return create(request.Options);
+        }
     }
 }

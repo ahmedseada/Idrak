@@ -24,7 +24,7 @@ public sealed record CartPoleOptions
     public double ResetHigh { get; init; } = 0.05;
 
     /// <summary>The kind's option keys.</summary>
-    public static IReadOnlyCollection<string> Keys { get; } = ["max-steps", "sutton-barto", "reset-low", "reset-high"];
+    public static OptionKeys Keys { get; } = new("max-steps", "sutton-barto", "reset-low", "reset-high");
 
     /// <summary>The settings the kind's <paramref name="options"/> give (the defaults for those not given).</summary>
     /// <exception cref="ArgumentException">An option not in <see cref="Keys"/>, a bad value, or a low bound above the high one.</exception>

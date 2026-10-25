@@ -66,8 +66,8 @@ public sealed record Idrak.Reinforcement.Plugins.Classic.BanditOptions : System.
   public int Arms { get; init; }
   public int MeansSeed { get; init; }
   public int Pulls { get; init; }
+  public static Idrak.Abstraction.OptionKeys Keys { get; }
   public static Idrak.Reinforcement.Plugins.Classic.BanditOptions FromOptions(System.Collections.Generic.IReadOnlyDictionary<string, string>? options)
-  public static System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
 
 public sealed class Idrak.Reinforcement.Plugins.Classic.CartPoleEnvironment : Idrak.Abstraction.Reinforcement.IEnvironment, Idrak.Abstraction.Reinforcement.IEnvironment<float[], int>, System.IDisposable
   public CartPoleEnvironment(Idrak.Reinforcement.Plugins.Classic.CartPoleOptions? options = null)
@@ -89,8 +89,8 @@ public sealed record Idrak.Reinforcement.Plugins.Classic.CartPoleOptions : Syste
   public double ResetHigh { get; init; }
   public double ResetLow { get; init; }
   public int MaxSteps { get; init; }
+  public static Idrak.Abstraction.OptionKeys Keys { get; }
   public static Idrak.Reinforcement.Plugins.Classic.CartPoleOptions FromOptions(System.Collections.Generic.IReadOnlyDictionary<string, string>? options)
-  public static System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
 
 public static class Idrak.Reinforcement.Plugins.Classic.ClassicControlPlugin
   public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
@@ -123,8 +123,8 @@ public sealed record Idrak.Reinforcement.Plugins.Classic.MountainCarOptions : Sy
   public double ResetHigh { get; init; }
   public double ResetLow { get; init; }
   public int MaxSteps { get; init; }
+  public static Idrak.Abstraction.OptionKeys Keys { get; }
   public static Idrak.Reinforcement.Plugins.Classic.MountainCarOptions FromOptions(System.Collections.Generic.IReadOnlyDictionary<string, string>? options)
-  public static System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
 
 public sealed class Idrak.Reinforcement.Plugins.Classic.PendulumEnvironment : Idrak.Abstraction.Reinforcement.IEnvironment, Idrak.Abstraction.Reinforcement.IEnvironment<float[], float[]>, System.IDisposable
   public Idrak.Abstraction.Reinforcement.EnvironmentStep<float[]> Step(System.ReadOnlySpan<float> action, System.Threading.CancellationToken cancellationToken = default)
@@ -146,8 +146,8 @@ public sealed record Idrak.Reinforcement.Plugins.Classic.PendulumOptions : Syste
   public double ResetAngle { get; init; }
   public double ResetSpeed { get; init; }
   public int MaxSteps { get; init; }
+  public static Idrak.Abstraction.OptionKeys Keys { get; }
   public static Idrak.Reinforcement.Plugins.Classic.PendulumOptions FromOptions(System.Collections.Generic.IReadOnlyDictionary<string, string>? options)
-  public static System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
 
 public abstract class Idrak.Reinforcement.Plugins.Coding.Abstractions.CodingEnvironmentVariant
   protected CodingEnvironmentVariant()
@@ -173,13 +173,13 @@ public sealed class Idrak.Reinforcement.Plugins.Coding.CodingEnvironment : Idrak
   public string? Workspace { get; }
   public void Dispose()
 
-public sealed class Idrak.Reinforcement.Plugins.Coding.CodingEnvironmentKind : Idrak.Abstraction.Reinforcement.IEnvironmentKind
+public sealed class Idrak.Reinforcement.Plugins.Coding.CodingEnvironmentKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Reinforcement.EnvironmentRequest, Idrak.Abstraction.Reinforcement.IEnvironment>, Idrak.Abstraction.Reinforcement.IEnvironmentKind
   public CodingEnvironmentKind()
   public CodingEnvironmentKind(Idrak.Reinforcement.Plugins.Coding.Abstractions.CodingEnvironmentVariant variant, System.Collections.Generic.IReadOnlyList<Idrak.Reinforcement.Plugins.Coding.CodingTask>? tasks = null)
   public CodingEnvironmentKind(System.Collections.Generic.IReadOnlyList<Idrak.Reinforcement.Plugins.Coding.CodingTask> tasks, string name = "coding")
-  public Idrak.Abstraction.Reinforcement.IEnvironment Create(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, int seed = 0)
+  public Idrak.Abstraction.Reinforcement.IEnvironment Create(Idrak.Abstraction.Reinforcement.EnvironmentRequest request)
   public Idrak.Reinforcement.Plugins.Coding.Abstractions.CodingEnvironmentVariant? Variant { get; }
-  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+  public System.Collections.Generic.IReadOnlySet<string> Keys { get; }
   public System.Type ActionType { get; }
   public System.Type ObservationType { get; }
   public const string KeepWorkspacesVariable = "IDRAK_RL_KEEP_WORKSPACES"

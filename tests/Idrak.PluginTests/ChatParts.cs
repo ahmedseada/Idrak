@@ -28,6 +28,9 @@ public sealed class AudioClipKind : IChatPartKind
     public string Name => AudioClip.KindName;
 
     /// <inheritdoc />
+    public string Summary => "an audio clip's samples";
+
+    /// <inheritdoc />
     public void Write(ChatPart part, JsonObject json)
     {
         var clip = (AudioClip)part;

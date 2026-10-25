@@ -24,7 +24,7 @@ public sealed record PendulumOptions
     public double ResetSpeed { get; init; } = 1.0;
 
     /// <summary>The kind's option keys.</summary>
-    public static IReadOnlyCollection<string> Keys { get; } = ["max-steps", "g", "reset-angle", "reset-speed"];
+    public static OptionKeys Keys { get; } = new("max-steps", "g", "reset-angle", "reset-speed");
 
     /// <summary>The settings the kind's <paramref name="options"/> give (the defaults for those not given).</summary>
     /// <exception cref="ArgumentException">An option not in <see cref="Keys"/>, or a bad value.</exception>

@@ -479,7 +479,7 @@ public static class FineTuningLosses
     /// does: one more pass of the head over the trained rows.
     /// </summary>
     /// <param name="loss">The policy loss (<see cref="PolicyLosses.Get"/>).</param>
-    /// <param name="options">Its options by key (<see cref="IPolicyLoss.Keys"/>), null for its defaults.</param>
+    /// <param name="options">Its options by key (<see cref="IConfigurableKind.Keys"/>), null for its defaults.</param>
     public static FineTuningLoss Policy(IPolicyLoss loss, IReadOnlyDictionary<string, string>? options = null)
     {
         ArgumentNullException.ThrowIfNull(loss);

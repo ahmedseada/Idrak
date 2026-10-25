@@ -18,7 +18,7 @@ public abstract class CodingEnvironmentVariant
     /// <summary>The environment kind's name (in <c>EnvironmentKinds</c>).</summary>
     public abstract string Name { get; }
 
-    /// <summary>One line on the kind (its <c>IEnvironmentKind.Summary</c>).</summary>
+    /// <summary>One line on the kind (its <c>IKind.Summary</c>).</summary>
     public abstract string Summary { get; }
 
     /// <summary>The coding language (a <see cref="CodingLanguages"/> name) whose defaults the tasks get, and the coding option <c>languages</c> unless given.</summary>

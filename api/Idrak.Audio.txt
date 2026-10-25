@@ -241,11 +241,12 @@ public sealed record Idrak.Audio.Abstractions.AudioInputDevice : System.IEquatab
   public string Id { get; init; }
   public string Name { get; init; }
 
-public sealed class Idrak.Audio.Abstractions.AudioPartKind : Idrak.Abstraction.Generation.IBinaryPartKind, Idrak.Abstraction.Generation.IChatPartKind
+public sealed class Idrak.Audio.Abstractions.AudioPartKind : Idrak.Abstraction.Generation.IBinaryPartKind, Idrak.Abstraction.Generation.IChatPartKind, Idrak.Abstraction.IKind
   public AudioPartKind()
   public Idrak.Abstraction.Generation.ChatPart FromBytes(System.ReadOnlySpan<byte> data, string? mediaType = null)
   public Idrak.Abstraction.Generation.ChatPart Read(System.Text.Json.Nodes.JsonObject json)
   public string Name { get; }
+  public string Summary { get; }
   public void Write(Idrak.Abstraction.Generation.ChatPart part, System.Text.Json.Nodes.JsonObject json)
 
 public readonly record struct Idrak.Audio.Abstractions.AudioPiece : System.IEquatable<Idrak.Audio.Abstractions.AudioPiece>

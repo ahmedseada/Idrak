@@ -34,7 +34,7 @@ public static class PolicyNetworks
     public static (Space Observations, Space Actions) Spaces(IEnvironmentKind environmentKind, IReadOnlyDictionary<string, string>? environmentOptions = null)
     {
         ArgumentNullException.ThrowIfNull(environmentKind);
-        using var probe = environmentKind.Create(environmentOptions, 0);
+        using var probe = environmentKind.Create(new EnvironmentRequest(environmentOptions));
         return (probe.ObservationSpace, probe.ActionSpace);
     }
 

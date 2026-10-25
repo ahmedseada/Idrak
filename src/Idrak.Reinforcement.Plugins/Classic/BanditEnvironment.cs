@@ -33,7 +33,7 @@ public sealed record BanditOptions
     public int Pulls { get; init; } = 1;
 
     /// <summary>The kind's option keys.</summary>
-    public static IReadOnlyCollection<string> Keys { get; } = ["arms", "means", "spreads", "means-seed", "pulls"];
+    public static OptionKeys Keys { get; } = new("arms", "means", "spreads", "means-seed", "pulls");
 
     /// <summary>The settings the kind's <paramref name="options"/> give (the defaults for those not given).</summary>
     /// <exception cref="ArgumentException">An option not in <see cref="Keys"/>, a bad value, or means and spreads of other counts than the arms.</exception>

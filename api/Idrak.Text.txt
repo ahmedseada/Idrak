@@ -1173,12 +1173,12 @@ public sealed record Idrak.Text.Reinforcement.PromptTask : System.IEquatable<Idr
   public static Idrak.Text.Reinforcement.PromptTask FromTranscript(Idrak.Text.ChatTranscript transcript)
   public string? Reference { get; init; }
 
-public sealed class Idrak.Text.Reinforcement.PromptsEnvironmentKind : Idrak.Abstraction.Reinforcement.IEnvironmentKind
+public sealed class Idrak.Text.Reinforcement.PromptsEnvironmentKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Reinforcement.EnvironmentRequest, Idrak.Abstraction.Reinforcement.IEnvironment>, Idrak.Abstraction.Reinforcement.IEnvironmentKind
   public Idrak.Abstraction.Generation.ITokenizer? Tokenizer { get; init; }
-  public Idrak.Abstraction.Reinforcement.IEnvironment Create(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, int seed = 0)
+  public Idrak.Abstraction.Reinforcement.IEnvironment Create(Idrak.Abstraction.Reinforcement.EnvironmentRequest request)
   public PromptsEnvironmentKind()
   public PromptsEnvironmentKind(System.Collections.Generic.IReadOnlyList<Idrak.Text.Reinforcement.PromptTask> tasks, Idrak.Abstraction.Generation.IToolRegistry? tools = null, string name = "prompts")
-  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+  public System.Collections.Generic.IReadOnlySet<string> Keys { get; }
   public System.Type ActionType { get; }
   public System.Type ObservationType { get; }
   public const string KindName = "prompts"

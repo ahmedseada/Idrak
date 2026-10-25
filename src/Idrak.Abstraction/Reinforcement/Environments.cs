@@ -60,7 +60,7 @@ public interface IEnvironment : IDisposable
 /// <item>a step whose token is cancelled throws an <see cref="OperationCanceledException"/>.</item>
 /// </list>
 /// One environment is not thread-safe: it runs one episode at a time. A rollout runs many episodes at once with an
-/// environment each (<see cref="IEnvironmentKind.Create"/>).
+/// environment each (<see cref="IKind{TRequest, T}.Create"/>).
 /// </summary>
 /// <typeparam name="TObservation">What the agent sees: a float array for a box, a conversation for a chat task.</typeparam>
 /// <typeparam name="TAction">What the agent does: a choice, a float array, a chat message.</typeparam>
@@ -82,36 +82,30 @@ public interface IEnvironment<TObservation, TAction> : IEnvironment
 }
 
 /// <summary>
-/// A kind of environment, registered in <see cref="EnvironmentKinds"/> under <see cref="Name"/>: what a trainer and
-/// <c>idrak reinforce --env</c> create environments from, with options of the kind's own (<see cref="Keys"/>). Creating is
-/// cheap enough to make an environment per episode slot; what is costly and shared (a prepared workspace, a loaded task
-/// list) the kind keeps and its environments reuse. Thread-safe: <see cref="Create"/> is called from many threads.
+/// What an environment is made with (<see cref="IKind{TRequest, T}.Create"/>): the kind's options and the seed of what it
+/// draws once when it is made.
 /// </summary>
-public interface IEnvironmentKind
+/// <param name="Options">The kind's options by key (<see cref="IConfigurableKind.Keys"/>), values as text; null for its defaults.</param>
+/// <param name="Seed">What the environment draws once when it is made (an order of tasks); each episode has its own seed (<see cref="IEnvironment{TObservation, TAction}.Reset"/>).</param>
+public sealed record EnvironmentRequest(IReadOnlyDictionary<string, string>? Options = null, int Seed = 0);
+
+/// <summary>
+/// A kind of environment, registered in <see cref="EnvironmentKinds"/> under its <see cref="IKind.Name"/> ("prompts",
+/// "coding"): what a trainer and <c>idrak reinforce --env</c> create environments from, with options of the kind's own
+/// (<see cref="IConfigurableKind.Keys"/>). Creating is cheap enough to make an environment per episode slot; what is
+/// costly and shared (a prepared workspace, a loaded task list) the kind keeps and its environments reuse. Thread-safe:
+/// <see cref="IKind{TRequest, T}.Create"/> is called from many threads, and makes an
+/// <see cref="IEnvironment{TObservation, TAction}"/> of <see cref="ObservationType"/> and <see cref="ActionType"/> that
+/// the caller disposes; an option the kind does not take is refused with an <see cref="ArgumentException"/> naming it
+/// and the keys.
+/// </summary>
+public interface IEnvironmentKind : IKind<EnvironmentRequest, IEnvironment>
 {
-    /// <summary>The kind's name in <see cref="EnvironmentKinds"/> ("prompts", "coding").</summary>
-    string Name { get; }
-
-    /// <summary>One line for help and listings.</summary>
-    string Summary { get; }
-
-    /// <summary>The option keys <see cref="Create"/> takes; any other is refused, naming these.</summary>
-    IReadOnlyCollection<string> Keys { get; }
-
     /// <summary>The type of the observations of the environments it creates (the TObservation of <see cref="IEnvironment{TObservation, TAction}"/>).</summary>
     Type ObservationType { get; }
 
     /// <summary>The type of their actions (the TAction of <see cref="IEnvironment{TObservation, TAction}"/>).</summary>
     Type ActionType { get; }
-
-    /// <summary>
-    /// A new environment of the kind, an <see cref="IEnvironment{TObservation, TAction}"/> of <see cref="ObservationType"/>
-    /// and <see cref="ActionType"/>; the caller disposes it.
-    /// </summary>
-    /// <param name="options">The kind's options by key (<see cref="Keys"/>), values as text; null for its defaults.</param>
-    /// <param name="seed">What the environment draws once when it is made (an order of tasks); each episode has its own seed (<see cref="IEnvironment{TObservation, TAction}.Reset"/>).</param>
-    /// <exception cref="ArgumentException">An option the kind does not take (the message names it and <see cref="Keys"/>), or a bad value.</exception>
-    IEnvironment Create(IReadOnlyDictionary<string, string>? options = null, int seed = 0);
 }
 
 /// <summary>
@@ -123,34 +117,29 @@ public interface IEnvironmentKind
 /// </summary>
 public static class EnvironmentKinds
 {
-    private static readonly SlotTable<string, IEnvironmentKind> Table = new(nameof(EnvironmentKinds), comparer: StringComparer.OrdinalIgnoreCase,
+    private static readonly KindTable<IEnvironmentKind> Table = new(nameof(EnvironmentKinds), "Environment kind",
+        "add it with EnvironmentKinds.Register, or reference Idrak.Reinforcement.Plugins and call ReinforcementPlugins.RegisterAll()",
+        comparer: StringComparer.OrdinalIgnoreCase,
         unguarded: "an environment kind is not called per use: it creates environments that keep an episode's state from step to step, so no single call can fall back");
 
     static EnvironmentKinds() => LibraryDefaults.Ensure(typeof(EnvironmentKinds));
 
-    /// <summary>Registers <paramref name="kind"/> under its <see cref="IEnvironmentKind.Name"/> (over the library's of that name, which stays behind it).</summary>
+    /// <summary>Registers <paramref name="kind"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IEnvironmentKind kind)
-    {
-        ArgumentNullException.ThrowIfNull(kind);
-        ArgumentException.ThrowIfNullOrWhiteSpace(kind.Name);
-        Table.Register(kind.Name, kind, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(IEnvironmentKind kind) => Table.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's kind <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Table.Unregister(name);
 
     /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
+    public static IReadOnlyCollection<string> Names => Table.Names;
 
     /// <summary>The kind registered as <paramref name="name"/>, or null.</summary>
-    public static IEnvironmentKind? Find(string name) => Table.Find(name);
+    public static IEnvironmentKind? Find(ReadOnlySpan<char> name) => Table.Find(name);
 
     /// <summary>The kind registered as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones and the plug-in package to reference.</exception>
-    public static IEnvironmentKind Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Environment kind '{name}' is not registered (registered: {(Table.Keys.Count == 0 ? "none" : string.Join(", ", Table.Keys))}); "
-                                           + "add it with EnvironmentKinds.Register, or reference Idrak.Reinforcement.Plugins and call ReinforcementPlugins.RegisterAll().");
+    public static IEnvironmentKind Get(ReadOnlySpan<char> name) => Table.Get(name);
 
     /// <summary>The library's kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IEnvironmentKind? Default(string name) => Table.Default(name);
@@ -159,9 +148,9 @@ public static class EnvironmentKinds
     public static string? Origin(string name) => Table.Origin(name);
 
     /// <summary>Each registered kind as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(k => $"{k.Name}: {k.Summary}"));
+    public static string Describe() => Table.Describe();
 
-    /// <summary>A new environment of the kind <paramref name="name"/> (<see cref="IEnvironmentKind.Create"/>), as the observation and action types asked for.</summary>
+    /// <summary>A new environment of the kind <paramref name="name"/> (<see cref="IKind{TRequest, T}.Create"/>), as the observation and action types asked for.</summary>
     /// <exception cref="NotSupportedException">No kind of that name is registered.</exception>
     /// <exception cref="ArgumentException">The kind's environments observe or act with other types (the message names both), or an option it does not take.</exception>
     public static IEnvironment<TObservation, TAction> Create<TObservation, TAction>(string name, IReadOnlyDictionary<string, string>? options = null, int seed = 0)
@@ -173,7 +162,7 @@ public static class EnvironmentKinds
                                         + $"not {typeof(TObservation).Name} and {typeof(TAction).Name}.", nameof(name));
         }
 
-        var environment = kind.Create(options, seed);
+        var environment = kind.Create(new EnvironmentRequest(options, seed));
         if (environment is IEnvironment<TObservation, TAction> typed)
         {
             return typed;

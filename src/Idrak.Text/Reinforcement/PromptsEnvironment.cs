@@ -43,6 +43,9 @@ public sealed class PromptsEnvironmentKind : IEnvironmentKind
     /// <summary>The kind's name.</summary>
     public const string KindName = "prompts";
 
+    // The library's kind reads its tasks from "data"; a kind made with tasks refuses it.
+    private static readonly OptionKeys DataKeys = new("data", "reward", "rounds"), TaskKeys = new("reward", "rounds");
+
     private readonly IReadOnlyList<PromptTask>? _tasks;
     private readonly IToolRegistry? _tools;
 
@@ -77,7 +80,7 @@ public sealed class PromptsEnvironmentKind : IEnvironmentKind
     public string Summary => "chat prompts with references: the reply is scored by a reward expression (reward=exact, or exact:1,length:0.1)";
 
     /// <inheritdoc />
-    public IReadOnlyCollection<string> Keys => _tasks is null ? ["data", "reward", "rounds"] : ["reward", "rounds"];
+    public IReadOnlySet<string> Keys => _tasks is null ? DataKeys : TaskKeys;
 
     /// <inheritdoc />
     public Type ObservationType => typeof(ChatObservation);
@@ -89,8 +92,10 @@ public sealed class PromptsEnvironmentKind : IEnvironmentKind
     public ITokenizer? Tokenizer { get; init; }
 
     /// <inheritdoc />
-    public IEnvironment Create(IReadOnlyDictionary<string, string>? options = null, int seed = 0)
+    public IEnvironment Create(EnvironmentRequest request)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        var options = request.Options;
         var rewardOptions = new Dictionary<string, string>(StringComparer.Ordinal);
         string reward = "exact", data = "";
         int rounds = 1;
@@ -103,7 +108,7 @@ public sealed class PromptsEnvironmentKind : IEnvironmentKind
                     break;
                 case "rounds":
                     rounds = int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int r) && r > 0 ? r
-                        : throw new ArgumentException($"The {Name} environment's rounds={value} is not a positive whole number.", nameof(options));
+                        : throw new ArgumentException($"The {Name} environment's rounds={value} is not a positive whole number.", nameof(request));
                     break;
                 case "data" when _tasks is null:
                     data = value;
@@ -112,7 +117,7 @@ public sealed class PromptsEnvironmentKind : IEnvironmentKind
                     if (!key.Contains('.', StringComparison.Ordinal))
                     {
                         throw new ArgumentException($"The {Name} environment does not take the option '{key}'; it takes: {string.Join(", ", Keys)}, and a reward term's options as term.key.",
-                            nameof(options));
+                            nameof(request));
                     }
 
                     rewardOptions[key] = value;
@@ -122,10 +127,10 @@ public sealed class PromptsEnvironmentKind : IEnvironmentKind
 
         var expression = RewardExpression.Parse(reward, rewardOptions);
         var tasks = _tasks ?? (data.Length > 0 ? [.. ChatTranscript.ReadJsonLines(data).Select(PromptTask.FromTranscript)]
-            : throw new ArgumentException($"The {Name} environment reads its tasks from the option data (a chat-transcript JSON-lines file).", nameof(options)));
+            : throw new ArgumentException($"The {Name} environment reads its tasks from the option data (a chat-transcript JSON-lines file).", nameof(request)));
         if (tasks.Count == 0)
         {
-            throw new ArgumentException($"The {Name} environment's data holds no task: {data}.", nameof(options));
+            throw new ArgumentException($"The {Name} environment's data holds no task: {data}.", nameof(request));
         }
 
         return new PromptsEnvironment(tasks, expression, rounds, _tools, Tokenizer);

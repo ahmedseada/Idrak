@@ -171,16 +171,14 @@ public sealed record ChatImage : ChatPart
 }
 
 /// <summary>
-/// A kind of message part, registered in <see cref="ChatParts"/> under <see cref="Name"/>: how parts of this kind are
+/// A kind of message part, registered in <see cref="ChatParts"/> under its name: how parts of this kind are
 /// written to and read from the chat JSON (the content-part objects of saved conversations, <c>{"type": name, …}</c>).
 /// The library's are "text" and "image"; a plug-in adds its own (audio, video, documents) with
-/// <see cref="ChatParts.Register"/> and makes its own <see cref="ChatPart"/> type for them.
+/// <see cref="ChatParts.Register"/> and makes its own <see cref="ChatPart"/> type for them. Its
+/// <see cref="IKind.Name"/> is the <see cref="ChatPart.Kind"/> of its parts and the "type" of their JSON.
 /// </summary>
-public interface IChatPartKind
+public interface IChatPartKind : IKind
 {
-    /// <summary>The kind's name: the <see cref="ChatPart.Kind"/> of its parts and the "type" of their JSON.</summary>
-    string Name { get; }
-
     /// <summary>Writes the fields of <paramref name="part"/> (one of this kind) into <paramref name="json"/>, which already holds its "type".</summary>
     void Write(ChatPart part, JsonObject json);
 
@@ -229,15 +227,15 @@ public static class ChatParts
     /// <summary>The kinds a text-only model or template takes: "text". The default of <see cref="IChatModel.PartKinds"/>.</summary>
     public static IReadOnlySet<string> TextOnly { get; } = FrozenSet.Create(StringComparer.Ordinal, Text);
 
-    private static readonly SlotTable<string, IChatPartKind> Table = BuiltIn();
+    private static readonly KindTable<IChatPartKind> Table = BuiltIn();
 
     static ChatParts() => LibraryDefaults.Ensure(typeof(ChatParts));   // the packages' kinds (Idrak.Audio's "audio"), on first use
 
-    private static SlotTable<string, IChatPartKind> BuiltIn()
+    private static KindTable<IChatPartKind> BuiltIn()
     {
-        var table = new SlotTable<string, IChatPartKind>(nameof(ChatParts), Guard, StringComparer.Ordinal);
-        table.RegisterDefault(Text, new TextKind());
-        table.RegisterDefault(Image, new ImageKind());
+        var table = new KindTable<IChatPartKind>(nameof(ChatParts), "Chat part kind", "add it with ChatParts.Register", Guard, StringComparer.Ordinal);
+        table.RegisterDefault(new TextKind());
+        table.RegisterDefault(new ImageKind());
         return table;
     }
 
@@ -245,29 +243,24 @@ public static class ChatParts
     private static IChatPartKind Guard(Slot slot, IChatPartKind app, IChatPartKind library) => new GuardedKind(slot, app, library);
 
     /// <summary>
-    /// Registers <paramref name="kind"/> under its <see cref="IChatPartKind.Name"/>: under a built-in name it takes that
+    /// Registers <paramref name="kind"/> under its <see cref="IKind.Name"/>: under a built-in name it takes that
     /// kind's place (the built-in stays behind it, see <see cref="SetPolicy"/>). Names are matched exactly.
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(IChatPartKind kind)
-    {
-        ArgumentNullException.ThrowIfNull(kind);
-        ArgumentException.ThrowIfNullOrEmpty(kind.Name);
-        Table.Register(kind.Name, kind, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(IChatPartKind kind) => Table.Register(kind, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's kind <paramref name="name"/> (a built-in name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Table.Unregister(name);
 
     /// <summary>The registered kind names, in registration order.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
+    public static IReadOnlyCollection<string> Names => Table.Names;
 
     /// <summary>The kind registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
-    public static IChatPartKind Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"No chat part kind '{name}' is registered ({string.Join(", ", Table.Keys)}); add it with ChatParts.Register.");
+    /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
+    public static IChatPartKind Get(ReadOnlySpan<char> name) => Table.Get(name);
 
     /// <summary>The kind registered as <paramref name="name"/>, or null.</summary>
-    public static IChatPartKind? Find(string name) => Table.Find(name);
+    public static IChatPartKind? Find(ReadOnlySpan<char> name) => Table.Find(name);
 
     /// <summary>The library's kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IChatPartKind? Default(string name) => Table.Default(name);
@@ -379,6 +372,8 @@ public static class ChatParts
     {
         public string Name => Text;
 
+        public string Summary => "text: {\"type\": \"text\", \"text\": …}";
+
         public void Write(ChatPart part, JsonObject json) => json["text"] = Of<ChatText>(part, Name).Text;
 
         public ChatPart Read(JsonObject json) =>
@@ -388,6 +383,8 @@ public static class ChatParts
     private sealed class ImageKind : IChatPartKind
     {
         public string Name => Image;
+
+        public string Summary => "an image's bytes as base64, with its media type: {\"type\": \"image\", \"media_type\": …, \"data\": …}";
 
         public void Write(ChatPart part, JsonObject json)
         {
@@ -425,6 +422,8 @@ public static class ChatParts
     private sealed class GuardedKind(Slot slot, IChatPartKind app, IChatPartKind library) : IChatPartKind
     {
         public string Name => app.Name;
+
+        public string Summary => app.Summary;
 
         public void Write(ChatPart part, JsonObject json)
         {

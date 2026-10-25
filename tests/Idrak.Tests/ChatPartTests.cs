@@ -159,6 +159,8 @@ internal static partial class Tests
     {
         public string Name => "image";
 
+        public string Summary => "an image kind that fails";
+
         public void Write(ChatPart part, JsonObject json)
         {
             called();
@@ -185,6 +187,8 @@ internal static partial class Tests
     private sealed class ForgetfulImageKind : IChatPartKind
     {
         public string Name => "image";
+
+        public string Summary => "an image kind that drops the media type";
 
         public void Write(ChatPart part, JsonObject json) => json["data"] = Convert.ToBase64String(((ChatImage)part).Data.Span);
 

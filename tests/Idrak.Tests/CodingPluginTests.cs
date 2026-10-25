@@ -320,8 +320,8 @@ internal static partial class Tests
         {
             ["suite"] = suite, ["system"] = "Fix the code.", ["rounds"] = "6", ["reward"] = "tests-passed:1,rounds:1,tool-errors:1", ["work"] = work, ["workspaces"] = "2",
         };
-        var first = (CodingEnvironment)kind.Create(options);
-        var second = (CodingEnvironment)kind.Create(options);
+        var first = (CodingEnvironment)kind.Create(new EnvironmentRequest(options));
+        var second = (CodingEnvironment)kind.Create(new EnvironmentRequest(options));
         CodingEnvironment? refusing = null;
         try
         {
@@ -386,7 +386,7 @@ internal static partial class Tests
                 $"a test edit reported, the hidden tests copied over it: {ShowInfo(edited.Info)}");
 
             // Refused when asked: no verification, counted as failed.
-            refusing = (CodingEnvironment)kind.Create(new Dictionary<string, string>(options) { ["refuse-test-edits"] = "true", ["work"] = Path.Combine(root, "work-refusing") });
+            refusing = (CodingEnvironment)kind.Create(new EnvironmentRequest(new Dictionary<string, string>(options) { ["refuse-test-edits"] = "true", ["work"] = Path.Combine(root, "work-refusing") }));
             var refused = PlayCoding(refusing, hello, [CodingFix, CodingTestEdit, CodingDone])[^1];
             Check(refused.Info![CodingInfo.Refused] == "test-edits" && refused.Info[CodingInfo.VerifyPassed] == "false" && refused.Info[CodingInfo.TestEdits] == "tests/Check.cs",
                 $"a test edit refused: {ShowInfo(refused.Info)}");
@@ -394,8 +394,8 @@ internal static partial class Tests
             Check(refusing.Verification!.Output.StartsWith("refused", StringComparison.Ordinal), "the verification did not run");
 
             ThrowsNaming<InvalidOperationException>(() => first.StepAsync(CodingDone).AsTask().GetAwaiter().GetResult(), "a step after the end", "reset");
-            ThrowsNaming<ArgumentException>(() => kind.Create(new Dictionary<string, string> { ["suite"] = suite, ["rounds"] = "many" }), "a bad option", "rounds=many");
-            ThrowsNaming<ArgumentException>(() => kind.Create(new Dictionary<string, string> { ["suite"] = suite, ["filter"] = "nothing-matches" }), "a filter that leaves nothing", "nothing-matches");
+            ThrowsNaming<ArgumentException>(() => kind.Create(new EnvironmentRequest(new Dictionary<string, string> { ["suite"] = suite, ["rounds"] = "many" })), "a bad option", "rounds=many");
+            ThrowsNaming<ArgumentException>(() => kind.Create(new EnvironmentRequest(new Dictionary<string, string> { ["suite"] = suite, ["filter"] = "nothing-matches" })), "a filter that leaves nothing", "nothing-matches");
         }
         finally
         {
@@ -452,7 +452,7 @@ internal static partial class Tests
                     options[key] = value;
                 }
 
-                using var environment = (CodingEnvironment)kind.Create(options);
+                using var environment = (CodingEnvironment)kind.Create(new EnvironmentRequest(options));
                 environment.Reset(1);
                 var command = new ChatMessage("assistant", "", ToolCalls: [new ToolCall("run_command", new JsonObject { ["command"] = "git status" })]);
                 environment.StepAsync(command).AsTask().GetAwaiter().GetResult();
@@ -469,7 +469,7 @@ internal static partial class Tests
             Check(most == (TimeSpan.FromSeconds(600), TimeSpan.FromSeconds(300)), $"never past 600 s for verification and 300 s for a tool command: {most}");
             var given = Limits(new() { ["verify-timeout"] = "7", ["command-timeout"] = "9" });
             Check(given == (TimeSpan.FromSeconds(7), TimeSpan.FromSeconds(9)), $"verify-timeout and command-timeout as given: {given}");
-            ThrowsNaming<ArgumentException>(() => kind.Create(new Dictionary<string, string> { ["suite"] = WriteQuickSuite(Path.Combine(root, "bad")), ["timeout-scale"] = "x" }),
+            ThrowsNaming<ArgumentException>(() => kind.Create(new EnvironmentRequest(new Dictionary<string, string> { ["suite"] = WriteQuickSuite(Path.Combine(root, "bad")), ["timeout-scale"] = "x" })),
                 "a timeout-scale that is not a number", "timeout-scale");
         }
         finally
@@ -587,7 +587,7 @@ internal static partial class Tests
             var trajectories = new List<Trajectory<ChatObservation, ChatMessage>>();
             foreach (var (script, index) in new[] { (new[] { CodingFix, CodingDone }, 0), (new[] { CodingRead, CodingDone }, 1) })
             {
-                using var environment = (IEnvironment<ChatObservation, ChatMessage>)kind.Create(environmentOptions);
+                using var environment = (IEnvironment<ChatObservation, ChatMessage>)kind.Create(new EnvironmentRequest(environmentOptions));
                 var observations = new List<ChatObservation> { environment.Reset(7) };
                 var records = new List<ActionRecord>();
                 var rewards = new List<float>();

@@ -158,6 +158,8 @@ internal static partial class Tests
     {
         public string Name => "audio";
 
+        public string Summary => "the library's audio, passed through";
+
         public void Write(ChatPart part, JsonObject json) => ChatParts.Default("audio")!.Write(part, json);
 
         public ChatPart Read(JsonObject json) => ChatParts.Default("audio")!.Read(json);

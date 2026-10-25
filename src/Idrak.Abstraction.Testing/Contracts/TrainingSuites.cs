@@ -112,7 +112,7 @@ public sealed class OptimizerKindSuite(IOptimizerKind? reference = null, Device?
                 parameters.Add(Tensor.Persistent(untouched, [untouched.Length], Device, requiresGrad: true));
             }
 
-            using var optimizer = kind.Create(parameters, settings);
+            using var optimizer = kind.Create(new OptimizerRequest(parameters, settings));
             if (checks is not null)
             {
                 checks.Check("it updates the parameters it was given, in order",

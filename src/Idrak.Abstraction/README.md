@@ -30,7 +30,8 @@ its README lists it.
 | Reinforcement (`Idrak.Abstraction.Reinforcement`) | `IEnvironment<TObservation, TAction>` and `Space` (episodes reset from a seed and stepped; discrete, box, text and conversation spaces), `IEnvironmentKind` and `EnvironmentKinds`, `IPolicy<TObservation, TAction>`, `IRewardFunction` and `RewardFunctions`, `IAdvantageEstimator` and `AdvantageEstimators` (a fixed summation order), `IPolicyLoss` and `PolicyLosses`; `Trajectory`, `ActionRecord` and `RolloutBatch` (pooled arrays). The registries hold no defaults here: Idrak.Reinforcement registers the estimators and losses, Idrak.Text and the plug-ins the environments and rewards |
 | Command sandboxes (`Idrak.Abstraction`) | `ICommandSandbox` and `CommandSandboxes`: where an outside command a model asked for runs and under which `CommandLimits` (time, output, memory, processes, CPUs, network, the programs allowed), giving a `CommandResult`; a sandbox that cannot keep a limit refuses, naming one that can. Idrak.Text registers `process`, the coding plug-in of Idrak.Reinforcement.Plugins `container` |
 | Plug-ins (`Idrak.Abstraction.Plugins`) | `IIdrakPlugin` (a family or other named set of registrations kept outside the library), `IdrakPlugin` (its usual base: registers once, takes every part back), `IdrakPlugins` (the registered plug-ins by name; the plug-in packages' `RegisterAll()` go through it) |
-| The override loop (root) | `SlotTable<TKey, TValue>` (every registry's entries, each with its library default), `Slot`, `SlotPolicy` (`FallBack`, `Throw`, `Shadow`), `SlotGuard<TValue>`, `Overrides` (`Report()`, `AsLibraryDefaults`), `Comparisons` (shared with the testing kit) |
+| The override loop (root) | `SlotTable<TKey, TValue>` (every registry's entries, each with its library default; string names also found by span), `Slot`, `SlotPolicy` (`FallBack`, `Throw`, `Shadow`), `SlotGuard<TValue>`, `Overrides` (`Report()`, `AsLibraryDefaults`), `Comparisons` (shared with the testing kit) |
+| Kinds (root) | `IKind` (a name and a summary), `IConfigurableKind` (the option keys it takes, an `OptionKeys`), `IKind<TRequest, T>` (made from one request record), and `KindTable<TKind>` (a registry of kinds over `SlotTable`: registered by their own name, found by span, listed and refused as "not registered" alike) |
 
 The GPU devices (CUDA, Vulkan, HIP) ship in the `Idrak.Gpu` package (which `Idrak` brings) and are built on this
 public device API alone; when an application includes it, `Device.Available` lists them, even before any other type of
@@ -116,6 +117,11 @@ public static class Greeters
     public static void SetPolicy(string name, SlotPolicy policy, double shadowRate = Slot.DefaultShadowRate) => Table.SetPolicy(name, policy, shadowRate);
 }
 ```
+
+A registry of kinds (contracts with a name, a summary and, often, option keys) uses a `KindTable<TKind>` instead: it
+registers each kind under its own `Name`, finds it by a name read from input without making a string
+(`Find(ReadOnlySpan<char>)`, `TryGet`, `Get`), and words `Describe()` and its "not registered" error as every registry
+does. `SlotTable`'s own `TryGet`, `Find` and `Contains` take a `ReadOnlySpan<char>` too when its names are strings.
 
 Projects with implicit usings get `using Idrak.Abstraction;` from this package, so code written for Idrak 0.3 compiles
 unchanged.

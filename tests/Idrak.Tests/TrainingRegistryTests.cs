@@ -192,7 +192,7 @@ internal static partial class Tests
 
         public string Summary => "SGD without momentum";
 
-        public Optimizer Create(IReadOnlyList<Tensor> parameters, OptimizerSettings settings) => new Sgd(parameters, settings.LearningRate, 0f, settings.WeightDecay);
+        public Optimizer Create(OptimizerRequest request) => new Sgd(request.Parameters, request.Settings.LearningRate, 0f, request.Settings.WeightDecay);
     }
 
     // An app's "constant": half the optimizer's rate after the warm-up.

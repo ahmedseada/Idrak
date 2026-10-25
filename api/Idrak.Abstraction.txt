@@ -2977,10 +2977,10 @@ public static class Idrak.Abstraction.Generation.ChatParts
   public const string Image = "image"
   public const string Text = "text"
   public static Idrak.Abstraction.Generation.ChatPart FromJson(System.Text.Json.Nodes.JsonNode? json)
-  public static Idrak.Abstraction.Generation.IChatPartKind Get(string name)
+  public static Idrak.Abstraction.Generation.IChatPartKind Get(System.ReadOnlySpan<char> name)
   public static Idrak.Abstraction.Generation.IChatPartKind? Default(string name)
   public static Idrak.Abstraction.Generation.IChatPartKind? Default(string name, int version)
-  public static Idrak.Abstraction.Generation.IChatPartKind? Find(string name)
+  public static Idrak.Abstraction.Generation.IChatPartKind? Find(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatPart> ContentFromJson(System.Text.Json.Nodes.JsonNode? content)
   public static System.Collections.Generic.IReadOnlySet<string> TextOnly { get; }
@@ -3307,16 +3307,15 @@ public interface Idrak.Abstraction.Generation.IAttentionPositionBias
   public Idrak.Abstraction.Tensor For(int queries, int keys, int queryStart, Idrak.Abstraction.Device device)
   public int Heads { get; }
 
-public interface Idrak.Abstraction.Generation.IBinaryPartKind : Idrak.Abstraction.Generation.IChatPartKind
+public interface Idrak.Abstraction.Generation.IBinaryPartKind : Idrak.Abstraction.Generation.IChatPartKind, Idrak.Abstraction.IKind
   public Idrak.Abstraction.Generation.ChatPart FromBytes(System.ReadOnlySpan<byte> data, string? mediaType = null)
 
 public interface Idrak.Abstraction.Generation.IChatModel
   public (default) System.Collections.Generic.IReadOnlySet<string> PartKinds { get; }
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.ChatChunk> StreamAsync(Idrak.Abstraction.Generation.ChatRequest request, System.Threading.CancellationToken cancellationToken = default)
 
-public interface Idrak.Abstraction.Generation.IChatPartKind
+public interface Idrak.Abstraction.Generation.IChatPartKind : Idrak.Abstraction.IKind
   public Idrak.Abstraction.Generation.ChatPart Read(System.Text.Json.Nodes.JsonObject json)
-  public string Name { get; }
   public void Write(Idrak.Abstraction.Generation.ChatPart part, System.Text.Json.Nodes.JsonObject json)
 
 public interface Idrak.Abstraction.Generation.IFeatureCache : System.IDisposable
@@ -4076,6 +4075,16 @@ public interface Idrak.Abstraction.ICommandSandbox
   public string Summary { get; }
   public string? Check(Idrak.Abstraction.CommandLimits limits)
 
+public interface Idrak.Abstraction.IConfigurableKind : Idrak.Abstraction.IKind
+  public System.Collections.Generic.IReadOnlySet<string> Keys { get; }
+
+public interface Idrak.Abstraction.IKind
+  public string Name { get; }
+  public string Summary { get; }
+
+public interface Idrak.Abstraction.IKind<in TRequest, out T> : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind where TRequest : allows ref struct
+  public T Create(TRequest request)
+
 public sealed class Idrak.Abstraction.KeySpans
   public (Idrak.Abstraction.Tensor, Idrak.Abstraction.Tensor) ToTensors(Idrak.Abstraction.Device? device = null)
   public KeySpans(System.Collections.Generic.IReadOnlyList<int> starts, System.Collections.Generic.IReadOnlyList<int> ends)
@@ -4087,6 +4096,30 @@ public sealed class Idrak.Abstraction.KeySpans
   public static Idrak.Abstraction.KeySpans Concat(params Idrak.Abstraction.KeySpans[] tables)
   public static Idrak.Abstraction.KeySpans ImageBlocks(int rows, System.Collections.Generic.IReadOnlyList<(int, int)> blocks, int window = 0)
   public static Idrak.Abstraction.KeySpans Segments(System.Collections.Generic.IReadOnlyList<int> lengths, int window = 0)
+
+public sealed class Idrak.Abstraction.KindTable<TKind> where TKind : class, Idrak.Abstraction.IKind
+  public Idrak.Abstraction.SlotTable<string, TKind> Slots { get; }
+  public KindTable(string registry, string kind, string remedy, Idrak.Abstraction.SlotGuard<TKind>? guard = null, System.Collections.Generic.IEqualityComparer<string>? comparer = null, bool newestFirst = false, string? unguarded = null, string? setPolicy = null)
+  public System.Collections.Generic.IReadOnlyList<TKind> Kinds { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Names { get; }
+  public TKind Default(string name)
+  public TKind Default(string name, int version)
+  public TKind Find(System.ReadOnlySpan<char> name)
+  public TKind Get(System.ReadOnlySpan<char> name)
+  public bool Contains(System.ReadOnlySpan<char> name)
+  public bool TryGet(System.ReadOnlySpan<char> name, out TKind kind)
+  public bool Unregister(string name)
+  public int DefaultVersion(string name)
+  public string Describe()
+  public string Listed()
+  public string NotRegistered(System.ReadOnlySpan<char> name)
+  public string Registry { get; }
+  public string? Origin(string name)
+  public void Register(TKind kind)
+  public void Register(TKind kind, System.Reflection.Assembly? registeredBy)
+  public void Register(scoped params System.ReadOnlySpan<TKind> kinds)
+  public void RegisterDefault(TKind kind, int version = 1, string? since = null)
+  public void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
 public enum Idrak.Abstraction.MatMulPrecision : int
   BFloat16 = 1
@@ -4840,6 +4873,24 @@ public static class Idrak.Abstraction.Operations.PluginOperations
   public static Idrak.Abstraction.Operations.PluginOperation<TKernel> Register<TKernel>(string name, TKernel defaultKernel, Idrak.Abstraction.Operations.KernelSource fallback = (Idrak.Abstraction.Operations.KernelSource)3) where TKernel : System.Delegate
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Operations.Operation> All { get; }
 
+public sealed class Idrak.Abstraction.OptionKeys : System.Collections.Generic.IEnumerable<string>, System.Collections.Generic.IReadOnlyCollection<string>, System.Collections.Generic.IReadOnlySet<string>, System.Collections.IEnumerable
+  public OptionKeys(System.Collections.Generic.IEnumerable<string> keys)
+  public OptionKeys(scoped params System.ReadOnlySpan<string> keys)
+  public System.Collections.Frozen.FrozenSet<string> Set { get; }
+  public System.Collections.Generic.IEnumerator<string> GetEnumerator()
+  public System.ReadOnlySpan<string> Ordered { get; }
+  public bool Contains(System.ReadOnlySpan<char> key)
+  public bool Contains(string key)
+  public bool IsProperSubsetOf(System.Collections.Generic.IEnumerable<string> other)
+  public bool IsProperSupersetOf(System.Collections.Generic.IEnumerable<string> other)
+  public bool IsSubsetOf(System.Collections.Generic.IEnumerable<string> other)
+  public bool IsSupersetOf(System.Collections.Generic.IEnumerable<string> other)
+  public bool Overlaps(System.Collections.Generic.IEnumerable<string> other)
+  public bool SetEquals(System.Collections.Generic.IEnumerable<string> other)
+  public int Count { get; }
+  public override string ToString()
+  public static Idrak.Abstraction.OptionKeys None { get; }
+
 public static class Idrak.Abstraction.Overrides
   public const string Library = "library"
   public const string PolicyVariable = "IDRAK_OVERRIDE_POLICY"
@@ -4904,9 +4955,9 @@ public sealed record Idrak.Abstraction.Reinforcement.ActionSampling : System.IEq
   public static Idrak.Abstraction.Reinforcement.ActionSampling Default { get; }
 
 public static class Idrak.Abstraction.Reinforcement.AdvantageEstimators
-  public static Idrak.Abstraction.Reinforcement.IAdvantageEstimator Get(string name)
+  public static Idrak.Abstraction.Reinforcement.IAdvantageEstimator Get(System.ReadOnlySpan<char> name)
   public static Idrak.Abstraction.Reinforcement.IAdvantageEstimator? Default(string name)
-  public static Idrak.Abstraction.Reinforcement.IAdvantageEstimator? Find(string name)
+  public static Idrak.Abstraction.Reinforcement.IAdvantageEstimator? Find(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static bool Unregister(string name)
   public static string Describe()
@@ -4930,14 +4981,19 @@ public static class Idrak.Abstraction.Reinforcement.AdvantageEstimators
 
 public static class Idrak.Abstraction.Reinforcement.EnvironmentKinds
   public static Idrak.Abstraction.Reinforcement.IEnvironment<TObservation, TAction> Create<TObservation, TAction>(string name, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, int seed = 0)
-  public static Idrak.Abstraction.Reinforcement.IEnvironmentKind Get(string name)
+  public static Idrak.Abstraction.Reinforcement.IEnvironmentKind Get(System.ReadOnlySpan<char> name)
   public static Idrak.Abstraction.Reinforcement.IEnvironmentKind? Default(string name)
-  public static Idrak.Abstraction.Reinforcement.IEnvironmentKind? Find(string name)
+  public static Idrak.Abstraction.Reinforcement.IEnvironmentKind? Find(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static bool Unregister(string name)
   public static string Describe()
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.Reinforcement.IEnvironmentKind kind)
+
+public sealed record Idrak.Abstraction.Reinforcement.EnvironmentRequest : System.IEquatable<Idrak.Abstraction.Reinforcement.EnvironmentRequest>
+  public EnvironmentRequest(System.Collections.Generic.IReadOnlyDictionary<string, string>? Options = null, int Seed = 0)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string>? Options { get; init; }
+  public int Seed { get; init; }
 
 public readonly record struct Idrak.Abstraction.Reinforcement.EnvironmentStep<TObservation> : System.IEquatable<Idrak.Abstraction.Reinforcement.EnvironmentStep<TObservation>>
   public EnvironmentStep(TObservation Observation, float Reward, bool Terminated, bool Truncated, System.Collections.Generic.IReadOnlyDictionary<string, string>? Info = null)
@@ -4948,35 +5004,25 @@ public readonly record struct Idrak.Abstraction.Reinforcement.EnvironmentStep<TO
   public bool Truncated { get; init; }
   public float Reward { get; init; }
 
-public interface Idrak.Abstraction.Reinforcement.IAdvantageEstimator
-  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+public interface Idrak.Abstraction.Reinforcement.IAdvantageEstimator : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
   public bool UsesValues { get; }
-  public string Name { get; }
-  public string Summary { get; }
   public void Estimate(Idrak.Abstraction.Reinforcement.AdvantageInput input, System.Span<float> advantages, System.Span<float> returns, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
 
 public interface Idrak.Abstraction.Reinforcement.IEnvironment : System.IDisposable
   public Idrak.Abstraction.Reinforcement.Space ActionSpace { get; }
   public Idrak.Abstraction.Reinforcement.Space ObservationSpace { get; }
 
-public interface Idrak.Abstraction.Reinforcement.IEnvironmentKind
-  public Idrak.Abstraction.Reinforcement.IEnvironment Create(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, int seed = 0)
-  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
+public interface Idrak.Abstraction.Reinforcement.IEnvironmentKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Reinforcement.EnvironmentRequest, Idrak.Abstraction.Reinforcement.IEnvironment>
   public System.Type ActionType { get; }
   public System.Type ObservationType { get; }
-  public string Name { get; }
-  public string Summary { get; }
 
 public interface Idrak.Abstraction.Reinforcement.IEnvironment<TObservation, TAction> : Idrak.Abstraction.Reinforcement.IEnvironment, System.IDisposable
   public System.Threading.Tasks.ValueTask<Idrak.Abstraction.Reinforcement.EnvironmentStep<TObservation>> StepAsync(TAction action, System.Threading.CancellationToken cancellationToken = default)
   public TObservation Reset(int seed)
 
-public interface Idrak.Abstraction.Reinforcement.IPolicyLoss
+public interface Idrak.Abstraction.Reinforcement.IPolicyLoss : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
   public (default) bool NeedsReference(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
   public Idrak.Abstraction.Tensor Loss(Idrak.Abstraction.Reinforcement.PolicyLossInput input, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
-  public System.Collections.Generic.IReadOnlyCollection<string> Keys { get; }
-  public string Name { get; }
-  public string Summary { get; }
 
 public interface Idrak.Abstraction.Reinforcement.IPolicy<TObservation, TAction> : System.IDisposable
   public Idrak.Abstraction.Reinforcement.UpdateStats Update(Idrak.Abstraction.Reinforcement.RolloutBatch<TObservation, TAction> batch, Idrak.Abstraction.Reinforcement.IPolicyLoss loss, System.Collections.Generic.IReadOnlyList<int>? episodes = null, System.Collections.Generic.IReadOnlyDictionary<string, string>? lossOptions = null)
@@ -5018,9 +5064,9 @@ public sealed class Idrak.Abstraction.Reinforcement.PolicyLossInput
   public int Units { get; }
 
 public static class Idrak.Abstraction.Reinforcement.PolicyLosses
-  public static Idrak.Abstraction.Reinforcement.IPolicyLoss Get(string name)
+  public static Idrak.Abstraction.Reinforcement.IPolicyLoss Get(System.ReadOnlySpan<char> name)
   public static Idrak.Abstraction.Reinforcement.IPolicyLoss? Default(string name)
-  public static Idrak.Abstraction.Reinforcement.IPolicyLoss? Find(string name)
+  public static Idrak.Abstraction.Reinforcement.IPolicyLoss? Find(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static bool Unregister(string name)
   public static string Describe()
@@ -5332,10 +5378,13 @@ public sealed class Idrak.Abstraction.SlotTable<TKey, TValue> where TKey : notnu
   public System.Collections.Generic.IReadOnlyList<int> DefaultVersions(TKey key)
   public TValue Default(TKey key)
   public TValue Default(TKey key, int version)
+  public TValue Find(System.ReadOnlySpan<char> name)
   public TValue Find(TKey key)
+  public bool Contains(System.ReadOnlySpan<char> name)
   public bool Contains(TKey key)
   public bool Guarded { get; }
   public bool HasDefault(TKey key)
+  public bool TryGet(System.ReadOnlySpan<char> name, out TValue value)
   public bool TryGet(TKey key, out TValue value)
   public bool Unregister(TKey key)
   public int DefaultVersion(TKey key)
@@ -5560,15 +5609,11 @@ public sealed class Idrak.Abstraction.Training.CosineAnnealing : Idrak.Abstracti
 public sealed class Idrak.Abstraction.Training.ExponentialDecay : Idrak.Abstraction.Training.LearningRateScheduler
   public ExponentialDecay(Idrak.Abstraction.Training.Optimizer optimizer, float gamma)
 
-public interface Idrak.Abstraction.Training.ILearningRateSchedule
+public interface Idrak.Abstraction.Training.ILearningRateSchedule : Idrak.Abstraction.IKind
   public System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Create(Idrak.Abstraction.Training.LearningRateScheduleSettings settings)
-  public string Name { get; }
-  public string Summary { get; }
 
-public interface Idrak.Abstraction.Training.IOptimizerKind
-  public Idrak.Abstraction.Training.Optimizer Create(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> parameters, Idrak.Abstraction.Training.OptimizerSettings settings)
-  public string Name { get; }
-  public string Summary { get; }
+public interface Idrak.Abstraction.Training.IOptimizerKind : Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Training.Optimizer Create(Idrak.Abstraction.Training.OptimizerRequest request)
 
 public sealed class Idrak.Abstraction.Training.LambdaSchedule : Idrak.Abstraction.Training.LearningRateScheduler
   public LambdaSchedule(Idrak.Abstraction.Training.Optimizer optimizer, System.Func<int, float, float> schedule)
@@ -5593,11 +5638,11 @@ public static class Idrak.Abstraction.Training.LearningRateSchedules
   public const string Cosine = "cosine"
   public const string Linear = "linear"
   public const string WarmupStableDecay = "wsd"
-  public static Idrak.Abstraction.Training.ILearningRateSchedule Get(string name)
+  public static Idrak.Abstraction.Training.ILearningRateSchedule Get(System.ReadOnlySpan<char> name)
   public static Idrak.Abstraction.Training.ILearningRateSchedule? Default(string name)
-  public static Idrak.Abstraction.Training.ILearningRateSchedule? Find(string name)
+  public static Idrak.Abstraction.Training.ILearningRateSchedule? Find(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Factory(string name, Idrak.Abstraction.Training.LearningRateScheduleSettings? settings = null)
+  public static System.Func<Idrak.Abstraction.Training.Optimizer, int, Idrak.Abstraction.Training.LearningRateScheduler> Factory(System.ReadOnlySpan<char> name, Idrak.Abstraction.Training.LearningRateScheduleSettings? settings = null)
   public static bool Unregister(string name)
   public static string Describe()
   public static string? Origin(string name)
@@ -5630,15 +5675,20 @@ public abstract class Idrak.Abstraction.Training.Optimizer : System.IDisposable
   public void ZeroGrad()
 
 public static class Idrak.Abstraction.Training.OptimizerKinds
-  public static Idrak.Abstraction.Training.IOptimizerKind Get(string name)
+  public static Idrak.Abstraction.Training.IOptimizerKind Get(System.ReadOnlySpan<char> name)
   public static Idrak.Abstraction.Training.IOptimizerKind? Default(string name)
-  public static Idrak.Abstraction.Training.IOptimizerKind? Find(string name)
+  public static Idrak.Abstraction.Training.IOptimizerKind? Find(System.ReadOnlySpan<char> name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
-  public static System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer> Factory(string name, Idrak.Abstraction.Training.OptimizerSettings settings)
+  public static System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer> Factory(System.ReadOnlySpan<char> name, Idrak.Abstraction.Training.OptimizerSettings settings)
   public static bool Unregister(string name)
   public static string Describe()
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.Training.IOptimizerKind kind)
+
+public sealed record Idrak.Abstraction.Training.OptimizerRequest : System.IEquatable<Idrak.Abstraction.Training.OptimizerRequest>
+  public Idrak.Abstraction.Training.OptimizerSettings Settings { get; init; }
+  public OptimizerRequest(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters, Idrak.Abstraction.Training.OptimizerSettings Settings)
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters { get; init; }
 
 public sealed record Idrak.Abstraction.Training.OptimizerSettings : System.IEquatable<Idrak.Abstraction.Training.OptimizerSettings>
   public OptimizerSettings(float LearningRate, float WeightDecay = 0f, float Momentum = 0.9f)

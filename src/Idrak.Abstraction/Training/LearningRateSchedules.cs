@@ -18,16 +18,11 @@ public sealed record LearningRateScheduleSettings(float WarmupFraction = 0.03f, 
 /// A kind of learning-rate schedule, made by name: from <see cref="LearningRateScheduleSettings"/>, what makes the schedule
 /// of an optimizer over a run's number of optimizer steps (the form <c>FineTuningOptions.Scheduler</c> takes). The schedule
 /// is stepped once per optimizer step and works from the optimizer's own rate, its peak. Registered in
-/// <see cref="LearningRateSchedules"/> under <see cref="Name"/>. Thread-safe: one kind makes the schedules of several runs.
+/// <see cref="LearningRateSchedules"/> under its <see cref="IKind.Name"/> ("cosine", "wsd"). Thread-safe: one kind makes
+/// the schedules of several runs.
 /// </summary>
-public interface ILearningRateSchedule
+public interface ILearningRateSchedule : IKind
 {
-    /// <summary>The schedule's name in <see cref="LearningRateSchedules"/> ("cosine", "wsd").</summary>
-    string Name { get; }
-
-    /// <summary>One line for help and listings.</summary>
-    string Summary { get; }
-
     /// <summary>What makes the schedule from the optimizer and the number of optimizer steps, with <paramref name="settings"/>.</summary>
     /// <exception cref="ArgumentException">A setting the schedule cannot use (a decay share outside [0, 1], say), refused here, before a run starts.</exception>
     Func<Optimizer, int, LearningRateScheduler> Create(LearningRateScheduleSettings settings);
@@ -61,45 +56,40 @@ public static class LearningRateSchedules
     /// <summary>Warm-up, stable, decay: "wsd".</summary>
     public const string WarmupStableDecay = "wsd";
 
-    private static readonly SlotTable<string, ILearningRateSchedule> Table = BuiltIn();
+    private static readonly KindTable<ILearningRateSchedule> Table = BuiltIn();
 
-    private static SlotTable<string, ILearningRateSchedule> BuiltIn()
+    private static KindTable<ILearningRateSchedule> BuiltIn()
     {
-        var table = new SlotTable<string, ILearningRateSchedule>(nameof(LearningRateSchedules), comparer: StringComparer.OrdinalIgnoreCase,
+        var table = new KindTable<ILearningRateSchedule>(nameof(LearningRateSchedules), "Learning-rate schedule", "add it with LearningRateSchedules.Register",
+            comparer: StringComparer.OrdinalIgnoreCase,
             unguarded: "a schedule sets the optimizer's rate at every step of a run from where it is, so another cannot take over half-way");
-        table.RegisterDefault(Cosine, new BuiltInSchedule(Cosine, "warm-up, then cosine decay to the minimum rate at the last step",
+        table.RegisterDefault(new BuiltInSchedule(Cosine, "warm-up, then cosine decay to the minimum rate at the last step",
             s => CosineDecay(s.WarmupFraction, s.MinLearningRate)));
-        table.RegisterDefault(Linear, new BuiltInSchedule(Linear, "warm-up, then linear decay to the minimum rate at the last step",
+        table.RegisterDefault(new BuiltInSchedule(Linear, "warm-up, then linear decay to the minimum rate at the last step",
             s => LinearDecay(s.WarmupFraction, s.MinLearningRate)));
-        table.RegisterDefault(Constant, new BuiltInSchedule(Constant, "warm-up, then the optimizer's rate unchanged", s => Unchanged(s.WarmupFraction)));
-        table.RegisterDefault(WarmupStableDecay, new BuiltInSchedule(WarmupStableDecay,
+        table.RegisterDefault(new BuiltInSchedule(Constant, "warm-up, then the optimizer's rate unchanged", s => Unchanged(s.WarmupFraction)));
+        table.RegisterDefault(new BuiltInSchedule(WarmupStableDecay,
             "warm-up, the optimizer's rate, then linear decay to the minimum over the last decay share of the steps (MiniCPM)",
             s => StableThenDecay(s.WarmupFraction, s.DecayFraction, s.MinLearningRate)));
         return table;
     }
 
-    /// <summary>Registers <paramref name="schedule"/> under its <see cref="ILearningRateSchedule.Name"/> (over the library's of that name, which stays behind it).</summary>
+    /// <summary>Registers <paramref name="schedule"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)
-    public static void Register(ILearningRateSchedule schedule)
-    {
-        ArgumentNullException.ThrowIfNull(schedule);
-        ArgumentException.ThrowIfNullOrWhiteSpace(schedule.Name);
-        Table.Register(schedule.Name, schedule, System.Reflection.Assembly.GetCallingAssembly());
-    }
+    public static void Register(ILearningRateSchedule schedule) => Table.Register(schedule, System.Reflection.Assembly.GetCallingAssembly());
 
     /// <summary>Removes the app's schedule <paramref name="name"/> (a library name gets the library's back); false when the app registered none.</summary>
     public static bool Unregister(string name) => Table.Unregister(name);
 
     /// <summary>The registered names, in the order they were registered.</summary>
-    public static IReadOnlyCollection<string> Names => Table.Keys;
+    public static IReadOnlyCollection<string> Names => Table.Names;
 
     /// <summary>The schedule registered as <paramref name="name"/>, or null.</summary>
-    public static ILearningRateSchedule? Find(string name) => Table.Find(name);
+    public static ILearningRateSchedule? Find(ReadOnlySpan<char> name) => Table.Find(name);
 
     /// <summary>The schedule registered as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
-    public static ILearningRateSchedule Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Learning-rate schedule '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with LearningRateSchedules.Register.");
+    public static ILearningRateSchedule Get(ReadOnlySpan<char> name) => Table.Get(name);
 
     /// <summary>The library's schedule <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static ILearningRateSchedule? Default(string name) => Table.Default(name);
@@ -108,7 +98,7 @@ public static class LearningRateSchedules
     public static string? Origin(string name) => Table.Origin(name);
 
     /// <summary>Each registered schedule as "name: summary", one per line.</summary>
-    public static string Describe() => string.Join("\n", Table.Values.Select(s => $"{s.Name}: {s.Summary}"));
+    public static string Describe() => Table.Describe();
 
     /// <summary>
     /// What makes the schedule <paramref name="name"/> with <paramref name="settings"/> (its defaults when null) from the
@@ -116,7 +106,7 @@ public static class LearningRateSchedules
     /// </summary>
     /// <exception cref="NotSupportedException">The schedule is not registered.</exception>
     /// <exception cref="ArgumentException">A setting the schedule cannot use.</exception>
-    public static Func<Optimizer, int, LearningRateScheduler> Factory(string name, LearningRateScheduleSettings? settings = null)
+    public static Func<Optimizer, int, LearningRateScheduler> Factory(ReadOnlySpan<char> name, LearningRateScheduleSettings? settings = null)
     {
         var schedule = Get(name);
         return schedule.Create(settings ?? new LearningRateScheduleSettings())

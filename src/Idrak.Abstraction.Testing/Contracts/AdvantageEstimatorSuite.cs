@@ -16,7 +16,7 @@ namespace Idrak.Abstraction.Testing;
 /// once;</item>
 /// <item>outputs of the wrong length are refused, and so is an input without values when the estimator uses them
 /// (<see cref="ArgumentException"/>);</item>
-/// <item>an option not in its <see cref="IAdvantageEstimator.Keys"/> is refused, naming it;</item>
+/// <item>an option not in its <see cref="IConfigurableKind.Keys"/> is refused, naming it;</item>
 /// <item>given a reference (the library's estimator of that name), the same advantages and returns within
 /// <see cref="Tolerance"/>.</item>
 /// </list>

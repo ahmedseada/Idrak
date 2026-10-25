@@ -174,7 +174,7 @@ internal static partial class Tests
 
         public string Summary => $"{inner.Name}, its ratios recorded (the reinforcement cluster tests)";
 
-        public IReadOnlyCollection<string> Keys => inner.Keys;
+        public IReadOnlySet<string> Keys => inner.Keys;
 
         public bool NeedsReference(IReadOnlyDictionary<string, string>? options = null) => inner.NeedsReference(options);
 

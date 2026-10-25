@@ -266,8 +266,8 @@ internal static partial class Tests
         {
             ["suite"] = suite, ["system"] = "Fix the code.", ["rounds"] = "6", ["reward"] = "csharp-tests:1,csharp-build:1", ["work"] = work, ["workspaces"] = "2", ["packages"] = packages,
         };
-        var first = (CodingEnvironment)kind.Create(options);
-        var second = (CodingEnvironment)kind.Create(options);
+        var first = (CodingEnvironment)kind.Create(new EnvironmentRequest(options));
+        var second = (CodingEnvironment)kind.Create(new EnvironmentRequest(options));
         CodingEnvironment? refusing = null;
         try
         {
@@ -302,7 +302,7 @@ internal static partial class Tests
             AssertClose([-0.2f], [broken.Reward], 1e-6f, "the reward: no tests, 0 less 0.1 for each of the two errors");
 
             // Edits to the test project and to the build's shared files: reported, and refused when asked.
-            refusing = (CodingEnvironment)kind.Create(new Dictionary<string, string>(options) { ["refuse-test-edits"] = "true", ["work"] = Path.Combine(root, "work-refusing") });
+            refusing = (CodingEnvironment)kind.Create(new EnvironmentRequest(new Dictionary<string, string>(options) { ["refuse-test-edits"] = "true", ["work"] = Path.Combine(root, "work-refusing") }));
             var refused = PlayCoding(refusing, 0, [CSharpEditTests, CSharpDone])[^1];
             Check(refused.Info![CodingInfo.Refused] == "test-edits" && refused.Info[CodingInfo.TestEdits] == "Directory.Build.props,Lib.Tests/Lib.Tests.csproj"
                   && refused.Info[CSharpInfo.TestsTotal] == "0", $"the protected edits refused: {ShowInfo(refused.Info)}");

@@ -15,7 +15,7 @@ namespace Idrak.Abstraction.Testing;
 /// <item>its gradient reaches the log-probabilities (finite, not all 0), and agrees with central differences wherever the
 /// loss is smooth there (a clipped ratio has kinks, where the one-sided differences disagree; those coordinates are
 /// left out);</item>
-/// <item>an option not in its <see cref="IPolicyLoss.Keys"/> is refused, naming it;</item>
+/// <item>an option not in its <see cref="IConfigurableKind.Keys"/> is refused, naming it;</item>
 /// <item>given a reference (the library's loss of that name), the same loss within <see cref="Tolerance"/>.</item>
 /// </list>
 /// A loss that needs what a case does not give (a reference, values) may refuse that case with an

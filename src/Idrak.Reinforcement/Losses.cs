@@ -86,8 +86,8 @@ internal sealed class ReinforceLoss : IPolicyLoss
 
     public string Summary => "REINFORCE (Williams 1992): log-probabilities weighted by the advantages, with an entropy bonus and a value loss when weighted";
 
-    public IReadOnlyCollection<string> Keys { get; } =
-        [ReinforcementNames.EntropyKey, ReinforcementNames.ValueKey, ReinforcementNames.NormalizeKey, ReinforcementNames.ConstantKey];
+    public IReadOnlySet<string> Keys { get; } =
+        new OptionKeys(ReinforcementNames.EntropyKey, ReinforcementNames.ValueKey, ReinforcementNames.NormalizeKey, ReinforcementNames.ConstantKey);
 
     // No KL term: the reference is never read.
     public bool NeedsReference(IReadOnlyDictionary<string, string>? options = null) => false;
@@ -140,11 +140,11 @@ internal sealed class ClippedRatioLoss(string name, string normalization, bool v
 
     public string Summary => summary;
 
-    public IReadOnlyCollection<string> Keys { get; } = values
-        ? [ReinforcementNames.ClipKey, ReinforcementNames.ClipHighKey, ReinforcementNames.ValueKey, ReinforcementNames.EntropyKey, ReinforcementNames.KlKey,
-            ReinforcementNames.KlEstimatorKey, ReinforcementNames.NormalizeKey, ReinforcementNames.ConstantKey]
-        : [ReinforcementNames.ClipKey, ReinforcementNames.ClipHighKey, ReinforcementNames.KlKey, ReinforcementNames.KlEstimatorKey, ReinforcementNames.EntropyKey,
-            ReinforcementNames.NormalizeKey, ReinforcementNames.ConstantKey];
+    public IReadOnlySet<string> Keys { get; } = values
+        ? new OptionKeys(ReinforcementNames.ClipKey, ReinforcementNames.ClipHighKey, ReinforcementNames.ValueKey, ReinforcementNames.EntropyKey, ReinforcementNames.KlKey,
+            ReinforcementNames.KlEstimatorKey, ReinforcementNames.NormalizeKey, ReinforcementNames.ConstantKey)
+        : new OptionKeys(ReinforcementNames.ClipKey, ReinforcementNames.ClipHighKey, ReinforcementNames.KlKey, ReinforcementNames.KlEstimatorKey, ReinforcementNames.EntropyKey,
+            ReinforcementNames.NormalizeKey, ReinforcementNames.ConstantKey);
 
     // The reference is read by the KL term only, weighted by the option kl (0 by default); a value Loss refuses is left to it.
     public bool NeedsReference(IReadOnlyDictionary<string, string>? options = null) =>

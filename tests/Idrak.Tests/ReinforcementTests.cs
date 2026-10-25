@@ -37,14 +37,15 @@ internal static partial class Tests
 
         public string Summary => "a two-armed bandit (the reinforcement tests)";
 
-        public IReadOnlyCollection<string> Keys { get; } = ["low", "high"];
+        public IReadOnlySet<string> Keys { get; } = new OptionKeys("low", "high");
 
         public Type ObservationType => typeof(float[]);
 
         public Type ActionType => typeof(int);
 
-        public IEnvironment Create(IReadOnlyDictionary<string, string>? options = null, int seed = 0)
+        public IEnvironment Create(EnvironmentRequest request)
         {
+            var options = request.Options;
             float low = 0.2f, high = 0.8f;
             foreach (var (key, value) in options ?? new Dictionary<string, string>())
             {
@@ -107,7 +108,7 @@ internal static partial class Tests
 
         public string Summary => "a short corridor walked to its right end (the reinforcement tests)";
 
-        public IReadOnlyCollection<string> Keys { get; } = [];
+        public IReadOnlySet<string> Keys => OptionKeys.None;
 
         public Type ObservationType => typeof(float[]);
 
@@ -115,7 +116,7 @@ internal static partial class Tests
 
         public int Created => Volatile.Read(ref _created);
 
-        public IEnvironment Create(IReadOnlyDictionary<string, string>? options = null, int seed = 0)
+        public IEnvironment Create(EnvironmentRequest request)
         {
             Interlocked.Increment(ref _created);
             return new RlCorridor(length, limit);
@@ -176,13 +177,13 @@ internal static partial class Tests
 
         public string Summary => "a rewarded point in a box (the reinforcement tests)";
 
-        public IReadOnlyCollection<string> Keys { get; } = [];
+        public IReadOnlySet<string> Keys => OptionKeys.None;
 
         public Type ObservationType => typeof(float[]);
 
         public Type ActionType => typeof(float[]);
 
-        public IEnvironment Create(IReadOnlyDictionary<string, string>? options = null, int seed = 0) => new RlTarget();
+        public IEnvironment Create(EnvironmentRequest request) => new RlTarget();
     }
 
     private sealed class RlTarget : IEnvironment<float[], float[]>
@@ -242,7 +243,7 @@ internal static partial class Tests
 
     private static (Space Observations, Space Actions) Spaces(IEnvironmentKind kind)
     {
-        using var environment = kind.Create();
+        using var environment = kind.Create(new EnvironmentRequest());
         return (environment.ObservationSpace, environment.ActionSpace);
     }
 
