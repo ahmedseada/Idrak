@@ -19,6 +19,5 @@ artifacts/
 # The owner's own publishing script, kept on the owner's machine only
 /tools/publish.ps1
 
-# The owner's test output and its extracted failures (CLAUDE.md, commands for the owner)
-/test.log
-/fails*.txt
+# Every file a run writes for the owner: failures files, logs, traces, runs (CLAUDE.md, output files)
+/test-output/

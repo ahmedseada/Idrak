@@ -61,10 +61,15 @@ These are the owner's standing rules. They hold in every session, after every co
   working. The same for the software: long work shows live progress (what it is doing, how far, how fast, time left).
 - **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`. Every
   test run in them shows the live progress line and saves only the failed lines (each FAIL line with its message lines,
-  the device headers and the summary) into `fails.txt` for the owner to paste:
+  the device headers and the summary) into `test-output\fails.txt` for the owner to paste:
   ```powershell
-  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file fails.txt
+  dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails.txt
   ```
+- **Output files go under `test-output\`.** Every file a run writes for the owner (a failures file, a log, a trace, a
+  bench's results, a training or reinforcement run's folder and checkpoints, an app's output) goes under `test-output\`
+  at the repository root, the one folder any package's runs share (git ignores it): commands for the owner name paths
+  there (`--failures-file test-output\fails.txt`, `-o test-output\runs\rl-coding`, `> test-output\trace.txt`), never
+  the repository root or a source folder.
 - **"Just answer"** means answer the question without writing or changing code.
 - **Stay on the owner's current task.** Do not steer to a different feature or conclusion; report results and offer
   next steps within what was asked.

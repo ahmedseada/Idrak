@@ -26,8 +26,9 @@
 //                                                   (the tests' own lines dropped)
 //   a test whose data is not here (Tests.Skip: the owner's references, written by a tool's run) is a SKIP line naming the run
 //   that writes it, counted apart from passed and failed ("…, 2 skipped") and not written to the failures file
-//   … -- --failures-file fails.txt (IDRAK_TEST_FAILURES_FILE)  the runner also writes those lines to the file as they happen:
-//                                                   … -- --progress --failures-only --failures-file fails.txt
+//   … -- --failures-file test-output/fails.txt (IDRAK_TEST_FAILURES_FILE)  the runner also writes those lines to the file as they
+//                                                   happen (its folder made; test-output/ is where runs write, CLAUDE.md):
+//                                                   … -- --progress --failures-only --failures-file test-output/fails.txt
 
 using System.Diagnostics;
 using Idrak;
@@ -204,6 +205,11 @@ bool failuresOnly = args.Contains("--failures-only") || Tests.RunnerFlag("IDRAK_
 string? failuresPath = Array.IndexOf(args, "--failures-file") is var at and >= 0
     ? (at + 1 < args.Length ? args[at + 1] : throw new InvalidOperationException("--failures-file needs a path."))
     : Environment.GetEnvironmentVariable("IDRAK_TEST_FAILURES_FILE") is { Length: > 0 } named ? named : null;
+if (failuresPath is not null)
+{
+    Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(failuresPath))!);
+}
+
 using var failuresFile = failuresPath is null ? null : new StreamWriter(failuresPath, append: false, new System.Text.UTF8Encoding(false)) { AutoFlush = true };
 failuresFile?.WriteLine(runHeader);
 var results = Console.Out;

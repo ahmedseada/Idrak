@@ -65,7 +65,7 @@ Not in this plan: word-level timestamps for the committed words, a macOS capture
 cd D:\Projects\Idrak
 git pull origin main
 dotnet build -c Release tests\Idrak.Tests
-$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "audio live"; dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file fails.txt
+$env:IDRAK_DEVICES = "cuda"; $env:IDRAK_FILTER = "audio live"; dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails.txt
 $idrak = "src\Idrak.Cli\bin\Release\net10.0\Idrak.Cli.dll"
 dotnet $idrak transcribe --list-inputs
 dotnet $idrak transcribe openai/whisper-small --live --language ar -o work\live.srt
