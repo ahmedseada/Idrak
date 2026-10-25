@@ -888,6 +888,16 @@ public sealed record FineTuningOptions
     public bool? BFloat16Activations { get; init; }
 
     /// <summary>
+    /// Before the first step of each batch shape (rows × positions), estimate from the model's dimensions the device memory
+    /// each rung of the activation ladder needs (activations held, recomputed feed-forward, also bfloat16, checkpointing;
+    /// only the rungs the three settings above leave automatic) and start at the first whose estimate fits the memory the
+    /// device reports available (within its configured limit), instead of finding it by running out of memory. A step that
+    /// still runs out steps down as before and says the estimate was short. True by default; false starts from the settings
+    /// as given, the out-of-memory ladder alone. IDRAK_ACTIVATION_ESTIMATE=0 sets the default to false.
+    /// </summary>
+    public bool EstimateActivations { get; init; } = ActivationEstimate.FromEnvironment();
+
+    /// <summary>
     /// Run AdamW's update on the CPU, with its state (two moments per trained value) in system memory: only gradients and
     /// weights cross PCIe each step (see <see cref="Optimizers.HostOptimizer"/>). For training many parameters (large
     /// adapters, or unfrozen layers) on a GPU too small for the optimizer state; slower per step. Recorded graphs are not
@@ -1332,12 +1342,26 @@ public static class FineTuner
     internal const string StopStateFile = "tune-state.json", StopOptimizerFile = "optimizer.safetensors";
 
     // A stop's optimizer state and step beside its adapters (plan 23, C8b).
-    internal static void WriteStopState(string folder, IReadOnlyDictionary<string, OptimizerStateValue> state, Optimizer optimizer, int step)
+    // rung: the activation ladder's rung the run settled on, which a resumed run starts at (null: none written).
+    internal static void WriteStopState(string folder, IReadOnlyDictionary<string, OptimizerStateValue> state, Optimizer optimizer, int step, ActivationRung? rung = null)
     {
         Directory.CreateDirectory(folder);
         SafeTensorsWriter.Write(Path.Combine(folder, StopOptimizerFile), state.Select(e => (e.Key, e.Value.Shape, e.Value.Values)), SafeTensorType.F32,
             new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = optimizer.GetType().Name });
-        File.WriteAllText(Path.Combine(folder, StopStateFile), new System.Text.Json.Nodes.JsonObject { ["format"] = "idrak-tune-state/1", ["step"] = step }.ToJsonString() + "\n");
+        var json = new System.Text.Json.Nodes.JsonObject { ["format"] = "idrak-tune-state/1", ["step"] = step };
+        if (rung is { } settled)
+        {
+            json["activations"] = settled.ToJson();
+        }
+
+        File.WriteAllText(Path.Combine(folder, StopStateFile), json.ToJsonString() + "\n");
+    }
+
+    // The activation rung a stop state holds, or null (none written, or no state).
+    internal static ActivationRung? ReadStopRung(string folder)
+    {
+        string path = Path.Combine(folder, StopStateFile);
+        return File.Exists(path) ? ActivationRung.FromJson(System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(path))?["activations"]) : null;
     }
 
     internal static long ReadStopState(string folder)
@@ -1557,7 +1581,13 @@ public static class FineTuner
             // bfloat16, then checkpoint every block (a third more compute); the step is run again each time and the graph,
             // recorded without them, recorded again. Which of the setting that fits and checkpointing is faster is measured.
             // The first step also measures its bytes per position, so a run whose largest batch would not fit takes the
-            // first rung before it fails (FirstRung).
+            // first rung before it fails (FirstRung). Before that, a shape not seen yet starts at the rung its estimate
+            // fits (Estimate).
+            if (options.EstimateActivations && _probe is 0 or 3)
+            {
+                Estimate(group);
+            }
+
             while (true)
             {
                 try
@@ -1572,6 +1602,7 @@ public static class FineTuner
 
                     long started = Stopwatch.GetTimestamp();
                     var result = RunOnce(group, cancellationToken, label, graphs && _probe is 0 or 3);
+                    _estimate = null;                                            // it held
                     Measured(Stopwatch.GetElapsedTime(started).TotalSeconds / Math.Max(1L, group.Sum(b => (long)b.Rows.Length * b.Length)));
                     if (measure)
                     {
@@ -1583,14 +1614,14 @@ public static class FineTuner
                 }
                 catch (ResourceLimitExceededException ex) when (_probe == 2)
                 {
-                    Choose(checkpointing: false, $"checkpointing ran out of device memory ({ex.Message.Split(':')[0]})");
+                    Choose(checkpointing: false, $"checkpointing ran out of device memory ({ex.Message.Split(':')[0]}{Short()})");
                 }
                 catch (ResourceLimitExceededException ex) when (_automaticRecompute && _options.RecomputeFeedForward != true && !Checkpointing)
                 {
                     _options = _options with { RecomputeFeedForward = true };
                     Reset();
                     StartProbe();
-                    trace?.Invoke($"out of device memory ({ex.Message.Split(':')[0]}): feed-forward activations are recomputed in the backward pass "
+                    trace?.Invoke($"out of device memory ({ex.Message.Split(':')[0]}{Short()}): feed-forward activations are recomputed in the backward pass "
                                   + "from this step (RecomputeFeedForward / --recompute to start with it)");
                 }
                 catch (ResourceLimitExceededException ex) when (_automaticBFloat16 && _options.BFloat16Activations != true && !Checkpointing)
@@ -1598,7 +1629,7 @@ public static class FineTuner
                     _options = _options with { BFloat16Activations = true };
                     Reset();
                     StartProbe();
-                    trace?.Invoke($"out of device memory ({ex.Message.Split(':')[0]}): activations are held as bfloat16 between the passes "
+                    trace?.Invoke($"out of device memory ({ex.Message.Split(':')[0]}{Short()}): activations are held as bfloat16 between the passes "
                                   + "from this step (BFloat16Activations / --bf16-activations to start with it)");
                 }
                 catch (ResourceLimitExceededException ex) when (_automatic && !Checkpointing)
@@ -1606,13 +1637,138 @@ public static class FineTuner
                     _options = _options with { Checkpointing = true };
                     Reset();
                     _probe = 3;                                                  // nothing lighter fits
-                    trace?.Invoke($"out of device memory without activation checkpointing ({ex.Message.Split(':')[0]}): checkpointing is on from this step "
+                    trace?.Invoke($"out of device memory without activation checkpointing ({ex.Message.Split(':')[0]}{Short()}): checkpointing is on from this step "
                                   + "(set Checkpointing / --checkpointing to start with it)");
                 }
             }
         }
 
         private bool _firstMeasured;
+
+        // The shapes (rows × positions) estimated, whether the rung was said, and the estimate of the step about to run
+        // (said by the out-of-memory line when it was short).
+        private readonly HashSet<(int Rows, int Length)> _estimated = [];
+        private bool _toldRung;
+        private (long Bytes, long Room)? _estimate;
+
+        /// <summary>The rung of the activation ladder the steps run on.</summary>
+        internal ActivationRung Rung => ActivationRung.Of(_options);
+
+        // Before the first step of a shape: the estimate of each rung from the one in effect down, against what the device
+        // can give; the first that fits is taken (measured against checkpointing as after a failed step when lighter), the
+        // lightest when none does. Nothing changes when the device reports no free memory or no limit.
+        private void Estimate(IReadOnlyList<Batch> group)
+        {
+            var batch = group.MaxBy(b => (long)b.Rows.Length * b.Length)!;
+            int rows = batch.Rows.Length, length = batch.Length;
+            var backend = model.Device.Backend;
+            if (!_estimated.Add((rows, length)) || Room() is not { } room)
+            {
+                return;
+            }
+
+            long pending = 0;
+            foreach (var parameter in optimizer.Parameters)
+            {
+                pending += parameter.RequiresGrad && parameter.Grad is null ? parameter.Size : 0;
+            }
+
+            long Bytes(ActivationRung r) => ActivationEstimate.Bytes(model.Spec, backend.Capabilities, rows, length, r, _options.LossChunkRows, pending);
+            var start = ActivationRung.Of(_options);
+            var (rung, bytes, without) = (start, Bytes(start), 0L);
+            while (bytes > room && Next(rung) is { } next)
+            {
+                (rung, bytes, without) = (next, Bytes(next), bytes);
+            }
+
+            _estimate = (bytes, room);
+            string shape = $"{rows} × {length} positions";
+            if (rung == start)
+            {
+                if (!_toldRung)
+                {
+                    trace?.Invoke($"activations: {start} (estimated {ActivationEstimate.Size(bytes)} for {shape}, {ActivationEstimate.Size(room)} free)");
+                }
+
+                _toldRung = true;
+                return;
+            }
+
+            _options = Apply(rung);
+            Reset();
+            if (rung.Checkpointing)
+            {
+                _probe = 3;                                                      // nothing lighter fits
+            }
+            else
+            {
+                StartProbe();
+            }
+
+            trace?.Invoke($"activations: {rung} from {(_toldRung ? "this step" : "the start")} (estimated {ActivationEstimate.Size(without)} without, "
+                          + $"{ActivationEstimate.Size(bytes)} with, {ActivationEstimate.Size(room)} free for {shape}"
+                          + (bytes > room ? "; no lighter rung's estimate fits" : "")
+                          + "; EstimateActivations / IDRAK_ACTIVATION_ESTIMATE=0 to start from the settings as given)");
+            _toldRung = true;
+        }
+
+        // The rung the out-of-memory ladder takes after `rung` (the catches in Run, in their order), or null at its end.
+        private ActivationRung? Next(ActivationRung rung) =>
+            rung.Checkpointing ? null
+            : _automaticRecompute && !rung.Recompute ? rung with { Recompute = true }
+            : _automaticBFloat16 && !rung.BFloat16 ? rung with { BFloat16 = true }
+            : _automatic ? rung with { Checkpointing = true }
+            : null;
+
+        private FineTuningOptions Apply(ActivationRung rung) => _options with
+        {
+            RecomputeFeedForward = rung.Recompute ? true : _options.RecomputeFeedForward,
+            BFloat16Activations = rung.BFloat16 ? true : _options.BFloat16Activations,
+            Checkpointing = rung.Checkpointing ? true : _options.Checkpointing,
+        };
+
+        /// <summary>
+        /// Starts at the rung a run settled on before (a checkpoint's), as far as the settings leave the ladder automatic, and
+        /// keeps it (no measuring between rungs). A lighter rung than the one in effect changes nothing.
+        /// </summary>
+        internal void StartAt(ActivationRung saved, string source)
+        {
+            var rung = ActivationRung.Of(_options);
+            var target = new ActivationRung(rung.Recompute || saved.Recompute && _automaticRecompute, rung.BFloat16 || saved.BFloat16 && _automaticBFloat16,
+                rung.Checkpointing || saved.Checkpointing && _automatic);
+            if (target == rung)
+            {
+                return;
+            }
+
+            _options = Apply(target);
+            Reset();
+            _probe = 3;
+            _toldRung = true;
+            trace?.Invoke($"activations: {target} from the start (the rung {source} settled on)");
+        }
+
+        // What the estimate is held to: a step that fails short of it says so.
+        private string Short()
+        {
+            if (_estimate is not { } estimate)
+            {
+                return "";
+            }
+
+            _estimate = null;
+            return $"; the estimate, {ActivationEstimate.Size(estimate.Bytes)} of {ActivationEstimate.Size(estimate.Room)} free, was short";
+        }
+
+        // What the device can still give: its reported free memory, within a configured limit (a hard cap: a device that
+        // reports its free memory without the limit, the CPU's system memory, is held to it); null when it reports neither.
+        private long? Room()
+        {
+            var backend = model.Device.Backend;
+            var usage = backend.GetMemoryUsage();
+            long? reported = backend.AvailableMemory(), capped = usage.Limit is { } limit ? limit - usage.InUse : null;
+            return reported is { } r && capped is { } c ? Math.Min(r, c) : reported ?? capped;
+        }
 
         // After the first step: its bytes per position (the peak above what stays held after it, the optimizer's state and
         // gradients made by that step aside, over its largest batch's positions) times the run's largest batch, against
@@ -1626,11 +1782,7 @@ public static class FineTuner
             long positions = group.Max(b => (long)b.Rows.Length * b.Length);
             var usage = backend.GetMemoryUsage();
             long stepBytes = usage.Peak - Math.Max(held, usage.InUse);
-            // What the device reports free, within a configured limit (a hard cap: a device that reports its free memory
-            // without the limit, the CPU's system memory, is held to it).
-            long? reported = backend.AvailableMemory(), capped = usage.Limit is { } limit ? limit - usage.InUse : null;
-            long? available = reported is { } r && capped is { } c ? Math.Min(r, c) : reported ?? capped;
-            if (positions <= 0 || largest <= positions || stepBytes <= 0 || available is not { } room)
+            if (positions <= 0 || largest <= positions || stepBytes <= 0 || Room() is not { } room)
             {
                 return;
             }

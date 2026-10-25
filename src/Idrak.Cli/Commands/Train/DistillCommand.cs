@@ -101,7 +101,7 @@ internal sealed class DistillCommand : Command
           --batch-tokens, --accumulate, --targets, --optimizer, --weight-decay, --momentum, --schedule, --warmup, --min-lr,
           --decay, --adapter-type, --adapter, --context, --matmul, --gpu-memory, --eval, --eval-fraction, --eval-every,
           --save-every, --system, --max-rows, --no-packing, --checkpointing, --no-checkpointing, --recompute,
-          --bf16-activations, --no-graphs, --fp8, --cpu-optimizer, --no-dedup, --offload, and for image
+          --bf16-activations, --no-activation-estimate, --no-graphs, --fp8, --cpu-optimizer, --no-dedup, --offload, and for image
           records --data-format, --images, --image-transform, --vision, --parts and --feature-cache (a vision-language
           teacher reads the student's images as they are prepared; its family's plug-in with -P). --json prints one JSON
           document at the end with the output lines.

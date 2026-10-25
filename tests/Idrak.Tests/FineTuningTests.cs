@@ -31,6 +31,8 @@ internal static partial class Tests
         ("fine-tuning: releasing results no backward step reads, and recomputing feed-forward activations, give the same loss and gradients with less memory (RoPE, biases, q/k norms, post norms, parallel blocks, layer norms, dropout)", ReleasedActivations),
         ("fine-tuning: checkpointing is off by default and turns on (the step run again) when a step runs out of memory; a lighter setting that fits is timed against checkpointing and the faster kept", AutomaticCheckpointing),
         ("fine-tuning: when the first step's bytes per position say the largest batch will not fit, recomputed feed-forward activations are on before any step fails; with room nothing changes", FirstRungFromMeasuredBytes),
+        ("fine-tuning: the activation estimate per rung grows with rows × positions and falls down the ladder (held, recomputed feed-forward, also bfloat16, checkpointing); a rung round-trips through the stop state", ActivationEstimatePerRung),
+        ("fine-tuning: with the activation estimate the first step starts at the rung that fits a small device (no out-of-memory step-down); with it off the ladder steps down; a resumed session starts at the saved rung", ActivationEstimateFirstRung),
         ("models: a Hugging Face model id is downloaded (only the files the library reads, sharded weights) into the cache, loads, and works offline", ModelDownload),
         ("fine-tuning: agent transcripts through the chat template, assistant-only tokens, LoRA and QLoRA training, PEFT adapters, merged export", AgentFineTuning),
         ("fine-tuning: a conversation too long for the maximum length keeps its whole answer (the user message is shortened, its start kept); an answer longer than the budget alone gives the end cut at once; rows encode on all cores in order", LongMessageKeepsAnswer),
@@ -530,7 +532,8 @@ internal static partial class Tests
         var random = new Random(71);
         var sequences = Enumerable.Range(0, 16).Select(_ =>
             new TrainingSequence([.. Enumerable.Range(0, 257).Select(_ => random.Next(256))], [.. Enumerable.Range(0, 257).Select(i => i > 128)])).ToList();
-        var options = new FineTuningOptions { Rank = 4, Alpha = 8, BatchTokens = 2048, Seed = 1, Packing = false };
+        // The out-of-memory ladder alone (the estimate off; ActivationEstimateFirstRung tests it).
+        var options = new FineTuningOptions { Rank = 4, Alpha = 8, BatchTokens = 2048, Seed = 1, Packing = false, EstimateActivations = false };
         (bool Done, string Trace, List<float> Losses) Train(bool? checkpointing, long? extra, int epochs = 1)
         {
             using var pretrained = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
@@ -608,7 +611,7 @@ internal static partial class Tests
         var random = new Random(72);
         var sequences = Enumerable.Range(0, 9).Select(_ =>
             new TrainingSequence([.. Enumerable.Range(0, 129).Select(_ => random.Next(256))], [.. Enumerable.Range(0, 129).Select(i => i > 64)])).ToList();
-        var options = new FineTuningOptions { Rank = 4, Alpha = 8, BatchTokens = 512, Packing = false, Seed = 1 };
+        var options = new FineTuningOptions { Rank = 4, Alpha = 8, BatchTokens = 512, Packing = false, Seed = 1, EstimateActivations = false };
         (bool Done, string Trace) Train(FineTuningOptions run, long? extra)
         {
             using var pretrained = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
@@ -667,6 +670,136 @@ internal static partial class Tests
         finally
         {
             Directory.Delete(folder, true);
+        }
+    }
+
+    private static void ActivationEstimatePerRung(Device device)
+    {
+        var spec = new DecoderSpec
+        {
+            Vocabulary = 260, Dim = 128, Layers = 4, Heads = 4, KvHeads = 2, HeadDim = 32, FfDim = 512, MaxPositions = 512,
+            Rope = new RopeSettings(10000f), NormEpsilon = 1e-6f, QkNorm = true, TieEmbeddings = true,
+        };
+        var capabilities = device.Backend.Capabilities;
+        ActivationRung[] ladder = [new(false, false, false), new(true, false, false), new(true, true, false), new(true, true, true)];
+        long Bytes(int rows, int length, ActivationRung rung) => ActivationEstimate.Bytes(spec, capabilities, rows, length, rung, 512);
+        for (int i = 0; i < ladder.Length; i++)
+        {
+            Check(Bytes(2, 256, ladder[i]) > Bytes(1, 256, ladder[i]) && Bytes(1, 512, ladder[i]) > Bytes(1, 256, ladder[i]),
+                $"{ladder[i]}: more rows or positions need more ({Bytes(1, 256, ladder[i])}, {Bytes(2, 256, ladder[i])}, {Bytes(1, 512, ladder[i])} bytes)");
+            Check(i == 0 || Bytes(4, 256, ladder[i]) < Bytes(4, 256, ladder[i - 1]),
+                $"{ladder[i]} needs less than {(i == 0 ? "" : ladder[i - 1].ToString())}: {Bytes(4, 256, ladder[i])} and {(i == 0 ? 0 : Bytes(4, 256, ladder[i - 1]))} bytes");
+            Check(ActivationRung.FromJson(System.Text.Json.Nodes.JsonNode.Parse(ladder[i].ToJson().ToJsonString())) == ladder[i], $"{ladder[i]} round-trips");
+        }
+
+        Check(ActivationEstimate.Bytes(spec, capabilities, 1, 256, ladder[0], 512, pendingGradients: 1000) == Bytes(1, 256, ladder[0]) + 4000,
+            "the gradients a first step makes are counted");
+        Check(ActivationRung.FromJson(null) is null, "a stop state from before rungs were kept holds none");
+    }
+
+    // The automatic-checkpointing model and data: a CPU budget only checkpointed training fits (found with the estimate
+    // off), under which the estimate starts the first step at checkpointing; the ladder alone steps down to it; a session
+    // checkpointed there resumes at checkpointing.
+    private static void ActivationEstimateFirstRung(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                              // the CPU memory limit makes a small full device
+        }
+
+        var spec = new DecoderSpec
+        {
+            Vocabulary = 260, Dim = 128, Layers = 4, Heads = 4, KvHeads = 2, HeadDim = 32, FfDim = 512, MaxPositions = 512,
+            Rope = new RopeSettings(10000f), NormEpsilon = 1e-6f, QkNorm = true, TieEmbeddings = true,
+        };
+        string folder = WriteChatModel(spec);
+        string saved = Path.Combine(Path.GetTempPath(), "ns-rung-" + Guid.NewGuid().ToString("N"));
+        var random = new Random(73);
+        var sequences = Enumerable.Range(0, 16).Select(_ =>
+            new TrainingSequence([.. Enumerable.Range(0, 257).Select(_ => random.Next(256))], [.. Enumerable.Range(0, 257).Select(i => i > 128)])).ToList();
+        var options = new FineTuningOptions { Rank = 4, Alpha = 8, BatchTokens = 2048, Seed = 1, Packing = false };
+        (bool Done, string Trace) Train(FineTuningOptions run, long? extra)
+        {
+            using var pretrained = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
+            var trace = new System.Text.StringBuilder();
+            long before = ComputeResources.GetMemoryUsage(device).InUse;
+            ComputeResources.CpuMemoryLimit = extra is { } e ? before + e : null;
+            try
+            {
+                FineTuner.Train(pretrained, sequences, null, run, trace: line => trace.AppendLine(line));
+                return (true, trace.ToString());
+            }
+            catch (ResourceLimitExceededException)
+            {
+                return (false, trace.ToString());
+            }
+            finally
+            {
+                ComputeResources.CpuMemoryLimit = null;
+            }
+        }
+
+        try
+        {
+            var ladder = options with { EstimateActivations = false };
+            var lightest = ladder with { RecomputeFeedForward = true, BFloat16Activations = true, Checkpointing = false };
+            long? budget = null;
+            foreach (long megabytes in new long[] { 4, 8, 12, 16, 24, 32, 48, 64, 96, 128 })
+            {
+                if (Train(ladder with { Checkpointing = true }, megabytes << 20).Done)
+                {
+                    budget = Train(lightest, megabytes << 20).Done ? null : megabytes << 20;
+                    break;
+                }
+            }
+
+            Check(budget is not null, "a budget where only checkpointed training fits");
+            var estimated = Train(options, budget);
+            Check(estimated.Done && estimated.Trace.Contains("activations: checkpointing from the start", StringComparison.Ordinal)
+                  && !estimated.Trace.Contains("out of device memory", StringComparison.Ordinal),
+                $"the estimate starts at checkpointing under {budget >> 20} MiB, no step fails first:\n{estimated.Trace}");
+            var stepped = Train(ladder, budget);
+            Check(stepped.Done && stepped.Trace.Contains("out of device memory", StringComparison.Ordinal) && !stepped.Trace.Contains("activations:", StringComparison.Ordinal),
+                $"with the estimate off the ladder steps down:\n{stepped.Trace}");
+            var roomy = Train(options, null);
+            Check(roomy.Done && !roomy.Trace.Contains("from the start", StringComparison.Ordinal) && !roomy.Trace.Contains("checkpointing is on", StringComparison.Ordinal),
+                $"with room the steps start with the activations held:\n{roomy.Trace}");
+
+            // A session that settled on checkpointing writes it with its checkpoint; one resumed from it starts there.
+            using (var pretrained = PretrainedModel.Load(folder, new PretrainedOptions { Device = device }))
+            {
+                long before = ComputeResources.GetMemoryUsage(device).InUse;
+                ComputeResources.CpuMemoryLimit = before + budget!.Value;
+                try
+                {
+                    using var session = new FineTuningSession(pretrained, options, totalSteps: 4, sequences);
+                    session.Step(sequences.Take(7).ToList());
+                    Check(session.Settings.StartsWith("checkpointing", StringComparison.Ordinal), $"the session settled on checkpointing: {session.Settings}");
+                    session.Checkpoint(saved);
+                }
+                finally
+                {
+                    ComputeResources.CpuMemoryLimit = null;
+                }
+            }
+
+            Check(FineTuner.ReadStopRung(saved) is { Checkpointing: true }, $"the stop state holds the rung: {File.ReadAllText(Path.Combine(saved, FineTuner.StopStateFile))}");
+            using (var pretrained = PretrainedModel.Load(folder, new PretrainedOptions { Device = device }))
+            {
+                var trace = new System.Text.StringBuilder();
+                using var resumed = new FineTuningSession(pretrained, options with { ResumeFrom = saved }, totalSteps: 4, sequences, trace: line => trace.AppendLine(line));
+                Check(resumed.Settings.StartsWith("checkpointing", StringComparison.Ordinal) && trace.ToString().Contains("the rung the checkpoint", StringComparison.Ordinal),
+                    $"the resumed session starts at checkpointing ({resumed.Settings}):\n{trace}");
+                resumed.Step(sequences.Take(7).ToList());
+            }
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+            if (Directory.Exists(saved))
+            {
+                Directory.Delete(saved, true);
+            }
         }
     }
 

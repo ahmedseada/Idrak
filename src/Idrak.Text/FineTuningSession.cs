@@ -55,6 +55,7 @@ public sealed class FineTuningSession : IDisposable
     private IDisposable? _float8;
     private bool _float8Pending;
     private FineTuner.StepRunner? _runner;
+    private readonly ActivationRung? _resumedRung;                        // the rung the checkpoint resumed from settled on
     private LearningRateScheduler? _schedule;
     private FineTuningLoss? _lastLoss;
     private FineTuner.CustomLoss? _lastCustom;
@@ -138,6 +139,7 @@ public sealed class FineTuningSession : IDisposable
                 }
 
                 ResumedSteps = FineTuner.ReadStopState(from);
+                _resumedRung = FineTuner.ReadStopRung(from);
                 model.LoadAdapter(from);                                   // into the adapters just made: the same tensors, the stop's values
             }
 
@@ -217,6 +219,10 @@ public sealed class FineTuningSession : IDisposable
         _schedule = scheduler(Optimizer, Math.Max(1, totalSteps))
             ?? throw new InvalidOperationException("FineTuningOptions.Scheduler returned no schedule.");
         _runner = new FineTuner.StepRunner(Model, train, Optimizer, Options, lossRows, _defaultCustom, _trace, largest, imageTokens, Sync);
+        if (_resumedRung is { } rung)
+        {
+            _runner.StartAt(rung, $"the checkpoint at {Options.ResumeFrom}");      // where the run it resumes settled
+        }
     }
 
     // One optimizer step over `group` (batches of the run's sequences, or of `sequences` when given): the step, the
@@ -473,7 +479,8 @@ public sealed class FineTuningSession : IDisposable
 
     /// <summary>
     /// Writes a checkpoint to <paramref name="folder"/>: the adapters (<see cref="Save"/>), the optimizer's state and the
-    /// steps done, which a new session resumes from (<see cref="FineTuningOptions.ResumeFrom"/>) or this one goes back to
+    /// steps done and the activation rung the steps settled on (<see cref="FineTuningOptions.EstimateActivations"/>), which a
+    /// new session resumes from (<see cref="FineTuningOptions.ResumeFrom"/>, starting at that rung) or this one goes back to
     /// (<see cref="Restore"/>). On a cluster every rank takes part (a sharded run's state is joined) and rank 0 writes.
     /// </summary>
     public void Checkpoint(string folder)
@@ -486,7 +493,7 @@ public sealed class FineTuningSession : IDisposable
             if (Sync is null || Sync.Rank == 0)
             {
                 Save(folder);
-                FineTuner.WriteStopState(folder, state, Optimizer, Steps);
+                FineTuner.WriteStopState(folder, state, Optimizer, Steps, _runner is { Settled: true } runner ? runner.Rung : null);
             }
         }
 
@@ -510,6 +517,11 @@ public sealed class FineTuningSession : IDisposable
         }
 
         Model.LoadAdapter(folder);
+        if (FineTuner.ReadStopRung(folder) is { } rung && _runner is { } runner)
+        {
+            runner.StartAt(rung, $"the checkpoint at {folder}");                   // never lighter than the one in effect
+        }
+
         var saved = FineTuner.ReadOptimizerFile(folder);
         if (Sync?.LoadOptimizerState(saved) != true)
         {

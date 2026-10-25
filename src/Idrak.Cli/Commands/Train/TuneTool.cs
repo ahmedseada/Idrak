@@ -57,7 +57,9 @@ internal sealed class TuneTool(ToolConsole console)
                    (default: off, turned on if a step runs out of device memory even with --recompute), --recompute (recompute the
                    feed-forward activations in the backward pass: a fifth less activation memory for one kernel per block;
                    default: turned on first when a step runs out of device memory), --bf16-activations (hold the activations
-                   as bfloat16 between the passes: half their memory; default: turned on second), --no-packing,
+                   as bfloat16 between the passes: half their memory; default: turned on second), --no-activation-estimate
+                   (start from these settings and step down only when a step runs out of device memory; default: each
+                   batch shape starts at the rung its estimated memory fits, IDRAK_ACTIVATION_ESTIMATE), --no-packing,
                    --no-graphs, --fp8 (the frozen base's forward products in FP8, checked against bfloat16 first),
                    --adapter DIR (continue training an adapter), --time-steps (time a few steps instead of training),
                    --cpu-optimizer (the optimizer's update on the CPU, its state in system memory),
@@ -109,7 +111,7 @@ internal sealed class TuneTool(ToolConsole console)
     public static readonly string[] Flags =
     [
         "--cuda", "--gpu", "--cpu", "--int8", "--bf16", "--int4", "--kv8", "--kv16", "--no-think", "--no-checkpointing", "--checkpointing",
-        "--recompute", "--bf16-activations", "--no-packing", "--no-graphs", "--fp8", "--time-steps", "--offload", "--cpu-optimizer",
+        "--recompute", "--bf16-activations", "--no-activation-estimate", "--no-packing", "--no-graphs", "--fp8", "--time-steps", "--offload", "--cpu-optimizer",
         "--no-shuffle", "--no-dedup", "--mix", "--train-projector", "--grayscale",
     ];
 
@@ -127,7 +129,8 @@ internal sealed class TuneTool(ToolConsole console)
 
     /// <summary>The flags of train that set up a fine-tuning session (the activations' memory, the packing, FP8, the optimizer's place, offloading).</summary>
     public static readonly string[] SessionFlags =
-        ["--no-packing", "--checkpointing", "--no-checkpointing", "--recompute", "--bf16-activations", "--no-graphs", "--fp8", "--cpu-optimizer", "--offload"];
+        ["--no-packing", "--checkpointing", "--no-checkpointing", "--recompute", "--bf16-activations", "--no-activation-estimate", "--no-graphs", "--fp8", "--cpu-optimizer",
+            "--offload"];
 
     private readonly TextWriter _out = console.Out;
     private readonly TextWriter _error = console.Error;
@@ -251,6 +254,7 @@ internal sealed class TuneTool(ToolConsole console)
                 case "--checkpointing": tuning = tuning with { Checkpointing = true }; break;
                 case "--recompute": tuning = tuning with { RecomputeFeedForward = true }; break;
                 case "--bf16-activations": tuning = tuning with { BFloat16Activations = true }; break;
+                case "--no-activation-estimate": tuning = tuning with { EstimateActivations = false }; break;
                 case "--no-packing": tuning = tuning with { Packing = false }; break;
                 case "--no-graphs": tuning = tuning with { CudaGraphs = false }; break;
                 case "--fp8": tuning = tuning with { Float8 = true }; break;

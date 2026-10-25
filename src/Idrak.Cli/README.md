@@ -435,10 +435,14 @@ idrak tune export adapters/qa -o merged
   on matrix units (a frozen bfloat16 or 4-bit base read as stored in both directions), the optimizer over every adapter
   matrix in three passes; `--fp8` for the frozen base's forward products (checked against bfloat16 first), `-w int4` /
   `-w int8` for QLoRA. `train --time-steps` times a few steps per kernel instead of training.
-- **Memory.** Results no backward step reads are released during the forward pass. When a step runs out of device memory
-  the tuner steps down, each step at a small cost, and says so: feed-forward activations recomputed in the backward pass
-  (`--recompute`), then activations held as bfloat16 between the passes (`--bf16-activations`), then activation
-  checkpointing (`--checkpointing`, a third more compute). The flags start a run at that step.
+- **Memory.** Results no backward step reads are released during the forward pass. The activations' ladder, each rung
+  at a small cost: feed-forward activations recomputed in the backward pass (`--recompute`), then activations held as
+  bfloat16 between the passes (`--bf16-activations`), then activation checkpointing (`--checkpointing`, a third more
+  compute); the flags start a run at that rung. Before the first step of each batch shape the tuner estimates each
+  rung's device memory from the model's dimensions and the batch, and starts at the first that fits what the device
+  reports free, saying so once (`activations: checkpointing from the start (estimated … without, … with, … free …)`);
+  a checkpoint keeps the rung, so a resumed run starts there. A step that still runs out of device memory steps down
+  and says the estimate was short. `--no-activation-estimate` (`IDRAK_ACTIVATION_ESTIMATE=0`) leaves the ladder alone.
 - **Settings files.** `idrak tune init` writes a commented `tune.json` and `idrak suggest --base` one sized to the data
   and the device; `idrak tune --config tune.json` runs it. Its keys are the long options without the dashes, plus
   `command`, `model` and `data`, and an optional `"format": "idrak-tune/1"`; options on the command line win.

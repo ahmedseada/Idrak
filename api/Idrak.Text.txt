@@ -553,6 +553,7 @@ public sealed record Idrak.Text.FineTuningOptions : System.IEquatable<Idrak.Text
   public System.Func<System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor>, Idrak.Abstraction.Training.Optimizer>? Optimizer { get; init; }
   public bool CudaGraphs { get; init; }
   public bool Dora { get; init; }
+  public bool EstimateActivations { get; init; }
   public bool Float8 { get; init; }
   public bool HostOptimizer { get; init; }
   public bool Packing { get; init; }

@@ -132,7 +132,7 @@ internal sealed class ReinforceCommand : Command
           and these options of idrak tune train: --rank, --alpha, --lr, --max-length, --batch-tokens, --accumulate,
           --targets, --optimizer, --weight-decay, --momentum, --schedule (default: IDRAK_RL_SCHEDULE's, constant),
           --warmup (default: IDRAK_RL_WARMUP's, 0), --min-lr, --decay, --adapter-type, --adapter, --context, --matmul,
-          --gpu-memory, --no-packing, --checkpointing, --no-checkpointing, --recompute, --bf16-activations, --no-graphs,
+          --gpu-memory, --no-packing, --checkpointing, --no-checkpointing, --recompute, --bf16-activations, --no-activation-estimate, --no-graphs,
           --fp8, --cpu-optimizer, --offload. Every run setting also reads its IDRAK_RL_* variable (idrak help env); the
           command line wins. A JSON line per iteration goes to DIR/log.jsonl (IDRAK_RL_LOG: another file; the pass rate
           counts the episodes whose return reaches IDRAK_RL_PASS_RETURN, 1). --json prints one JSON document at the end.
