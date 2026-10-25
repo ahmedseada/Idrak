@@ -13,7 +13,6 @@ Plans are kept by state: finished plans in [done/](done/), plans not started in 
 | Plan 30: live transcription, `idrak transcribe --live` (built, the owner's runs open) | [opened/30-live-transcription.md](opened/30-live-transcription.md) |
 | Plan 31: an audio processing pipeline (filters, dynamics, noise and repair, live, rnnoise; built, the owner's runs open) | [opened/31-audio-processing.md](opened/31-audio-processing.md) |
 | Plan 32: an Opus codec plug-in (`IAudioCodec`, speech only; draft, paused after O0) | [opened/32-opus.md](opened/32-opus.md) |
-| Plan 33: every contract an interface (the audit's list of contracts that are only members, conventions or type checks) | [opened/33-explicit-contracts.md](opened/33-explicit-contracts.md) |
 | Plug-in 1. Idrak.HarfBuzz: HarfBuzz as a second shaper | [opened/plugins/1-harfbuzz.md](opened/plugins/1-harfbuzz.md) |
 | Plug-in plans | [opened/plugins/README.md](opened/plugins/README.md) |
 
@@ -45,6 +44,7 @@ Plans are kept by state: finished plans in [done/](done/), plans not started in 
 | Plan 24: Unigram (SentencePiece) and WordPiece tokenizers, built in | [done/24-tokenizers.md](done/24-tokenizers.md) |
 | Plan 26: model families as plug-in packages, and `Idrak.Nlp` renamed `Idrak.Text` | [done/26-plugin-packages.md](done/26-plugin-packages.md) |
 | Plan 27: reinforcement learning (`Idrak.Reinforcement`, `Idrak.Reinforcement.Plugins`) | [done/27-reinforcement.md](done/27-reinforcement.md) |
+| Plan 33: every contract an interface (contracts that were only members, conventions or type checks) | [done/33-explicit-contracts.md](done/33-explicit-contracts.md) |
 | GPU checks for plans 12 and 13 | [done/gpu-checks.md](done/gpu-checks.md) |
 | idrak: one command-line tool | [done/idrak-cli.md](done/idrak-cli.md) |
 | Plug-in points: what is still closed | [done/plug-in.md](done/plug-in.md) |

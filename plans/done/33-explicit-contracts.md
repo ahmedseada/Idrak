@@ -1,26 +1,45 @@
 # Plan 33: every contract an interface
 
-**Status: opened 2026-10-25; C0 done (`IKind`, `IConfigurableKind`, `IKind<TRequest, T>`, `KindTable<TKind>`, `OptionKeys`,
-`SlotTable`'s span lookups; the six existing kind interfaces adopt the base); C1 done (`IDeviceBackend` and the capability interfaces, read once per
-backend; `OwnKernels`; typed `Operation<TKernel>`; `IDeviceProvider : IKind`; `IDeviceKernel`; the string-named kernel
-lookups left as is: keyed by name across hundreds of call sites); C3 done (`IOptimizer`, `IStatefulOptimizer`,
-`IScaledGradientStep`, `Adam.Step` sealed, `ILearningRateScheduler`, `IEngineModel<TCopy>`, `ITensorOwner`,
-`IShardedGradientSync`, `IShardedHostValueCollectives`, `ICarriedStopAgreement`, `ILoss`, `IMetric`,
-`IShardableBatchSource`); C2 done (`IKeyValueLayout` and its capability interfaces, `IPackedWeight`, `IKernelPackedWeight`,
-`IRecordable`, `IPackedFormat`, `IChatTemplate` rendering into the caller's builder, `IChatTemplateReader`, `IToolCallFormat`,
-`ITool`, `IPretrainedVision`, `IDescribedModel`, `IDecodingStep`, `ISavableTokenizer`, `IPretrainedArchitecture`, the GGUF
-contracts with `IGgufType.Dequantize` on spans, and a kind for every `Func` registry; `IGraphValue` not done: a tensor in
-Idrak.Abstraction cannot implement a core contract and wrapping each value would allocate per node); C4 done (`ILibraryRegistrations` and `IIdrakPluginPackage` found by assembly attributes read once per assembly,
-`RegisterIdrakPlugin` removed, one `IToolProvider` loader, `IOnnxRuntimeLoader`, `NotRegisteredException`); C5 done
-(`EpisodeInfoKey<T>`, `IOptionSchema`, `ISettingAdvisor<TSubject>`, `IBinaryPartKind.RecordKeys`, the Text, Vision, Audio,
-Reinforcement and Data rows; open: the low Mp3 encoder parameters row); C6a done (the core and cluster type checks:
-`INamedWeights`, `IPeftAdapter`, `IRecurrentCell`/`IFusedRecurrentCell`, `IAttentionCacheInfo`, `IPositionAware`,
-`IRoutedLayer`, `IHostRoundTrip`, `IOffloadableLayer`, `ISavableScaler`, `ICheckpointable`/`IDecoderBlock`, `IPositionLimit`,
-`IAdaptableLinear`, `IPackableLinear`, `IOwnedPositionBias`, `IDeviceMeasuredLink`, `IOverridingTopology`, `ISavableTopology`,
-`ILiveFailureModel`; left as is: `IIndexedSource` (decides nothing), `is GraphModule` (a reader registry would be new work),
-`SimTransport` (internal)); C7 done (the kit's suites take the contracts already in Idrak.Abstraction; the package
-contracts' delegate bags stay, the owner's decision: the kit references Idrak.Abstraction only; `IAnnotationFormat.Keeps`);
-C6b in progress.** The list below comes from an audit of `src/` (the owner asked: where, no
+**Status: done 2026-10-25.** Every phase is merged; what each became, and what was left as is and why:
+
+- **C0**: `IKind`, `IConfigurableKind`, `IKind<TRequest, T>`, `KindTable<TKind>`, `OptionKeys` (keys in declared order),
+  `SlotTable`'s lookups by `ReadOnlySpan<char>`; the six existing kind interfaces adopt the base.
+- **C1**: `IDeviceBackend` and the capability interfaces (graphs, profiling, FP8, row and segmented attention, fused
+  packed products, matrix units, recurrent kernels, offloading, peer copies, memory report, long-lived allocations, host
+  storage), read once per backend; `OwnKernels` instead of reflection over names; typed `Operation<TKernel>`;
+  `IDeviceProvider : IKind`, `ISeparableDeviceProvider`; `ITensorOffloadingHooks`; `ISlotStaging`; `IDeviceKernel`. Left
+  as is: the string-named kernel lookups inside the Vulkan, HIP and CUDA backends (keyed by name across hundreds of call
+  sites).
+- **C2**: `IKeyValueLayout` and its capability interfaces, `IPackedWeight`, `IKernelPackedWeight`, `IRecordable`,
+  `IPackedFormat` (`PackedWeightFormats`), `IChatTemplate` rendering into the caller's builder, `IChatTemplateReader`,
+  `IToolCallFormat`, `ITool`, `IPretrainedVision`, `IDescribedModel`, `IDecodingStep`, `ISavableTokenizer`,
+  `IPretrainedArchitecture`, the GGUF contracts (`IGgufType.Dequantize` on spans), and a kind for every `Func` registry.
+  Not done: `IGraphValue` (a tensor in Idrak.Abstraction cannot implement a core contract, and wrapping each value would
+  allocate per node).
+- **C3**: `IOptimizer`, `IStatefulOptimizer`, `IScaledGradientStep`, `Adam.Step` sealed (a subclass keeps the fused
+  path), `ILearningRateScheduler`, `IEngineModel<TCopy>`, `ITensorOwner`, `IShardedGradientSync`,
+  `IShardedHostValueCollectives`, `ICarriedStopAgreement`, `ILoss`, `IMetric`, `IShardableBatchSource`.
+- **C4**: `ILibraryRegistrations` and `IIdrakPluginPackage` found by assembly attributes read once per assembly
+  (`RegisterIdrakPlugin` removed), one `IToolProvider` loader (of `ITool`), `IOnnxRuntimeLoader`, and
+  `NotRegisteredException` from every registry's refusal of a name (the CLI catches it by type).
+- **C5**: `EpisodeInfoKey<T>`, `IOptionSchema`, `ISettingAdvisor<TSubject>`, `IBinaryPartKind.RecordKeys`, and the Text,
+  Vision, Audio, Reinforcement and Data rows (teachers, fine-tuning losses, rewards, keyword indexes, detection decoders
+  and heads, vision losses, matchers and metrics, live and recording processors, creatable and trainable families,
+  vocoders, coding variants, data file kinds).
+- **C6**: the type checks that decide behaviour: `INamedWeights`, `IPeftAdapter`, `IRecurrentCell`/`IFusedRecurrentCell`,
+  `IAttentionCacheInfo`, `IPositionAware`, `IRoutedLayer`, `IHostRoundTrip`, `IOffloadableLayer`, `ISavableScaler`,
+  `ICheckpointable`/`IDecoderBlock`, `IPositionLimit`, `IAdaptableLinear`, `IPackableLinear`, `IOwnedPositionBias`,
+  `IWordEmbeddings`, `IDeviceMeasuredLink`, `IOverridingTopology`, `ISavableTopology`, `ILiveFailureModel`,
+  `IDistillationTeacher.Live`, `ISearchableRetriever`, `IGroupedOptimizer`, `ITrainableVisionEncoder`,
+  `ITrainableAudioEncoder`, `IAudioEncoder.Parameters`. Left as is: `IIndexedSource` (the check decides nothing),
+  `is GraphModule` (a format-reader registry would be new work), `SimTransport` (internal), the fused paths checked by
+  concrete type (library kernels), `AttachFloat8` on `Linear` (a library kernel path).
+- **C7**: the kit's suites take the contracts already in Idrak.Abstraction (`ITokenSamplerKind`, `IFeatureCache`,
+  `IProgressReporterKind`); `IAnnotationFormat.Keeps`. Left as is (the owner's decision): the delegate bags of the
+  package contracts (Audio, Text, Data, Vision, core Idrak), since the kit references Idrak.Abstraction only; the
+  transport and collectives suites already drive the real interfaces; `IContractSuite<T>` (no gain over the base class).
+- Joined up along the way: float16 and bfloat16 widened once (`HalfFloats`), keeping a NaN's payload as the device
+  kernels do. The list below comes from an audit of `src/` (the owner asked: where, no
 code yet). Each row was found by reading the code; a sample of the rows was checked against the source.
 
 ## Why
