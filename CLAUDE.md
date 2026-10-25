@@ -53,24 +53,24 @@ These are the owner's standing rules. They hold in every session, after every co
   operation took a host fallback). 3. Build once, only the projects that changed. 4. Run the targeted filtered tests
   once with `--no-build` (CPU here). 5. Merge and push; a merge without conflicts gets no build and no tests (its
   branch was built and tested already). 6. Hand the owner one targeted command list for only what changed: the pull of
-  the session's working branch first, then one `dotnet build -c Release tests\Idrak.Tests`, then the CUDA filters with `--no-build`. At most two agents at a time,
+  the session's working branch first, then one `dotnet build -c Release tests\Idrak.Tests`, then every test and run it needs with `--no-build`, and no second pull. At most two agents at a time,
   so builds do not compete for the machine. A slot never idles while work is ready: the moment an agent finishes, the
   slot takes the next piece of work whose inputs are already merged, without waiting for the current wave to end
   (waves are a dependency order, not a barrier).
 - **Keep the owner informed.** Before each step, say in a line what you are about to do and why; never go quiet while
   working. The same for the software: long work shows live progress (what it is doing, how far, how fast, time left).
-- **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`. Every
-  block of commands handed to the owner (a build, a test run, a training or app run, each block on its own) starts with
-  the pull of the session's working branch (the branch the session pushed its work to, named in the command, never
-  assumed), so the owner never builds or runs an old copy:
+- **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`. After
+  every change, the owner gets ONE list in this order, and nothing else: one pull of the current working branch, one
+  build, then every test and run the change needs, each with `--no-build`. Never a second pull, and never a run after a
+  pull without the build between them:
   ```powershell
-  cd D:\Projects\Idrak; git checkout <the session's branch>; git pull origin <the session's branch>
-  ```
-  Every test run in them shows the live progress line and saves only the failed lines (each FAIL line with its message
-  lines, the device headers and the summary) into `test-output\fails.txt` for the owner to paste:
-  ```powershell
+  cd D:\Projects\Idrak; git checkout <working branch>; git pull origin <working branch>
+  dotnet build -c Release tests\Idrak.Tests
   dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails.txt
+  dotnet run -c Release --no-build --project src\Idrak.Cli -- <the run>
   ```
+  Every test run shows the live progress line and saves only the failed lines (each FAIL line with its message lines,
+  the device headers and the summary) into `test-output\` for the owner to paste.
 - **Output files go under `test-output\`.** Every file a run writes for the owner (a failures file, a log, a trace, a
   bench's results, a training or reinforcement run's folder and checkpoints, an app's output) goes under `test-output\`
   at the repository root, the one folder any package's runs share (git ignores it): commands for the owner name paths
