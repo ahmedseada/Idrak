@@ -21,7 +21,44 @@ internal static partial class Tests
     [
         ("reinforcement cluster: the split: shards from the episodes' numbers (blocks and interleaved, sizes within one, duplicates refused), shards to ranks in runs; the settings and their variables; the exchange gives every rank each rank's bytes and values as sent, and text episodes round trip (messages and tool lists shared as they were, images refused)", ClusterSpreadRules),
         ("reinforcement cluster: a seeded grpo run under R2's trainer on the prompts environment gives the same episodes, rewards and advantages on 1, 2 and 4 ranks (4 shards, blocks and interleaved) and adapters within the documented tolerance; every rank plays its share; the first ratios are exactly 1 on every rank; spreading the passes changes no bit; rank 0 alone writes the checkpoint and the log; held device memory does not grow", ClusterRolloutsReplay),
+        ("reinforcement cluster: the behaviour and reference passes shared out by their batches (2 and 3 parts, as ranks take them) give each sequence the whole pass's values bit for bit, and a part only its own batches' sequences", SharedPassesMatchWhole),
     ];
+
+    // A pass shared out over ranks computes the batches the whole pass makes, every parts-th to each part, so a sequence's
+    // values are the whole pass's however the batches are shared (another cut of the sequences packs other batches, whose
+    // shapes may pick other kernels on a device and so other last bits than the update's forward).
+    private static void SharedPassesMatchWhole(Device device)
+    {
+        string folder = WriteChatModelWith(TinyChatSpec(), ChatMlTemplate);
+        using var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
+        using var session = new FineTuningSession(model, SessionOptions(1e-2f) with { BatchTokens = 32 }, totalSteps: 10);
+        var sequences = new[] { "Q", "P", "R" }.SelectMany(p => new[] { "yes", "no, not at all" }.Select(a => AnswerSequence(model, [new ChatMessage("user", p)], a))).ToList();
+        foreach (bool adapters in new[] { true, false })
+        {
+            var whole = session.LogProbabilities(sequences, adapters);
+            foreach (int parts in new[] { 2, 3 })
+            {
+                var merged = new float[sequences.Count][];
+                for (int part = 0; part < parts; part++)
+                {
+                    var (values, shares) = session.SharedLogProbabilities(sequences, adapters, part, parts);
+                    Check(shares.SelectMany(s => s).Order().SequenceEqual(Enumerable.Range(0, sequences.Count)) && shares.All(s => s.Length > 0),
+                        $"{parts} parts: every sequence in one part's batches, every part with some: {string.Join(" | ", shares.Select(s => string.Join(",", s)))}");
+                    Check(values.Select((v, i) => v is not null == shares[part].Contains(i)).All(b => b), $"{parts} parts, part {part}: only its own batches' sequences");
+                    foreach (int i in shares[part])
+                    {
+                        merged[i] = values[i]!;
+                    }
+                }
+
+                for (int i = 0; i < sequences.Count; i++)
+                {
+                    Check(whole[i].Length > 0 && merged[i].AsSpan().SequenceEqual(whole[i]),
+                        $"{(adapters ? "behaviour" : "reference")}, {parts} parts: sequence {i}'s values are the whole pass's bit for bit");
+                }
+            }
+        }
+    }
 
     private static void ClusterSpreadRules(Device device)
     {

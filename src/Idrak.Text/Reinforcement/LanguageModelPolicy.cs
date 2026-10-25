@@ -91,8 +91,8 @@ public sealed record LanguageModelPolicyOptions
     /// <summary>
     /// On a cluster (the session opened with <see cref="FineTuningOptions.Cluster"/>): whether a rollout batch's behaviour
     /// and reference passes (<see cref="FineTuningSession.LogProbabilities"/>, no gradient) are spread over the ranks, each
-    /// computing a contiguous run of the batch's sequences (balanced by their positions) and the runs gathered, rather than
-    /// every rank computing all of them. On by default (<see cref="SpreadPassesVariable"/>: on or off); in one process it
+    /// computing every world-th of the pass's batches (the batches one process makes, so each sequence's values are one
+    /// process's whichever rank computes them) and the values gathered, rather than every rank computing all of them. On by default (<see cref="SpreadPassesVariable"/>: on or off); in one process it
     /// changes nothing.
     /// </summary>
     public bool SpreadPasses { get; init; } = SettingSwitch(SpreadPassesVariable) ?? true;
@@ -414,9 +414,10 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>,
     }
 
     // log p of the trained tokens of `all` with the adapters on or off (FineTuningSession.LogProbabilities). On a cluster
-    // with SpreadPasses each rank computes a contiguous run of the sequences, the runs cut where the positions before them
-    // reach r/W of all the positions (the same cut on every rank), and every rank's values are gathered: each sequence's
-    // count, then its values, as computed (an all-gather copies them).
+    // with SpreadPasses the pass's batches (made alike on every rank, the ones one process makes) are shared out, every
+    // world-th to each rank, and every rank's values gathered in the order it computed them: each sequence gets the values
+    // its batch gives in one process, whichever rank ran it (another way of cutting the sequences would pack other batches,
+    // whose shapes may pick other kernels and so other last bits than the update's forward).
     private float[][] LogProbabilities(List<TrainingSequence> all, bool adapters)
     {
         if (Session.Sync is not { WorldSize: > 1 } sync || !Options.SpreadPasses)
@@ -424,48 +425,31 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>,
             return Session.LogProbabilities(all, adapters);
         }
 
-        int world = sync.WorldSize;
-        var bounds = new int[world + 1];
-        long total = 0;
-        foreach (var sequence in all)
+        var (mine, shares) = Session.SharedLogProbabilities(all, adapters, sync.Rank, sync.WorldSize);
+        var own = shares[sync.Rank];
+        var packed = new float[own.Sum(i => mine[i]!.Length)];
+        for (int j = 0, at = 0; j < own.Length; j++)
         {
-            total += sequence.Tokens.Length;
-        }
-
-        long before = 0;
-        for (int r = 1, i = 0; r < world; r++)
-        {
-            while (i < all.Count && before * world < total * r)
-            {
-                before += all[i++].Tokens.Length;
-            }
-
-            bounds[r] = i;
-        }
-
-        bounds[world] = all.Count;
-        int from = bounds[sync.Rank];
-        var mine = Session.LogProbabilities(all.GetRange(from, bounds[sync.Rank + 1] - from), adapters);
-        var packed = new float[mine.Length + mine.Sum(m => m.Length)];
-        for (int i = 0, at = mine.Length; i < mine.Length; i++)
-        {
-            packed[i] = mine[i].Length;                                    // a sequence's trained tokens: below 2^24, exact
-            mine[i].CopyTo(packed, at);
-            at += mine[i].Length;
+            mine[own[j]]!.CopyTo(packed, at);
+            at += mine[own[j]]!.Length;
         }
 
         var gathered = RolloutExchange.Gather(sync.Collectives, packed);
         var result = new float[all.Count][];
-        for (int r = 0; r < world; r++)
+        for (int r = 0; r < shares.Length; r++)
         {
-            int count = bounds[r + 1] - bounds[r];
-            var values = gathered[r];
-            for (int i = 0, at = count; i < count; i++)
+            int at = 0;
+            foreach (int i in shares[r])
             {
-                int length = (int)values[i];
-                result[bounds[r] + i] = values[at..(at + length)];
-                at += length;
+                int count = all[i].TrainedTokens;
+                result[i] = gathered[r][at..(at + count)];
+                at += count;
             }
+        }
+
+        for (int i = 0; i < result.Length; i++)
+        {
+            result[i] ??= [];                                              // too short to be in a batch: nothing trained
         }
 
         return result;

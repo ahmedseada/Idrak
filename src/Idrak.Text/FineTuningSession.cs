@@ -353,18 +353,47 @@ public sealed class FineTuningSession : IDisposable
     /// <param name="adapters">True: the adapters on; false: the base model.</param>
     public float[][] LogProbabilities(IReadOnlyList<TrainingSequence> sequences, bool adapters = true)
     {
+        var (result, _) = SharedLogProbabilities(sequences, adapters, 0, 1);
+        for (int i = 0; i < result.Length; i++)
+        {
+            result[i] ??= [];                                              // too short to be in a batch: nothing trained
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// <see cref="LogProbabilities(IReadOnlyList{TrainingSequence}, bool)"/> over every <paramref name="parts"/>-th of its
+    /// batches from <paramref name="part"/> (a cluster rank's share: its rank of the world size): the batches are the whole
+    /// pass's, made the same way on every rank, so a sequence's values do not depend on how the batches are shared. The
+    /// values of the sequences of the other parts' batches, and of those too short to train, are null; Shares holds each
+    /// part's sequences in the order they were computed.
+    /// </summary>
+    internal (float[][] Values, int[][] Shares) SharedLogProbabilities(IReadOnlyList<TrainingSequence> sequences, bool adapters, int part, int parts)
+    {
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentNullException.ThrowIfNull(sequences);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(parts);
+        ArgumentOutOfRangeException.ThrowIfNegative(part);
+        ArgumentOutOfRangeException.ThrowIfGreaterThanOrEqual(part, parts);
         var result = new float[sequences.Count][];
+        var shares = new int[parts][];
         if (sequences.Count == 0)
         {
-            return result;
+            Array.Fill(shares, []);
+            return (result, shares);
         }
 
         ReleaseGenerators();
         var network = Model.Network;
         bool wasTraining = network.IsTraining;
-        var batches = FineTuner.MakeBatches(Model, sequences, Options, random: null);
+        var all = FineTuner.MakeBatches(Model, sequences, Options, random: null);
+        for (int p = 0; p < parts; p++)
+        {
+            shares[p] = [.. all.Where((_, b) => b % parts == p).SelectMany(batch => batch.Sequences)];
+        }
+
+        var batches = all.Where((_, b) => b % parts == part).ToList();
         try
         {
             using (Autograd.NoGrad())
@@ -392,12 +421,7 @@ public sealed class FineTuningSession : IDisposable
             network.Train(wasTraining);
         }
 
-        for (int i = 0; i < result.Length; i++)
-        {
-            result[i] ??= [];                                              // too short to be in a batch: nothing trained
-        }
-
-        return result;
+        return (result, shares);
     }
 
     /// <summary>
