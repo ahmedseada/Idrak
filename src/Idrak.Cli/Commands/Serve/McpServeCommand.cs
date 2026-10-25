@@ -20,9 +20,10 @@ internal sealed class McpServeCommand : Command
         TOOLS.dll [TOOLS.dll...] [options]
 
         Loads each assembly and serves the tools it declares ([assembly: ToolProvider(typeof(X))], X an IToolProvider
-        of Idrak.Abstraction.Generation, whose tools may be its [Tool] methods) to an MCP client over standard input
-        and output, until the client disconnects. Status lines go to the error output, since the output carries the
-        protocol. To serve models as MCP tools too (generate, chat): idrak serve MODEL --mcp [--tools TOOLS.dll].
+        of Idrak.Abstraction.Generation, whose tools are ITool: its [Tool] methods or types of its own) to an MCP
+        client over standard input and output, until the client disconnects. Status lines go to the error output,
+        since the output carries the protocol. To serve models as MCP tools too (generate, chat): idrak serve MODEL
+        --mcp [--tools TOOLS.dll].
 
         Options:
               --list  print the tools (name and description) and exit, without serving

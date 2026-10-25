@@ -19,9 +19,9 @@ internal static class ToolAssemblies
     /// <exception cref="InvalidOperationException">An assembly declares no tools, or two tools share a name.</exception>
     [RequiresUnreferencedCode("Loads assemblies from files.")]
     [RequiresDynamicCode("Loads assemblies from files.")]
-    public static IReadOnlyList<Tool> Load(IEnumerable<string> paths)
+    public static IReadOnlyList<ITool> Load(IEnumerable<string> paths)
     {
-        var tools = new List<Tool>();
+        var tools = new List<ITool>();
         foreach (string path in paths)
         {
             tools.AddRange(Load(path));
@@ -36,7 +36,7 @@ internal static class ToolAssemblies
     /// <exception cref="InvalidOperationException">The assembly declares no tools.</exception>
     [RequiresUnreferencedCode("Loads an assembly from a file.")]
     [RequiresDynamicCode("Loads an assembly from a file.")]
-    public static IReadOnlyList<Tool> Load(string path)
+    public static IReadOnlyList<ITool> Load(string path)
     {
         string full = Path.GetFullPath(path);
         if (!File.Exists(full))
@@ -47,11 +47,11 @@ internal static class ToolAssemblies
         var tools = ToolProviders.Of(Assembly.LoadFrom(full));
         return tools.Count > 0 ? tools
             : throw new InvalidOperationException($"{full} declares no tools: add [assembly: ToolProvider(typeof(YourTools))] with YourTools : IToolProvider "
-                                                  + "(Idrak.Abstraction.Generation), whose Tools can be ToolProviders.FromMethods(this) for its [Tool(name, description)] methods.");
+                                                  + "(Idrak.Abstraction.Generation), whose Tools (ITool) can be ToolProviders.FromMethods(this) for its [Tool(name, description)] methods.");
     }
 
     /// <summary>A registry of <paramref name="tools"/>, or null when there are none.</summary>
-    public static ToolRegistry? Registry(IReadOnlyList<Tool> tools) => tools.Count == 0 ? null : ToolRegistry.Create().Add(tools).Build();
+    public static ToolRegistry? Registry(IReadOnlyList<ITool> tools) => tools.Count == 0 ? null : ToolRegistry.Create().Add(tools).Build();
 
     /// <summary>Sample arguments for a tool's JSON schema (for <c>idrak tools test</c>): its examples, defaults or a value of each type.</summary>
     public static JsonObject SampleArguments(JsonNode? schema)

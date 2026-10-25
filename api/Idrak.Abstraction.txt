@@ -3656,7 +3656,7 @@ public interface Idrak.Abstraction.Generation.IToolChatModel : Idrak.Abstraction
   public Idrak.Abstraction.Generation.IToolRegistry? Tools { get; }
 
 public interface Idrak.Abstraction.Generation.IToolProvider
-  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.Tool> Tools { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ITool> Tools { get; }
 
 public interface Idrak.Abstraction.Generation.IToolRegistry
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Definitions { get; }
@@ -4199,8 +4199,8 @@ public sealed class Idrak.Abstraction.Generation.ToolProviderAttribute : System.
   public ToolProviderAttribute(System.Type provider)
 
 public static class Idrak.Abstraction.Generation.ToolProviders
-  [RequiresDynamicCode("See Tool.FromDelegate.")] [RequiresUnreferencedCode("See Tool.FromDelegate.")] public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.Tool> FromMethods(object instance)
-  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.Tool> Of(System.Reflection.Assembly assembly)
+  [RequiresDynamicCode("See Tool.FromDelegate.")] [RequiresUnreferencedCode("See Tool.FromDelegate.")] public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ITool> FromMethods(object instance)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ITool> Of(System.Reflection.Assembly assembly)
 
 public sealed class Idrak.Abstraction.Generation.ToolRegistry : Idrak.Abstraction.Generation.IToolRegistry
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Definitions { get; }

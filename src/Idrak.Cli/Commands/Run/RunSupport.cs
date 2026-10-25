@@ -12,7 +12,7 @@ using Idrak.Text.Generation;
 namespace Idrak.Cli.Commands.Run;
 
 /// <summary>A model loaded for chat: the model, the choice it came from, its chat generator, context window and tools.</summary>
-internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice choice, ChatGenerator chat, int context, IReadOnlyList<Tool> tools) : IDisposable
+internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice choice, ChatGenerator chat, int context, IReadOnlyList<ITool> tools) : IDisposable
 {
     private readonly List<Idrak.Mcp.McpToolSource> _servers = [];
 
@@ -72,7 +72,7 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
 
     public int Context { get; } = context;
 
-    public IReadOnlyList<Tool> Tools { get; } = tools;
+    public IReadOnlyList<ITool> Tools { get; } = tools;
 
     /// <summary>The tools as a registry, or null.</summary>
     public ToolRegistry? Registry { get; } = ToolAssemblies.Registry(tools);

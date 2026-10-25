@@ -410,7 +410,7 @@ internal static partial class Tests
 public sealed class CliTestTools : IToolProvider
 {
     /// <inheritdoc/>
-    public IReadOnlyList<Tool> Tools => ToolProviders.FromMethods(this);
+    public IReadOnlyList<ITool> Tools => ToolProviders.FromMethods(this);
 
     [Tool("cli_add", "Adds two numbers.")]
     public static int Add(int a, int b) => a + b;

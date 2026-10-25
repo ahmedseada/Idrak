@@ -15,8 +15,8 @@ namespace Idrak.Abstraction.Generation;
 /// </summary>
 public interface IToolProvider
 {
-    /// <summary>The tools, in the order they are offered.</summary>
-    IReadOnlyList<Tool> Tools { get; }
+    /// <summary>The tools, in the order they are offered: any <see cref="ITool"/> (a <see cref="Tool"/> made from a function, or a type of its own).</summary>
+    IReadOnlyList<ITool> Tools { get; }
 }
 
 /// <summary>
@@ -37,7 +37,7 @@ public sealed class ToolProviderAttribute([DynamicallyAccessedMembers(Dynamicall
 public static class ToolProviders
 {
     // Each assembly's tools, its attributes read and its providers made once.
-    private static readonly ConditionalWeakTable<Assembly, IReadOnlyList<Tool>> Declared = new();
+    private static readonly ConditionalWeakTable<Assembly, IReadOnlyList<ITool>> Declared = new();
 
     /// <summary>
     /// The tools <paramref name="assembly"/> declares: those of each provider its <see cref="ToolProviderAttribute"/>s
@@ -45,7 +45,7 @@ public static class ToolProviders
     /// declares none.
     /// </summary>
     /// <exception cref="InvalidOperationException">An attribute names a type that is not an <see cref="IToolProvider"/>.</exception>
-    public static IReadOnlyList<Tool> Of(Assembly assembly)
+    public static IReadOnlyList<ITool> Of(Assembly assembly)
     {
         ArgumentNullException.ThrowIfNull(assembly);
         return Declared.GetValue(assembly, static a => Read(a));
@@ -58,10 +58,10 @@ public static class ToolProviders
     /// </summary>
     [RequiresUnreferencedCode("See Tool.FromDelegate.")]
     [RequiresDynamicCode("See Tool.FromDelegate.")]
-    public static IReadOnlyList<Tool> FromMethods(object instance)
+    public static IReadOnlyList<ITool> FromMethods(object instance)
     {
         ArgumentNullException.ThrowIfNull(instance);
-        var tools = new List<Tool>();
+        var tools = new List<ITool>();
         foreach (var method in instance.GetType().GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static))
         {
             if (method.GetCustomAttribute<ToolAttribute>() is { } attribute && !method.IsGenericMethodDefinition)
@@ -73,9 +73,9 @@ public static class ToolProviders
         return tools;
     }
 
-    private static List<Tool> Read(Assembly assembly)
+    private static List<ITool> Read(Assembly assembly)
     {
-        var tools = new List<Tool>();
+        var tools = new List<ITool>();
         foreach (var declared in assembly.GetCustomAttributes<ToolProviderAttribute>())
         {
             var provider = Activator.CreateInstance(declared.Provider) as IToolProvider

@@ -19,8 +19,8 @@ internal sealed class ToolsListCommand : Command
         TOOLS.dll [TOOLS.dll ...]
 
         Tools are what the assembly declares with [assembly: ToolProvider(typeof(X))], X an IToolProvider
-        (Idrak.Abstraction.Generation) whose Tools can be its methods marked [Tool(name, description)]
-        (ToolProviders.FromMethods); chat, run and agent take the same assemblies with --tools.
+        (Idrak.Abstraction.Generation) whose Tools are ITool: its methods marked [Tool(name, description)]
+        (ToolProviders.FromMethods) or types of its own; chat, run and agent take the same assemblies with --tools.
 
         Examples:
           idrak tools list ./MyTools.dll

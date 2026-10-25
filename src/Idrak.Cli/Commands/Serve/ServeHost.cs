@@ -532,7 +532,7 @@ internal sealed class ServeHost
     /// input and output until the client disconnects; each model loads on its first call. Status lines go to the error
     /// output, since the output carries the protocol.
     /// </summary>
-    public int RunMcp(IReadOnlyList<Tool> tools)
+    public int RunMcp(IReadOnlyList<ITool> tools)
     {
         _mcp = true;
         var engine = AddModels(InferenceEngine.Create().LoadOnFirstUse()).BuildAsync().GetAwaiter().GetResult();

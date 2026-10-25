@@ -28,11 +28,24 @@ using ModelContextProtocol.Protocol;
 
 [assembly: ToolProvider(typeof(CliServeTestTools))]
 
-/// <summary>Tools served by the 'idrak mcp serve' test (the test assembly is the tools assembly, declaring them with ToolProvider).</summary>
+/// <summary>
+/// Tools served by the 'idrak mcp serve' test (the test assembly is the tools assembly, declaring them with ToolProvider):
+/// the [Tool] methods and a tool of its own type (any ITool).
+/// </summary>
 public sealed class CliServeTestTools : IToolProvider
 {
     /// <inheritdoc/>
-    public IReadOnlyList<Idrak.Abstraction.Generation.Tool> Tools => ToolProviders.FromMethods(this);
+    public IReadOnlyList<Idrak.Abstraction.Generation.ITool> Tools => [.. ToolProviders.FromMethods(this), new UpperTool()];
+
+    // A tool that is not a Tool record: what a provider may offer beside its methods.
+    private sealed class UpperTool : Idrak.Abstraction.Generation.ITool
+    {
+        public ToolDefinition Definition { get; } = new("serve_upper", "Upper-cases the text.",
+            new JsonObject { ["type"] = "object", ["properties"] = new JsonObject { ["text"] = new JsonObject { ["type"] = "string" } }, ["required"] = new JsonArray("text") });
+
+        public Task<string> InvokeAsync(JsonObject arguments, CancellationToken cancellationToken) =>
+            Task.FromResult(((string?)arguments["text"] ?? "").ToUpperInvariant());
+    }
 
     /// <summary>Adds two integers.</summary>
     [Tool("serve_add", "Adds two integers.")]
@@ -433,7 +446,7 @@ internal static partial class Tests
         var list = ServeCli("mcp", "serve", tools, "--list", "--json");
         var names = JsonNode.Parse(list.Output)!["tools"]!.AsArray().Select(t => (string)t!["name"]!)
             .Where(n => n.StartsWith("serve_", StringComparison.Ordinal)).Order().ToList();          // the test assembly holds other groups' tools too
-        Check(list.Code == 0 && names.SequenceEqual(["serve_add", "serve_echo"]), $"mcp serve --list: {list.Output}{list.Error}");
+        Check(list.Code == 0 && names.SequenceEqual(["serve_add", "serve_echo", "serve_upper"]), $"mcp serve --list: {list.Output}{list.Error}");
         Check(ServeCli("mcp", "serve").Code == 2 && ServeCli("mcp", "serve", "missing.dll").Code == 2, "mcp serve usage errors");
 
         var toServer = new Pipe();
@@ -449,9 +462,10 @@ internal static partial class Tests
                 await using var source = await McpTools.ConnectAsync(new StreamClientTransport(toServer.Writer.AsStream(), toClient.Reader.AsStream()));
                 Check(source.ServerName == "idrak", $"server name {source.ServerName}");
                 var listed = await source.ListToolsAsync();
-                Check(listed.Select(t => t.Definition.Name).Where(n => n.StartsWith("serve_", StringComparison.Ordinal)).Order().SequenceEqual(["serve_add", "serve_echo"]), "tools over MCP");
+                Check(listed.Select(t => t.Definition.Name).Where(n => n.StartsWith("serve_", StringComparison.Ordinal)).Order().SequenceEqual(["serve_add", "serve_echo", "serve_upper"]), "tools over MCP");
                 Check(await source.CallAsync("serve_add", new JsonObject { ["a"] = 2, ["b"] = 40 }) == "42", "a call over MCP");
                 Check(await source.CallAsync("serve_echo", new JsonObject { ["text"] = "hi" }) == "hi", "a static tool over MCP");
+                Check(await source.CallAsync("serve_upper", new JsonObject { ["text"] = "hi" }) == "HI", "a provider's own ITool over MCP");
             }).GetAwaiter().GetResult();
             toServer.Writer.Complete();
             Check(serving.Wait(TimeSpan.FromSeconds(30)) && serving.Result == 0 && error.ToString().Contains("tools over MCP") && error.ToString().Contains("serve_add"), $"mcp serve ends with its input: {error}");
