@@ -13,7 +13,14 @@ contracts with `IGgufType.Dequantize` on spans, and a kind for every `Func` regi
 Idrak.Abstraction cannot implement a core contract and wrapping each value would allocate per node); C4 done (`ILibraryRegistrations` and `IIdrakPluginPackage` found by assembly attributes read once per assembly,
 `RegisterIdrakPlugin` removed, one `IToolProvider` loader, `IOnnxRuntimeLoader`, `NotRegisteredException`); C5 done
 (`EpisodeInfoKey<T>`, `IOptionSchema`, `ISettingAdvisor<TSubject>`, `IBinaryPartKind.RecordKeys`, the Text, Vision, Audio,
-Reinforcement and Data rows; open: the low Mp3 encoder parameters row); C6, C7 in progress.** The list below comes from an audit of `src/` (the owner asked: where, no
+Reinforcement and Data rows; open: the low Mp3 encoder parameters row); C6a done (the core and cluster type checks:
+`INamedWeights`, `IPeftAdapter`, `IRecurrentCell`/`IFusedRecurrentCell`, `IAttentionCacheInfo`, `IPositionAware`,
+`IRoutedLayer`, `IHostRoundTrip`, `IOffloadableLayer`, `ISavableScaler`, `ICheckpointable`/`IDecoderBlock`, `IPositionLimit`,
+`IAdaptableLinear`, `IPackableLinear`, `IOwnedPositionBias`, `IDeviceMeasuredLink`, `IOverridingTopology`, `ISavableTopology`,
+`ILiveFailureModel`; left as is: `IIndexedSource` (decides nothing), `is GraphModule` (a reader registry would be new work),
+`SimTransport` (internal)); C7 done (the kit's suites take the contracts already in Idrak.Abstraction; the package
+contracts' delegate bags stay, the owner's decision: the kit references Idrak.Abstraction only; `IAnnotationFormat.Keeps`);
+C6b in progress.** The list below comes from an audit of `src/` (the owner asked: where, no
 code yet). Each row was found by reading the code; a sample of the rows was checked against the source.
 
 ## Why
