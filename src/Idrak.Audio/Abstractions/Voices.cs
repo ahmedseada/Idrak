@@ -249,8 +249,9 @@ public static class VoiceConverters
         throw NotRegistered(named ?? $"for {where ?? "this config.json"}");
     }
 
-    internal static NotSupportedException NotRegistered(string name) =>
-        new($"Voice converter family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
+    internal static NotRegisteredException NotRegistered(string name) =>
+        new(nameof(VoiceConverters), name, Registry.Keys,
+            $"Voice converter family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
             + "register it with VoiceConverters.Register (a plug-in or the app that brings the family; the library registers none), "
             + "or reference Idrak.Audio.Plugins and call AudioPlugins.RegisterAll().");
 }
@@ -400,7 +401,8 @@ public static class VoiceStores
     /// <summary>The store <paramref name="name"/> (null: "folder").</summary>
     /// <exception cref="NotSupportedException">None is registered under the name.</exception>
     public static IVoiceStore Get(string? name = null) => Registry.Find(name ?? FolderName)
-        ?? throw new NotSupportedException($"Voice store '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with VoiceStores.Register.");
+        ?? throw new NotRegisteredException(nameof(VoiceStores), name ?? FolderName, Registry.Keys,
+            $"Voice store '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with VoiceStores.Register.");
 
     /// <summary>The library's store <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IVoiceStore? Default(string name) => Registry.Default(name);

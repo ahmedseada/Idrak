@@ -113,7 +113,7 @@ internal sealed class ServeCommand : Command
                                      HTTP: the models as the tools generate and chat (each takes a "model" argument
                                      when several are served), until the client disconnects; status lines go to the
                                      error output
-              --tools FILE.dll       with --mcp, also serve the [Tool] methods of an assembly (repeatable)
+              --tools FILE.dll       with --mcp, also serve the tools an assembly declares (repeatable)
 
         Examples:
           idrak serve Qwen/Qwen3-0.6B

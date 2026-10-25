@@ -87,7 +87,8 @@ public static class TextMatchers
     /// <summary>The matcher <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
     public static ITextMatcher Get(string name) => Find(name)
-        ?? throw new NotSupportedException($"Text matcher '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TextMatchers.Register.");
+        ?? throw new NotRegisteredException(nameof(TextMatchers), name, Table.Keys,
+            $"Text matcher '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TextMatchers.Register.");
 
     /// <summary>The library's matcher <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static ITextMatcher? Default(string name) => Table.Default(name);

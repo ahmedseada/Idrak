@@ -2,15 +2,18 @@ using Idrak;
 using Idrak.Abstraction;
 using Idrak.Abstraction.Generation;
 using Idrak.Abstraction.Modules;
+using Idrak.Abstraction.Plugins;
 using Idrak.Layers;
 using Idrak.Layers.Abstractions;
+
+[assembly: IdrakPluginPackage(typeof(__NAMESPACE__.PluginPackage))]
 
 namespace __NAMESPACE__;
 
 /// <summary>
 /// What this plug-in adds to Idrak: the packed weight format "__FORMAT__" (<see cref="RoundedWeight"/>) and the
-/// network step "__FORMAT__-softplus". `idrak --plugin __NAME__.dll` calls <see cref="RegisterIdrakPlugin"/>; your own
-/// code calls <see cref="Register"/>.
+/// network step "__FORMAT__-softplus". `idrak --plugin __NAME__.dll` registers the assembly's <see cref="PluginPackage"/>
+/// (named by its [assembly: IdrakPluginPackage]); your own code calls <see cref="Register"/>.
 /// </summary>
 public static class Plugin
 {
@@ -31,6 +34,28 @@ public static class Plugin
         NetworkOps.Register(StepName, (builder, arguments) => builder.Lambda(t => Softplus.Apply(t), "Softplus", [.. builder.CurrentShape]));
     }
 
-    /// <summary>Called by `idrak --plugin` after it loads this assembly.</summary>
-    public static void RegisterIdrakPlugin() => Register();
+    /// <summary>Removes the format and the step again.</summary>
+    public static void Unregister()
+    {
+        PackedWeight.Unregister(FormatName);
+        NetworkOps.Unregister(StepName);
+    }
+}
+
+/// <summary>
+/// The package `idrak --plugin __NAME__.dll` finds through the assembly's [assembly: IdrakPluginPackage]: one plug-in,
+/// "__FORMAT__", that registers the format and the step (<see cref="Plugin.Register"/>) and takes them back.
+/// </summary>
+public sealed class PluginPackage : IIdrakPluginPackage
+{
+    /// <summary>The package's name.</summary>
+    public string Name => "__NAME__";
+
+    /// <summary>Its plug-ins.</summary>
+    public IReadOnlyList<IIdrakPlugin> All { get; } = [new Registration()];
+
+    private sealed class Registration() : IdrakPlugin("__FORMAT__")
+    {
+        protected override void RegisterParts() => Part(Plugin.Register, Plugin.Unregister);
+    }
 }

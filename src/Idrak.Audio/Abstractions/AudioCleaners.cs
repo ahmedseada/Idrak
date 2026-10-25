@@ -167,7 +167,8 @@ public static class AudioCleaners
     /// <summary>The stage of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IAudioCleaner Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Audio cleaning stage '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AudioCleaners.Register.");
+        ?? throw new NotRegisteredException(nameof(AudioCleaners), name, Table.Keys,
+            $"Audio cleaning stage '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AudioCleaners.Register.");
 
     /// <summary>The library's stage of that name, or null.</summary>
     public static IAudioCleaner? Default(string name) => Table.Default(name);

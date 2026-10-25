@@ -188,9 +188,10 @@ public static class CodingLanguages
     /// <summary>The language <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones and the package with the library's own.</exception>
     public static ICodingLanguage Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Coding language '{name}' is not registered (registered: {(Table.Keys.Count == 0 ? "none" : string.Join(", ", Table.Keys))}); "
-                                           + $"register its plug-in ({PluginPackage}: TextPlugins.RegisterAll() registers the library's own, each as '<name>-language') "
-                                           + "or your own with CodingLanguages.Register.");
+        ?? throw new NotRegisteredException(nameof(CodingLanguages), name, Table.Keys,
+            $"Coding language '{name}' is not registered (registered: {(Table.Keys.Count == 0 ? "none" : string.Join(", ", Table.Keys))}); "
+            + $"register its plug-in ({PluginPackage}: TextPlugins.RegisterAll() registers the library's own, each as '<name>-language') "
+            + "or your own with CodingLanguages.Register.");
 
     /// <summary>Who registered the language <paramref name="name"/>: the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Table.Origin(name);

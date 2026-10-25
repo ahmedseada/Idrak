@@ -78,7 +78,8 @@ public static class TokenizerFiles
     /// <summary>The reader of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static ITokenizerFileReader Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Tokenizer file reader '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TokenizerFiles.Register.");
+        ?? throw new NotRegisteredException(nameof(TokenizerFiles), name, Table.Keys,
+            $"Tokenizer file reader '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TokenizerFiles.Register.");
 
     /// <summary>The library's reader of that name, or null.</summary>
     public static ITokenizerFileReader? Default(string name) => Table.Default(name);

@@ -161,7 +161,8 @@ public static class SpeechSources
     /// <summary>The kind of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static ISpeechSource Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Speech source '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with SpeechSources.Register.");
+        ?? throw new NotRegisteredException(nameof(SpeechSources), name, Table.Keys,
+            $"Speech source '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with SpeechSources.Register.");
 
     /// <summary>The library's kind of that name, or null.</summary>
     public static ISpeechSource? Default(string name) => Table.Default(name);

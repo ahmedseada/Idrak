@@ -9,6 +9,8 @@ using Idrak.Cli.Commands.Run;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
 
+[assembly: ToolProvider(typeof(CliTestTools))]
+
 // The idrak run commands (chat, run, batch, compare, complete, embed, tokenize, template, agent, tools), run in-process
 // through CommandLine.Run with captured output against the tiny model in tests/Idrak.Tests/data (no network).
 internal static partial class Tests
@@ -404,9 +406,12 @@ internal static partial class Tests
 
 }
 
-/// <summary>Tools for the CLI tests (idrak tools list/test, --tools): found by the [Tool] attribute.</summary>
-public sealed class CliTestTools
+/// <summary>Tools for the CLI tests (idrak tools list/test, --tools): the [Tool] methods, declared by the assembly's ToolProvider attribute.</summary>
+public sealed class CliTestTools : IToolProvider
 {
+    /// <inheritdoc/>
+    public IReadOnlyList<Tool> Tools => ToolProviders.FromMethods(this);
+
     [Tool("cli_add", "Adds two numbers.")]
     public static int Add(int a, int b) => a + b;
 

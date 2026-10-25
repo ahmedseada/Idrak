@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+[assembly: LibraryRegistrations(typeof(Idrak.Vision.LibraryRegistrations))]
+
 namespace Idrak.Vision;
 
 /// <summary>
@@ -9,14 +11,14 @@ namespace Idrak.Vision;
 /// <see cref="RegisterFor"/> once per registry, before that registry is first used. The registries that live here (vision
 /// losses, box matchers, vision metrics) register their built-ins themselves.
 /// </summary>
-internal static class LibraryRegistrations
+internal sealed class LibraryRegistrations : ILibraryRegistrations
 {
     private static readonly Dictionary<Type, Action> ByRegistry = new()
     {
         [typeof(Augmentations)] = RegisterAugmentations,
     };
 
-    private static void RegisterFor(Type registry)
+    public void RegisterFor(Type registry)
     {
         if (ByRegistry.TryGetValue(registry, out var register))
         {

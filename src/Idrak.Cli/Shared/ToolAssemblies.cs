@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics.CodeAnalysis;
-using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json.Nodes;
 using Idrak.Generation;
@@ -10,91 +9,49 @@ using Idrak.Generation;
 namespace Idrak.Cli.Shared;
 
 /// <summary>
-/// Tools from assemblies (<c>--tools FILE.dll</c>, <c>idrak tools list/test</c>; serve may reuse it): every public
-/// method marked <see cref="ToolAttribute"/> on the assembly's public types (static methods, and instance methods of a
-/// type with a public parameterless constructor), and every public static property or field of type <see cref="Tool"/>
-/// or <c>IEnumerable&lt;Tool&gt;</c>.
+/// Tools from assemblies (<c>--tools FILE.dll</c> of run, chat, agent and serve; <c>idrak tools list/test</c>;
+/// <c>idrak mcp serve</c>): the tools each assembly declares with <see cref="ToolProviderAttribute"/>
+/// (<see cref="ToolProviders.Of"/>, the attributes read once per assembly).
 /// </summary>
 internal static class ToolAssemblies
 {
-    /// <summary>The tools of the assemblies at <paramref name="paths"/>, in the order found.</summary>
-    [RequiresUnreferencedCode("Reads tool methods with reflection.")]
-    [RequiresDynamicCode("Reads tool methods with reflection.")]
+    /// <summary>The tools of the assemblies at <paramref name="paths"/>, in the order given.</summary>
+    /// <exception cref="InvalidOperationException">An assembly declares no tools, or two tools share a name.</exception>
+    [RequiresUnreferencedCode("Loads assemblies from files.")]
+    [RequiresDynamicCode("Loads assemblies from files.")]
     public static IReadOnlyList<Tool> Load(IEnumerable<string> paths)
     {
         var tools = new List<Tool>();
         foreach (string path in paths)
         {
-            string full = Path.GetFullPath(path);
-            if (!File.Exists(full))
-            {
-                throw new UsageException($"Tool assembly not found: {full}");
-            }
-
-            var assembly = Assembly.LoadFrom(full);
-            int before = tools.Count;
-            foreach (var type in assembly.GetExportedTypes())
-            {
-                tools.AddRange(FromType(type));
-            }
-
-            if (tools.Count == before)
-            {
-                throw new InvalidOperationException($"{full} has no tools: mark public methods with [Tool(name, description)] (Idrak.Abstraction.Generation).");
-            }
+            tools.AddRange(Load(path));
         }
 
         var duplicate = tools.GroupBy(t => t.Definition.Name).FirstOrDefault(g => g.Count() > 1);
         return duplicate is null ? tools : throw new InvalidOperationException($"Two tools are named '{duplicate.Key}'.");
     }
 
+    /// <summary>The tools of the assembly at <paramref name="path"/>, in the order it declares them.</summary>
+    /// <exception cref="UsageException">The file does not exist.</exception>
+    /// <exception cref="InvalidOperationException">The assembly declares no tools.</exception>
+    [RequiresUnreferencedCode("Loads an assembly from a file.")]
+    [RequiresDynamicCode("Loads an assembly from a file.")]
+    public static IReadOnlyList<Tool> Load(string path)
+    {
+        string full = Path.GetFullPath(path);
+        if (!File.Exists(full))
+        {
+            throw new UsageException($"Tool assembly not found: {full}");
+        }
+
+        var tools = ToolProviders.Of(Assembly.LoadFrom(full));
+        return tools.Count > 0 ? tools
+            : throw new InvalidOperationException($"{full} declares no tools: add [assembly: ToolProvider(typeof(YourTools))] with YourTools : IToolProvider "
+                                                  + "(Idrak.Abstraction.Generation), whose Tools can be ToolProviders.FromMethods(this) for its [Tool(name, description)] methods.");
+    }
+
     /// <summary>A registry of <paramref name="tools"/>, or null when there are none.</summary>
     public static ToolRegistry? Registry(IReadOnlyList<Tool> tools) => tools.Count == 0 ? null : ToolRegistry.Create().Add(tools).Build();
-
-    [RequiresUnreferencedCode("Reads tool methods with reflection.")]
-    [RequiresDynamicCode("Reads tool methods with reflection.")]
-    private static IEnumerable<Tool> FromType(Type type)
-    {
-        const BindingFlags Public = BindingFlags.Public | BindingFlags.Static | BindingFlags.Instance | BindingFlags.DeclaredOnly;
-        object? instance = null;
-        foreach (var method in type.GetMethods(Public))
-        {
-            if (method.GetCustomAttribute<ToolAttribute>() is not { } attribute || method.IsGenericMethodDefinition)
-            {
-                continue;
-            }
-
-            object? target = null;
-            if (!method.IsStatic)
-            {
-                if (type.IsAbstract || type.GetConstructor(Type.EmptyTypes) is null)
-                {
-                    throw new InvalidOperationException($"{type.FullName}.{method.Name} is an instance tool, but {type.Name} has no public parameterless constructor.");
-                }
-
-                target = instance ??= Activator.CreateInstance(type);
-            }
-
-            var delegateType = Expression.GetDelegateType([.. method.GetParameters().Select(p => p.ParameterType), method.ReturnType]);
-            yield return Tool.FromDelegate(attribute.Name, attribute.Description, method.CreateDelegate(delegateType, target));
-        }
-
-        foreach (var member in type.GetProperties(BindingFlags.Public | BindingFlags.Static).Select(p => (p.PropertyType, Get: (Func<object?>)(() => p.GetValue(null))))
-                     .Concat(type.GetFields(BindingFlags.Public | BindingFlags.Static).Select(f => (Type: f.FieldType, Get: (Func<object?>)(() => f.GetValue(null))))))
-        {
-            if (member.Item1 == typeof(Tool) && member.Get() is Tool tool)
-            {
-                yield return tool;
-            }
-            else if (typeof(IEnumerable<Tool>).IsAssignableFrom(member.Item1) && member.Get() is IEnumerable<Tool> many)
-            {
-                foreach (var each in many)
-                {
-                    yield return each;
-                }
-            }
-        }
-    }
 
     /// <summary>Sample arguments for a tool's JSON schema (for <c>idrak tools test</c>): its examples, defaults or a value of each type.</summary>
     public static JsonObject SampleArguments(JsonNode? schema)

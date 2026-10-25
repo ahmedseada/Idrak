@@ -26,9 +26,14 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Protocol;
 
-/// <summary>Tools served by the 'idrak mcp serve' test (the test assembly is the tools assembly).</summary>
-public sealed class CliServeTestTools
+[assembly: ToolProvider(typeof(CliServeTestTools))]
+
+/// <summary>Tools served by the 'idrak mcp serve' test (the test assembly is the tools assembly, declaring them with ToolProvider).</summary>
+public sealed class CliServeTestTools : IToolProvider
 {
+    /// <inheritdoc/>
+    public IReadOnlyList<Idrak.Abstraction.Generation.Tool> Tools => ToolProviders.FromMethods(this);
+
     /// <summary>Adds two integers.</summary>
     [Tool("serve_add", "Adds two integers.")]
     public int Add(int a, int b) => a + b;

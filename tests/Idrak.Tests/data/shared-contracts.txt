@@ -26,3 +26,5 @@ Idrak.Abstraction.Generation.ChatTemplate | the base of a chat template (IChatTe
 Idrak.Abstraction.Generation.IPackedFormat | a packed weight format any package may add (a plug-in's own quantization) and every package that builds layers packs with, by name
 Idrak.Abstraction.Generation.PackedWeightFormats | the packed weight formats by name, overridable once for every package that packs weights
 Idrak.Abstraction.Generation.ToolCallFormats | the tool-call formats by name, beside ChatTemplates: a family plug-in registers its own once for every package that parses a chat model's output
+Idrak.Abstraction.Formats.IOnnxRuntimeLoader | how a host runs an ONNX model outside Idrak's own import (the tool's onnx check, an app comparing outputs) without referencing the runtime's package; Idrak.Onnx.Runtime registers ONNX Runtime, and any package may register another runtime
+Idrak.Abstraction.Formats.OnnxRuntimeLoaders | the ONNX runtimes by name, filled through LibraryDefaults when Idrak.Onnx.Runtime ships (or a host loads it with -P), so a host finds one with no reference to it

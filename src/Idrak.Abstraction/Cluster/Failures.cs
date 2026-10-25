@@ -96,7 +96,8 @@ public static class FailureModels
     /// <summary>The model of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IFailureModel Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Failure model '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with FailureModels.Register.");
+        ?? throw new NotRegisteredException(nameof(FailureModels), name, Table.Keys,
+            $"Failure model '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with FailureModels.Register.");
 
     /// <summary>The library's model of that name, or null.</summary>
     public static IFailureModel? Default(string name) => Table.Default(name);

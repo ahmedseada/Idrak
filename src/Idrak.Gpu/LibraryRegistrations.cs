@@ -5,6 +5,8 @@ using Idrak.Gpu.Cuda;
 using Idrak.Gpu.Hip;
 using Idrak.Gpu.Vulkan;
 
+[assembly: LibraryRegistrations(typeof(Idrak.Gpu.LibraryRegistrations))]
+
 namespace Idrak.Gpu;
 
 /// <summary>
@@ -14,7 +16,7 @@ namespace Idrak.Gpu;
 /// <see cref="RegisterFor"/> once per registry, before that registry is first used, after the core assembly's own
 /// registrations when the application ships it.
 /// </summary>
-internal static class LibraryRegistrations
+internal sealed class LibraryRegistrations : ILibraryRegistrations
 {
     private static readonly Dictionary<Type, Action> ByRegistry = new()
     {
@@ -26,7 +28,7 @@ internal static class LibraryRegistrations
         },
     };
 
-    private static void RegisterFor(Type registry)
+    public void RegisterFor(Type registry)
     {
         if (ByRegistry.TryGetValue(registry, out var register))
         {

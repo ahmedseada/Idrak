@@ -3,6 +3,8 @@
 
 using Idrak.Abstraction.Plugins;
 
+[assembly: IdrakPluginPackage(typeof(Idrak.Text.Plugins.TextPluginsPackage))]
+
 namespace Idrak.Text.Plugins;
 
 /// <summary>
@@ -14,8 +16,11 @@ namespace Idrak.Text.Plugins;
 /// </summary>
 public static class TextPlugins
 {
-    /// <summary>The package's name, as the library's "not registered" messages name it: "Idrak.Text.Plugins".</summary>
-    public const string Package = "Idrak.Text.Plugins";
+    /// <summary>
+    /// The package, as <c>-P</c> finds it too (<c>[assembly: IdrakPluginPackage]</c>): its name ("Idrak.Text.Plugins", as the
+    /// library's "not registered" messages and the registries' origins name it) and <see cref="All"/>.
+    /// </summary>
+    public static IIdrakPluginPackage Package { get; } = new TextPluginsPackage();
 
     /// <summary>
     /// Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them: BERT
@@ -34,12 +39,22 @@ public static class TextPlugins
         Python.PythonLanguagePlugin.Plugin,
     ];
 
-    /// <summary>Registers every family of the package (<see cref="IdrakPlugins.RegisterAll"/>); once: calling it again changes nothing.</summary>
-    public static void RegisterAll() => IdrakPlugins.RegisterAll(All);
+    /// <summary>Registers every family of the package (<see cref="IdrakPlugins.RegisterAll(IIdrakPluginPackage)"/>); once: calling it again changes nothing.</summary>
+    public static void RegisterAll() => IdrakPlugins.RegisterAll(Package);
 
     /// <summary>Unregisters every family of the package, the last first, leaving the registries as <see cref="RegisterAll"/> found them.</summary>
-    public static void UnregisterAll() => IdrakPlugins.UnregisterAll(All);
+    public static void UnregisterAll() => IdrakPlugins.UnregisterAll(Package);
+}
 
-    /// <summary>The entry the idrak tool's <c>-P</c> (<c>--plugin</c>) calls when it loads this assembly: <see cref="RegisterAll"/>.</summary>
-    public static void RegisterIdrakPlugin() => RegisterAll();
+/// <summary>
+/// The package <c>-P</c> and <see cref="IdrakPlugins.Load"/> find through this assembly's
+/// <see cref="IdrakPluginPackageAttribute"/>: <see cref="TextPlugins"/>' name and plug-ins.
+/// </summary>
+internal sealed class TextPluginsPackage : IIdrakPluginPackage
+{
+    /// <inheritdoc/>
+    public string Name => "Idrak.Text.Plugins";
+
+    /// <inheritdoc/>
+    public IReadOnlyList<IIdrakPlugin> All => TextPlugins.All;
 }

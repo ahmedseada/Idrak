@@ -202,7 +202,8 @@ public static class LinkProfiles
             return ClusterCache.Calibrated(name) is { } calibrated ? calibrated.Apply(rated) : rated;
         }
 
-        throw new NotSupportedException($"Link profile '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); a registered name may end in a rate (\"-10g\", \"-300m\"), or add one with LinkProfiles.Register.");
+        throw new NotRegisteredException(nameof(LinkProfiles), name, Table.Keys,
+            $"Link profile '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); a registered name may end in a rate (\"-10g\", \"-300m\"), or add one with LinkProfiles.Register.");
     }
 
     /// <summary>The library's profile of that name, or null.</summary>

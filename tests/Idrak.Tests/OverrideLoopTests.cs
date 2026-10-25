@@ -19,6 +19,7 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] OverrideLoopGroup =
     [
         ("override loop: the library's built-ins are the slots' defaults in every registry, not overrides", OverrideLoopLibraryDefaults),
+        ("override loop: each first-party assembly LibraryDefaults lists names its ILibraryRegistrations with the LibraryRegistrations attribute (read once per assembly), the same type LibraryDefaults keeps for trimmed apps; Idrak.Onnx.Runtime's ONNX Runtime is a library default", OverrideLoopLibraryRegistrations),
         ("override loop: under the default policy (Throw) an app's sampler, tokenizer part and RoPE scaling that throw reach the caller, reported with a hint naming FallBack, Shadow and IDRAK_OVERRIDE_POLICY", OverrideLoopDefaultThrows),
         ("override loop: under FallBack (opted into per slot) an app's sampler, tokenizer part and RoPE scaling each throw once and fall back to the default, reported to telemetry", OverrideLoopFallBack),
         ("override loop: under Shadow the default answers and the app's sampler, tokenizer part and RoPE scaling are compared (outputs, times, allocations)", OverrideLoopShadow),
@@ -185,6 +186,43 @@ internal static partial class Tests
         Check(!origins.Overlaps(["Idrak", "Idrak.Abstraction", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Data", "Idrak.Text", "Idrak.Vision"]),
             $"no library assembly is reported as overriding: {string.Join(", ", origins)}");
         Check(RopeScalings.Get(LinearType) == RopeScalings.Default(LinearType), "with only its default, a slot hands it out as it is");
+    }
+
+    private static void OverrideLoopLibraryRegistrations(Device device)
+    {
+        _ = device;
+        var defaults = typeof(Overrides).Assembly.GetType("Idrak.Abstraction.LibraryDefaults", throwOnError: true)!;
+        var listed = (string[])defaults.GetField("Assemblies", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
+        var kept = System.Reflection.CustomAttributeExtensions.GetCustomAttributes<System.Diagnostics.CodeAnalysis.DynamicDependencyAttribute>(defaults.GetMethod("Ensure")!)
+            .ToDictionary(d => d.AssemblyName!, d => d.TypeName!, StringComparer.Ordinal);
+        Check(listed.Order(StringComparer.Ordinal).SequenceEqual(kept.Keys.Order(StringComparer.Ordinal)),
+            $"every listed assembly's registrations are kept for trimmed apps: listed {string.Join(", ", listed)}, kept {string.Join(", ", kept.Keys)}");
+        int found = 0;
+        foreach (string name in listed)
+        {
+            System.Reflection.Assembly assembly;
+            try
+            {
+                assembly = System.Reflection.Assembly.Load(name);
+            }
+            catch (FileNotFoundException)
+            {
+                continue;                                                           // a package this runner does not ship
+            }
+
+            if (System.Reflection.CustomAttributeExtensions.GetCustomAttribute<LibraryRegistrationsAttribute>(assembly) is not { } declared)
+            {
+                continue;
+            }
+
+            found++;
+            Check(typeof(ILibraryRegistrations).IsAssignableFrom(declared.Type) && declared.Type.GetConstructor(Type.EmptyTypes) is not null && declared.Type.FullName == kept[name],
+                $"{name}: its attribute names {declared.Type.FullName}, an ILibraryRegistrations with a public parameterless constructor, which LibraryDefaults keeps as {kept[name]}");
+        }
+
+        Check(found >= 10, $"the first-party assemblies this runner ships declare their registrations ({found})");
+        Check(OnnxRuntimeLoaders.Origin("onnxruntime") == Overrides.Library && OnnxRuntimeLoaders.Get("onnxruntime") is { Summary.Length: > 0 },
+            $"ONNX Runtime is registered by Idrak.Onnx.Runtime as a library default: {OnnxRuntimeLoaders.Describe()}");
     }
 
     private static void OverrideLoopDefaultThrows(Device device)

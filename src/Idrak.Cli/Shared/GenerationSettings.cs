@@ -40,7 +40,7 @@ internal sealed class GenerationSettings
         "                         time it was seen (default 0 = off); --repeat-last-n N: how far back they look (default 64)\n" +
         "      --repeat-stop N    end the answer when one phrase repeats N times in a row (default 0 = off)\n" +
         "      --think            ask for reasoning (shown apart); --no-think: suppress it (default: the model's own)\n" +
-        "      --tools FILE.dll   tools the model may call: the [Tool] methods of an assembly (repeatable)\n";
+        "      --tools FILE.dll   tools the model may call: the tools an assembly declares (repeatable)\n";
 
     /// <summary>The setting names <c>/set</c> knows.</summary>
     public static readonly string[] Names =

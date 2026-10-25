@@ -70,7 +70,8 @@ public static class AudioEncoders
     /// <summary>The encoder registered as <paramref name="name"/> (any case).</summary>
     /// <exception cref="NotSupportedException">None is; the message names those that are.</exception>
     public static IAudioEncoder Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"Audio encoder '{name}' is not registered (registered: {string.Join(", ", Names)}); add it with AudioEncoders.Register.");
+        ?? throw new NotRegisteredException(nameof(AudioEncoders), name, Names,
+            $"Audio encoder '{name}' is not registered (registered: {string.Join(", ", Names)}); add it with AudioEncoders.Register.");
 
     /// <summary>The encoder that writes files named like <paramref name="path"/> (by its extension).</summary>
     /// <exception cref="NotSupportedException">No registered encoder lists the extension; the message names the extensions there are.</exception>
@@ -79,7 +80,8 @@ public static class AudioEncoders
         ArgumentException.ThrowIfNullOrEmpty(path);
         string extension = Path.GetExtension(path);
         return Registry.Values.FirstOrDefault(e => extension.Length > 0 && string.Equals(e.Extension, extension, StringComparison.OrdinalIgnoreCase))
-            ?? throw new NotSupportedException($"An audio encoder of '{extension}' files is not registered (registered: {string.Join(", ", Extensions)}); add one with AudioEncoders.Register.");
+            ?? throw new NotRegisteredException(nameof(AudioEncoders), extension, Extensions,
+                $"An audio encoder of '{extension}' files is not registered (registered: {string.Join(", ", Extensions)}); add one with AudioEncoders.Register.");
     }
 
     /// <summary>The library's encoder <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>

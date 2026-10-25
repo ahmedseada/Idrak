@@ -97,7 +97,8 @@ public static class GradientCompressions
     /// <summary>The compression of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IGradientCompression Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Gradient compression '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add one with GradientCompressions.Register (IDRAK_CLUSTER_COMPRESSION names it).");
+        ?? throw new NotRegisteredException(nameof(GradientCompressions), name, Table.Keys,
+            $"Gradient compression '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add one with GradientCompressions.Register (IDRAK_CLUSTER_COMPRESSION names it).");
 
     /// <summary>The library's compression of that name, or null.</summary>
     public static IGradientCompression? Default(string name) => Table.Default(name);

@@ -193,7 +193,8 @@ public static class TuningDataFormats
     /// <summary>The format registered as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
     public static ITuningDataFormat Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Tuning data format '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TuningDataFormats.Register.");
+        ?? throw new NotRegisteredException(nameof(TuningDataFormats), name, Table.Keys,
+            $"Tuning data format '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TuningDataFormats.Register.");
 
     /// <summary>The library's format <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static ITuningDataFormat? Default(string name) => Table.Default(name);

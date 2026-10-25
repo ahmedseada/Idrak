@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Plugins;
 using Idrak.Audio.Plugins;
 using Idrak.Cli.Shared;
 using Idrak.Reinforcement.Plugins;
@@ -23,12 +24,12 @@ internal static class CommandLine
     /// <c>--plugin</c> assemblies load (which can still take a family's place). Registering is idempotent and loads no
     /// model: only the families' names.
     /// </summary>
-    internal static readonly (string Name, string Package, Action RegisterAll)[] PluginPackages =
+    internal static readonly (string Name, IIdrakPluginPackage Package)[] PluginPackages =
     [
-        ("text", TextPlugins.Package, TextPlugins.RegisterAll),
-        ("vision", VisionPlugins.Package, VisionPlugins.RegisterAll),
-        ("audio", AudioPlugins.Package, AudioPlugins.RegisterAll),
-        ("reinforcement", ReinforcementPlugins.Package, ReinforcementPlugins.RegisterAll),
+        ("text", TextPlugins.Package),
+        ("vision", VisionPlugins.Package),
+        ("audio", AudioPlugins.Package),
+        ("reinforcement", ReinforcementPlugins.Package),
     ];
 
     /// <summary>
@@ -42,7 +43,7 @@ internal static class CommandLine
     /// The packages <paramref name="value"/> (the variable's value) chooses, in <see cref="PluginPackages"/>' order.
     /// </summary>
     /// <exception cref="UsageException">A name that is not one of the packages (the message names the variable).</exception>
-    internal static IReadOnlyList<(string Name, string Package, Action RegisterAll)> ChosenPluginPackages(string? value)
+    internal static IReadOnlyList<(string Name, IIdrakPluginPackage Package)> ChosenPluginPackages(string? value)
     {
         if (string.IsNullOrWhiteSpace(value) || value.Trim().Equals("all", StringComparison.OrdinalIgnoreCase))
         {
@@ -70,9 +71,9 @@ internal static class CommandLine
     /// <summary>Registers every family of the packages <see cref="PluginPackagesVariable"/> chooses (once: again changes nothing).</summary>
     internal static void RegisterPluginPackages()
     {
-        foreach (var (_, _, registerAll) in ChosenPluginPackages(Environment.GetEnvironmentVariable(PluginPackagesVariable)))
+        foreach (var (_, package) in ChosenPluginPackages(Environment.GetEnvironmentVariable(PluginPackagesVariable)))
         {
-            registerAll();
+            IdrakPlugins.RegisterAll(package);
         }
     }
 

@@ -424,14 +424,14 @@ internal static partial class Tests
                 "unregistered: no BERT architecture is registered");
             var found = PretrainedEncoders.Names.Order(StringComparer.Ordinal).ToList();
             ThrowsNaming<NotSupportedException>(() => LoadBert(folder, device).Dispose(), "a BERT checkpoint without the plug-in", "not registered",
-                BertPlugin.BertForMaskedLM, TextPlugins.Package);
+                BertPlugin.BertForMaskedLM, TextPlugins.Package.Name);
 
             BertPlugin.Register();
             BertPlugin.Register();
             Check(BertPlugin.IsRegistered && ReferenceEquals(IdrakPlugins.Find("bert"), BertPlugin.Plugin), "registered and recorded as \"bert\"");
             Check(PretrainedEncoders.Names.Order(StringComparer.Ordinal).SequenceEqual(found.Concat(BertPlugin.Architectures).Order(StringComparer.Ordinal)),
                 $"Register twice registers the three architectures once: {string.Join(", ", PretrainedEncoders.Names)}");
-            Check(BertPlugin.Architectures.All(a => PretrainedEncoders.Origin(a) == TextPlugins.Package), "the architectures are Idrak.Text.Plugins'");
+            Check(BertPlugin.Architectures.All(a => PretrainedEncoders.Origin(a) == TextPlugins.Package.Name), "the architectures are Idrak.Text.Plugins'");
             using (var model = LoadBert(folder, device))
             {
                 Check(model.Architecture == BertPlugin.BertForMaskedLM, "registered, the checkpoint loads");

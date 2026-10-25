@@ -534,7 +534,7 @@ internal sealed class TuneTool(ToolConsole console)
                                        or ResourceLimitExceededException or HttpRequestException)
         {
             console.Clear();
-            bool family = ex is NotSupportedException && ex.Message.Contains("VisionFamilies.Register", StringComparison.Ordinal);
+            bool family = ex is NotRegisteredException { Registry: nameof(Idrak.Models.Abstractions.VisionFamilies) };
             _error.WriteLine($"error: {ex.Message}{(family ? " Load its plug-in with -P (--plugin)." : "")}");
             return 1;
         }

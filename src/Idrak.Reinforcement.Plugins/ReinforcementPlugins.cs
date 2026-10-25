@@ -3,6 +3,8 @@
 
 using Idrak.Abstraction.Plugins;
 
+[assembly: IdrakPluginPackage(typeof(Idrak.Reinforcement.Plugins.ReinforcementPluginsPackage))]
+
 namespace Idrak.Reinforcement.Plugins;
 
 /// <summary>
@@ -15,8 +17,11 @@ namespace Idrak.Reinforcement.Plugins;
 /// </summary>
 public static class ReinforcementPlugins
 {
-    /// <summary>The package's name, as the library's "not registered" messages name it: "Idrak.Reinforcement.Plugins".</summary>
-    public const string Package = "Idrak.Reinforcement.Plugins";
+    /// <summary>
+    /// The package, as <c>-P</c> finds it too (<c>[assembly: IdrakPluginPackage]</c>): its name ("Idrak.Reinforcement.Plugins", as the
+    /// library's "not registered" messages and the registries' origins name it) and <see cref="All"/>.
+    /// </summary>
+    public static IIdrakPluginPackage Package { get; } = new ReinforcementPluginsPackage();
 
     /// <summary>
     /// Every family plug-in of the package, in the order <see cref="RegisterAll"/> registers them: agentic coding
@@ -25,12 +30,22 @@ public static class ReinforcementPlugins
     /// </summary>
     public static IReadOnlyList<IIdrakPlugin> All { get; } = [Coding.CodingPlugin.Plugin, CSharp.CSharpCodingPlugin.Plugin, Classic.ClassicControlPlugin.Plugin];
 
-    /// <summary>Registers every family of the package (<see cref="IdrakPlugins.RegisterAll"/>); once: calling it again changes nothing.</summary>
-    public static void RegisterAll() => IdrakPlugins.RegisterAll(All);
+    /// <summary>Registers every family of the package (<see cref="IdrakPlugins.RegisterAll(IIdrakPluginPackage)"/>); once: calling it again changes nothing.</summary>
+    public static void RegisterAll() => IdrakPlugins.RegisterAll(Package);
 
     /// <summary>Unregisters every family of the package, the last first, leaving the registries as <see cref="RegisterAll"/> found them.</summary>
-    public static void UnregisterAll() => IdrakPlugins.UnregisterAll(All);
+    public static void UnregisterAll() => IdrakPlugins.UnregisterAll(Package);
+}
 
-    /// <summary>The entry the idrak tool's <c>-P</c> (<c>--plugin</c>) calls when it loads this assembly: <see cref="RegisterAll"/>.</summary>
-    public static void RegisterIdrakPlugin() => RegisterAll();
+/// <summary>
+/// The package <c>-P</c> and <see cref="IdrakPlugins.Load"/> find through this assembly's
+/// <see cref="IdrakPluginPackageAttribute"/>: <see cref="ReinforcementPlugins"/>' name and plug-ins.
+/// </summary>
+internal sealed class ReinforcementPluginsPackage : IIdrakPluginPackage
+{
+    /// <inheritdoc/>
+    public string Name => "Idrak.Reinforcement.Plugins";
+
+    /// <inheritdoc/>
+    public IReadOnlyList<IIdrakPlugin> All => ReinforcementPlugins.All;
 }

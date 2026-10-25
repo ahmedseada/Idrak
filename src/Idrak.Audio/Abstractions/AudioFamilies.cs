@@ -221,7 +221,8 @@ public static class AudioFamilies
         return Registry.Find(architecture) ?? (HasAudio(config) ? throw NotRegistered(architecture) : null);
     }
 
-    internal static NotSupportedException NotRegistered(string name) =>
-        new($"Audio family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
+    internal static NotRegisteredException NotRegistered(string name) =>
+        new(nameof(AudioFamilies), name, Registry.Keys,
+            $"Audio family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
             + "register it with AudioFamilies.Register (a plug-in or the app that brings the family; the library registers none).");
 }

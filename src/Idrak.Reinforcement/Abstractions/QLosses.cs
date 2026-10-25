@@ -180,7 +180,8 @@ public static class QLosses
     /// <summary>The loss registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
     public static IQLoss Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Q-learning loss '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with QLosses.Register.");
+        ?? throw new NotRegisteredException(nameof(QLosses), name, Table.Keys,
+            $"Q-learning loss '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with QLosses.Register.");
 
     /// <summary>The library's loss <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IQLoss? Default(string name) => Table.Default(name);

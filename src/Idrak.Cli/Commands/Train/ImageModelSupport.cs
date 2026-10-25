@@ -122,8 +122,39 @@ internal static class ImageModelFiles
     };
 
     /// <summary>Whether <paramref name="e"/> is a registry's refusal of a name it does not hold (a family, a decoder, a head).</summary>
-    public static bool NotRegistered(Exception e) => e is NotSupportedException
-        && (e.Message.Contains(" is not registered", StringComparison.Ordinal) || e.Message.StartsWith("No architecture '", StringComparison.Ordinal));
+    public static bool NotRegistered(Exception e) => e is NotRegisteredException || e is NotSupportedException && Untyped(e.Message);
+
+    // The refusals of the registries that do not throw NotRegisteredException yet, known by their words until they do:
+    // pretrained architectures ("No architecture 'x' is registered"), and encoder families and heads, position biases,
+    // feature caches, progress reporters, tokenizer models and the GGUF tables ("... 'x' is not registered").
+    private static readonly string[] UntypedRefusals =
+    [
+        "Encoder family '", "Encoder-decoder family '", "Encoder head '", "Attention position bias '", "Feature cache '", "Progress reporter '",
+        "Tokenizer model '", "GGUF architecture '", "GGUF tokenizer '", "GGUF chat template '", "GGUF pre-tokenizer '",
+    ];
+
+    private static bool Untyped(string message)
+    {
+        if (message.StartsWith("No architecture '", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (!message.Contains(" is not registered", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        foreach (string refusal in UntypedRefusals)
+        {
+            if (message.Contains(refusal, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     /// <summary>Prints a registry's refusal with the remedy on the command line, and gives the failure's exit code.</summary>
     public static int Refuse(CommandContext context, Exception e)

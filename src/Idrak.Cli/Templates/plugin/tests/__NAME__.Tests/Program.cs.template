@@ -6,6 +6,7 @@ using System.Runtime.CompilerServices;
 using Idrak;
 using Idrak.Abstraction;
 using Idrak.Abstraction.Generation;
+using Idrak.Abstraction.Plugins;
 using Idrak.Layers;
 using Idrak.Abstraction.Training;
 using Idrak.Optimizers;
@@ -17,6 +18,7 @@ int failed = 0;
 foreach (var (name, test) in new (string, Action)[]
 {
     ("public API only: Idrak grants this assembly no internal access", NoInternalAccess),
+    ("idrak --plugin finds the assembly's plug-in package, whose plug-in registers and takes back the format and the step", DeclaredPackage),
     ("the packed format multiplies like its expanded weights, with the input's gradient", PackedFormat),
     ("the network step trains and replays from JSON", NetworkStep),
 })
@@ -45,6 +47,19 @@ void NoInternalAccess()
     string self = typeof(Plugin).Assembly.GetName().Name!;
     var friends = typeof(Tensor).Assembly.GetCustomAttributes<InternalsVisibleToAttribute>().Select(a => a.AssemblyName);
     Check(!friends.Contains(self), $"Idrak lists {self} among its friends");
+}
+
+void DeclaredPackage()
+{
+    var package = IdrakPlugins.PackageOf(typeof(Plugin).Assembly);
+    Check(package is { All.Count: 1 } && ReferenceEquals(package, IdrakPlugins.PackageOf(typeof(Plugin).Assembly)), "one package, made once");
+    var plugin = package!.All[0];
+    Plugin.Unregister();
+    IdrakPlugins.Register(plugin);
+    Check(plugin.IsRegistered && PackedWeight.FormatNames.Contains(Plugin.FormatName), "its plug-in registers the format");
+    IdrakPlugins.Unregister(plugin);
+    Check(!PackedWeight.FormatNames.Contains(Plugin.FormatName), "and takes it back");
+    Plugin.Register();
 }
 
 void PackedFormat()

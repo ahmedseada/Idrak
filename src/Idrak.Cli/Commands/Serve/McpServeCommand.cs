@@ -1,14 +1,11 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Linq.Expressions;
-using System.Reflection;
 using System.Text.Json.Nodes;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using Idrak.Cli.Shared;
 using Idrak.Mcp;
-using Tool = Idrak.Abstraction.Generation.Tool;
 
 namespace Idrak.Cli.Commands.Serve;
 
@@ -22,8 +19,8 @@ internal sealed class McpServeCommand : Command
     public override string Usage => """
         TOOLS.dll [TOOLS.dll...] [options]
 
-        Loads each assembly and serves every public method marked [Tool] (Idrak.Abstraction.Generation.ToolAttribute)
-        on its public types (instance methods need a parameterless constructor) to an MCP client over standard input
+        Loads each assembly and serves the tools it declares ([assembly: ToolProvider(typeof(X))], X an IToolProvider
+        of Idrak.Abstraction.Generation, whose tools may be its [Tool] methods) to an MCP client over standard input
         and output, until the client disconnects. Status lines go to the error output, since the output carries the
         protocol. To serve models as MCP tools too (generate, chat): idrak serve MODEL --mcp [--tools TOOLS.dll].
 
@@ -45,11 +42,10 @@ internal sealed class McpServeCommand : Command
     {
         if (context.Positional.Count == 0)
         {
-            throw new UsageException("Name at least one assembly (TOOLS.dll) whose [Tool] methods to serve.");
+            throw new UsageException("Name at least one assembly (TOOLS.dll) whose tools to serve.");
         }
 
         var builder = ToolRegistry.Create();
-        int count = 0;
         var listed = new JsonArray();
         foreach (string path in context.Positional)
         {
@@ -57,13 +53,7 @@ internal sealed class McpServeCommand : Command
             {
                 builder.Add(tool);
                 listed.Add(new JsonObject { ["name"] = tool.Definition.Name, ["description"] = tool.Definition.Description, ["assembly"] = Path.GetFileName(path) });
-                count++;
             }
-        }
-
-        if (count == 0)
-        {
-            throw new InvalidOperationException($"no public method marked [Tool] was found in {string.Join(", ", context.Positional)}.");
         }
 
         if (context.Flag("--list"))
@@ -112,46 +102,5 @@ internal sealed class McpServeCommand : Command
         {
             // Ctrl+C
         }
-    }
-}
-
-/// <summary>Reads the [Tool] methods of an assembly's public types as tools.</summary>
-internal static class ToolAssemblies
-{
-    public static IReadOnlyList<Tool> Load(string path)
-    {
-        string full = Path.GetFullPath(path);
-        if (!File.Exists(full))
-        {
-            throw new UsageException($"Tools assembly not found: {full}");
-        }
-
-        var assembly = Assembly.LoadFrom(full);
-        var tools = new List<Tool>();
-        foreach (var type in assembly.GetExportedTypes().Where(t => t.IsClass && !t.IsGenericTypeDefinition))
-        {
-            var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
-                .Select(m => (Method: m, Attribute: m.GetCustomAttribute<ToolAttribute>())).Where(m => m.Attribute is not null).ToList();
-            if (methods.Count == 0)
-            {
-                continue;
-            }
-
-            object? instance = null;
-            if (methods.Any(m => !m.Method.IsStatic))
-            {
-                instance = type.GetConstructor(Type.EmptyTypes) is { } constructor ? constructor.Invoke(null)
-                    : throw new InvalidOperationException($"{type.FullName} has [Tool] instance methods but no public parameterless constructor.");
-            }
-
-            foreach (var (method, attribute) in methods)
-            {
-                var delegateType = Expression.GetDelegateType([.. method.GetParameters().Select(p => p.ParameterType), method.ReturnType]);
-                var function = method.IsStatic ? method.CreateDelegate(delegateType) : method.CreateDelegate(delegateType, instance);
-                tools.Add(Tool.FromDelegate(attribute!.Name, attribute.Description, function));
-            }
-        }
-
-        return tools;
     }
 }

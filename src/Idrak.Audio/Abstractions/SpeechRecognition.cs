@@ -265,8 +265,9 @@ public static class SpeechFamilies
         return Registry.Find(architecture) ?? throw NotRegistered(architecture);
     }
 
-    internal static NotSupportedException NotRegistered(string name) =>
-        new($"Speech family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
+    internal static NotRegisteredException NotRegistered(string name) =>
+        new(nameof(SpeechFamilies), name, Registry.Keys,
+            $"Speech family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
             + "add it with SpeechFamilies.Register (a plug-in or the app that brings the family; the library registers none), "
             + "or reference Idrak.Audio.Plugins and call AudioPlugins.RegisterAll().");
 }

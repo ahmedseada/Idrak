@@ -149,7 +149,8 @@ public static class TuningMetrics
     /// <summary>The metric registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
     public static ITuningMetric Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Tuning metric '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TuningMetrics.Register.");
+        ?? throw new NotRegisteredException(nameof(TuningMetrics), name, Table.Keys,
+            $"Tuning metric '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TuningMetrics.Register.");
 
     /// <summary>The library's metric <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static ITuningMetric? Default(string name) => Table.Default(name);

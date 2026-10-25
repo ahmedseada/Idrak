@@ -125,7 +125,8 @@ public static class Collectives
     /// <summary>The algorithm of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static ICollectivesProvider Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Collective algorithm '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with Collectives.Register.");
+        ?? throw new NotRegisteredException(nameof(Collectives), name, Table.Keys,
+            $"Collective algorithm '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with Collectives.Register.");
 
     /// <summary>The library's algorithm of that name, or null.</summary>
     public static ICollectivesProvider? Default(string name) => Table.Default(name);

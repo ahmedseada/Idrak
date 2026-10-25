@@ -69,8 +69,8 @@ internal static partial class Tests
             Check(VisionFamilyPlugins.All(p => p.Plugin.IsRegistered && ReferenceEquals(IdrakPlugins.Find(p.Name), p.Plugin)), "registered and recorded by name");
             Check(Sorted(VisionFamilies.Names).SequenceEqual(Sorted(visionFound.Concat(vision))) && Sorted(PretrainedArchitectures.Names).SequenceEqual(Sorted(textFound.Concat(vision)))
                 && Sorted(ImageModelFamilies.Names).SequenceEqual(Sorted(imageFound.Concat(image))), "Register twice registers each architecture once");
-            Check(vision.All(a => VisionFamilies.Origin(a) == VisionPlugins.Package && PretrainedArchitectures.Origin(a) == VisionPlugins.Package)
-                && ImageModelFamilies.Origin(CrnnPlugin.Architecture) == VisionPlugins.Package, "every architecture is Idrak.Vision.Plugins'");
+            Check(vision.All(a => VisionFamilies.Origin(a) == VisionPlugins.Package.Name && PretrainedArchitectures.Origin(a) == VisionPlugins.Package.Name)
+                && ImageModelFamilies.Origin(CrnnPlugin.Architecture) == VisionPlugins.Package.Name, "every architecture is Idrak.Vision.Plugins'");
             foreach (var (plugin, _, _) in VisionFamilyPlugins)
             {
                 plugin.Unregister();
@@ -165,7 +165,7 @@ internal static partial class Tests
             ThrowsNaming<FileNotFoundException>(() => CrnnRecognizer.Load(Path.Combine(folder, "nothing"), device).Dispose(), "an empty folder", "is not a line recognizer folder");
 
             CrnnPlugin.Unregister();
-            ThrowsNaming<NotSupportedException>(() => ImageModels.Load(saved).Dispose(), "the family unregistered", CrnnPlugin.Architecture, "not registered", VisionPlugins.Package);
+            ThrowsNaming<NotSupportedException>(() => ImageModels.Load(saved).Dispose(), "the family unregistered", CrnnPlugin.Architecture, "not registered", VisionPlugins.Package.Name);
         }
         finally
         {

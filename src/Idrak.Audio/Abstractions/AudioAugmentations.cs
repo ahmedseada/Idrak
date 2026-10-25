@@ -171,7 +171,8 @@ public static class AudioAugmentations
     /// <summary>The augmentation of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IAudioAugmentation Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Audio augmentation '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AudioAugmentations.Register.");
+        ?? throw new NotRegisteredException(nameof(AudioAugmentations), name, Table.Keys,
+            $"Audio augmentation '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AudioAugmentations.Register.");
 
     /// <summary>The library's augmentation of that name, or null.</summary>
     public static IAudioAugmentation? Default(string name) => Table.Default(name);

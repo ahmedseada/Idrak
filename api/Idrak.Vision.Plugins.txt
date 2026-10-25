@@ -488,8 +488,7 @@ public enum Idrak.Vision.Plugins.Qwen.QwenVlVariant : int
   Qwen2Vl = 1
 
 public static class Idrak.Vision.Plugins.VisionPlugins
-  public const string Package = "Idrak.Vision.Plugins"
+  public static Idrak.Abstraction.Plugins.IIdrakPluginPackage Package { get; }
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Plugins.IIdrakPlugin> All { get; }
   public static void RegisterAll()
-  public static void RegisterIdrakPlugin()
   public static void UnregisterAll()

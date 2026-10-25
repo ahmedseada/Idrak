@@ -256,11 +256,12 @@ internal static class HelpTopics
     private const string Plugins = """
         idrak help plugins
 
-        -P/--plugin PATH (repeatable), or the config's "plugins" list, loads an assembly before the command runs. Its
-        module initializer runs, then any public static RegisterIdrakPlugin() method: there it registers weight and KV
-        formats, model families, RoPE scalings, tool-call formats, checkpoint and dataset formats, graph ops, layer
-        types, ONNX ops or device kinds through the libraries' public Register methods. Everything it adds is then
-        available to every command (e.g. -w MYFORMAT).
+        -P/--plugin PATH (repeatable), or the config's "plugins" list, loads an assembly before the command runs and
+        registers the plug-ins of its package, which it names with [assembly: IdrakPluginPackage(typeof(X))] (X an
+        IIdrakPluginPackage, Idrak.Abstraction.Plugins): they register weight and KV formats, model families, RoPE
+        scalings, tool-call formats, checkpoint and dataset formats, graph ops, layer types, ONNX ops or device kinds
+        through the libraries' public Register methods. A library assembly (Idrak.Onnx.Runtime) registers its
+        built-ins instead. Everything it adds is then available to every command (e.g. -w MYFORMAT).
 
         The tool itself registers the model families of Idrak.Text.Plugins, Idrak.Vision.Plugins and
         Idrak.Audio.Plugins, and the environment families of Idrak.Reinforcement.Plugins, first, so a -P plug-in can

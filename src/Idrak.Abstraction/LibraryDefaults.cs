@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 
 namespace Idrak.Abstraction;
 
@@ -9,9 +10,10 @@ namespace Idrak.Abstraction;
 /// The built-ins that ship in the first-party assemblies (Idrak, its domain packages) but are found through registries
 /// here (GPU devices, sample sources, layer types, ...). Idrak.Abstraction cannot name them; every such registry calls
 /// <see cref="Ensure"/> with its own type before its first use, which has each assembly the application ships register
-/// that registry's built-ins, once. Only the registries an application uses pay for their built-ins: training a network
-/// never builds the GGUF tables or the ONNX translators. An application that references Idrak.Abstraction alone gets the
-/// defaults that live here and whatever it registers itself.
+/// that registry's built-ins, once, through the <see cref="ILibraryRegistrations"/> its
+/// <see cref="LibraryRegistrationsAttribute"/> names. Only the registries an application uses pay for their built-ins:
+/// training a network never builds the GGUF tables or the ONNX translators. An application that references
+/// Idrak.Abstraction alone gets the defaults that live here and whatever it registers itself.
 /// </summary>
 internal static class LibraryDefaults
 {
@@ -20,34 +22,36 @@ internal static class LibraryDefaults
     // The registries whose built-ins are registered (or being registered: a registration may use another registry).
     private static readonly HashSet<Type> Done = [];
 
-    // The RegisterFor methods of the first-party assemblies the application ships, found on the first Ensure.
-    private static List<System.Reflection.MethodInfo>? _registrations;
+    // The registrations of the first-party assemblies the application ships, in Assemblies' order, found on the first
+    // Ensure (each assembly's attribute read once, its implementation made once); then those of assemblies a host loaded
+    // later (Include).
+    private static List<(Assembly Assembly, ILibraryRegistrations Registrations)>? _registrations;
 
-    // The first-party assemblies that register built-ins, in order (core first: the others build on it). Each may define
-    // an internal static class `<root namespace>.LibraryRegistrations` with a static `RegisterFor(Type registry)`; one
-    // that is missing (not shipped with the application) is skipped. The root namespace is the assembly's name except
-    // Idrak.Network's (Idrak.Networking: a namespace Idrak.Network would hide the Idrak.Network builder from code in
-    // Idrak.* namespaces). Planned packages are listed so they work the day they appear.
-    private static readonly (string Assembly, string Namespace)[] Assemblies =
-        [("Idrak", "Idrak"), ("Idrak.Gpu", "Idrak.Gpu"), ("Idrak.Imaging", "Idrak.Imaging"), ("Idrak.Data", "Idrak.Data"), ("Idrak.Text", "Idrak.Text"),
-            ("Idrak.Vision", "Idrak.Vision"), ("Idrak.Diffusion", "Idrak.Diffusion"), ("Idrak.Audio", "Idrak.Audio"), ("Idrak.Reinforcement", "Idrak.Reinforcement"),
-            ("Idrak.Cluster", "Idrak.Cluster"), ("Idrak.Network", "Idrak.Networking")];
+    // The first-party assemblies that register built-ins, in order (core first: the others build on it). Each names its
+    // ILibraryRegistrations with [assembly: LibraryRegistrations(typeof(...))]; one that is missing (not shipped with the
+    // application) is skipped. Planned packages are listed so they work the day they appear.
+    private static readonly string[] Assemblies =
+        ["Idrak", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Data", "Idrak.Text", "Idrak.Vision", "Idrak.Diffusion", "Idrak.Audio", "Idrak.Reinforcement",
+            "Idrak.Cluster", "Idrak.Network", "Idrak.Onnx.Runtime"];
 
     /// <summary>
     /// Has the first-party assemblies register their built-ins of <paramref name="registry"/>, unless done already (on
     /// this or another thread, which this then waits for).
     /// </summary>
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.LibraryRegistrations", "Idrak")]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Gpu.LibraryRegistrations", "Idrak.Gpu")]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Imaging.LibraryRegistrations", "Idrak.Imaging")]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Data.LibraryRegistrations", "Idrak.Data")]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Text.LibraryRegistrations", "Idrak.Text")]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Vision.LibraryRegistrations", "Idrak.Vision")]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Diffusion.LibraryRegistrations", "Idrak.Diffusion")]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Audio.LibraryRegistrations", "Idrak.Audio")]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Reinforcement.LibraryRegistrations", "Idrak.Reinforcement")]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Cluster.LibraryRegistrations", "Idrak.Cluster")]
-    [DynamicDependency(DynamicallyAccessedMemberTypes.NonPublicMethods, "Idrak.Networking.LibraryRegistrations", "Idrak.Network")]
+    // The attributes keep each assembly's implementation in a trimmed or AOT application that ships the assembly: the
+    // type its LibraryRegistrations attribute names (a test checks that the two agree).
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.LibraryRegistrations", "Idrak")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Gpu.LibraryRegistrations", "Idrak.Gpu")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Imaging.LibraryRegistrations", "Idrak.Imaging")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Data.LibraryRegistrations", "Idrak.Data")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Text.LibraryRegistrations", "Idrak.Text")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Vision.LibraryRegistrations", "Idrak.Vision")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Diffusion.LibraryRegistrations", "Idrak.Diffusion")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Audio.LibraryRegistrations", "Idrak.Audio")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Reinforcement.LibraryRegistrations", "Idrak.Reinforcement")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Cluster.LibraryRegistrations", "Idrak.Cluster")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Networking.LibraryRegistrations", "Idrak.Network")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Onnx.Runtime.LibraryRegistrations", "Idrak.Onnx.Runtime")]
     public static void Ensure(Type registry)
     {
         lock (Gate)   // re-entrant: a registration that touches another registry comes back here
@@ -57,41 +61,83 @@ internal static class LibraryDefaults
                 return;
             }
 
-            _registrations ??= Find();
-            object[] arguments = [registry];
+            var registrations = _registrations ??= Find();
             Overrides.AsLibraryDefaults(() =>   // the built-ins are the slots' library defaults, not overrides
             {
-                foreach (var register in _registrations)
+                for (int i = 0; i < registrations.Count; i++)
                 {
-                    register.Invoke(null, arguments);
+                    registrations[i].Registrations.RegisterFor(registry);
                 }
             });
         }
     }
 
-    [UnconditionalSuppressMessage("Trimming", "IL2057", Justification = "The type names are the constant first-party names listed above, kept by the DynamicDependency attributes on Ensure.")]
-    private static List<System.Reflection.MethodInfo> Find()
+    /// <summary>
+    /// Adds the built-ins of <paramref name="assembly"/>, a library assembly a host loaded after the application started
+    /// (the tool's <c>-P</c>): into every registry in use already, now, and into the others on their first use, after
+    /// the application's own. False when the assembly declares no <see cref="LibraryRegistrationsAttribute"/>; true, and
+    /// nothing registered again, when it is one of the application's already.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The attribute names a type that is not an <see cref="ILibraryRegistrations"/>.</exception>
+    public static bool Include(Assembly assembly)
     {
-        var found = new List<System.Reflection.MethodInfo>();
-        foreach (var (assembly, root) in Assemblies)
+        ArgumentNullException.ThrowIfNull(assembly);
+        if (assembly.GetCustomAttribute<LibraryRegistrationsAttribute>() is not { } declared)
         {
-            Type? registrations;
+            return false;
+        }
+
+        lock (Gate)
+        {
+            var registrations = _registrations ??= Find();
+            foreach (var (known, _) in registrations)
+            {
+                if (known == assembly)
+                {
+                    return true;
+                }
+            }
+
+            var added = Create(assembly, declared);
+            registrations.Add((assembly, added));
+            Type[] inUse = [.. Done];
+            Overrides.AsLibraryDefaults(() =>
+            {
+                foreach (var registry in inUse)
+                {
+                    added.RegisterFor(registry);
+                }
+            });
+            return true;
+        }
+    }
+
+    private static List<(Assembly, ILibraryRegistrations)> Find()
+    {
+        var found = new List<(Assembly, ILibraryRegistrations)>(Assemblies.Length);
+        foreach (string name in Assemblies)
+        {
+            Assembly assembly;
             try
             {
-                registrations = Type.GetType($"{root}.LibraryRegistrations, {assembly}", throwOnError: false);
+                assembly = Assembly.Load(new AssemblyName(name));
             }
             catch (Exception e) when (e is FileLoadException or FileNotFoundException or BadImageFormatException)
             {
                 continue;
             }
 
-            if (registrations?.GetMethod("RegisterFor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Public,
-                    [typeof(Type)]) is { } register)
+            if (assembly.GetCustomAttribute<LibraryRegistrationsAttribute>() is { } declared)
             {
-                found.Add(register);
+                found.Add((assembly, Create(assembly, declared)));
             }
         }
 
         return found;
     }
+
+    private static ILibraryRegistrations Create(Assembly assembly, LibraryRegistrationsAttribute declared) =>
+        Activator.CreateInstance(declared.Type) as ILibraryRegistrations
+        ?? throw new InvalidOperationException($"{assembly.GetName().Name}: [assembly: LibraryRegistrations(typeof({declared.Type.FullName}))] names a type that is not an "
+                                               + $"{nameof(ILibraryRegistrations)}.");
 }

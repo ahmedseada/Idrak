@@ -17,7 +17,9 @@ AudioPlugins.RegisterAll();      // every family of the package; calling it agai
 - Each family is an `IIdrakPlugin` (`Idrak.Abstraction.Plugins`), recorded by name in `IdrakPlugins`; a plug-in
   registered later under the same name takes its place.
 - The `idrak` tool registers this package at startup, before any `-P` plug-in (which can still take a family's place);
-  `RegisterIdrakPlugin()` is the `-P` entry, for a host that loads `Idrak.Audio.Plugins.dll` itself.
+  `AudioPlugins.Package` is the package (an `IIdrakPluginPackage`: its name and `All`); the assembly declares it with
+  `[assembly: IdrakPluginPackage]`, which `-P` and `IdrakPlugins.Load` read when a host loads `Idrak.Audio.Plugins.dll`
+  itself.
 
 ## The families
 

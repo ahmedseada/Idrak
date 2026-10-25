@@ -656,9 +656,9 @@ internal static partial class Tests
             var seq2seq = PretrainedSeq2Seq.Names.Order(StringComparer.Ordinal).ToList();
             var encoders = PretrainedEncoders.Names.Order(StringComparer.Ordinal).ToList();
             ThrowsNaming<NotSupportedException>(() => LoadT5(folder, device).Dispose(), "a T5 checkpoint without the plug-in", "not registered",
-                T5Plugin.T5ForConditionalGeneration, TextPlugins.Package);
+                T5Plugin.T5ForConditionalGeneration, TextPlugins.Package.Name);
             ThrowsNaming<NotSupportedException>(() => PretrainedEncoderModel.Load(folder, new PretrainedEncoderOptions { Device = device, Architecture = T5Plugin.T5EncoderModel }).Dispose(),
-                "a T5 encoder without the plug-in", "not registered", T5Plugin.T5EncoderModel, TextPlugins.Package);
+                "a T5 encoder without the plug-in", "not registered", T5Plugin.T5EncoderModel, TextPlugins.Package.Name);
 
             T5Plugin.Register();
             T5Plugin.Register();
@@ -666,7 +666,7 @@ internal static partial class Tests
             Check(PretrainedSeq2Seq.Names.Order(StringComparer.Ordinal).SequenceEqual(seq2seq.Concat(T5Plugin.Seq2SeqArchitectures).Order(StringComparer.Ordinal))
                 && PretrainedEncoders.Names.Order(StringComparer.Ordinal).SequenceEqual(encoders.Concat(T5Plugin.EncoderArchitectures).Order(StringComparer.Ordinal)),
                 $"Register twice registers the four architectures once: {string.Join(", ", PretrainedSeq2Seq.Names)}; {string.Join(", ", PretrainedEncoders.Names)}");
-            Check(T5Plugin.Seq2SeqArchitectures.All(a => PretrainedSeq2Seq.Origin(a) == TextPlugins.Package) && T5Plugin.EncoderArchitectures.All(a => PretrainedEncoders.Origin(a) == TextPlugins.Package),
+            Check(T5Plugin.Seq2SeqArchitectures.All(a => PretrainedSeq2Seq.Origin(a) == TextPlugins.Package.Name) && T5Plugin.EncoderArchitectures.All(a => PretrainedEncoders.Origin(a) == TextPlugins.Package.Name),
                 "the architectures are Idrak.Text.Plugins'");
             using (var model = LoadT5(folder, device))
             {

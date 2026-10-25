@@ -63,7 +63,7 @@ internal static partial class Tests
 
     // The plug-in's place: named so, in its family's namespace of Idrak.Text.Plugins, listed in TextPlugins.All.
     private static void CheckTextPlugin(IIdrakPlugin plugin, string name, string ns) =>
-        Check(plugin.Name == name && plugin.GetType().Namespace == ns && TextPlugins.All.Contains(plugin) && plugin.GetType().Assembly.GetName().Name == TextPlugins.Package,
+        Check(plugin.Name == name && plugin.GetType().Namespace == ns && TextPlugins.All.Contains(plugin) && plugin.GetType().Assembly.GetName().Name == TextPlugins.Package.Name,
             $"{name}: the plug-in \"{name}\" of TextPlugins.All, in {ns} ({plugin.Name}, {plugin.GetType().Namespace})");
 
     private static void LlamaPluginRegistration(Device device)
@@ -104,7 +104,7 @@ internal static partial class Tests
 
                 LlamaPlugin.Register();
                 LlamaPlugin.Register();
-                string assembly = TextPlugins.Package;
+                string assembly = TextPlugins.Package.Name;
                 Check(LlamaPlugin.IsRegistered && ReferenceEquals(IdrakPlugins.Find("llama"), LlamaPlugin.Plugin)
                       && PretrainedArchitectures.Origin(LlamaPlugin.LlamaForCausalLM) == assembly && PretrainedArchitectures.Names.Count(n => n == LlamaPlugin.LlamaForCausalLM) == 1
                       && GgufArchitectures.Origin(LlamaPlugin.GgufName) == assembly && RopeScalings.Origin(LlamaRopeScaling.Name) == assembly
@@ -206,7 +206,7 @@ internal static partial class Tests
 
                 QwenPlugin.Register();
                 QwenPlugin.Register();
-                string assembly = TextPlugins.Package;
+                string assembly = TextPlugins.Package.Name;
                 Check(QwenPlugin.IsRegistered && QwenPlugin.Architectures.All(n => PretrainedArchitectures.Origin(n) == assembly && PretrainedArchitectures.Names.Count(m => m == n) == 1)
                       && gguf.All(n => GgufArchitectures.Origin(n) == assembly)
                       && QwenPlugin.PreTokenizers.All(n => GgufPreTokenizers.TryGet(n, out string? p) && p == QwenArchitectures.SplitPattern)
@@ -243,7 +243,7 @@ internal static partial class Tests
             MistralPlugin.Register();
             MistralPlugin.Register();
             Check(MistralPlugin.IsRegistered && LlamaPlugin.IsRegistered && GgufArchitectures.Find(LlamaPlugin.GgufName) is { WithExperts: MistralPlugin.MixtralForCausalLM }
-                  && MistralPlugin.Architectures.All(n => PretrainedArchitectures.Origin(n) == TextPlugins.Package && PretrainedArchitectures.Names.Count(m => m == n) == 1)
+                  && MistralPlugin.Architectures.All(n => PretrainedArchitectures.Origin(n) == TextPlugins.Package.Name && PretrainedArchitectures.Names.Count(m => m == n) == 1)
                   && GgufPreTokenizers.TryGet(MistralPlugin.PreTokenizer, out string? tekken) && tekken == MistralArchitectures.TekkenPattern
                   && Formats.Names.Count(n => n == MistralPlugin.ToolCallFormat) == 1 && PretrainedArchitectures.Get(MistralPlugin.MistralForCausalLM) is IConfigWritingArchitecture,
                 "Register (twice) adds the two architectures, tekken and the tool-call format once, and Llama's mapping it needs");
@@ -277,7 +277,7 @@ internal static partial class Tests
             DeepSeekPlugin.Register();
             DeepSeekPlugin.Register();
             Check(DeepSeekPlugin.IsRegistered && Formats.Names.Count(n => n == DeepSeekPlugin.ToolCallFormat) == 1
-                  && Formats.Origin(DeepSeekPlugin.ToolCallFormat) == TextPlugins.Package
+                  && Formats.Origin(DeepSeekPlugin.ToolCallFormat) == TextPlugins.Package.Name
                   && GgufPreTokenizers.TryGet(DeepSeekPlugin.PreTokenizer, out string? pattern) && pattern == QwenArchitectures.SplitPattern
                   && new JinjaChatTemplate(DeepSeekV31Template, ["<｜end▁of▁sentence｜>"], "<｜begin▁of▁sentence｜>", "<｜end▁of▁sentence｜>").ToolCallFormatName == DeepSeekPlugin.ToolCallFormat,
                 "Register (twice) adds the format and the pre-tokenizer once; the template detects it");
@@ -301,7 +301,7 @@ internal static partial class Tests
             HarmonyPlugin.Register();
             HarmonyPlugin.Register();
             Check(HarmonyPlugin.IsRegistered && Formats.Names.Count(n => n == HarmonyPlugin.ToolCallFormat) == 1
-                  && Formats.Origin(HarmonyPlugin.ToolCallFormat) == TextPlugins.Package
+                  && Formats.Origin(HarmonyPlugin.ToolCallFormat) == TextPlugins.Package.Name
                   && new JinjaChatTemplate(HarmonyTemplate, ["<|return|>", "<|call|>"]).ToolCallFormatName == HarmonyPlugin.ToolCallFormat,
                 "Register (twice) adds the format once; the template detects it");
             HarmonyPlugin.Unregister();

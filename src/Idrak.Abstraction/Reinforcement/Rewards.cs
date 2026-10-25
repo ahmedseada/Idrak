@@ -76,9 +76,10 @@ public static class RewardFunctions
     /// <summary>The reward registered as <paramref name="name"/>; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones and the packages to reference.</exception>
     public static IRewardFunction Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Reward function '{name}' is not registered (registered: {(Table.Keys.Count == 0 ? "none" : string.Join(", ", Table.Keys))}); "
-                                           + "add it with RewardFunctions.Register, or reference Idrak.Text (the text rewards) or Idrak.Reinforcement.Plugins "
-                                           + "and call ReinforcementPlugins.RegisterAll() (the environment families' rewards).");
+        ?? throw new NotRegisteredException(nameof(RewardFunctions), name, Table.Keys,
+            $"Reward function '{name}' is not registered (registered: {(Table.Keys.Count == 0 ? "none" : string.Join(", ", Table.Keys))}); "
+            + "add it with RewardFunctions.Register, or reference Idrak.Text (the text rewards) or Idrak.Reinforcement.Plugins "
+            + "and call ReinforcementPlugins.RegisterAll() (the environment families' rewards).");
 
     /// <summary>The library's reward <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IRewardFunction? Default(string name) => Table.Default(name);

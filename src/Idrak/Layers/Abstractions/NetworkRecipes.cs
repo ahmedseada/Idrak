@@ -130,7 +130,8 @@ public static class NetworkRecipes
     /// <summary>The recipe registered as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
     public static INetworkRecipe Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Network recipe '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with NetworkRecipes.Register.");
+        ?? throw new NotRegisteredException(nameof(NetworkRecipes), name, Table.Keys,
+            $"Network recipe '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with NetworkRecipes.Register.");
 
     /// <summary>The library's recipe <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static INetworkRecipe? Default(string name) => Table.Default(name);

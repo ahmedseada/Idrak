@@ -2868,6 +2868,9 @@ public interface Idrak.Abstraction.Formats.IModelSource
   public string Name { get; }
   public string Resolve(string model, Idrak.Abstraction.Formats.ModelSourceOptions options)
 
+public interface Idrak.Abstraction.Formats.IOnnxRuntimeLoader : Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Module Load(byte[] model)
+
 public interface Idrak.Abstraction.Formats.ITensorStore : System.IDisposable
   public (default) Idrak.Abstraction.Formats.WeightFormat? FormatOf(string name)
   public (default) System.TimeSpan? ReadTime { get; }
@@ -2903,6 +2906,16 @@ public static class Idrak.Abstraction.Formats.NpyFile
   public static void Write(string path, System.ReadOnlySpan<float> values, System.Collections.Generic.IReadOnlyList<int> shape)
   public static void WriteFloat32(System.IO.Stream stream, System.ReadOnlySpan<float> values)
   public static void WriteHeader(System.IO.Stream stream, string header)
+
+public static class Idrak.Abstraction.Formats.OnnxRuntimeLoaders
+  public static Idrak.Abstraction.Formats.IOnnxRuntimeLoader Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Formats.IOnnxRuntimeLoader? Find(System.ReadOnlySpan<char> name)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Formats.IOnnxRuntimeLoader> Registered { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Formats.IOnnxRuntimeLoader loader)
 
 public sealed class Idrak.Abstraction.Formats.TensorDictionary : Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
   public System.Collections.Generic.IEnumerable<string> Names { get; }
@@ -3642,6 +3655,9 @@ public interface Idrak.Abstraction.Generation.IToolCallParser
 public interface Idrak.Abstraction.Generation.IToolChatModel : Idrak.Abstraction.Generation.IChatModel
   public Idrak.Abstraction.Generation.IToolRegistry? Tools { get; }
 
+public interface Idrak.Abstraction.Generation.IToolProvider
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.Tool> Tools { get; }
+
 public interface Idrak.Abstraction.Generation.IToolRegistry
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Definitions { get; }
   public System.Threading.Tasks.Task<Idrak.Abstraction.Generation.ToolResult> InvokeAsync(Idrak.Abstraction.Generation.ToolCall call, System.Threading.CancellationToken cancellationToken = default)
@@ -4178,6 +4194,14 @@ public sealed record Idrak.Abstraction.Generation.ToolDefinition : System.IEquat
   public string Name { get; init; }
   public string? Description { get; init; }
 
+public sealed class Idrak.Abstraction.Generation.ToolProviderAttribute : System.Attribute
+  public System.Type Provider { get; }
+  public ToolProviderAttribute(System.Type provider)
+
+public static class Idrak.Abstraction.Generation.ToolProviders
+  [RequiresDynamicCode("See Tool.FromDelegate.")] [RequiresUnreferencedCode("See Tool.FromDelegate.")] public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.Tool> FromMethods(object instance)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.Tool> Of(System.Reflection.Assembly assembly)
+
 public sealed class Idrak.Abstraction.Generation.ToolRegistry : Idrak.Abstraction.Generation.IToolRegistry
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> Definitions { get; }
   public System.Threading.Tasks.Task<Idrak.Abstraction.Generation.ToolResult> InvokeAsync(Idrak.Abstraction.Generation.ToolCall call, System.Threading.CancellationToken cancellationToken = default)
@@ -4314,6 +4338,9 @@ public interface Idrak.Abstraction.IKind
 public interface Idrak.Abstraction.IKind<in TRequest, out T> : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind where TRequest : allows ref struct
   public T Create(TRequest request)
 
+public interface Idrak.Abstraction.ILibraryRegistrations
+  public void RegisterFor(System.Type registry)
+
 public interface Idrak.Abstraction.IRecordable
 
 public sealed class Idrak.Abstraction.KeySpans
@@ -4329,6 +4356,7 @@ public sealed class Idrak.Abstraction.KeySpans
   public static Idrak.Abstraction.KeySpans Segments(System.Collections.Generic.IReadOnlyList<int> lengths, int window = 0)
 
 public sealed class Idrak.Abstraction.KindTable<TKind> where TKind : class, Idrak.Abstraction.IKind
+  public Idrak.Abstraction.NotRegisteredException NotRegisteredError(System.ReadOnlySpan<char> name)
   public Idrak.Abstraction.SlotTable<string, TKind> Slots { get; }
   public KindTable(string registry, string kind, string remedy, Idrak.Abstraction.SlotGuard<TKind>? guard = null, System.Collections.Generic.IEqualityComparer<string>? comparer = null, bool newestFirst = false, string? unguarded = null, string? setPolicy = null)
   public System.Collections.Generic.IReadOnlyList<TKind> Kinds { get; }
@@ -4351,6 +4379,10 @@ public sealed class Idrak.Abstraction.KindTable<TKind> where TKind : class, Idra
   public void Register(scoped params System.ReadOnlySpan<TKind> kinds)
   public void RegisterDefault(TKind kind, int version = 1, string? since = null)
   public void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed class Idrak.Abstraction.LibraryRegistrationsAttribute : System.Attribute
+  public LibraryRegistrationsAttribute(System.Type type)
+  public System.Type Type { get; }
 
 public enum Idrak.Abstraction.MatMulPrecision : int
   BFloat16 = 1
@@ -4446,6 +4478,12 @@ public sealed record Idrak.Abstraction.Modules.LoraAdapter : Idrak.Abstraction.M
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Tensor> Parameters { get; }
   public float Scale { get; init; }
   public int Rank { get; init; }
+
+public sealed class Idrak.Abstraction.NotRegisteredException : System.NotSupportedException
+  public NotRegisteredException(string registry, string name, System.Collections.Generic.IEnumerable<string> registered, string message)
+  public System.Collections.Generic.IReadOnlyList<string> Registered { get; }
+  public string Name { get; }
+  public string Registry { get; }
 
 public readonly record struct Idrak.Abstraction.Operations.KernelChoice : System.IEquatable<Idrak.Abstraction.Operations.KernelChoice>
   public Idrak.Abstraction.Operations.KernelSource Source { get; init; }
@@ -5150,6 +5188,10 @@ public interface Idrak.Abstraction.Plugins.IIdrakPlugin
   public void Register()
   public void Unregister()
 
+public interface Idrak.Abstraction.Plugins.IIdrakPluginPackage
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Plugins.IIdrakPlugin> All { get; }
+  public string Name { get; }
+
 public abstract class Idrak.Abstraction.Plugins.IdrakPlugin : Idrak.Abstraction.Plugins.IIdrakPlugin
   protected IdrakPlugin(string name)
   protected abstract void RegisterParts()
@@ -5160,15 +5202,23 @@ public abstract class Idrak.Abstraction.Plugins.IdrakPlugin : Idrak.Abstraction.
   public void Register()
   public void Unregister()
 
+public sealed class Idrak.Abstraction.Plugins.IdrakPluginPackageAttribute : System.Attribute
+  public IdrakPluginPackageAttribute(System.Type package)
+  public System.Type Package { get; }
+
 public static class Idrak.Abstraction.Plugins.IdrakPlugins
   public static Idrak.Abstraction.Plugins.IIdrakPlugin Get(string name)
   public static Idrak.Abstraction.Plugins.IIdrakPlugin? Find(string name)
+  public static Idrak.Abstraction.Plugins.IIdrakPluginPackage? PackageOf(System.Reflection.Assembly assembly)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Load(System.Reflection.Assembly assembly)
   public static bool Unregister(Idrak.Abstraction.Plugins.IIdrakPlugin plugin)
   public static bool Unregister(string name)
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.Plugins.IIdrakPlugin plugin)
+  public static void RegisterAll(Idrak.Abstraction.Plugins.IIdrakPluginPackage package)
   public static void RegisterAll(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Plugins.IIdrakPlugin> plugins)
+  public static void UnregisterAll(Idrak.Abstraction.Plugins.IIdrakPluginPackage package)
   public static void UnregisterAll(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Plugins.IIdrakPlugin> plugins)
 
 public static class Idrak.Abstraction.RandomDraws

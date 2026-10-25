@@ -143,7 +143,7 @@ internal static partial class Tests
         _ = device;
         string library = Overrides.Library;
         Check(GgufChatTemplates.Names.First() == "chatml" && GgufChatTemplates.Origin("chatml") == library && GgufChatTemplates.Default("chatml") is not null
-              && GgufChatTemplates.Origin(LlamaPlugin.ChatTemplateName) == TextPlugins.Package && GgufChatTemplates.Default(LlamaPlugin.ChatTemplateName) is null,
+              && GgufChatTemplates.Origin(LlamaPlugin.ChatTemplateName) == TextPlugins.Package.Name && GgufChatTemplates.Default(LlamaPlugin.ChatTemplateName) is null,
             $"the library's ChatML first, Llama 3's the plug-in's: {string.Join(", ", GgufChatTemplates.Names.Select(n => $"{n}={GgufChatTemplates.Origin(n)}"))}");
         string refused = Failure<NotSupportedException>(() => GgufChatTemplates.Get("imaginary")).Message;
         Check(refused.Contains("GGUF chat template 'imaginary' is not registered", StringComparison.Ordinal) && refused.Contains("GgufChatTemplates.Register", StringComparison.Ordinal)
@@ -203,7 +203,7 @@ internal static partial class Tests
                 Check(why.Any(n => n.Contains("no fallback registered in GgufChatTemplates (chatml)", StringComparison.Ordinal) && n.Contains("chat is not available", StringComparison.Ordinal)
                       && n.Contains("GgufChatTemplates.Register", StringComparison.Ordinal) && n.Contains("Idrak.Text.Plugins", StringComparison.Ordinal)), $"the note names the registry: {string.Join("; ", why)}");
             });
-            Check(GgufChatTemplates.Origin(LlamaPlugin.ChatTemplateName) == TextPlugins.Package && Prepared(llama3).Template == LlamaArchitectures.ChatTemplateText,
+            Check(GgufChatTemplates.Origin(LlamaPlugin.ChatTemplateName) == TextPlugins.Package.Name && Prepared(llama3).Template == LlamaArchitectures.ChatTemplateText,
                 "registered again, Llama 3's template is back");
         }
         finally

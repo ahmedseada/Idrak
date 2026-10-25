@@ -3,6 +3,8 @@
 
 using Idrak.Abstraction.Reinforcement;
 
+[assembly: LibraryRegistrations(typeof(Idrak.Reinforcement.LibraryRegistrations))]
+
 namespace Idrak.Reinforcement;
 
 /// <summary>
@@ -11,7 +13,7 @@ namespace Idrak.Reinforcement;
 /// (<see cref="PolicyLosses"/>). <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once
 /// per registry, before that registry is first used, so they are the slots' library defaults.
 /// </summary>
-internal static class LibraryRegistrations
+internal sealed class LibraryRegistrations : ILibraryRegistrations
 {
     private static readonly Dictionary<Type, Action> ByRegistry = new()
     {
@@ -19,7 +21,7 @@ internal static class LibraryRegistrations
         [typeof(PolicyLosses)] = PolicyLossTerms.Register,
     };
 
-    private static void RegisterFor(Type registry)
+    public void RegisterFor(Type registry)
     {
         if (ByRegistry.TryGetValue(registry, out var register))
         {

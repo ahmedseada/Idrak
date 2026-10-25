@@ -109,7 +109,8 @@ public static class SequencePoolers
     /// <summary>The pooler <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name; the message lists the registered ones.</exception>
     public static ISequencePooler Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"Sequence pooler '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with SequencePoolers.Register.");
+        ?? throw new NotRegisteredException(nameof(SequencePoolers), name, Registry.Keys,
+            $"Sequence pooler '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with SequencePoolers.Register.");
 
     /// <summary>The library's pooler <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static ISequencePooler? Default(string name) => Registry.Default(name);

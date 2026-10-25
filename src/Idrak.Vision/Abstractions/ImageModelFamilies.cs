@@ -308,8 +308,9 @@ public static class ImageModelFamilies
     /// <summary>Who registered the family <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
 
-    internal static NotSupportedException NotRegistered(string name) =>
-        new($"Image model family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
+    internal static NotRegisteredException NotRegistered(string name) =>
+        new(nameof(ImageModelFamilies), name, Registry.Keys,
+            $"Image model family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
             + "register it with ImageModelFamilies.Register (a plug-in or the app that brings the family; the library registers none), "
             + "or reference Idrak.Vision.Plugins and call VisionPlugins.RegisterAll().");
 }

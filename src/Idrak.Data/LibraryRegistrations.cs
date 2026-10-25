@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+[assembly: LibraryRegistrations(typeof(Idrak.Data.LibraryRegistrations))]
+
 namespace Idrak.Data;
 
 /// <summary>
@@ -9,14 +11,14 @@ namespace Idrak.Data;
 /// registry is first used. The registries that live here (data file formats, dataset sources, Parquet codecs) register
 /// their built-ins themselves.
 /// </summary>
-internal static class LibraryRegistrations
+internal sealed class LibraryRegistrations : ILibraryRegistrations
 {
     private static readonly Dictionary<Type, Action> ByRegistry = new()
     {
         [typeof(ModelSources)] = () => ModelSources.Register(HuggingFaceModels.Source),
     };
 
-    private static void RegisterFor(Type registry)
+    public void RegisterFor(Type registry)
     {
         if (ByRegistry.TryGetValue(registry, out var register))
         {

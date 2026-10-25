@@ -345,7 +345,8 @@ public static class StopAgreements
     /// <summary>The agreement of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IStopAgreementProvider Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Stop agreement '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with StopAgreements.Register, or reference Idrak.Network.");
+        ?? throw new NotRegisteredException(nameof(StopAgreements), name, Table.Keys,
+            $"Stop agreement '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with StopAgreements.Register, or reference Idrak.Network.");
 
     /// <summary>The library's agreement of that name, or null.</summary>
     public static IStopAgreementProvider? Default(string name) => Table.Default(name);

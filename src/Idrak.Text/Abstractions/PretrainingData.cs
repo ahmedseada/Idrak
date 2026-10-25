@@ -160,7 +160,8 @@ public static class PretrainingSources
     /// <summary>The kind of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IPretrainingSource Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Pretraining source '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with PretrainingSources.Register.");
+        ?? throw new NotRegisteredException(nameof(PretrainingSources), name, Table.Keys,
+            $"Pretraining source '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with PretrainingSources.Register.");
 
     /// <summary>The library's kind of that name, or null.</summary>
     public static IPretrainingSource? Default(string name) => Table.Default(name);

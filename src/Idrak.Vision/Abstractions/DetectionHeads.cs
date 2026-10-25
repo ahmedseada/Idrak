@@ -75,7 +75,8 @@ public static class DetectionHeads
     /// <summary>The head registered as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is; the message names <see cref="Register"/>.</exception>
     public static DetectionHeadFactory Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"Detection head '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
+        ?? throw new NotRegisteredException(nameof(DetectionHeads), name, Registry.Keys,
+            $"Detection head '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
             + "register it with DetectionHeads.Register under its decoder's name (the plug-in or app that brings the model family; the library registers none).");
 
     /// <summary>The library's head <paramref name="name"/>, whatever an app registered over it; null when the library has none (it has none).</summary>

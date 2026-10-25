@@ -51,7 +51,8 @@ public static class TextRomanizers
     /// <summary>The romanizer <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name: the message names the registered ones.</exception>
     public static ITextRomanizer Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Romanizer '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TextRomanizers.Register.");
+        ?? throw new NotRegisteredException(nameof(TextRomanizers), name, Table.Keys,
+            $"Romanizer '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TextRomanizers.Register.");
 
     /// <summary>The built-in romanizer <paramref name="name"/>, whatever an app registered over it; null when there is none.</summary>
     public static ITextRomanizer? Default(string name) => Table.Default(name);
@@ -139,7 +140,8 @@ public static class TextPhonemizers
     /// <summary>The phonemizer <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name: the message names the registered ones.</exception>
     public static ITextPhonemizer Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Phonemizer '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TextPhonemizers.Register.");
+        ?? throw new NotRegisteredException(nameof(TextPhonemizers), name, Table.Keys,
+            $"Phonemizer '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TextPhonemizers.Register.");
 
     /// <summary>The most recently registered phonemizer.</summary>
     /// <exception cref="NotSupportedException">None is registered: the message names the registry and the plug-in package.</exception>

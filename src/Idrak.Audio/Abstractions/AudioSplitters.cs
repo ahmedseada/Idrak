@@ -122,7 +122,8 @@ public static class AudioSplitters
     /// <summary>The splitter of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IAudioSplitter Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Audio splitter '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AudioSplitters.Register.");
+        ?? throw new NotRegisteredException(nameof(AudioSplitters), name, Table.Keys,
+            $"Audio splitter '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AudioSplitters.Register.");
 
     /// <summary>The library's splitter of that name, or null.</summary>
     public static IAudioSplitter? Default(string name) => Table.Default(name);

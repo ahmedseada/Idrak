@@ -314,14 +314,14 @@ internal static partial class Tests
 
     private static void LanguagePluginRegisters(IIdrakPlugin plugin, string name, string ns, string[] languages)
     {
-        Check(plugin.Name == name && plugin.GetType().Namespace == ns && TextPlugins.All.Contains(plugin) && plugin.GetType().Assembly.GetName().Name == TextPlugins.Package,
+        Check(plugin.Name == name && plugin.GetType().Namespace == ns && TextPlugins.All.Contains(plugin) && plugin.GetType().Assembly.GetName().Name == TextPlugins.Package.Name,
             $"{name}: the plug-in \"{name}\" of TextPlugins.All, in {ns} ({plugin.Name}, {plugin.GetType().Namespace})");
         WithoutLanguages(() =>
         {
             string found = string.Join(",", CodingLanguages.Names);
             IdrakPlugins.Register(plugin);
             IdrakPlugins.Register(plugin);
-            Check(CodingLanguages.Names.SequenceEqual(languages) && languages.All(l => CodingLanguages.Origin(l) == TextPlugins.Package),
+            Check(CodingLanguages.Names.SequenceEqual(languages) && languages.All(l => CodingLanguages.Origin(l) == TextPlugins.Package.Name),
                 $"{name} registers {string.Join(", ", languages)} once, from Idrak.Text.Plugins: {string.Join(", ", CodingLanguages.Names)}");
             if (name == "python-language")
             {

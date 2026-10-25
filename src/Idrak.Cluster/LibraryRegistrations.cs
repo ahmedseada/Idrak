@@ -3,6 +3,8 @@
 
 using Idrak.Cluster.Diagnostics;
 
+[assembly: LibraryRegistrations(typeof(Idrak.Cluster.LibraryRegistrations))]
+
 namespace Idrak.Cluster;
 
 /// <summary>
@@ -11,7 +13,7 @@ namespace Idrak.Cluster;
 /// mixed, and "live": faults queued while a run goes), the "shared" stop agreement, the "in-process" run steering and the "cluster" profiler probe. <c>LibraryDefaults.Ensure</c> calls
 /// <see cref="RegisterFor"/> once per registry, before that registry is first used, when the application ships it.
 /// </summary>
-internal static class LibraryRegistrations
+internal sealed class LibraryRegistrations : ILibraryRegistrations
 {
     private static readonly Dictionary<Type, Action> ByRegistry = new()
     {
@@ -38,7 +40,7 @@ internal static class LibraryRegistrations
         [typeof(RunSteerings)] = () => RunSteerings.Register(new InProcessSteeringProvider()),       // Plan 27, R11: a trainer's boundaries steered by the run's control
     };
 
-    private static void RegisterFor(Type registry)
+    public void RegisterFor(Type registry)
     {
         if (ByRegistry.TryGetValue(registry, out var register))
         {

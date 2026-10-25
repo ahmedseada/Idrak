@@ -266,7 +266,8 @@ public static class RunSteerings
     /// <summary>The way of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IRunSteeringProvider Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Run steering '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with RunSteerings.Register, or reference Idrak.Cluster or Idrak.Network.");
+        ?? throw new NotRegisteredException(nameof(RunSteerings), name, Table.Keys,
+            $"Run steering '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with RunSteerings.Register, or reference Idrak.Cluster or Idrak.Network.");
 
     /// <summary>The library's way of that name, or null.</summary>
     public static IRunSteeringProvider? Default(string name) => Table.Default(name);

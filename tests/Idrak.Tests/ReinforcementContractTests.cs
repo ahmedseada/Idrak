@@ -518,13 +518,13 @@ internal static partial class Tests
         string plugins = File.ReadAllText(Path.Combine(root, "src", "Idrak.Reinforcement.Plugins", "Idrak.Reinforcement.Plugins.csproj"));
         var pluginReferences = System.Text.RegularExpressions.Regex.Matches(plugins, "<ProjectReference Include=\"([^\"]+)\"").Select(m => Path.GetFileNameWithoutExtension(m.Groups[1].Value.Replace('\\', '/'))).ToList();
         Check(pluginReferences.Order(StringComparer.Ordinal).SequenceEqual(["Idrak.Reinforcement", "Idrak.Text", "Idrak.Text.Plugins"]), $"Idrak.Reinforcement.Plugins references {string.Join(", ", pluginReferences)}");
-        var defaults = (ValueTuple<string, string>[])typeof(Idrak.Abstraction.Plugins.IdrakPlugins).Assembly.GetType("Idrak.Abstraction.LibraryDefaults", throwOnError: true)!
+        var defaults = (string[])typeof(Idrak.Abstraction.Plugins.IdrakPlugins).Assembly.GetType("Idrak.Abstraction.LibraryDefaults", throwOnError: true)!
             .GetField("Assemblies", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!.GetValue(null)!;
-        Check(defaults.Contains(("Idrak.Reinforcement", "Idrak.Reinforcement")), "LibraryDefaults lists Idrak.Reinforcement, so its estimators and losses become the slots' defaults");
-        var registrations = System.Reflection.Assembly.Load("Idrak.Reinforcement").GetType("Idrak.Reinforcement.LibraryRegistrations", throwOnError: true)!;
-        Check(registrations.GetMethod("RegisterFor", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static, [typeof(Type)]) is not null,
-            "Idrak.Reinforcement.LibraryRegistrations.RegisterFor(Type), which LibraryDefaults calls");
-        Check(Idrak.Reinforcement.Plugins.ReinforcementPlugins.Package == "Idrak.Reinforcement.Plugins"
+        Check(defaults.Contains("Idrak.Reinforcement"), "LibraryDefaults lists Idrak.Reinforcement, so its estimators and losses become the slots' defaults");
+        var registrations = System.Reflection.CustomAttributeExtensions.GetCustomAttribute<LibraryRegistrationsAttribute>(System.Reflection.Assembly.Load("Idrak.Reinforcement"))?.Type;
+        Check(registrations is not null && typeof(ILibraryRegistrations).IsAssignableFrom(registrations),
+            "Idrak.Reinforcement names its ILibraryRegistrations with the LibraryRegistrations attribute, which LibraryDefaults reads");
+        Check(Idrak.Reinforcement.Plugins.ReinforcementPlugins.Package.Name == "Idrak.Reinforcement.Plugins"
               && Idrak.Reinforcement.Plugins.ReinforcementPlugins.All.Select(p => p.Name).SequenceEqual(["coding", "csharp", "classic"]),
             "the plug-in package's families: coding (R4), csharp (R4b), classic (R6)");
     }

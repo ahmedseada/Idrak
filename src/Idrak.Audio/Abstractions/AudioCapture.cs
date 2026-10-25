@@ -127,7 +127,8 @@ public static class AudioCaptures
     /// <summary>The capture of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IAudioCapture Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Audio capture '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AudioCaptures.Register.");
+        ?? throw new NotRegisteredException(nameof(AudioCaptures), name, Table.Keys,
+            $"Audio capture '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AudioCaptures.Register.");
 
     /// <summary>The library's capture of that name, or null.</summary>
     public static IAudioCapture? Default(string name) => Table.Default(name);

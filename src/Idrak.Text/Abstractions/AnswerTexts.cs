@@ -67,7 +67,8 @@ public static class AnswerTexts
 
     /// <summary>The answer text of that name; throws when none is registered.</summary>
     public static IAnswerText Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Answer text '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AnswerTexts.Register.");
+        ?? throw new NotRegisteredException(nameof(AnswerTexts), name, Table.Keys,
+            $"Answer text '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with AnswerTexts.Register.");
 
     /// <summary>The library's answer text of that name, or null.</summary>
     public static IAnswerText? Default(string name) => Table.Default(name);

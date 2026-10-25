@@ -7,6 +7,8 @@ using Idrak.Networking.Selection;
 using Idrak.Networking.Transports;
 using Idrak.Networking.Training;
 
+[assembly: LibraryRegistrations(typeof(Idrak.Networking.LibraryRegistrations))]
+
 namespace Idrak.Networking;
 
 /// <summary>
@@ -16,7 +18,7 @@ namespace Idrak.Networking;
 /// (the gradient compressions are its own registry, <see cref="Abstractions.GradientCompressions"/>). <c>LibraryDefaults.Ensure</c> calls
 /// <see cref="RegisterFor"/> once per registry, before that registry is first used, when the application ships it.
 /// </summary>
-internal static class LibraryRegistrations
+internal sealed class LibraryRegistrations : ILibraryRegistrations
 {
     private static readonly Dictionary<Type, Action> ByRegistry = new()
     {
@@ -49,7 +51,7 @@ internal static class LibraryRegistrations
         [typeof(SettingAdvisors)] = () => SettingAdvisors.Register(new ClusterSettingAdvisor()),   // decision 4: how a run sends less
     };
 
-    private static void RegisterFor(Type registry)
+    public void RegisterFor(Type registry)
     {
         if (ByRegistry.TryGetValue(registry, out var register))
         {

@@ -78,7 +78,8 @@ public static class DetectionDecoders
     /// <exception cref="NotSupportedException">None is registered; the message names <see cref="Register"/>.</exception>
     public static DetectionDecoderFactory Get(string name) =>
         Registry.TryGet(name, out var factory) ? factory
-            : throw new NotSupportedException($"Detection decoder '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); register it with "
+            : throw new NotRegisteredException(nameof(DetectionDecoders), name, Registry.Keys,
+                $"Detection decoder '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); register it with "
                 + "DetectionDecoders.Register (a plug-in or the app that brings the model family; the library registers only generic ones).");
 
     /// <summary>The library's decoder <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>

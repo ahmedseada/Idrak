@@ -118,7 +118,8 @@ public static class SpeechTrainingObjectives
     /// <summary>The objective <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is registered under it; the message names those that are.</exception>
     public static ISpeechTrainingObjective Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"Speech training objective '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with SpeechTrainingObjectives.Register.");
+        ?? throw new NotRegisteredException(nameof(SpeechTrainingObjectives), name, Registry.Keys,
+            $"Speech training objective '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with SpeechTrainingObjectives.Register.");
 
     /// <summary>The library's objective <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static ISpeechTrainingObjective? Default(string name) => Registry.Default(name);

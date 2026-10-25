@@ -261,7 +261,8 @@ public static class PretrainedFamilies
             {
                 if (!RopeScalings.Contains(type))
                 {
-                    throw new NotSupportedException($"RoPE scaling '{type}' is not registered ({string.Join(", ", RopeScalings.Names)}); add it with RopeScalings.Register, "
+                    throw new NotRegisteredException(nameof(RopeScalings), type, RopeScalings.Names,
+                        $"RoPE scaling '{type}' is not registered ({string.Join(", ", RopeScalings.Names)}); add it with RopeScalings.Register, "
                         + "reference Idrak.Text.Plugins (a family's own scaling) and call TextPlugins.RegisterAll(), or remove rope_scaling to use the model within its original context.");
                 }
 

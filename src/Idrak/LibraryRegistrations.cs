@@ -3,6 +3,8 @@
 
 using Idrak.Datasets;
 
+[assembly: LibraryRegistrations(typeof(Idrak.LibraryRegistrations))]
+
 namespace Idrak;
 
 /// <summary>
@@ -15,7 +17,7 @@ namespace Idrak;
 /// that live here (layer types, graph operations, network-builder steps, ONNX translators, checkpoint formats, GGUF
 /// tables, pretrained families) register their built-ins themselves, on first use.
 /// </summary>
-internal static class LibraryRegistrations
+internal sealed class LibraryRegistrations : ILibraryRegistrations
 {
     private static readonly Dictionary<Type, Action> ByRegistry = new()
     {
@@ -27,7 +29,7 @@ internal static class LibraryRegistrations
         [typeof(OptimizerKinds)] = () => OptimizerKinds.Register(new Optimizers.AdamW8BitKind()),        // after adamw and adam, before sgd
     };
 
-    private static void RegisterFor(Type registry)
+    public void RegisterFor(Type registry)
     {
         if (ByRegistry.TryGetValue(registry, out var register))
         {

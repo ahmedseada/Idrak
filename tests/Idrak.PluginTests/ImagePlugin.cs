@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Plugins;
 using Idrak.Data;
 using Idrak.Imaging;
 using Idrak.Models.Abstractions;
@@ -11,9 +12,9 @@ namespace Idrak.PluginTests;
 
 /// <summary>
 /// This assembly as a command-line plug-in for image models (<c>idrak predict -P</c>, <c>idrak train -P</c>, plan 13 step 7):
-/// <see cref="RegisterIdrakPlugin"/> registers the two families of <see cref="ImageFamilyPluginTests"/>, an ONNX segmenter
-/// family, an ONNX backbone family (features), the grid detector's decoder and its training head. The library registers
-/// none of them.
+/// <see cref="Plugin"/> ("outside-image", in this assembly's <see cref="PluginTestsPackage"/>) registers the two families
+/// of <see cref="ImageFamilyPluginTests"/>, an ONNX segmenter family, an ONNX backbone family (features), the grid
+/// detector's decoder and its training head. The library registers none of them.
 /// </summary>
 public static class ImageFamilyPlugin
 {
@@ -23,26 +24,29 @@ public static class ImageFamilyPlugin
     /// <summary>The backbone family's architecture name.</summary>
     public const string Backbone = "OutsideOnnxBackbone";
 
-    /// <summary>Registers the families, the decoder and the head (what <c>-P</c> runs after loading the assembly).</summary>
-    public static void RegisterIdrakPlugin()
-    {
-        ImageModelFamilies.Register(new TinyResNetFamily());
-        ImageModelFamilies.Register(new GridDetectorFamily());
-        ImageModelFamilies.Register(new OnnxSegmenterFamily());
-        ImageModelFamilies.Register(new OnnxBackboneFamily());
-        DetectionDecoders.Register(ImageFamilyPluginTests.Decoder, GridDecoder.Create);
-        DetectionHeads.Register(ImageFamilyPluginTests.Decoder, GridHead.Create);
-    }
+    /// <summary>The plug-in: the families, the decoder and the head, one part each (what <c>-P</c> registers through the package).</summary>
+    public static IIdrakPlugin Plugin { get; } = new ImageRegistration();
 
-    /// <summary>Removes everything <see cref="RegisterIdrakPlugin"/> registered (tests leave the registries as they found them).</summary>
-    public static void Unregister()
+    /// <summary>Whether the plug-in is registered.</summary>
+    public static bool IsRegistered => Plugin.IsRegistered;
+
+    /// <summary>Registers the families, the decoder and the head (through <see cref="IdrakPlugins"/>); once.</summary>
+    public static void Register() => IdrakPlugins.Register(Plugin);
+
+    /// <summary>Removes everything <see cref="Register"/> registered (tests leave the registries as they found them).</summary>
+    public static void Unregister() => IdrakPlugins.Unregister(Plugin);
+
+    private sealed class ImageRegistration() : IdrakPlugin("outside-image")
     {
-        ImageModelFamilies.Unregister(ImageFamilyPluginTests.Classifier);
-        ImageModelFamilies.Unregister(ImageFamilyPluginTests.Detector);
-        ImageModelFamilies.Unregister(Segmenter);
-        ImageModelFamilies.Unregister(Backbone);
-        DetectionDecoders.Unregister(ImageFamilyPluginTests.Decoder);
-        DetectionHeads.Unregister(ImageFamilyPluginTests.Decoder);
+        protected override void RegisterParts()
+        {
+            Part(() => ImageModelFamilies.Register(new TinyResNetFamily()), () => ImageModelFamilies.Unregister(ImageFamilyPluginTests.Classifier));
+            Part(() => ImageModelFamilies.Register(new GridDetectorFamily()), () => ImageModelFamilies.Unregister(ImageFamilyPluginTests.Detector));
+            Part(() => ImageModelFamilies.Register(new OnnxSegmenterFamily()), () => ImageModelFamilies.Unregister(Segmenter));
+            Part(() => ImageModelFamilies.Register(new OnnxBackboneFamily()), () => ImageModelFamilies.Unregister(Backbone));
+            Part(() => DetectionDecoders.Register(ImageFamilyPluginTests.Decoder, GridDecoder.Create), () => DetectionDecoders.Unregister(ImageFamilyPluginTests.Decoder));
+            Part(() => DetectionHeads.Register(ImageFamilyPluginTests.Decoder, GridHead.Create), () => DetectionHeads.Unregister(ImageFamilyPluginTests.Decoder));
+        }
     }
 }
 

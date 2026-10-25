@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+[assembly: LibraryRegistrations(typeof(Idrak.Audio.LibraryRegistrations))]
+
 namespace Idrak.Audio;
 
 /// <summary>
@@ -9,7 +11,7 @@ namespace Idrak.Audio;
 /// encoders) hold their own built-ins, as Idrak.Vision's do. <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction)
 /// calls <see cref="RegisterFor"/> once per registry, before that registry is first used.
 /// </summary>
-internal static class LibraryRegistrations
+internal sealed class LibraryRegistrations : ILibraryRegistrations
 {
     private static readonly Dictionary<Type, Action> ByRegistry = new()
     {
@@ -17,7 +19,7 @@ internal static class LibraryRegistrations
         [typeof(ModelParts)] = () => ModelParts.Register(new AudioModelPart()),    // the audio part stored beside a decoder (plan 21, S6)
     };
 
-    private static void RegisterFor(Type registry)
+    public void RegisterFor(Type registry)
     {
         if (ByRegistry.TryGetValue(registry, out var register))
         {

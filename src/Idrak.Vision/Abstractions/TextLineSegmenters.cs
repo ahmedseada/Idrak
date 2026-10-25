@@ -115,7 +115,8 @@ public static class TextLineSegmenters
     /// <summary>The segmenter <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
     public static ITextLineSegmenter Get(string name) => Find(name)
-        ?? throw new NotSupportedException($"Text line segmenter '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TextLineSegmenters.Register.");
+        ?? throw new NotRegisteredException(nameof(TextLineSegmenters), name, Table.Keys,
+            $"Text line segmenter '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TextLineSegmenters.Register.");
 
     /// <summary>The library's segmenter <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static ITextLineSegmenter? Default(string name) => Table.Default(name);

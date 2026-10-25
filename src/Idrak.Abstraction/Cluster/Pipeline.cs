@@ -421,7 +421,8 @@ public static class PipelineSchedules
     /// <summary>The schedule of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name (Idrak.Network registers "gpipe": ship it with the app).</exception>
     public static IPipelineSchedule Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Pipeline schedule '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with PipelineSchedules.Register, or reference Idrak.Network (IDRAK_CLUSTER_SCHEDULE).");
+        ?? throw new NotRegisteredException(nameof(PipelineSchedules), name, Table.Keys,
+            $"Pipeline schedule '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with PipelineSchedules.Register, or reference Idrak.Network (IDRAK_CLUSTER_SCHEDULE).");
 
     /// <summary>The library's schedule of that name, or null.</summary>
     public static IPipelineSchedule? Default(string name) => Table.Default(name);

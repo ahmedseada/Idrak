@@ -4,10 +4,10 @@
 using System.Buffers;
 using System.Globalization;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Plugins;
 
 namespace Idrak.Cli;
 
@@ -310,9 +310,11 @@ internal sealed class CommandContext : IDisposable
     }
 
     /// <summary>
-    /// Loads the assemblies given with <c>--plugin</c> (and in the config's "plugins" list): each one's module
-    /// initializer runs, then any public static parameterless <c>RegisterIdrakPlugin()</c> method on its types.
+    /// Loads the assemblies given with <c>--plugin</c> (and in the config's "plugins" list) and registers what each
+    /// declares (<see cref="IdrakPlugins.Load"/>): the plug-ins of its package (<c>[assembly: IdrakPluginPackage(typeof(X))]</c>,
+    /// <c>X : IIdrakPluginPackage</c>), or a library assembly's built-ins (<c>[assembly: LibraryRegistrations]</c>).
     /// </summary>
+    /// <exception cref="UsageException">A file that is missing, or an assembly that declares neither.</exception>
     internal void LoadPlugins()
     {
         foreach (string path in Options("--plugin").Concat(Config.List("plugins")))
@@ -323,11 +325,11 @@ internal sealed class CommandContext : IDisposable
                 throw new UsageException($"Plug-in not found: {full}");
             }
 
-            var assembly = Assembly.LoadFrom(full);
-            RuntimeHelpers.RunModuleConstructor(assembly.ManifestModule.ModuleHandle);
-            foreach (var type in assembly.GetExportedTypes())
+            if (!IdrakPlugins.Load(Assembly.LoadFrom(full)))
             {
-                type.GetMethod("RegisterIdrakPlugin", BindingFlags.Public | BindingFlags.Static, Type.EmptyTypes)?.Invoke(null, null);
+                throw new UsageException($"{full} declares no plug-in package: add [assembly: IdrakPluginPackage(typeof(YourPackage))] with "
+                                         + "YourPackage : IIdrakPluginPackage (Idrak.Abstraction.Plugins), whose All lists its plug-ins; "
+                                         + "a public static RegisterIdrakPlugin() is not called.");
             }
 
             Detail($"plug-in loaded: {full}");

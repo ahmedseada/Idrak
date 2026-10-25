@@ -103,7 +103,8 @@ public static class ModelParts
     /// <summary>The part registered as <paramref name="kind"/>.</summary>
     /// <exception cref="NotSupportedException">None is; the message names those that are and <see cref="Register"/>.</exception>
     public static IModelPart Get(string kind) => Table.Find(kind)
-        ?? throw new NotSupportedException($"Model part '{kind}' is not registered ({(Table.Keys.Count == 0 ? "none is" : string.Join(", ", Table.Keys))}); "
+        ?? throw new NotRegisteredException(nameof(ModelParts), kind, Table.Keys,
+            $"Model part '{kind}' is not registered ({(Table.Keys.Count == 0 ? "none is" : string.Join(", ", Table.Keys))}); "
             + "ship the package that brings it (Idrak.Audio for \"audio\") or add it with ModelParts.Register.");
 
     /// <summary>The library's part <paramref name="kind"/>, whatever an app registered over it; null when the library has none.</summary>

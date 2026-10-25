@@ -339,8 +339,9 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
         }
     }
 
-    internal static NotSupportedException Unsupported(OnnxNode node, string what) =>
-        new($"Cannot import {node}: {what} has no Idrak layer.");
+    internal static NotSupportedException Unsupported(OnnxNode node, string what) => new(UnsupportedText(node, what));
+
+    private static string UnsupportedText(OnnxNode node, string what) => $"Cannot import {node}: {what} has no Idrak layer.";
 
     private static NotSupportedException UnknownOperator(OnnxNode node) =>
         new($"Cannot import {node}: the {node.Op} operator has no Idrak layer (registered: {string.Join(", ", OnnxImportOps.Names)}); "
@@ -522,7 +523,8 @@ internal sealed class Importer(OnnxModel model, Device device, int[]? sampleShap
     {
         if (!GraphOps.Contains(op))
         {
-            throw Unsupported(node, $"the graph operation '{op}', which is not registered (registered: {string.Join(", ", GraphOps.Names)}; add it with GraphOps.Register)");
+            throw new NotRegisteredException(nameof(GraphOps), op, GraphOps.Names,
+                UnsupportedText(node, $"the graph operation '{op}', which is not registered (registered: {string.Join(", ", GraphOps.Names)}; add it with GraphOps.Register)"));
         }
 
         RegisterConstants(inputs);

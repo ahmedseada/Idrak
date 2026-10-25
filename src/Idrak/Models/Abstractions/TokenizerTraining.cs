@@ -410,7 +410,8 @@ public static class TokenizerTrainers
     /// <summary>The trainer of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static ITokenizerTrainer Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Tokenizer trainer '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TokenizerTrainers.Register.");
+        ?? throw new NotRegisteredException(nameof(TokenizerTrainers), name, Table.Keys,
+            $"Tokenizer trainer '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TokenizerTrainers.Register.");
 
     /// <summary>The library's trainer of that name, or null.</summary>
     public static ITokenizerTrainer? Default(string name) => Table.Default(name);

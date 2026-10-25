@@ -66,7 +66,8 @@ public static class JsonRepairs
 
     /// <summary>The repair of that name; throws when none is registered.</summary>
     public static IJsonRepair Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"JSON repair '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with JsonRepairs.Register.");
+        ?? throw new NotRegisteredException(nameof(JsonRepairs), name, Table.Keys,
+            $"JSON repair '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with JsonRepairs.Register.");
 
     /// <summary>The library's repair of that name, or null.</summary>
     public static IJsonRepair? Default(string name) => Table.Default(name);

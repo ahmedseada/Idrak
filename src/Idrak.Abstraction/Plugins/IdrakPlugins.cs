@@ -1,13 +1,16 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Reflection;
+using System.Runtime.CompilerServices;
+
 namespace Idrak.Abstraction.Plugins;
 
 /// <summary>
 /// The registered plug-ins (<see cref="IIdrakPlugin"/>), by name: what a plug-in package's <c>RegisterAll()</c> and a
 /// family's <c>Register()</c> go through. <see cref="Register"/> registers a plug-in's parts and records it; a plug-in
 /// registered under a taken name replaces the earlier one (which is unregistered first), so an outside plug-in loaded
-/// after a package (the CLI's <c>-P</c>) can take a family's place. The library registers none: model families live in
+/// after a package (the CLI's <c>-P</c>, through <see cref="Load"/>) can take a family's place. The library registers none: model families live in
 /// the plug-in packages (<c>Idrak.Text.Plugins</c>, <c>Idrak.Vision.Plugins</c>, <c>Idrak.Audio.Plugins</c>; environment
 /// families in <c>Idrak.Reinforcement.Plugins</c>) and in apps.
 /// </summary>
@@ -18,6 +21,9 @@ public static class IdrakPlugins
 
     private static readonly SlotTable<string, IIdrakPlugin> Registry = new(nameof(IdrakPlugins), comparer: StringComparer.Ordinal,
         unguarded: "a plug-in is not called per use: it registers its parts into the library's registries, which guard them");
+
+    // Each assembly's plug-in package, read from its attribute and made once (null inside when it declares none).
+    private static readonly ConditionalWeakTable<Assembly, StrongBox<IIdrakPluginPackage?>> Packages = new();
 
     /// <summary>
     /// Registers <paramref name="plugin"/>'s parts and records it under its <see cref="IIdrakPlugin.Name"/>. Once: the same
@@ -61,6 +67,13 @@ public static class IdrakPlugins
         {
             Register(plugin);
         }
+    }
+
+    /// <summary>Registers every plug-in of <paramref name="package"/>, in order (<see cref="Register"/>): a plug-in package's <c>RegisterAll()</c>.</summary>
+    public static void RegisterAll(IIdrakPluginPackage package)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        RegisterAll(package.All);
     }
 
     /// <summary>
@@ -110,6 +123,49 @@ public static class IdrakPlugins
         {
             Unregister(plugins[i]);
         }
+    }
+
+    /// <summary>Unregisters every plug-in of <paramref name="package"/>, the last first: a plug-in package's <c>UnregisterAll()</c>.</summary>
+    public static void UnregisterAll(IIdrakPluginPackage package)
+    {
+        ArgumentNullException.ThrowIfNull(package);
+        UnregisterAll(package.All);
+    }
+
+    /// <summary>
+    /// The plug-in package <paramref name="assembly"/> declares (<see cref="IdrakPluginPackageAttribute"/>), its attribute
+    /// read and the package made once per assembly; null when it declares none.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The attribute names a type that is not an <see cref="IIdrakPluginPackage"/>.</exception>
+    public static IIdrakPluginPackage? PackageOf(Assembly assembly)
+    {
+        ArgumentNullException.ThrowIfNull(assembly);
+        return Packages.GetValue(assembly, static a => new(Create(a))).Value;
+
+        static IIdrakPluginPackage? Create(Assembly assembly) => assembly.GetCustomAttribute<IdrakPluginPackageAttribute>() is not { } declared ? null
+            : Activator.CreateInstance(declared.Package) as IIdrakPluginPackage
+              ?? throw new InvalidOperationException($"{assembly.GetName().Name}: [assembly: IdrakPluginPackage(typeof({declared.Package.FullName}))] names a type that is not an "
+                                                     + $"{nameof(IIdrakPluginPackage)}.");
+    }
+
+    /// <summary>
+    /// Registers what <paramref name="assembly"/> declares, as a host that loads the assembly itself does (the idrak tool's
+    /// <c>-P</c>): for a library assembly loaded after the application started (<see cref="LibraryRegistrationsAttribute"/>),
+    /// its built-ins, as the registries' library defaults; then every plug-in of its package (<see cref="PackageOf"/>,
+    /// <see cref="RegisterAll(IIdrakPluginPackage)"/>). Once: loading it again registers nothing twice.
+    /// </summary>
+    /// <returns>False when the assembly declares neither a plug-in package nor library registrations.</returns>
+    public static bool Load(Assembly assembly)
+    {
+        ArgumentNullException.ThrowIfNull(assembly);
+        bool library = LibraryDefaults.Include(assembly);
+        if (PackageOf(assembly) is not { } package)
+        {
+            return library;
+        }
+
+        RegisterAll(package);
+        return true;
     }
 
     /// <summary>The recorded plug-in names, in the order they were registered.</summary>

@@ -34,8 +34,9 @@ ImageTransforms.Register(new CoffeeRing());                    // Name "coffee",
 ScanProfiles.Register(new ScanProfile("cafe", "coffee=1..3@0.5,blur=0.3..0.8@0.3", "rings from a cup"));
 ```
 
-From the command line, put the registration in a public static `RegisterIdrakPlugin()` of an assembly and load it with
-`-P`: `idrak -P my-effects.dll data synth text.txt -o pages.jsonl --fonts DIR --scan cafe --scan mixed`.
+From the command line, put the registration in a plug-in (`IdrakPlugin`) of an assembly that declares its package
+(`[assembly: IdrakPluginPackage(typeof(MyEffects))]`, `MyEffects : IIdrakPluginPackage`) and load it with `-P`:
+`idrak -P my-effects.dll data synth text.txt -o pages.jsonl --fonts DIR --scan cafe --scan mixed`.
 
 ## Contracts
 

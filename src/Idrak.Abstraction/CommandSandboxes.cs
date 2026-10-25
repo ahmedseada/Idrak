@@ -140,9 +140,10 @@ public static class CommandSandboxes
     /// <summary>The sandbox registered as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones and where the others come from.</exception>
     public static ICommandSandbox Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Command sandbox '{name}' is not registered (registered: {(Table.Keys.Count == 0 ? "none" : string.Join(", ", Table.Keys))}); "
-                                           + $"add it with CommandSandboxes.Register; '{Process}' comes with Idrak.Text, '{Container}' with Idrak.Reinforcement.Plugins "
-                                           + "(ReinforcementPlugins.RegisterAll()).");
+        ?? throw new NotRegisteredException(nameof(CommandSandboxes), name, Table.Keys,
+            $"Command sandbox '{name}' is not registered (registered: {(Table.Keys.Count == 0 ? "none" : string.Join(", ", Table.Keys))}); "
+            + $"add it with CommandSandboxes.Register; '{Process}' comes with Idrak.Text, '{Container}' with Idrak.Reinforcement.Plugins "
+            + "(ReinforcementPlugins.RegisterAll()).");
 
     /// <summary>The library's sandbox <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static ICommandSandbox? Default(string name) => Table.Default(name);

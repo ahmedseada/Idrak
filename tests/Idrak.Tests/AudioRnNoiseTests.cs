@@ -45,8 +45,8 @@ internal static partial class Tests
         RnNoisePlugin.Register();
         Check(AudioPlugins.All.Contains(RnNoisePlugin.Plugin) && RnNoisePlugin.IsRegistered, "RnNoisePlugin is one of AudioPlugins.All and registered");
         var processor = AudioProcessors.Find("rnnoise");
-        Check(processor is not null && processor.Live && AudioProcessors.Origin("rnnoise") == AudioPlugins.Package,
-            $"rnnoise is registered, live, by {AudioPlugins.Package} (origin {AudioProcessors.Origin("rnnoise")})");
+        Check(processor is not null && processor.Live && AudioProcessors.Origin("rnnoise") == AudioPlugins.Package.Name,
+            $"rnnoise is registered, live, by {AudioPlugins.Package.Name} (origin {AudioProcessors.Origin("rnnoise")})");
         Check(AudioProcessors.Default("rnnoise") is null, "the library has no rnnoise of its own (no learned denoiser is a library default)");
         Check(AudioProcessors.Describe().Contains("rnnoise: ", StringComparison.Ordinal), "rnnoise is listed");
         Check(processor!.Keys.OrderBy(k => k, StringComparer.Ordinal).SequenceEqual(["attenuation", "convert", "mix", "model"]), $"its options: {string.Join(", ", processor.Keys)}");

@@ -35,7 +35,7 @@ internal sealed class BatchCommand : Command
           -k, --kv FORMAT        KV cache format: float32, int8, bfloat16 or a registered one (default float32)
               --context N        context window in tokens (default 4096, at most the model's)
               --adapter DIR      merge a LoRA adapter into the weights as they are read
-        """ + "\n" + GenerationSettings.Help.Replace("      --tools FILE.dll   tools the model may call: the [Tool] methods of an assembly (repeatable)\n", "") + """
+        """ + "\n" + GenerationSettings.Help.Replace("      --tools FILE.dll   tools the model may call: the tools an assembly declares (repeatable)\n", "") + """
 
         Examples:
           idrak batch Qwen/Qwen3-0.6B --input prompts.jsonl --out answers.jsonl

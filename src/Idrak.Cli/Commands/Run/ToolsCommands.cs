@@ -18,9 +18,9 @@ internal sealed class ToolsListCommand : Command
     public override string Usage => """
         TOOLS.dll [TOOLS.dll ...]
 
-        Tools are the public methods marked [Tool(name, description)] (Idrak.Abstraction.Generation) on the
-        assembly's public types, and its public static Tool properties and fields; chat, run and agent take the same
-        assemblies with --tools.
+        Tools are what the assembly declares with [assembly: ToolProvider(typeof(X))], X an IToolProvider
+        (Idrak.Abstraction.Generation) whose Tools can be its methods marked [Tool(name, description)]
+        (ToolProviders.FromMethods); chat, run and agent take the same assemblies with --tools.
 
         Examples:
           idrak tools list ./MyTools.dll

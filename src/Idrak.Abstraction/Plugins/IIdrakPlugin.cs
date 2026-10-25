@@ -12,8 +12,10 @@ namespace Idrak.Abstraction.Plugins;
 /// <c>Idrak.Audio.Plugins</c>): each family lives in a namespace of its own (<c>Idrak.Audio.Plugins.Whisper</c>) with a
 /// public static class named for it (<c>WhisperPlugin</c>) that holds the family's plug-in (<c>Plugin</c>, usually an
 /// <see cref="IdrakPlugin"/>) and has <c>Register()</c> (<c>IdrakPlugins.Register(Plugin)</c>) and <c>Unregister()</c>
-/// (<c>IdrakPlugins.Unregister(Plugin)</c>); the package's root class lists every family's plug-in and registers them all
-/// with <c>RegisterAll()</c>. Plug-ins use the library's public API only.
+/// (<c>IdrakPlugins.Unregister(Plugin)</c>); the package's root class holds the package (a static <c>Package</c>, an
+/// <see cref="IIdrakPluginPackage"/> that the assembly also declares with <see cref="IdrakPluginPackageAttribute"/> for
+/// hosts that load it themselves), lists every family's plug-in (<c>All</c>) and registers them all with
+/// <c>RegisterAll()</c>. Plug-ins use the library's public API only.
 /// </para>
 /// </summary>
 public interface IIdrakPlugin

@@ -59,7 +59,8 @@ public static class RandomTextSources
     /// <summary>The source of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IRandomTextSource Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Random text source '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); give a pools file or a word list, or add one with RandomTextSources.Register.");
+        ?? throw new NotRegisteredException(nameof(RandomTextSources), name, Table.Keys,
+            $"Random text source '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); give a pools file or a word list, or add one with RandomTextSources.Register.");
 
     /// <summary>The library's source of that name, or null.</summary>
     public static IRandomTextSource? Default(string name) => Table.Default(name);

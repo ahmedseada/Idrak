@@ -310,8 +310,7 @@ public sealed record Idrak.Reinforcement.Plugins.Coding.ContainerSandboxOptions 
   public string? User { get; init; }
 
 public static class Idrak.Reinforcement.Plugins.ReinforcementPlugins
-  public const string Package = "Idrak.Reinforcement.Plugins"
+  public static Idrak.Abstraction.Plugins.IIdrakPluginPackage Package { get; }
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Plugins.IIdrakPlugin> All { get; }
   public static void RegisterAll()
-  public static void RegisterIdrakPlugin()
   public static void UnregisterAll()

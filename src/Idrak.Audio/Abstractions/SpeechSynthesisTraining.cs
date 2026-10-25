@@ -124,7 +124,8 @@ public static class SpeechSynthesisObjectives
     /// <summary>The objective <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is registered under it; the message names those that are.</exception>
     public static ISpeechSynthesisObjective Get(string name) => Registry.Find(name)
-        ?? throw new NotSupportedException($"Speech synthesis objective '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with SpeechSynthesisObjectives.Register.");
+        ?? throw new NotRegisteredException(nameof(SpeechSynthesisObjectives), name, Registry.Keys,
+            $"Speech synthesis objective '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with SpeechSynthesisObjectives.Register.");
 
     /// <summary>The library's objective <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static ISpeechSynthesisObjective? Default(string name) => Registry.Default(name);

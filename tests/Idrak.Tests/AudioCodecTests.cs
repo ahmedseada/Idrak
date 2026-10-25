@@ -203,7 +203,7 @@ internal static partial class Tests
             return;
         }
 
-        // An in-process tool run with -P on Idrak.PluginTests (cli vision:) ran its RegisterIdrakPlugin methods, this
+        // An in-process tool run with -P on Idrak.PluginTests (cli vision:) registered its package's plug-ins, this
         // codec's among them, and the tool takes nothing back: start without it, and leave it as found.
         bool registeredAlready = AudioCodecs.Origin(OutsideRawCodec.FormatName) is not null;
         if (registeredAlready)
@@ -212,7 +212,7 @@ internal static partial class Tests
         }
 
         var before = AudioCodecs.Names.ToArray();
-        AudioPlugin.RegisterIdrakPlugin();
+        AudioPlugin.Register();
         try
         {
             Check(AudioCodecs.Names.First() == OutsideRawCodec.FormatName && AudioCodecs.Origin(OutsideRawCodec.FormatName) == typeof(AudioPlugin).Assembly.GetName().Name,
@@ -233,7 +233,7 @@ internal static partial class Tests
         bool readsIt = AudioCodecs.CanDecode("a.oraw"), unregisteredAgain = AudioCodecs.Unregister(OutsideRawCodec.FormatName);
         if (registeredAlready)
         {
-            AudioPlugin.RegisterIdrakPlugin();
+            AudioPlugin.Register();
         }
 
         Check(after.SequenceEqual(before) && !readsIt && !unregisteredAgain,

@@ -3,6 +3,8 @@
 
 using System.Globalization;
 
+[assembly: LibraryRegistrations(typeof(Idrak.Imaging.LibraryRegistrations))]
+
 namespace Idrak.Imaging;
 
 /// <summary>
@@ -11,7 +13,7 @@ namespace Idrak.Imaging;
 /// the "images" sample source, the "opentype" font format, the "coverage" outline rasterizer and the reading orders (bidi, runs). <c>LibraryDefaults.Ensure</c> (in Idrak.Abstraction) calls <see cref="RegisterFor"/> once
 /// per registry, before that registry is first used.
 /// </summary>
-internal static class LibraryRegistrations
+internal sealed class LibraryRegistrations : ILibraryRegistrations
 {
     private static readonly Dictionary<Type, Action> ByRegistry = new()
     {
@@ -105,7 +107,7 @@ internal static class LibraryRegistrations
         }
     }
 
-    private static void RegisterFor(Type registry)
+    public void RegisterFor(Type registry)
     {
         if (ByRegistry.TryGetValue(registry, out var register))
         {

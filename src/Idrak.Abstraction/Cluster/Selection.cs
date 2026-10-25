@@ -54,7 +54,8 @@ public static class TransportSelectors
     /// <summary>The selector of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static ITransportSelector Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Transport selector '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with TransportSelectors.Register.");
+        ?? throw new NotRegisteredException(nameof(TransportSelectors), name, Table.Keys,
+            $"Transport selector '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with TransportSelectors.Register.");
 
     /// <summary>The library's selector of that name, or null.</summary>
     public static ITransportSelector? Default(string name) => Table.Default(name);

@@ -144,10 +144,9 @@ public static class Idrak.Text.Plugins.T5.T5Plugin
   public static void Unregister()
 
 public static class Idrak.Text.Plugins.TextPlugins
-  public const string Package = "Idrak.Text.Plugins"
+  public static Idrak.Abstraction.Plugins.IIdrakPluginPackage Package { get; }
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Plugins.IIdrakPlugin> All { get; }
   public static void RegisterAll()
-  public static void RegisterIdrakPlugin()
   public static void UnregisterAll()
 
 public static class Idrak.Text.Plugins.TypeScript.TypeScriptLanguagePlugin

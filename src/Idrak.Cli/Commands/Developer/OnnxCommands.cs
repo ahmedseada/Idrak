@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
-using System.Reflection;
 using System.Text.Json.Nodes;
 using Idrak.Inference;
 using Idrak.Layers;
@@ -183,9 +182,6 @@ internal sealed class OnnxExportCommand : Command
 /// </summary>
 internal sealed class OnnxCheckCommand : Command
 {
-    /// <summary>The ONNX Runtime module type of Idrak.Onnx.Runtime, looked up by name so the tool needs no dependency on it.</summary>
-    internal const string RuntimeType = "Idrak.Onnx.Runtime.OnnxModule";
-
     public override string Name => "onnx check";
 
     public override string Summary => "Checks an ONNX model: Idrak's import against a round trip and against ONNX Runtime";
@@ -245,19 +241,25 @@ internal sealed class OnnxCheckCommand : Command
             checks.Add(("Idrak export, imported again", "skipped", null, e.Message));
         }
 
-        if (RuntimeLoader() is not { } load)
+        if (RuntimeLoader() is not { } loader)
         {
             checks.Add(("ONNX Runtime", "unavailable", null,
                 "Idrak.Onnx.Runtime is not loaded; pass --plugin PATH/Idrak.Onnx.Runtime.dll (Microsoft.ML.OnnxRuntime beside it) to compare with it"));
+        }
+        else if (LoadRuntime(loader, bytes, out string? refused) is not { } runtime)
+        {
+            checks.Add(("ONNX Runtime", "unavailable", null, refused));
         }
         else
         {
             try
             {
-                using var runtime = (Module)load(bytes);
-                checks.Add(Compare("ONNX Runtime", reference, Run(runtime, input, shape, batch, Device.Cpu), tolerance));
+                using (runtime)
+                {
+                    checks.Add(Compare("ONNX Runtime", reference, Run(runtime, input, shape, batch, Device.Cpu), tolerance));
+                }
             }
-            catch (Exception e) when (e is TargetInvocationException or NotSupportedException or DllNotFoundException or TypeInitializationException or FileNotFoundException)
+            catch (Exception e) when (e is NotSupportedException or DllNotFoundException or TypeInitializationException or FileNotFoundException)
             {
                 checks.Add(("ONNX Runtime", "unavailable", null, (e.InnerException ?? e).Message));
             }
@@ -297,27 +299,26 @@ internal sealed class OnnxCheckCommand : Command
     }
 
     /// <summary>
-    /// A loader for ONNX Runtime modules (bytes of an .onnx file to a <see cref="Module"/>) when Idrak.Onnx.Runtime is
-    /// loaded (by --plugin or a reference) or found next to the tool; otherwise null.
+    /// The ONNX runtime the check compares with: the first one registered in <see cref="OnnxRuntimeLoaders"/>
+    /// (Idrak.Onnx.Runtime's "onnxruntime", there when its assembly is next to the tool, referenced, or loaded with
+    /// --plugin); null when none is.
     /// </summary>
-    internal static Func<byte[], object>? RuntimeLoader()
-    {
-        Type? type = AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType(RuntimeType)).FirstOrDefault(t => t is not null);
-        if (type is null)
-        {
-            try
-            {
-                type = Type.GetType($"{RuntimeType}, Idrak.Onnx.Runtime");
-            }
-            catch (Exception e) when (e is FileNotFoundException or FileLoadException or BadImageFormatException)
-            {
-                return null;
-            }
-        }
+    internal static IOnnxRuntimeLoader? RuntimeLoader() => OnnxRuntimeLoaders.Registered is [var first, ..] ? first : null;
 
-        var method = type?.GetMethods(BindingFlags.Public | BindingFlags.Static)
-            .FirstOrDefault(m => m.Name == "Load" && m.GetParameters() is [{ ParameterType: var p }, _] && p == typeof(byte[]));
-        return method is null ? null : bytes => method.Invoke(null, [bytes, null])!;
+    // The model run by the runtime; null, with the reason, when the runtime cannot load it (the runtime's own library
+    // missing, a model it does not take: whatever it throws).
+    private static Module? LoadRuntime(IOnnxRuntimeLoader loader, byte[] bytes, out string? refused)
+    {
+        try
+        {
+            refused = null;
+            return loader.Load(bytes);
+        }
+        catch (Exception e)
+        {
+            refused = e.Message;
+            return null;
+        }
     }
 
     // Random samples, or token ids in the vocabulary when the model starts with an embedding.

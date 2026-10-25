@@ -78,7 +78,7 @@ internal sealed class AgentCommand : Command
         {
             coding = new CodingTools(workspace, new CodingToolOptions { ReadOnly = context.Flag("--read-only"), Languages = context.Option("--languages") ?? CodingLanguages.DefaultChoice });
         }
-        catch (NotSupportedException e) when (e.Message.Contains("Coding language", StringComparison.Ordinal))
+        catch (NotRegisteredException e) when (e.Registry == nameof(CodingLanguages))
         {
             throw new UsageException(e.Message);
         }

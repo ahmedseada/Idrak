@@ -119,8 +119,9 @@ public static class VisionFamilies
         return Registry.Find(architecture) ?? (HasVision(config) ? throw NotRegistered(architecture) : null);
     }
 
-    internal static NotSupportedException NotRegistered(string name) =>
-        new($"Vision family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
+    internal static NotRegisteredException NotRegistered(string name) =>
+        new(nameof(VisionFamilies), name, Registry.Keys,
+            $"Vision family '{name}' is not registered (registered: {(Registry.Keys.Count == 0 ? "none" : string.Join(", ", Registry.Keys))}); "
             + "register it with VisionFamilies.Register (a plug-in or the app that brings the family; the library registers none), "
             + "or reference Idrak.Vision.Plugins and call VisionPlugins.RegisterAll().");
 }

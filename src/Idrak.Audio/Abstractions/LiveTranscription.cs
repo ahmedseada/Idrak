@@ -139,7 +139,8 @@ public static class LiveCommitPolicies
     /// <summary>The policy of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static ILiveCommitPolicy Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Live commit policy '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with LiveCommitPolicies.Register.");
+        ?? throw new NotRegisteredException(nameof(LiveCommitPolicies), name, Table.Keys,
+            $"Live commit policy '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with LiveCommitPolicies.Register.");
 
     /// <summary>The library's policy of that name, or null.</summary>
     public static ILiveCommitPolicy? Default(string name) => Table.Default(name);

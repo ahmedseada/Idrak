@@ -12,7 +12,7 @@ internal static partial class Tests
     [
         ("slot table span lookup: a table of string names finds by span what it finds by string, in both layers and under the comparer's case rule, and allocates nothing once warm", SlotTableSpanLookup),
         ("slot table span lookup: a comparer that cannot take spans still finds the same entries (through a string), and a table of value-type keys refuses a span", SlotTableSpanFallback),
-        ("kind table: kinds register by their name (one or several at once), are found by span, list names and summaries in order, and an unknown name is refused as every registry words it", KindTableRegistry),
+        ("kind table: kinds register by their name (one or several at once), are found by span, list names and summaries in order, and an unknown name is refused as every registry words it, with a NotRegisteredException naming the registry, the name and the registered ones", KindTableRegistry),
         ("kind table: option keys keep their declared order for listings and are checked by span; a kind's request may be a ref struct; the library's kind registries find their kinds by span", KindTableKeysAndRegistries),
     ];
 
@@ -121,6 +121,17 @@ internal static partial class Tests
         // The name a table lists is spelled as its last registration or removal spelled it (the table ignores case).
         ThrowsNaming<NotSupportedException>(() => table.Get("gamma".AsSpan()), "an unknown kind",
             $"Test kind 'gamma' is not registered (registered: {table.Listed()}); add it with TestKinds.Register.", "registered: alpha, ");
+        try
+        {
+            table.Get("gamma".AsSpan());
+            Check(false, "an unknown kind is refused");
+        }
+        catch (NotRegisteredException e)
+        {
+            Check(e.Registry == "TestKinds" && e.Name == "gamma" && e.Registered.SequenceEqual(table.Names) && e.Message == table.NotRegistered("gamma"),
+                $"the refusal is a NotRegisteredException (a NotSupportedException) naming the registry, the name and the registered ones: {e.Registry} {e.Name} [{string.Join(", ", e.Registered)}]");
+        }
+
         ThrowsNaming<ArgumentException>(() => table.Register(new Greeting(" ", "nameless")), "a kind without a name", "kind");
         var empty = new KindTable<Greeting>("TestEmpty", "Test kind", "add one", unguarded: "test");
         Check(empty.Listed() == "none" && empty.NotRegistered("x") == "Test kind 'x' is not registered (registered: none); add one.", empty.NotRegistered("x"));

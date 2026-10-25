@@ -97,7 +97,8 @@ public static class TeacherDivergences
     /// <summary>The divergence of that name; an app's, guarded by its <see cref="SetPolicy">policy</see>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
     public static ITeacherDivergence Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Teacher divergence '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TeacherDivergences.Register.");
+        ?? throw new NotRegisteredException(nameof(TeacherDivergences), name, Table.Keys,
+            $"Teacher divergence '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with TeacherDivergences.Register.");
 
     /// <summary>The library's divergence of that name, whatever an app registered over it; null when the library has none.</summary>
     public static ITeacherDivergence? Default(string name) => Table.Default(name);

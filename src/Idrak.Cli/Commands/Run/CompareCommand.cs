@@ -30,7 +30,7 @@ internal sealed class CompareCommand : Command
               --context N        context window in tokens (default 4096, at most the model's)
               --adapter DIR      merge a LoRA adapter into the weights of both
               --width N          width of the side-by-side text (default 100; 0 prints the answers one after the other)
-        """ + "\n" + GenerationSettings.Help.Replace("      --tools FILE.dll   tools the model may call: the [Tool] methods of an assembly (repeatable)\n", "") + """
+        """ + "\n" + GenerationSettings.Help.Replace("      --tools FILE.dll   tools the model may call: the tools an assembly declares (repeatable)\n", "") + """
 
         Examples:
           idrak compare Qwen/Qwen3-0.6B Qwen/Qwen3-1.7B "Explain recursion in one paragraph"

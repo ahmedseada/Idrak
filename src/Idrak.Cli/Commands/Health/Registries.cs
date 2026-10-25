@@ -47,6 +47,7 @@ internal static class Registries
             new("graphops", "Graph ops", false, Sorted(GraphOps.Names)),
             new("layers", "Layer types (network builder)", false, Sorted(NetworkOps.Names)),
             new("onnx", "ONNX import ops", false, Sorted(OnnxImportOps.Names)),
+            new("onnxruntimes", "ONNX runtimes", false, Sorted(OnnxRuntimeLoaders.Names)),
             new("audiocodecs", "Audio codecs", true, Sorted(AudioCodecs.Names)),
             new("audioencoders", "Audio encoders", true, Sorted(AudioEncoders.Names)),
             new("audiofeatures", "Audio feature extractors", false, Sorted(AudioFeatureExtractors.Names)),

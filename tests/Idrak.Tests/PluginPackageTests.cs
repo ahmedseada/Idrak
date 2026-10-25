@@ -22,22 +22,22 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] PluginPackageGroup =
     [
-        ("plugins: packages: Idrak.Text.Plugins, Idrak.Vision.Plugins, Idrak.Audio.Plugins and Idrak.Reinforcement.Plugins load, each root class has All, RegisterAll, UnregisterAll and the -P entry RegisterIdrakPlugin, each family in a namespace of its own; RegisterAll twice leaves every registry the tool lists as once, and UnregisterAll leaves them as found", PluginPackagesRegisterAll),
+        ("plugins: packages: Idrak.Text.Plugins, Idrak.Vision.Plugins, Idrak.Audio.Plugins and Idrak.Reinforcement.Plugins load, each root class has Package (an IIdrakPluginPackage the assembly declares with IdrakPluginPackage, read once), All, RegisterAll and UnregisterAll and no RegisterIdrakPlugin, each family in a namespace of its own; RegisterAll twice leaves every registry the tool lists as once, and UnregisterAll leaves them as found", PluginPackagesRegisterAll),
         ("plugins: packages: an IdrakPlugin registers its parts once however often Register is called (from several threads too), Unregister leaves the registries as found, a failing part takes back the parts before it, Requires registers a needed plug-in only when missing; IdrakPlugins registers a plug-in once, replaces one of the same name (unregistering the earlier, which comes back when the new one fails) and names the packages when none is registered", PluginContract),
-        ("plugins: packages: the tool registers the four packages at startup (text first, reinforcement last), and -P on each package's DLL loads it through the tool's loader (RegisterIdrakPlugin runs) adding nothing twice", PluginPackagesCli),
+        ("plugins: packages: the tool registers the four packages at startup (text first, reinforcement last), and -P on each package's DLL loads it through the tool's loader (its IdrakPluginPackage attribute) adding nothing twice; -P on an assembly that declares no package is refused naming the attribute, and on a library assembly registers its built-ins", PluginPackagesCli),
         ("plugins: packages: IDRAK_PLUGIN_PACKAGES chooses the packages the tool registers at startup (all four when unset, none, or a list taken in the tool's order) and is refused naming the variable when it names no package", PluginPackagesSetting),
         ("plugins: packages: no library assembly nor the tool grants a plug-in package its internals, the plug-in packages grant none but the test runner (as every library package does), and they are not library defaults", PluginPackagesNoInternals),
-        ("plugins: packages: the not-registered messages of VisionFamilies, SpeechFamilies, SpeechSynthesisFamilies, VoiceConverters, GgufArchitectures, ToolCallFormats, EnvironmentKinds and RewardFunctions name the plug-in package to reference and its RegisterAll", PluginPackagesMessages),
+        ("plugins: packages: the not-registered messages of VisionFamilies, SpeechFamilies, SpeechSynthesisFamilies, VoiceConverters, GgufArchitectures, ToolCallFormats, EnvironmentKinds and RewardFunctions name the plug-in package to reference and its RegisterAll (the families', kinds' and rewards' as a NotRegisteredException)", PluginPackagesMessages),
     ];
 
-    private sealed record PluginPackage(string Name, Type Root, IReadOnlyList<IIdrakPlugin> All, Action RegisterAll, Action UnregisterAll);
+    private sealed record PluginPackage(string Name, Type Root, IIdrakPluginPackage Package, IReadOnlyList<IIdrakPlugin> All, Action RegisterAll, Action UnregisterAll);
 
     private static readonly PluginPackage[] PluginPackages =
     [
-        new(TextPlugins.Package, typeof(TextPlugins), TextPlugins.All, TextPlugins.RegisterAll, TextPlugins.UnregisterAll),
-        new(VisionPlugins.Package, typeof(VisionPlugins), VisionPlugins.All, VisionPlugins.RegisterAll, VisionPlugins.UnregisterAll),
-        new(AudioPlugins.Package, typeof(AudioPlugins), AudioPlugins.All, AudioPlugins.RegisterAll, AudioPlugins.UnregisterAll),
-        new(ReinforcementPlugins.Package, typeof(ReinforcementPlugins), ReinforcementPlugins.All, ReinforcementPlugins.RegisterAll, ReinforcementPlugins.UnregisterAll),
+        new(TextPlugins.Package.Name, typeof(TextPlugins), TextPlugins.Package, TextPlugins.All, TextPlugins.RegisterAll, TextPlugins.UnregisterAll),
+        new(VisionPlugins.Package.Name, typeof(VisionPlugins), VisionPlugins.Package, VisionPlugins.All, VisionPlugins.RegisterAll, VisionPlugins.UnregisterAll),
+        new(AudioPlugins.Package.Name, typeof(AudioPlugins), AudioPlugins.Package, AudioPlugins.All, AudioPlugins.RegisterAll, AudioPlugins.UnregisterAll),
+        new(ReinforcementPlugins.Package.Name, typeof(ReinforcementPlugins), ReinforcementPlugins.Package, ReinforcementPlugins.All, ReinforcementPlugins.RegisterAll, ReinforcementPlugins.UnregisterAll),
     ];
 
     // What the tool lists (every registry by category) and the plug-ins recorded, as one comparable text.
@@ -51,10 +51,14 @@ internal static partial class Tests
         foreach (var package in PluginPackages)
         {
             Check(package.Root.Assembly.GetName().Name == package.Name && package.Root.Namespace == package.Name, $"{package.Root.Name} is the root class of {package.Name}");
-            Check(package.Root.GetMethod("RegisterIdrakPlugin", BindingFlags.Public | BindingFlags.Static, Type.EmptyTypes) is { ReturnType: var r } && r == typeof(void),
-                $"{package.Name}: a public static void RegisterIdrakPlugin() for -P");
-            Check(package.Root.Assembly.GetExportedTypes().Count(t => t.GetMethod("RegisterIdrakPlugin", BindingFlags.Public | BindingFlags.Static, Type.EmptyTypes) is not null) == 1,
-                $"{package.Name}: -P finds one RegisterIdrakPlugin (the root class's), so it registers the package once");
+            var declared = IdrakPlugins.PackageOf(package.Root.Assembly);
+            Check(declared is not null && declared.Name == package.Name && declared.All.SequenceEqual(package.All) && package.Package.All.SequenceEqual(package.All)
+                  && ReferenceEquals(IdrakPlugins.PackageOf(package.Root.Assembly), declared),
+                $"{package.Name}: the assembly declares its package (IdrakPluginPackage), read once, with the root class's name and plug-ins");
+            Check(package.Root.GetProperty("Package", BindingFlags.Public | BindingFlags.Static)?.PropertyType == typeof(IIdrakPluginPackage),
+                $"{package.Name}: the root class's Package is the IIdrakPluginPackage");
+            Check(package.Root.Assembly.GetExportedTypes().All(t => t.GetMethod("RegisterIdrakPlugin", BindingFlags.Public | BindingFlags.Static, Type.EmptyTypes) is null),
+                $"{package.Name}: no RegisterIdrakPlugin is left (-P reads the attribute)");
             foreach (var plugin in package.All)
             {
                 string? ns = plugin.GetType().Namespace;
@@ -232,7 +236,7 @@ internal static partial class Tests
     private static void PluginPackagesCli(Device device)
     {
         _ = device;
-        Check(CommandLine.PluginPackages.Select(p => p.Package).SequenceEqual(PluginPackages.Select(p => p.Name)), "the tool registers Idrak.Text.Plugins, Idrak.Vision.Plugins, Idrak.Audio.Plugins and Idrak.Reinforcement.Plugins, in that order");
+        Check(CommandLine.PluginPackages.Select(p => p.Package).SequenceEqual(PluginPackages.Select(p => p.Package)), "the tool registers Idrak.Text.Plugins, Idrak.Vision.Plugins, Idrak.Audio.Plugins and Idrak.Reinforcement.Plugins, in that order");
         var listed = CliJson("plugins", "list", "-j");
         Check(listed["plugins"] is JsonObject, $"plugins list has the plug-ins: {listed}");
         var recorded = listed["plugins"]!["names"]!.AsArray().Select(n => (string?)n).ToHashSet(StringComparer.Ordinal);
@@ -247,6 +251,20 @@ internal static partial class Tests
             Check(added.All(c => c.Value!["added"]!.AsArray().Count == 0), $"-P {package.Name}.dll adds nothing the tool registered already: {output}");
             Check(PluginPackages.SelectMany(p => p.All).All(p => p.IsRegistered), $"-P {package.Name}.dll leaves every family registered");
         }
+
+        // An assembly that declares no package: refused, naming the attribute (Idrak.Mcp declares neither a package nor
+        // library registrations).
+        var (refusedExit, _, refused) = Cli("plugins", "list", "-P", typeof(Idrak.Mcp.McpTools).Assembly.Location);
+        Check(refusedExit == 2 && refused.Contains("IdrakPluginPackage", StringComparison.Ordinal) && refused.Contains("IIdrakPluginPackage", StringComparison.Ordinal),
+            $"-P on an assembly with no package: exit {refusedExit}: {refused}");
+        Check(!IdrakPlugins.Load(typeof(Idrak.Mcp.McpTools).Assembly) && IdrakPlugins.PackageOf(typeof(Idrak.Mcp.McpTools).Assembly) is null, "IdrakPlugins.Load: nothing declared, false");
+
+        // A library assembly (Idrak.Onnx.Runtime, shipped with this runner): -P registers its built-ins, once.
+        var runtimes = OnnxRuntimeLoaders.Names.ToList();
+        var (libraryExit, _, libraryError) = Cli("plugins", "list", "-P", typeof(Idrak.Onnx.Runtime.OnnxModule).Assembly.Location);
+        Check(libraryExit == 0 && IdrakPlugins.Load(typeof(Idrak.Onnx.Runtime.OnnxModule).Assembly) && OnnxRuntimeLoaders.Names.SequenceEqual(runtimes)
+              && runtimes.Contains("onnxruntime") && OnnxRuntimeLoaders.Origin("onnxruntime") == Overrides.Library,
+            $"-P on a library assembly: exit {libraryExit} {libraryError}; runtimes {string.Join(", ", OnnxRuntimeLoaders.Names)}");
     }
 
     private static void PluginPackagesSetting(Device device)
@@ -288,10 +306,11 @@ internal static partial class Tests
             Check(ApiAssemblyNames.Contains(package.Name) && LibraryAssemblyNames.Contains(package.Name), $"{package.Name} is in the API guard and the abstraction inventory");
         }
 
-        var defaults = (ValueTuple<string, string>[])typeof(IdrakPlugins).Assembly.GetType("Idrak.Abstraction.LibraryDefaults", throwOnError: true)!
+        var defaults = (string[])typeof(IdrakPlugins).Assembly.GetType("Idrak.Abstraction.LibraryDefaults", throwOnError: true)!
             .GetField("Assemblies", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
-        Check(!defaults.Any(d => plugins.Contains(d.Item1)), "the plug-in packages register nothing as library defaults (LibraryDefaults does not list them)");
-        Check(defaults.Any(d => d.Item1 == "Idrak.Reinforcement"), "Idrak.Reinforcement, a library package, is listed in LibraryDefaults (unlike its plug-in package)");
+        Check(!defaults.Any(plugins.Contains), "the plug-in packages register nothing as library defaults (LibraryDefaults does not list them)");
+        Check(defaults.Contains("Idrak.Reinforcement"), "Idrak.Reinforcement, a library package, is listed in LibraryDefaults (unlike its plug-in package)");
+        Check(PluginPackages.All(p => p.Root.Assembly.GetCustomAttribute<LibraryRegistrationsAttribute>() is null), "the plug-in packages declare no library registrations");
     }
 
     private static void PluginPackagesMessages(Device device)
@@ -300,17 +319,17 @@ internal static partial class Tests
         const string None = "PluginsTestNobody";
         string[] text = ["Idrak.Text.Plugins", "TextPlugins.RegisterAll()"], vision = ["Idrak.Vision.Plugins", "VisionPlugins.RegisterAll()"],
             audio = ["Idrak.Audio.Plugins", "AudioPlugins.RegisterAll()"], reinforcement = ["Idrak.Reinforcement.Plugins", "ReinforcementPlugins.RegisterAll()"];
-        ThrowsNaming<NotSupportedException>(() => VisionFamilies.For(None, new JsonObject { ["vision_config"] = new JsonObject() }), "VisionFamilies",
+        ThrowsNaming<NotRegisteredException>(() => VisionFamilies.For(None, new JsonObject { ["vision_config"] = new JsonObject() }), "VisionFamilies",
             [$"'{None}' is not registered", "VisionFamilies.Register", .. vision]);
-        ThrowsNaming<NotSupportedException>(() => SpeechFamilies.Get(None), "SpeechFamilies", [$"'{None}' is not registered", "SpeechFamilies.Register", .. audio]);
-        ThrowsNaming<NotSupportedException>(() => SpeechSynthesisFamilies.Get(None), "SpeechSynthesisFamilies", [$"'{None}' is not registered", "SpeechSynthesisFamilies.Register", .. audio]);
-        ThrowsNaming<NotSupportedException>(() => VoiceConverters.Get(None), "VoiceConverters", [$"'{None}' is not registered", "VoiceConverters.Register", .. audio]);
+        ThrowsNaming<NotRegisteredException>(() => SpeechFamilies.Get(None), "SpeechFamilies", [$"'{None}' is not registered", "SpeechFamilies.Register", .. audio]);
+        ThrowsNaming<NotRegisteredException>(() => SpeechSynthesisFamilies.Get(None), "SpeechSynthesisFamilies", [$"'{None}' is not registered", "SpeechSynthesisFamilies.Register", .. audio]);
+        ThrowsNaming<NotRegisteredException>(() => VoiceConverters.Get(None), "VoiceConverters", [$"'{None}' is not registered", "VoiceConverters.Register", .. audio]);
         ThrowsNaming<NotSupportedException>(() => GgufArchitectures.Get(None), "GgufArchitectures", [$"'{None}' is registered", "GgufArchitectures.Register", .. text]);
         ThrowsNaming<NotSupportedException>(() => Idrak.Abstraction.Generation.ToolCallFormats.Create(None, new ToolCallContext(new ChatMLTemplate(), [], null)), "ToolCallFormats",
             [$"'{None}' is registered", "ToolCallFormats.Register", .. text]);
-        ThrowsNaming<NotSupportedException>(() => Idrak.Abstraction.Reinforcement.EnvironmentKinds.Get(None), "EnvironmentKinds",
+        ThrowsNaming<NotRegisteredException>(() => Idrak.Abstraction.Reinforcement.EnvironmentKinds.Get(None), "EnvironmentKinds",
             [$"'{None}' is not registered", "EnvironmentKinds.Register", .. reinforcement]);
-        ThrowsNaming<NotSupportedException>(() => Idrak.Abstraction.Reinforcement.RewardFunctions.Get(None), "RewardFunctions",
+        ThrowsNaming<NotRegisteredException>(() => Idrak.Abstraction.Reinforcement.RewardFunctions.Get(None), "RewardFunctions",
             [$"'{None}' is not registered", "RewardFunctions.Register", .. reinforcement]);
     }
 }

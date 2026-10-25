@@ -730,7 +730,8 @@ public static class ProfileProbes
     /// <summary>The probe registered as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
     public static IProfileProbe Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Profile probe '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with ProfileProbes.Register.");
+        ?? throw new NotRegisteredException(nameof(ProfileProbes), name, Table.Keys,
+            $"Profile probe '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with ProfileProbes.Register.");
 
     /// <summary>The library's probe <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IProfileProbe? Default(string name) => Table.Default(name);

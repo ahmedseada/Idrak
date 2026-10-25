@@ -2,22 +2,35 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers.Binary;
+using Idrak.Abstraction.Plugins;
 using Idrak.Audio.Abstractions;
 
 namespace Idrak.PluginTests;
 
 /// <summary>
-/// This assembly as a plug-in for sound formats (plan 21, S1): <see cref="RegisterIdrakPlugin"/> registers the
-/// "outside-raw" codec (<see cref="OutsideRawCodec"/>), a format of this assembly's own that the library does not read,
-/// so the tests see an app's codec asked before the library's and removed again.
+/// This assembly as a plug-in for sound formats (plan 21, S1): <see cref="Plugin"/> ("outside-audio", in this assembly's
+/// <see cref="PluginTestsPackage"/>) registers the "outside-raw" codec (<see cref="OutsideRawCodec"/>), a format of this
+/// assembly's own that the library does not read, so the tests see an app's codec asked before the library's and
+/// removed again.
 /// </summary>
 public static class AudioPlugin
 {
-    /// <summary>Registers the codec (what <c>-P</c> runs after loading the assembly).</summary>
-    public static void RegisterIdrakPlugin() => AudioCodecs.Register(new OutsideRawCodec());
+    /// <summary>The plug-in: the codec (what <c>-P</c> registers through the package).</summary>
+    public static IIdrakPlugin Plugin { get; } = new AudioRegistration();
 
-    /// <summary>Removes what <see cref="RegisterIdrakPlugin"/> registered (tests leave the registries as they found them).</summary>
-    public static void Unregister() => AudioCodecs.Unregister(OutsideRawCodec.FormatName);
+    /// <summary>Whether the plug-in is registered.</summary>
+    public static bool IsRegistered => Plugin.IsRegistered;
+
+    /// <summary>Registers the codec (through <see cref="IdrakPlugins"/>); once.</summary>
+    public static void Register() => IdrakPlugins.Register(Plugin);
+
+    /// <summary>Removes what <see cref="Register"/> registered (tests leave the registries as they found them).</summary>
+    public static void Unregister() => IdrakPlugins.Unregister(Plugin);
+
+    private sealed class AudioRegistration() : IdrakPlugin("outside-audio")
+    {
+        protected override void RegisterParts() => Part(() => AudioCodecs.Register(new OutsideRawCodec()), () => AudioCodecs.Unregister(OutsideRawCodec.FormatName));
+    }
 }
 
 /// <summary>

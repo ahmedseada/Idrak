@@ -165,7 +165,8 @@ public static class Transports
     /// <summary>The transport of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static ITransportProvider Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Transport '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with Transports.Register.");
+        ?? throw new NotRegisteredException(nameof(Transports), name, Table.Keys,
+            $"Transport '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with Transports.Register.");
 
     /// <summary>The library's transport of that name, or null.</summary>
     public static ITransportProvider? Default(string name) => Table.Default(name);

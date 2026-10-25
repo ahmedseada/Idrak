@@ -6,6 +6,8 @@ using Idrak.Abstraction.Reinforcement;
 using Idrak.Text.Generation;
 using Idrak.Text.Reinforcement;
 
+[assembly: LibraryRegistrations(typeof(Idrak.Text.LibraryRegistrations))]
+
 namespace Idrak.Text;
 
 /// <summary>
@@ -18,9 +20,9 @@ namespace Idrak.Text;
 /// chat model kinds need no registry: <c>GenerativeModels</c> adds them to an engine. <c>LibraryDefaults.Ensure</c> (in
 /// Idrak.Abstraction) calls <see cref="RegisterFor"/> once per registry, before that registry is first used.
 /// </summary>
-internal static class LibraryRegistrations
+internal sealed class LibraryRegistrations : ILibraryRegistrations
 {
-    private static void RegisterFor(Type registry)
+    public void RegisterFor(Type registry)
     {
         if (registry == typeof(ChatTemplates))
         {

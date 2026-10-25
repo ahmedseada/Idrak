@@ -73,7 +73,8 @@ public static class ProfileWriters
     /// <summary>The writer registered as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
     public static IProfileWriter Get(string name) => Writers.Find(name)
-        ?? throw new NotSupportedException($"Profile writer '{name}' is not registered (registered: {string.Join(", ", Writers.Keys)}); add it with ProfileWriters.Register.");
+        ?? throw new NotRegisteredException(nameof(ProfileWriters), name, Writers.Keys,
+            $"Profile writer '{name}' is not registered (registered: {string.Join(", ", Writers.Keys)}); add it with ProfileWriters.Register.");
 
     /// <summary>The library's writer <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IProfileWriter? Default(string name) => Writers.Default(name);

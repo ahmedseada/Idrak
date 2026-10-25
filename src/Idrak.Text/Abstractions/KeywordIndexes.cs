@@ -91,7 +91,8 @@ public static class KeywordIndexes
     /// <summary>The factory registered as <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
     public static Func<IEnumerable<string>, KeywordIndexOptions, IKeywordIndex> Get(string name) => Find(name)
-        ?? throw new NotSupportedException($"Keyword index '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with KeywordIndexes.Register.");
+        ?? throw new NotRegisteredException(nameof(KeywordIndexes), name, Table.Keys,
+            $"Keyword index '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with KeywordIndexes.Register.");
 
     /// <summary>The library's factory <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static Func<IEnumerable<string>, KeywordIndexOptions, IKeywordIndex>? Default(string name) => Table.Default(name)?.Create;

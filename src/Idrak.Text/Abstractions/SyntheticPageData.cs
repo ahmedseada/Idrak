@@ -83,7 +83,8 @@ public static class SyntheticRecordFormats
     /// <summary>The format of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static ISyntheticRecordFormat Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Synthetic record format '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with SyntheticRecordFormats.Register.");
+        ?? throw new NotRegisteredException(nameof(SyntheticRecordFormats), name, Table.Keys,
+            $"Synthetic record format '{name}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with SyntheticRecordFormats.Register.");
 
     /// <summary>The library's format of that name, or null.</summary>
     public static ISyntheticRecordFormat? Default(string name) => Table.Default(name);
@@ -176,7 +177,8 @@ public static class PagePartFillers
     /// <summary>The filler of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name.</exception>
     public static IPagePartFiller Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Page part slot '{{{name}}}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with PagePartFillers.Register.");
+        ?? throw new NotRegisteredException(nameof(PagePartFillers), name, Table.Keys,
+            $"Page part slot '{{{name}}}' is not registered (registered: {string.Join(", ", Table.Keys)}); add it with PagePartFillers.Register.");
 
     /// <summary>The library's filler of that name, or null.</summary>
     public static IPagePartFiller? Default(string name) => Table.Default(name);

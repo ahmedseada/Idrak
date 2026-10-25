@@ -261,7 +261,8 @@ public static class GradientSyncs
     /// <summary>The synchronisation of that name.</summary>
     /// <exception cref="NotSupportedException">None is registered under that name (Idrak.Network registers "all-reduce": ship it with the app).</exception>
     public static IGradientSyncProvider Get(string name) => Table.Find(name)
-        ?? throw new NotSupportedException($"Gradient synchronisation '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with GradientSyncs.Register, or reference Idrak.Network.");
+        ?? throw new NotRegisteredException(nameof(GradientSyncs), name, Table.Keys,
+            $"Gradient synchronisation '{name}' is not registered (registered: {ClusterNames.List(Table.Keys)}); add one with GradientSyncs.Register, or reference Idrak.Network.");
 
     /// <summary>The library's synchronisation of that name, or null.</summary>
     public static IGradientSyncProvider? Default(string name) => Table.Default(name);

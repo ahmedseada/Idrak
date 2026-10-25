@@ -69,7 +69,8 @@ public static class ReadingOrders
     /// <summary>The order <paramref name="name"/>.</summary>
     /// <exception cref="NotSupportedException">None is: the message names the registered ones.</exception>
     public static IReadingOrder Get(string name) => Find(name)
-        ?? throw new NotSupportedException($"Reading order '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with ReadingOrders.Register.");
+        ?? throw new NotRegisteredException(nameof(ReadingOrders), name, Registry.Keys,
+            $"Reading order '{name}' is not registered (registered: {string.Join(", ", Registry.Keys)}); add it with ReadingOrders.Register.");
 
     /// <summary>The library's order <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static IReadingOrder? Default(string name) => Registry.Default(name);

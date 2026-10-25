@@ -103,8 +103,8 @@ public sealed class KindTable<TKind> where TKind : class, IKind
     public bool Contains(ReadOnlySpan<char> name) => Slots.Contains(name);
 
     /// <summary>The kind registered as <paramref name="name"/>.</summary>
-    /// <exception cref="NotSupportedException">None is: the message names the registered ones and what to do (<see cref="NotRegistered"/>).</exception>
-    public TKind Get(ReadOnlySpan<char> name) => Slots.Find(name) ?? throw new NotSupportedException(NotRegistered(name));
+    /// <exception cref="NotRegisteredException">None is: the message names the registered ones and what to do (<see cref="NotRegistered"/>).</exception>
+    public TKind Get(ReadOnlySpan<char> name) => Slots.Find(name) ?? throw NotRegisteredError(name);
 
     /// <summary>The library's kind <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public TKind? Default(string name) => Slots.Default(name);
@@ -137,4 +137,10 @@ public sealed class KindTable<TKind> where TKind : class, IKind
     /// registered (registered: a, b); add it with EnvironmentKinds.Register."
     /// </summary>
     public string NotRegistered(ReadOnlySpan<char> name) => $"{_kind} '{name}' is not registered (registered: {Listed()}); {_remedy}.";
+
+    /// <summary>
+    /// The refusal of <paramref name="name"/> to throw: a <see cref="NotRegisteredException"/> naming this registry, the
+    /// name and the registered ones, with <see cref="NotRegistered"/>'s message.
+    /// </summary>
+    public NotRegisteredException NotRegisteredError(ReadOnlySpan<char> name) => new(Registry, name.ToString(), Slots.Keys, NotRegistered(name));
 }
