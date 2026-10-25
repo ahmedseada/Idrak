@@ -7,19 +7,17 @@ namespace Idrak.Abstraction.Devices;
 
 /// <summary>
 /// One kind of device beyond the CPU (CUDA, Vulkan, HIP, …): how many there are, and the backend that drives each. Devices
-/// come from the registered providers (<see cref="DeviceProviders"/>), registered by <see cref="Name"/>, so a new kind of
+/// come from the registered providers (<see cref="DeviceProviders"/>), registered by <see cref="IKind.Name"/>, so a new kind of
 /// hardware is a provider and a <see cref="Backend"/>, with no change to <see cref="Device"/> or the layers. A kind that
 /// can carve several backends out of one device implements <see cref="ISeparableDeviceProvider"/> too.
 /// </summary>
-public interface IDeviceProvider
+/// <remarks>
+/// <see cref="IKind.Name"/> is the kind's name in device names ("cuda" in "cuda:1"), the key it is registered and found by;
+/// <see cref="IKind.Summary"/> is one line about the kind, for listings and help ("GPUs through the CUDA driver").
+/// </remarks>
+public interface IDeviceProvider : IKind
 {
-    /// <summary>The kind's name in device names ("cuda" in "cuda:1"): the key it is registered and found by.</summary>
-    string Name { get; }
-
-    /// <summary>One line about the kind, for listings and help ("GPUs through the CUDA driver").</summary>
-    string Summary { get; }
-
-    /// <summary>The name in messages ("CUDA"); <see cref="Name"/> unless the provider says otherwise.</summary>
+    /// <summary>The name in messages ("CUDA"); <see cref="IKind.Name"/> unless the provider says otherwise.</summary>
     string Display => Name;
 
     /// <summary>The <see cref="DeviceType"/> of its devices.</summary>
@@ -97,7 +95,7 @@ public static class DeviceProviders
     public static IReadOnlyList<IDeviceProvider> All => Table.Values;
 
     /// <summary>
-    /// Registers a provider under its <see cref="IDeviceProvider.Name"/>; one of a registered kind takes its place, and the
+    /// Registers a provider under its <see cref="IKind.Name"/>; one of a registered kind takes its place, and the
     /// library's provider of that kind comes back with <see cref="Unregister"/>. A device does not fall back to the
     /// library's provider when an app's one fails.
     /// </summary>

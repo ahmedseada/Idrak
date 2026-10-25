@@ -1862,7 +1862,7 @@ public interface Idrak.Abstraction.Devices.IDeviceBackend
   public void Synchronize()
   public void Upload(System.ReadOnlySpan<float> source, Idrak.Abstraction.Devices.Storage destination)
 
-public interface Idrak.Abstraction.Devices.IDeviceProvider
+public interface Idrak.Abstraction.Devices.IDeviceProvider : Idrak.Abstraction.IKind
   public (default) Idrak.Abstraction.DeviceType TypeOf(int ordinal)
   public (default) System.Guid? DeviceUuid(int ordinal)
   public (default) bool Listed(int ordinal)
@@ -1874,8 +1874,6 @@ public interface Idrak.Abstraction.Devices.IDeviceProvider
   public Idrak.Abstraction.Devices.Backend Create(int ordinal)
   public bool IsStarted(int ordinal)
   public int Count { get; }
-  public string Name { get; }
-  public string Summary { get; }
 
 public interface Idrak.Abstraction.Devices.IFloat8Backend
   public bool Float8MatMul(Idrak.Abstraction.Devices.Storage x, int m, int k, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage scales, int n, Idrak.Abstraction.Devices.Storage y, float beta)
@@ -1982,7 +1980,7 @@ public interface Idrak.Abstraction.Devices.ISegmentedAttentionBackend
   public bool AttentionSegmentedBackward(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant)
   public bool SupportsSegmented(int dim, Idrak.Abstraction.Devices.AttentionVariant variant)
 
-public interface Idrak.Abstraction.Devices.ISeparableDeviceProvider : Idrak.Abstraction.Devices.IDeviceProvider
+public interface Idrak.Abstraction.Devices.ISeparableDeviceProvider : Idrak.Abstraction.Devices.IDeviceProvider, Idrak.Abstraction.IKind
   public Idrak.Abstraction.Devices.Backend CreateSeparate(int ordinal, Idrak.Abstraction.Devices.SeparateBackendOptions options)
 
 public interface Idrak.Abstraction.Devices.ISlotStaging : Idrak.Abstraction.Devices.IHostStaging, System.IDisposable
