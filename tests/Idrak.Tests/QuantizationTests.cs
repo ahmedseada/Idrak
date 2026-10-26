@@ -24,6 +24,7 @@ internal static partial class Tests
         ("int8: QLoRA — adapters train on top of frozen int8 weights", Int8Lora),
         ("bf16: rounding, direct and expanded products, gradient, model conversion, save/load, decoder build", BFloat16Weights),
         ("int4: group scales, direct and expanded products, gradient, model conversion, save/load", Int4Weights),
+        ("int8 / int4 / bf16 few-row products on CUDA: the kernels compiled for 1, 2 and 4 rows equal the eight-row kernel bit for bit (1 to 8 rows; 1, 2 and 4 splits; eight-word passes, shorter passes and single rows; a partial last word, column block and int4 scale group)", FewRowKernelsMatch),
         ("packed projections sharing an input (int8, int4, bf16; biases; splits) and gated down projections match separate layers", PackedMany),
         ("packed epilogues: the bias, gelu and the residual in a bf16 or 4-bit product's epilogue (MatMulPackedEpilogue, the Linear helpers) equal the separate passes bit for bit, float32 and bfloat16 (1, 70 and 300 rows), with no pass after the product on CUDA's tensor cores; a transformer encoder layer's fused inference pass equals its layers run one by one", PackedEpilogues),
         ("weights: Float16 and BFloat16 files are half the size and round as expected", HalfPrecisionFiles),
@@ -496,6 +497,69 @@ internal static partial class Tests
         var generator = new TextGenerator(model, new CharTokenizer("abcdefghijk"), 12) { CacheFormat = KeyValueFormat.Int8 };
         var (text, _, stats) = generator.Generate("abc", new GenerationOptions { Temperature = 0f, TopK = 1, NumPredict = 6 });
         Check(stats.GeneratedTokens == 6 && text.Length == 6, $"generator with an int8 cache: '{text}'");
+    }
+
+    // CUDA's plain few-row products compiled for 1, 2 and 4 rows (PtxKernels.GemvRowVariants: fewer accumulators, no
+    // predicated-off rows, eight words a pass) against the eight-row kernel they stand in for, which keeps each output's
+    // operations and their order: equal bit for bit at each split count. Depths with eight-word passes, four-row (int4:
+    // one-block) passes and single rows in every split's chunk; widths with a partial last word and column block.
+    private static void FewRowKernelsMatch(Device device)
+    {
+        if (device.Type != DeviceType.Cuda)
+        {
+            return;
+        }
+
+        var b = device.Backend;
+        var random = new Random(83);
+        float[] Values(int count, float scale) => [.. Enumerable.Range(0, count).Select(_ => (float)(random.NextDouble() * 2 - 1) * scale)];
+        try
+        {
+            foreach (var format in new[] { PackedFormat.Int8, PackedFormat.Int4, PackedFormat.BFloat16 })
+            {
+                foreach (var (k, n) in new[] { (64, 1001), (1000, 1001), (2048, 4100) })
+                {
+                    using var weight = PackedWeightFormats.Pack(format, Values(k * n, 0.5f), k, n, device);
+                    var (packed, scales) = (weight.PackedValues.Storage, weight.ScaleValues?.Storage);
+                    foreach (int m in new[] { 1, 2, 3, 4, 5, 8 })
+                    {
+                        using var x = Tensor.From(Values(m * k, 1f), [m * k], device);
+                        foreach (int splits in new[] { 1, 2, 4 })
+                        {
+                            Idrak.Gpu.Cuda.CudaBackend.GemvSplits = splits;
+                            float[] Run(bool rowKernels)
+                            {
+                                Idrak.Gpu.Cuda.CudaBackend.GemvRowKernelsOn = rowKernels;
+                                using var y = Tensor.From(new float[m * n], [m * n], device);
+                                switch (format)
+                                {
+                                    case PackedFormat.Int8:
+                                        b.Int8MatMul(x.Storage, packed, scales!, y.Storage, m, n, k);
+                                        break;
+                                    case PackedFormat.Int4:
+                                        b.Int4MatMul(x.Storage, packed, scales!, y.Storage, m, n, k);
+                                        break;
+                                    default:
+                                        b.BFloat16MatMul(x.Storage, packed, y.Storage, m, n, k);
+                                        break;
+                                }
+
+                                return y.ToArray();
+                            }
+
+                            float[] fewer = Run(true), eight = Run(false);
+                            int differ = fewer.Where((v, i) => BitConverter.SingleToInt32Bits(v) != BitConverter.SingleToInt32Bits(eight[i])).Count();
+                            Check(differ == 0, $"{format}, {m} x {k} -> {n}, {splits} splits: {differ} of {fewer.Length} outputs of the kernel for fewer rows differ from the eight-row kernel's (largest difference {fewer.Zip(eight, (p, q) => MathF.Abs(p - q)).Max()})");
+                        }
+                    }
+                }
+            }
+        }
+        finally
+        {
+            Idrak.Gpu.Cuda.CudaBackend.GemvSplits = null;
+            Idrak.Gpu.Cuda.CudaBackend.GemvRowKernelsOn = true;
+        }
     }
 
     private static void FewRowMatMul(Device device)

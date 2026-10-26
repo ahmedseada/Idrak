@@ -10,7 +10,17 @@ namespace Idrak.Gpu.Cuda;
 // row padded to n4 = ceil(n / 4) words), with one float scale per column: w[k, j] = q[k, j] · scale[j].
 internal static partial class PtxKernels
 {
-    public static readonly string[] QuantizedNames = ["int8_matmul_f32", "int8_dequant_f32", "kv_write_int8", "attn_scores_int8", "attn_context_int8", "int8_gemv_f32", "int8_gemv_finish_f32", "bf16_gemv_f32", "bf16_dequant_f32", "f16_dequant_f32", "int4_gemv_f32", "int4_dequant_f32", "int8_gemv_multi_f32", "bf16_gemv_multi_f32", "int4_gemv_multi_f32", "int8_gemv_silu_f32", "bf16_gemv_silu_f32", "int4_gemv_silu_f32", "int8_gemv_gelu_f32", "bf16_gemv_gelu_f32", "int4_gemv_gelu_f32", "int8_gemv_addnorm_f32", "bf16_gemv_addnorm_f32", "int4_gemv_addnorm_f32", "int8_gemv_multi_act_f32", "bf16_gemv_multi_act_f32", "int4_gemv_multi_act_f32", "int8_gemv_normaddnorm_f32", "bf16_gemv_normaddnorm_f32", "int4_gemv_normaddnorm_f32"];
+    public static readonly string[] QuantizedNames = ["int8_matmul_f32", "int8_dequant_f32", "kv_write_int8", "attn_scores_int8", "attn_context_int8", "int8_gemv_f32", "int8_gemv_finish_f32", "bf16_gemv_f32", "bf16_dequant_f32", "f16_dequant_f32", "int4_gemv_f32", "int4_dequant_f32", "int8_gemv_multi_f32", "bf16_gemv_multi_f32", "int4_gemv_multi_f32", "int8_gemv_silu_f32", "bf16_gemv_silu_f32", "int4_gemv_silu_f32", "int8_gemv_gelu_f32", "bf16_gemv_gelu_f32", "int4_gemv_gelu_f32", "int8_gemv_addnorm_f32", "bf16_gemv_addnorm_f32", "int4_gemv_addnorm_f32", "int8_gemv_multi_act_f32", "bf16_gemv_multi_act_f32", "int4_gemv_multi_act_f32", "int8_gemv_normaddnorm_f32", "bf16_gemv_normaddnorm_f32", "int4_gemv_normaddnorm_f32",
+        "int8_gemv_r1_f32", "int8_gemv_r2_f32", "int8_gemv_r4_f32", "int4_gemv_r1_f32", "int4_gemv_r2_f32", "int4_gemv_r4_f32",
+        "bf16_gemv_r1_f32", "bf16_gemv_r2_f32", "bf16_gemv_r4_f32"];
+
+    /// <summary>
+    /// Row counts the plain few-row products are also compiled for (<c>int8_gemv_r1_f32</c> …, by format int8, int4,
+    /// bfloat16 and then these counts in <see cref="QuantizedNames"/>): m rows take the first at least m, more than the last
+    /// the <see cref="GemvRows"/>-row kernel. Each gives the eight-row kernel's results bit for bit. A span over constant
+    /// data, not a static array: Source is built during static initialization, which may precede this file's fields.
+    /// </summary>
+    public static ReadOnlySpan<int> GemvRowVariants => [1, 2, 4];
 
     /// <summary>Rows of an int4 weight matrix that share one scale per column.</summary>
     public const int Int4Group = 32;
@@ -42,6 +52,12 @@ internal static partial class PtxKernels
         Int8Gemv(sb, addNorm: true, normAdd: true);
         Int8Gemv(sb, bf16: true, addNorm: true, normAdd: true);
         Int8Gemv(sb, int4: true, addNorm: true, normAdd: true);
+        foreach (int rows in GemvRowVariants)
+        {
+            Int8Gemv(sb, rows: rows);
+            Int8Gemv(sb, int4: true, rows: rows);
+            Int8Gemv(sb, bf16: true, rows: rows);
+        }
 
         // w[r, 8c + j] = nibble j of packed word (r, c) · s[r / Int4Group, 8c + j]: one thread per word.
         var dequant = new StringBuilder("""
@@ -452,13 +468,31 @@ internal static partial class PtxKernels
     // equal widths, then hidden = act(gate) · up (p_act as gated_act_f32's kind): the second product to finish a column
     // range (counted in counters[2·cstride + column block], reset afterwards) computes it for those columns. p_act and
     // p_hidden follow p_n2.
+    //
+    // rows (…_gemv_r1_f32 / _r2 / _r4, the plain kernels only): compiled for at most that many rows of x instead of
+    // GemvRows. Each output takes the eight-row kernel's operations in its order (the same rows of k per slice, the same
+    // multiply-adds, the slices and splits added alike), so the results are equal bit for bit; only the accumulators
+    // and the predicated-off rows' loads and multiply-adds are gone. The eight-row kernel issued all eight rows'
+    // instructions for one row and kept 8 · cpw accumulators live (64 for int4), so a multiprocessor held one block of
+    // it: one row reached about half the memory bandwidth (int8) or less (int4) that bfloat16 did on the same card.
+    // Deep (rows · cpw ≤ 8: int8 to 2 rows, int4 1 row, bf16 to 4 rows): a pass loads eight words per thread before
+    // using any (int8 / bf16: rows kk, kk + 16, …, kk + 112; int4: two 64-row blocks, each with its group's scales), the
+    // shorter passes after it, so twice the bytes are in flight; one row also loads each step's input into a register
+    // of its own (rule 80: all eight loads issue together).
     private static void Int8Gemv(StringBuilder sb, bool bf16 = false, bool int4 = false, bool multi = false, int gated = 0, bool addNorm = false,
-        bool gatedPair = false, bool normAdd = false)
+        bool gatedPair = false, bool normAdd = false, int rows = GemvRows)
     {
+        if (rows != GemvRows && (multi || gated != 0 || addNorm || !GemvRowVariants.Contains(rows)))
+        {
+            throw new ArgumentException($"The few-row kernels compiled for {rows} rows are the plain ones, for the counts of GemvRowVariants.", nameof(rows));
+        }
+
         int cpw = bf16 ? 2 : int4 ? 8 : 4, columns = 32 * cpw;
-        int acc = GemvRows * cpw, dec = Math.Max(32, acc), sc = dec + 9, red = dec + 20;
+        bool deep = rows != GemvRows && rows * cpw <= 8, ownInputs = deep && rows == 1;
+        int acc = rows * cpw, dec = Math.Max(32, acc), sc = dec + 9, red = dec + (deep && int4 ? 28 : 20);
         string part = bf16 ? "h_part" : int4 ? "i4_part" : "i8_part";
-        string name = (bf16 ? "bf16_gemv" : int4 ? "int4_gemv" : "int8_gemv") + (multi ? (gatedPair ? "_multi_act_f32" : "_multi_f32") : gated == 1 ? "_silu_f32" : gated == 2 ? "_gelu_f32" : normAdd ? "_normaddnorm_f32" : addNorm ? "_addnorm_f32" : "_f32");
+        string name = (bf16 ? "bf16_gemv" : int4 ? "int4_gemv" : "int8_gemv") + (rows != GemvRows ? string.Create(CultureInfo.InvariantCulture, $"_r{rows}") : "")
+            + (multi ? (gatedPair ? "_multi_act_f32" : "_multi_f32") : gated == 1 ? "_silu_f32" : gated == 2 ? "_gelu_f32" : normAdd ? "_normaddnorm_f32" : addNorm ? "_addnorm_f32" : "_f32");
         string finished = addNorm ? "COLS_DONE" : gatedPair ? "PAIR" : "DONE";
         int gt = red + 9;
         bool scaled = !bf16 && !int4;
@@ -554,9 +588,9 @@ internal static partial class PtxKernels
             {
                 .reg .pred %p<24>;
                 .reg .f32 %f<{{red + (normAdd ? 26 : 12)}}>;
-                .reg .f32 %x<{{GemvRows}}>;{{(gated > 0 ? string.Create(CultureInfo.InvariantCulture, $"\n    .reg .f32 %u<{GemvRows}>;") : "")}}
-                .reg .b32 %r<40>;
-                .reg .b64 %rd<32>;
+                .reg .f32 %x<{{(ownInputs ? 8 : rows)}}>;{{(gated > 0 ? string.Create(CultureInfo.InvariantCulture, $"\n    .reg .f32 %u<{GemvRows}>;") : "")}}
+                .reg .b32 %r<{{(deep ? 48 : 40)}}>;
+                .reg .b64 %rd<{{(deep ? 36 : 32)}}>;
                 .shared .align 4 .f32 {{part}}[{{16 * columns}}];
             {{loads}}
                 mov.u32 %r5, %tid.x;
@@ -575,7 +609,7 @@ internal static partial class PtxKernels
                 mul.wide.u32 %rd8, %r4, 4;
                 shl.b32 %r36, %r4, 3;
             """);
-        for (int r = 0; r < GemvRows; r++)
+        for (int r = 0; r < rows; r++)
         {
             s.AppendLine(CultureInfo.InvariantCulture, $"    setp.lt.u32 %p{r}, {r}, %r1;");
             for (int c = 0; c < cpw; c++)
@@ -586,15 +620,17 @@ internal static partial class PtxKernels
 
         if (int4)
         {
-            for (int c = 0; c < 8; c++)
+            for (int c = 0; c < (deep ? 16 : 8); c++)
             {
                 s.AppendLine(CultureInfo.InvariantCulture, $"    mov.f32 %f{sc + c}, 0f00000000;");
             }
         }
 
-        // One k step: word %r{word} holds cpw columns; x[r, kk] is at %rd11 + {offset} + r·k·4.
-        string Step(string wordReg, string xOffset)
+        // One k step: word %r{word} holds cpw columns; x[r, kk] is at %rd11 + {offset} + r·k·4. int4: the group's scales
+        // are %f{scales} … %f{scales + 7}; row r's input goes to %x{input + r}.
+        string Step(string wordReg, string xOffset, int scales = -1, int input = 0)
         {
+            scales = scales < 0 ? sc : scales;
             var t = new StringBuilder();
             if (bf16)
             {
@@ -613,7 +649,7 @@ internal static partial class PtxKernels
                     t.AppendLine(CultureInfo.InvariantCulture, $"cvt.rn.f32.s32 %f{dec + c}, %r20;");
                     if (int4)
                     {
-                        t.AppendLine(CultureInfo.InvariantCulture, $"mul.f32 %f{dec + c}, %f{dec + c}, %f{sc + c};");
+                        t.AppendLine(CultureInfo.InvariantCulture, $"mul.f32 %f{dec + c}, %f{dec + c}, %f{scales + c};");
                     }
                 }
             }
@@ -623,9 +659,9 @@ internal static partial class PtxKernels
             // their predicates made each load wait for the previous row's multiply-adds). Each row's sums take the same
             // operations in the same order.
             t.AppendLine("mov.u64 %rd12, %rd11;");
-            for (int r = 0; r < GemvRows; r++)
+            for (int r = 0; r < rows; r++)
             {
-                t.AppendLine(CultureInfo.InvariantCulture, $"@%p{r} ld.global.f32 %x{r}, [%rd12+{xOffset}];");
+                t.AppendLine(CultureInfo.InvariantCulture, $"@%p{r} ld.global.f32 %x{input + r}, [%rd12+{xOffset}];");
                 if (gated > 0)
                 {
                     t.AppendLine("add.u64 %rd28, %rd12, %rd29;");
@@ -635,7 +671,7 @@ internal static partial class PtxKernels
                 t.AppendLine("add.u64 %rd12, %rd12, %rd7;");
             }
 
-            for (int r = 0; r < GemvRows; r++)
+            for (int r = 0; r < rows; r++)
             {
                 if (gated > 0)
                 {
@@ -667,25 +703,61 @@ internal static partial class PtxKernels
 
                 for (int c = 0; c < cpw; c++)
                 {
-                    t.AppendLine(CultureInfo.InvariantCulture, $"@%p{r} fma.rn.f32 %f{r * cpw + c}, %x{r}, %f{dec + c}, %f{r * cpw + c};");
+                    t.AppendLine(CultureInfo.InvariantCulture, $"@%p{r} fma.rn.f32 %f{r * cpw + c}, %x{input + r}, %f{dec + c}, %f{r * cpw + c};");
                 }
             }
 
             return t.ToString();
         }
 
-        // Int4: the scales of row %r{row}'s group for this thread's eight columns (two 16-byte loads).
-        string GroupScales(string row) => string.Create(CultureInfo.InvariantCulture, $"""
-                shr.u32 %r37, {row}, {(int)Math.Log2(Int4Group)};
-                mul.wide.u32 %rd15, %r37, %r36;
-                cvt.u64.u32 %rd16, %r8;
-                shl.b64 %rd16, %rd16, 3;
-                add.u64 %rd15, %rd15, %rd16;
-                shl.b64 %rd15, %rd15, 2;
-                add.u64 %rd15, %rd15, %rd3;
-                @%p20 ld.global.v4.f32 {"{"}%f{sc}, %f{sc + 1}, %f{sc + 2}, %f{sc + 3}{"}"}, [%rd15];
-                @%p20 ld.global.v4.f32 {"{"}%f{sc + 4}, %f{sc + 5}, %f{sc + 6}, %f{sc + 7}{"}"}, [%rd15+16];
-            """);
+        // Int4: the scales of row %r{row}'s group for this thread's eight columns (two 16-byte loads) into %f{scales} …
+        // %f{scales + 7}.
+        string GroupScales(string row, int scales = -1)
+        {
+            scales = scales < 0 ? sc : scales;
+            return string.Create(CultureInfo.InvariantCulture, $"""
+                    shr.u32 %r37, {row}, {(int)Math.Log2(Int4Group)};
+                    mul.wide.u32 %rd15, %r37, %r36;
+                    cvt.u64.u32 %rd16, %r8;
+                    shl.b64 %rd16, %rd16, 3;
+                    add.u64 %rd15, %rd15, %rd16;
+                    shl.b64 %rd15, %rd15, 2;
+                    add.u64 %rd15, %rd15, %rd3;
+                    @%p20 ld.global.v4.f32 {"{"}%f{scales}, %f{scales + 1}, %f{scales + 2}, %f{scales + 3}{"}"}, [%rd15];
+                    @%p20 ld.global.v4.f32 {"{"}%f{scales + 4}, %f{scales + 5}, %f{scales + 6}, %f{scales + 7}{"}"}, [%rd15+16];
+                """);
+        }
+
+        // Deep kernels: the eight words of a pass in %r21 … %r24, %r40 … %r43, loaded before any is used (the second four
+        // from %rd32 on, `second` bytes past the first word), each %rd9 += `stride` after the one before.
+        string EightWords(string stride, string second) => string.Create(CultureInfo.InvariantCulture, $"""
+                    {second}
+                    mov.u32 %r21, 0;
+                    mov.u32 %r22, 0;
+                    mov.u32 %r23, 0;
+                    mov.u32 %r24, 0;
+                    mov.u32 %r40, 0;
+                    mov.u32 %r41, 0;
+                    mov.u32 %r42, 0;
+                    mov.u32 %r43, 0;
+                    @%p20 ld.global.u32 %r21, [%rd9];
+                    add.u64 %rd9, %rd9, {stride};
+                    @%p20 ld.global.u32 %r22, [%rd9];
+                    add.u64 %rd9, %rd9, {stride};
+                    @%p20 ld.global.u32 %r23, [%rd9];
+                    add.u64 %rd9, %rd9, {stride};
+                    @%p20 ld.global.u32 %r24, [%rd9];
+                    @%p20 ld.global.u32 %r40, [%rd32];
+                    add.u64 %rd32, %rd32, {stride};
+                    @%p20 ld.global.u32 %r41, [%rd32];
+                    add.u64 %rd32, %rd32, {stride};
+                    @%p20 ld.global.u32 %r42, [%rd32];
+                    add.u64 %rd32, %rd32, {stride};
+                    @%p20 ld.global.u32 %r43, [%rd32];
+                """);
+
+        // The input register base of step u of a deep pass: one of its own per step for one row, else shared.
+        int Input(int u) => ownInputs ? u : 0;
 
         if (int4)
         {
@@ -693,6 +765,46 @@ internal static partial class PtxKernels
             s.AppendLine("""
                     mov.u32 %r12, %r10;
                     shl.b32 %r34, %r7, 2;
+                """);
+            if (deep)
+            {
+                // Two 64-row blocks a pass while both fit, in block order (the order of the one-block passes), each
+                // with its group's scales (%f{sc} … and %f{sc + 8} …); then the one-block passes.
+                s.AppendLine("""
+                        K8:
+                            add.u32 %r13, %r12, 128;
+                            setp.gt.u32 %p10, %r13, %r11;
+                            @%p10 bra K4;
+                            add.u32 %r35, %r12, %r34;
+                            add.u32 %r44, %r35, 64;
+                            mul.wide.u32 %rd9, %r35, %r4;
+                            cvt.u64.u32 %rd10, %r8;
+                            add.u64 %rd9, %rd9, %rd10;
+                            shl.b64 %rd9, %rd9, 2;
+                            add.u64 %rd9, %rd9, %rd2;
+                        """);
+                s.AppendLine(EightWords("%rd8", "shl.b64 %rd32, %rd6, 2;\n    add.u64 %rd32, %rd32, %rd9;"));
+                s.AppendLine(GroupScales("%r35"));
+                s.AppendLine(GroupScales("%r44", sc + 8));
+                s.AppendLine("""
+                            mul.wide.u32 %rd11, %r35, 4;
+                            add.u64 %rd11, %rd11, %rd1;
+                        """);
+                s.AppendLine(Step("%r21", "0", sc, Input(0)));
+                s.AppendLine(Step("%r22", "4", sc, Input(1)));
+                s.AppendLine(Step("%r23", "8", sc, Input(2)));
+                s.AppendLine(Step("%r24", "12", sc, Input(3)));
+                s.AppendLine(Step("%r40", "256", sc + 8, Input(4)));
+                s.AppendLine(Step("%r41", "260", sc + 8, Input(5)));
+                s.AppendLine(Step("%r42", "264", sc + 8, Input(6)));
+                s.AppendLine(Step("%r43", "268", sc + 8, Input(7)));
+                s.AppendLine("""
+                            add.u32 %r12, %r12, 128;
+                            bra K8;
+                        """);
+            }
+
+            s.AppendLine("""
                 K4:
                     add.u32 %r13, %r12, 64;
                     setp.gt.u32 %p10, %r13, %r11;
@@ -735,6 +847,42 @@ internal static partial class PtxKernels
         {
             s.AppendLine("""
                     add.u32 %r12, %r10, %r7;
+                """);
+            if (deep)
+            {
+                // Rows kk, kk + 16, …, kk + 112 a pass while all eight are in the chunk (the four-row passes' order);
+                // then the four-row passes.
+                s.AppendLine("""
+                        K8:
+                            add.u32 %r13, %r12, 112;
+                            setp.ge.u32 %p10, %r13, %r11;
+                            @%p10 bra K4;
+                            mul.wide.u32 %rd9, %r12, %r4;
+                            cvt.u64.u32 %rd10, %r8;
+                            add.u64 %rd9, %rd9, %rd10;
+                            shl.b64 %rd9, %rd9, 2;
+                            add.u64 %rd9, %rd9, %rd2;
+                        """);
+                s.AppendLine(EightWords("%rd6", "shl.b64 %rd32, %rd6, 2;\n    add.u64 %rd32, %rd32, %rd9;"));
+                s.AppendLine("""
+                            mul.wide.u32 %rd11, %r12, 4;
+                            add.u64 %rd11, %rd11, %rd1;
+                        """);
+                s.AppendLine(Step("%r21", "0", input: Input(0)));
+                s.AppendLine(Step("%r22", "64", input: Input(1)));
+                s.AppendLine(Step("%r23", "128", input: Input(2)));
+                s.AppendLine(Step("%r24", "192", input: Input(3)));
+                s.AppendLine(Step("%r40", "256", input: Input(4)));
+                s.AppendLine(Step("%r41", "320", input: Input(5)));
+                s.AppendLine(Step("%r42", "384", input: Input(6)));
+                s.AppendLine(Step("%r43", "448", input: Input(7)));
+                s.AppendLine("""
+                            add.u32 %r12, %r12, 128;
+                            bra K8;
+                        """);
+            }
+
+            s.AppendLine("""
                 K4:
                     add.u32 %r13, %r12, 48;
                     setp.ge.u32 %p10, %r13, %r11;
@@ -809,7 +957,7 @@ internal static partial class PtxKernels
                 mul.wide.u32 %rd13, %r18, 4;
                 add.u64 %rd14, %rd13, %rd3;
             """);
-        for (int r = 0; r < GemvRows; r++)
+        for (int r = 0; r < rows; r++)
         {
             // part[slice][lane·cpw + c] = acc[r][c]; then one thread per column adds the 16 slices of its column.
             s.AppendLine(CultureInfo.InvariantCulture, $"    @!%p{r} bra ROWS_DONE;");

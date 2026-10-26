@@ -112,6 +112,40 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
         "int8_gemv_normaddnorm_f32", "int4_gemv_normaddnorm_f32", "bf16_gemv_normaddnorm_f32",
     ];
 
+    // The plain kernels compiled for fewer rows, [format * GemvRowVariants.Length + i] for GemvRowVariants[i] rows.
+    private static readonly string[] GemvRowKernels =
+    [
+        "int8_gemv_r1_f32", "int8_gemv_r2_f32", "int8_gemv_r4_f32", "int4_gemv_r1_f32", "int4_gemv_r2_f32", "int4_gemv_r4_f32",
+        "bf16_gemv_r1_f32", "bf16_gemv_r2_f32", "bf16_gemv_r4_f32",
+    ];
+
+    /// <summary>
+    /// Tests and benchmarks: false runs the plain few-row products of 1 to 4 rows on the eight-row kernels instead of the
+    /// ones compiled for fewer rows (the same results bit for bit, so a comparison of the two).
+    /// </summary>
+    internal static bool GemvRowKernelsOn { get; set; } = true;
+
+    // The kernel of a few-row product: a plain product of m ≤ 4 rows on the kernel compiled for the fewest rows that hold
+    // m (PtxKernels.GemvRowVariants: fewer accumulators and no predicated-off rows, so more blocks fit a multiprocessor
+    // and more loads are in flight), equal bit for bit to the eight-row kernel; the fused kernels and more rows on the
+    // eight-row kernels. No allocation (the per-token path).
+    private static string GemvKernel(int variant, int m)
+    {
+        var counts = PtxKernels.GemvRowVariants;
+        if (GemvRowKernelsOn && variant < GemvNormAddNorm && variant % 4 == GemvPlain && m >= 1)
+        {
+            for (int i = 0; i < counts.Length; i++)
+            {
+                if (m <= counts[i])
+                {
+                    return GemvRowKernels[variant / 4 * counts.Length + i];
+                }
+            }
+        }
+
+        return GemvKernels[variant];
+    }
+
     private static readonly string[] GemvMultiKernels =
         ["int8_gemv_multi_f32", "int8_gemv_multi_act_f32", "int4_gemv_multi_f32", "int4_gemv_multi_act_f32", "bf16_gemv_multi_f32", "bf16_gemv_multi_act_f32"];
 
@@ -195,7 +229,7 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
         Storage? up = null, ReadOnlySpan<ulong> tail = default)
     {
         int columnBlocks = (words + 31) / 32;
-        var rows = new FewRows(GemvKernels[variant], x, q, scales, up, SplitCounters(columnBlocks + 1), m, n, k, words, align);
+        var rows = new FewRows(GemvKernel(variant, m), x, q, scales, up, SplitCounters(columnBlocks + 1), m, n, k, words, align);
         int splits;
         if (GemvSplits is int forced)
         {

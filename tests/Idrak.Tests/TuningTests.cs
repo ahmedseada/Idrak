@@ -808,11 +808,40 @@ internal static partial class Tests
         {
             ("gemv_nn_f32", PtxKernels.Source, PtxKernels.GemvThreads), ("gemv_multi_f32", PtxKernels.Source, PtxKernels.GemvThreads),
             ("int8_gemv_f32", PtxKernels.Source, PtxKernels.Int8GemvThreads), ("int4_gemv_multi_act_f32", PtxKernels.Source, PtxKernels.Int8GemvThreads),
+            ("int8_gemv_r1_f32", PtxKernels.Source, PtxKernels.Int8GemvThreads), ("int4_gemv_r2_f32", PtxKernels.Source, PtxKernels.Int8GemvThreads),
+            ("bf16_gemv_r4_f32", PtxKernels.Source, PtxKernels.Int8GemvThreads),
             ("softmax_ce_rows_f32", PtxKernels.Source, PtxKernels.SoftmaxCrossEntropyThreads),
             ("sample_rows_f32", PtxKernels.Source, defaults.SamplerThreads), ("sample_rows_f32", source, wide!.SamplerThreads),
         };
         var undeclared = declared.Where(d => MaxThreads(d.Ptx, d.Kernel) != d.Threads).Select(d => $"{d.Kernel}: .maxntid {MaxThreads(d.Ptx, d.Kernel)}, launched with {d.Threads}").ToList();
         Check(undeclared.Count == 0, $"kernels written for a fixed block declare it: {string.Join("; ", undeclared)}");
+
+        // The plain few-row kernels compiled for fewer rows: the predicates of their rows only (the eight-row kernel's
+        // others are gone), and the eight-word passes where rows · columns per word ≤ 8 (int8 to 2 rows, int4 1, bf16 to 4).
+        var gemvEntries = PtxKernels.Entries(PtxKernels.Source);
+        string Body(string kernel)
+        {
+            int at = gemvEntries.FindIndex(e => e.Name == kernel);
+            return at < 0 ? "" : PtxKernels.Source[gemvEntries[at].Start..(at + 1 < gemvEntries.Count ? gemvEntries[at + 1].Start : PtxKernels.Source.Length)];
+        }
+
+        var rowKernels = new List<string>();
+        foreach (var (format, perWord) in new[] { ("int8", 4), ("int4", 8), ("bf16", 2) })
+        {
+            foreach (int rows in PtxKernels.GemvRowVariants)
+            {
+                string kernel = $"{format}_gemv_r{rows}_f32", body = Body(kernel);
+                bool deep = rows * perWord <= 8;
+                if (body.Length == 0 || !PtxKernels.QuantizedNames.Contains(kernel) || body.Contains($"@%p{rows} ", StringComparison.Ordinal)
+                    || !body.Contains($"@%p{rows - 1} fma.rn.f32", StringComparison.Ordinal) || body.Contains("K8:", StringComparison.Ordinal) != deep)
+                {
+                    rowKernels.Add($"{kernel}: {(body.Length == 0 ? "missing" : $"rows {rows}, eight-word passes {body.Contains("K8:", StringComparison.Ordinal)} (expected {deep})")}");
+                }
+            }
+        }
+
+        Check(rowKernels.Count == 0 && Body("int8_gemv_f32").Contains("@%p7 fma.rn.f32", StringComparison.Ordinal) && !Body("int8_gemv_f32").Contains("K8:", StringComparison.Ordinal),
+            $"the few-row kernels for 1, 2 and 4 rows hold those rows (the eight-row kernel all eight): {string.Join("; ", rowKernels)}");
 
         // Devices the kernels cannot run on: a reason, no shapes.
         Check(KernelShapes.Derive(large with { MaxThreadsPerBlock = 512 }, out string? small) is null && small!.Contains("1024", StringComparison.Ordinal), $"512 threads per block: {small}");
