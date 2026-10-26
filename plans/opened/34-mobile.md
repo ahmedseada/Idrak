@@ -1,7 +1,6 @@
 # Plan 34: Idrak.Maui and Idrak.Mobile (the library on a phone, as an app; Android first)
 
-**Status:** planned 2026-10-26 against `main` 5c7d54a; M0, M1 and M3 built (459e41a, b7b6739, 44303bd); M2 and the Models lab under way; the Self-test lab after M7; R (the redesign) built, the phone and the tablet to confirm. Phases below, built in order, at most two agents
-at a time. Android is the target; iOS is later and outside this plan.
+**Status:** planned 2026-10-26 against `main` 5c7d54a. Built: M0, M1, M2, M3, M4 (Models and every feature's place), M5 (Chat, Transcribe), M6 (Speak, Studio, Read text, Image), F (the first-run fixes) and R (the approved redesign), with their follow-ups. Held for the owner: Search (M7), Self-test (M7b), the bench (M8) and iOS. Open: on the CPU a process's first operation is about 10.6 ms slower than before F (28.7 → 39.4 ms cold, measured with the launch bench); its cause is not measured yet (likely F's first-use reads: system memory, core groups, vector paths), left by the owner for later. Next: the owner's runs of the built features on a phone and a tablet.
 
 ## Why
 
