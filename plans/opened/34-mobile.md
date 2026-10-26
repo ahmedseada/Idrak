@@ -1,6 +1,6 @@
 # Plan 34: Idrak.Maui and Idrak.Mobile (the library on a phone, as an app; Android first)
 
-**Status:** planned 2026-10-26 against `main` 5c7d54a; M0 and M1 built (459e41a, b7b6739), M2 and M3 under way. Phases below, built in order, at most two agents
+**Status:** planned 2026-10-26 against `main` 5c7d54a; M0, M1 and M3 built (459e41a, b7b6739, 44303bd); M2 and the Models lab under way; the Self-test lab after M7. Phases below, built in order, at most two agents
 at a time. Android is the target; iOS is later and outside this plan.
 
 ## Why
@@ -110,10 +110,11 @@ nothing that needs a shell.
 | M1 | **Library: sound out, and Android sound.** `IAudioPlayback` / `IAudioOutput` in `Idrak.Audio.Abstractions`, in **`AudioPlaybacks`** (a `SlotTable`), mirroring capture (available here and why not, devices, open, blocks written in order, drain). Built in: `winmm` (waveOut), `alsa` (PCM playback), and `aaudio` capture and playback for Android, from `libaaudio.so` loaded at run time (no Java binding, nothing shipped). `ForThisMachine` picks `aaudio` on Android; a refused microphone permission is named | none | B |
 | M2 | **The test groups as a library.** The groups and the runner's logic (filter, devices, progress, failures file, timeout) move to `tests/Idrak.Tests.Library`; `tests/Idrak.Tests` keeps its program and its commands unchanged. Tests find repository files through one root; where it is missing (on a phone), a test that needs the repository reports "not run here: needs the repository" instead of failing, and the summary counts them apart | M0 | A |
 | M3 | **Idrak.Maui core, and a first app to open.** The project (`net10.0;net10.0-android`), `UseIdrak`, the options, `IMobileFeature` and `MobileFeatures`, the services, the `maui` reporter, the theme; the app `apps/Idrak.Mobile` (`apps/Idrak.Mobile.slnx`) with its navigation, both themes, the icon, the settings page and the Devices lab, so the owner can open it in Visual Studio early | M0, M1 | B |
-| M4 | **Idrak.Mobile: the test harness.** The Self-test lab (the app's own feature over the test library) and the Models lab | M2, M3 | A |
-| M5 | Chat lab; Transcribe lab | M4 | A; B |
+| M4 | **The Models lab** (pull with progress, sizes, free space, remove). The Self-test lab moves after M7 (the owner, 2026-10-26: the features first; M2 is kept for it) | M3 | B |
+| M5 | Chat lab; Transcribe lab | M4 (Models) | A; B |
 | M6 | Speak and Audio process labs; OCR and Image labs | M5 | A; B |
 | M7 | Search lab | M6 | A |
+| M7b | **The Self-test lab**: the app's own feature over the test library (M2), a group on `cpu` or `vulkan:N` with live progress, the failures file shared out | M2, M7 | A |
 | M8 | Bench lab: the bench rows callable from the app as the tests are (M2's pattern). **Held: the owner decides when** | M7 | A |
 
 **Done when:**
