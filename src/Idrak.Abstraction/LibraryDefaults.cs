@@ -52,6 +52,9 @@ internal static class LibraryDefaults
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Cluster.LibraryRegistrations", "Idrak.Cluster")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Networking.LibraryRegistrations", "Idrak.Network")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Onnx.Runtime.LibraryRegistrations", "Idrak.Onnx.Runtime")]
+    // An application ships only the packages it references (a phone app takes a few), so the trimmer cannot resolve the
+    // others' assemblies (IL2035). That is the intent: an assembly not shipped has nothing to keep, and Find skips it.
+    [UnconditionalSuppressMessage("Trimming", "IL2035", Justification = "Each package is optional: one the application does not ship has no registrations to keep.")]
     public static void Ensure(Type registry)
     {
         lock (Gate)   // re-entrant: a registration that touches another registry comes back here
