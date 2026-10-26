@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The settings page (plan 34) over every option of IdrakMauiOptions; an empty field is the library's own value. -->
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+             x:Class="Idrak.Maui.Views.SettingsPage"
+             x:DataType="vm:SettingsViewModel"
+             Title="{Binding Title}">
+    <ContentPage.ToolbarItems>
+        <ToolbarItem Text="Save" Command="{Binding SaveCommand}" />
+    </ContentPage.ToolbarItems>
+
+    <ScrollView>
+        <VerticalStackLayout Padding="{DynamicResource IdrakPagePadding}" Spacing="{DynamicResource IdrakSpacingSmall}">
+            <Label Text="Settings" Style="{DynamicResource IdrakTitle}" />
+            <Label Text="Kept between runs and applied at start-up. An empty field is the library's own value (what it measures)." Style="{DynamicResource IdrakCaption}" />
+            <Label Text="{Binding Message}" IsVisible="{Binding HasMessage}" Style="{DynamicResource IdrakHighlightText}" />
+
+            <VerticalStackLayout BindableLayout.ItemsSource="{Binding Entries}" Margin="0,12,0,0">
+                <BindableLayout.ItemTemplate>
+                    <DataTemplate x:DataType="vm:SettingEntry">
+                        <Border Style="{DynamicResource IdrakCard}">
+                            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                <Label Text="{Binding Title}" Style="{DynamicResource IdrakHeading}" />
+                                <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" />
+                                <Entry Text="{Binding Text}" Placeholder="{Binding Placeholder}" IsPassword="{Binding IsPassword}"
+                                       Keyboard="{Binding Keyboard}" IsVisible="{Binding IsEntry}" ClearButtonVisibility="WhileEditing" />
+                                <Picker ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}" IsVisible="{Binding IsChoice}" Title="{Binding Title}" />
+                                <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+                            </VerticalStackLayout>
+                        </Border>
+                    </DataTemplate>
+                </BindableLayout.ItemTemplate>
+            </VerticalStackLayout>
+
+            <Border Style="{DynamicResource IdrakCard}">
+                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                    <Label Text="Features" Style="{DynamicResource IdrakHeading}" />
+                    <Label Text="Which pages the menu shows." Style="{DynamicResource IdrakCaption}" />
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding Features}" Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="vm:FeatureToggle">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                                    <VerticalStackLayout VerticalOptions="Center">
+                                        <Label Text="{Binding Title}" />
+                                        <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" />
+                                    </VerticalStackLayout>
+                                    <Switch Grid.Column="1" IsToggled="{Binding IsEnabled}" VerticalOptions="Center" />
+                                </Grid>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{DynamicResource IdrakCard}">
+                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                    <Label Text="Storage" Style="{DynamicResource IdrakHeading}" />
+                    <Label Text="The cache folder in effect" Style="{DynamicResource IdrakCaption}" />
+                    <Label Text="{Binding CacheFolder}" />
+                    <Label Text="The app's storage" Style="{DynamicResource IdrakCaption}" />
+                    <Label Text="{Binding AppStorage}" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Button Text="Save" Command="{Binding SaveCommand}" Margin="0,8,0,0" />
+            <Button Text="Forget the saved settings" Command="{Binding ResetCommand}" Style="{DynamicResource IdrakSecondaryButton}" Margin="0,0,0,24" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

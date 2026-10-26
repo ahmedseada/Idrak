@@ -1,0 +1,138 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using Idrak.Maui.Abstractions;
+
+namespace Idrak.Maui;
+
+/// <summary>Which theme the app shows.</summary>
+public enum IdrakThemeChoice
+{
+    /// <summary>The phone's setting, followed as it changes.</summary>
+    System,
+
+    /// <summary>Light.</summary>
+    Light,
+
+    /// <summary>Dark.</summary>
+    Dark,
+}
+
+/// <summary>
+/// What <c>UseIdrak</c> sets up, and the settings page edits: the device, the theme, the cache folder, every
+/// <see cref="ComputeResources"/> limit, the Hugging Face token, the progress interval, the models kept loaded and the
+/// features shown. A null limit means the library's own value: what its environment variable sets, else what it measures.
+/// The values an app gives in <c>UseIdrak</c> are its defaults; what the user saved in the settings page is applied over
+/// them (<see cref="KeepSettings"/>), at start-up, before the first device or download.
+/// </summary>
+public sealed class IdrakMauiOptions
+{
+    /// <summary>The device models load on: "auto" (the best found, <see cref="Device.Default"/>), "cpu", or "vulkan:0" and the like.</summary>
+    public string Device { get; set; } = "auto";
+
+    /// <summary>The theme: the phone's (the default), light or dark.</summary>
+    public IdrakThemeChoice Theme { get; set; } = IdrakThemeChoice.System;
+
+    /// <summary>
+    /// The library's cache folder (<see cref="ComputeResources.CacheFolder"/>): models, prepared files, measured choices.
+    /// Null: <c>IDRAK_CACHE</c> when set, else <c>idrak</c> in the app's own storage (MAUI's <c>FileSystem.AppDataDirectory</c>).
+    /// A change takes effect at the next start.
+    /// </summary>
+    public string? CacheFolder { get; set; }
+
+    /// <summary>The CPU threads the library may use (<see cref="ComputeResources.MaxCpuThreads"/>); null: every core, or IDRAK_CPU_THREADS.</summary>
+    public int? MaxCpuThreads { get; set; }
+
+    /// <summary>The most tensor memory on the CPU, in MiB (<see cref="ComputeResources.CpuMemoryLimit"/>); null: no limit, or IDRAK_CPU_MEMORY_LIMIT_MB.</summary>
+    public long? CpuMemoryLimitMiB { get; set; }
+
+    /// <summary>The most tensor memory on each GPU, in MiB (<see cref="ComputeResources.GpuMemoryLimit"/>); null: what the device has.</summary>
+    public long? GpuMemoryLimitMiB { get; set; }
+
+    /// <summary>GPU memory left free for the system, in MiB (<see cref="ComputeResources.GpuMemoryReserve"/>); null: measured from the device.</summary>
+    public long? GpuMemoryReserveMiB { get; set; }
+
+    /// <summary>Whether a full GPU places tensors in system memory (<see cref="ComputeResources.OffloadToHostMemory"/>); null: the library's.</summary>
+    public bool? OffloadToHostMemory { get; set; }
+
+    /// <summary>GPU memory kept free when offloaded tensors come back, in MiB (<see cref="ComputeResources.OffloadReturnHeadroom"/>); null: measured.</summary>
+    public long? OffloadReturnHeadroomMiB { get; set; }
+
+    /// <summary>The chunk a GPU places long-lived blocks in, in MiB (<see cref="ComputeResources.GpuChunkBytes"/>); null: from the device's pages. Next start.</summary>
+    public long? GpuChunkMiB { get; set; }
+
+    /// <summary>The stack each GPU thread gets, in bytes (<see cref="ComputeResources.GpuStackBytes"/>); null: what kernels need. Next start.</summary>
+    public long? GpuStackBytes { get; set; }
+
+    /// <summary>The share of available memory one operation's buffers may take, in (0, 1] (<see cref="ComputeResources.WorkspaceShare"/>); null: the library's.</summary>
+    public double? WorkspaceShare { get; set; }
+
+    /// <summary>How long a shape's first use may measure kernel choices, in ms (<see cref="ComputeResources.TuningBudget"/>); null: the library's.</summary>
+    public double? TuningBudgetMs { get; set; }
+
+    /// <summary>How far a measured choice reaches, in octaves (<see cref="ComputeResources.TuningNeighbourOctaves"/>); null: the library's.</summary>
+    public double? TuningNeighbourOctaves { get; set; }
+
+    /// <summary>Where frozen lookup tables live: "auto", "host" or "device" (<see cref="ComputeResources.LookupTables"/>); null: the library's.</summary>
+    public string? LookupTables { get; set; }
+
+    /// <summary>The Hugging Face token for gated and private models (kept in the phone's secure storage); null: none, or HF_TOKEN.</summary>
+    public string? HuggingFaceToken { get; set; }
+
+    /// <summary>The least time between two updates of a progress view (the "maui" reporter).</summary>
+    public TimeSpan ProgressInterval { get; set; } = TimeSpan.FromMilliseconds(250);
+
+    /// <summary>How long a model stays loaded after its last use; null: until memory pressure or the app ends.</summary>
+    public TimeSpan? ModelKeepAlive { get; set; } = TimeSpan.FromMinutes(10);
+
+    /// <summary>The most models kept loaded at once in each host (loading another unloads the longest unused); null: no limit.</summary>
+    public int? MaxLoadedModels { get; set; }
+
+    /// <summary>The least memory-pressure level that unloads the models not in use (cached device memory is returned at every level).</summary>
+    public MemoryPressureLevel UnloadModelsAt { get; set; } = MemoryPressureLevel.Low;
+
+    /// <summary>The features turned off in the settings (by name); every other registered feature shows.</summary>
+    public ISet<string> DisabledFeatures { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Whether what the user saved in the settings page is applied over these values at start-up (true by default).</summary>
+    public bool KeepSettings { get; set; } = true;
+
+    /// <summary>
+    /// Whether the library's progress goes to the "maui" reporter when nothing else names one (<c>IDRAK_PROGRESS</c> is set
+    /// to it in the process unless it is set already). True by default.
+    /// </summary>
+    public bool UseMauiProgress { get; set; } = true;
+
+    /// <summary>Where settings are kept; null: MAUI's Preferences.</summary>
+    public ISettingsStore? SettingsStore { get; set; }
+
+    /// <summary>Where the token is kept; null: MAUI's SecureStorage.</summary>
+    public ISecretStore? SecretStore { get; set; }
+
+    /// <summary>Whether the feature <paramref name="name"/> shows.</summary>
+    public bool IsFeatureEnabled(string name) => !DisabledFeatures.Contains(name);
+
+    /// <summary>A copy (its own set of disabled features).</summary>
+    public IdrakMauiOptions Clone()
+    {
+        var copy = (IdrakMauiOptions)MemberwiseClone();
+        copy.DisabledFeatures = new HashSet<string>(DisabledFeatures, StringComparer.OrdinalIgnoreCase);
+        return copy;
+    }
+
+    /// <summary>Takes every value of <paramref name="other"/> (the settings page saving into the app's options).</summary>
+    public void CopyFrom(IdrakMauiOptions other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        foreach (var setting in IdrakMauiSettings.Definitions)
+        {
+            setting.Set(this, setting.Get(other));
+        }
+
+        DisabledFeatures = new HashSet<string>(other.DisabledFeatures, StringComparer.OrdinalIgnoreCase);
+        KeepSettings = other.KeepSettings;
+        UseMauiProgress = other.UseMauiProgress;
+        SettingsStore = other.SettingsStore;
+        SecretStore = other.SecretStore;
+    }
+}

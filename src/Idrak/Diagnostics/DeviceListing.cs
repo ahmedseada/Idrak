@@ -58,6 +58,9 @@ public sealed record DeviceInfo
     /// <summary>The driver or runtime version, when the backend reports it separately from <see cref="Name"/>.</summary>
     public string? Driver { get; init; }
 
+    /// <summary>More of what the device reports, by name, in the backend's order (<see cref="Idrak.Abstraction.Devices.BackendHardware.Facts"/>), or null.</summary>
+    public IReadOnlyList<KeyValuePair<string, string>>? Facts { get; init; }
+
     /// <summary>Why the device's backend could not start, or null.</summary>
     public string? Error { get; init; }
 
@@ -134,6 +137,7 @@ public static class DeviceListing
             KernelWidth = hardware.KernelWidth,
             HardwareKind = hardware.HardwareKind,
             Driver = hardware.Driver,
+            Facts = hardware.Facts,
             KernelsUnavailable = (backend as Idrak.Abstraction.Devices.IKernelAvailability)?.KernelsUnavailable(),
         };
     }

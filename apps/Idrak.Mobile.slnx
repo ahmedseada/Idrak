@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/apps/">
+    <Project Path="Idrak.Mobile/Idrak.Mobile.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="../src/Idrak.Maui/Idrak.Maui.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="../tests/Idrak.Maui.Tests/Idrak.Maui.Tests.csproj" />
+  </Folder>
+</Solution>

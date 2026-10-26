@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Idrak.Maui's tests (plan 34, M3), on the net10.0 target of Idrak.Maui (no platform: MAUI's platform services are
+    given in-memory stand-ins), the CPU only. Its own runner, like the repository's other app test projects (the
+    commands are in Program.cs); it also writes and checks api/Idrak.Maui.txt, which tests/Idrak.Tests cannot (it does
+    not build MAUI projects).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Idrak.Maui.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Idrak.Maui\Idrak.Maui.csproj" />
+  </ItemGroup>
+
+</Project>

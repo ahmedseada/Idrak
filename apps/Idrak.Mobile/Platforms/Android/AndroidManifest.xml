@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The minimum SDK (26, Android 8.0: AAudio) comes from SupportedOSPlatformVersion in the project. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+	<application android:allowBackup="true" android:icon="@mipmap/appicon" android:roundIcon="@mipmap/appicon_round" android:supportsRtl="true" android:label="Idrak"></application>
+	<!-- Model downloads. -->
+	<uses-permission android:name="android.permission.INTERNET" />
+	<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+	<!-- Live transcription and recording (asked at first use). -->
+	<uses-permission android:name="android.permission.RECORD_AUDIO" />
+	<!-- Reading a photo from the camera (asked at first use). -->
+	<uses-permission android:name="android.permission.CAMERA" />
+	<uses-feature android:name="android.hardware.microphone" android:required="false" />
+	<uses-feature android:name="android.hardware.camera" android:required="false" />
+</manifest>

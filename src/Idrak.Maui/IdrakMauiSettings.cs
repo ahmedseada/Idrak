@@ -1,0 +1,325 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using System.Globalization;
+using Idrak.Maui.Abstractions;
+
+namespace Idrak.Maui;
+
+/// <summary>How a setting is edited.</summary>
+public enum IdrakSettingKind
+{
+    /// <summary>Free text (a folder).</summary>
+    Text,
+
+    /// <summary>A number; empty means the library's own value.</summary>
+    Number,
+
+    /// <summary>One of <see cref="IdrakSetting.Choices"/>.</summary>
+    Choice,
+
+    /// <summary>A device name: "auto", "cpu" or a device such as "vulkan:0".</summary>
+    Device,
+
+    /// <summary>A secret (the token): kept in secure storage, shown hidden.</summary>
+    Secret,
+}
+
+/// <summary>
+/// One option of <see cref="IdrakMauiOptions"/> as a setting: its key in the settings store, its title and help for the
+/// settings page, and its value as text (empty: the library's own value). <see cref="IdrakMauiSettings.Definitions"/>
+/// lists them all; saving, loading, the settings page and the restart check all read this one list.
+/// </summary>
+public sealed class IdrakSetting
+{
+    private readonly Func<IdrakMauiOptions, string> _read;
+    private readonly Action<IdrakMauiOptions, string> _write;
+
+    internal IdrakSetting(string key, string title, string summary, IdrakSettingKind kind, Func<IdrakMauiOptions, string> read, Action<IdrakMauiOptions, string> write,
+        bool needsRestart = false, string placeholder = "", IReadOnlyList<string>? choices = null)
+    {
+        Key = key;
+        Title = title;
+        Summary = summary;
+        Kind = kind;
+        _read = read;
+        _write = write;
+        NeedsRestart = needsRestart;
+        Placeholder = placeholder;
+        Choices = choices ?? [];
+    }
+
+    /// <summary>The key in the settings store, after <see cref="IdrakMauiSettings.Prefix"/> ("cpu_threads").</summary>
+    public string Key { get; }
+
+    /// <summary>The title on the settings page.</summary>
+    public string Title { get; }
+
+    /// <summary>What it does, with the library's option and variable it maps to.</summary>
+    public string Summary { get; }
+
+    /// <summary>How it is edited.</summary>
+    public IdrakSettingKind Kind { get; }
+
+    /// <summary>Whether a change takes effect only at the next start.</summary>
+    public bool NeedsRestart { get; }
+
+    /// <summary>What an empty value means ("measured"), shown in an empty field.</summary>
+    public string Placeholder { get; }
+
+    /// <summary>The values a <see cref="IdrakSettingKind.Choice"/> takes.</summary>
+    public IReadOnlyList<string> Choices { get; }
+
+    /// <summary>The value in <paramref name="options"/> as text ("" for the library's own).</summary>
+    public string Get(IdrakMauiOptions options) => _read(options ?? throw new ArgumentNullException(nameof(options)));
+
+    /// <summary>Sets the value in <paramref name="options"/> from text ("" or null for the library's own).</summary>
+    /// <exception cref="FormatException">The text is not a value of the setting (the message says what is).</exception>
+    public void Set(IdrakMauiOptions options, string? text) => _write(options ?? throw new ArgumentNullException(nameof(options)), text?.Trim() ?? "");
+}
+
+/// <summary>
+/// The settings kept between runs: each <see cref="IdrakMauiOptions"/> value under <see cref="Prefix"/> and its key in an
+/// <see cref="ISettingsStore"/> (MAUI's Preferences in an app), the token in an <see cref="ISecretStore"/> (secure storage).
+/// </summary>
+public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets)
+{
+    /// <summary>What every key starts with.</summary>
+    public const string Prefix = "idrak.";
+
+    private const string DisabledFeaturesKey = Prefix + "disabled_features", SavedKey = Prefix + "saved", TokenKey = Prefix + "hf_token";
+
+    /// <summary>Every setting, in the settings page's order.</summary>
+    public static IReadOnlyList<IdrakSetting> Definitions { get; } = Define();
+
+    /// <summary>Raised after <see cref="SaveAsync"/>, with the options saved.</summary>
+    public event EventHandler<IdrakMauiOptions>? Saved;
+
+    /// <summary>Whether settings were saved before (by <see cref="SaveAsync"/>).</summary>
+    public bool HasSaved => store.Get(SavedKey) is not null;
+
+    /// <summary>
+    /// Applies what was saved over <paramref name="options"/>: each saved setting (an empty one is the library's own value),
+    /// the features turned off and the token. Nothing saved: <paramref name="options"/> stays as it is. A saved value that
+    /// no longer reads (an older app's) is skipped and named in the result.
+    /// </summary>
+    public async Task<IReadOnlyList<string>> LoadIntoAsync(IdrakMauiOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        var skipped = new List<string>();
+        if (!HasSaved)
+        {
+            return skipped;
+        }
+
+        foreach (var setting in Definitions)
+        {
+            string? text = setting.Kind == IdrakSettingKind.Secret ? await secrets.GetAsync(TokenKey).ConfigureAwait(false) ?? "" : store.Get(Prefix + setting.Key);
+            if (text is null)
+            {
+                continue;
+            }
+
+            try
+            {
+                setting.Set(options, text);
+            }
+            catch (FormatException e)
+            {
+                skipped.Add($"{setting.Title}: {e.Message}");
+            }
+        }
+
+        if (store.Get(DisabledFeaturesKey) is { } disabled)
+        {
+            options.DisabledFeatures = new HashSet<string>(disabled.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), StringComparer.OrdinalIgnoreCase);
+        }
+
+        return skipped;
+    }
+
+    /// <summary>Keeps every setting of <paramref name="options"/> (the token in secure storage), then raises <see cref="Saved"/>.</summary>
+    public async Task SaveAsync(IdrakMauiOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        foreach (var setting in Definitions)
+        {
+            if (setting.Kind == IdrakSettingKind.Secret)
+            {
+                await secrets.SetAsync(TokenKey, setting.Get(options)).ConfigureAwait(false);
+            }
+            else
+            {
+                store.Set(Prefix + setting.Key, setting.Get(options));
+            }
+        }
+
+        store.Set(DisabledFeaturesKey, string.Join(',', options.DisabledFeatures.Order(StringComparer.OrdinalIgnoreCase)));
+        store.Set(SavedKey, "1");
+        Saved?.Invoke(this, options);
+    }
+
+    /// <summary>Forgets every saved setting and the token: the next start takes the app's defaults.</summary>
+    public async Task ClearAsync()
+    {
+        foreach (var setting in Definitions.Where(s => s.Kind != IdrakSettingKind.Secret))
+        {
+            store.Set(Prefix + setting.Key, null);
+        }
+
+        store.Set(DisabledFeaturesKey, null);
+        store.Set(SavedKey, null);
+        await secrets.SetAsync(TokenKey, null).ConfigureAwait(false);
+    }
+
+    /// <summary>The titles of the settings that differ between <paramref name="before"/> and <paramref name="after"/> and take effect only at the next start.</summary>
+    public static IReadOnlyList<string> NeedRestart(IdrakMauiOptions before, IdrakMauiOptions after)
+    {
+        ArgumentNullException.ThrowIfNull(before);
+        ArgumentNullException.ThrowIfNull(after);
+        var titles = Definitions.Where(s => s.NeedsRestart && s.Get(before) != s.Get(after)).Select(s => s.Title).ToList();
+        if (!IsAuto(before.Device) && IsAuto(after.Device))
+        {
+            titles.Add("Device (back to auto)");                                     // a chosen device stays the default until the app starts again
+        }
+
+        return titles;
+    }
+
+    internal static bool IsAuto(string device) => device.Length == 0 || device.Equals("auto", StringComparison.OrdinalIgnoreCase);
+
+    private static IReadOnlyList<IdrakSetting> Define() =>
+    [
+        new("device", "Device", "The device models load on: auto (the best found), cpu, or a device such as vulkan:0 (Device.Default).", IdrakSettingKind.Device,
+            o => o.Device, (o, t) => o.Device = DeviceName(t), placeholder: "auto"),
+        new("theme", "Theme", "The phone's theme, light or dark.", IdrakSettingKind.Choice,
+            o => o.Theme.ToString().ToLowerInvariant(), (o, t) => o.Theme = t.Length == 0 ? IdrakThemeChoice.System : Enum.TryParse<IdrakThemeChoice>(t, ignoreCase: true, out var theme) && Enum.IsDefined(theme)
+                ? theme : throw new FormatException($"'{t}' is not a theme: system, light or dark."),
+            placeholder: "system", choices: ["system", "light", "dark"]),
+        new("cache_folder", "Cache and models folder", "Where models, prepared files and measured choices are kept (ComputeResources.CacheFolder, IDRAK_CACHE). Empty: the app's own storage.",
+            IdrakSettingKind.Text, o => o.CacheFolder ?? "", (o, t) => o.CacheFolder = t.Length == 0 ? null : Path.IsPathFullyQualified(t) ? t
+                : throw new FormatException($"'{t}' is not a full path."), needsRestart: true, placeholder: "the app's storage"),
+        new("cpu_threads", "CPU threads", "The CPU threads the library may use (ComputeResources.MaxCpuThreads, IDRAK_CPU_THREADS).", IdrakSettingKind.Number,
+            o => Text(o.MaxCpuThreads), (o, t) => o.MaxCpuThreads = (int?)Whole(t, 1, Environment.ProcessorCount), placeholder: "every core"),
+        new("cpu_memory_limit_mb", "CPU memory limit (MiB)", "The most tensor memory on the CPU (ComputeResources.CpuMemoryLimit, IDRAK_CPU_MEMORY_LIMIT_MB).", IdrakSettingKind.Number,
+            o => Text(o.CpuMemoryLimitMiB), (o, t) => o.CpuMemoryLimitMiB = Whole(t, 1), placeholder: "no limit"),
+        new("gpu_memory_limit_mb", "GPU memory limit (MiB)", "The most tensor memory on each GPU (ComputeResources.GpuMemoryLimit, IDRAK_GPU_MEMORY_LIMIT_MB).", IdrakSettingKind.Number,
+            o => Text(o.GpuMemoryLimitMiB), (o, t) => o.GpuMemoryLimitMiB = Whole(t, 1), placeholder: "what the device has"),
+        new("gpu_memory_reserve_mb", "GPU memory kept free (MiB)", "GPU memory left for the system and other apps (ComputeResources.GpuMemoryReserve, IDRAK_GPU_MEMORY_RESERVE_MB).",
+            IdrakSettingKind.Number, o => Text(o.GpuMemoryReserveMiB), (o, t) => o.GpuMemoryReserveMiB = Whole(t, 0), placeholder: "measured"),
+        new("offload", "Offload to system memory", "Whether a full GPU places tensors in system memory (ComputeResources.OffloadToHostMemory, IDRAK_OFFLOAD).",
+            IdrakSettingKind.Choice, o => Text(o.OffloadToHostMemory), (o, t) => o.OffloadToHostMemory = Switch(t), placeholder: "default", choices: ["default", "on", "off"]),
+        new("offload_return_headroom_mb", "Offload return headroom (MiB)", "GPU memory kept free when offloaded tensors come back (ComputeResources.OffloadReturnHeadroom).",
+            IdrakSettingKind.Number, o => Text(o.OffloadReturnHeadroomMiB), (o, t) => o.OffloadReturnHeadroomMiB = Whole(t, 0), placeholder: "measured"),
+        new("gpu_chunk_mb", "GPU chunk (MiB)", "The chunk long-lived GPU blocks are placed in (ComputeResources.GpuChunkBytes, IDRAK_GPU_CHUNK_MB); 0: a block each.",
+            IdrakSettingKind.Number, o => Text(o.GpuChunkMiB), (o, t) => o.GpuChunkMiB = Whole(t, 0), needsRestart: true, placeholder: "from the device's pages"),
+        new("gpu_stack_bytes", "GPU thread stack (bytes)", "The stack each GPU thread gets (ComputeResources.GpuStackBytes, IDRAK_GPU_STACK_BYTES).",
+            IdrakSettingKind.Number, o => Text(o.GpuStackBytes), (o, t) => o.GpuStackBytes = Whole(t, 0), needsRestart: true, placeholder: "what kernels need"),
+        new("workspace_share", "Workspace share", "The share of available memory one operation's buffers may take, in (0, 1] (ComputeResources.WorkspaceShare).",
+            IdrakSettingKind.Number, o => Text(o.WorkspaceShare), (o, t) => o.WorkspaceShare = Fraction(t), placeholder: "the library's"),
+        new("tuning_budget_ms", "Tuning budget (ms)", "How long a shape's first use may measure kernel choices (ComputeResources.TuningBudget, IDRAK_TUNE_BUDGET_MS).",
+            IdrakSettingKind.Number, o => Text(o.TuningBudgetMs), (o, t) => o.TuningBudgetMs = Real(t, exclusiveMinimum: 0), placeholder: "the library's"),
+        new("tuning_neighbour_octaves", "Tuning reach (octaves)", "How far a measured choice reaches (ComputeResources.TuningNeighbourOctaves, IDRAK_TUNE_NEIGHBOUR_OCTAVES).",
+            IdrakSettingKind.Number, o => Text(o.TuningNeighbourOctaves), (o, t) => o.TuningNeighbourOctaves = Real(t, minimum: 0), placeholder: "the library's"),
+        new("lookup_tables", "Lookup tables", "Where frozen lookup tables live (ComputeResources.LookupTables, IDRAK_LOOKUP_TABLES).", IdrakSettingKind.Choice,
+            o => o.LookupTables ?? "", (o, t) => o.LookupTables = Placement(t), placeholder: "default", choices: ["default", "auto", "host", "device"]),
+        new("hf_token", "Hugging Face token", "For gated and private models, kept in the phone's secure storage (HF_TOKEN).", IdrakSettingKind.Secret,
+            o => o.HuggingFaceToken ?? "", (o, t) => o.HuggingFaceToken = t.Length == 0 ? null : t, placeholder: "none"),
+        new("progress_interval_ms", "Progress interval (ms)", "The least time between two updates of a progress view.", IdrakSettingKind.Number,
+            o => Text(o.ProgressInterval.TotalMilliseconds), (o, t) => o.ProgressInterval = TimeSpan.FromMilliseconds(Real(t, exclusiveMinimum: 0) ?? 250), placeholder: "250"),
+        new("model_keep_alive_s", "Model keep-alive (s)", "How long a model stays loaded after its last use; empty: until memory pressure.", IdrakSettingKind.Number,
+            o => o.ModelKeepAlive is { } k ? Text(k.TotalSeconds) : "", (o, t) => o.ModelKeepAlive = Real(t, minimum: 0) is { } s ? TimeSpan.FromSeconds(s) : null,
+            placeholder: "until memory pressure"),
+        new("max_loaded_models", "Models loaded at once", "The most models kept loaded in each host; loading another unloads the longest unused.", IdrakSettingKind.Number,
+            o => Text(o.MaxLoadedModels), (o, t) => o.MaxLoadedModels = (int?)Whole(t, 1, 1024), placeholder: "no limit"),
+        new("unload_models_at", "Unload models at", "The least memory pressure that unloads the models not in use.", IdrakSettingKind.Choice,
+            o => o.UnloadModelsAt.ToString().ToLowerInvariant(), (o, t) => o.UnloadModelsAt = t.Length == 0 ? MemoryPressureLevel.Low
+                : Enum.TryParse<MemoryPressureLevel>(t, ignoreCase: true, out var level) && Enum.IsDefined(level) ? level
+                : throw new FormatException($"'{t}' is not a level: background, moderate, low or critical."),
+            placeholder: "low", choices: ["background", "moderate", "low", "critical"]),
+    ];
+
+    private static string Text(long? value) => value?.ToString(CultureInfo.InvariantCulture) ?? "";
+
+    private static string Text(int? value) => value?.ToString(CultureInfo.InvariantCulture) ?? "";
+
+    private static string Text(double? value) => value?.ToString("R", CultureInfo.InvariantCulture) ?? "";
+
+    private static string Text(bool? value) => value switch { true => "on", false => "off", null => "" };
+
+    private static long? Whole(string text, long minimum, long maximum = long.MaxValue)
+    {
+        if (text.Length == 0)
+        {
+            return null;
+        }
+
+        return long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long value) && value >= minimum && value <= maximum ? value
+            : throw new FormatException(maximum == long.MaxValue ? $"'{text}' is not a whole number of {minimum} or more." : $"'{text}' is not a whole number from {minimum} to {maximum}.");
+    }
+
+    // A decimal number, with a comma read as the point (a phone's keyboard in many languages gives one).
+    private static double? Real(string text, double? minimum = null, double? exclusiveMinimum = null)
+    {
+        if (text.Length == 0)
+        {
+            return null;
+        }
+
+        if (!double.TryParse(text.Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out double value) || !double.IsFinite(value)
+            || value < minimum || value <= exclusiveMinimum)
+        {
+            throw new FormatException(exclusiveMinimum is { } above ? $"'{text}' is not a number above {above.ToString(CultureInfo.InvariantCulture)}."
+                : $"'{text}' is not a number of {(minimum ?? 0).ToString(CultureInfo.InvariantCulture)} or more.");
+        }
+
+        return value;
+    }
+
+    private static double? Fraction(string text)
+    {
+        double? share = Real(text, exclusiveMinimum: 0);
+        return share > 1 ? throw new FormatException($"'{text}' is not in (0, 1].") : share;
+    }
+
+    private static bool? Switch(string text) => text.ToLowerInvariant() switch
+    {
+        "" or "default" => null,
+        "on" or "true" or "1" => true,
+        "off" or "false" or "0" => false,
+        _ => throw new FormatException($"'{text}' is not on, off or default."),
+    };
+
+    private static string? Placement(string text)
+    {
+        if (text.Length == 0 || text.Equals("default", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        try
+        {
+            ComputeResources.ParseLookupTables(text);
+            return text.ToLowerInvariant();
+        }
+        catch (ArgumentException e)
+        {
+            throw new FormatException(e.Message);
+        }
+    }
+
+    // "auto", "cpu" or kind:ordinal; whether the device exists is the start-up's to say (IdrakMauiStartup).
+    private static string DeviceName(string text)
+    {
+        if (IsAuto(text))
+        {
+            return "auto";
+        }
+
+        int colon = text.IndexOf(':', StringComparison.Ordinal);
+        string kind = colon < 0 ? text : text[..colon];
+        bool ordinal = colon < 0 || int.TryParse(text.AsSpan(colon + 1), NumberStyles.None, CultureInfo.InvariantCulture, out _);
+        return kind.Length > 0 && ordinal && kind.All(char.IsAsciiLetterOrDigit) ? text.ToLowerInvariant()
+            : throw new FormatException($"'{text}' is not a device: auto, cpu, or a kind and its number such as vulkan:0.");
+    }
+}

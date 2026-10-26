@@ -36,8 +36,15 @@ internal static partial class Tests
                            && !File.ReadAllText(Path.Combine(root, "src", name!, name + ".csproj")).Contains("<IsPackable>false</IsPackable>", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal).ToList();
         Check(listed.SequenceEqual(packages), $"listed: {string.Join(", ", listed)}; src/: {string.Join(", ", packages)}");
-        Check(packages.ToHashSet().SetEquals(ApiAssemblyNames), $"the API guard covers {string.Join(", ", ApiAssemblyNames)}");
+        Check(packages.Except(ApiCheckedElsewhere).ToHashSet().SetEquals(ApiAssemblyNames), $"the API guard covers {string.Join(", ", ApiAssemblyNames)}"
+            + $" (and {string.Join(", ", ApiCheckedElsewhere)} elsewhere)");
+        Check(ApiCheckedElsewhere.All(p => packages.Contains(p) && File.Exists(Path.Combine(root, "api", p + ".txt"))),
+            $"{string.Join(", ", ApiCheckedElsewhere)}: a package under src/ with its api/*.txt");
     }
+
+    // The one exception: Idrak.Maui is a MAUI project, which this runner cannot build, so its api/Idrak.Maui.txt is written
+    // and checked by tests/Idrak.Maui.Tests (the same dump, copied there as ApiSurface.cs).
+    private static readonly string[] ApiCheckedElsewhere = ["Idrak.Maui"];
 
     // The packages whose surface is guarded: the library's, the testing kit included (apps build on it), the CLI not (an app).
     // The reserved packages after Idrak.Onnx.Runtime hold no types yet: their dumps are empty until they are built.
@@ -75,7 +82,7 @@ internal static partial class Tests
             }
         }
 
-        var stray = Directory.Exists(folder) ? Directory.GetFiles(folder, "*.txt").Select(Path.GetFileNameWithoutExtension).Except(ApiAssemblyNames).ToList() : [];
+        var stray = Directory.Exists(folder) ? Directory.GetFiles(folder, "*.txt").Select(Path.GetFileNameWithoutExtension).Except(ApiAssemblyNames).Except(ApiCheckedElsewhere).ToList() : [];
         if (stray.Count > 0 && !UpdateApi)
         {
             problems.Add($"api/ has files for no guarded package: {string.Join(", ", stray)}");

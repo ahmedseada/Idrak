@@ -1794,6 +1794,7 @@ public sealed record Idrak.Abstraction.Devices.BackendCapabilities : System.IEqu
 
 public sealed record Idrak.Abstraction.Devices.BackendHardware : System.IEquatable<Idrak.Abstraction.Devices.BackendHardware>
   public BackendHardware()
+  public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.KeyValuePair<string, string>>? Facts { get; init; }
   public int? ComputeUnits { get; init; }
   public int? KernelWidth { get; init; }
   public int? SubgroupSize { get; init; }

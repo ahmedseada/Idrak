@@ -27,4 +27,12 @@ public sealed record BackendHardware
 
     /// <summary>The driver or runtime version, when the backend reports it separately from <see cref="Backend.Name"/>.</summary>
     public string? Driver { get; init; }
+
+    /// <summary>
+    /// More of what the device reports and what the backend chose by it, each a name and its value in the order the
+    /// backend gives them, for listings (an app's device page, <c>idrak doctor</c>): the CPU's instruction sets and caches,
+    /// a Vulkan device's subgroup sizes, how its kernel width was chosen and whether its memory budget is read. Null when
+    /// the backend reports none. Read when asked, so a value that changes (a memory budget) is the current one.
+    /// </summary>
+    public IReadOnlyList<KeyValuePair<string, string>>? Facts { get; init; }
 }

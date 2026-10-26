@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Idrak.Maui (plan 34, M3): the library inside a .NET MAUI app. UseIdrak, the options and their settings page, the
+    features (IMobileFeature in MobileFeatures), the services (models, the model store, devices, permissions, sharing)
+    and the "maui" progress reporter. Plain MAUI with XAML and MVVM.
+
+    Two targets, as MAUI's library template has them: net10.0-android is the phone's (it needs the maui-android workload
+    and the Android SDK); net10.0 is the same code without a platform, built and tested on any machine
+    (tests/Idrak.Maui.Tests), where MAUI's platform services (Preferences, SecureStorage, FileSystem, Permissions,
+    Share) throw if called, so the tests give in-memory stores. Platform code lives under Platforms/Android only (MAUI
+    compiles a Platforms/<platform> folder for that platform alone), kept small and behind this package's contracts.
+  -->
+  <PropertyGroup>
+    <!-- The root Directory.Build.props sets TargetFramework (one target); a project with several clears it. -->
+    <TargetFramework></TargetFramework>
+    <TargetFrameworks>net10.0;net10.0-android</TargetFrameworks>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <RootNamespace>Idrak.Maui</RootNamespace>
+    <AssemblyName>Idrak.Maui</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsAotCompatible>true</IsAotCompatible>
+    <!-- Bindings in XAML are compiled (x:DataType on every page and template), so trimming keeps what they read. -->
+    <PackageId>Idrak.Maui</PackageId>
+    <Description>Idrak inside a .NET MAUI app (Android first): UseIdrak on MauiAppBuilder, the library's options and limits as saved settings with a settings page, features (pages with their view models) in a registry an app adds to, models kept loaded and released on the phone's memory pressure, a model store with pull progress, device information (the Vulkan driver loaded in the app's own process, CPU features, memory), permissions, sharing, a progress reporter bound to the UI, and light and dark themes from the library's icon.</Description>
+    <!-- AAudio is Android 8.0 (API 26), the library's sound on Android (Idrak.Audio). -->
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">26.0</SupportedOSPlatformVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak\Idrak.csproj" />
+    <ProjectReference Include="..\Idrak.Gpu\Idrak.Gpu.csproj" />
+    <ProjectReference Include="..\Idrak.Data\Idrak.Data.csproj" />
+  </ItemGroup>
+
+</Project>

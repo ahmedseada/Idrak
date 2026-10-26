@@ -310,6 +310,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
         KernelWidth = Width,
         HardwareKind = Facts.DeviceType switch { 1 => "integrated", 2 => "discrete", 3 => "virtual", 4 => "cpu", _ => null },
         Driver = Driver,
+        Facts = HardwareFacts(),
     };
 
     public override BackendCapabilities Capabilities { get; } = Device.Cpu.Backend.Capabilities with

@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Idrak.Mobile (plan 34): the library on a phone, as an app. Android only (an app needs a platform; iOS is held). It
+    references the library as packages, which apps/Directory.Build.targets turns into this clone's projects.
+
+    Visual Studio: open apps/Idrak.Mobile.slnx, make Idrak.Mobile the startup project, pick the Android target and the
+    phone (USB debugging on). The command line: dotnet build -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -t:Install
+    (with -p:AndroidSdkDirectory=FOLDER when the Android SDK is not where the tools look).
+
+    The runtime is .NET for Android's default (Mono); -p:UseMonoRuntime=false builds it on CoreCLR, to measure both.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <UseMaui>true</UseMaui>
+    <SingleProject>true</SingleProject>
+    <RootNamespace>Idrak.Mobile</RootNamespace>
+    <ApplicationTitle>Idrak</ApplicationTitle>
+    <ApplicationId>io.github.ahmedseada.idrak</ApplicationId>
+    <ApplicationDisplayVersion>$(VersionPrefix)</ApplicationDisplayVersion>
+    <ApplicationVersion>1</ApplicationVersion>
+    <!-- AAudio (the library's sound on Android) is Android 8.0, API 26. -->
+    <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+    <PackageReference Include="Idrak.Maui" Version="$(IdrakVersion)" />
+  </ItemGroup>
+
+  <!--
+    The library's icon is the app's icon (assets/icon.svg). The launcher's adaptive icon takes the icon's dark ground as
+    its background and the graph mark as its foreground: the icon without its rounded square, which the launcher's own
+    mask replaces. The mark is made from the repository's SVG at every build (the rounded square, the one <rect> with
+    rounded corners, taken out), so the two never drift apart; the splash screen shows the same mark on the same ground.
+  -->
+  <PropertyGroup>
+    <IdrakIconSource>$(MSBuildThisFileDirectory)../../assets/icon.svg</IdrakIconSource>
+    <IdrakIconGround>#0b1020</IdrakIconGround>
+    <IdrakIconMark>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(BaseIntermediateOutputPath)', 'icon', 'idrakmark.svg'))</IdrakIconMark>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="$(IdrakIconMark)" Color="$(IdrakIconGround)" />
+    <MauiSplashScreen Include="$(IdrakIconMark)" Color="$(IdrakIconGround)" BaseSize="160,160" />
+  </ItemGroup>
+
+  <Target Name="IdrakIconMark" BeforeTargets="ResizetizeCollectItems;ProcessMauiSplashScreens;PrepareForBuild" Inputs="$(IdrakIconSource)" Outputs="$(IdrakIconMark)">
+    <PropertyGroup>
+      <_IdrakIcon>$([System.IO.File]::ReadAllText('$(IdrakIconSource)'))</_IdrakIcon>
+      <_IdrakMark>$([System.Text.RegularExpressions.Regex]::Replace('$(_IdrakIcon)', '\s*&lt;rect\b[^&gt;]*\brx=[^&gt;]*/&gt;', ''))</_IdrakMark>
+    </PropertyGroup>
+    <Error Condition="'$(_IdrakMark)' == '$(_IdrakIcon)'" Text="$(IdrakIconSource) has no rounded square (a &lt;rect rx=...&gt;) to take out; the app's icon is made from it." />
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(IdrakIconMark)'))" />
+    <WriteLinesToFile File="$(IdrakIconMark)" Lines="$([MSBuild]::Escape('$(_IdrakMark)'))" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+</Project>

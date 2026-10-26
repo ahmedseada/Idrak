@@ -133,6 +133,27 @@ internal sealed unsafe partial class VulkanBackend
         return null;
     }
 
+    /// <summary>
+    /// The subgroup sizes measured so far, for device listings: "3 kernels: 2 at 32, 1 at the default" (none measured: "none
+    /// measured yet").
+    /// </summary>
+    internal string DescribeSubgroupChoices()
+    {
+        var counts = new SortedDictionary<int, int>();
+        lock (_sized)
+        {
+            foreach (var chosen in _sized.Values)
+            {
+                counts[chosen.RequiredSubgroupSize] = counts.GetValueOrDefault(chosen.RequiredSubgroupSize) + 1;
+            }
+        }
+
+        int total = counts.Values.Sum();
+        return total == 0 ? "none measured yet"
+            : string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"{total} kernel{(total == 1 ? "" : "s")}: {string.Join(", ", counts.Select(c => $"{c.Value} at {(c.Key == 0 ? "the default" : c.Key.ToString(System.Globalization.CultureInfo.InvariantCulture))}"))}");
+    }
+
     // Dispatches a generated kernel: its sized variant where subgroup size control is on and it uses subgroup
     // operations (the size measured on its first run here) unless it keeps the default size, else the kernel itself.
     private void DispatchKernel(VulkanKernel kernel, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> push)

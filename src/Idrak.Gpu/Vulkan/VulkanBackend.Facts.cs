@@ -111,6 +111,31 @@ internal sealed unsafe partial class VulkanBackend
     /// <summary>The driver's name and version as the device reports them (device listings).</summary>
     internal string Driver => _physical.Driver;
 
+    /// <summary>
+    /// What the device reports and what was chosen by it, for device listings (<see cref="BackendHardware.Facts"/>): the
+    /// kernel width and how it was chosen, the subgroup sizes it runs and those measured, the memory budget and the limits.
+    /// </summary>
+    private KeyValuePair<string, string>[] HardwareFacts()
+    {
+        var culture = System.Globalization.CultureInfo.InvariantCulture;
+        var budget = StorageHeapBudget();
+        int[] candidates = SubgroupSizeCandidates(Width);
+        return
+        [
+            new("kernel width", string.Create(culture, $"{Width} ({WidthChoice})")),
+            new("subgroup sizes", string.Create(culture, $"{Facts.MinSubgroupSize}-{Facts.MaxSubgroupSize}, default {Facts.SubgroupSize}")),
+            new("subgroup size control", SubgroupSizeControl
+                ? string.Create(culture, $"on{(FullSubgroups ? ", full subgroups" : "")}; at width {Width}: {(candidates.Length == 0 ? "none" : string.Join(", ", candidates))}")
+                : "off (the device's default size)"),
+            new("subgroup sizes measured", DescribeSubgroupChoices()),
+            new("memory budget", budget is { } b
+                ? string.Create(culture, $"read (VK_EXT_memory_budget): budget {b.Budget >> 20:N0} MiB, this process uses {b.Usage >> 20:N0} MiB")
+                : MemoryBudget ? "enabled, but the driver reports none for the storage heap" : "not read (the heap less the reserve)"),
+            new("storage heap", string.Create(culture, $"{StorageHeapBytes >> 20:N0} MiB, {MemoryReserve >> 20:N0} MiB kept free")),
+            new("limits", Facts.Describe()),
+        ];
+    }
+
     /// <summary>The device facts and the device's own one-line summary (for benchmark headers).</summary>
     internal string Describe() =>
         $"{Name}: storages {DescribeStorage()} on a {StorageHeapBytes >> 20:N0} MiB heap{(ReadsThroughStaging ? ", reads through staging" : "")}" +

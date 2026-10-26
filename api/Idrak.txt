@@ -227,6 +227,7 @@ public sealed record Idrak.Diagnostics.BackendInfo : System.IEquatable<Idrak.Dia
 
 public sealed record Idrak.Diagnostics.DeviceInfo : System.IEquatable<Idrak.Diagnostics.DeviceInfo>
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public DeviceInfo()
+  public System.Collections.Generic.IReadOnlyList<System.Collections.Generic.KeyValuePair<string, string>>? Facts { get; init; }
   public bool IsDefault { get; init; }
   public bool Listed { get; init; }
   public bool MatrixUnits { get; init; }

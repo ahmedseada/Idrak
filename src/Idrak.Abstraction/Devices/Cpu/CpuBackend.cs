@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -67,7 +68,20 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
         HardwareKind = "cpu",
         ComputeUnits = Environment.ProcessorCount,
         SubgroupSize = Vector<float>.Count,
+        Facts = HardwareFacts(CpuInfo.Current),
     };
+
+    // What the processor reports (CpuInfo), for device listings.
+    internal static KeyValuePair<string, string>[] HardwareFacts(CpuInfo cpu) =>
+    [
+        new("processor", cpu.Model.Length > 0 ? cpu.Model : "not reported"),
+        new("threads", string.Create(CultureInfo.InvariantCulture, $"{cpu.LogicalProcessors} threads, {cpu.PhysicalCores} cores")),
+        new("instruction sets", cpu.InstructionSets),
+        new("vectors", string.Create(CultureInfo.InvariantCulture,
+            $"{cpu.VectorFloats} floats ({cpu.WidestFloats} at the widest), {cpu.VectorRegisters} registers, fused multiply-add {(cpu.FusedMultiplyAdd ? "yes" : "no")}")),
+        new("caches", string.Create(CultureInfo.InvariantCulture,
+            $"L1d {cpu.L1 >> 10} KiB, L2 {cpu.L2 >> 10} KiB per core, L3 {(cpu.L3 > 0 ? $"{cpu.L3 >> 20} MiB" : "unknown")}, line {cpu.CacheLine} B{(cpu.CachesReported ? "" : " (not reported: fallbacks)")}")),
+    ];
 
     public override string? TensorCoresUnavailable() => "the CPU computes matrix products in float32";
 

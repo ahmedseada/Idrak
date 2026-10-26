@@ -1,0 +1,17 @@
+<Project>
+  <!-- The apps (plan 34): built against this clone's library from source, never packed. Their own copy of the samples'
+       arrangement (samples/Directory.Build.props), so nothing here depends on samples/. -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- The library's packages the apps reference become this clone's projects (build/IdrakFromSource.targets), unless
+       IdrakFromPackages is true: dotnet build -p:IdrakFromPackages=true -p:IdrakVersion=VERSION
+       -p:RestoreAdditionalProjectSources=FOLDER takes them from a folder that dotnet pack filled. -->
+  <PropertyGroup>
+    <IdrakFromSource Condition="'$(IdrakFromSource)' == '' and '$(IdrakFromPackages)' != 'true'">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..'))</IdrakFromSource>
+    <IdrakVersion Condition="'$(IdrakVersion)' == ''">$(VersionPrefix)-*</IdrakVersion>
+  </PropertyGroup>
+</Project>

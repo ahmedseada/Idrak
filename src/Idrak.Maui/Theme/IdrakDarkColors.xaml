@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The dark theme's colours (plan 34): the ground, sky and amber of the library's icon (assets/icon.svg). Every key may be
+     overridden by the app (a key in its own App.xaml resources wins over the merged dictionaries). -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                    x:Class="Idrak.Maui.Theme.IdrakDarkColors">
+    <!-- The icon's own colours. -->
+    <Color x:Key="IdrakGround">#0B1020</Color>
+    <Color x:Key="IdrakSky">#38BDF8</Color>
+    <Color x:Key="IdrakAmber">#F59E0B</Color>
+    <Color x:Key="IdrakWhite">#FFFFFF</Color>
+
+    <!-- What pages use. -->
+    <Color x:Key="IdrakPageBackground">#0B1020</Color>
+    <Color x:Key="IdrakCardBackground">#141B2E</Color>
+    <Color x:Key="IdrakCardStroke">#334155</Color>
+    <Color x:Key="IdrakText">#F1F5F9</Color>
+    <Color x:Key="IdrakTextMuted">#94A3B8</Color>
+    <Color x:Key="IdrakAccent">#38BDF8</Color>
+    <Color x:Key="IdrakOnAccent">#0B1020</Color>
+    <Color x:Key="IdrakHighlight">#F59E0B</Color>
+    <Color x:Key="IdrakError">#F87171</Color>
+    <Color x:Key="IdrakSuccess">#4ADE80</Color>
+    <Color x:Key="IdrakFlyoutBackground">#0E1528</Color>
+    <Color x:Key="IdrakSeparator">#26304A</Color>
+    <Color x:Key="IdrakBarBackground">#0B1020</Color>
+    <Color x:Key="IdrakBarText">#F1F5F9</Color>
+</ResourceDictionary>
