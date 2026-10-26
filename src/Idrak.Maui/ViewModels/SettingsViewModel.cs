@@ -374,8 +374,11 @@ public sealed class ChoiceChip(string text, ICommand select) : ViewModel
 {
     private bool _selected;
 
-    /// <summary>The choice.</summary>
+    /// <summary>The choice, as the setting takes it ("automatic").</summary>
     public string Text { get; } = text;
+
+    /// <summary>The choice as its segment shows it, capitalised ("Automatic").</summary>
+    public string Label => Text.Length == 0 ? Text : char.ToUpperInvariant(Text[0]) + Text[1..];
 
     /// <summary>Whether it is the value.</summary>
     public bool IsSelected

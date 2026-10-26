@@ -62,6 +62,7 @@ public partial class HomeView : AdaptiveView
         Brand.SetDynamicResource(StyleProperty, wide ? "IdrakHeroTitle" : "IdrakSheetTitle");
         Page.SetDynamicResource(PaddingProperty, wide ? "IdrakWidePagePadding" : "IdrakPagePadding");
         Carousel.HeightRequest = wide ? 286 : 236;
+        Dots.ActiveWidth = wide ? 24 : 22;                                       // the design's pill: 22 on a phone, 24 on a tablet
         SpeakLine.IsVisible = wide;
         Bento.ColumnDefinitions = wide
             ? [new ColumnDefinition(new GridLength(1.6, GridUnitType.Star)), new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star), new ColumnDefinition(GridLength.Star)]

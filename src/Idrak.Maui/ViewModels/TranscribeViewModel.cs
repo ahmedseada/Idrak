@@ -164,6 +164,8 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
     private long _applied;
     private int _scheduled;
     private volatile bool _live;
+    private volatile bool _dictating;
+    private CancellationTokenSource? _dictationStop;
     private double _step = 1;
     private bool _running, _recording, _listing, _refused, _showSettings;
     private string _status = "", _error = "", _modelStatus = "", _modelsText = "", _settingsMessage = "";
@@ -760,21 +762,137 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
             return false;
         }
 
+        if (_dictating)
+        {
+            Error = DictatingNow;
+            return false;
+        }
+
         Error = "";
         IsPermissionRefused = false;
+        var start = await OpenMicrophoneAsync().ConfigureAwait(true);
+        if (start.Input is not { } input)
+        {
+            IsPermissionRefused = start.Refused;
+            Error = start.Problem;
+            return false;
+        }
+
+        return await RunLiveAsync(input, start.Live!, start.Key!, $"Listening: {input.Description}, {input.SampleRate} Hz", microphone: true).ConfigureAwait(true);
+    }
+
+    /// <summary>Whether the chat (or another caller of <see cref="TranscribeDictation"/>) dictates with this lab's model now.</summary>
+    public bool IsDictating => _dictating;
+
+    /// <summary>
+    /// Dictates with this lab's services: its speech model (listed and loaded as the lab does it), its language, its
+    /// cleaning pipeline and its live settings, through the microphone until <see cref="StopDictation"/>; the whole text so
+    /// far handed to <paramref name="heard"/> (from a worker thread) as it grows. The lab's own transcript is left as it is.
+    /// </summary>
+    internal async Task<DictationOutcome> DictateAsync(Action<string> heard, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(heard);
+        if (_dictating)
+        {
+            return new DictationOutcome("", false, "A dictation runs already.");
+        }
+
+        if (IsRunning)
+        {
+            return new DictationOutcome("", false, "Transcribe is listening now: stop it there first, then dictate.");
+        }
+
+        _dictating = true;
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);   // the microphone's end: its last words are read
+        using var abort = CancellationTokenSource.CreateLinkedTokenSource(_abort.Token, cancellationToken);
+        _dictationStop = stop;
+        try
+        {
+            if (SpeechModels.Count == 0)
+            {
+                await RefreshAsync().ConfigureAwait(true);
+            }
+
+            if (SelectedModel is null)
+            {
+                return new DictationOutcome("", false, NoDictationModel, NeedsModel: true);
+            }
+
+            var start = await OpenMicrophoneAsync().ConfigureAwait(true);
+            if (start.Input is not { } input)
+            {
+                return new DictationOutcome("", false, start.Problem, start.NeedsModel, start.Refused);
+            }
+
+            var text = new DictationText();
+            try
+            {
+                if (stop.IsCancellationRequested)
+                {
+                    return new DictationOutcome("", false, "");                   // stopped while the model loaded
+                }
+
+                await Task.Run(async () =>
+                {
+                    using var lease = Host.Acquire(start.Key!);
+                    await foreach (var update in LiveTranscriber.TranscribeAsync(lease.Model, input.ReadAsync(stop.Token), start.Live, abort.Token).ConfigureAwait(false))
+                    {
+                        if (text.Add(update))
+                        {
+                            heard(text.Text);
+                        }
+                    }
+                }, CancellationToken.None).ConfigureAwait(true);
+                return new DictationOutcome(text.Text, true, "");
+            }
+            catch (OperationCanceledException) when (abort.IsCancellationRequested)
+            {
+                return new DictationOutcome(text.Text, false, "");
+            }
+            catch (Exception e) when (e is not OutOfMemoryException)
+            {
+                return new DictationOutcome(text.Text, false, $"The dictation stopped: {e.Message.Split('\n')[0].Trim()}");
+            }
+            finally
+            {
+                input.Dispose();
+            }
+        }
+        finally
+        {
+            _dictationStop = null;
+            _dictating = false;
+        }
+    }
+
+    /// <summary>Stops the dictation's microphone: the words heard last are read, then <see cref="DictateAsync"/> returns.</summary>
+    internal void StopDictation()
+    {
+        try
+        {
+            _dictationStop?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // It ended meanwhile.
+        }
+    }
+
+    // What the microphone's run needs, or why it cannot start: the model picked, the permission granted, the settings, the
+    // pipeline and the capture checked (a step that needs the whole recording refused by name), the model loaded, the
+    // capture opened and cleaned. Used by the lab's recording and by dictation alike.
+    private async Task<MicrophoneStart> OpenMicrophoneAsync()
+    {
         if (SelectedModel is null)
         {
-            Error = NoModel();
-            return false;
+            return MicrophoneStart.Failed(NoModel(), needsModel: true);
         }
 
         var permission = await _permissions.RequestAsync(PhoneNeeds.Microphone).ConfigureAwait(true);
         if (!permission.Granted)
         {
-            IsPermissionRefused = true;
-            Error = permission.Message.Length > 0 ? permission.Message
-                : "The app may not use the microphone. Allow it in the app's settings (Permissions), then try again.";
-            return false;
+            return MicrophoneStart.Failed(permission.Message.Length > 0 ? permission.Message
+                : "The app may not use the microphone. Allow it in the app's settings (Permissions), then try again.", refused: true);
         }
 
         AudioPipeline pipeline;
@@ -792,22 +910,20 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
         }
         catch (Exception e) when (e is ArgumentException or NotSupportedException)
         {
-            Error = e.Message;
-            return false;
+            return MicrophoneStart.Failed(e.Message);
         }
 
         if (!await LoadModelAsync().ConfigureAwait(true) || _loadedKey is not { } key)
         {
-            return false;
+            return MicrophoneStart.Failed(Error.Length > 0 ? Error : "The speech model is not loaded.", needsModel: SelectedModel is null);
         }
 
-        IAudioInput input;
         try
         {
             var source = capture.Open(_options.ToCapture());
             try
             {
-                input = pipeline.Wrap(source);
+                return new MicrophoneStart(pipeline.Wrap(source), live, key, "", false, false);
             }
             catch
             {
@@ -817,11 +933,61 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
         }
         catch (Exception e) when (e is not OutOfMemoryException)
         {
-            Error = $"The microphone could not be opened ({capture.Name}): {e.Message}";
-            return false;
+            return MicrophoneStart.Failed($"The microphone could not be opened ({capture.Name}): {e.Message}");
+        }
+    }
+
+    // The microphone opened for a run (its input, live settings and the loaded model's key), or why not.
+    private sealed record MicrophoneStart(IAudioInput? Input, LiveTranscriptionOptions? Live, string? Key, string Problem, bool Refused, bool NeedsModel)
+    {
+        public static MicrophoneStart Failed(string problem, bool refused = false, bool needsModel = false) => new(null, null, null, problem, refused, needsModel);
+    }
+
+    // A dictation's text: the finished segments, then the open one's committed words and its tentative ones, one line.
+    private sealed class DictationText
+    {
+        private readonly StringBuilder _finished = new();
+        private readonly StringBuilder _current = new();
+        private string _tentative = "";
+
+        public string Text { get; private set; } = "";
+
+        // Takes an update; true when the text changed.
+        public bool Add(LiveTranscript update)
+        {
+            if (update.Segment is { } segment)
+            {
+                Append(_finished, segment.Trim());
+                _current.Clear();
+                _tentative = "";
+            }
+            else
+            {
+                Append(_current, update.Committed.Trim());
+                _tentative = update.Tentative.Trim();
+            }
+
+            var text = new StringBuilder(_finished.Length + _current.Length + _tentative.Length + 2);
+            Append(text, _finished.ToString());
+            Append(text, _current.ToString());
+            Append(text, _tentative);
+            string next = text.ToString();
+            if (next == Text)
+            {
+                return false;
+            }
+
+            Text = next;
+            return true;
         }
 
-        return await RunLiveAsync(input, live, key, $"Listening: {input.Description}, {input.SampleRate} Hz", microphone: true).ConfigureAwait(true);
+        private static void Append(StringBuilder into, string words)
+        {
+            if (words.Length > 0)
+            {
+                (into.Length > 0 ? into.Append(' ') : into).Append(words);
+            }
+        }
     }
 
     /// <summary>Stops what runs: the microphone's input ends (its last segment is read and committed), or the file's transcription is cancelled.</summary>
@@ -852,6 +1018,12 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         if (IsRunning)
         {
+            return false;
+        }
+
+        if (_dictating)
+        {
+            Error = DictatingNow;                                              // one reading of the model at a time
             return false;
         }
 
@@ -1187,6 +1359,10 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
             return Device.Default;                                             // the start-up named it as a problem already
         }
     }
+
+    private const string DictatingNow = "The chat is dictating with the microphone and this lab's model: stop it there first.";
+
+    private const string NoDictationModel = "No speech model is ready to dictate with: pull one in Models (Transcribe's model reads the microphone), then tap the microphone again.";
 
     private string NoModel() => SpeechModels.Count == 0 ? "No speech model to read with: pull one in Models, then come back." : "Pick a speech model first.";
 

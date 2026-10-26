@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
+using Idrak.Abstraction.Devices;
 using Idrak.Maui.Abstractions;
 
 namespace Idrak.Maui;
@@ -85,7 +86,7 @@ public sealed class IdrakSetting
         "cache_folder" or "hf_token" or "storage_headroom_mb" => "Storage",
         "model_keep_alive_s" or "max_loaded_models" or "unload_models_at" => "Models in memory",
         "wide_layout_dp" or "carousel_s" or "progress_interval_ms" => "Layout and motion",
-        "device" or "theme" => "General",
+        "device" or "cpu_vectors" or "theme" => "General",
         _ => "Limits",
     };
 
@@ -211,6 +212,10 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
     [
         new("device", "Device", "The device models load on: auto (the best found), cpu, or a device such as vulkan:0 (Device.Default).", IdrakSettingKind.Device,
             o => o.Device, (o, t) => o.Device = DeviceName(t), placeholder: "auto"),
+        new("cpu_vectors", "CPU vector paths", "Which vector paths the CPU's kernels take (ComputeResources.CpuVectors, IDRAK_CPU_VECTORS): automatic (the platform's intrinsics where the runtime reports them, "
+            + "else portable 128-bit vectors), native (the intrinsics only), portable (the portable vectors only) or scalar (the plain loops). Every path gives the same results; "
+            + "only the speed differs. The int4 kernels keep the lane shifts they took at their first run until the next start.", IdrakSettingKind.Choice,
+            o => o.CpuVectors is { } paths ? VectorName(paths) : "", (o, t) => o.CpuVectors = VectorPaths(t), placeholder: "automatic", choices: ["automatic", "native", "portable", "scalar"]),
         new("theme", "Theme", "The phone's theme, light or dark.", IdrakSettingKind.Choice,
             o => o.Theme.ToString().ToLowerInvariant(), (o, t) => o.Theme = t.Length == 0 ? IdrakThemeChoice.System : Enum.TryParse<IdrakThemeChoice>(t, ignoreCase: true, out var theme) && Enum.IsDefined(theme)
                 ? theme : throw new FormatException($"'{t}' is not a theme: system, light or dark."),
@@ -371,6 +376,27 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
         "off" or "false" or "0" => false,
         _ => throw new FormatException($"'{text}' is not on, off or default."),
     };
+
+    // The setting's name of a vector path: "automatic", "native", "portable", "scalar".
+    private static string VectorName(CpuVectorPaths paths) => paths.ToString().ToLowerInvariant();
+
+    // "" is the library's own (null); otherwise a name ComputeResources.ParseCpuVectors takes (auto, automatic, native, portable, scalar).
+    private static CpuVectorPaths? VectorPaths(string text)
+    {
+        if (text.Length == 0 || text.Equals("default", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        try
+        {
+            return ComputeResources.ParseCpuVectors(text);
+        }
+        catch (ArgumentException)
+        {
+            throw new FormatException($"'{text}' is not a vector path setting: automatic, native, portable or scalar.");
+        }
+    }
 
     private static string? Placement(string text)
     {

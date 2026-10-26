@@ -129,6 +129,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
     private bool _recording, _applying, _monitoring, _playing, _refused, _showSettings;
     private string _pipelineCheck = "", _pipelineError = "", _status = "", _error = "", _originalText = "", _processedText = "", _latencyText = "", _coldText = "",
         _warmText = "", _beforeText = "", _afterText = "", _savedText = "", _settingsMessage = "", _playingText = "", _elapsed = "00:00", _monitorText = "", _levelText = "";
+    private LevelReading _beforeLevel = LevelReading.None, _afterLevel = LevelReading.None;
     private double _level;
 
     /// <summary>The page over the app's services; <paramref name="picker"/> is MAUI's own when null.</summary>
@@ -345,6 +346,20 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
 
     /// <summary>The warm time of the last apply, or null.</summary>
     public TimeSpan? WarmTime { get; private set; }
+
+    /// <summary>The original's level as a meter shows it (<see cref="LevelReading.None"/> before a sound).</summary>
+    public LevelReading Before
+    {
+        get => _beforeLevel;
+        private set => SetProperty(ref _beforeLevel, value);
+    }
+
+    /// <summary>The processed sound's level as a meter shows it (<see cref="LevelReading.None"/> before an apply).</summary>
+    public LevelReading After
+    {
+        get => _afterLevel;
+        private set => SetProperty(ref _afterLevel, value);
+    }
 
     /// <summary>The original's level ("RMS -23.1 dB, peak -3.0 dB"), or "".</summary>
     public string BeforeText
@@ -622,8 +637,10 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
         Original = audio;
         Processed = null;
         ProcessedText = AfterText = SavedText = LatencyText = "";
+        After = LevelReading.None;
         OriginalText = $"{AudioText.Seconds(audio.Duration.TotalSeconds)} at {audio.SampleRate} Hz, {audio.Channels} channel{(audio.Channels == 1 ? "" : "s")}, {from}";
         BeforeText = LevelOf(audio);
+        Before = LevelReading.Of(audio);
     }
 
     /// <summary>
@@ -845,7 +862,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
 
                 var (processed, first) = Run(pipeline, audio, block);
                 TimeSpan? again = warmRun && !pipeline.IsEmpty ? Run(pipeline, audio, block).Elapsed : null;
-                return (processed, first, again, latency, delay, rate, after: LevelOf(processed));
+                return (processed, first, again, latency, delay, rate, after: LevelOf(processed), meter: LevelReading.Of(processed));
             }, CancellationToken.None).ConfigureAwait(true);
             string text = pipeline.ToString();
             bool cold = !_cold.ContainsKey(text);
@@ -864,6 +881,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
                 + $"Delay {result.delay} samples ({AudioText.Milliseconds(result.delay * 1000.0 / result.rate)}): what a live listener waits.";
             Processed = result.processed;
             AfterText = result.after;
+            After = result.meter;
             ProcessedText = $"{AudioText.Seconds(result.processed.Duration.TotalSeconds)} at {result.processed.SampleRate} Hz, {result.processed.Channels} channel{(result.processed.Channels == 1 ? "" : "s")}"
                 + (pipeline.IsEmpty ? ", as it was" : $", through {pipeline}{(block > 0 ? $" in blocks of {AudioText.Seconds(block)}" : "")}");
             Status = pipeline.IsEmpty ? "No steps: the processed sound is the original." : $"Applied {pipeline.Steps.Count} step{(pipeline.Steps.Count == 1 ? "" : "s")}.";
@@ -1438,4 +1456,44 @@ public sealed record PipelineStep(string Name, string Value, bool HasArrow, Syst
 {
     /// <summary>Whether it has a value to show.</summary>
     public bool HasValue => Value.Length > 0;
+}
+
+/// <summary>
+/// A sound's level as a meter shows it: its root mean square and its peak, each in decibels of full scale and as a share of
+/// the meter (0 at <see cref="Floor"/> or under, 1 at full scale), the peak drawn after the root mean square.
+/// </summary>
+/// <param name="Rms">The root mean square's share of the meter, 0 to 1.</param>
+/// <param name="Peak">The peak's share of the meter, 0 to 1.</param>
+/// <param name="RmsDecibels">The root mean square in decibels of full scale (negative infinity for no sound).</param>
+/// <param name="PeakDecibels">The peak in decibels of full scale.</param>
+public sealed record LevelReading(double Rms, double Peak, double RmsDecibels, double PeakDecibels)
+{
+    /// <summary>The level the meter shows as empty, in decibels of full scale.</summary>
+    public const double Floor = -60;
+
+    /// <summary>No sound yet: an empty meter.</summary>
+    public static LevelReading None { get; } = new(0, 0, double.NegativeInfinity, double.NegativeInfinity);
+
+    /// <summary>What the peak adds after the root mean square on the meter (its second share).</summary>
+    public double PeakAbove => Math.Max(0, Peak - Rms);
+
+    /// <summary>Whether there is a level to show.</summary>
+    public bool HasLevel => double.IsFinite(RmsDecibels);
+
+    /// <summary>"-23 dB" (the root mean square), or "–".</summary>
+    public string Short => HasLevel ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{RmsDecibels:0} dB") : "–";
+
+    /// <summary>"RMS -23.1 dB, peak -3.0 dB" (for a screen reader), or "no sound".</summary>
+    public string Description => HasLevel ? $"RMS {AudioText.Decibels(RmsDecibels)}, peak {AudioText.Decibels(PeakDecibels)}" : "no sound";
+
+    /// <summary>The level of <paramref name="audio"/>.</summary>
+    public static LevelReading Of(AudioData audio)
+    {
+        ArgumentNullException.ThrowIfNull(audio);
+        double rms = LevelMeter.Decibels(audio.Samples), peak = LevelMeter.PeakDecibels(audio.Samples);
+        return new LevelReading(Share(rms), Share(peak), rms, peak);
+    }
+
+    /// <summary>The share of the meter <paramref name="decibels"/> fill.</summary>
+    public static double Share(double decibels) => double.IsFinite(decibels) ? Math.Clamp(1 - decibels / Floor, 0, 1) : 0;
 }

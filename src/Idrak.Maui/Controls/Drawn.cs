@@ -500,3 +500,158 @@ public sealed class LogoMark : DrawnView
 
     private static readonly PointF[] Corners = [new(160, 140), new(352, 140), new(160, 372), new(352, 372)];
 }
+
+/// <summary>
+/// A carousel's place as the approved design draws it: a dot a page, the page shown an elongated pill in the accent. Bound
+/// to the carousel's <see cref="Position"/> and its page <see cref="Count"/>; the pill slides to the new page when it
+/// changes (on screen only), its size from <see cref="DotSize"/>, <see cref="ActiveWidth"/> and <see cref="Spacing"/>.
+/// </summary>
+public sealed class PageIndicator : DrawnView
+{
+    /// <summary>The pages.</summary>
+    public static readonly BindableProperty CountProperty =
+        BindableProperty.Create(nameof(Count), typeof(int), typeof(PageIndicator), 0, propertyChanged: (b, _, _) => ((PageIndicator)b).Resize());
+
+    /// <summary>The page shown, from 0.</summary>
+    public static readonly BindableProperty PositionProperty =
+        BindableProperty.Create(nameof(Position), typeof(int), typeof(PageIndicator), 0, propertyChanged: (b, o, n) => ((PageIndicator)b).Move((int)o, (int)n));
+
+    /// <summary>A dot's size (its height, and a dot's width).</summary>
+    public static readonly BindableProperty DotSizeProperty =
+        BindableProperty.Create(nameof(DotSize), typeof(double), typeof(PageIndicator), 6d, propertyChanged: (b, _, _) => ((PageIndicator)b).Resize());
+
+    /// <summary>The pill's width.</summary>
+    public static readonly BindableProperty ActiveWidthProperty =
+        BindableProperty.Create(nameof(ActiveWidth), typeof(double), typeof(PageIndicator), 22d, propertyChanged: (b, _, _) => ((PageIndicator)b).Resize());
+
+    /// <summary>The space between two dots.</summary>
+    public static readonly BindableProperty SpacingProperty =
+        BindableProperty.Create(nameof(Spacing), typeof(double), typeof(PageIndicator), 6d, propertyChanged: (b, _, _) => ((PageIndicator)b).Resize());
+
+    /// <summary>The dots' colour.</summary>
+    public static readonly BindableProperty DotColorProperty = ColorProperty<PageIndicator>(nameof(DotColor));
+
+    /// <summary>The pill's colour.</summary>
+    public static readonly BindableProperty ActiveColorProperty = ColorProperty<PageIndicator>(nameof(ActiveColor));
+
+    private const string SlideAnimation = "IdrakPageIndicator";
+    private double _shown;
+
+    /// <summary>An indicator in the theme's line and accent colours.</summary>
+    public PageIndicator()
+    {
+        SetDynamicResource(DotColorProperty, "IdrakLine2");
+        SetDynamicResource(ActiveColorProperty, "IdrakAccent");
+        Resize();
+    }
+
+    /// <summary>The pages.</summary>
+    public int Count
+    {
+        get => (int)GetValue(CountProperty);
+        set => SetValue(CountProperty, value);
+    }
+
+    /// <summary>The page shown.</summary>
+    public int Position
+    {
+        get => (int)GetValue(PositionProperty);
+        set => SetValue(PositionProperty, value);
+    }
+
+    /// <summary>A dot's size.</summary>
+    public double DotSize
+    {
+        get => (double)GetValue(DotSizeProperty);
+        set => SetValue(DotSizeProperty, value);
+    }
+
+    /// <summary>The pill's width.</summary>
+    public double ActiveWidth
+    {
+        get => (double)GetValue(ActiveWidthProperty);
+        set => SetValue(ActiveWidthProperty, value);
+    }
+
+    /// <summary>The space between two dots.</summary>
+    public double Spacing
+    {
+        get => (double)GetValue(SpacingProperty);
+        set => SetValue(SpacingProperty, value);
+    }
+
+    /// <summary>The dots' colour.</summary>
+    public Color DotColor
+    {
+        get => (Color)GetValue(DotColorProperty);
+        set => SetValue(DotColorProperty, value);
+    }
+
+    /// <summary>The pill's colour.</summary>
+    public Color ActiveColor
+    {
+        get => (Color)GetValue(ActiveColorProperty);
+        set => SetValue(ActiveColorProperty, value);
+    }
+
+    /// <summary>Where the pill is drawn now, in pages (between two pages while it slides).</summary>
+    public double Shown => _shown;
+
+    /// <summary>The width of the dot of page <paramref name="index"/> when the pill is at <paramref name="shown"/>: the pill's at it, a dot's a page away or more, between them in between.</summary>
+    public double WidthOf(int index, double shown) => DotSize + (ActiveWidth - DotSize) * Math.Max(0, 1 - Math.Abs(index - shown));
+
+    /// <inheritdoc />
+    public override void Draw(ICanvas canvas, RectF dirtyRect)
+    {
+        int count = Count;
+        if (count <= 0)
+        {
+            return;
+        }
+
+        float size = (float)DotSize, radius = size / 2, top = dirtyRect.Center.Y - radius, x = dirtyRect.Left;
+        for (int i = 0; i < count; i++)
+        {
+            double width = WidthOf(i, _shown);
+            double share = Math.Max(0, 1 - Math.Abs(i - _shown));
+            canvas.FillColor = share <= 0 ? DotColor : share >= 1 ? ActiveColor : Blend(DotColor, ActiveColor, (float)share);
+            canvas.FillRoundedRectangle(x, top, (float)width, size, radius);
+            x += (float)(width + Spacing);
+        }
+    }
+
+    private static Color Blend(Color from, Color to, float share) =>
+        new(from.Red + (to.Red - from.Red) * share, from.Green + (to.Green - from.Green) * share, from.Blue + (to.Blue - from.Blue) * share, from.Alpha + (to.Alpha - from.Alpha) * share);
+
+    // Its width: every dot, the pill and the spaces between.
+    private void Resize()
+    {
+        int count = Math.Max(0, Count);
+        WidthRequest = count == 0 ? 0 : (count - 1) * (DotSize + Spacing) + ActiveWidth;
+        HeightRequest = DotSize;
+        Invalidate();
+    }
+
+    // The pill slides from the page it was at to the new one on screen; off screen it is there at once.
+    private void Move(int from, int to)
+    {
+        this.AbortAnimation(SlideAnimation);
+        if (!Motion.CanAnimate(this) || from == to)
+        {
+            _shown = to;
+            Invalidate();
+            return;
+        }
+
+        double start = _shown;
+        this.Animate(SlideAnimation, t =>
+        {
+            _shown = start + (to - start) * t;
+            Invalidate();
+        }, length: 220, easing: Easing.CubicOut, finished: (_, _) =>
+        {
+            _shown = to;
+            Invalidate();
+        });
+    }
+}

@@ -14,8 +14,8 @@ namespace Idrak.Maui.ViewModels;
 /// <param name="GpuDetail">"kernels 64 wide", "ready", "failed to start", or why none was found.</param>
 /// <param name="GpuReady">Whether a GPU started.</param>
 /// <param name="GpuFailed">Whether a GPU was found and could not start.</param>
-/// <param name="MemoryFree">The memory free, as text ("4.2 GB").</param>
-/// <param name="MemoryTotal">The memory the process may use, as text ("11 GB").</param>
+/// <param name="MemoryFree">The memory free, as text ("4.2 GB"): the system's figure where the CPU lists it.</param>
+/// <param name="MemoryTotal">The memory the process may use, as text ("11 GB"): the system's figure (held to a memory limit) where listed.</param>
 /// <param name="MemoryUsed">The share in use, 0 to 1.</param>
 /// <param name="DefaultDevice">The device models load on ("vulkan:0").</param>
 public sealed record DeviceSummary(string CpuTitle, string CpuDetail, string GpuTitle, string GpuDetail, bool GpuReady, bool GpuFailed, string MemoryFree,
@@ -145,7 +145,8 @@ public sealed class DeviceStatus : ViewModel
         var p = report.Process;
         var cpu = report.Devices.FirstOrDefault(d => d.Info.Kind == "cpu");
         string? Fact(DeviceDetails? d, string part) => d?.Info.Facts?.FirstOrDefault(f => f.Key.Contains(part, StringComparison.OrdinalIgnoreCase)).Value;
-        string cpuDetail = Fact(cpu, "core group") is { Length: > 0 } groups ? groups
+        string cpuDetail = DeviceFacts.CoreGroupCount(DeviceFacts.Fact(cpu?.Info.Facts, "core groups")) is var groups and > 0
+            ? string.Create(CultureInfo.InvariantCulture, $"{groups} core group{(groups == 1 ? "" : "s")}")
             : Fact(cpu, "instruction set") is { Length: > 0 } sets ? string.Join(" · ", sets.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).Take(2))
             : string.Create(CultureInfo.InvariantCulture, $"{p.CpuThreads} threads");
 
@@ -157,11 +158,22 @@ public sealed class DeviceStatus : ViewModel
             : failed is not null ? "failed to start"
             : report.Backends.FirstOrDefault(b => b.Count == 0)?.UnavailableReason is { Length: > 0 } why ? Short(why) : "no GPU found";
 
-        long total = cpu?.Info.MemoryBytes is > 0 and var bytes ? bytes : p.AvailableMemory;
-        long used = Math.Clamp(p.WorkingSet, 0, Math.Max(total, 0));
-        long free = Math.Max(0, total - used);
+        // The memory from the system's figure (what is free on the phone, not the runtime's heap budget), where the CPU lists it;
+        // else what the process may use less its working set.
+        MemoryFigure memory;
+        if (DeviceFacts.SystemMemory(cpu?.Info.Facts) is { } system)
+        {
+            memory = system;
+        }
+        else
+        {
+            long total = cpu?.Info.MemoryBytes is > 0 and var bytes ? bytes : p.AvailableMemory;
+            long used = Math.Clamp(p.WorkingSet, 0, Math.Max(total, 0));
+            memory = new MemoryFigure(Math.Max(0, total - used), total);
+        }
+
         return new DeviceSummary(string.Create(CultureInfo.InvariantCulture, $"{p.Processors} cores"), cpuDetail, gpuTitle, gpuDetail, ready is not null,
-            ready is null && failed is not null, ProgressText.Bytes(free), ProgressText.Bytes(total), total > 0 ? (double)used / total : 0, report.DefaultDevice);
+            ready is null && failed is not null, ProgressText.Bytes(memory.Free), ProgressText.Bytes(memory.Total), memory.Used, report.DefaultDevice);
     }
 
     /// <summary>The rows of <paramref name="models"/> (the largest first, at most <paramref name="most"/>) and the line counting them.</summary>

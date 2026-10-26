@@ -56,6 +56,11 @@ public sealed class TranscribeFeature : IMobileFeature
     public object CreateViewModel(IServiceProvider services)
     {
         ArgumentNullException.ThrowIfNull(services);
+        if (services.GetService<TranscribeViewModel>() is { } shared)
+        {
+            return shared;                                                      // the app's one: the chat's dictation reads with its model
+        }
+
         var options = services.GetService<IdrakMauiOptions>() ?? new IdrakMauiOptions();
         return new TranscribeViewModel(
             services.GetService<IModelStore>() ?? new ModelStore(options),

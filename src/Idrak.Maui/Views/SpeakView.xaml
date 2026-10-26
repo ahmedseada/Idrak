@@ -118,14 +118,17 @@
                 <Border Style="{DynamicResource IdrakPanel}">
                     <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingChip}">
                         <Label Text="Spoken pieces" Style="{DynamicResource IdrakSectionLabel}" />
-                        <Label Text="Each sentence plays as soon as it is made; the next is made while it plays." Style="{DynamicResource IdrakCaption}" />
+                        <Label Text="Each piece plays as soon as it is made; the next is made while it plays." Style="{DynamicResource IdrakCaption}" />
                         <VerticalStackLayout BindableLayout.ItemsSource="{Binding Pieces}" Spacing="{DynamicResource IdrakSpacingSmall}">
                             <BindableLayout.ItemTemplate>
                                 <DataTemplate x:DataType="vm:SpokenPiece">
-                                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
-                                        <Label Text="{Binding Number}" Style="{DynamicResource IdrakTimestamp}" VerticalOptions="Center" />
-                                        <Label Grid.Column="1" Text="{Binding Length}" Style="{DynamicResource IdrakValue}" />
-                                        <Label Grid.Column="2" Text="{Binding MadeText}" Style="{DynamicResource IdrakMeta}" />
+                                    <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                                        <Label Text="{Binding Number}" Style="{DynamicResource IdrakTimestamp}" />
+                                        <Label Grid.Column="1" Text="{Binding Text}" IsVisible="{Binding HasText}" Style="{DynamicResource IdrakBody}" LineBreakMode="WordWrap" />
+                                        <HorizontalStackLayout Grid.Row="1" Grid.Column="1" Spacing="{DynamicResource IdrakSpacingChip}">
+                                            <Label Text="{Binding Length}" Style="{DynamicResource IdrakMeta}" />
+                                            <Label Text="{Binding MadeText}" Style="{DynamicResource IdrakMeta}" />
+                                        </HorizontalStackLayout>
                                     </Grid>
                                 </DataTemplate>
                             </BindableLayout.ItemTemplate>

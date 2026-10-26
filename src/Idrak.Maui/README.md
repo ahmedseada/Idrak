@@ -12,7 +12,8 @@ builder.UseMauiApp<App>().UseIdrak(options =>
 
 - **`UseIdrak`** applies the options before any device or download: the cache folder (the app's own storage by
   default, `ComputeResources.CacheFolder`), the device (`auto`, `cpu`, `vulkan:0`), every `ComputeResources` limit
-  (empty means measured), the Hugging Face token and the progress interval. Settings are kept between runs (MAUI
+  (empty means measured), the CPU's vector paths (`ComputeResources.CpuVectors`: automatic, native, portable or
+  scalar), the Hugging Face token and the progress interval. Settings are kept between runs (MAUI
   Preferences; the token in SecureStorage) and a change that needs a restart says so.
 - **Features** (`IMobileFeature` in `MobileFeatures`): a page and its view model, with what it needs from the phone, its
   group among the labs (Language, Voice, Vision, the device's), a tagline and an icon, and its content as a view a section
@@ -40,7 +41,9 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   settings' weights and key/value cache formats, after checking it fits the memory the device has (refused with the
   limit named otherwise); the answer streams into a bubble with its token count and tokens per second, the bubble
   updated at most once a progress interval; Stop, a new chat, copy, thinking where the template has a switch; the first
-  answer after a load (cold) apart from the warm ones. The system prompt, temperature, top-p, top-k, max new tokens,
+  answer after a load (cold) apart from the warm ones. The composer's microphone dictates into the message through
+  `IDictation` (the library's is the Transcribe lab's: its speech model, language, cleaning and live settings), live,
+  until tapped again; with no speech model ready it says so and offers Models. The system prompt, temperature, top-p, top-k, max new tokens,
   context and seed are settings over the library's `GenerationOptions`. Idrak.Maui registers no model family: the app
   registers the ones it shows (`QwenPlugin.Register()` and so on), and a model of another family fails as not registered.
 - **Transcribe** page: live transcription from the microphone through the library's `LiveTranscriber` (the

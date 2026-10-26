@@ -528,6 +528,51 @@ internal static partial class MauiTests
         Check(again.Wait(TimeSpan.FromSeconds(20)) && lab.Vm.Segments.Count == 2 && lab.Vm.CommittedText.Split('\n').Length == 2, $"two recordings: '{lab.Vm.CommittedText}'");
     }
 
+    private static void TranscribeDictates()
+    {
+        var time = new SharedTime();
+        var recognizer = new ScriptedRecognizer { OnCall = () => time.Advance(TimeSpan.FromSeconds(1)) };
+        var capture = new FakeCapture(Signal((2, 0.5f))) { HoldOpen = true };
+        using var lab = new Lab(recognizer, capture, time: time);
+        var dictation = new TranscribeDictation(lab.Vm);
+        var heard = new List<string>();
+        var run = dictation.DictateAsync(text =>
+        {
+            lock (heard)
+            {
+                heard.Add(text);
+            }
+        });
+        WaitFor(() =>
+        {
+            lock (heard)
+            {
+                return heard.Count > 0;
+            }
+        }, "the first words dictated");
+        Check(dictation.IsDictating && lab.Vm.IsDictating && !lab.Vm.IsRecording && !lab.Vm.IsRunning, "dictating, the lab idle");
+        Check(!lab.Vm.RecordAsync().GetAwaiter().GetResult() && lab.Vm.Error.Contains("dictating", StringComparison.Ordinal) && capture.Opened == 1, $"the lab refused to record: {lab.Vm.Error}");
+        var second = dictation.DictateAsync(_ => { }).GetAwaiter().GetResult();
+        Check(second is { Completed: false, HasProblem: true }, $"a second dictation: {second}");
+        dictation.Stop();
+        Check(run.Wait(TimeSpan.FromSeconds(20)), "the dictation ended");
+        var outcome = run.Result;
+        Check(outcome is { Completed: true, HasProblem: false } && outcome.Text.StartsWith("alpha beta", StringComparison.Ordinal) && !outcome.Text.Contains('\n', StringComparison.Ordinal),
+            $"the text: '{outcome.Text}' ({outcome.Problem})");
+        lock (heard)
+        {
+            Check(heard.All(h => h.Length > 0) && heard[0].StartsWith("alpha", StringComparison.Ordinal), $"heard: {string.Join(" | ", heard)}");
+        }
+
+        Check(lab.Vm.CommittedText.Length == 0 && lab.Vm.Segments.Count == 0 && !dictation.IsDictating && lab.Permissions.Requests == 1 && capture.Opened == 1,
+            $"the lab's transcript left as it was: '{lab.Vm.CommittedText}'; asked {lab.Permissions.Requests}, opened {capture.Opened}");
+
+        // No speech model: said, Models needed; a refused microphone: said.
+        using var none = new TranscribeViewModel(new FakeStore(), lab.Models, lab.Permissions, lab.Share, lab.Options, new MemorySettingsStore(), lab.Center);
+        var missing = new TranscribeDictation(none).DictateAsync(_ => { }).GetAwaiter().GetResult();
+        Check(missing is { Completed: false, NeedsModel: true } && missing.Problem.Contains("Models", StringComparison.Ordinal), $"no model: {missing}");
+    }
+
     private static void TranscribePermission()
     {
         var capture = new FakeCapture(Signal((1, 0.5f)));
@@ -537,6 +582,8 @@ internal static partial class MauiTests
         Check(lab.Vm.IsPermissionRefused && lab.Vm.Error.Contains("Allow it in the app's settings", StringComparison.Ordinal), $"error: {lab.Vm.Error}");
         lab.Vm.OpenPermissionSettingsCommand.Execute(null);
         Check(lab.Permissions.SettingsOpened == 1, "the app's settings opened");
+        var refused = new TranscribeDictation(lab.Vm).DictateAsync(_ => { }).GetAwaiter().GetResult();
+        Check(refused is { Completed: false, PermissionRefused: true, NeedsModel: false } && capture.Opened == 0, $"dictation without the permission: {refused}");
     }
 
     private static void TranscribePipeline()

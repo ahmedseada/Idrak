@@ -3,7 +3,8 @@
   Chat (plan 34, phase R; apps/Idrak.Mobile/Design/chat.html and t-chat.html): the model card (its state, format, device
   and load time); the user's messages in the gradient; the answers full width with "Thought for", their Markdown (lists,
   bold, code with Copy), the meta row (tokens per second, tokens, first token, copy, ask again); the streaming answer with
-  its caret, its live rate and Stop; suggestions while the chat is empty; the composer. A wide window: three panes, the
+  its caret, its live rate and Stop; suggestions while the chat is empty; the composer (+ opens Models, the microphone
+  dictates into the message). A wide window: three panes, the
   kept conversations with search, the chat, and the inspector (the live rate's line, the memory, quick settings).
   Theme keys only.
 -->
@@ -222,6 +223,15 @@
                         </BindableLayout.ItemTemplate>
                     </HorizontalStackLayout>
                 </ScrollView>
+                <!-- What the dictation says: that it listens, or why it cannot (no speech model: Models offered). -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}" IsVisible="{Binding HasDictationNote}">
+                    <Label Text="{Binding DictationNote}" Style="{DynamicResource IdrakCaption}" VerticalOptions="Center" />
+                    <Label Grid.Column="1" Text="Models" IsVisible="{Binding DictationNeedsModel}" Style="{DynamicResource IdrakLink}" VerticalOptions="Center">
+                        <Label.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding GoToModelsCommand}" />
+                        </Label.GestureRecognizers>
+                    </Label>
+                </Grid>
                 <Border Style="{DynamicResource IdrakComposer}">
                     <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
                         <Border Style="{DynamicResource IdrakRoundButton}" VerticalOptions="End" SemanticProperties.Description="Models">
@@ -232,11 +242,20 @@
                         </Border>
                         <Editor Grid.Column="1" Text="{Binding Draft}" Placeholder="{Binding ModelName, StringFormat='Message {0}…'}" AutoSize="TextChanges" MaximumHeightRequest="160"
                                 VerticalOptions="Center" />
-                        <Border Grid.Column="2" Style="{DynamicResource IdrakRoundButtonPlain}" VerticalOptions="End" SemanticProperties.Description="Speak instead (Transcribe)">
+                        <!-- The microphone dictates into the message (the Transcribe lab's model, live); a tap again stops it. -->
+                        <Border Grid.Column="2" Style="{DynamicResource IdrakRoundButtonPlain}" VerticalOptions="End" SemanticProperties.Description="{Binding MicrophoneDescription}">
+                            <Border.Triggers>
+                                <DataTrigger TargetType="Border" Binding="{Binding IsDictating}" Value="True">
+                                    <Setter Property="BackgroundColor" Value="{DynamicResource IdrakToneRoseBackground}" />
+                                </DataTrigger>
+                            </Border.Triggers>
                             <Border.GestureRecognizers>
-                                <TapGestureRecognizer Tapped="OnMicrophone" />
+                                <TapGestureRecognizer Command="{Binding DictateCommand}" />
                             </Border.GestureRecognizers>
-                            <ctl:IconView Glyph="mic" Size="20" Stroke="{DynamicResource IdrakTextMuted}" />
+                            <Grid>
+                                <ctl:IconView Glyph="mic" Size="20" Stroke="{DynamicResource IdrakTextMuted}" IsVisible="{Binding IsNotDictating}" />
+                                <ctl:IconView Glyph="mic" Size="20" Stroke="{DynamicResource IdrakRecordText}" IsVisible="{Binding IsDictating}" />
+                            </Grid>
                         </Border>
                         <Border Grid.Column="3" Style="{DynamicResource IdrakGradientIconButton}" IsVisible="{Binding IsIdle}" VerticalOptions="End" SemanticProperties.Description="Send">
                             <Border.GestureRecognizers>

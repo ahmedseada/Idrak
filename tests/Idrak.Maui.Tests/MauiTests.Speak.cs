@@ -452,6 +452,8 @@ internal static partial class MauiTests
             Check(lab.Vm.Pieces.Select(p => p.Number).SequenceEqual(["#1", "#2", "#3"]) && lab.Vm.Pieces.All(p => p.Length.EndsWith(" s", StringComparison.Ordinal))
                   && lab.Vm.HasMeasures && lab.Vm.FirstSoundText != "–" && lab.Vm.RealTimeText.EndsWith("× real time", StringComparison.Ordinal),
                 $"pieces: {string.Join(", ", lab.Vm.Pieces.Select(p => p.Number + " " + p.Length))}; {lab.Vm.FirstSoundText}; {lab.Vm.RealTimeText}");
+            Check(lab.Vm.Pieces.Select(p => p.Text).SequenceEqual(pieces) && lab.Vm.Pieces.All(p => p.HasText),
+                $"each piece's text, as the lab's piece size cut it: {string.Join(" | ", lab.Vm.Pieces.Select(p => p.Text))}");
 
             Check(lab.Vm.SpeakAsync().GetAwaiter().GetResult() && lab.Vm.HasWarm && lab.Vm.WarmText.StartsWith("Warm", StringComparison.Ordinal) && lab.Vm.HasCold,
                 $"warm after cold: {lab.Vm.WarmText}");

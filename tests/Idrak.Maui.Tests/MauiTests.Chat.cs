@@ -392,4 +392,66 @@ internal static partial class MauiTests
         Check(page is ChatPage { BindingContext: ChatViewModel { Copy: not null, OpenModels: not null } } && page.Title == "Chat", $"page {page.GetType().Name}, title {page.Title}");
         Check(MobileFeatures.Origin("chat") == Overrides.Library && MobileFeatures.Get("chat") is ChatFeature { Order: 20, Needs: PhoneNeeds.Model }, "the library's chat feature");
     }
+
+    // A dictation that hears its words at once, then waits for Stop; or one with no speech model.
+    private sealed class ScriptedDictation(params string[] heard) : IDictation
+    {
+        private readonly TaskCompletionSource _stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _stops;
+
+        public bool NoModel { get; init; }
+
+        public bool IsDictating { get; private set; }
+
+        public int Stops => Volatile.Read(ref _stops);
+
+        public async Task<DictationOutcome> DictateAsync(Action<string> onHeard, CancellationToken cancellationToken = default)
+        {
+            if (NoModel)
+            {
+                return new DictationOutcome("", false, "No speech model is ready to dictate with: pull one in Models.", NeedsModel: true);
+            }
+
+            IsDictating = true;
+            foreach (string words in heard)
+            {
+                onHeard(words);
+            }
+
+            await _stopped.Task.ConfigureAwait(false);
+            IsDictating = false;
+            return new DictationOutcome(heard.Length > 0 ? heard[^1] : "", true, "");
+        }
+
+        public void Stop()
+        {
+            Interlocked.Increment(ref _stops);
+            _stopped.TrySetResult();
+        }
+    }
+
+    private static void ChatDictates()
+    {
+        string folder = ChatFolder("chat-dictate");
+        var chats = new OneChat(new ScriptedChat(1, "a", Stats(1, 1)));
+        var dictation = new ScriptedDictation("hello", "hello there");
+        var page = new ChatViewModel(new ListedStore(Stored(folder)), chats, new IdrakMauiOptions(), new InlineDispatcher(), new ManualTime(), dictation: dictation);
+        page.Draft = "Typed first: ";
+        var run = page.ToggleDictationAsync();
+        Check(page.IsDictating && !page.IsNotDictating && page.MicrophoneDescription == "Stop dictating" && page.Draft == "Typed first: hello there"
+              && page.DictationNote.StartsWith("Listening", StringComparison.Ordinal) && !run.IsCompleted, $"dictating: '{page.Draft}', '{page.DictationNote}'");
+        page.DictateCommand.Execute(null);                                     // the microphone again: it stops
+        Check(run.Wait(TimeSpan.FromSeconds(20)) && run.Result && dictation.Stops == 1 && !page.IsDictating && page.MicrophoneDescription == "Dictate",
+            $"stopped: {dictation.Stops} stop(s), '{page.DictationNote}'");
+        Check(page.Draft == "Typed first: hello there" && !page.HasDictationNote && !page.DictationNeedsModel, $"the draft: '{page.Draft}'; '{page.DictationNote}'");
+
+        // No speech model: said, with Models offered; nothing typed.
+        var none = new ChatViewModel(new ListedStore(Stored(folder)), chats, new IdrakMauiOptions(), new InlineDispatcher(), new ManualTime(), dictation: new ScriptedDictation { NoModel = true });
+        Check(!none.ToggleDictationAsync().GetAwaiter().GetResult() && none.DictationNeedsModel && none.DictationNote.Contains("Models", StringComparison.Ordinal) && none.Draft.Length == 0
+              && !none.IsDictating, $"no model: '{none.DictationNote}'");
+
+        // No dictation registered: said.
+        var without = new ChatViewModel(new ListedStore(Stored(folder)), chats, new IdrakMauiOptions(), new InlineDispatcher(), new ManualTime());
+        Check(!without.ToggleDictationAsync().GetAwaiter().GetResult() && without.HasDictationNote && !without.IsDictating, without.DictationNote);
+    }
 }

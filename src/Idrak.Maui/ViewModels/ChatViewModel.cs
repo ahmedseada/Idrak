@@ -309,6 +309,9 @@ public sealed class ChatViewModel : ViewModel
     private string _status = "";
     private string _error = "";
     private readonly IConversationStore? _conversations;
+    private readonly IDictation? _dictation;
+    private bool _dictating, _dictationNeedsModel;
+    private string _dictationNote = "";
     private readonly List<double> _rates = [];
     private string _conversationId;
     private string _conversationQuery = "";
@@ -324,10 +327,13 @@ public sealed class ChatViewModel : ViewModel
     /// <param name="dispatcher">The UI thread's dispatcher; null: the app's (<c>Application.Current.Dispatcher</c>) when there is one, else the streaming thread itself.</param>
     /// <param name="time">The clock the batching reads (tests give their own).</param>
     /// <param name="conversations">Where the chats are kept between runs; null: none kept.</param>
+    /// <param name="dictation">What the composer's microphone dictates with (the Transcribe lab's, <c>UseIdrak</c>'s); null: the microphone says there is none.</param>
     public ChatViewModel(IModelStore store, IChatModelService chats, IdrakMauiOptions options, IDispatcher? dispatcher = null, TimeProvider? time = null,
-        IConversationStore? conversations = null)
+        IConversationStore? conversations = null, IDictation? dictation = null)
     {
         _conversations = conversations;
+        _dictation = dictation;
+        DictateCommand = new Command(async () => await ToggleDictationAsync());
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _chats = chats ?? throw new ArgumentNullException(nameof(chats));
         _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -852,6 +858,99 @@ public sealed class ChatViewModel : ViewModel
 
     /// <summary>Opens the Models page (<see cref="OpenModels"/>).</summary>
     public ICommand GoToModelsCommand { get; }
+
+    /// <summary>
+    /// The composer's microphone: dictates into <see cref="Draft"/> (the words heard live after what was typed, through
+    /// the <see cref="IDictation"/> given: the Transcribe lab's model and settings), and stops it on the next tap.
+    /// </summary>
+    public ICommand DictateCommand { get; }
+
+    /// <summary>Whether the microphone dictates into the draft now.</summary>
+    public bool IsDictating
+    {
+        get => _dictating;
+        private set
+        {
+            if (SetProperty(ref _dictating, value))
+            {
+                OnPropertyChanged(nameof(IsNotDictating));
+                OnPropertyChanged(nameof(MicrophoneDescription));
+            }
+        }
+    }
+
+    /// <summary>Whether the microphone is idle.</summary>
+    public bool IsNotDictating => !IsDictating;
+
+    /// <summary>What the microphone does on a tap ("Dictate" or "Stop dictating").</summary>
+    public string MicrophoneDescription => IsDictating ? "Stop dictating" : "Dictate";
+
+    /// <summary>What the last dictation said (why it did not start, that it listens), or "".</summary>
+    public string DictationNote
+    {
+        get => _dictationNote;
+        private set
+        {
+            if (SetProperty(ref _dictationNote, value))
+            {
+                OnPropertyChanged(nameof(HasDictationNote));
+            }
+        }
+    }
+
+    /// <summary>Whether <see cref="DictationNote"/> has something to show.</summary>
+    public bool HasDictationNote => DictationNote.Length > 0;
+
+    /// <summary>Whether the dictation needs a speech model first (the note offers Models).</summary>
+    public bool DictationNeedsModel
+    {
+        get => _dictationNeedsModel;
+        private set => SetProperty(ref _dictationNeedsModel, value);
+    }
+
+    /// <summary>
+    /// Starts dictating into the draft (the words heard after what is typed, live), or stops the dictation running; true
+    /// when a dictation ran and ended with its last words read.
+    /// </summary>
+    public async Task<bool> ToggleDictationAsync()
+    {
+        if (_dictation is null)
+        {
+            DictationNote = "No dictation here: the app registers none.";
+            return false;
+        }
+
+        if (IsDictating)
+        {
+            DictationNote = "Finishing the last words…";
+            _dictation.Stop();
+            return false;
+        }
+
+        string typed = Draft.TrimEnd();
+        DictationNeedsModel = false;
+        DictationNote = "Listening… tap the microphone again to stop.";
+        IsDictating = true;
+        try
+        {
+            var outcome = await _dictation.DictateAsync(heard => Post(() => Draft = Joined(typed, heard))).ConfigureAwait(true);
+            if (outcome.Text.Length > 0)
+            {
+                Draft = Joined(typed, outcome.Text);
+            }
+
+            DictationNeedsModel = outcome.NeedsModel;
+            DictationNote = outcome.Problem;
+            return outcome.Completed;
+        }
+        finally
+        {
+            IsDictating = false;
+        }
+    }
+
+    // What was typed, then what was heard.
+    private static string Joined(string typed, string heard) => typed.Length == 0 ? heard : heard.Length == 0 ? typed : typed + " " + heard;
 
     /// <summary>
     /// The generation options the settings give: <see cref="IdrakMauiOptions.ChatTemperature"/>, <see cref="IdrakMauiOptions.ChatTopP"/>,

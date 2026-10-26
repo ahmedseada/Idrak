@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!--
   Devices (plan 34, phase R): what the library measured in the app's own process, as summary cards (the process, then each
-  device with its state as a badge and a few key facts, every other fact folded under it), the virtual devices (deferred,
+  device with its state as a badge and a few key facts, every other fact folded under it; the CPU's memory from the
+  system's figure, its core groups and vector paths in a line; a GPU's refused kernels as an amber badge, listed folded), the virtual devices (deferred,
   minimal, simulated) apart, and each backend that found none with why. Theme keys only.
 -->
 <ctl:AdaptiveView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
@@ -44,6 +45,21 @@
                             </Border>
                         </Grid>
                         <Label Text="{Binding Device}" Style="{DynamicResource IdrakTimestamp}" />
+                        <!-- Kernels the driver refused: a small amber badge (each runs on a fallback), the list folded under it. -->
+                        <Border Style="{DynamicResource IdrakStateBadge}" BackgroundColor="{DynamicResource IdrakToneAmberBackground}" IsVisible="{Binding HasRefusedKernels}"
+                                HorizontalOptions="Start" SemanticProperties.Description="{Binding RefusedText}">
+                            <Border.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding ToggleRefusedCommand}" />
+                            </Border.GestureRecognizers>
+                            <Label Text="{Binding RefusedText}" Style="{DynamicResource IdrakStateBadgeLabel}" TextColor="{DynamicResource IdrakToneAmber}" />
+                        </Border>
+                        <VerticalStackLayout BindableLayout.ItemsSource="{Binding RefusedKernels}" IsVisible="{Binding IsRefusedExpanded}" Spacing="{DynamicResource IdrakSpacingTiny}">
+                            <BindableLayout.ItemTemplate>
+                                <DataTemplate x:DataType="x:String">
+                                    <Label Text="{Binding .}" Style="{DynamicResource IdrakMono}" />
+                                </DataTemplate>
+                            </BindableLayout.ItemTemplate>
+                        </VerticalStackLayout>
                         <Label Text="{Binding Problem}" IsVisible="{Binding HasProblem}" Style="{DynamicResource IdrakErrorText}" />
                         <VerticalStackLayout BindableLayout.ItemsSource="{Binding Facts}" Spacing="{DynamicResource IdrakSpacingTiny}">
                             <BindableLayout.ItemTemplate>

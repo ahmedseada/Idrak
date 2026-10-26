@@ -54,7 +54,7 @@
                     <VerticalStackLayout x:Name="Left">
 
                         <!-- The carousel. -->
-                        <CarouselView x:Name="Carousel" ItemsSource="{Binding Slides}" Position="{Binding Position, Mode=TwoWay}" IndicatorView="Dots"
+                        <CarouselView x:Name="Carousel" ItemsSource="{Binding Slides}" Position="{Binding Position, Mode=TwoWay}"
                                       HeightRequest="236" PeekAreaInsets="{DynamicResource IdrakCarouselPeek}" Loop="False" HorizontalScrollBarVisibility="Never">
                             <CarouselView.ItemsLayout>
                                 <LinearItemsLayout Orientation="Horizontal" ItemSpacing="12" SnapPointsType="MandatorySingle" SnapPointsAlignment="Start" />
@@ -99,7 +99,7 @@
                             </CarouselView.ItemTemplate>
                         </CarouselView>
                         <Grid ColumnDefinitions="Auto,*" Padding="{DynamicResource IdrakTopGap}">
-                            <IndicatorView x:Name="Dots" VerticalOptions="Center" />
+                            <ctl:PageIndicator x:Name="Dots" Count="{Binding Slides.Count}" Position="{Binding Position}" VerticalOptions="Center" />
                             <Label Grid.Column="1" Text="{Binding SlideCaption}" Style="{DynamicResource IdrakMicro}" HorizontalOptions="End" />
                         </Grid>
 

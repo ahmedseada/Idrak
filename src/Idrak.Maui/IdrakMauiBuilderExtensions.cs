@@ -21,7 +21,7 @@ public static class IdrakMauiBuilderExtensions
     /// <see cref="IModelStore"/>, <see cref="IDeviceInformation"/>, <see cref="IPermissionService"/>,
     /// <see cref="IShareService"/>, <see cref="ISoundPlayer"/>, the settings and the memory-pressure signal); the library's features
     /// (<see cref="MobileFeatures"/>: Devices, Models, Chat with <see cref="IChatModelService"/> and its kept conversations
-    /// (<see cref="IConversationStore"/>), Transcribe, Speak, Studio, Read text with <see cref="IVisionReaderService"/>, and
+    /// (<see cref="IConversationStore"/>) and its microphone's dictation (<see cref="IDictation"/>, the Transcribe lab's), Transcribe, Speak, Studio, Read text with <see cref="IVisionReaderService"/>, and
     /// Image) and the settings page; the app's navigation (<see cref="AppHostPage"/> over <see cref="AppSections"/>, its
     /// <see cref="AppLayout"/> and <see cref="IAppNavigator"/>, and <see cref="DeviceStatus"/>). The app registers its own
     /// features and model families after; it gives its own defaults for the OCR and Image labs' settings by registering an
@@ -76,8 +76,11 @@ public static class IdrakMauiBuilderExtensions
         services.AddTransient<DevicesViewModel>();
         services.TryAddSingleton<ModelsViewModel>();                                // one for the app: a pull outlives its page
         services.TryAddSingleton<IConversationStore>(_ => new FileConversationStore(Path.Combine(startup.AppStorage, "conversations")));
+        services.TryAddSingleton(sp => new TranscribeViewModel(sp.GetRequiredService<IModelStore>(), sp.GetRequiredService<IModelService>(),    // shared by the lab and dictation
+            sp.GetRequiredService<IPermissionService>(), sp.GetRequiredService<IShareService>(), options, store, progress));
+        services.TryAddSingleton<IDictation>(sp => new TranscribeDictation(sp.GetRequiredService<TranscribeViewModel>()));
         services.TryAddSingleton(sp => new ChatViewModel(sp.GetRequiredService<IModelStore>(), sp.GetRequiredService<IChatModelService>(), options,
-            conversations: sp.GetService<IConversationStore>()));                                                                                   // a chat outlives its page
+            conversations: sp.GetService<IConversationStore>(), dictation: sp.GetService<IDictation>()));                                         // a chat outlives its page
         services.TryAddSingleton(sp => new OcrViewModel(sp.GetRequiredService<IModelStore>(), sp.GetRequiredService<IVisionReaderService>(),   // a read outlives its page
             sp.GetRequiredService<IPermissionService>(), sp.GetRequiredService<IShareService>(), options, store, sp.GetService<OcrLabOptions>()));
         services.AddTransient(sp => new SettingsViewModel(options, settings, startup, progress));

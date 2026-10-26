@@ -210,6 +210,11 @@ internal static partial class MauiTests
             Check(!vm.ApplyAsync().GetAwaiter().GetResult() && vm.Error.Contains("Record or pick", StringComparison.Ordinal), $"nothing to apply: {vm.Error}");
             var audio = lab.OpenTone();
             Check(vm.HasOriginal && vm.OriginalText.Contains("16000 Hz", StringComparison.Ordinal) && vm.BeforeText.StartsWith("RMS", StringComparison.Ordinal), $"{vm.OriginalText}; {vm.BeforeText}");
+            Check(vm.Before is { HasLevel: true } before && before.Rms > 0 && before.Peak >= before.Rms && before.PeakAbove == before.Peak - before.Rms
+                  && before.RmsDecibels == LevelMeter.Decibels(audio.Samples) && before.Description.StartsWith("RMS", StringComparison.Ordinal) && !vm.After.HasLevel && vm.After.Short == "–",
+                $"the meters before an apply: {vm.Before}; {vm.After}");
+            Check(LevelReading.Share(-60) == 0 && LevelReading.Share(0) == 1 && LevelReading.Share(-30) == 0.5 && LevelReading.Share(double.NegativeInfinity) == 0 && LevelReading.Share(-90) == 0,
+                "the meter's scale: -60 dB to full scale");
 
             // The library's own result on the same sound, bit for bit; its latency and delay; cold, then warm.
             const string Text = "highpass=80, limit, normalize=-20";
@@ -230,6 +235,8 @@ internal static partial class MauiTests
             Check(vm.ColdTime is { } cold && vm.WarmTime is { } warm && cold > TimeSpan.Zero && warm > TimeSpan.Zero && vm.ColdText.StartsWith("Cold", StringComparison.Ordinal)
                   && vm.WarmText.StartsWith("Warm", StringComparison.Ordinal) && vm.ColdText.Contains("real-time factor", StringComparison.Ordinal), $"{vm.ColdText}; {vm.WarmText}");
             Check(vm.AfterText.StartsWith("RMS", StringComparison.Ordinal) && vm.AfterText != vm.BeforeText, $"levels: {vm.BeforeText} / {vm.AfterText}");
+            Check(vm.After is { HasLevel: true } after && after.RmsDecibels == LevelMeter.Decibels(vm.Processed!.Samples) && after.PeakDecibels == LevelMeter.PeakDecibels(vm.Processed!.Samples)
+                  && after != vm.Before && after.Short.EndsWith(" dB", StringComparison.Ordinal), $"the meters after: {vm.Before} / {vm.After}");
             double rms = LevelMeter.Decibels(expected.Samples), peak = LevelMeter.PeakDecibels(expected.Samples);
             Check(vm.AfterText == $"RMS {AudioTextFor(rms)}, peak {AudioTextFor(peak)}" && peak <= 0, $"the processed level: {vm.AfterText} (RMS {rms:0.00}, peak {peak:0.00})");
             var coldBefore = vm.ColdTime;

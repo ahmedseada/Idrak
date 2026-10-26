@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Devices;
 using Idrak.Maui.Abstractions;
 
 namespace Idrak.Maui;
@@ -75,6 +76,13 @@ public sealed class IdrakMauiOptions
 
     /// <summary>Where frozen lookup tables live: "auto", "host" or "device" (<see cref="ComputeResources.LookupTables"/>); null: the library's.</summary>
     public string? LookupTables { get; set; }
+
+    /// <summary>
+    /// Which vector paths the CPU's kernels take (<see cref="ComputeResources.CpuVectors"/>): automatic, the platform's
+    /// intrinsics only (native), the portable vectors only, or the plain loops (scalar). Every path gives the same results;
+    /// they differ in speed. Null: the library's (IDRAK_CPU_VECTORS, else automatic).
+    /// </summary>
+    public CpuVectorPaths? CpuVectors { get; set; }
 
     /// <summary>The Hugging Face token for gated and private models (kept in the phone's secure storage); null: none, or HF_TOKEN.</summary>
     public string? HuggingFaceToken { get; set; }

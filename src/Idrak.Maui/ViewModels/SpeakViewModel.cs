@@ -686,7 +686,9 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
             {
                 using var lease = Host.Acquire(key);
                 bool first = !ReferenceEquals(lease.Model, Volatile.Read(ref _spokenWith));
-                var made = Made(lease.Model.SpeakStream(text, speech, stop.Token), stop.Token);
+                // The text of each piece, as the lab's piece size cuts it (the stream gives the sound alone): the library's own split.
+                var texts = SpeechSynthesisText.Pieces(text, speech.MaxCharacters);
+                var made = Made(lease.Model.SpeakStream(text, speech, stop.Token), texts, stop.Token);
                 var result = await _player.PlayAsync(made, play, stop.Token).ConfigureAwait(false);
                 Volatile.Write(ref _spokenWith, lease.Model);
                 return (result, first);
@@ -1119,10 +1121,12 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
         OnPropertyChanged(nameof(HasVoiceReason));
     }
 
-    // The speech's pieces as they are made: each kept (to play again and save), its making timed, a showing asked for.
-    private async IAsyncEnumerable<AudioData> Made(IAsyncEnumerable<AudioData> speech, [EnumeratorCancellation] CancellationToken cancellationToken)
+    // The speech's pieces as they are made: each kept (to play again and save) with its text (the n-th piece the n-th of
+    // `texts`; one past them has none), its making timed, a showing asked for.
+    private async IAsyncEnumerable<AudioData> Made(IAsyncEnumerable<AudioData> speech, IReadOnlyList<string> texts, [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var pieces = speech.GetAsyncEnumerator(cancellationToken);
+        int index = 0;
         try
         {
             while (true)
@@ -1134,7 +1138,8 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
                 }
 
                 var piece = pieces.Current;
-                _state.Add(piece, _time.GetElapsedTime(asked));
+                _state.Add(piece, _time.GetElapsedTime(asked), index < texts.Count ? texts[index] : "");
+                index++;
                 _batcher.Touch();
                 yield return piece;
             }
@@ -1172,9 +1177,9 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
     {
         var s = _state.Snapshot();
         ProgressLine = s.Pieces == 0 ? "" : $"{s.Pieces} piece{(s.Pieces == 1 ? "" : "s")}, {AudioText.Seconds(s.Seconds)} of speech, made in {AudioText.Time(s.Making)}";
-        foreach (var (seconds, making) in _state.PiecesFrom(Pieces.Count))
+        foreach (var (seconds, making, text) in _state.PiecesFrom(Pieces.Count))
         {
-            Pieces.Add(new SpokenPiece(Pieces.Count + 1, AudioText.Seconds(seconds), AudioText.Time(making), seconds > 0 ? making.TotalSeconds / seconds : 0));
+            Pieces.Add(new SpokenPiece(Pieces.Count + 1, AudioText.Seconds(seconds), AudioText.Time(making), seconds > 0 ? making.TotalSeconds / seconds : 0, text));
         }
     }
 
@@ -1186,7 +1191,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
     {
         private readonly Lock _gate = new();
         private readonly List<AudioData> _pieces = [];
-        private readonly List<(double Seconds, TimeSpan Making)> _timings = [];
+        private readonly List<(double Seconds, TimeSpan Making, string Text)> _timings = [];
         private double _seconds;
         private TimeSpan _making;
 
@@ -1201,8 +1206,8 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
             }
         }
 
-        // Each piece's length and making time, from the start-th on.
-        public IReadOnlyList<(double Seconds, TimeSpan Making)> PiecesFrom(int start)
+        // Each piece's length, making time and text, from the start-th on.
+        public IReadOnlyList<(double Seconds, TimeSpan Making, string Text)> PiecesFrom(int start)
         {
             lock (_gate)
             {
@@ -1210,11 +1215,11 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
             }
         }
 
-        public void Add(AudioData piece, TimeSpan making)
+        public void Add(AudioData piece, TimeSpan making, string text)
         {
             lock (_gate)
             {
-                _timings.Add((piece.Duration.TotalSeconds, making));
+                _timings.Add((piece.Duration.TotalSeconds, making, text));
                 _pieces.Add(piece);
                 _seconds += piece.Duration.TotalSeconds;
                 _making += making;
@@ -1264,13 +1269,17 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
     }
 }
 
-/// <summary>One piece of a speech as it was made: its place, its length and how long it took to make.</summary>
+/// <summary>One piece of a speech as it was made: its place, its text, its length and how long it took to make.</summary>
 /// <param name="Index">Its place, from 1.</param>
 /// <param name="Length">Its length ("1.2 s").</param>
 /// <param name="Making">How long it took ("180 ms").</param>
 /// <param name="Factor">Its real-time factor (making time over length; under 1 is faster than it plays).</param>
-public sealed record SpokenPiece(int Index, string Length, string Making, double Factor)
+/// <param name="Text">What it says: the piece of the text the lab cut by its piece size (<see cref="SpeechSynthesisText.Pieces"/>), or "" where none matched.</param>
+public sealed record SpokenPiece(int Index, string Length, string Making, double Factor, string Text = "")
 {
+    /// <summary>Whether its text is known.</summary>
+    public bool HasText => Text.Length > 0;
+
     /// <summary>"#1".</summary>
     public string Number => "#" + Index.ToString(System.Globalization.CultureInfo.InvariantCulture);
 

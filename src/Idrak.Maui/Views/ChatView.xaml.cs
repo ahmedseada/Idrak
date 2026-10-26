@@ -12,14 +12,15 @@ namespace Idrak.Maui.Views;
 /// <summary>
 /// Chat's view: reads the store's models and the kept chats each time it is shown, keeps the composer above the keyboard
 /// (the window resizes while it is shown), follows the streaming answer to its end, copies with the clipboard, opens Models
-/// (+) and Transcribe (the microphone). Wide: the conversations on the left and the inspector on the right.
+/// (+); the microphone dictates into the message (<see cref="ChatViewModel.DictateCommand"/>). Wide: the conversations on the
+/// left and the inspector on the right.
 /// </summary>
 public partial class ChatView : AdaptiveView
 {
     private readonly IAppNavigator _navigator;
     private WindowSoftInputModeAdjust? _keyboard;
 
-    /// <summary>A view bound to <paramref name="viewModel"/>; <paramref name="services"/> open Models and Transcribe.</summary>
+    /// <summary>A view bound to <paramref name="viewModel"/>; <paramref name="services"/> open Models.</summary>
     public ChatView(ChatViewModel viewModel, IServiceProvider services)
         : base(services)
     {
@@ -94,8 +95,6 @@ public partial class ChatView : AdaptiveView
             ViewModel.SuggestCommand.Execute(text);
         }
     }
-
-    private async void OnMicrophone(object? sender, TappedEventArgs e) => await _navigator.OpenFeatureAsync(MobileFeatures.Transcribe);
 }
 
 /// <summary>The chat's two bubbles: the user's and the model's.</summary>

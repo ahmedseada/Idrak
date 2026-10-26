@@ -2,7 +2,7 @@
 <!--
   Studio, the audio process lab (plan 34, phase R; the design's visual language for the Voice tab): a recording or a file
   as the sound; the pipeline as a flow of steps (tap a processor to add it, a step to take it out) and as text; the A and B
-  players, the latency and delay, the level before and after, cold apart from warm; monitoring; save and share. A wide
+  players with their levels as meters (the root mean square, the peak after it), the latency and delay, cold apart from warm; monitoring; save and share. A wide
   window: the sound and the pipeline on the left, the result on the right. Theme keys only.
 -->
 <ctl:AdaptiveView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
@@ -96,7 +96,12 @@
                             <ctl:IconBadge Glyph="play" Tone="Neutral" />
                             <VerticalStackLayout Grid.Column="1" VerticalOptions="Center">
                                 <Label Text="A · Original" Style="{DynamicResource IdrakItemTitle}" />
-                                <Label Text="{Binding BeforeText}" Style="{DynamicResource IdrakMicro}" />
+                                <!-- The level: the root mean square filled, the peak after it; the RMS in dB beside. -->
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingSmall}" Margin="{DynamicResource IdrakTopGapSmall}"
+                                      SemanticProperties.Description="{Binding Before.Description}">
+                                    <ctl:MeterBar Progress="{Binding Before.Rms}" Second="{Binding Before.PeakAbove}" VerticalOptions="Center" />
+                                    <Label Grid.Column="1" Text="{Binding Before.Short}" Style="{DynamicResource IdrakMicro}" VerticalOptions="Center" />
+                                </Grid>
                             </VerticalStackLayout>
                         </Grid>
                     </Border>
@@ -108,7 +113,12 @@
                             <ctl:IconBadge Glyph="play" Tone="Rose" />
                             <VerticalStackLayout Grid.Column="1" VerticalOptions="Center">
                                 <Label Text="B · Processed" Style="{DynamicResource IdrakItemTitle}" />
-                                <Label Text="{Binding AfterText}" Style="{DynamicResource IdrakMicro}" />
+                                <!-- The level: the root mean square filled, the peak after it; the RMS in dB beside. -->
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingSmall}" Margin="{DynamicResource IdrakTopGapSmall}"
+                                      SemanticProperties.Description="{Binding After.Description}">
+                                    <ctl:MeterBar Progress="{Binding After.Rms}" Second="{Binding After.PeakAbove}" VerticalOptions="Center" />
+                                    <Label Grid.Column="1" Text="{Binding After.Short}" Style="{DynamicResource IdrakMicro}" VerticalOptions="Center" />
+                                </Grid>
                             </VerticalStackLayout>
                         </Grid>
                     </Border>

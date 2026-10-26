@@ -59,6 +59,7 @@ public static class IdrakMauiStartup
         ComputeResources.TuningBudget = options.TuningBudgetMs is { } budget ? TimeSpan.FromMilliseconds(budget) : library.TuningBudget;
         ComputeResources.TuningNeighbourOctaves = options.TuningNeighbourOctaves ?? library.TuningNeighbourOctaves;
         ComputeResources.LookupTables = options.LookupTables is { } placement ? ComputeResources.ParseLookupTables(placement) : library.LookupTables;
+        ComputeResources.CpuVectors = options.CpuVectors ?? library.CpuVectors;
         ApplyToken(options.HuggingFaceToken);
         ApplyDevice(options.Device, problems);
         return new IdrakStartupReport(ComputeResources.CacheFolder, options.Device, problems, appStorage);
@@ -108,10 +109,12 @@ public static class IdrakMauiStartup
     }
 
     private sealed record Snapshot(int MaxCpuThreads, long? CpuMemoryLimit, long? GpuMemoryLimit, long? GpuMemoryReserve, bool OffloadToHostMemory, long? OffloadReturnHeadroom,
-        long? GpuChunkBytes, long? GpuStackBytes, double WorkspaceShare, TimeSpan TuningBudget, double TuningNeighbourOctaves, LookupTablePlacement LookupTables)
+        long? GpuChunkBytes, long? GpuStackBytes, double WorkspaceShare, TimeSpan TuningBudget, double TuningNeighbourOctaves, LookupTablePlacement LookupTables,
+        CpuVectorPaths CpuVectors)
     {
         public static Snapshot Read() => new(ComputeResources.MaxCpuThreads, ComputeResources.CpuMemoryLimit, ComputeResources.GpuMemoryLimit, ComputeResources.GpuMemoryReserve,
             ComputeResources.OffloadToHostMemory, ComputeResources.OffloadReturnHeadroom, ComputeResources.GpuChunkBytes, ComputeResources.GpuStackBytes,
-            ComputeResources.WorkspaceShare, ComputeResources.TuningBudget, ComputeResources.TuningNeighbourOctaves, ComputeResources.LookupTables);
+            ComputeResources.WorkspaceShare, ComputeResources.TuningBudget, ComputeResources.TuningNeighbourOctaves, ComputeResources.LookupTables,
+            ComputeResources.CpuVectors);
     }
 }

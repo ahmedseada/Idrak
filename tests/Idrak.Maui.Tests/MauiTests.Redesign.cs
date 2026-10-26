@@ -640,6 +640,13 @@ internal static partial class MauiTests
                   && theme.Segments[0].IsSelected, "the theme as segments");
             theme.Segments[2].SelectCommand.Execute(null);
             Check(theme.Text == "dark" && theme.Segments[2].IsSelected && !theme.Segments[0].IsSelected, $"chose '{theme.Text}'");
+            var vectors = page.Entries.Single(e => e.Setting.Key == "cpu_vectors");
+            Check(vectors is { IsSegmented: true, Group: "General", Text.Length: 0 } && vectors.Segments.Select(s => s.Label).SequenceEqual(["Automatic", "Native", "Portable", "Scalar"])
+                  && vectors.Segments[0].IsSelected && theme.Segments[0].Label == "System", $"the vector paths as segments: {string.Join(", ", vectors.Segments.Select(s => s.Label))}");
+            vectors.Segments[2].SelectCommand.Execute(null);
+            Check(vectors.Text == "portable" && vectors.Segments[2].IsSelected, $"chose '{vectors.Text}'");
+            vectors.Segments[0].SelectCommand.Execute(null);
+            Check(vectors.Text.Length == 0, "automatic is the library's own");
             var weights = page.Entries.Single(e => e.Setting.Key == "chat_weights");
             Check(weights.IsSegmented == weights.Choices.Count <= 4 && weights.IsPicker == !weights.IsSegmented && page.Entries.Single(e => e.Setting.Key == "device") is { IsPicker: true, IsSegmented: false }
               && page.Entries.Single(e => e.Setting.Key == "lookup_tables") is { IsSegmented: true, Segments.Count: 4 }, $"weights ({weights.Choices.Count} choices) and the device");
@@ -702,5 +709,138 @@ internal static partial class MauiTests
         wave.IsLive = false;
         wave.Level = 0.05;
         Check(wave.Count == 8, "not live: a level is not pushed");
+    }
+
+    // A phone's CPU as phase F lists it (Mono: the runtime's figure is its heap budget, the system's figure the phone's
+    // memory), and a Vulkan device whose driver refused two kernels.
+    private static DeviceReport PhoneReading(params KeyValuePair<string, string>[] more)
+    {
+        KeyValuePair<string, string>[] facts =
+        [
+            new("processor", "Test SoC (8 cores: 4 × part 0x41:0xd05 up to 2.00 GHz, 3 × part 0x41:0xd0d up to 2.75 GHz, 1 × part 0x41:0xd0e up to 3.20 GHz)"),
+            new("core groups", "8 cores: 4 × part 0x41:0xd05 up to 2.00 GHz, 3 × part 0x41:0xd0d up to 2.75 GHz, 1 × part 0x41:0xd0e up to 3.20 GHz"),
+            new("threads", "8 threads, 8 cores"),
+            new("instruction sets", "NEON (portable vectors: the runtime reports no NEON intrinsics), FMA"),
+            new("vector paths", "automatic (IDRAK_CPU_VECTORS); tiled products: 8×8 in 128-bit vectors (portable vectors: the runtime reports no NEON intrinsics); few-row products: register-tiled; int4 lane shifts: multiplies by powers of two (the same bits)"),
+            new("memory", "11.0 GiB the process may use, 4.2 GiB of it free now (as the system reports them)"),
+            new("system memory", "11.0 GiB, 4.2 GiB available (/proc/meminfo)"),
+            new("runtime memory", "143.0 MiB: Mono's heap budget now, not a limit (it grows as the heap does)"),
+            .. more,
+        ];
+        var cpu = new DeviceInfo { Device = "cpu", Kind = "cpu", Backend = "CPU", Name = "Test SoC", Listed = true, MemoryBytes = 11L << 30, ComputeUnits = 8, SubgroupSize = 4, Facts = facts };
+        var gpu = new DeviceInfo
+        {
+            Device = "vulkan:0", Kind = "vulkan", Backend = "Vulkan", Name = "Test GPU", Listed = true, IsDefault = true, KernelWidth = 64, HardwareKind = "integrated",
+            Facts =
+            [
+                new("refused kernels", "int8_gemv at width 64 (vkCreateComputePipelines with subgroups of 64: VK_ERROR_UNKNOWN; VK_ERROR_UNKNOWN); instead: Int8MatMul: the host; "
+                    + "softmax at width 128 (VK_ERROR_UNKNOWN); instead: nothing has needed it since"),
+                new("subgroup-size requests dropped", "none"),
+            ],
+        };
+        var process = new ProcessFacts("Android", "Arm64", ".NET 10 (Mono)", 8, 150L << 20, 400L << 20, 50 << 20, "/cache", 8);
+        return new DeviceReport([new(cpu, null, 0), new(gpu, null, 0)], [], process, "vulkan:0", TimeSpan.Zero);
+    }
+
+    private static void RedesignPhoneFacts()
+    {
+        const long GiB = 1L << 30;
+        long total = 11 * GiB, free = (long)Math.Round(4.2 * GiB);
+        var report = PhoneReading();
+        var cpuFacts = report.Devices[0].Info.Facts;
+
+        // The memory from the system's figure, held to a memory limit; the runtime's figure where the system reports none.
+        Check(DeviceFacts.SystemMemory(cpuFacts) is { } memory && memory.Total == total && memory.Free == free && Math.Abs(memory.Used - (double)(total - free) / total) < 1e-9
+              && memory.Text == $"{ProgressText.Bytes(free)} free of {ProgressText.Bytes(total)}", $"{DeviceFacts.SystemMemory(cpuFacts)}");
+        var limited = DeviceFacts.SystemMemory(PhoneReading(new KeyValuePair<string, string>("memory limit", "6.0 GiB, 5.0 GiB in use (cgroup v2 /sys/fs/cgroup)")).Devices[0].Info.Facts);
+        Check(limited is { Total: 6 * GiB, Free: 1 * GiB }, $"held to the limit: {limited}");
+        var runtime = DeviceFacts.SystemMemory([new("memory", "16.0 GiB the process may use, 9.5 GiB of it free now (as the runtime reports them: the system reports none here)")]);
+        Check(runtime is { Total: 16 * GiB } r && r.Free == (long)(9.5 * GiB) && DeviceFacts.SystemMemory([]) is null && DeviceFacts.SystemMemory(null) is null, $"the runtime's figures: {runtime}");
+
+        // The core groups and the vector paths in a line; the refused kernels one each.
+        string groups = DeviceFacts.CoreGroups(DeviceFacts.Fact(cpuFacts, "core groups"));
+        Check(groups == "4 × 2.0 GHz · 3 × 2.75 GHz · 1 × 3.2 GHz" && DeviceFacts.CoreGroupCount(DeviceFacts.Fact(cpuFacts, "core groups")) == 3, groups);
+        Check(DeviceFacts.CoreGroups("4 cores: 4 × part 0x41:0xd03") == "4 × 0x41:0xd03" && DeviceFacts.CoreGroups(null).Length == 0, DeviceFacts.CoreGroups("4 cores: 4 × part 0x41:0xd03"));
+        string vectors = DeviceFacts.VectorPaths(DeviceFacts.Fact(cpuFacts, "vector paths"));
+        Check(vectors == "automatic · 8×8 in 128-bit vectors (portable vectors)" && DeviceFacts.VectorPaths("something else") == "something else", vectors);
+        var refused = DeviceFacts.RefusedKernels(DeviceFacts.Fact(report.Devices[1].Info.Facts, "refused kernels"));
+        Check(refused.Count == 2 && refused[0].StartsWith("int8_gemv at width 64 (", StringComparison.Ordinal) && refused[0].EndsWith("; instead: Int8MatMul: the host", StringComparison.Ordinal)
+              && refused[1].StartsWith("softmax at width 128", StringComparison.Ordinal) && DeviceFacts.RefusedKernels("none").Count == 0 && DeviceFacts.RefusedKernels(null).Count == 0,
+            string.Join(" | ", refused));
+
+        // Home's tiles: the memory and the core groups.
+        var summary = DeviceStatus.Summarize(report);
+        Check(summary.MemoryFree == ProgressText.Bytes(free) && summary.MemoryTotal == ProgressText.Bytes(total) && Math.Abs(summary.MemoryUsed - (double)(total - free) / total) < 1e-9
+              && summary.CpuDetail == "3 core groups" && summary.GpuReady, summary.ToString());
+
+        // The Devices cards: the CPU's summary, the runtime's figure labelled in the details; the GPU's badge, its list folded.
+        var cards = DevicesViewModel.Summarize(report);
+        var cpu = cards.Single(c => c.Title == "CPU");
+        Check(cpu.Facts.Select(f => f.Name).SequenceEqual(["memory", "core groups", "vector paths", "instruction sets"]) && cpu.Facts[0].Value == $"{ProgressText.Bytes(free)} free of {ProgressText.Bytes(total)}"
+              && cpu.Facts[1].Value == groups && cpu.Facts[2].Value == vectors && !cpu.HasRefusedKernels, string.Join("; ", cpu.Facts.Select(f => $"{f.Name}: {f.Value}")));
+        Check(cpu.Details.Any(d => d.Name == "the runtime's memory figure" && d.Value.StartsWith("143.0 MiB: Mono's heap budget", StringComparison.Ordinal))
+              && cpu.Details.All(d => d.Name != "runtime memory") && cpu.Details.Any(d => d.Name == "system memory"), string.Join(", ", cpu.Details.Select(d => d.Name)));
+        var gpu = cards.Single(c => c.Title == "Vulkan");
+        Check(gpu is { HasRefusedKernels: true, RefusedText: "2 kernels on fallback", IsRefusedExpanded: false } && gpu.RefusedKernels.SequenceEqual(refused), gpu.RefusedText);
+        gpu.ToggleRefusedCommand.Execute(null);
+        Check(gpu.IsRefusedExpanded, "the refused kernels unfold");
+        cpu.IsRefusedExpanded = true;
+        Check(!cpu.IsRefusedExpanded, "nothing to unfold without a refused kernel");
+        var one = DevicesViewModel.Summarize(new DeviceReport([new(new DeviceInfo
+        {
+            Device = "vulkan:0", Kind = "vulkan", Backend = "Vulkan", Name = "g", Listed = true, Facts = [new("refused kernels", "rms_norm at width 64 (VK_ERROR_UNKNOWN); instead: the host")],
+        }, null, 0)], [], report.Process, "cpu", TimeSpan.Zero));
+        Check(one.Single(c => c.Title == "Vulkan").RefusedText == "1 kernel on fallback", "one kernel");
+
+        // The Devices view binds the badge in both themes, its labels in the theme's colours.
+        EnsureDispatcher();
+        var vm = new DevicesViewModel(new PhoneDevices(report));
+        vm.RefreshAsync().GetAwaiter().GetResult();
+        foreach (var theme in (AppTheme[])[AppTheme.Light, AppTheme.Dark])
+        {
+            var page = Themed(new DevicesView(vm), theme);
+            Check(CheckLabels(page, theme, "devices") > 0 && Tree(page).OfType<Label>().Any(l => l.Text == "2 kernels on fallback"), $"the devices view in {theme}");
+        }
+    }
+
+    private sealed class PhoneDevices(DeviceReport report) : IDeviceInformation
+    {
+        public DeviceReport Read(IReadOnlyList<string>? devices = null) => report;
+    }
+
+    private static void RedesignIndicator()
+    {
+        // The design's dots: 6 units, 6 apart, the page shown a pill of 22 (24 on a tablet) in the accent.
+        var dots = new PageIndicator { Count = 4 };
+        Check(dots.WidthRequest == 3 * 12 + 22 && dots.HeightRequest == 6 && dots.Shown == 0, $"{dots.WidthRequest} x {dots.HeightRequest}");
+        Check(dots.WidthOf(0, 0) == 22 && dots.WidthOf(1, 0) == 6 && dots.WidthOf(3, 0) == 6, "the first page's pill");
+        dots.Position = 2;                                                       // off screen: there at once
+        Check(dots.Shown == 2 && dots.WidthOf(2, dots.Shown) == 22 && dots.WidthOf(0, dots.Shown) == 6 && dots.WidthOf(1, 1.5) == 14 && dots.WidthOf(2, 1.5) == 14,
+            $"at {dots.Shown}; halfway {dots.WidthOf(1, 1.5)}");
+        dots.ActiveWidth = 24;
+        Check(dots.WidthRequest == 3 * 12 + 24, $"a tablet's pill: {dots.WidthRequest}");
+        dots.Count = 0;
+        Check(dots.WidthRequest == 0, "no pages, no dots");
+
+        // Bound to Home's carousel: the slides' count and its place.
+        var source = new IndicatorSource();
+        var bound = new PageIndicator { BindingContext = source };
+        bound.SetBinding(PageIndicator.CountProperty, new Binding(nameof(IndicatorSource.Count)));
+        bound.SetBinding(PageIndicator.PositionProperty, new Binding(nameof(IndicatorSource.Position)));
+        source.Position = 2;
+        Check(bound.Count == 3 && bound.Position == 2 && bound.Shown == 2, $"bound: {bound.Count} pages at {bound.Position}");
+    }
+
+    private sealed class IndicatorSource : ViewModel
+    {
+        private int _position;
+
+        public int Count => 3;
+
+        public int Position
+        {
+            get => _position;
+            set => SetProperty(ref _position, value);
+        }
     }
 }

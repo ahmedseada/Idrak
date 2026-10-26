@@ -66,8 +66,9 @@ public sealed class DevicesViewModel : ViewModel
             var rows = card?.Rows ?? [];
             var state = info.Error is not null ? DeviceState.Failed : DeviceState.Ready;
             bool isVirtual = !info.Listed || string.Equals(info.HardwareKind, "virtual", StringComparison.OrdinalIgnoreCase);
+            var facts = info.Kind == "cpu" ? CpuFacts(info, rows) : Pick(rows, "memory", "kernel width", "lanes", "compute units", "instruction sets", "driver");
             list.Add(new DeviceCard(info.Backend, info.Name.Length > 0 ? info.Name : info.Device, info.Device, info.HardwareKind ?? info.Kind, state, info.IsDefault, isVirtual,
-                info.Kind == "cpu" ? "cpu" : "zap", Pick(rows, "memory", "kernel width", "lanes", "compute units", "instruction sets", "driver"), rows, card?.Problem ?? ""));
+                info.Kind == "cpu" ? "cpu" : "zap", facts, rows, card?.Problem ?? "", DeviceFacts.RefusedKernels(DeviceFacts.Fact(info.Facts, "refused kernels"))));
         }
 
         foreach (var b in report.Backends.Where(b => b.Count == 0))
@@ -77,6 +78,42 @@ public sealed class DevicesViewModel : ViewModel
         }
 
         return list;
+    }
+
+    // The CPU's few key facts: its memory from the system's figure ("4.2 GB free of 11 GB"), its core groups in a line, the
+    // vector paths that run, its instruction sets; each in the reading's own words where the facts do not read so.
+    private static IReadOnlyList<InfoRow> CpuFacts(DeviceInfo info, IReadOnlyList<InfoRow> rows)
+    {
+        var facts = new List<InfoRow>(4);
+        if (DeviceFacts.SystemMemory(info.Facts) is { } memory)
+        {
+            facts.Add(new("memory", memory.Text));
+        }
+        else if (rows.FirstOrDefault(r => r.Name == "memory") is { } row)
+        {
+            facts.Add(row);
+        }
+
+        if (DeviceFacts.CoreGroups(DeviceFacts.Fact(info.Facts, "core groups")) is { Length: > 0 } groups)
+        {
+            facts.Add(new("core groups", groups));
+        }
+        else if (rows.FirstOrDefault(r => r.Name == "compute units") is { } units)
+        {
+            facts.Add(units);
+        }
+
+        if (DeviceFacts.VectorPaths(DeviceFacts.Fact(info.Facts, "vector paths")) is { Length: > 0 } paths)
+        {
+            facts.Add(new("vector paths", paths));
+        }
+
+        if (rows.FirstOrDefault(r => r.Name == "instruction sets") is { } sets)
+        {
+            facts.Add(sets);
+        }
+
+        return [.. facts.Take(4)];
     }
 
     // The rows named, in that order, at most four.
@@ -202,7 +239,7 @@ public sealed class DevicesViewModel : ViewModel
 
             foreach (var (name, value) in info.Facts ?? [])
             {
-                rows.Add(new(name, value));
+                rows.Add(new(name == RuntimeMemoryFact ? RuntimeMemoryRow : name, value));
             }
 
             if (d.MeasuredChoices > 0)
@@ -223,6 +260,9 @@ public sealed class DevicesViewModel : ViewModel
 
         return cards;
     }
+
+    // The CPU's runtime figure (under Mono its heap budget, not the phone's memory), named as the runtime's in the details.
+    private const string RuntimeMemoryFact = "runtime memory", RuntimeMemoryRow = "the runtime's memory figure";
 
     private static void Add(List<InfoRow> rows, string name, string? value)
     {
@@ -251,9 +291,13 @@ public sealed class DeviceCard : ViewModel
 {
     private bool _expanded;
 
+    private bool _refusedExpanded;
+
     internal DeviceCard(string title, string name, string device, string kind, DeviceState state, bool isDefault, bool isVirtual, string icon,
-        IReadOnlyList<InfoRow> facts, IReadOnlyList<InfoRow> details, string problem)
+        IReadOnlyList<InfoRow> facts, IReadOnlyList<InfoRow> details, string problem, IReadOnlyList<string>? refusedKernels = null)
     {
+        RefusedKernels = refusedKernels ?? [];
+        ToggleRefusedCommand = new Command(() => IsRefusedExpanded = !IsRefusedExpanded);
         Title = title;
         Name = name;
         Device = device;
@@ -337,4 +381,23 @@ public sealed class DeviceCard : ViewModel
 
     /// <summary>Folds or unfolds the facts.</summary>
     public ICommand ToggleCommand { get; }
+
+    /// <summary>The kernels the driver refused, each with what was tried and what ran instead (its "refused kernels" fact).</summary>
+    public IReadOnlyList<string> RefusedKernels { get; }
+
+    /// <summary>Whether a kernel was refused (the card shows the badge).</summary>
+    public bool HasRefusedKernels => RefusedKernels.Count > 0;
+
+    /// <summary>The badge: "1 kernel on fallback", "3 kernels on fallback".</summary>
+    public string RefusedText => RefusedKernels.Count == 1 ? "1 kernel on fallback" : $"{RefusedKernels.Count} kernels on fallback";
+
+    /// <summary>Whether the refused kernels are listed.</summary>
+    public bool IsRefusedExpanded
+    {
+        get => _refusedExpanded;
+        set => SetProperty(ref _refusedExpanded, value && HasRefusedKernels);
+    }
+
+    /// <summary>Lists or folds the refused kernels.</summary>
+    public ICommand ToggleRefusedCommand { get; }
 }

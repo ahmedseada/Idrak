@@ -48,7 +48,7 @@
                                                                 <Border.GestureRecognizers>
                                                                     <TapGestureRecognizer Command="{Binding SelectCommand}" />
                                                                 </Border.GestureRecognizers>
-                                                                <Label Text="{Binding Text}" Style="{DynamicResource IdrakChipLabel}" />
+                                                                <Label Text="{Binding Label}" Style="{DynamicResource IdrakChipLabel}" />
                                                             </Border>
                                                         </DataTemplate>
                                                     </BindableLayout.ItemTemplate>

@@ -52,11 +52,13 @@ internal static partial class MauiTests
         ("maui chat: a model is measured before loading (weights by format, the cache by the context) and refused with the limit named when it does not fit; an unregistered family fails as not registered", ChatRefused),
         ("maui chat: a tiny generated Qwen3 decoder loads from a folder through the model service and streams its answers on the CPU, cold then warm, and cold again after memory pressure took it", ChatEndToEnd),
         ("maui chat: the chat feature is the library's (order 20, needs a model) and opens its page bound to its view model", ChatPageOpens),
+        ("maui chat: the composer's microphone dictates into the message after what was typed, live, and stops on the next tap; no speech model says so and offers Models; no dictation says so", ChatDictates),
         ("maui transcribe settings: empty, every value is the library's (live, transcription and capture options); each setting maps to its option, is kept and read back; a bad value is refused saying what is taken", TranscribeSettingsMapped),
         ("maui transcribe: live from a registered capture (a loud tone, a pause, a soft one) through a scripted recognizer: tentative and committed words reach the view model as they come, each finished segment committed on its own line; level, time and lag shown", TranscribeLive),
         ("maui transcribe: hundreds of audio blocks and several readings inside one progress interval make at most one UI dispatch; the last values are shown at the end and an older showing never replaces them", TranscribeBatched),
         ("maui transcribe: stop ends the microphone's input and its last segment is read and committed; a second recording goes below the first", TranscribeStop),
-        ("maui transcribe: a refused microphone opens no capture and says how to allow it; the app's settings open from the page", TranscribePermission),
+        ("maui transcribe: dictation reads the microphone with the lab's model and settings, the whole text handed on live and its last words read when stopped; the lab's transcript left as it is and its recording refused meanwhile; one at a time; no speech model says so", TranscribeDictates),
+        ("maui transcribe: a refused microphone opens no capture and says how to allow it (dictation too); the app's settings open from the page", TranscribePermission),
         ("maui transcribe: the pipeline setting takes live steps only (a whole-recording step refused naming its live alternative, an unknown one naming the registered); a live pipeline cleans the capture", TranscribePipeline),
         ("maui transcribe: a WAV made here is decoded by the library's codecs and read through the live path and whole; the text copied and shared; a file that is not sound named", TranscribeFile),
         ("maui transcribe: the speech models are the store's complete ones a registered family reads, picked and loaded once in the speech host; none says why; the feature opens its page", TranscribeModels),
@@ -99,6 +101,8 @@ internal static partial class MauiTests
         ("maui redesign: Home takes its slides from the app's options ({device} filled), its carousel interval from the settings, the device's tiles from one reading, the chat tile from the chat; the layout settings are kept", RedesignHome),
         ("maui redesign: the settings by group with their controls (segments, pickers, sliders rounded to their step, fields); Devices as summary cards with state and key facts, every fact folded, virtual devices apart", RedesignSettingsAndDevices),
         ("maui redesign: Studio's pipeline as steps that take themselves out; Speak's measures before a speech; the caret, the record button and the waveform (nothing animates off screen)", RedesignLabParts),
+        ("maui redesign: a phone's facts (phase F) on the cards and tiles: the memory from the system's figure (held to a limit), the runtime's labelled as the runtime's, the core groups and vector paths in a line; a GPU's refused kernels as an amber badge, listed folded", RedesignPhoneFacts),
+        ("maui redesign: the carousel's indicator, a dot a page and the page shown an elongated pill (wider on a tablet), bound to the carousel's place", RedesignIndicator),
         ("public API: api/Idrak.Maui.txt matches the public surface of Idrak.Maui (IDRAK_UPDATE_API=1 rewrites it)", ApiSurfaceCurrent),
     ];
 
@@ -145,6 +149,7 @@ internal static partial class MauiTests
         TuningBudgetMs = 200,
         TuningNeighbourOctaves = 2,
         LookupTables = "host",
+        CpuVectors = CpuVectorPaths.Portable,
         HuggingFaceToken = "hf_test_token",
     };
 
@@ -166,6 +171,7 @@ internal static partial class MauiTests
             Check(ComputeResources.WorkspaceShare == 0.25 && ComputeResources.TuningBudget == TimeSpan.FromMilliseconds(200) && ComputeResources.TuningNeighbourOctaves == 2,
                 "workspace and tuning");
             Check(ComputeResources.LookupTables == LookupTablePlacement.HostMemory, $"lookup tables {ComputeResources.LookupTables}");
+            Check(ComputeResources.CpuVectors == CpuVectorPaths.Portable, $"vector paths {ComputeResources.CpuVectors}");
             Check(Environment.GetEnvironmentVariable("HF_TOKEN") == "hf_test_token", "HF_TOKEN set in the process");
             Check(Device.Default == Device.Cpu && report.Problems.Count == 0, $"device {Device.Default}; problems: {string.Join("; ", report.Problems)}");
 
@@ -186,6 +192,7 @@ internal static partial class MauiTests
         long? cpuLimit = ComputeResources.CpuMemoryLimit;
         double share = ComputeResources.WorkspaceShare;
         var lookup = ComputeResources.LookupTables;
+        var vectors = ComputeResources.CpuVectors;
         try
         {
             var first = Limits();
@@ -194,7 +201,8 @@ internal static partial class MauiTests
             var empty = new IdrakMauiOptions { CacheFolder = Path.Combine(storage, "next-start") };
             var report = IdrakMauiStartup.Apply(empty, storage, previous: first);
             Check(ComputeResources.MaxCpuThreads == threads && ComputeResources.CpuMemoryLimit == cpuLimit && ComputeResources.WorkspaceShare == share
-                  && ComputeResources.LookupTables == lookup, $"the library's values back: threads {ComputeResources.MaxCpuThreads} (was {threads})");
+                  && ComputeResources.LookupTables == lookup && ComputeResources.CpuVectors == vectors,
+                $"the library's values back: threads {ComputeResources.MaxCpuThreads} (was {threads}), vector paths {ComputeResources.CpuVectors} (was {vectors})");
             Check(ComputeResources.CacheFolder == folder && report.CacheFolder == folder, "the cache folder changed before a restart");
             Check(Environment.GetEnvironmentVariable("HF_TOKEN") is null, "the app's token is gone from the process");
             Check(IdrakMauiSettings.NeedRestart(first, empty).Contains("Cache and models folder"), "the restart is named");
@@ -260,7 +268,7 @@ internal static partial class MauiTests
         IdrakSetting Find(string key) => IdrakMauiSettings.Definitions.Single(s => s.Key == key);
         var options = new IdrakMauiOptions();
         foreach (var (key, text) in new[] { ("cpu_threads", "0"), ("cpu_threads", "two"), ("workspace_share", "1.5"), ("cache_folder", "relative/folder"), ("device", "vulkan:x"),
-                     ("theme", "blue"), ("offload", "maybe"), ("lookup_tables", "disk"), ("tuning_budget_ms", "0"), ("unload_models_at", "never"), ("storage_headroom_mb", "-1") })
+                     ("theme", "blue"), ("offload", "maybe"), ("lookup_tables", "disk"), ("cpu_vectors", "fast"), ("tuning_budget_ms", "0"), ("unload_models_at", "never"), ("storage_headroom_mb", "-1") })
         {
             bool refused = false;
             try
@@ -283,6 +291,18 @@ internal static partial class MauiTests
         Find("offload").Set(options, "default");
         Find("device").Set(options, "");
         Check(options.OffloadToHostMemory is null && options.Device == "auto", "defaults");
+
+        // The CPU's vector paths: each of ComputeResources.CpuVectors' names (any case, "auto" too), "" the library's own.
+        var vectors = Find("cpu_vectors");
+        foreach (var (text, paths) in new[] { ("SCALAR", CpuVectorPaths.Scalar), ("native", CpuVectorPaths.Native), ("portable", CpuVectorPaths.Portable), ("auto", CpuVectorPaths.Automatic) })
+        {
+            vectors.Set(options, text);
+            Check(options.CpuVectors == paths && vectors.Get(options) == paths.ToString().ToLowerInvariant(), $"cpu_vectors={text}: {options.CpuVectors}, '{vectors.Get(options)}'");
+        }
+
+        vectors.Set(options, "");
+        Check(options.CpuVectors is null && vectors.Get(options).Length == 0 && vectors is { Group: "General", NeedsRestart: false, Kind: IdrakSettingKind.Choice }
+              && vectors.Choices.SequenceEqual(["automatic", "native", "portable", "scalar"]), "the library's own vector paths, in the device's group");
 
         var before = new IdrakMauiOptions();
         var after = before.Clone();
