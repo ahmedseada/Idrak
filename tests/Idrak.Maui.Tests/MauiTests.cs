@@ -45,6 +45,13 @@ internal static partial class MauiTests
         ("maui model store: a pull that does not fit the free space (less the headroom kept) is refused before its first byte; the free space is measured", ModelStoreSpace),
         ("maui models page: a pull's progress reaches the view model (bytes, share, rate, time left), then the list with sizes; suggestions fill the id; removing asks first", ModelsPageProgress),
         ("maui models page: failures name their cause (no network, a token needed, refused, gated, not found, not enough space, a full storage, cancelled, not an id)", ModelsPageErrors),
+        ("maui chat: a model of the store is chosen and loaded (device, formats, load time); an answer streams into its bubble with its count and tokens per second, cold then warm; the request carries the system prompt, the history, thinking and the settings' options; a new chat clears it; copying goes through the page's clipboard", ChatStreams),
+        ("maui chat: a thousand tokens make a few UI updates (one a progress interval, the first and the last), the bubble every token", ChatBatched),
+        ("maui chat: Stop cancels mid-answer, keeping what came as the answer", ChatStopped),
+        ("maui chat: the settings map to GenerationOptions over the library's defaults, are checked, and give the load request (device, weights, cache format, context)", ChatSettings),
+        ("maui chat: a model is measured before loading (weights by format, the cache by the context) and refused with the limit named when it does not fit; an unregistered family fails as not registered", ChatRefused),
+        ("maui chat: a tiny generated Qwen3 decoder loads from a folder through the model service and streams its answers on the CPU, cold then warm, and cold again after memory pressure took it", ChatEndToEnd),
+        ("maui chat: the chat feature is the library's (order 20, needs a model) and opens its page bound to its view model", ChatPageOpens),
         ("public API: api/Idrak.Maui.txt matches the public surface of Idrak.Maui (IDRAK_UPDATE_API=1 rewrites it)", ApiSurfaceCurrent),
     ];
 

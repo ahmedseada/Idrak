@@ -2,6 +2,10 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Maui;
+using Idrak.Text.Plugins.Gemma;
+using Idrak.Text.Plugins.Llama;
+using Idrak.Text.Plugins.Mistral;
+using Idrak.Text.Plugins.Qwen;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Idrak.Mobile;
@@ -21,11 +25,19 @@ public static class MauiProgram
 
                 // The small models the Models page offers to tap: the app's own list (the library suggests none).
                 options.SuggestedModels = ["Qwen/Qwen3-0.6B", "unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf"];
+
+                // The chat's weights as int8 by default (a quarter of float32's memory); the settings page changes it.
+                options.ChatWeights = "int8";
             });
 
-        // The model families the app shows are registered here, each plug-in by its own Register call, as their labs
-        // arrive (plan 34, M5 on: the chat, speech and reading labs). The labs so far (Devices, Models, Settings) need
-        // none; the espeak-ng phonemizer is never registered (it runs a program, which an app cannot).
+        // The model families the app shows are registered here, each plug-in by its own Register call (the library
+        // registers none: a model of another family is refused as not registered). The espeak-ng phonemizer is never
+        // registered (it runs a program, which an app cannot).
+        // The Chat lab's text families: Qwen (Qwen2, Qwen3 and their mixtures of experts), Llama, Gemma and Mistral.
+        QwenPlugin.Register();
+        LlamaPlugin.Register();
+        GemmaPlugin.Register();
+        MistralPlugin.Register();
 
         builder.Services.AddSingleton<AppFlyoutPage>();
         builder.Services.AddSingleton<MenuPage>();

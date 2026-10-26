@@ -86,7 +86,8 @@ public interface IMobileFeature : IKind
 /// The app's features, by name (ignoring case). The library's: "devices" (the devices found, the Vulkan driver loaded in
 /// the app's own process with its measured width, subgroup sizes and memory budget, CPU features, memory in use) and
 /// "models" (pull a Hugging Face model into the app's storage with its progress, list the models with their sizes,
-/// remove one, the storage's free space). Register
+/// remove one, the storage's free space) and "chat" (a model of the store chats, its answer streamed with its tokens per
+/// second; the families are the app's to register). Register
 /// another with <see cref="Register"/>; one under a library name shadows the library's, which <see cref="Unregister"/>
 /// brings back. <see cref="Enabled"/> lists them in menu order without those the settings turn off.
 /// </summary>
@@ -131,6 +132,7 @@ public static class MobileFeatures
         Idrak.Maui.Views.PlannedFeatures.RegisterDefaults(table);
         table.RegisterDefault(Devices, new Idrak.Maui.Views.DevicesFeature());
         table.RegisterDefault(Models, new Idrak.Maui.Views.ModelsFeature());
+        table.RegisterDefault("chat", new Idrak.Maui.Views.ChatFeature());
         return table;
     }
 

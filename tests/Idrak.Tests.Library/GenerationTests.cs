@@ -21,7 +21,7 @@ internal abstract partial class Tests
         ("generation: num_predict, stop sequences, cache/graph/recompute agree; without a slide a reply ends where the window does", GeneratorBehaviour),
         ("generation: a batch of prompts of different lengths keeps a bfloat16 cache (IRowStartsLayout) and gives each prompt its text alone, greedy, through prompts and steps; float32 and bfloat16 caches give the same texts with recorded steps (UseGraph) as without, through many steps, and the device records the step once", BFloat16RowsBatch),
         ("generation: a measured prompt piece is never fewer than PrefillMinChunk positions (256 by default) however little memory is free, never more than the prompt, and as many as the room holds between", PrefillPieceFloor),
-        ("generation: chat end to end yields a final message and stats", ChatEndToEnd),
+        ("generation: chat end to end yields a final message and stats, each piece counting the tokens sampled so far", ChatEndToEnd),
         ("generation: a kept KV cache reuses shared prompt prefixes without changing the output", PromptCacheReuse),
         ("generation: a windowed decoder generating far past its window with sliding windows' caches gives the texts of caches holding the whole reply (one row through recorded steps, a batch of two)", SlidingWindowGeneration),
         ("generation: ReuseDecoding keeps the decoding context, sampler and recorded step between generations (the same objects while the size and sampling match, new ones otherwise, no sampler without a seed) and every text is a fresh generator's; ReleaseCache frees them", DecodingReuse),
@@ -567,5 +567,10 @@ internal abstract partial class Tests
         var last = chunks[^1];
         Check(last.Done && last.Message is { Role: "assistant" } && last.Stats is { PromptTokens: > 0 }, "final chunk carries the message and stats");
         Check(chat.RenderPrompt(request).Contains("<|im_start|>user\nhi<|im_end|>"), "prompt rendered with the template");
+
+        // Each piece counts the tokens sampled so far, rising to the final piece's count, which is the statistics' own.
+        var counts = chunks.Select(c => c.Generated).ToList();
+        Check(last.Generated == last.Stats!.GeneratedTokens && counts.SequenceEqual(counts.Order()) && counts.All(c => c > 0),
+            $"the pieces' counts {string.Join(", ", counts)}, the final {last.Generated}, the statistics' {last.Stats.GeneratedTokens}");
     }
 }

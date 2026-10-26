@@ -72,6 +72,12 @@ public sealed record ChatChunk(ChatDelta Delta, bool Done = false, string? DoneR
 {
     /// <summary>The prompt's and the reply's ids, on the final piece when the request asked for them (<see cref="GenerationOptions.ReturnTokens"/>); null otherwise.</summary>
     public ChatTokens? Tokens { get; init; }
+
+    /// <summary>
+    /// The tokens sampled so far when the piece was made (on the final piece all of them, as <see cref="GenerationStats.GeneratedTokens"/>),
+    /// so a reader shows the count and the rate while the reply streams; 0 from a model that does not count them.
+    /// </summary>
+    public int Generated { get; init; }
 }
 
 /// <summary>Anything that answers chat requests: <c>ChatGenerator</c>, a model hosted by the inference engine, or <c>FakeChatModel</c> in tests.</summary>

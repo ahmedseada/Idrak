@@ -1195,7 +1195,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                         (chunkFrom, chunkStart) = (produced, Telemetry.StartStage());
                         if (piece.Length > 0)
                         {
-                            yield return new GenerationChunk(piece);
+                            yield return new GenerationChunk(piece) { Generated = generated.Count };
                         }
                     }
 
@@ -1210,7 +1210,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                         string piece = Collect(produced, final: false);
                         if (piece.Length > 0)
                         {
-                            yield return new GenerationChunk(piece);
+                            yield return new GenerationChunk(piece) { Generated = generated.Count };
                         }
 
                         if (doneReason is not null)
@@ -1255,7 +1255,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 string rest = Collect(produced, final: true);
                 if (rest.Length > 0)
                 {
-                    yield return new GenerationChunk(rest);
+                    yield return new GenerationChunk(rest) { Generated = generated.Count };
                 }
 
                 // The cache holds the keys and values of history[..Length] (the last sampled token was never fed).
@@ -1294,6 +1294,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             total.Elapsed, resets);
         yield return new GenerationChunk("", Done: true, DoneReason: doneReason, Stats: stats)
         {
+            Generated = generated.Count,
             Tokens = promptIds is null ? null : Sampled(promptIds, generated, logProbabilities, doneReason == "stop" ? stopText : null),
         };
     }

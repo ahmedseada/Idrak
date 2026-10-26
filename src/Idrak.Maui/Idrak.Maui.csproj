@@ -36,6 +36,8 @@
     <ProjectReference Include="..\Idrak\Idrak.csproj" />
     <ProjectReference Include="..\Idrak.Gpu\Idrak.Gpu.csproj" />
     <ProjectReference Include="..\Idrak.Data\Idrak.Data.csproj" />
+    <!-- The Chat lab: the library's chat generator and its Jinja chat templates (the families are the app's to register). -->
+    <ProjectReference Include="..\Idrak.Text\Idrak.Text.csproj" />
   </ItemGroup>
 
 </Project>

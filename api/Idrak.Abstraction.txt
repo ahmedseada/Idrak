@@ -3099,6 +3099,7 @@ public sealed record Idrak.Abstraction.Generation.ChatChunk : System.IEquatable<
   public Idrak.Abstraction.Generation.ChatTokens? Tokens { get; init; }
   public Idrak.Abstraction.Generation.GenerationStats? Stats { get; init; }
   public bool Done { get; init; }
+  public int Generated { get; init; }
   public string? DoneReason { get; init; }
 
 public sealed record Idrak.Abstraction.Generation.ChatDelta : System.IEquatable<Idrak.Abstraction.Generation.ChatDelta>
@@ -3449,6 +3450,7 @@ public sealed record Idrak.Abstraction.Generation.GenerationChunk : System.IEqua
   public Idrak.Abstraction.Generation.ChatTokens? Tokens { get; init; }
   public Idrak.Abstraction.Generation.GenerationStats? Stats { get; init; }
   public bool Done { get; init; }
+  public int Generated { get; init; }
   public string Text { get; init; }
   public string? DoneReason { get; init; }
 

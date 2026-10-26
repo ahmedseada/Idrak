@@ -21,6 +21,14 @@ public static class HuggingFaceModels
         "preprocessor_config.json", "processor_config.json",
         "vocab.json", "merges.txt", "vocab.txt", "tokenizer.model"];   // the tokenizers without a tokenizer.json (VITS's vocab.json, BPE, WordPiece, SentencePiece)
 
+    /// <summary>
+    /// The file a pull keeps in a model's revision folder (downloads/huggingface/models/&lt;owner&gt;/&lt;name&gt;/&lt;commit&gt;/)
+    /// until every file of it is in: <see cref="DownloadFolderAsync"/> writes it before its first file and deletes it after
+    /// its last, as an app's model store does around its own pulls. A folder holding it, or a partial file (".part"), is
+    /// unfinished: the offline fallback never takes it.
+    /// </summary>
+    public const string PullMarker = ".idrak-pull";
+
     // Registered after Idrak's own sources, so asked before them: it leaves them the names they own (a .gguf file, "store:…").
     internal static IModelSource Source { get; } = new HubSource();
 
@@ -57,18 +65,23 @@ public static class HuggingFaceModels
         string root = d.PathFor($"huggingface/models/{repo}/{commit[..Math.Min(12, commit.Length)]}");
         string folder = subfolder.Length == 0 ? root : Path.Combine(root, subfolder);
         var missing = chosen.Where(f => !File.Exists(Path.Combine(root, f.Path)) || d is Downloader { Refresh: true }).ToList();
+        string marker = Path.Combine(root, PullMarker);
         if (missing.Count == 0)
         {
+            File.Delete(marker);                                                // every file is in: a pull that stopped after its last one is done
             d.Log?.Invoke($"{repo}: all {chosen.Count} files cached ({Downloader.Size(chosen.Sum(f => new FileInfo(Path.Combine(root, f.Path)).Length))})");
             return folder;
         }
 
         d.Log?.Invoke($"{repo}: {chosen.Count} of {files.Count} files needed ({Downloader.Size(chosen.Sum(f => f.Size))}), {missing.Count} to download");
+        Directory.CreateDirectory(root);
+        await File.WriteAllTextAsync(marker, commit, cancellationToken).ConfigureAwait(false);   // unfinished until the last file is in, between files too
         foreach (var file in missing)
         {
             await HuggingFace.DownloadFileAsync(repo, file.Path, "models", commit, token, d, cancellationToken).ConfigureAwait(false);
         }
 
+        File.Delete(marker);
         return folder;
     }
 
@@ -163,13 +176,26 @@ public static class HuggingFaceModels
             .FirstOrDefault();
     }
 
-    // The most recent download of a model in Idrak's cache.
+    // The most recent finished download of a model in Idrak's cache: a revision folder with a config.json, without the pull
+    // marker and without a partial file (a pull cancelled or failed, or one running, is never loaded half-pulled).
     private static string? NewestDownloaded(string repo, IDownloader? downloader)
     {
         string folder = Path.Combine([(downloader ?? Downloader.Shared).CacheFolder, "huggingface", "models", .. repo.Split('/')]);
         return Directory.Exists(folder)
-            ? Directory.GetDirectories(folder).Where(d => File.Exists(Path.Combine(d, "config.json"))).OrderByDescending(Directory.GetLastWriteTimeUtc).FirstOrDefault()
+            ? Directory.GetDirectories(folder).Where(d => File.Exists(Path.Combine(d, "config.json")) && IsFinished(d))
+                .OrderByDescending(Directory.GetLastWriteTimeUtc).FirstOrDefault()
             : null;
+    }
+
+    /// <summary>
+    /// Whether the pulled revision folder <paramref name="folder"/> is finished: it holds no <see cref="PullMarker"/> and no
+    /// partial file (".part", what a download keeps until its file is whole), in it or below it.
+    /// </summary>
+    public static bool IsFinished(string folder)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(folder);
+        return !File.Exists(Path.Combine(folder, PullMarker))
+               && !Directory.EnumerateFiles(folder, "*.part", SearchOption.AllDirectories).Any();
     }
 
     private sealed class HubSource : IModelSource

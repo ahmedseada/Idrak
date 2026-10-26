@@ -35,6 +35,7 @@ internal abstract partial class Tests
         ("fine-tuning: the activation estimate of each rung is not short of a step's measured peak (a decoder with query and key norms, activations above the loss's logits; the CPU counts every byte)", ActivationEstimateAgainstPeak),
         ("fine-tuning: with the activation estimate the first step starts at the rung that fits a small device (no out-of-memory step-down); with it off the ladder steps down; a resumed session starts at the saved rung", ActivationEstimateFirstRung),
         ("models: a Hugging Face model id is downloaded (only the files the library reads, sharded weights) into the cache, loads, and works offline", ModelDownload),
+        ("models: offline, a model id takes the newest finished download, never a folder a pull left unfinished (its pull marker, or a partial file); a download that fails keeps its marker", OfflineSkipsUnfinished),
         ("fine-tuning: agent transcripts through the chat template, assistant-only tokens, LoRA and QLoRA training, PEFT adapters, merged export", AgentFineTuning),
         ("fine-tuning: a conversation too long for the maximum length keeps its whole answer (the user message is shortened, its start kept); an answer longer than the budget alone gives the end cut at once; rows encode on all cores in order", LongMessageKeepsAnswer),
         ("fine-tuning: an adapter folder's manifest round-trips, names a local base model by its full path, and loads the model with the adapter merged", ManifestRoundTrip),
@@ -913,6 +914,66 @@ internal abstract partial class Tests
         finally
         {
             Directory.Delete(source, true);
+            if (Directory.Exists(cache))
+            {
+                Directory.Delete(cache, true);
+            }
+        }
+    }
+
+    internal static void OfflineSkipsUnfinished(Device device)
+    {
+        if (!FirstRun(nameof(OfflineSkipsUnfinished)))
+        {
+            return;                                                             // folders and files only: the same on every device
+        }
+
+        string cache = Path.Combine(Path.GetTempPath(), "ns-unfinished-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string models = Path.Combine(cache, "huggingface", "models", "org");
+            string Revision(string model, string revision, int minutesAgo, params string[] files)
+            {
+                string folder = Path.Combine(models, model, revision);
+                Directory.CreateDirectory(folder);
+                foreach (string file in files.Prepend("config.json"))
+                {
+                    File.WriteAllText(Path.Combine(folder, file), "{}");
+                }
+
+                Directory.SetLastWriteTimeUtc(folder, DateTime.UtcNow.AddMinutes(-minutesAgo));
+                return folder;
+            }
+
+            // The oldest is finished; a newer one holds the pull marker, the newest a partial weights file.
+            string finished = Revision("half", "aaaaaaaaaaaa", 30, "model.safetensors");
+            string marked = Revision("half", "bbbbbbbbbbbb", 20, "model.safetensors", Idrak.Data.HuggingFaceModels.PullMarker);
+            string partial = Revision("half", "cccccccccccc", 10, "model.safetensors.part");
+            var offline = new Idrak.Data.Downloader(new HttpClient(new Unreachable()), cache) { Attempts = 1 };
+            Check(Idrak.Data.HuggingFaceModels.IsFinished(finished) && !Idrak.Data.HuggingFaceModels.IsFinished(marked) && !Idrak.Data.HuggingFaceModels.IsFinished(partial),
+                "finished: no marker and no partial file");
+            Check(ModelSource.Resolve("org/half", downloader: offline) == finished, $"offline: {ModelSource.Resolve("org/half", downloader: offline)}, not the finished {finished}");
+            Check(ModelSource.Resolve("org/half", downloader: offline, download: false) == finished, "without downloading: the finished one");
+            File.Delete(Path.Combine(marked, Idrak.Data.HuggingFaceModels.PullMarker));
+            Check(ModelSource.Resolve("org/half", downloader: offline) == marked, "once its pull ended, the newer folder is taken (the partial one still not)");
+
+            // The library's own download marks its folder from before its first file: one that fails after it stays unfinished.
+            const string hf = "https://huggingface.co", commit = "0123456789abcdef0123456789abcdef01234567";
+            var web = new FakeRouter();
+            web.Json($"{hf}/api/models/org/fail/revision/main", $"{{\"sha\":\"{commit}\"}}");
+            web.Json($"{hf}/api/models/org/fail/tree/{commit}?recursive=true", new JsonArray(
+                (JsonNode)new JsonObject { ["type"] = "file", ["path"] = "config.json", ["size"] = 2 },
+                new JsonObject { ["type"] = "file", ["path"] = "model.safetensors", ["size"] = 10 }).ToJsonString());
+            web.Bytes($"{hf}/org/fail/resolve/{commit}/config.json", "{}"u8.ToArray());     // the weights are not served: 404
+            var online = new Idrak.Data.Downloader(new HttpClient(web), cache) { Attempts = 1 };
+            string failed = Path.Combine(models, "fail", commit[..12]);
+            Throws<HttpRequestException>(() => Idrak.Data.HuggingFaceModels.DownloadAsync("org/fail", downloader: online).GetAwaiter().GetResult(), "a missing weights file");
+            Check(File.Exists(Path.Combine(failed, "config.json")) && File.Exists(Path.Combine(failed, Idrak.Data.HuggingFaceModels.PullMarker)),
+                "the failed download keeps its config and its marker");
+            Throws<HttpRequestException>(() => ModelSource.Resolve("org/fail", downloader: offline), "offline, the unfinished download");
+        }
+        finally
+        {
             if (Directory.Exists(cache))
             {
                 Directory.Delete(cache, true);

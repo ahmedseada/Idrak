@@ -103,6 +103,42 @@ public sealed class IdrakMauiOptions
     /// <summary>The least memory-pressure level that unloads the models not in use (cached device memory is returned at every level).</summary>
     public MemoryPressureLevel UnloadModelsAt { get; set; } = MemoryPressureLevel.Low;
 
+    /// <summary>The system prompt every chat of the Chat lab starts with (a system message, rendered by the model's own template); null: none.</summary>
+    public string? ChatSystemPrompt { get; set; }
+
+    /// <summary>The chat's sampling temperature (<see cref="GenerationOptions.Temperature"/>; 0 picks the likeliest token); null: the library's.</summary>
+    public double? ChatTemperature { get; set; }
+
+    /// <summary>The chat's nucleus share, in (0, 1] (<see cref="GenerationOptions.TopP"/>); null: the library's.</summary>
+    public double? ChatTopP { get; set; }
+
+    /// <summary>The chat's most likely tokens sampled among (<see cref="GenerationOptions.TopK"/>, 0: all); null: the library's.</summary>
+    public int? ChatTopK { get; set; }
+
+    /// <summary>The most tokens one answer has (<see cref="GenerationOptions.NumPredict"/>); null: the library's (until the turn ends or the context is full).</summary>
+    public int? ChatMaxNewTokens { get; set; }
+
+    /// <summary>
+    /// The chat's context window in tokens (<see cref="GenerationOptions.NumCtx"/>; it also sizes the key/value cache and the
+    /// memory a model is checked against, and is capped by the model's own); null: the library's.
+    /// </summary>
+    public int? ChatContext { get; set; }
+
+    /// <summary>The chat's random seed (<see cref="GenerationOptions.Seed"/>), for answers that repeat; null: random.</summary>
+    public int? ChatSeed { get; set; }
+
+    /// <summary>Whether the chat asks for reasoning where the model's template has a switch for it (<see cref="ChatRequest.Think"/>); null: the model's own default.</summary>
+    public bool? ChatThinking { get; set; }
+
+    /// <summary>
+    /// The format a chat model's projections are kept in once loaded: "bfloat16", "int8", "int4" or another registered packed
+    /// format (<see cref="PackedWeightFormats.Names"/>); null: the library's (float32). Taken at the next load.
+    /// </summary>
+    public string? ChatWeights { get; set; }
+
+    /// <summary>The chat's key/value cache format (a registered one, <see cref="KeyValueLayouts.Names"/>: "int8" halves it); null: the library's (float32). Taken at the next load.</summary>
+    public string? ChatKeyValueFormat { get; set; }
+
     /// <summary>The features turned off in the settings (by name); every other registered feature shows.</summary>
     public ISet<string> DisabledFeatures { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 

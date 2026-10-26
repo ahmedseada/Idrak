@@ -239,7 +239,61 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
                 : Enum.TryParse<MemoryPressureLevel>(t, ignoreCase: true, out var level) && Enum.IsDefined(level) ? level
                 : throw new FormatException($"'{t}' is not a level: background, moderate, low or critical."),
             placeholder: "low", choices: ["background", "moderate", "low", "critical"]),
+        new("chat_system_prompt", "Chat: system prompt", "The instructions every chat starts with, as a system message the model's own chat template renders. Empty: none.",
+            IdrakSettingKind.Text, o => o.ChatSystemPrompt ?? "", (o, t) => o.ChatSystemPrompt = t.Length == 0 ? null : t, placeholder: "none"),
+        new("chat_temperature", "Chat: temperature", "How varied the answers are (GenerationOptions.Temperature): 0 takes the likeliest token, above 1 more varied.",
+            IdrakSettingKind.Number, o => Text(o.ChatTemperature), (o, t) => o.ChatTemperature = Real(t, minimum: 0), placeholder: Library.Temperature.ToString(CultureInfo.InvariantCulture)),
+        new("chat_top_p", "Chat: top-p", "Sample among the likeliest tokens holding this share, in (0, 1] (GenerationOptions.TopP); 1 is off.",
+            IdrakSettingKind.Number, o => Text(o.ChatTopP), (o, t) => o.ChatTopP = Fraction(t), placeholder: Library.TopP.ToString(CultureInfo.InvariantCulture)),
+        new("chat_top_k", "Chat: top-k", "Sample among this many likeliest tokens (GenerationOptions.TopK); 0: all.",
+            IdrakSettingKind.Number, o => Text(o.ChatTopK), (o, t) => o.ChatTopK = (int?)Whole(t, 0, int.MaxValue), placeholder: Text(Library.TopK)),
+        new("chat_max_new_tokens", "Chat: max new tokens", "The most tokens one answer has (GenerationOptions.NumPredict). Empty: until the turn ends or the context is full.",
+            IdrakSettingKind.Number, o => Text(o.ChatMaxNewTokens), (o, t) => o.ChatMaxNewTokens = (int?)Whole(t, 1, int.MaxValue), placeholder: "until the turn ends"),
+        new("chat_context", "Chat: context (tokens)", "The context window (GenerationOptions.NumCtx), capped by the model's own; it sizes the key/value cache and the memory a model is checked against.",
+            IdrakSettingKind.Number, o => Text(o.ChatContext), (o, t) => o.ChatContext = (int?)Whole(t, 16, int.MaxValue), placeholder: Text(Library.NumCtx)),
+        new("chat_seed", "Chat: seed", "The random seed (GenerationOptions.Seed), for answers that repeat. Empty: random.",
+            IdrakSettingKind.Number, o => Text(o.ChatSeed), (o, t) => o.ChatSeed = (int?)Whole(t, int.MinValue, int.MaxValue), placeholder: "random"),
+        new("chat_thinking", "Chat: thinking", "Whether the chat asks for reasoning, where the model's template has a switch for it (ChatRequest.Think); the chat page switches it too.",
+            IdrakSettingKind.Choice, o => Text(o.ChatThinking), (o, t) => o.ChatThinking = Switch(t), placeholder: "default", choices: ["default", "on", "off"]),
+        new("chat_weights", "Chat: weights format", "The format a chat model's projections are kept in once loaded: bfloat16 (half of float32), int8, int4 or another registered packed format (PackedWeightFormats). Default: float32. Taken at the next load.",
+            IdrakSettingKind.Choice, o => o.ChatWeights ?? "", (o, t) => o.ChatWeights = WeightFormat(t), placeholder: "default", choices: ["default", .. WeightFormats()]),
+        new("chat_kv", "Chat: key/value cache format", "How the chat's key/value cache is kept (KeyValueLayouts): int8 or bfloat16 take less memory than float32. Default: float32. Taken at the next load.",
+            IdrakSettingKind.Choice, o => o.ChatKeyValueFormat ?? "", (o, t) => o.ChatKeyValueFormat = CacheFormat(t), placeholder: "default",
+            choices: ["default", .. KeyValueLayouts.Names.Order(StringComparer.Ordinal)]),
     ];
+
+    // The library's generation defaults, which an empty chat setting keeps (shown as the placeholders).
+    private static GenerationOptions Library => field ??= new GenerationOptions();
+
+    // bfloat16, int8, int4 first, then the other registered packed formats.
+    private static IEnumerable<string> WeightFormats() =>
+        new[] { "bfloat16", "int8", "int4" }.Concat(PackedWeightFormats.Names.Order(StringComparer.Ordinal)).Distinct(StringComparer.OrdinalIgnoreCase);
+
+    // "default" or "float32" is the library's own (null); bf16 is bfloat16's short name; anything else a registered packed format.
+    private static string? WeightFormat(string text)
+    {
+        string name = text.ToLowerInvariant() switch { "" or "default" or "float32" or "f32" => "", "bf16" => "bfloat16", var other => other };
+        if (name.Length == 0)
+        {
+            return null;
+        }
+
+        return PackedWeightFormats.Names.Contains(name, StringComparer.OrdinalIgnoreCase) || name is "bfloat16" or "int8" or "int4" ? name
+            : throw new FormatException($"'{text}' is not a weights format: default, {string.Join(", ", WeightFormats())}.");
+    }
+
+    // "default" or "float32" is the library's own (null); a registered key/value layout otherwise.
+    private static string? CacheFormat(string text)
+    {
+        string name = text.ToLowerInvariant() switch { "" or "default" or "float32" or "f32" => "", "bf16" => "bfloat16", var other => other };
+        if (name.Length == 0)
+        {
+            return null;
+        }
+
+        return KeyValueLayouts.Names.Contains(name, StringComparer.OrdinalIgnoreCase) ? name
+            : throw new FormatException($"'{text}' is not a key/value cache format: default, {string.Join(", ", KeyValueLayouts.Names.Order(StringComparer.Ordinal))}.");
+    }
 
     private static string Text(long? value) => value?.ToString(CultureInfo.InvariantCulture) ?? "";
 

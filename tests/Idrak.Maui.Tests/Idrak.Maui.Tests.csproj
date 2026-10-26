@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Idrak.Maui\Idrak.Maui.csproj" />
+    <!-- The Chat lab's end-to-end test registers Qwen, as the app does (Idrak.Maui registers no family). -->
+    <ProjectReference Include="..\..\src\Idrak.Text.Plugins\Idrak.Text.Plugins.csproj" />
   </ItemGroup>
 
 </Project>

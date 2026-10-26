@@ -12,6 +12,12 @@ public sealed record GenerationChunk(string Text, bool Done = false, string? Don
 {
     /// <summary>The prompt's and the continuation's ids, on the final chunk when the options asked for them (<see cref="GenerationOptions.ReturnTokens"/>); null otherwise.</summary>
     public ChatTokens? Tokens { get; init; }
+
+    /// <summary>
+    /// The tokens sampled so far when the chunk was made (on the final chunk all of them, as <see cref="GenerationStats.GeneratedTokens"/>),
+    /// so a reader shows the count and the rate while the text streams; 0 from a model that does not count them.
+    /// </summary>
+    public int Generated { get; init; }
 }
 
 /// <summary>Anything that continues a text prompt: <c>TextGenerator</c>, or a text or chat model hosted by the inference engine.</summary>

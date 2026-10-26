@@ -27,6 +27,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
     <PackageReference Include="Idrak.Maui" Version="$(IdrakVersion)" />
+    <!-- The text families the Chat lab shows, each registered by its own call in MauiProgram. -->
+    <PackageReference Include="Idrak.Text.Plugins" Version="$(IdrakVersion)" />
   </ItemGroup>
 
   <!--

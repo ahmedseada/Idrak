@@ -18,8 +18,8 @@ namespace Idrak.Maui;
 /// </summary>
 public sealed class ModelStore : IModelStore
 {
-    /// <summary>The file a pull keeps in a model's revision folder until every file is in (not counted in its size).</summary>
-    public const string PullMarker = ".idrak-pull";
+    /// <summary>The file a pull keeps in a model's revision folder until every file is in (not counted in its size): the library's own (<see cref="HuggingFaceModels.PullMarker"/>).</summary>
+    public const string PullMarker = HuggingFaceModels.PullMarker;
 
     private const string Models = "models";
     private readonly IdrakMauiOptions _options;

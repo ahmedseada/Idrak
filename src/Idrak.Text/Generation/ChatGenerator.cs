@@ -697,11 +697,11 @@ public sealed class ChatGenerator(TextGenerator generator, IChatTemplate? templa
                 if (chunk.Done)
                 {
                     var message = Reply(parser, content.ToString(), thinking.ToString(), calls);
-                    yield return new ChatChunk(delta, true, chunk.DoneReason, message, chunk.Stats) { Tokens = chunk.Tokens };
+                    yield return new ChatChunk(delta, true, chunk.DoneReason, message, chunk.Stats) { Tokens = chunk.Tokens, Generated = chunk.Generated };
                 }
                 else if (!delta.IsEmpty)
                 {
-                    yield return new ChatChunk(delta);
+                    yield return new ChatChunk(delta) { Generated = chunk.Generated };
                 }
             }
         }

@@ -15,11 +15,18 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   (empty means measured), the Hugging Face token and the progress interval. Settings are kept between runs (MAUI
   Preferences; the token in SecureStorage) and a change that needs a restart says so.
 - **Features** (`IMobileFeature` in `MobileFeatures`): a page and its view model, with what it needs from the phone. The
-  library registers its own (Devices, Models); an app adds its own or replaces one by name.
+  library registers its own (Devices, Models, Chat); an app adds its own or replaces one by name.
 - **Models** page: pull a Hugging Face id (and a revision) into the cache folder with its progress (bytes, rate, time
   left), cancellable and resumed by pulling again; the token from the settings when set; the space checked before the
   first byte (`StorageHeadroomMiB` keeps some free); the models stored with sizes and folders, removing one after a
   confirmation; the storage's free space. `SuggestedModels` (set by the app) shows as chips to tap.
+- **Chat** page: a finished model of the store, loaded once through the model service on the settings' device in the
+  settings' weights and key/value cache formats, after checking it fits the memory the device has (refused with the
+  limit named otherwise); the answer streams into a bubble with its token count and tokens per second, the bubble
+  updated at most once a progress interval; Stop, a new chat, copy, thinking where the template has a switch; the first
+  answer after a load (cold) apart from the warm ones. The system prompt, temperature, top-p, top-k, max new tokens,
+  context and seed are settings over the library's `GenerationOptions`. Idrak.Maui registers no model family: the app
+  registers the ones it shows (`QwenPlugin.Register()` and so on), and a model of another family fails as not registered.
 - **Services**: models kept loaded through `ModelHost` and released on the phone's memory pressure, the model store
   (pull with progress, list, sizes, remove), device information (the Vulkan driver in the app's process, its measured
   width and subgroup sizes, the memory budget, CPU features), permissions and sharing a file out.

@@ -19,7 +19,7 @@ public static class IdrakMauiBuilderExtensions
     /// (<see cref="IdrakMauiStartup.Apply"/>); the "maui" progress reporter; the services (<see cref="IModelService"/>,
     /// <see cref="IModelStore"/>, <see cref="IDeviceInformation"/>, <see cref="IPermissionService"/>,
     /// <see cref="IShareService"/>, the settings and the memory-pressure signal); the library's features
-    /// (<see cref="MobileFeatures"/>: Devices and Models) and the settings page. The app registers its own features and model families after.
+    /// (<see cref="MobileFeatures"/>: Devices, Models and Chat, with <see cref="IChatModelService"/>) and the settings page. The app registers its own features and model families after.
     /// </summary>
     public static MauiAppBuilder UseIdrak(this MauiAppBuilder builder, Action<IdrakMauiOptions>? configure = null)
     {
@@ -61,11 +61,13 @@ public static class IdrakMauiBuilderExtensions
 #endif
         services.TryAddSingleton<IModelService>(sp => new ModelService(sp.GetRequiredService<IMemoryPressureSource>(), options));
         services.TryAddSingleton<IModelStore>(_ => new ModelStore(options));
+        services.TryAddSingleton<IChatModelService>(sp => new ChatModelService(sp.GetRequiredService<IModelService>()));
         services.TryAddSingleton<IDeviceInformation, DeviceInformation>();
         services.TryAddSingleton<IPermissionService, MauiPermissionService>();
         services.TryAddSingleton<IShareService, MauiShareService>();
         services.AddTransient<DevicesViewModel>();
         services.TryAddSingleton<ModelsViewModel>();                                // one for the app: a pull outlives its page
+        services.TryAddSingleton(sp => new ChatViewModel(sp.GetRequiredService<IModelStore>(), sp.GetRequiredService<IChatModelService>(), options));   // a chat outlives its page
         services.AddTransient(sp => new SettingsViewModel(options, settings, startup, progress));
         services.AddTransient<SettingsPage>();
         services.TryAddEnumerable(ServiceDescriptor.Transient<IMauiInitializeService, IdrakInitializer>());
