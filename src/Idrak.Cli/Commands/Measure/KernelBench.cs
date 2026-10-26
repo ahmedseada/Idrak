@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Diagnostics;
 using System.Globalization;
 using Idrak.Layers;
 
@@ -13,14 +12,19 @@ namespace Idrak.Cli.Commands.Measure;
 /// <param name="Unit">Its unit, e.g. "GFLOP/s".</param>
 /// <param name="HigherIsBetter">Whether a larger value is an improvement (false for times and memory).</param>
 /// <param name="Note">Extra detail (the time per call, the bandwidth), or null.</param>
-internal sealed record BenchResult(string Name, double Value, string Unit, bool HigherIsBetter, string? Note = null);
+/// <param name="Cold">The first call's value in the same unit (a kernel benchmark), or null; <paramref name="Value"/> is then the warm median.</param>
+/// <param name="WarmupCalls">The warm-up calls before the timed ones (a kernel benchmark), or null.</param>
+/// <param name="Settled">Whether the warm-up settled before its budget (a kernel benchmark), or null.</param>
+internal sealed record BenchResult(string Name, double Value, string Unit, bool HigherIsBetter, string? Note = null, double? Cold = null,
+    int? WarmupCalls = null, bool? Settled = null);
 
 /// <summary>
 /// The kernel benchmarks of <c>idrak bench</c> without a model, through the library's public tensor API on any device:
 /// matrix products (float32 and with mixed-precision bfloat16), decoding-sized products of one row with packed weights
 /// (int8, int4, bfloat16 or any registered packed format), and one decoding step of an attention layer over a cache of
 /// several lengths in each key/value format. The shapes follow the test runner's --bench-vulkan and --bench-gemv
-/// sections, which time the same work through each backend's internals.
+/// sections, which time the same work through each backend's internals. Each measurement's first call is reported
+/// apart (cold) and its value is the median of the timed calls after a warm-up that settles (<see cref="BenchTiming"/>).
 /// </summary>
 internal static class KernelBench
 {
@@ -29,7 +33,7 @@ internal static class KernelBench
 
     /// <summary>Runs the chosen benchmarks on <paramref name="device"/>; <paramref name="small"/> uses small shapes (slow devices, quick checks).</summary>
     public static List<BenchResult> Run(Device device, IReadOnlyCollection<string> kernels, int repeats, bool small, IReadOnlyList<string> packedFormats,
-        Action<string>? progress = null)
+        BenchSettle settle, Action<string>? progress = null, Action<BenchResult>? measured = null)
     {
         var results = new List<BenchResult>();
         var random = new Random(5);
@@ -59,12 +63,12 @@ internal static class KernelBench
                 }
 
                 double flops = 2.0 * size * size * size;
-                double us = Micros(device, Product, repeats);
-                results.Add(new BenchResult($"matmul {size}x{size}x{size} float32", flops / (us * 1e3), "GFLOP/s", true, string.Create(CultureInfo.InvariantCulture, $"{us / 1000:F2} ms")));
+                BenchResult Rate(string name, BenchTime time) => new(name, flops / (time.Micros * 1e3), "GFLOP/s", true,
+                    string.Create(CultureInfo.InvariantCulture, $"{time.Micros / 1000:F2} ms"), flops / (time.ColdMicros * 1e3), time.WarmupCalls, time.Settled);
+                Add(Rate($"matmul {size}x{size}x{size} float32", Time(device, Product, repeats, settle)));
                 using (MixedPrecision.BFloat16())
                 {
-                    double mixed = Micros(device, Product, repeats);
-                    results.Add(new BenchResult($"matmul {size}x{size}x{size} mixed bfloat16", flops / (mixed * 1e3), "GFLOP/s", true, string.Create(CultureInfo.InvariantCulture, $"{mixed / 1000:F2} ms")));
+                    Add(Rate($"matmul {size}x{size}x{size} mixed bfloat16", Time(device, Product, repeats, settle)));
                 }
             }
         }
@@ -79,12 +83,13 @@ internal static class KernelBench
                 {
                     progress?.Invoke($"gemv {format} {k}x{n}");
                     using var packed = PackedWeightFormats.Pack(format, weights, k, n, device);
-                    double us = Micros(device, () =>
+                    var time = Time(device, () =>
                     {
                         using var scope = new TensorScope();
                         packed.MatMul(x);
-                    }, repeats);
-                    results.Add(new BenchResult($"gemv {format} 1x{k} -> {n}", us, "µs", false, string.Create(CultureInfo.InvariantCulture, $"{packed.Bytes / (us * 1e3):F1} GB/s of weights")));
+                    }, repeats, settle);
+                    Add(new BenchResult($"gemv {format} 1x{k} -> {n}", time.Micros, "µs", false,
+                        string.Create(CultureInfo.InvariantCulture, $"{packed.Bytes / (time.Micros * 1e3):F1} GB/s of weights"), time.ColdMicros, time.WarmupCalls, time.Settled));
                 }
             }
         }
@@ -100,19 +105,27 @@ internal static class KernelBench
                 foreach (int length in lengths)
                 {
                     progress?.Invoke($"attention {format} {length}");
-                    using var context = new DecodingContext(device, 1, length + repeats + 2, KeyValueLayouts.Get(format));
+                    // Every call steps from the same `length` cached positions: the cache is cut back to them before each.
+                    using var context = new DecodingContext(device, 1, length + 2, KeyValueLayouts.Get(format));
                     using (var fill = Tensor.From(Values((long)length * dim), [1, length, dim], device))
                     {
                         Cached(layer, fill, context);
                     }
 
-                    double us = Micros(device, () => Cached(layer, step, context), repeats);
-                    results.Add(new BenchResult($"attention decode step {format} cache, {length} positions (dim {dim}, {heads} heads)", us, "µs", false));
+                    var time = Time(device, () => Cached(layer, step, context), repeats, settle, () => context.Truncate(length));
+                    Add(new BenchResult($"attention decode step {format} cache, {length} positions (dim {dim}, {heads} heads)", time.Micros, "µs", false,
+                        null, time.ColdMicros, time.WarmupCalls, time.Settled));
                 }
             }
         }
 
         return results;
+
+        void Add(BenchResult result)
+        {
+            results.Add(result);
+            measured?.Invoke(result);
+        }
     }
 
     // One cached pass of the attention layer over `input`'s positions.
@@ -124,18 +137,11 @@ internal static class KernelBench
         step.Complete();
     }
 
-    /// <summary>Average time of <paramref name="run"/> in µs over <paramref name="repeats"/> calls, after one warm-up, the device drained before and after.</summary>
-    public static double Micros(Device device, Action run, int repeats)
-    {
-        run();
-        device.Synchronize();
-        var watch = Stopwatch.StartNew();
-        for (int i = 0; i < repeats; i++)
-        {
-            run();
-        }
-
-        device.Synchronize();
-        return watch.Elapsed.TotalMilliseconds * 1000 / Math.Max(1, repeats);
-    }
+    /// <summary>
+    /// <paramref name="run"/> on <paramref name="device"/>: its first call (cold) and the median of
+    /// <paramref name="repeats"/> calls after a warm-up that settles (<see cref="BenchTiming.Measure"/>), each call
+    /// timed alone with the device drained before and after it.
+    /// </summary>
+    public static BenchTime Time(Device device, Action run, int repeats, BenchSettle settle, Action? between = null) =>
+        BenchTiming.Measure(run, device.Synchronize, repeats, settle, between);
 }

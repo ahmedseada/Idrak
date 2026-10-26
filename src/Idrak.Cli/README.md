@@ -560,7 +560,12 @@ idrak rag eval --index docs.idx --questions questions.jsonl
 
 ### Measure
 
-Speed and quality on the chosen device.
+Speed and quality on the chosen device. The kernel benchmarks (`idrak bench` without a model) show each
+measurement's first call (`Cold`, what a first token pays) apart from its warm value: the median of the `--repeat`
+timed calls after a warm-up that runs rounds until the last few agree within a few percent and the JIT compiles
+nothing more, within a budget (`--warmup`, `--warmup-calls`, `--settle`, `--settle-rounds`, `--warmup-round` and
+their `IDRAK_BENCH_*` variables). Saved results record the timing method, and `--compare` says when a saved run was
+timed another way.
 
 | Command | What it does |
 |---|---|
@@ -575,6 +580,7 @@ Speed and quality on the chosen device.
 idrak b qwen --save laptop && idrak b qwen --compare laptop
 idrak b qwen --devices all                     # one table across every device
 idrak b --kernels matmul,gemv -d cuda:0 -j     # the kernel benchmarks, without a model
+idrak b --devices cpu --warmup 5s --settle 2   # kernels with a longer, stricter warm-up
 idrak eval qwen held-out.jsonl --limit 100
 idrak perplexity qwen wiki.txt -w int4
 ```

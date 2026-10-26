@@ -239,6 +239,11 @@ internal static class EnvironmentVariables
         new("IDRAK_UPDATE_INDEX", Tool, "the package feed", "Where idrak update reads the published versions (a URL or a local file; mirrors and tests)", ["update"]),
 
         new("IDRAK_OVERRIDE_POLICY", Tests, "throw (an override's failure reaches the caller)", "What happens when an app's or plug-in's registration over a library default throws (until code sets a slot's policy): fallback (the library default answers), shadow or shadow:RATE (the library answers, the override is compared on RATE of the calls, 0.01 by default), throw; for every slot, and/or Registry/name=policy entries for single slots, separated by commas (RopeScalings/yarn=fallback). See idrak overrides", [Every]),
+        new("IDRAK_BENCH_WARMUP", Tests, "2s", "The longest warm-up of one kernel benchmark measurement before its timed calls (a duration: 500ms, 2s; 0: none beyond the first, cold call); --warmup wins", ["bench"]),
+        new("IDRAK_BENCH_WARMUP_CALLS", Tests, "100000", "The most warm-up calls of one kernel benchmark measurement; --warmup-calls wins", ["bench"]),
+        new("IDRAK_BENCH_SETTLE", Tests, "5", "Percent: a kernel benchmark's warm-up stops once its last rounds' medians agree within it and the last round compiled no method; --settle wins", ["bench"]),
+        new("IDRAK_BENCH_SETTLE_ROUNDS", Tests, "3", "How many warm-up rounds in a row must agree before a kernel benchmark's timed calls; --settle-rounds wins", ["bench"]),
+        new("IDRAK_BENCH_WARMUP_ROUND", Tests, "100ms", "The shortest warm-up round of a kernel benchmark (at least one call); --warmup-round wins", ["bench"]),
         new("IDRAK_DEVICES", Tests, "every listed device", "Devices the test runner uses, comma-separated (cpu, cuda:0, vulkan:0, ...)", ["test", "report"]),
         new("IDRAK_FILTER", Tests, "every test", "Run only tests whose names contain this text", ["test", "report"]),
         new("IDRAK_TIMEOUT", Tests, "300", "Seconds before a running test is reported as HANG and the run stops", ["test", "report"]),

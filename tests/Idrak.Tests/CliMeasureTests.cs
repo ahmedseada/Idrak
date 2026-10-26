@@ -6,6 +6,8 @@ using Idrak;
 using Idrak.Generation;
 using Idrak.Models;
 using Idrak.Text;
+using BenchSettle = global::Idrak.Cli.Commands.Measure.BenchSettle;
+using BenchTiming = global::Idrak.Cli.Commands.Measure.BenchTiming;
 
 // The idrak tool's Measure and Retrieval groups (bench, eval, perplexity, profile, check, tuning show, rag ...), run
 // in-process through CommandLine.Run on the tiny fixture model and texts made here; speeds are not checked, only the
@@ -15,7 +17,8 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] CliMeasureGroup =
     [
         ("cli measure: every command has help with an example and its environment; short forms are its own", d => { if (d == Device.Cpu) CliMeasureHelp(); }),
-        ("cli measure: bench without a model runs the kernel benchmarks (JSON shape)", CliBenchKernels),
+        ("cli measure: bench without a model runs the kernel benchmarks (JSON shape, cold and warm apart, --save and --compare)", CliBenchKernels),
+        ("cli measure: bench warm-up settles on a fake clock: the first call apart, rounds until they agree and nothing compiles, the median", d => { if (d == Device.Cpu) CliBenchSettle(); }),
         ("cli measure: bench MODEL gives tokens per second, GFLOP/s and memory; --save and --compare", CliBenchModel),
         ("cli measure: bench --matrix and --devices give one run per format and device", CliBenchMatrix),
         ("cli measure: bench usage errors exit with 2", d => { if (d == Device.Cpu) CliBenchErrors(); }),
@@ -90,22 +93,98 @@ internal static partial class Tests
         {
             var json = IdrakJson(cache, "bench", "--small", "-n", "1", "-d", device.ToString());
             Check((string?)json["kind"] == "kernels" && (string?)json["device"] == device.ToString(), json.ToJsonString());
+            Check((string?)json["timing"] == BenchTiming.Method && (string?)json["settings"]!["statistic"] == "median"
+                  && (double)json["settings"]!["warmup"]!["budget_ms"]! == 2000 && (int)json["settings"]!["warmup"]!["rounds"]! == 3,
+                $"the timing method and the default warm-up are recorded: {json["settings"]?.ToJsonString()}");
             var results = json["results"]!.AsArray();
             Check(results.Count == 4 + 6 + 6, $"4 matmul, 6 gemv and 6 attention results, got {results.Count}");
             foreach (var r in results)
             {
                 Check(r!["name"] is not null && (double)r["value"]! > 0 && r["unit"] is not null, $"result {r.ToJsonString()}");
+                Check((double?)r["cold"] > 0 && (int?)r["warmup_calls"] >= 0 && (int?)r["warmup_calls"] <= BenchSettle.Default.MaxCalls && r["settled"] is not null,
+                    $"each kernel result has its first call (cold) apart, its warm-up calls and whether it settled: {r.ToJsonString()}");
             }
 
-            var gemv = IdrakJson(cache, "b", "--small", "-n", "1", "--kernels", "gemv", "-w", "int8", "-d", device.ToString());
+            var gemv = IdrakJson(cache, "b", "--small", "-n", "1", "--kernels", "gemv", "-w", "int8", "--warmup", "0", "-d", device.ToString());
             Check(gemv["results"]!.AsArray().Count == 2 && gemv["results"]!.AsArray().All(r => ((string)r!["name"]!).StartsWith("gemv int8")), gemv.ToJsonString());
-            var (code, text, _) = MeasureIdrak(cache, "bench", "--small", "-n", "1", "--kernels", "matmul", "-d", device.ToString());
-            Check(code == 0 && text.Contains("matmul 128x128x128 float32") && text.Contains("GFLOP/s"), text);
+            Check(gemv["results"]!.AsArray().All(r => (int)r!["warmup_calls"]! == 0 && (bool)r["settled"]! == false), $"--warmup 0: no warm-up beyond the cold call: {gemv.ToJsonString()}");
+
+            JsonObject? capped = null;
+            WithEnvironment(new Dictionary<string, string?> { [BenchSettle.CallsVariable] = "3" },
+                () => capped = IdrakJson(cache, "bench", "--small", "-n", "1", "--kernels", "matmul", "-d", device.ToString()));
+            Check((int)capped!["settings"]!["warmup"]!["max_calls"]! == 3 && capped["results"]!.AsArray().All(r => (int)r!["warmup_calls"]! <= 3),
+                $"{BenchSettle.CallsVariable}=3 caps the warm-up: {capped.ToJsonString()}");
+
+            string[] matmul = ["bench", "--small", "-n", "1", "--kernels", "matmul", "--warmup", "100ms", "-d", device.ToString()];
+            var (code, text, _) = MeasureIdrak(cache, matmul);
+            Check(code == 0 && text.Contains("matmul 128x128x128 float32") && text.Contains("GFLOP/s") && text.Contains("Cold") && text.Contains("median"), text);
+
+            // --save keeps the method; --compare against it compares warm with warm and cold with cold, and against
+            // results saved before the method was recorded (no "timing", no cold values) it says the method changed.
+            IdrakJson(cache, [.. matmul, "--save", "kernels"]);
+            var compared = IdrakJson(cache, [.. matmul, "--compare", "kernels"]);
+            var rows = compared["compare"]!["results"]!.AsArray();
+            Check(rows.Count == 4 && (bool)compared["compare"]!["same_timing"]! && rows.All(r => (double?)r!["saved_cold"] > 0 && r["cold_change"] is not null),
+                $"compared with the same method, cold values included: {compared["compare"]!.ToJsonString()}");
+            string savedPath = Path.Combine(cache, "bench", "kernels.json");
+            var old = JsonNode.Parse(File.ReadAllText(savedPath))!.AsObject();
+            old.Remove("timing");
+            foreach (var r in old["results"]!.AsArray())
+            {
+                r!.AsObject().Remove("cold");
+            }
+
+            File.WriteAllText(Path.Combine(cache, "bench", "old.json"), old.ToJsonString());
+            var (oldCode, oldText, _) = MeasureIdrak(cache, [.. matmul, "--compare", "old"]);
+            Check(oldCode == 0 && oldText.Contains("was timed another way") && oldText.Contains("mean-after-one-warmup") && oldText.Contains("Against 'old'"),
+                $"results saved before the timing method still compare, with a note: {oldText}");
         }
         finally
         {
             Directory.Delete(cache, true);
         }
+    }
+
+    // The kernel benchmarks' timing on a fake clock (µs ticks) and a fake JIT count: the first call is the cold one;
+    // warm-up rounds of at least 1 ms run while the JIT keeps compiling and until three rounds' medians agree; the
+    // timed calls' median ignores an outlier a mean would not.
+    private static void CliBenchSettle()
+    {
+        long now = 0, compiled = 0;
+        int call = 0, drains = 0, betweens = 0;
+        void Run()
+        {
+            int i = call++;
+            now += i == 0 ? 5000 : i <= 40 ? 300 : i % 7 == 0 ? 1000 : 100;    // cold, unoptimized, then optimized with an outlier every 7th call
+            if (i < 45)
+            {
+                compiled++;                                                  // the JIT is still compiling
+            }
+        }
+
+        var settle = new BenchSettle(0.05, 3, TimeSpan.FromMilliseconds(1), TimeSpan.FromSeconds(1), 10_000);
+        var time = BenchTiming.Measure(Run, () => drains++, 9, settle, () => betweens++, () => now, 1e6, () => compiled);
+        Check(time.ColdMicros == 5000, $"the first call apart: {time.ColdMicros} µs, expected 5000");
+        Check(time.Settled && time.WarmupCalls == 63, $"settled once three rounds agree and the JIT is quiet (call 63): settled {time.Settled}, {time.WarmupCalls} calls");
+        Check(time.Micros == 100, $"the median of the timed calls (one 1000 µs outlier among 9): {time.Micros} µs, expected 100");
+        Check(drains == 2 * (1 + 63 + 9) && betweens == 1 + 63 + 9, $"every call drained before and after, with the reset before it: {drains} drains, {betweens} resets");
+
+        // A JIT that never goes quiet: the call limit, then the time budget, stop the warm-up unsettled.
+        now = 0;
+        call = 1;
+        int busy = 0;
+        var limited = BenchTiming.Measure(Run, () => { }, 3, settle with { MaxCalls = 50 }, null, () => now, 1e6, () => busy++);
+        Check(!limited.Settled && limited.WarmupCalls == 50, $"stopped at the call limit: settled {limited.Settled}, {limited.WarmupCalls} calls");
+        call = 1;
+        long start = now;
+        var budgeted = BenchTiming.Measure(Run, () => { }, 3, settle with { Budget = TimeSpan.FromMilliseconds(100) }, null, () => now, 1e6, () => busy++);
+        Check(!budgeted.Settled && now - start is >= 100_000 and < 106_000, $"stopped at the budget: settled {budgeted.Settled}, {now - start} µs");
+        var none = BenchTiming.Measure(Run, () => { }, 3, settle with { Budget = TimeSpan.Zero }, null, () => now, 1e6, () => compiled);
+        Check(none.WarmupCalls == 0 && !none.Settled, $"a zero budget: no warm-up beyond the cold call ({none.WarmupCalls})");
+
+        Check(BenchTiming.Agree([300, 100, 104, 103], 3, 0.05) && !BenchTiming.Agree([100, 106], 2, 0.05) && !BenchTiming.Agree([100, 100], 3, 0.05),
+            "rounds agree when the last ones lie within the tolerance of the smallest, and only when there are enough");
+        Check(BenchTiming.Median([5, 1, 3]) == 3 && BenchTiming.Median([4, 1, 3, 2]) == 2.5 && BenchTiming.Median([]) == 0, "median");
     }
 
     private static void CliBenchModel(Device device)
@@ -167,6 +246,13 @@ internal static partial class Tests
             Check(MeasureIdrak(cache, "bench", MeasureModel, "--small").Code == 2, "--small with a model");
             Check(MeasureIdrak(cache, "bench", "-d", "cpu", "--devices", "cpu").Code == 2, "--device with --devices");
             Check(MeasureIdrak(cache, "bench", "--save", "../x", "--small", "--kernels", "matmul").Code == 2, "a path as a name");
+            Check(MeasureIdrak(cache, "bench", "--settle", "0").Code == 2, "--settle 0");
+            Check(MeasureIdrak(cache, "bench", "--warmup", "soon").Code == 2, "--warmup without a duration");
+            Check(MeasureIdrak(cache, "bench", "--settle-rounds", "0").Code == 2, "--settle-rounds 0");
+            Check(MeasureIdrak(cache, "bench", MeasureModel, "--warmup", "1s").Code == 2, "--warmup with a model");
+            (int Code, string Output, string Error) bad = (0, "", "");
+            WithEnvironment(new Dictionary<string, string?> { [BenchSettle.SettleVariable] = "lots" }, () => bad = MeasureIdrak(cache, "bench", "--kernels", "matmul"));
+            Check(bad.Code == 2 && bad.Error.Contains(BenchSettle.SettleVariable), $"a bad {BenchSettle.SettleVariable} is a usage error naming it: {bad.Code} {bad.Error}");
         }
         finally
         {

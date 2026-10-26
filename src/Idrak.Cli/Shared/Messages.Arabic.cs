@@ -458,5 +458,18 @@ internal static partial class Messages
         ["Write a commented tune.json (model, data, adapter and training settings) for idrak tune --config"] =
             "كتابة ملف tune.json بتعليقات (النموذج والبيانات والمحول وإعدادات التدريب) للأمر idrak tune --config",
         ["Versions of the tool, the libraries, the .NET runtime and the device drivers"] = "إصدارات الأداة والمكتبات وبيئة .NET ومشغلات الأجهزة",
+
+        // idrak bench: the kernel benchmarks' warm-up, cold and warm values.
+        ["kernels on {0} ({1}): {2}; the median of {3} timed calls each"] = "النوى على {0} ({1}): {2}؛ القيمة وسيط {3} استدعاءات مقيسة لكل قياس",
+        [", small shapes"] = "، بأشكال صغيرة",
+        ["  warm-up: until {0} rounds of at least {1} agree within {2:0.##}% and nothing is compiled, at most {3} or {4} calls; Cold: the first call"] =
+            "  الإحماء: حتى تتفق {0} جولات مدة كل منها {1} على الأقل في حدود {2:0.##}% ولا يترجم شيء، بحد أقصى {3} أو {4} استدعاء؛ Cold: الاستدعاء الأول",
+        ["    {0} {1} warm, {2} cold; settled after {3} warm-up calls"] = "    دافئ {0} {1}، بارد {2}؛ استقر بعد {3} استدعاء إحماء",
+        ["    {0} {1} warm, {2} cold; not settled after {3} warm-up calls (the budget ran out)"] =
+            "    دافئ {0} {1}، بارد {2}؛ لم يستقر بعد {3} استدعاء إحماء (نفدت المدة المتاحة)",
+        ["  {0} of {1} measurements did not settle within the warm-up budget (a busy machine?); raise --warmup or --settle"] =
+            "  لم يستقر {0} من {1} قياسات ضمن مدة الإحماء المتاحة (جهاز مشغول؟)؛ ارفع --warmup أو --settle",
+        ["  '{0}' was timed another way ({1}, now {2}): a change includes the method's"] =
+            "  قيست '{0}' بطريقة أخرى ({1}، والآن {2}): التغير يشمل أثر الطريقة",
     };
 }
