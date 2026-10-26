@@ -75,6 +75,10 @@ nothing that needs a shell.
   settings page (system, light, dark) kept between runs. Colours, type sizes and spacing are resources in one
   dictionary per theme (`AppThemeBinding` and dynamic resources), never set on a page; cards, rounded corners,
   the system's font, room for the phone's text size. Every page is checked in both themes.
+- **The library's icon is the app's icon** (`assets/icon.svg`): the launcher's adaptive icon takes the icon's dark
+  ground as its background colour and the graph mark (the icon without its rounded square, which the launcher's own
+  mask replaces) as its foreground, read from the repository's SVG at build time so the two never drift apart; the
+  splash screen shows the same mark on the same ground; the theme's accent colours come from the icon's own.
 - **A settings page** over every option of `IdrakMauiOptions`: device, theme, the cache and models folder, memory
   and thread limits (empty means measured), the Hugging Face token (kept in the phone's secure storage), the
   progress interval, which labs show. Settings are kept between runs and applied at start-up, before the first
