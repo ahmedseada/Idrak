@@ -15,7 +15,7 @@ internal static partial class Tests
         ("vulkan runtime: a GPU another provider reaches (same UUID) is found by UUID (first match; none for an empty or unknown UUID)", VulkanSameGpuByUuid),
         ("vulkan runtime: devices are numbered by what they report (type, then UUID), whatever order the loader lists them in", VulkanDeviceOrder),
         ("vulkan runtime: mapped memory, staging and page sizes come from the reported heaps and limits", VulkanSizesFromReport),
-        ("vulkan runtime: storage memory candidates come from the reported heaps (host memory only on shared-memory devices); the cost model favors device reads", VulkanMappedByDeviceType),
+        ("vulkan runtime: storage memory candidates come from the reported heaps (host memory only on shared-memory devices, listed a second time on it when larger than their own); the cost model favors device reads", VulkanMappedByDeviceType),
         ("vulkan runtime: descriptor mode, batch size and batches in flight are measured at start, cached per device and driver, overridable", VulkanRuntimeMeasured),
         ("vulkan runtime: no vendor ids or card names in the code of src/Idrak.Gpu/Vulkan (comments may say where something was measured)", VulkanNoVendorNames),
     ];
@@ -154,6 +154,18 @@ internal static partial class Tests
         Check(Pages(0, apu, apuHeaps) == 16L << 20 && Pages(3, apu, apuHeaps) == 64L << 20 && Pages(1, apu, apuHeaps) == 64L << 20,
             "APU: pages of 16 MiB in the carve-out, 64 MiB in the 14 GiB system heap");
         Check(Candidates(apu, apuHeaps, Discrete) == "staging:0", "the same report from a discrete GPU: staging only (host memory is across the bus)");
+
+        // The APU's system memory is larger than its carve-out: it is listed a second time, its storages there (cached or
+        // write-combined, measured). A discrete GPU, and a device whose one heap is all its memory, are not.
+        static string SystemMemory((uint, int)[] types, (ulong, ulong)[] heaps, uint deviceType) =>
+            string.Join(", ", VulkanBackend.SystemMemoryCandidates(types, heaps, deviceType).Select(c => $"{VulkanBackend.StorageName(c.Kind)}:{c.Type}"));
+        found = SystemMemory(apu, apuHeaps, Integrated);
+        Check(found == "mapped-cached:3, mapped-uncached:1", $"APU listed again on system memory: {found}");
+        Check(SystemMemory(apu, apuHeaps, Discrete) == "", "a discrete GPU: not listed again");
+        Check(SystemMemory([(Local, 0), (Local | Visible | Coherent, 0), (Local | Visible | Coherent | Cached, 0)], [(16 * GiB, LocalHeap)], Integrated) == "",
+            "an integrated GPU with one heap: not listed again (its memory is all one)");
+        Check(SystemMemory([(Local, 0), (Visible | Coherent | Cached, 1)], [(16 * GiB, LocalHeap), (8 * GiB, 0)], Integrated) == "",
+            "system memory smaller than the carve-out: not listed again");
 
         // The same APU with a device-local, cached type on the small window only: the window is still too small.
         (uint, int)[] apuWindowCached = [(Local, 0), (Visible | Coherent, 1), (Local | Visible | Coherent | Cached, 2)];

@@ -212,6 +212,8 @@ internal sealed unsafe partial class HipBackend
             BinaryOp.Add => "add_f32",
             BinaryOp.Sub => "sub_f32",
             BinaryOp.Mul => "mul_f32",
+            BinaryOp.Maximum => "max_f32",
+            BinaryOp.Minimum => "min_f32",
             _ => throw new ArgumentOutOfRangeException(nameof(op)),
         };
         if (!Elements(name, n, P(a), P(b), P(c), U(n)))

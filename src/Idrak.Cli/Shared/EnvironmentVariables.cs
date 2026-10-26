@@ -163,6 +163,7 @@ internal static class EnvironmentVariables
         new("IDRAK_VULKAN_SUBGROUPS", Vulkan, "on where reported", "0 or false: reductions through workgroup memory alone, as on devices without subgroup arithmetic", OnDevice),
         new("IDRAK_VULKAN_SUBGROUP_SIZE", Vulkan, "on where reported", "0 or false: no per-kernel subgroup size (every pipeline at the device's default)", OnDevice),
         new("IDRAK_VULKAN_STORAGE", Vulkan, "measured", "staging, mapped-device, mapped-cached or mapped-uncached: the memory tensors are kept in", OnDevice),
+        new("IDRAK_VULKAN_SYSTEM_MEMORY_DEVICE", Devices, "on", "0 or false: an integrated GPU whose system memory is larger than its own is not listed a second time (after every device, as \"NAME, system memory\") with its tensors there", OnDevice),
         new("IDRAK_VULKAN_STAGING", Vulkan, "not set", "1 or true: copies go through staging buffers everywhere", OnDevice),
         new("IDRAK_VULKAN_STAGING_BYTES", Vulkan, "from the heap", "The staging buffer's size in bytes (tests)", OnDevice),
         new("IDRAK_VULKAN_PAGE_BYTES", Vulkan, "from the heap", "The size of the memory pages storages are carved from, in bytes (tests)", OnDevice),

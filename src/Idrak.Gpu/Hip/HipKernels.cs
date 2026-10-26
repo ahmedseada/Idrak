@@ -24,6 +24,8 @@ internal static class HipKernels
         ["add_f32"] = "pppi",
         ["sub_f32"] = "pppi",
         ["mul_f32"] = "pppi",
+        ["max_f32"] = "pppi",
+        ["min_f32"] = "pppi",
         ["axpy_f32"] = "ppif",
         ["affine_f32"] = "ppiff",
         ["muladd_f32"] = "pppi",
@@ -105,6 +107,30 @@ internal static class HipKernels
         extern "C" __global__ void __launch_bounds__(IDRAK_BLOCK) mul_f32(const float* a, const float* b, float* c, int n)
         {
             IDRAK_EACH(i, n) c[i] = a[i] * b[i];
+        }
+
+        // c = max(a, b) and min(a, b) as MathF.Max and MathF.Min: a NaN a gives a, a NaN b gives b; of +0 and -0, max is +0
+        // and min is -0.
+        extern "C" __global__ void __launch_bounds__(IDRAK_BLOCK) max_f32(const float* a, const float* b, float* c, int n)
+        {
+            IDRAK_EACH(i, n)
+            {
+                float x = a[i], y = b[i];
+                float r = y < x ? x : y;
+                if (x == y) r = __float_as_int(y) < 0 ? x : y;
+                c[i] = x != x ? x : r;
+            }
+        }
+
+        extern "C" __global__ void __launch_bounds__(IDRAK_BLOCK) min_f32(const float* a, const float* b, float* c, int n)
+        {
+            IDRAK_EACH(i, n)
+            {
+                float x = a[i], y = b[i];
+                float r = x < y ? x : y;
+                if (x == y) r = __float_as_int(x) < 0 ? x : y;
+                c[i] = x != x ? x : r;
+            }
         }
 
         // y += alpha x

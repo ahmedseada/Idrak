@@ -31,18 +31,21 @@ internal static partial class VulkanKernels
                 {
                     var o = r * cols;
                     var (mean, rstd) = (stats[r], stats[rows + r]);
+                    // Every product rounded on its own (MulRounded, AddRounded): a driver that fused one into the add or
+                    // subtraction it feeds would fuse it at one width and not another, and the row's bits would change.
                     var sums = w.RowSums(2, cols, j =>
                     {
-                        var g = dy[o + j] * gamma[j];
-                        return [g, g * ((x[o + j] - mean) * rstd)];
+                        var g = k.MulRounded(dy[o + j], gamma[j]);
+                        return [g, k.MulRounded(g, k.MulRounded(x[o + j] - mean, rstd))];
                     });
                     var count = cols.ToFloat();
                     var m1 = sums[0] / count;
                     var m2 = sums[1] / count;
                     w.Columns(cols, j =>
                     {
-                        var xhat = (x[o + j] - mean) * rstd;
-                        dx[o + j] = dx[o + j] + rstd * (dy[o + j] * gamma[j] - m1 - xhat * m2);
+                        var xhat = k.MulRounded(x[o + j] - mean, rstd);
+                        var inner = k.MulRounded(dy[o + j], gamma[j]) - m1 - k.MulRounded(xhat, m2);
+                        dx[o + j] = k.AddRounded(dx[o + j], k.MulRounded(rstd, inner));
                     });
                 });
                 return k.Build();

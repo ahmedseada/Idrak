@@ -141,6 +141,35 @@ internal sealed unsafe partial class VulkanBackend
         return candidates;
     }
 
+    /// <summary>
+    /// The candidates of <paramref name="candidates"/> that put storages in system memory larger than the device's own:
+    /// mapped-cached and mapped-uncached on a heap larger than the largest device-local heap (an integrated GPU whose
+    /// carve-out is smaller than the system memory it reaches). Empty on discrete GPUs (no such candidates) and on devices
+    /// whose one heap is all their memory. A device with any is listed a second time, its storages in them
+    /// (<see cref="PhysicalDevice.SystemMemory"/>): the carve-out's device keeps the faster reads, the second one the room.
+    /// </summary>
+    internal static List<StorageCandidate> SystemMemoryCandidates(IReadOnlyList<StorageCandidate> candidates, VkPhysicalDeviceMemoryProperties memory)
+    {
+        ulong largestLocal = 0;
+        for (int heap = 0; heap < (int)memory.MemoryHeapCount; heap++)
+        {
+            if ((memory.HeapFlags(heap) & HeapDeviceLocal) != 0)
+            {
+                largestLocal = Math.Max(largestLocal, memory.HeapSize(heap));
+            }
+        }
+
+        return [.. candidates.Where(c => c.Kind is StorageMemory.MappedCached or StorageMemory.MappedUncached && memory.HeapSize(memory.TypeHeap(c.Type)) > largestLocal)];
+    }
+
+    /// <summary>The system-memory candidates for the memory types (flags, heap) and heaps (size, flags) given (tests).</summary>
+    internal static List<StorageCandidate> SystemMemoryCandidates(ReadOnlySpan<(uint Flags, int Heap)> types, ReadOnlySpan<(ulong Size, ulong Flags)> heaps,
+        uint deviceType)
+    {
+        var memory = MemoryReport(types, heaps);
+        return SystemMemoryCandidates(StorageCandidates(memory, uint.MaxValue, deviceType), memory);
+    }
+
     /// <summary>The candidates for the memory types (flags, heap) and heaps (size, flags) given (tests: a device's report made up).</summary>
     internal static List<StorageCandidate> StorageCandidates(ReadOnlySpan<(uint Flags, int Heap)> types, ReadOnlySpan<(ulong Size, ulong Flags)> heaps,
         uint deviceType) => StorageCandidates(MemoryReport(types, heaps), uint.MaxValue, deviceType);

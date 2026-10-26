@@ -732,7 +732,9 @@ internal static partial class Tests
             Check(result.MicroBatchSeconds > 0, $"the run has a batch of {result.MicroBatchSeconds} s");
             var state = SpeechTrainer.ReadCheckpoint(Path.Combine(root, "run-a", "checkpoint-3"));
             Check(state.Options.BatchSeconds == result.MicroBatchSeconds, $"the checkpoint stores the measured batch ({state.Options.BatchSeconds} s against {result.MicroBatchSeconds})");
-            Check(state.Options.BatchSeconds >= 0.9 && state.Options.BatchSeconds <= 12 * 1.1, $"the batch is at least the longest utterance and at most one pass ({state.Options.BatchSeconds} s)");
+            Check(state.Options.BatchSeconds >= 0.9 && state.Options.BatchSeconds <= 12 * 1.1,
+                $"the batch is at least the longest utterance and at most one pass ({state.Options.BatchSeconds} s against 0.9-{12 * 1.1:0.#} s on {device}; "
+                + $"{device.Backend.AvailableMemory()?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "no"} bytes available now; the measure: '{note}')");
         }
         finally
         {

@@ -33,14 +33,14 @@ public sealed record SpeechTrainingOptions
     /// (no optimizer step), its peak memory gives the cost of an audio second, and the batch fills <see cref="AutomaticBatchShare"/>
     /// of the memory the device reports free after the optimizers' state (never less than the longest utterance, never more
     /// than one pass of the training audio); the run's notes name the value, and its checkpoints resume with it. A device
-    /// that reports no free memory trains in batches of 160 s.
+    /// that reports no free memory trains in batches of <see cref="FallbackBatchSeconds"/>, within the same bounds.
     /// </summary>
     public double BatchSeconds { get; init; }
 
     /// <summary>The share of the device's free memory an automatic batch (<see cref="BatchSeconds"/> 0) fills; the rest is headroom for a pass's own temporaries. In (0, 1]; 0.9 by default.</summary>
     public double AutomaticBatchShare { get; init; } = 0.9;
 
-    /// <summary>The batch of a device that reports no free memory, in audio seconds (<see cref="BatchSeconds"/> 0).</summary>
+    /// <summary>The batch of a device that reports no free memory, in audio seconds (<see cref="BatchSeconds"/> 0), kept between the longest utterance and one pass of the training audio.</summary>
     public const double FallbackBatchSeconds = 160;
 
     /// <summary>Batches whose gradients are added up before each optimizer step.</summary>
@@ -691,7 +691,8 @@ public static class SpeechTrainer
     // The batch that fills the device: the longest usable utterance through a step's passes once (no optimizer step), its
     // peak memory as the cost of an audio second, and the options' share of what the device reports free after the state the
     // optimizers will hold (three floats a parameter: the gradient and Adam's two moments), at least the longest utterance
-    // and at most one pass of the training audio. A device that reports no free memory gets FallbackBatchSeconds.
+    // and at most one pass of the training audio. A device that reports no free memory gets FallbackBatchSeconds, within
+    // the same bounds.
     private static SpeechTrainingOptions AutomaticBatch(SpeechTrainee model, ISpeechReader reader, int[][] labels, FeatureSource features, IAudioAugmentation[] augmentations,
         List<int> usable, double[] seconds, SpeechTrainingOptions options, SpeechForwardOptions forward, List<string> notes, Action<string>? trace)
     {
@@ -727,8 +728,11 @@ public static class SpeechTrainer
         }
         else
         {
-            chosen = SpeechTrainingOptions.FallbackBatchSeconds;
-            note = string.Create(CultureInfo.InvariantCulture, $"batch: {chosen:0.#} audio seconds a step ({model.Device} reports no free memory to size an automatic batch by; SpeechTrainingOptions.BatchSeconds sets it)");
+            // The same bounds as a measured batch: never less than the longest utterance, never more than one pass.
+            chosen = Math.Round(Math.Clamp(SpeechTrainingOptions.FallbackBatchSeconds, length, Math.Max(length, total)), 1);
+            note = string.Create(CultureInfo.InvariantCulture,
+                $"batch: {chosen:0.#} audio seconds a step ({model.Device} reports no free memory to size an automatic batch by: {SpeechTrainingOptions.FallbackBatchSeconds:0.#} s "
+                + $"within the longest utterance ({length:0.#} s) and one pass ({total:0.#} s); SpeechTrainingOptions.BatchSeconds sets it)");
         }
 
         notes.Add(note);

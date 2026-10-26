@@ -46,11 +46,10 @@ internal static partial class Tests
         Check(plain.Exit == 0 && profiled.Exit == 0 && profiled.Out == plain.Out && JsonNode.Parse(profiled.Out) is not null && !plain.Err.Contains("Profile ", StringComparison.Ordinal),
             $"the output as it is: {profiled.Exit}, '{profiled.Out}' for '{plain.Out}'");
         string err = profiled.Err;
-        Check(err.Contains($"Profile \"idrak version -j -d {device} -C {config} --profile\" on {device}", StringComparison.Ordinal) && err.Contains("one run watched", StringComparison.Ordinal)
-              && err.Contains("ended with exit code 0", StringComparison.Ordinal) && err.Contains("wall time", StringComparison.Ordinal)
-              && Regex.IsMatch(err, @"\nwall +ms +\d") && err.Contains("allocated", StringComparison.Ordinal) && err.Contains("tuning time", StringComparison.Ordinal)
-              && err.Contains("fallback calls", StringComparison.Ordinal),
-            $"the report on the error stream: {err}");
+        string line = CommandProfile.Shown(["version", "-j", "-d", device.ToString(), "-C", config, "--profile"]);   // a path with spaces is quoted
+        string[] missing = [.. new[] { $"Profile \"{line}\" on {device}", "one run watched", "ended with exit code 0", "wall time", "allocated", "tuning time", "fallback calls" }
+            .Where(piece => !err.Contains(piece, StringComparison.Ordinal)), .. Regex.IsMatch(err, @"\nwall +ms +\d") ? Array.Empty<string>() : ["the wall row"]];
+        Check(missing.Length == 0, $"the report on the error stream lacks {string.Join("; ", missing)}: {err}");
 
         WithEnvironment(new Dictionary<string, string?> { ["IDRAK_PROFILE"] = "1" }, () =>
         {

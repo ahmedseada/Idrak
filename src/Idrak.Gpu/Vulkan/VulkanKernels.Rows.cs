@@ -76,7 +76,7 @@ internal static partial class VulkanKernels
                 w.Columns(cols, j =>
                 {
                     var g = dy[o + j];
-                    dx[o + j] = dx[o + j] + k.Select(isLog, g - k.Exp(y[o + j]) * s, y[o + j] * (g - s));
+                    dx[o + j] = k.AddRounded(dx[o + j], k.Select(isLog, g - k.MulRounded(k.Exp(y[o + j]), s), k.MulRounded(y[o + j], g - s)));
                 });
             });
             return k.Build();
@@ -99,7 +99,7 @@ internal static partial class VulkanKernels
                 {
                     var add = k.Local(0f);
                     k.If(masked, () => add.V = mask[mo + j]);
-                    var v = x[o + j] * scale + add.V;
+                    var v = k.AddRounded(k.MulRounded(x[o + j], scale), add.V);
                     y[o + j] = v;
                     max.V = k.Max(max.V, v);
                 });
@@ -145,7 +145,7 @@ internal static partial class VulkanKernels
                 var o = r * cols;
                 var mean = w.RowSum(cols, j => dy[o + j] * y[o + j]) / cols.ToFloat();
                 var scale = inv[r];
-                w.Columns(cols, j => dx[o + j] = dx[o + j] + scale * (dy[o + j] - y[o + j] * mean));
+                w.Columns(cols, j => dx[o + j] = k.AddRounded(dx[o + j], k.MulRounded(scale, dy[o + j] - k.MulRounded(y[o + j], mean))));   // never fused: the same bits at every width
             });
             return k.Build();
         });
@@ -180,12 +180,12 @@ internal static partial class VulkanKernels
                 var sums = work.RowSums(2, cols, j => [x[o + j] * x[o + j], dw[o + j] * x[o + j]]);
                 var (sumSquares, dot) = (sums[0], sums[1]);
                 var inverse = 1f / k.Sqrt(sumSquares);
-                k.If((flags & 1).Ne(0), () => work.Leader(() => dgain[r] = dgain[r] + dot * inverse));
+                k.If((flags & 1).Ne(0), () => work.Leader(() => dgain[r] = k.AddRounded(dgain[r], k.MulRounded(dot, inverse))));
                 k.If((flags & 2).Ne(0), () =>
                 {
                     var scale = gain[r] * inverse;
                     var along = scale * dot / sumSquares;
-                    work.Columns(cols, j => dx[o + j] = dx[o + j] + (dw[o + j] * scale - x[o + j] * along));
+                    work.Columns(cols, j => dx[o + j] = k.AddRounded(dx[o + j], k.MulRounded(dw[o + j], scale) - k.MulRounded(x[o + j], along)));
                 });
             });
             return k.Build();
@@ -335,7 +335,7 @@ internal static partial class VulkanKernels
                 });
             }
 
-            w.Columns(cols, j => y[o + j] = (x[o + j] - mean) * inv * gamma[j] + beta[j]);
+            w.Columns(cols, j => y[o + j] = k.AddRounded(k.MulRounded(k.MulRounded(x[o + j] - mean, inv), gamma[j]), beta[j]));
         });
         return k.Build();
     }
@@ -350,7 +350,9 @@ internal static partial class VulkanKernels
     // the lanes then combine in KernelBuilder.Reduce's tree, pairing lane l with l + stride as the strides halve from
     // P / 2. A workgroup keeps an accumulator per lane it covers and folds the strides at or above its width in
     // registers before the reduction; one invocation takes the lanes in bit-reversed order and sums them pairwise (a
-    // stack of partial sums), which pairs them exactly as the tree does.
+    // stack of partial sums), which pairs them exactly as the tree does. The columns' own results round every product on
+    // its own too (MulRounded, AddRounded): the driver compiles each width apart and may fuse a product into the add it
+    // feeds at one width and not another (one driver's layer-norm gradient differed by one bit between widths 64 and 256).
     private sealed class RowWork(KernelBuilder k, bool narrow)
     {
         private const int LaneBits = 10;                                 // log2 of MaxWidth: at most MaxWidth lanes

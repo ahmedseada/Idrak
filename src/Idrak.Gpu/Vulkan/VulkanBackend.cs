@@ -22,6 +22,10 @@ namespace Idrak.Gpu.Vulkan;
 /// copies through staging everywhere; IDRAK_VULKAN_STORAGE names a memory.
 ///
 /// Devices are numbered (vulkan:0, vulkan:1, …) by what they report, not the loader's order (<see cref="DeviceOrder"/>).
+/// An integrated GPU whose system memory is larger than its own carve-out (<see cref="SystemMemoryCandidates(IReadOnlyList{StorageCandidate}, VkPhysicalDeviceMemoryProperties)"/>)
+/// is listed a second time after all of them, as "NAME, system memory": the same GPU with its storages in the system
+/// memory it reaches, for models the carve-out cannot hold (the first keeps the measured choice and its faster reads).
+/// IDRAK_VULKAN_SYSTEM_MEMORY_DEVICE=0 lists only the first.
 /// </summary>
 internal sealed unsafe partial class VulkanBackend : Backend
 {
@@ -67,7 +71,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
         _physical = physical;
         var p = physical.Properties;
         MaxAllocations = MemoryAllocationCap(p.MaxMemoryAllocationCount, maxAllocations);
-        Name = $"{physical.DeviceName} (Vulkan {VersionOf(p.ApiVersion).Major}.{VersionOf(p.ApiVersion).Minor}, {physical.Driver})";
+        Name = $"{physical.DeviceName}{(physical.SystemMemory ? ", system memory" : "")} (Vulkan {VersionOf(p.ApiVersion).Major}.{VersionOf(p.ApiVersion).Minor}, {physical.Driver})";
         long? cap = separate?.MemoryLimit;
         if (separate is not null)
         {
@@ -187,6 +191,17 @@ internal sealed unsafe partial class VulkanBackend : Backend
         // the cache or a single candidate decides it (VulkanBackend.StorageMemory.cs).
         _pageSetting = pageBytes ?? BytesSetting("IDRAK_VULKAN_PAGE_BYTES");
         _storageCandidates = [.. StorageCandidates(memory, typeBits, physical.Facts.DeviceType)];
+        if (physical.SystemMemory)
+        {
+            // The second listing of an integrated GPU: its storages only in the system memory larger than its carve-out
+            // (still measured between host-cached and write-combined).
+            _storageCandidates = [.. SystemMemoryCandidates(_storageCandidates, memory)];
+            if (_storageCandidates.Length == 0)
+            {
+                throw new VulkanException($"{Name}: no memory type storage buffers may use lies on a heap larger than the device's own.");
+            }
+        }
+
         var (decided, how, timings) = DecideStorage(_storageCandidates, preferMapped ? null : StorageMemory.Staging,
             Environment.GetEnvironmentVariable("IDRAK_VULKAN_STORAGE"), CachedChoices());
         UseStorage(_storageCandidates.First(c => c.Kind == (decided ?? _storageCandidates[0].Kind)));
@@ -314,6 +329,9 @@ internal sealed unsafe partial class VulkanBackend : Backend
         return new DeviceOrderKey(d.Facts.DeviceType, d.Facts.DeviceUuid, d.Facts.DriverUuid, d.Facts.PciAddress, d.DeviceName);
     }
 
+    /// <summary>The ordinal of the device that device <paramref name="ordinal"/> lists again with its storages in system memory, or null.</summary>
+    public static int? SystemMemoryOf(int ordinal) => Probe.Value.Devices[ordinal].SystemMemoryOf;
+
     /// <summary>Device <paramref name="ordinal"/>'s reported facts, without starting it.</summary>
     internal static VulkanDeviceFacts FactsOf(int ordinal) => Probe.Value.Devices[ordinal].Facts;
 
@@ -339,8 +357,17 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
     // A physical device with what the backend reads of it.
     private sealed class PhysicalDevice(IntPtr handle, VkPhysicalDeviceProperties properties, string deviceName, string driver,
-        VkPhysicalDeviceMemoryProperties memory, uint queueFamily, VulkanDeviceFacts facts)
+        VkPhysicalDeviceMemoryProperties memory, uint queueFamily, VulkanDeviceFacts facts, int? systemMemoryOf = null)
     {
+        /// <summary>The ordinal of the device this one lists again with its storages in system memory, or null (a device as reported).</summary>
+        public int? SystemMemoryOf { get; } = systemMemoryOf;
+
+        /// <summary>Whether this listing keeps its storages in system memory (<see cref="SystemMemoryCandidates(IReadOnlyList{StorageCandidate}, VkPhysicalDeviceMemoryProperties)"/>).</summary>
+        public bool SystemMemory => SystemMemoryOf is not null;
+
+        /// <summary>This device listed again, its storages in system memory; <paramref name="ordinal"/> is this one's.</summary>
+        public PhysicalDevice OnSystemMemory(int ordinal) => new(Handle, Properties, DeviceName, Driver, Memory, QueueFamily, Facts, ordinal);
+
         public VulkanDeviceFacts Facts { get; } = facts;
 
         public IntPtr Handle { get; } = handle;
@@ -438,7 +465,20 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
             int[] order = DeviceOrder([.. devices.Select(d => new DeviceOrderKey(d.Facts.DeviceType, d.Facts.DeviceUuid, d.Facts.DriverUuid,
                 d.Facts.PciAddress, d.DeviceName))]);
-            return devices.Count > 0 ? ([.. order.Select(i => devices[i])], "")
+            var listed = order.Select(i => devices[i]).ToList();
+            if (Environment.GetEnvironmentVariable("IDRAK_VULKAN_SYSTEM_MEMORY_DEVICE") is not ("0" or "false"))
+            {
+                for (int i = 0, reported = listed.Count; i < reported; i++)
+                {
+                    var d = listed[i];
+                    if (SystemMemoryCandidates(StorageCandidates(d.Memory, uint.MaxValue, d.Facts.DeviceType), d.Memory).Count > 0)
+                    {
+                        listed.Add(d.OnSystemMemory(i));                       // after every device, so their ordinals stay
+                    }
+                }
+            }
+
+            return devices.Count > 0 ? ([.. listed], "")
                 : ([], skipped.Count > 0 ? $"no usable Vulkan device ({string.Join("; ", skipped)})" : "the Vulkan driver reports no devices");
         }
         catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or VulkanException)
@@ -983,19 +1023,24 @@ internal sealed class VulkanProvider : ISeparableDeviceProvider
         VulkanBackend.DeviceKind(ordinal).Type != VulkanDriver.DeviceTypeCpu && DrivenElsewhere(ordinal) is null;
 
     // Not chosen by Device.Default until its kernels are tuned (a CPU can still beat an untuned integrated GPU);
-    // IDRAK_VULKAN_DEFAULT=1 opts in. Reached by name ("vulkan:1") either way.
+    // IDRAK_VULKAN_DEFAULT=1 opts in. Reached by name ("vulkan:1") either way. A GPU listed again on system memory ranks
+    // after its first listing (the carve-out reads faster).
     public int? DefaultRank(int ordinal) => Environment.GetEnvironmentVariable("IDRAK_VULKAN_DEFAULT") != "1" ? null
         : VulkanBackend.DeviceKind(ordinal).Type switch
         {
             VulkanDriver.DeviceTypeDiscreteGpu => 50,
-            VulkanDriver.DeviceTypeIntegratedGpu => 40,
+            VulkanDriver.DeviceTypeIntegratedGpu => VulkanBackend.SystemMemoryOf(ordinal) is null ? 40 : 35,
             _ => null,
         };
 
-    public string? Note(int ordinal) =>
-        VulkanBackend.DeviceKind(ordinal).Type == VulkanDriver.DeviceTypeCpu ? "software driver: by name only"
-        : DrivenElsewhere(ordinal) is var (display, name) ? $"driven by {display} as {name}: by name only"
-        : DefaultRank(ordinal) is null ? "not the default device (IDRAK_VULKAN_DEFAULT=1 to prefer it)" : null;
+    public string? Note(int ordinal)
+    {
+        string? note = VulkanBackend.DeviceKind(ordinal).Type == VulkanDriver.DeviceTypeCpu ? "software driver: by name only"
+            : DrivenElsewhere(ordinal) is var (display, name) ? $"driven by {display} as {name}: by name only"
+            : DefaultRank(ordinal) is null ? "not the default device (IDRAK_VULKAN_DEFAULT=1 to prefer it)" : null;
+        return VulkanBackend.SystemMemoryOf(ordinal) is int first
+            ? $"vulkan:{first}'s GPU with tensors in system memory (more room, slower reads){(note is null ? "" : "; " + note)}" : note;
+    }
 
     // The provider (display name) and device ("cuda:0") registered before this provider that reach the same GPU, or null.
     private (string Display, string Device)? DrivenElsewhere(int ordinal)
