@@ -50,6 +50,12 @@ public sealed class ProgressCenter
     public IProgressReporter Start(string label, long? total = null, ProgressUnit unit = ProgressUnit.Items, TimeSpan? interval = null) =>
         new MauiProgressReporter(this, new ProgressRequest(label, total, unit, TextWriter.Null, interval), _time);
 
+    /// <summary>
+    /// The item <paramref name="reporter"/> shows on, when it is one of this center's (<see cref="Start"/> or the "maui"
+    /// kind made it); else null. A page binds it to show the one piece of work it started.
+    /// </summary>
+    public ProgressItem? ItemOf(IProgressReporter reporter) => reporter is MauiProgressReporter mine && ReferenceEquals(mine.Center, this) ? mine.Item : null;
+
     internal void Dispatch(Action action)
     {
         var dispatcher = Dispatcher ?? Application.Current?.Dispatcher;

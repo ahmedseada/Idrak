@@ -19,7 +19,7 @@ public static class IdrakMauiBuilderExtensions
     /// (<see cref="IdrakMauiStartup.Apply"/>); the "maui" progress reporter; the services (<see cref="IModelService"/>,
     /// <see cref="IModelStore"/>, <see cref="IDeviceInformation"/>, <see cref="IPermissionService"/>,
     /// <see cref="IShareService"/>, the settings and the memory-pressure signal); the library's features
-    /// (<see cref="MobileFeatures"/>) and the settings page. The app registers its own features and model families after.
+    /// (<see cref="MobileFeatures"/>: Devices and Models) and the settings page. The app registers its own features and model families after.
     /// </summary>
     public static MauiAppBuilder UseIdrak(this MauiAppBuilder builder, Action<IdrakMauiOptions>? configure = null)
     {
@@ -65,6 +65,7 @@ public static class IdrakMauiBuilderExtensions
         services.TryAddSingleton<IPermissionService, MauiPermissionService>();
         services.TryAddSingleton<IShareService, MauiShareService>();
         services.AddTransient<DevicesViewModel>();
+        services.TryAddSingleton<ModelsViewModel>();                                // one for the app: a pull outlives its page
         services.AddTransient(sp => new SettingsViewModel(options, settings, startup, progress));
         services.AddTransient<SettingsPage>();
         services.TryAddEnumerable(ServiceDescriptor.Transient<IMauiInitializeService, IdrakInitializer>());

@@ -60,7 +60,9 @@ public interface IMobileFeature : IKind
 
 /// <summary>
 /// The app's features, by name (ignoring case). The library's: "devices" (the devices found, the Vulkan driver loaded in
-/// the app's own process with its measured width, subgroup sizes and memory budget, CPU features, memory in use). Register
+/// the app's own process with its measured width, subgroup sizes and memory budget, CPU features, memory in use) and
+/// "models" (pull a Hugging Face model into the app's storage with its progress, list the models with their sizes,
+/// remove one, the storage's free space). Register
 /// another with <see cref="Register"/>; one under a library name shadows the library's, which <see cref="Unregister"/>
 /// brings back. <see cref="Enabled"/> lists them in menu order without those the settings turn off.
 /// </summary>
@@ -69,6 +71,9 @@ public static class MobileFeatures
     /// <summary>The library's devices page.</summary>
     public const string Devices = "devices";
 
+    /// <summary>The library's models page.</summary>
+    public const string Models = "models";
+
     private static readonly SlotTable<string, IMobileFeature> Table = BuiltIn();
 
     private static SlotTable<string, IMobileFeature> BuiltIn()
@@ -76,6 +81,7 @@ public static class MobileFeatures
         var table = new SlotTable<string, IMobileFeature>(nameof(MobileFeatures), comparer: StringComparer.OrdinalIgnoreCase,
             unguarded: "a feature is a page the user has open, with no call to fall back at");
         table.RegisterDefault(Devices, new Idrak.Maui.Views.DevicesFeature());
+        table.RegisterDefault(Models, new Idrak.Maui.Views.ModelsFeature());
         return table;
     }
 

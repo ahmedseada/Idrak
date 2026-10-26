@@ -20,8 +20,8 @@ public enum IdrakThemeChoice
 
 /// <summary>
 /// What <c>UseIdrak</c> sets up, and the settings page edits: the device, the theme, the cache folder, every
-/// <see cref="ComputeResources"/> limit, the Hugging Face token, the progress interval, the models kept loaded and the
-/// features shown. A null limit means the library's own value: what its environment variable sets, else what it measures.
+/// <see cref="ComputeResources"/> limit, the Hugging Face token, the storage a pull leaves free, the progress interval, the
+/// models kept loaded and the features shown (and, set by the app only, the models the Models page suggests). A null limit means the library's own value: what its environment variable sets, else what it measures.
 /// The values an app gives in <c>UseIdrak</c> are its defaults; what the user saved in the settings page is applied over
 /// them (<see cref="KeepSettings"/>), at start-up, before the first device or download.
 /// </summary>
@@ -79,6 +79,18 @@ public sealed class IdrakMauiOptions
     /// <summary>The Hugging Face token for gated and private models (kept in the phone's secure storage); null: none, or HF_TOKEN.</summary>
     public string? HuggingFaceToken { get; set; }
 
+    /// <summary>
+    /// The free space a model pull leaves on the storage, in MiB: a pull whose files would leave less is refused before its
+    /// first byte (the model store measures the storage); null: none kept (the files must only fit).
+    /// </summary>
+    public long? StorageHeadroomMiB { get; set; }
+
+    /// <summary>
+    /// Models the Models page offers as chips to tap (Hugging Face ids, or an id and a .gguf file in it); empty by default,
+    /// set by the app in <c>UseIdrak</c>. Not a setting of the settings page: the app's own list.
+    /// </summary>
+    public IReadOnlyList<string> SuggestedModels { get; set; } = [];
+
     /// <summary>The least time between two updates of a progress view (the "maui" reporter).</summary>
     public TimeSpan ProgressInterval { get; set; } = TimeSpan.FromMilliseconds(250);
 
@@ -117,6 +129,7 @@ public sealed class IdrakMauiOptions
     {
         var copy = (IdrakMauiOptions)MemberwiseClone();
         copy.DisabledFeatures = new HashSet<string>(DisabledFeatures, StringComparer.OrdinalIgnoreCase);
+        copy.SuggestedModels = [.. SuggestedModels];
         return copy;
     }
 
@@ -130,6 +143,7 @@ public sealed class IdrakMauiOptions
         }
 
         DisabledFeatures = new HashSet<string>(other.DisabledFeatures, StringComparer.OrdinalIgnoreCase);
+        SuggestedModels = [.. other.SuggestedModels];
         KeepSettings = other.KeepSettings;
         UseMauiProgress = other.UseMauiProgress;
         SettingsStore = other.SettingsStore;

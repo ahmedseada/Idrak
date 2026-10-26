@@ -225,6 +225,8 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
             o => o.LookupTables ?? "", (o, t) => o.LookupTables = Placement(t), placeholder: "default", choices: ["default", "auto", "host", "device"]),
         new("hf_token", "Hugging Face token", "For gated and private models, kept in the phone's secure storage (HF_TOKEN).", IdrakSettingKind.Secret,
             o => o.HuggingFaceToken ?? "", (o, t) => o.HuggingFaceToken = t.Length == 0 ? null : t, placeholder: "none"),
+        new("storage_headroom_mb", "Storage kept free (MiB)", "The free space a model pull leaves; a pull that would leave less is refused before it starts.",
+            IdrakSettingKind.Number, o => Text(o.StorageHeadroomMiB), (o, t) => o.StorageHeadroomMiB = Whole(t, 0), placeholder: "none"),
         new("progress_interval_ms", "Progress interval (ms)", "The least time between two updates of a progress view.", IdrakSettingKind.Number,
             o => Text(o.ProgressInterval.TotalMilliseconds), (o, t) => o.ProgressInterval = TimeSpan.FromMilliseconds(Real(t, exclusiveMinimum: 0) ?? 250), placeholder: "250"),
         new("model_keep_alive_s", "Model keep-alive (s)", "How long a model stays loaded after its last use; empty: until memory pressure.", IdrakSettingKind.Number,

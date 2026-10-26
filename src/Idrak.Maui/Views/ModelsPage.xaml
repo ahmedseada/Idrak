@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The Models feature (plan 34): pull a Hugging Face model with its progress, the models stored, the free space. -->
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+             x:Class="Idrak.Maui.Views.ModelsPage"
+             x:DataType="vm:ModelsViewModel"
+             Title="{Binding Title}">
+    <ContentPage.ToolbarItems>
+        <ToolbarItem Text="Refresh" Command="{Binding RefreshCommand}" />
+    </ContentPage.ToolbarItems>
+
+    <RefreshView IsRefreshing="{Binding IsBusy}" Command="{Binding RefreshCommand}">
+        <CollectionView ItemsSource="{Binding Models}" SelectionMode="None" Margin="{DynamicResource IdrakPagePadding}">
+            <CollectionView.Header>
+                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}" Padding="{DynamicResource IdrakSectionPadding}">
+                    <Label Text="Models" Style="{DynamicResource IdrakTitle}" />
+                    <Label Text="{Binding Folder, StringFormat='Kept in {0}'}" Style="{DynamicResource IdrakCaption}" />
+
+                    <!-- Pull. -->
+                    <Border Style="{DynamicResource IdrakCard}">
+                        <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                            <Label Text="Pull a model" Style="{DynamicResource IdrakHeading}" />
+                            <Label Text="A Hugging Face id, or an id and a .gguf file in it" Style="{DynamicResource IdrakCaption}" />
+                            <Entry Text="{Binding ModelId}" Placeholder="owner/name or owner/name/file.gguf" Keyboard="Plain"
+                                   IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" ClearButtonVisibility="WhileEditing"
+                                   ReturnCommand="{Binding PullCommand}" />
+                            <Entry Text="{Binding Revision}" Placeholder="revision: main" Keyboard="Plain"
+                                   IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" ClearButtonVisibility="WhileEditing" />
+                            <FlexLayout BindableLayout.ItemsSource="{Binding Suggestions}" IsVisible="{Binding HasSuggestions}" Wrap="Wrap" Direction="Row">
+                                <BindableLayout.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:SuggestionChip">
+                                        <Button Text="{Binding Model}" Command="{Binding Command}" Style="{DynamicResource IdrakChip}" />
+                                    </DataTemplate>
+                                </BindableLayout.ItemTemplate>
+                            </FlexLayout>
+                            <Label Text="{Binding TokenText}" Style="{DynamicResource IdrakCaption}" />
+                            <Grid ColumnDefinitions="*,*" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                                <Button Text="Pull" Command="{Binding PullCommand}" />
+                                <Button Grid.Column="1" Text="Cancel" Command="{Binding CancelCommand}" Style="{DynamicResource IdrakSecondaryButton}" />
+                            </Grid>
+
+                            <!-- The pull's progress: the item the "maui" reporter updates at most once a progress interval. -->
+                            <VerticalStackLayout IsVisible="{Binding HasPull}" Spacing="{DynamicResource IdrakSpacingSmall}">
+                                <Label Text="{Binding Pull.Label}" Style="{DynamicResource IdrakValue}" />
+                                <ProgressBar Progress="{Binding Pull.Fraction}" />
+                                <ActivityIndicator IsRunning="{Binding IsPulling}" IsVisible="{Binding Pull.IsIndeterminate}" HorizontalOptions="Start" />
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                                    <Label Text="{Binding Pull.AmountText}" Style="{DynamicResource IdrakCaption}" />
+                                    <Label Grid.Column="1" Text="{Binding Pull.RateText}" Style="{DynamicResource IdrakCaption}" />
+                                    <Label Grid.Column="2" Text="{Binding Pull.TimeLeftText}" Style="{DynamicResource IdrakCaption}" />
+                                </Grid>
+                                <Label Text="{Binding Pull.Message}" Style="{DynamicResource IdrakCaption}" />
+                            </VerticalStackLayout>
+
+                            <Label Text="{Binding Status}" IsVisible="{Binding HasStatus}" Style="{DynamicResource IdrakHighlightText}" />
+                            <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <!-- Storage. -->
+                    <Border Style="{DynamicResource IdrakCard}">
+                        <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                            <Label Text="Storage" Style="{DynamicResource IdrakHeading}" />
+                            <Label Text="{Binding StorageText}" Style="{DynamicResource IdrakValue}" />
+                            <Label Text="{Binding ModelsText}" Style="{DynamicResource IdrakCaption}" />
+                        </VerticalStackLayout>
+                    </Border>
+
+                    <Label Text="On this phone" Style="{DynamicResource IdrakHeading}" />
+                </VerticalStackLayout>
+            </CollectionView.Header>
+            <CollectionView.EmptyView>
+                <Label Text="No models pulled yet: pull one above." Style="{DynamicResource IdrakCaption}" HorizontalOptions="Center" />
+            </CollectionView.EmptyView>
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="vm:ModelEntry">
+                    <Border Style="{DynamicResource IdrakCard}">
+                        <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                            <Label Text="{Binding Title}" Style="{DynamicResource IdrakHeading}" />
+                            <Label Text="{Binding Details}" Style="{DynamicResource IdrakValue}" />
+                            <Label Text="{Binding StateText}" IsVisible="{Binding IsComplete}" TextColor="{DynamicResource IdrakSuccess}" FontSize="{DynamicResource IdrakFontSizeCaption}" />
+                            <Label Text="{Binding StateText}" IsVisible="{Binding IsUnfinished}" Style="{DynamicResource IdrakHighlightText}" />
+                            <Label Text="{Binding Folder}" Style="{DynamicResource IdrakCaption}" />
+                            <Label Text="{Binding Modified}" Style="{DynamicResource IdrakCaption}" />
+                            <Button Text="Remove" Command="{Binding RemoveCommand}" Style="{DynamicResource IdrakDangerButton}" HorizontalOptions="Start" />
+                        </VerticalStackLayout>
+                    </Border>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </RefreshView>
+</ContentPage>

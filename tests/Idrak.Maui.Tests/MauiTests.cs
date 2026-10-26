@@ -15,7 +15,7 @@ using Device = Idrak.Abstraction.Device;
 
 namespace Idrak.Maui.Tests;
 
-internal static class MauiTests
+internal static partial class MauiTests
 {
     public sealed class CheckException(string message) : Exception(message);
 
@@ -36,6 +36,11 @@ internal static class MauiTests
         ("maui devices: the CPU is read with its facts (instruction sets, caches), its memory and the process, and shown as cards", DevicesRead),
         ("maui model store: lists pulled models with their sizes and removes a revision or a whole model; refuses what is not a model id", ModelStoreListed),
         ("maui theme: the choice and the phone's theme give the theme in effect; light and dark carry the same colour keys; the styles load", Themes),
+        ("maui model store: a pull through a local Hugging Face (no network) takes the library's files or one .gguf at a revision, sends the token from the secret store, resumes a partial file by a range", ModelStorePulled),
+        ("maui model store: a pull cancelled between two files or inside one is listed as unfinished, never complete; pulling again resumes it to the same bytes", ModelStoreCancelled),
+        ("maui model store: a pull that does not fit the free space (less the headroom kept) is refused before its first byte; the free space is measured", ModelStoreSpace),
+        ("maui models page: a pull's progress reaches the view model (bytes, share, rate, time left), then the list with sizes; suggestions fill the id; removing asks first", ModelsPageProgress),
+        ("maui models page: failures name their cause (no network, a token needed, refused, gated, not found, not enough space, a full storage, cancelled, not an id)", ModelsPageErrors),
         ("public API: api/Idrak.Maui.txt matches the public surface of Idrak.Maui (IDRAK_UPDATE_API=1 rewrites it)", ApiSurfaceCurrent),
     ];
 
@@ -197,7 +202,7 @@ internal static class MauiTests
         IdrakSetting Find(string key) => IdrakMauiSettings.Definitions.Single(s => s.Key == key);
         var options = new IdrakMauiOptions();
         foreach (var (key, text) in new[] { ("cpu_threads", "0"), ("cpu_threads", "two"), ("workspace_share", "1.5"), ("cache_folder", "relative/folder"), ("device", "vulkan:x"),
-                     ("theme", "blue"), ("offload", "maybe"), ("lookup_tables", "disk"), ("tuning_budget_ms", "0"), ("unload_models_at", "never") })
+                     ("theme", "blue"), ("offload", "maybe"), ("lookup_tables", "disk"), ("tuning_budget_ms", "0"), ("unload_models_at", "never"), ("storage_headroom_mb", "-1") })
         {
             bool refused = false;
             try
@@ -301,10 +306,11 @@ internal static class MauiTests
             Check(MobileFeatures.Find("lab") == lab && MobileFeatures.Get(MobileFeatures.Devices) == mine, "registered");
             Check(MobileFeatures.Origin(MobileFeatures.Devices) == typeof(MauiTests).Assembly.GetName().Name && MobileFeatures.Default(MobileFeatures.Devices) is DevicesFeature,
                 $"origin {MobileFeatures.Origin(MobileFeatures.Devices)}");
-            Check(MobileFeatures.All.Select(f => f.Name).SequenceEqual([MobileFeatures.Devices, "lab"]), $"order: {string.Join(", ", MobileFeatures.All.Select(f => f.Name))}");
+            Check(MobileFeatures.All.Select(f => f.Name).Take(3).SequenceEqual([MobileFeatures.Devices, "lab", MobileFeatures.Models]), $"order: {string.Join(", ", MobileFeatures.All.Select(f => f.Name))}");
             var options = new IdrakMauiOptions();
             options.DisabledFeatures.Add("LAB");
-            Check(MobileFeatures.Enabled(options).Select(f => f.Name).SequenceEqual([MobileFeatures.Devices]), "a turned-off feature is enabled");
+            Check(MobileFeatures.Enabled(options).Select(f => f.Name).Take(2).SequenceEqual([MobileFeatures.Devices, MobileFeatures.Models])
+                  && !MobileFeatures.Enabled(options).Any(f => f.Name == "lab"), "a turned-off feature is enabled");
             Check(MobileFeatures.Unregister(MobileFeatures.Devices) && MobileFeatures.Get(MobileFeatures.Devices) is DevicesFeature, "the library's comes back");
             Check(!MobileFeatures.Unregister(MobileFeatures.Devices), "the library's default was removed");
         }
@@ -330,6 +336,8 @@ internal static class MauiTests
         using var services = new ServiceCollection().AddSingleton<IDeviceInformation, DeviceInformation>().BuildServiceProvider();
         var page = MobileFeatures.Open(MobileFeatures.Devices, services);
         Check(page is DevicesPage { BindingContext: DevicesViewModel } && page.Title == "Devices", $"page {page.GetType().Name}, title {page.Title}");
+        var models = MobileFeatures.Open(MobileFeatures.Models, services);
+        Check(models is ModelsPage { BindingContext: ModelsViewModel { Confirm: not null } } && models.Title == "Models", $"page {models.GetType().Name}, title {models.Title}");
     }
 
     // A dispatcher standing in for the UI thread: every dispatch is queued until the test runs them.
@@ -634,6 +642,10 @@ internal static class MauiTests
 
         var styles = new IdrakStyles();
         Check(styles.ContainsKey("IdrakCard") && styles.ContainsKey("IdrakFontSizeBody") && styles.ContainsKey("IdrakCornerRadius"), "the styles and metrics");
+        foreach (string key in (string[])["IdrakChip", "IdrakDangerButton", "IdrakSectionPadding", "IdrakChipPadding", "IdrakChipCornerRadius"])
+        {
+            Check(styles.ContainsKey(key), $"the Models page's {key}");
+        }
     }
 
     private static void ApiSurfaceCurrent()

@@ -23,10 +23,14 @@
     <Thickness x:Key="IdrakPagePadding">16,12</Thickness>
     <Thickness x:Key="IdrakCardPadding">16,14</Thickness>
     <Thickness x:Key="IdrakCardMargin">0,0,0,12</Thickness>
+    <Thickness x:Key="IdrakSectionPadding">0,0,0,12</Thickness>
+    <Thickness x:Key="IdrakChipPadding">12,6</Thickness>
+    <Thickness x:Key="IdrakChipMargin">0,0,8,8</Thickness>
 
     <!-- Corner radii. -->
     <x:Double x:Key="IdrakCornerRadius">16</x:Double>
     <x:Int32 x:Key="IdrakButtonCornerRadius">12</x:Int32>
+    <x:Int32 x:Key="IdrakChipCornerRadius">16</x:Int32>
 
     <!-- Pages and navigation. -->
     <Style TargetType="ContentPage" ApplyToDerivedTypes="True">
@@ -103,6 +107,27 @@
         <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
         <Setter Property="CornerRadius" Value="{DynamicResource IdrakButtonCornerRadius}" />
         <Setter Property="Padding" Value="16,10" />
+    </Style>
+    <!-- A choice to tap (a suggested model): the page's ground inside a card, so it stands out in both themes. -->
+    <Style x:Key="IdrakChip" TargetType="Button">
+        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakPageBackground}" />
+        <Setter Property="TextColor" Value="{DynamicResource IdrakAccent}" />
+        <Setter Property="BorderColor" Value="{DynamicResource IdrakCardStroke}" />
+        <Setter Property="BorderWidth" Value="1" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeCaption}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource IdrakChipCornerRadius}" />
+        <Setter Property="Padding" Value="{DynamicResource IdrakChipPadding}" />
+        <Setter Property="Margin" Value="{DynamicResource IdrakChipMargin}" />
+    </Style>
+    <!-- What deletes something (removing a model). -->
+    <Style x:Key="IdrakDangerButton" TargetType="Button">
+        <Setter Property="BackgroundColor" Value="Transparent" />
+        <Setter Property="TextColor" Value="{DynamicResource IdrakError}" />
+        <Setter Property="BorderColor" Value="{DynamicResource IdrakError}" />
+        <Setter Property="BorderWidth" Value="1" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource IdrakButtonCornerRadius}" />
+        <Setter Property="Padding" Value="{DynamicResource IdrakChipPadding}" />
     </Style>
     <Style TargetType="Entry">
         <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />

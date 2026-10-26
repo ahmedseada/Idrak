@@ -42,8 +42,10 @@ public interface Idrak.Maui.Abstractions.IModelService : System.IDisposable
   public event System.EventHandler<Idrak.Maui.Abstractions.MemoryRelease>? Released
 
 public interface Idrak.Maui.Abstractions.IModelStore
+  public Idrak.Maui.Abstractions.StorageSpace? FreeSpace()
   public System.Collections.Generic.IReadOnlyList<Idrak.Maui.Abstractions.StoredModel> List()
-  public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.StoredModel> PullAsync(string model, Idrak.Abstraction.Diagnostics.IProgressReporter? progress = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.StoredModel> PullAsync(string model, string? revision = null, Idrak.Abstraction.Diagnostics.IProgressReporter? progress = null, System.Threading.CancellationToken cancellationToken = default)
+  public bool HasToken { get; }
   public bool Remove(string id)
   public string Folder { get; }
 
@@ -82,6 +84,7 @@ public sealed record Idrak.Maui.Abstractions.MemoryRelease : System.IEquatable<I
 
 public static class Idrak.Maui.Abstractions.MobileFeatures
   public const string Devices = "devices"
+  public const string Models = "models"
   public static Idrak.Maui.Abstractions.IMobileFeature Get(string name)
   public static Idrak.Maui.Abstractions.IMobileFeature? Default(string name)
   public static Idrak.Maui.Abstractions.IMobileFeature? Find(string name)
@@ -92,6 +95,14 @@ public static class Idrak.Maui.Abstractions.MobileFeatures
   public static bool Unregister(string name)
   public static string? Origin(string name)
   public static void Register(Idrak.Maui.Abstractions.IMobileFeature feature)
+
+public sealed class Idrak.Maui.Abstractions.NotEnoughSpaceException : System.IO.IOException
+  public NotEnoughSpaceException(string model, long needed, long free, long kept, string folder)
+  public long Free { get; }
+  public long Kept { get; }
+  public long Needed { get; }
+  public string Folder { get; }
+  public string Model { get; }
 
 public sealed record Idrak.Maui.Abstractions.PermissionOutcome : System.IEquatable<Idrak.Maui.Abstractions.PermissionOutcome>
   public Idrak.Maui.Abstractions.PhoneNeeds Need { get; init; }
@@ -118,6 +129,12 @@ public sealed record Idrak.Maui.Abstractions.ProcessFacts : System.IEquatable<Id
   public string OperatingSystem { get; init; }
   public string Runtime { get; init; }
 
+public sealed record Idrak.Maui.Abstractions.StorageSpace : System.IEquatable<Idrak.Maui.Abstractions.StorageSpace>
+  public StorageSpace(string Folder, long FreeBytes, long TotalBytes)
+  public long FreeBytes { get; init; }
+  public long TotalBytes { get; init; }
+  public string Folder { get; init; }
+
 public sealed record Idrak.Maui.Abstractions.StoredModel : System.IEquatable<Idrak.Maui.Abstractions.StoredModel>
   public StoredModel(string Id, string Revision, string Folder, long Bytes, int Files, bool Complete, System.DateTimeOffset Modified)
   public System.DateTimeOffset Modified { get; init; }
@@ -142,6 +159,7 @@ public sealed class Idrak.Maui.IdrakMauiOptions
   public Idrak.Maui.IdrakMauiOptions Clone()
   public Idrak.Maui.IdrakThemeChoice Theme { get; set; }
   public IdrakMauiOptions()
+  public System.Collections.Generic.IReadOnlyList<string> SuggestedModels { get; set; }
   public System.Collections.Generic.ISet<string> DisabledFeatures { get; set; }
   public System.TimeSpan ProgressInterval { get; set; }
   public System.TimeSpan? ModelKeepAlive { get; set; }
@@ -160,6 +178,7 @@ public sealed class Idrak.Maui.IdrakMauiOptions
   public long? GpuMemoryReserveMiB { get; set; }
   public long? GpuStackBytes { get; set; }
   public long? OffloadReturnHeadroomMiB { get; set; }
+  public long? StorageHeadroomMiB { get; set; }
   public string Device { get; set; }
   public string? CacheFolder { get; set; }
   public string? HuggingFaceToken { get; set; }
@@ -265,14 +284,19 @@ public sealed class Idrak.Maui.ModelService : Idrak.Maui.Abstractions.IModelServ
   public void Dispose()
 
 public sealed class Idrak.Maui.ModelStore : Idrak.Maui.Abstractions.IModelStore
-  public ModelStore(Idrak.Maui.IdrakMauiOptions options, System.Net.Http.HttpClient? http = null)
+  public Idrak.Maui.Abstractions.StorageSpace? FreeSpace()
+  public ModelStore(Idrak.Maui.IdrakMauiOptions options, System.Net.Http.HttpClient? http = null, System.Func<string, Idrak.Maui.Abstractions.StorageSpace?>? measureSpace = null)
   public System.Collections.Generic.IReadOnlyList<Idrak.Maui.Abstractions.StoredModel> List()
-  public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.StoredModel> PullAsync(string model, Idrak.Abstraction.Diagnostics.IProgressReporter? progress = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.StoredModel> PullAsync(string model, string? revision = null, Idrak.Abstraction.Diagnostics.IProgressReporter? progress = null, System.Threading.CancellationToken cancellationToken = default)
+  public bool HasToken { get; }
   public bool Remove(string id)
+  public const string PullMarker = ".idrak-pull"
+  public static Idrak.Maui.Abstractions.StorageSpace? Measure(string folder)
   public string Folder { get; }
 
 public sealed class Idrak.Maui.ProgressCenter
   public Idrak.Abstraction.Diagnostics.IProgressReporter Start(string label, long? total = null, Idrak.Abstraction.Diagnostics.ProgressUnit unit = (Idrak.Abstraction.Diagnostics.ProgressUnit)0, System.TimeSpan? interval = null)
+  public Idrak.Maui.ProgressItem? ItemOf(Idrak.Abstraction.Diagnostics.IProgressReporter reporter)
   public Microsoft.Maui.Dispatching.IDispatcher? Dispatcher { get; set; }
   public ProgressCenter(System.TimeSpan interval, Microsoft.Maui.Dispatching.IDispatcher? dispatcher = null, System.TimeProvider? time = null)
   public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ProgressItem> Items { get; }
@@ -347,6 +371,47 @@ public sealed record Idrak.Maui.ViewModels.InfoRow : System.IEquatable<Idrak.Mau
   public string Name { get; init; }
   public string Value { get; init; }
 
+public sealed class Idrak.Maui.ViewModels.ModelEntry
+  public Idrak.Maui.Abstractions.StoredModel Model { get; }
+  public System.Windows.Input.ICommand RemoveCommand { get; }
+  public bool IsComplete { get; }
+  public bool IsUnfinished { get; }
+  public string Details { get; }
+  public string Folder { get; }
+  public string Modified { get; }
+  public string StateText { get; }
+  public string Title { get; }
+
+public sealed class Idrak.Maui.ViewModels.ModelsViewModel : Idrak.Maui.ViewModels.ViewModel
+  public Idrak.Maui.ProgressItem? Pull { get; }
+  public ModelsViewModel(Idrak.Maui.Abstractions.IModelStore store, Idrak.Maui.IdrakMauiOptions options, Idrak.Maui.ProgressCenter? progress = null)
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.ModelEntry> Models { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.SuggestionChip> Suggestions { get; }
+  public System.Func<string, string, System.Threading.Tasks.Task<bool>>? Confirm { get; set; }
+  public System.Threading.Tasks.Task RefreshAsync()
+  public System.Threading.Tasks.Task<bool> PullAsync()
+  public System.Threading.Tasks.Task<bool> RemoveAsync(Idrak.Maui.Abstractions.StoredModel model)
+  public System.Windows.Input.ICommand CancelCommand { get; }
+  public System.Windows.Input.ICommand PullCommand { get; }
+  public System.Windows.Input.ICommand RefreshCommand { get; }
+  public bool HasError { get; }
+  public bool HasPull { get; }
+  public bool HasStatus { get; }
+  public bool HasSuggestions { get; }
+  public bool IsBusy { get; set; }
+  public bool IsPulling { get; }
+  public static string Explain(System.Exception error, string model, bool tokenSet)
+  public string Error { get; }
+  public string Folder { get; }
+  public string ModelId { get; set; }
+  public string ModelsText { get; }
+  public string Revision { get; set; }
+  public string Status { get; }
+  public string StorageText { get; }
+  public string Title { get; }
+  public string TokenText { get; }
+  public void Cancel()
+
 public sealed class Idrak.Maui.ViewModels.SettingEntry : Idrak.Maui.ViewModels.ViewModel
   public Idrak.Maui.IdrakSetting Setting { get; }
   public Microsoft.Maui.Keyboard Keyboard { get; }
@@ -376,6 +441,11 @@ public sealed class Idrak.Maui.ViewModels.SettingsViewModel : Idrak.Maui.ViewMod
   public string Message { get; }
   public string Title { get; }
 
+public sealed record Idrak.Maui.ViewModels.SuggestionChip : System.IEquatable<Idrak.Maui.ViewModels.SuggestionChip>
+  public SuggestionChip(string Model, System.Windows.Input.ICommand Command)
+  public System.Windows.Input.ICommand Command { get; init; }
+  public string Model { get; init; }
+
 public abstract class Idrak.Maui.ViewModels.ViewModel : System.ComponentModel.INotifyPropertyChanged
   protected ViewModel()
   protected bool SetProperty<T>(ref T field, T value, string name = "")
@@ -398,6 +468,23 @@ public sealed class Idrak.Maui.Views.DevicesFeature : Idrak.Abstraction.IKind, I
 public class Idrak.Maui.Views.DevicesPage : Microsoft.Maui.Controls.ContentPage
   protected override void OnAppearing()
   public DevicesPage(Idrak.Maui.ViewModels.DevicesViewModel viewModel)
+
+public sealed class Idrak.Maui.Views.ModelsFeature : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IMobileFeature
+  public Idrak.Maui.Abstractions.PhoneNeeds Needs { get; }
+  public Microsoft.Maui.Controls.Page CreatePage(System.IServiceProvider services, object viewModel)
+  public ModelsFeature()
+  public System.Collections.Generic.IReadOnlyList<string> ModelFamilies { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Packages { get; }
+  public int Order { get; }
+  public object CreateViewModel(System.IServiceProvider services)
+  public string Glyph { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public string Title { get; }
+
+public class Idrak.Maui.Views.ModelsPage : Microsoft.Maui.Controls.ContentPage
+  protected override void OnAppearing()
+  public ModelsPage(Idrak.Maui.ViewModels.ModelsViewModel viewModel)
 
 public class Idrak.Maui.Views.SettingsPage : Microsoft.Maui.Controls.ContentPage
   public SettingsPage(Idrak.Maui.ViewModels.SettingsViewModel viewModel)

@@ -49,35 +49,95 @@ public interface IModelService : IDisposable
 /// <param name="Folder">Its folder.</param>
 /// <param name="Bytes">The bytes of its files.</param>
 /// <param name="Files">How many files it has.</param>
-/// <param name="Complete">False while a download is unfinished (a partial file is there; pulling again resumes it).</param>
+/// <param name="Complete">
+/// False while a pull is unfinished: cancelled, failed or running (a partial file, or the store's pull marker, is there;
+/// pulling again resumes it).
+/// </param>
 /// <param name="Modified">When a file of it last changed.</param>
 public sealed record StoredModel(string Id, string Revision, string Folder, long Bytes, int Files, bool Complete, DateTimeOffset Modified);
 
+/// <summary>The space of the storage a folder is on.</summary>
+/// <param name="Folder">The folder measured (the nearest one that exists).</param>
+/// <param name="FreeBytes">The bytes the app may still write there.</param>
+/// <param name="TotalBytes">The storage's size.</param>
+public sealed record StorageSpace(string Folder, long FreeBytes, long TotalBytes);
+
+/// <summary>
+/// A pull refused before it started: the files still to download do not fit in the free space of the storage
+/// (less the room <see cref="IdrakMauiOptions.StorageHeadroomMiB"/> keeps free).
+/// </summary>
+public sealed class NotEnoughSpaceException : IOException
+{
+    /// <summary>The refusal of <paramref name="model"/>, which needs <paramref name="needed"/> bytes where <paramref name="free"/> are free.</summary>
+    /// <param name="model">The model asked for.</param>
+    /// <param name="needed">The bytes still to download.</param>
+    /// <param name="free">The bytes free on the storage.</param>
+    /// <param name="kept">The bytes kept free by the settings.</param>
+    /// <param name="folder">The folder whose storage was measured.</param>
+    public NotEnoughSpaceException(string model, long needed, long free, long kept, string folder)
+        : base($"Not enough space for {model}: it needs {ProgressText.Bytes(needed)} more and {ProgressText.Bytes(free)} is free on the storage of {folder}"
+               + (kept > 0 ? $" (keeping {ProgressText.Bytes(kept)} free)" : "")
+               + ". Remove a model, or choose another storage in Settings (Cache and models folder).")
+    {
+        Model = model;
+        Needed = needed;
+        Free = free;
+        Kept = kept;
+        Folder = folder;
+    }
+
+    /// <summary>The model asked for.</summary>
+    public string Model { get; }
+
+    /// <summary>The bytes still to download.</summary>
+    public long Needed { get; }
+
+    /// <summary>The bytes free on the storage.</summary>
+    public long Free { get; }
+
+    /// <summary>The bytes the settings keep free.</summary>
+    public long Kept { get; }
+
+    /// <summary>The folder whose storage was measured.</summary>
+    public string Folder { get; }
+}
+
 /// <summary>
 /// The models pulled into the app's storage, over the library's downloads (<c>Idrak.Data</c>: <c>Downloader</c>,
-/// <c>HuggingFaceModels</c>), under <see cref="ComputeResources.CacheFolder"/>'s <c>downloads/huggingface/models</c>, where
-/// loading a model by its id looks.
+/// <c>HuggingFace</c>, <c>HuggingFaceModels</c>), under <see cref="ComputeResources.CacheFolder"/>'s
+/// <c>downloads/huggingface/models</c>, where loading a model by its id looks.
 /// </summary>
 public interface IModelStore
 {
     /// <summary>The folder pulled models are kept in.</summary>
     string Folder { get; }
 
-    /// <summary>
-    /// Pulls <paramref name="model"/> (once; an unfinished pull resumes): a Hugging Face id ("Qwen/Qwen3-0.6B") takes the
-    /// files the library reads, an id followed by a file's path ending in .gguf ("unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf")
-    /// that one file. Shows its progress on <paramref name="progress"/>, or on a reporter of its own
-    /// (<see cref="ProgressReporters.Start"/>, the app's "maui" one).
-    /// </summary>
-    /// <exception cref="ArgumentException">The name is neither.</exception>
-    Task<StoredModel> PullAsync(string model, IProgressReporter? progress = null, CancellationToken cancellationToken = default);
+    /// <summary>Whether a Hugging Face token is set (the settings' one, else HF_TOKEN or a saved login), which gated and private models need.</summary>
+    bool HasToken { get; }
 
-    /// <summary>The models pulled, each revision apart, by id.</summary>
+    /// <summary>
+    /// Pulls <paramref name="model"/> (once; an unfinished pull resumes, a partial file where it stopped): a Hugging Face id
+    /// ("Qwen/Qwen3-0.6B") takes the files the library reads, an id followed by a file's path ending in .gguf
+    /// ("unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf") that one file. <paramref name="revision"/> is a branch, a tag or
+    /// a commit (null: "main"). The token goes with every request when one is set (<see cref="HasToken"/>). Before the
+    /// first byte, the files' sizes are checked against the free space of the storage. Shows its progress on
+    /// <paramref name="progress"/>, or on a reporter of its own (<see cref="ProgressReporters.Start"/>, the app's "maui" one).
+    /// </summary>
+    /// <exception cref="ArgumentException">The name is neither, or the revision is not one.</exception>
+    /// <exception cref="NotEnoughSpaceException">The files still to download do not fit (nothing was downloaded).</exception>
+    /// <exception cref="HttpRequestException">Hugging Face refused (its status: 401 a token is needed, 403 a gated model, 404 not there) or could not be reached (no status).</exception>
+    /// <exception cref="OperationCanceledException">Cancelled: what was downloaded is kept and the model is listed as unfinished.</exception>
+    Task<StoredModel> PullAsync(string model, string? revision = null, IProgressReporter? progress = null, CancellationToken cancellationToken = default);
+
+    /// <summary>The models pulled, each revision apart, by id (one walk over the store's folders; call it off the UI thread).</summary>
     IReadOnlyList<StoredModel> List();
 
     /// <summary>Removes <paramref name="id"/> ("owner/name": every revision; "owner/name@revision": that one); false when it is not there.</summary>
     /// <exception cref="ArgumentException">Not a model id.</exception>
     bool Remove(string id);
+
+    /// <summary>The space of the storage <see cref="Folder"/> is on, or null where it cannot be measured.</summary>
+    StorageSpace? FreeSpace();
 }
 
 /// <summary>A device as the device information reads it.</summary>

@@ -46,6 +46,9 @@ internal sealed class MauiProgressReporter : IProgressReporter
     /// <summary>The item this reporter shows on (tests and views that hold one piece of work).</summary>
     public ProgressItem Item => _item;
 
+    /// <summary>The center this reporter shows on.</summary>
+    public ProgressCenter Center => _center;
+
     public string Label { get; set; }
 
     public long? Total { get; set; }
