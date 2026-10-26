@@ -177,7 +177,8 @@ public sealed record ProfileOptions
 
     /// <summary>
     /// The probes to measure with, by name (<see cref="ProfileProbes"/>); null for every registered probe the device
-    /// supports. A named probe the device does not support is skipped and listed in <see cref="ProfileReport.Skipped"/>.
+    /// supports (in a watched run, <see cref="Profiler.Watch"/>, those that do not change it). A named probe the device does
+    /// not support is skipped and listed in <see cref="ProfileReport.Skipped"/>.
     /// </summary>
     public IReadOnlyList<string>? Probes { get; init; }
 
@@ -193,7 +194,7 @@ public sealed record ProfileOptions
     /// <summary>
     /// <paramref name="defaults"/> (or the defaults) with what the environment sets: <c>IDRAK_PROFILE_COLD</c> (1 or 0),
     /// <c>IDRAK_PROFILE_WARM</c> (the warm runs), <c>IDRAK_PROFILE_PROBES</c> (names separated by commas, "all" for every
-    /// probe, "none" for none), <c>IDRAK_PROFILE_STATISTIC</c> (median, mean, min or max), <c>IDRAK_PROFILE_FORMAT</c>
+    /// registered probe by name, the intrusive ones included in a watched run too, "none" for none), <c>IDRAK_PROFILE_STATISTIC</c> (median, mean, min or max), <c>IDRAK_PROFILE_FORMAT</c>
     /// (a writer's name) and <c>IDRAK_PROFILE_OUT</c> (a file).
     /// </summary>
     /// <exception cref="ArgumentException">A value that does not parse.</exception>
@@ -218,7 +219,7 @@ public sealed record ProfileOptions
             {
                 Probes = probes.Trim().ToLowerInvariant() switch
                 {
-                    "all" => null,
+                    "all" => [.. ProfileProbes.Names],                     // named, so a watched run takes the intrusive ones too
                     "none" => [],
                     _ => [.. probes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)],
                 },

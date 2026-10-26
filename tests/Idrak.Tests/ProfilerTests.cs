@@ -274,8 +274,9 @@ internal static partial class Tests
         var chosen = ProfileOptions.From(environment.GetValueOrDefault, new ProfileOptions { WarmRuns = 2 });
         Check(chosen is { Cold: false, WarmRuns: 5, Statistic: ProfileStatistic.Min, Format: "json", Output: "profile.jsonl" } && chosen.Probes!.SequenceEqual(["cpu", "memory"]),
             $"from the environment: {chosen}");
-        Check(ProfileOptions.From(n => n == "IDRAK_PROFILE_PROBES" ? "all" : null, new ProfileOptions { Probes = ["cpu"] }).Probes is null
-              && ProfileOptions.From(_ => null, null) == new ProfileOptions(), "all probes; nothing set keeps the defaults");
+        var all = ProfileOptions.From(n => n == "IDRAK_PROFILE_PROBES" ? "all" : null, new ProfileOptions { Probes = ["cpu"] }).Probes;
+        Check(all is not null && all.SequenceEqual(ProfileProbes.Names) && ProfileOptions.From(_ => null, null) == new ProfileOptions(),
+            $"all probes by name (a watched run takes the intrusive ones too), got {(all is null ? "null" : string.Join(", ", all))}; nothing set keeps the defaults");
         string bad = "";
         try
         {
