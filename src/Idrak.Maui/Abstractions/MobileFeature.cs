@@ -132,7 +132,7 @@ public static class MobileFeatures
         Idrak.Maui.Views.PlannedFeatures.RegisterDefaults(table);
         table.RegisterDefault(Devices, new Idrak.Maui.Views.DevicesFeature());
         table.RegisterDefault(Models, new Idrak.Maui.Views.ModelsFeature());
-        table.RegisterDefault("chat", new Idrak.Maui.Views.ChatFeature());
+        table.RegisterDefault(Chat, new Idrak.Maui.Views.ChatFeature());
         return table;
     }
 

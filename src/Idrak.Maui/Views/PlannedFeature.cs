@@ -84,16 +84,12 @@ public sealed class PlannedFeature : IMobileFeature
 
 /// <summary>
 /// The library's planned features (plan 34's labs, in its menu order), registered as defaults in <see cref="MobileFeatures"/>.
-/// Orders leave room: Devices is 0 and the Models lab 10; the Bench (held) and an app's own come after.
+/// Orders leave room: Devices is 0, the Models lab 10 and Chat 20 (built, so no longer here); the Bench (held) and an app's own come after.
 /// </summary>
 internal static class PlannedFeatures
 {
     public static readonly PlannedFeature[] Library =
     [
-        new(MobileFeatures.Chat, "Chat", "❝", 20,
-            "Talk with a small model on the phone",
-            "A small model streams its answer with its tokens per second, on the CPU or the phone's GPU",
-            PhoneNeeds.Model | PhoneNeeds.Network, ["Idrak.Text", "Idrak.Text.Plugins"]),
         new(MobileFeatures.Transcribe, "Transcribe", "◉", 30,
             "Speech into the microphone, written as it is spoken",
             "Live transcription from the microphone, with an optional cleaning pipeline before the recognizer",

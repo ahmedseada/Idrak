@@ -16,7 +16,7 @@ namespace Idrak.Maui.Views;
 public sealed class ChatFeature : IMobileFeature
 {
     // Its name in MobileFeatures.
-    private const string FeatureName = "chat";
+    private const string FeatureName = MobileFeatures.Chat;
 
     /// <inheritdoc />
     public string Name => FeatureName;
