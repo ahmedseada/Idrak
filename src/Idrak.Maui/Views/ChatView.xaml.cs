@@ -4,7 +4,7 @@
 using Idrak.Maui.Abstractions;
 using Idrak.Maui.Controls;
 using Idrak.Maui.ViewModels;
-using Microsoft.Maui.Controls.PlatformConfiguration;
+using AndroidPlatform = Microsoft.Maui.Controls.PlatformConfiguration.Android;   // "Android" alone is the platform's namespace in the Android build
 using Microsoft.Maui.Controls.PlatformConfiguration.AndroidSpecific;
 
 namespace Idrak.Maui.Views;
@@ -42,7 +42,7 @@ public partial class ChatView : AdaptiveView
         base.Shown();
         if (Microsoft.Maui.Controls.Application.Current is { } app)
         {
-            var android = app.On<Android>();
+            var android = app.On<AndroidPlatform>();
             _keyboard ??= android.GetWindowSoftInputModeAdjust();
             android.UseWindowSoftInputModeAdjust(WindowSoftInputModeAdjust.Resize);
         }
@@ -59,7 +59,7 @@ public partial class ChatView : AdaptiveView
         ViewModel.ScrollToEndRequested -= OnScrollToEnd;
         if (Microsoft.Maui.Controls.Application.Current is { } app && _keyboard is { } keyboard)
         {
-            app.On<Android>().UseWindowSoftInputModeAdjust(keyboard);
+            app.On<AndroidPlatform>().UseWindowSoftInputModeAdjust(keyboard);
         }
 
         base.Hidden();
