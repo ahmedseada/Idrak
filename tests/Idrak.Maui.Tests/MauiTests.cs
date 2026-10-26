@@ -52,6 +52,15 @@ internal static partial class MauiTests
         ("maui chat: a model is measured before loading (weights by format, the cache by the context) and refused with the limit named when it does not fit; an unregistered family fails as not registered", ChatRefused),
         ("maui chat: a tiny generated Qwen3 decoder loads from a folder through the model service and streams its answers on the CPU, cold then warm, and cold again after memory pressure took it", ChatEndToEnd),
         ("maui chat: the chat feature is the library's (order 20, needs a model) and opens its page bound to its view model", ChatPageOpens),
+        ("maui transcribe settings: empty, every value is the library's (live, transcription and capture options); each setting maps to its option, is kept and read back; a bad value is refused saying what is taken", TranscribeSettingsMapped),
+        ("maui transcribe: live from a registered capture (a loud tone, a pause, a soft one) through a scripted recognizer: tentative and committed words reach the view model as they come, each finished segment committed on its own line; level, time and lag shown", TranscribeLive),
+        ("maui transcribe: hundreds of audio blocks and several readings inside one progress interval make at most one UI dispatch; the last values are shown at the end and an older showing never replaces them", TranscribeBatched),
+        ("maui transcribe: stop ends the microphone's input and its last segment is read and committed; a second recording goes below the first", TranscribeStop),
+        ("maui transcribe: a refused microphone opens no capture and says how to allow it; the app's settings open from the page", TranscribePermission),
+        ("maui transcribe: the pipeline setting takes live steps only (a whole-recording step refused naming its live alternative, an unknown one naming the registered); a live pipeline cleans the capture", TranscribePipeline),
+        ("maui transcribe: a WAV made here is decoded by the library's codecs and read through the live path and whole; the text copied and shared; a file that is not sound named", TranscribeFile),
+        ("maui transcribe: the speech models are the store's complete ones a registered family reads, picked and loaded once in the speech host; none says why; the feature opens its page", TranscribeModels),
+        ("maui transcribe: tiny-whisper through the lab on the CPU gives the library's own transcription of a file, whole and live", TranscribeWhisper),
         ("public API: api/Idrak.Maui.txt matches the public surface of Idrak.Maui (IDRAK_UPDATE_API=1 rewrites it)", ApiSurfaceCurrent),
     ];
 

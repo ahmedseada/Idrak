@@ -29,6 +29,8 @@
     <PackageReference Include="Idrak.Maui" Version="$(IdrakVersion)" />
     <!-- The text families the Chat lab shows, each registered by its own call in MauiProgram. -->
     <PackageReference Include="Idrak.Text.Plugins" Version="$(IdrakVersion)" />
+    <!-- The speech families the Transcribe lab reads, registered one by one in MauiProgram (never espeak-ng). -->
+    <PackageReference Include="Idrak.Audio.Plugins" Version="$(IdrakVersion)" />
   </ItemGroup>
 
   <!--

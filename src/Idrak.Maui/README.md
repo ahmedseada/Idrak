@@ -15,7 +15,7 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   (empty means measured), the Hugging Face token and the progress interval. Settings are kept between runs (MAUI
   Preferences; the token in SecureStorage) and a change that needs a restart says so.
 - **Features** (`IMobileFeature` in `MobileFeatures`): a page and its view model, with what it needs from the phone. The
-  library registers its own (Devices, Models, Chat); an app adds its own or replaces one by name.
+  library registers its own (Devices, Models, Chat, Transcribe); an app adds its own or replaces one by name.
 - **Models** page: pull a Hugging Face id (and a revision) into the cache folder with its progress (bytes, rate, time
   left), cancellable and resumed by pulling again; the token from the settings when set; the space checked before the
   first byte (`StorageHeadroomMiB` keeps some free); the models stored with sizes and folders, removing one after a
@@ -27,6 +27,16 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   answer after a load (cold) apart from the warm ones. The system prompt, temperature, top-p, top-k, max new tokens,
   context and seed are settings over the library's `GenerationOptions`. Idrak.Maui registers no model family: the app
   registers the ones it shows (`QwenPlugin.Register()` and so on), and a model of another family fails as not registered.
+- **Transcribe** page: live transcription from the microphone through the library's `LiveTranscriber` (the
+  microphone permission asked first; the capture `AudioCaptures.ForThisMachine()` picks, aaudio on Android), with an
+  optional live cleaning pipeline (`AudioPipeline` text, live steps only); or an audio file picked and decoded by the
+  library's own codecs, read through the same live path or whole. A speech model is picked from the store's complete
+  models whose architecture a registered speech family reads, loaded once through the model service (host `speech`)
+  on the settings' device. The committed words and the tentative ones (lighter) as they arrive, the level, the time
+  and how far behind the model runs, updated at most once a progress interval; stop commits the last segment; copy
+  and share the text. Every `LiveTranscriptionOptions` value is a setting on the page (empty: the library's
+  default), kept in the settings store under `idrak.transcribe.`. The library registers no family: the app does
+  (Idrak.Mobile: `WhisperPlugin.Register()`).
 - **Services**: models kept loaded through `ModelHost` and released on the phone's memory pressure, the model store
   (pull with progress, list, sizes, remove), device information (the Vulkan driver in the app's process, its measured
   width and subgroup sizes, the memory budget, CPU features), permissions and sharing a file out.

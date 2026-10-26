@@ -133,6 +133,7 @@ public static class MobileFeatures
         table.RegisterDefault(Devices, new Idrak.Maui.Views.DevicesFeature());
         table.RegisterDefault(Models, new Idrak.Maui.Views.ModelsFeature());
         table.RegisterDefault(Chat, new Idrak.Maui.Views.ChatFeature());
+        table.RegisterDefault(Transcribe, new Idrak.Maui.Views.TranscribeFeature());
         return table;
     }
 

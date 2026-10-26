@@ -421,6 +421,64 @@ public static class Idrak.Maui.Theme.IdrakThemes
   public static Microsoft.Maui.Controls.ResourceDictionary Colors(Microsoft.Maui.ApplicationModel.AppTheme theme)
   public static void Apply(Microsoft.Maui.Controls.Application app, Idrak.Maui.IdrakThemeChoice choice)
 
+public enum Idrak.Maui.TranscribeFileMode : int
+  Live = 0
+  Whole = 1
+
+public sealed class Idrak.Maui.TranscribeLabOptions
+  public Idrak.Audio.Abstractions.AudioCaptureOptions ToCapture()
+  public Idrak.Audio.Abstractions.AudioPipeline ToPipeline()
+  public Idrak.Audio.Abstractions.LiveTranscriptionOptions ToLive(bool microphone = true)
+  public Idrak.Audio.Abstractions.TranscriptionOptions ToTranscription()
+  public Idrak.Maui.TranscribeFileMode FileMode { get; set; }
+  public Idrak.Maui.TranscribeLabOptions Clone()
+  public TranscribeLabOptions()
+  public bool? FileKeepUp { get; set; }
+  public bool? KeepUp { get; set; }
+  public double? BlockSeconds { get; set; }
+  public double? FileBlockSeconds { get; set; }
+  public double? MinSpeechSeconds { get; set; }
+  public double? PreRollSeconds { get; set; }
+  public double? SilenceDecibels { get; set; }
+  public double? SilenceFloorDecibels { get; set; }
+  public double? SilenceSeconds { get; set; }
+  public double? StepSeconds { get; set; }
+  public double? WindowSeconds { get; set; }
+  public int? Agreement { get; set; }
+  public int? Beams { get; set; }
+  public int? PromptCharacters { get; set; }
+  public int? SampleRate { get; set; }
+  public string? Capture { get; set; }
+  public string? InputDevice { get; set; }
+  public string? Language { get; set; }
+  public string? Model { get; set; }
+  public string? Pipeline { get; set; }
+  public string? Policy { get; set; }
+  public string? Prompt { get; set; }
+  public string? Task { get; set; }
+
+public sealed class Idrak.Maui.TranscribeSetting
+  public Idrak.Maui.TranscribeSettingKind Kind { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Choices { get; }
+  public string Get(Idrak.Maui.TranscribeLabOptions options)
+  public string Key { get; }
+  public string Placeholder { get; }
+  public string Summary { get; }
+  public string Title { get; }
+  public void Set(Idrak.Maui.TranscribeLabOptions options, string? text)
+
+public enum Idrak.Maui.TranscribeSettingKind : int
+  Choice = 2
+  Number = 1
+  Text = 0
+
+public static class Idrak.Maui.TranscribeSettings
+  public const double DefaultFileBlockSeconds = 0.1
+  public const string Prefix = "idrak.transcribe."
+  public static Idrak.Maui.TranscribeLabOptions Load(Idrak.Maui.Abstractions.ISettingsStore store, out System.Collections.Generic.IReadOnlyList<string> skipped)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.TranscribeSetting> Definitions { get; }
+  public static void Save(Idrak.Maui.Abstractions.ISettingsStore store, Idrak.Maui.TranscribeLabOptions options)
+
 public sealed class Idrak.Maui.ViewModels.ChatBubble : Idrak.Maui.ViewModels.ViewModel
   public System.Windows.Input.ICommand CopyCommand { get; }
   public bool HasFooter { get; }
@@ -520,6 +578,9 @@ public sealed record Idrak.Maui.ViewModels.InfoRow : System.IEquatable<Idrak.Mau
   public string Name { get; init; }
   public string Value { get; init; }
 
+public static class Idrak.Maui.ViewModels.LevelMeter
+  public static double Decibels(System.ReadOnlySpan<float> samples)
+
 public sealed class Idrak.Maui.ViewModels.ModelEntry
   public Idrak.Maui.Abstractions.StoredModel Model { get; }
   public System.Windows.Input.ICommand RemoveCommand { get; }
@@ -608,10 +669,106 @@ public sealed class Idrak.Maui.ViewModels.SettingsViewModel : Idrak.Maui.ViewMod
   public string Message { get; }
   public string Title { get; }
 
+public sealed class Idrak.Maui.ViewModels.SpeechModelEntry
+  public Idrak.Maui.Abstractions.StoredModel Model { get; }
+  public override string ToString()
+  public string Architecture { get; }
+  public string Details { get; }
+  public string Key { get; }
+  public string Title { get; }
+
 public sealed record Idrak.Maui.ViewModels.SuggestionChip : System.IEquatable<Idrak.Maui.ViewModels.SuggestionChip>
   public SuggestionChip(string Model, System.Windows.Input.ICommand Command)
   public System.Windows.Input.ICommand Command { get; init; }
   public string Model { get; init; }
+
+public sealed class Idrak.Maui.ViewModels.TranscribeSettingEntry : Idrak.Maui.ViewModels.ViewModel
+  public Idrak.Maui.TranscribeSetting Setting { get; }
+  public Microsoft.Maui.Keyboard Keyboard { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Choices { get; }
+  public bool HasError { get; }
+  public bool IsChoice { get; }
+  public bool IsEntry { get; }
+  public string Error { get; set; }
+  public string Placeholder { get; }
+  public string Summary { get; }
+  public string Text { get; set; }
+  public string Title { get; }
+  public string? SelectedChoice { get; set; }
+
+public sealed class Idrak.Maui.ViewModels.TranscribeViewModel : Idrak.Maui.ViewModels.ViewModel, System.IDisposable
+  public Idrak.Maui.ProgressItem? Work { get; }
+  public Idrak.Maui.TranscribeLabOptions Options { get; }
+  public Idrak.Maui.ViewModels.SpeechModelEntry? SelectedModel { get; set; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Audio.Abstractions.TranscriptSegment> Segments { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Tasks { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.SpeechModelEntry> SpeechModels { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.TranscribeSettingEntry> Settings { get; }
+  public System.Collections.ObjectModel.ObservableCollection<string> Languages { get; }
+  public System.Func<System.Threading.Tasks.Task>? OpenModels { get; set; }
+  public System.Threading.Tasks.Task RefreshAsync()
+  public System.Threading.Tasks.Task<bool> CopyAsync()
+  public System.Threading.Tasks.Task<bool> LoadModelAsync()
+  public System.Threading.Tasks.Task<bool> PickFileAsync()
+  public System.Threading.Tasks.Task<bool> RecordAsync()
+  public System.Threading.Tasks.Task<bool> ShareAsync()
+  public System.Threading.Tasks.Task<bool> TranscribeFileAsync(string path, string? name = null)
+  public System.Windows.Input.ICommand ApplySettingsCommand { get; }
+  public System.Windows.Input.ICommand ClearCommand { get; }
+  public System.Windows.Input.ICommand CopyCommand { get; }
+  public System.Windows.Input.ICommand GoToModelsCommand { get; }
+  public System.Windows.Input.ICommand OpenPermissionSettingsCommand { get; }
+  public System.Windows.Input.ICommand RecordCommand { get; }
+  public System.Windows.Input.ICommand RefreshCommand { get; }
+  public System.Windows.Input.ICommand ShareCommand { get; }
+  public System.Windows.Input.ICommand StopCommand { get; }
+  public System.Windows.Input.ICommand ToggleSettingsCommand { get; }
+  public System.Windows.Input.ICommand TranscribeFileCommand { get; }
+  public TranscribeViewModel(Idrak.Maui.Abstractions.IModelStore store, Idrak.Maui.Abstractions.IModelService models, Idrak.Maui.Abstractions.IPermissionService permissions, Idrak.Maui.Abstractions.IShareService share, Idrak.Maui.IdrakMauiOptions options, Idrak.Maui.Abstractions.ISettingsStore settings, Idrak.Maui.ProgressCenter? progress = null, Microsoft.Maui.ApplicationModel.DataTransfer.IClipboard? clipboard = null, Microsoft.Maui.Storage.IFilePicker? picker = null)
+  public bool ApplySettings()
+  public bool HasError { get; }
+  public bool HasLanguages { get; }
+  public bool HasNoSpeechModels { get; }
+  public bool HasNoText { get; }
+  public bool HasSettingsMessage { get; }
+  public bool HasSpeechModels { get; }
+  public bool HasStatus { get; }
+  public bool HasText { get; }
+  public bool HasWork { get; }
+  public bool IsBehind { get; }
+  public bool IsIdle { get; }
+  public bool IsListing { get; }
+  public bool IsPermissionRefused { get; }
+  public bool IsRecording { get; }
+  public bool IsRunning { get; }
+  public bool ShowSettings { get; set; }
+  public const string ModelHostName = "speech"
+  public double Behind { get; }
+  public double Level { get; }
+  public double LevelDecibels { get; }
+  public double MeterFloorDecibels { get; set; }
+  public string BehindText { get; }
+  public string CommittedText { get; }
+  public string ElapsedText { get; }
+  public string Error { get; }
+  public string HeardText { get; }
+  public string LevelText { get; }
+  public string ModelStatus { get; }
+  public string ModelsText { get; }
+  public string RecordGlyph { get; }
+  public string RecordText { get; }
+  public string SettingsButtonText { get; }
+  public string SettingsMessage { get; }
+  public string Status { get; }
+  public string TentativeShown { get; }
+  public string TentativeText { get; }
+  public string Text { get; }
+  public string Title { get; }
+  public string? SelectedLanguage { get; set; }
+  public string? SelectedTask { get; set; }
+  public void Clear()
+  public void Dispose()
+  public void Stop()
 
 public abstract class Idrak.Maui.ViewModels.ViewModel : System.ComponentModel.INotifyPropertyChanged
   protected ViewModel()
@@ -691,3 +848,21 @@ public sealed class Idrak.Maui.Views.PlannedFeature : Idrak.Abstraction.IKind, I
 
 public class Idrak.Maui.Views.SettingsPage : Microsoft.Maui.Controls.ContentPage
   public SettingsPage(Idrak.Maui.ViewModels.SettingsViewModel viewModel)
+
+public sealed class Idrak.Maui.Views.TranscribeFeature : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IMobileFeature
+  public Idrak.Maui.Abstractions.PhoneNeeds Needs { get; }
+  public Microsoft.Maui.Controls.Page CreatePage(System.IServiceProvider services, object viewModel)
+  public System.Collections.Generic.IReadOnlyList<string> ModelFamilies { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Packages { get; }
+  public TranscribeFeature()
+  public int Order { get; }
+  public object CreateViewModel(System.IServiceProvider services)
+  public string Glyph { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public string Title { get; }
+
+public class Idrak.Maui.Views.TranscribePage : Microsoft.Maui.Controls.ContentPage
+  protected override void OnAppearing()
+  protected override void OnDisappearing()
+  public TranscribePage(Idrak.Maui.ViewModels.TranscribeViewModel viewModel, System.IServiceProvider services)

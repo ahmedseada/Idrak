@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  The Transcribe feature (plan 34, M5): a speech model from the store, the record button, the live level, the elapsed time
+  and how far behind the model runs, the committed words with the tentative ones lighter after them, copy and share, and
+  the lab's settings (every live transcription option, the cleaning pipeline, the capture, the file mode). Colours, sizes
+  and spacing are the theme's keys only.
+-->
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+             x:Class="Idrak.Maui.Views.TranscribePage"
+             x:DataType="vm:TranscribeViewModel"
+             Title="{Binding Title}">
+    <ContentPage.ToolbarItems>
+        <ToolbarItem Text="Refresh" Command="{Binding RefreshCommand}" />
+    </ContentPage.ToolbarItems>
+
+    <ContentPage.Resources>
+        <!-- The record button: a round accent button with the mark alone, red (the theme's error colour) while recording. -->
+        <Style x:Key="TranscribeRecordButton" TargetType="Button">
+            <Setter Property="BackgroundColor" Value="{DynamicResource IdrakAccent}" />
+            <Setter Property="TextColor" Value="{DynamicResource IdrakOnAccent}" />
+            <Setter Property="BorderColor" Value="{DynamicResource IdrakCardStroke}" />
+            <Setter Property="BorderWidth" Value="4" />
+            <Setter Property="WidthRequest" Value="96" />
+            <Setter Property="HeightRequest" Value="96" />
+            <Setter Property="CornerRadius" Value="48" />
+            <Setter Property="FontSize" Value="34" />
+            <Setter Property="FontAutoScalingEnabled" Value="False" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalOptions" Value="Center" />
+        </Style>
+    </ContentPage.Resources>
+
+    <ScrollView>
+        <VerticalStackLayout Padding="{DynamicResource IdrakPagePadding}" Spacing="{DynamicResource IdrakSpacingSmall}">
+            <Label Text="Transcribe" Style="{DynamicResource IdrakTitle}" />
+            <Label Text="Speech into text as it is said, on this phone: the words in full colour are final, the lighter ones may still change."
+                   Style="{DynamicResource IdrakCaption}" />
+
+            <!-- The model. -->
+            <Border Style="{DynamicResource IdrakCard}">
+                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                    <Label Text="Speech model" Style="{DynamicResource IdrakHeading}" />
+                    <Picker Title="Speech model" ItemsSource="{Binding SpeechModels}" SelectedItem="{Binding SelectedModel}" IsVisible="{Binding HasSpeechModels}" />
+                    <Label Text="{Binding SelectedModel.Details}" Style="{DynamicResource IdrakCaption}" />
+                    <Label Text="{Binding ModelStatus}" Style="{DynamicResource IdrakValue}" />
+                    <Label Text="{Binding ModelsText}" Style="{DynamicResource IdrakCaption}" />
+                    <Button Text="Go to Models" Command="{Binding GoToModelsCommand}" IsVisible="{Binding HasNoSpeechModels}" Style="{DynamicResource IdrakSecondaryButton}" />
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="{DynamicResource IdrakSpacing}" IsVisible="{Binding HasLanguages}">
+                        <Picker Title="Language" ItemsSource="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}" />
+                        <Picker Grid.Column="1" Title="Task" ItemsSource="{Binding Tasks}" SelectedItem="{Binding SelectedTask}" />
+                    </Grid>
+
+                    <!-- Loading the model, or a file read whole: the item the "maui" reporter updates at most once a progress interval. -->
+                    <VerticalStackLayout IsVisible="{Binding HasWork}" Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <Label Text="{Binding Work.Label}" Style="{DynamicResource IdrakCaption}" />
+                        <ProgressBar Progress="{Binding Work.Fraction}" />
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                            <Label Text="{Binding Work.AmountText}" Style="{DynamicResource IdrakCaption}" />
+                            <Label Grid.Column="1" Text="{Binding Work.TimeLeftText}" Style="{DynamicResource IdrakCaption}" />
+                        </Grid>
+                        <Label Text="{Binding Work.Message}" Style="{DynamicResource IdrakCaption}" />
+                    </VerticalStackLayout>
+                </VerticalStackLayout>
+            </Border>
+
+            <!-- Live. -->
+            <Border Style="{DynamicResource IdrakCard}">
+                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacing}">
+                    <Button Text="{Binding RecordGlyph}" Command="{Binding RecordCommand}" Style="{StaticResource TranscribeRecordButton}"
+                            SemanticProperties.Description="{Binding RecordText}">
+                        <Button.Triggers>
+                            <DataTrigger TargetType="Button" Binding="{Binding IsRecording}" Value="True">
+                                <Setter Property="BackgroundColor" Value="{DynamicResource IdrakError}" />
+                            </DataTrigger>
+                        </Button.Triggers>
+                    </Button>
+                    <Label Text="{Binding RecordText}" HorizontalOptions="Center" Style="{DynamicResource IdrakCaption}" />
+
+                    <!-- The level of the latest block heard. -->
+                    <ProgressBar Progress="{Binding Level}" />
+                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                        <Label Text="{Binding ElapsedText}" Style="{DynamicResource IdrakHeading}" VerticalOptions="Center" />
+                        <Label Grid.Column="1" Text="{Binding HeardText}" Style="{DynamicResource IdrakCaption}" HorizontalOptions="Center" VerticalOptions="Center" />
+                        <Label Grid.Column="2" Text="{Binding LevelText}" Style="{DynamicResource IdrakCaption}" VerticalOptions="Center" />
+                    </Grid>
+                    <Label Text="{Binding BehindText}" Style="{DynamicResource IdrakCaption}">
+                        <Label.Triggers>
+                            <DataTrigger TargetType="Label" Binding="{Binding IsBehind}" Value="True">
+                                <Setter Property="TextColor" Value="{DynamicResource IdrakHighlight}" />
+                            </DataTrigger>
+                        </Label.Triggers>
+                    </Label>
+
+                    <Label Text="{Binding Status}" IsVisible="{Binding HasStatus}" Style="{DynamicResource IdrakHighlightText}" />
+                    <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+                    <Button Text="Allow the microphone" Command="{Binding OpenPermissionSettingsCommand}" IsVisible="{Binding IsPermissionRefused}"
+                            Style="{DynamicResource IdrakSecondaryButton}" />
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                        <Button Text="Transcribe a file" Command="{Binding TranscribeFileCommand}" IsEnabled="{Binding IsIdle}" Style="{DynamicResource IdrakSecondaryButton}" />
+                        <Button Grid.Column="1" Text="Stop" Command="{Binding StopCommand}" IsEnabled="{Binding IsRunning}" Style="{DynamicResource IdrakSecondaryButton}" />
+                    </Grid>
+                </VerticalStackLayout>
+            </Border>
+
+            <!-- The text: the committed words, then the tentative ones lighter. -->
+            <Border Style="{DynamicResource IdrakCard}">
+                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                    <Label Text="Text" Style="{DynamicResource IdrakHeading}" />
+                    <Label IsVisible="{Binding HasText}" Style="{DynamicResource IdrakValue}">
+                        <Label.FormattedText>
+                            <FormattedString>
+                                <Span Text="{Binding CommittedText}" TextColor="{DynamicResource IdrakText}" />
+                                <Span Text="{Binding TentativeShown}" TextColor="{DynamicResource IdrakTextMuted}" FontAttributes="Italic" />
+                            </FormattedString>
+                        </Label.FormattedText>
+                    </Label>
+                    <Label Text="Nothing yet: record, or read a file." IsVisible="{Binding HasNoText}" Style="{DynamicResource IdrakCaption}" />
+                    <Grid ColumnDefinitions="*,*,*" ColumnSpacing="{DynamicResource IdrakSpacingSmall}">
+                        <Button Text="Copy" Command="{Binding CopyCommand}" Style="{DynamicResource IdrakSecondaryButton}" />
+                        <Button Grid.Column="1" Text="Share" Command="{Binding ShareCommand}" Style="{DynamicResource IdrakSecondaryButton}" />
+                        <Button Grid.Column="2" Text="Clear" Command="{Binding ClearCommand}" IsEnabled="{Binding IsIdle}" Style="{DynamicResource IdrakSecondaryButton}" />
+                    </Grid>
+                </VerticalStackLayout>
+            </Border>
+
+            <!-- The lab's settings. -->
+            <Button Text="{Binding SettingsButtonText}" Command="{Binding ToggleSettingsCommand}" Style="{DynamicResource IdrakSecondaryButton}" />
+            <Label Text="{Binding SettingsMessage}" IsVisible="{Binding HasSettingsMessage}" Style="{DynamicResource IdrakHighlightText}" />
+            <VerticalStackLayout IsVisible="{Binding ShowSettings}" Spacing="{DynamicResource IdrakSpacingSmall}">
+                <Label Text="Kept between runs. An empty field is the library's default, shown in it." Style="{DynamicResource IdrakCaption}" />
+                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Settings}">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="vm:TranscribeSettingEntry">
+                            <Border Style="{DynamicResource IdrakCard}">
+                                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                    <Label Text="{Binding Title}" Style="{DynamicResource IdrakHeading}" />
+                                    <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" />
+                                    <Entry Text="{Binding Text}" Placeholder="{Binding Placeholder}" Keyboard="{Binding Keyboard}" IsVisible="{Binding IsEntry}"
+                                           IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" ClearButtonVisibility="WhileEditing" />
+                                    <Picker ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}" IsVisible="{Binding IsChoice}" Title="{Binding Title}" />
+                                    <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+                                </VerticalStackLayout>
+                            </Border>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
+                <Button Text="Keep these settings" Command="{Binding ApplySettingsCommand}" Margin="0,0,0,24" />
+            </VerticalStackLayout>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

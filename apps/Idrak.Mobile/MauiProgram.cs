@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Audio.Plugins.RnNoise;
+using Idrak.Audio.Plugins.Whisper;
 using Idrak.Maui;
 using Idrak.Text.Plugins.Gemma;
 using Idrak.Text.Plugins.Llama;
@@ -38,6 +40,10 @@ public static class MauiProgram
         LlamaPlugin.Register();
         GemmaPlugin.Register();
         MistralPlugin.Register();
+        // The Transcribe lab: Whisper reads the speech models, and RNNoise is a live cleaning step for its pipeline
+        // setting (rnnoise model=PATH, its model file kept on the phone).
+        WhisperPlugin.Register();
+        RnNoisePlugin.Register();
 
         builder.Services.AddSingleton<AppFlyoutPage>();
         builder.Services.AddSingleton<MenuPage>();

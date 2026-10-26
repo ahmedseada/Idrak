@@ -23,7 +23,7 @@
     <IsAotCompatible>true</IsAotCompatible>
     <!-- Bindings in XAML are compiled (x:DataType on every page and template), so trimming keeps what they read. -->
     <PackageId>Idrak.Maui</PackageId>
-    <Description>Idrak inside a .NET MAUI app (Android first): UseIdrak on MauiAppBuilder, the library's options and limits as saved settings with a settings page, features (pages with their view models) in a registry an app adds to, models kept loaded and released on the phone's memory pressure, a model store with pull progress, device information (the Vulkan driver loaded in the app's own process, CPU features, memory), permissions, sharing, a progress reporter bound to the UI, and light and dark themes from the library's icon.</Description>
+    <Description>Idrak inside a .NET MAUI app (Android first): UseIdrak on MauiAppBuilder, the library's options and limits as saved settings with a settings page, features (pages with their view models) in a registry an app adds to, models kept loaded and released on the phone's memory pressure, a model store with pull progress, live transcription from the microphone or a file (any registered speech family), device information (the Vulkan driver loaded in the app's own process, CPU features, memory), permissions, sharing, a progress reporter bound to the UI, and light and dark themes from the library's icon.</Description>
     <!-- AAudio is Android 8.0 (API 26), the library's sound on Android (Idrak.Audio). -->
     <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">26.0</SupportedOSPlatformVersion>
   </PropertyGroup>
@@ -38,6 +38,7 @@
     <ProjectReference Include="..\Idrak.Data\Idrak.Data.csproj" />
     <!-- The Chat lab: the library's chat generator and its Jinja chat templates (the families are the app's to register). -->
     <ProjectReference Include="..\Idrak.Text\Idrak.Text.csproj" />
+    <ProjectReference Include="..\Idrak.Audio\Idrak.Audio.csproj" />
   </ItemGroup>
 
 </Project>

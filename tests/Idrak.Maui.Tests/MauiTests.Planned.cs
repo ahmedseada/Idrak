@@ -18,7 +18,6 @@ internal static partial class MauiTests
     // The library's planned labs in the plan's menu order (after Devices and Models).
     private static readonly (string Name, string Title, int Order, PhoneNeeds Needs)[] PlannedLabs =
     [
-        (MobileFeatures.Transcribe, "Transcribe", 30, PhoneNeeds.Microphone | PhoneNeeds.Model | PhoneNeeds.Network),
         (MobileFeatures.Speak, "Speak", 40, PhoneNeeds.Model | PhoneNeeds.Network),
         (MobileFeatures.AudioProcess, "Audio process", 50, PhoneNeeds.Microphone),
         (MobileFeatures.Ocr, "OCR", 60, PhoneNeeds.Camera | PhoneNeeds.Model | PhoneNeeds.Network),
@@ -107,10 +106,10 @@ internal static partial class MauiTests
             Check(vm.NeedLines.Count == BitOperations.PopCount((uint)needs) && vm.NeedsNothing == (needs == PhoneNeeds.None), $"{name}: needs {string.Join(" | ", vm.NeedLines)}");
         }
 
-        var transcribe = (PlaceholderViewModel)MobileFeatures.Open(MobileFeatures.Transcribe, services).BindingContext;
-        Check(transcribe.NeedLines.SequenceEqual(PlaceholderViewModel.Describe(PhoneNeeds.Microphone | PhoneNeeds.Network | PhoneNeeds.Model))
-              && transcribe.NeedLines[0].Contains("microphone", StringComparison.Ordinal) && transcribe.NeedLines[^1].Contains("model", StringComparison.Ordinal),
-            $"transcribe: {string.Join(" | ", transcribe.NeedLines)}");
+        var ocr = (PlaceholderViewModel)MobileFeatures.Open(MobileFeatures.Ocr, services).BindingContext;
+        Check(ocr.NeedLines.SequenceEqual(PlaceholderViewModel.Describe(PhoneNeeds.Camera | PhoneNeeds.Network | PhoneNeeds.Model))
+              && ocr.NeedLines[0].Contains("camera", StringComparison.Ordinal) && ocr.NeedLines[^1].Contains("model", StringComparison.Ordinal),
+            $"ocr: {string.Join(" | ", ocr.NeedLines)}");
         Check(PlaceholderViewModel.Describe(PhoneNeeds.Camera).Single().Contains("camera", StringComparison.Ordinal) && PlaceholderViewModel.Describe(PhoneNeeds.None).Count == 0,
             "the camera's line, and none for nothing");
 
