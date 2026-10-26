@@ -113,8 +113,10 @@ nothing that needs a shell.
 | M4 | **The Models lab** (pull with progress, sizes, free space, remove). The Self-test lab moves after M7 (the owner, 2026-10-26: the features first; M2 is kept for it) | M3 | B |
 | M5 | Chat lab; Transcribe lab | M4 (Models) | A; B |
 | M6 | Speak and Audio process labs; OCR and Image labs | M5 | A; B |
-| M7 | Search lab | M6 | A |
-| M7b | **The Self-test lab**: the app's own feature over the test library (M2), a group on `cpu` or `vulkan:N` with live progress, the failures file shared out | M2, M7 | A |
+| M7 | Search lab. **Held: the owner decides after testing the existing features** | M6 | A |
+| M7b | **The Self-test lab** (**held: the owner decides after testing the existing features**): the app's own feature over the test library (M2), a group on `cpu` or `vulkan:N` with live progress, the failures file shared out | M2, M7 | A |
+| F | **Fixes from the owner's first runs** (a phone and a tablet): the memory measured from the system where the runtime's own figure is its heap budget (Mono reported 143-172 MB); portable 128-bit vector paths where NEON is not reported but vectors are accelerated (Mono); CoreCLR as an app build option, measured against Mono; a Vulkan kernel the driver refuses retried without the subgroup-size request, then its smaller variants, then that operation on the host, never the whole device; the device list measured cold and warm; the CPU named by its core groups | M6 | A |
+| R | **The redesign the owner approved** (2026-10-27): a landing with a carousel on the library and the app, bottom navigation with Home, Chat, Voice and Vision on phones and a side rail with multi-pane pages on tablets (chosen by the window's measured width), an All labs sheet or page grouped by Language, Voice, Vision and the device, every lab laid out for its own feature, light and dark, the source commit shown instead of the version | M6 | B |
 | M8 | Bench lab: the bench rows callable from the app as the tests are (M2's pattern). **Held: the owner decides when** | M7 | A |
 
 **Done when:**
