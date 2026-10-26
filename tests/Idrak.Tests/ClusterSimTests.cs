@@ -13,7 +13,7 @@ using Idrak.Cluster.Abstractions;
 // Plan 23, phase C1: Idrak.Cluster (carved devices, the sim transport, the virtual clock, the in-process cluster, the
 // built-in links, the builder, the cluster probe) and Idrak.Network (naive and ring, the fastest selector, the network
 // probe), and the cluster init and inspect commands.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ClusterSimGroup =
     [

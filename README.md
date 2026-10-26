@@ -309,7 +309,7 @@ Working rules for this repository are in `CLAUDE.md`; the performance rules in `
 | Path | Contents |
 |---|---|
 | `src/` | the 20 packages and the 8 reserved ones |
-| `tests/Idrak.Tests`, `tests/Idrak.PluginTests` | the test program (824 tests, filtered by group) and the plug-in tests |
+| `tests/Idrak.Tests`, `tests/Idrak.Tests.Library`, `tests/Idrak.PluginTests` | the test program (824 tests, filtered by group), the groups and the runner it shares with an app (those that need no CLI, ASP.NET Core, native ONNX Runtime or child process) and the plug-in tests |
 | `benches/Idrak.Benches` | the benches above |
 | `samples/` | 19 sample apps (Arabic OCR, chat, coding agent, GPT API and training, house prices and its API, OCR, ONNX import, an override checked with the testing kit, quantization, RAG, re-ranker, sentiment, shape recognition, spirals, summarizer, text generation, XOR), two of them with their own tests, and scripts (IdrakVision, OpenVoice, WhisperSpeech) |
 | `api/` | the public API dumps the guard test checks |

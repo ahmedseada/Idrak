@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The test groups that run in any process (plan 34, M2): the console runner in tests/Idrak.Tests and an app (the phone's
+       Self-test lab) both run them through TestRunner. Nothing here needs what an Android app cannot have: no ASP.NET
+       Core, no Idrak.Cli, no native ONNX Runtime, no child process or outside program; those groups stay in
+       tests/Idrak.Tests. -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <!-- The device layer the tests reach (internal to Idrak.Abstraction, which lets this assembly see it). -->
+  <ItemGroup>
+    <Using Include="Idrak.Abstraction.Devices" />
+    <Using Include="Idrak.Abstraction.Devices.Cpu" />
+  </ItemGroup>
+
+  <!-- The console runner adds its own groups to these and calls the runner. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Idrak\Idrak.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Gpu\Idrak.Gpu.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Imaging\Idrak.Imaging.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Mcp\Idrak.Mcp.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Data\Idrak.Data.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Vision\Idrak.Vision.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Text\Idrak.Text.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Audio\Idrak.Audio.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Text.Plugins\Idrak.Text.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Vision.Plugins\Idrak.Vision.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Audio.Plugins\Idrak.Audio.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Reinforcement\Idrak.Reinforcement.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Reinforcement.Plugins\Idrak.Reinforcement.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Cluster\Idrak.Cluster.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Network\Idrak.Network.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Abstraction.Testing\Idrak.Abstraction.Testing.csproj" />
+    <ProjectReference Include="..\Idrak.PluginTests\Idrak.PluginTests.csproj" />
+  </ItemGroup>
+
+</Project>

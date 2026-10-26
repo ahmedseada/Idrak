@@ -11,7 +11,7 @@ using Idrak.Audio.Plugins.OpenVoice;
 // PyTorch checkpoints read without running them (PyTorchCheckpointReader, the "pytorch" checkpoint format) and pulls of
 // a model kept in a repository's subfolder. The fixture comes from tools/pytorch/checkpoint_reference.py
 // (pytorch-checkpoints/) and tools/audio/make_tiny_audio.py --sections voices (tiny-openvoice/checkpoint.pth).
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] PyTorchCheckpointGroup =
     [

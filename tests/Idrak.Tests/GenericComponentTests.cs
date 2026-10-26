@@ -21,7 +21,7 @@ using Idrak.Text.Retrieval.Abstractions;
 // the renaming store (the vision and voice plug-ins' copies), the timings probe (the chat sample's recorder), whole code
 // points in CharTokenizer (GPT training's rune tokenizer), the progress reporters (the tool's line, the OCR samples'),
 // the keyword indexes (the re-ranker's BM25), the network recipes (the GPT samples' network) and finite JSON numbers.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] GenericComponentGroup =
     [

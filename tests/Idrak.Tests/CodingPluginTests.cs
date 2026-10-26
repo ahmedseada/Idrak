@@ -21,7 +21,7 @@ using Idrak.Text.Reinforcement;
 // Idrak.Reinforcement.Plugins: its environment on task suites written here (a tiny C# project with a hidden test built by
 // the real dotnet, and a quick suite checked by git grep), its rewards, its episodes in parallel, and R3's policy with a
 // teacher term trained on it by R2's trainer. The chat model is a script (or the tests' tiny decoder): no download.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CodingPluginGroup =
     [

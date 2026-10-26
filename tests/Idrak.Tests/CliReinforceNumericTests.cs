@@ -8,9 +8,9 @@ using Idrak.Reinforcement.Abstractions;
 
 // Plan 27, R9: idrak reinforce in an environment of numbers (the classic plug-in's kinds), with no model: PPO on a module
 // policy built from options (R2's trainer) and DQN on a Q-network built the same way (R6's off-policy trainer), run in-process.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] CliReinforceNumericGroup =
+    internal static readonly (string Name, Action<Device> Run)[] CliReinforceNumericGroup =
     [
         ("cli reinforce: an environment of numbers: --list names the classic kinds and dqn (off-policy, QLosses); the help shows the path; usage errors exit with 2 before anything trains (an --env-option key the kind does not take, also with IDRAK_RL_ENV; dqn on the pendulum naming its box; a model given; a language model's option; the other trainer's options; an algorithm in neither registry; nothing to resume; a bad --hidden, --activation or IDRAK_RL_HIDDEN)", d => { if (d == Device.Cpu) CliReinforceNumericUsage(); }),
         ("cli reinforce: a seeded ppo run on cartpole (no model; a categorical policy with a value head built from --hidden over IDRAK_RL_HIDDEN, the command line over IDRAK_RL_ITERATIONS) writes the policy, idrak-reinforce.json, its checkpoints and a log line per iteration; --resume from the iteration-2 checkpoint continues bit for bit (iterations 3 and 4's returns and losses, the policy's files)", CliReinforceNumericPpo),

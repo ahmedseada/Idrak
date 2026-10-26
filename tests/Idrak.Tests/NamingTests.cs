@@ -5,7 +5,7 @@ using Idrak;
 
 // The library's name: nothing in the repository still uses the one it had before (sources, projects, docs, tools); and
 // no public name is a provider's.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] NamingGroup =
     [
@@ -24,7 +24,7 @@ internal static partial class Tests
             | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.DeclaredOnly;
         var assemblies = Directory.EnumerateFiles(AppContext.BaseDirectory, "Idrak*.dll")
             .Select(Path.GetFileNameWithoutExtension)
-            .Where(n => n is not ("Idrak.Tests" or "Idrak.PluginTests"))
+            .Where(n => n is not ("Idrak.Tests" or "Idrak.Tests.Library" or "Idrak.PluginTests"))
             .Select(n => System.Reflection.Assembly.Load(n!))
             .ToList();
         Check(assemblies.Any(a => a.GetName().Name == "Idrak.AspNetCore") && assemblies.Any(a => a.GetName().Name == "Idrak.Text"),
@@ -170,18 +170,5 @@ internal static partial class Tests
         }
 
         return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories);
-    }
-
-    private static string RepositoryRoot()
-    {
-        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "Idrak.slnx")))
-            {
-                return dir.FullName;
-            }
-        }
-
-        throw new DirectoryNotFoundException($"Idrak.slnx not found above {AppContext.BaseDirectory}.");
     }
 }

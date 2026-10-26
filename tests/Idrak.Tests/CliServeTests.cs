@@ -59,7 +59,7 @@ public sealed class CliServeTestTools : IToolProvider
 // The Serve group of the idrak CLI: serve (both APIs, streaming and not), ps, api, ping, server load/unload/stop/keys,
 // metrics and the request log against a server started in-process on a free port with a tiny GGUF model; mcp serve
 // over pipes; and the OpenAI-style API of Idrak.AspNetCore with a scripted chat model (tool calls).
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliServeGroup =
     [

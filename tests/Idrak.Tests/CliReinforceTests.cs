@@ -15,7 +15,7 @@ using Idrak.Text.Abstractions;
 // and the coding plug-in's) and idrak distill --on-policy (R3's OnPolicyDistiller), run in-process on the tests' tiny
 // decoders; no download. R3c: idrak reinforce under idrak cluster sim (an in-process cluster: a thread per rank, no child
 // process).
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliReinforceGroup =
     [

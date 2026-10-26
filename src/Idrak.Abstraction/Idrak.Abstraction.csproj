@@ -15,6 +15,7 @@
        surface alone); only the tests do. -->
   <ItemGroup>
     <InternalsVisibleTo Include="Idrak.Tests" />
+    <InternalsVisibleTo Include="Idrak.Tests.Library" />
   </ItemGroup>
 
   <!-- Projects with implicit usings get `using Idrak.Abstraction;`, so code naming Device or Tensor compiles unchanged. -->

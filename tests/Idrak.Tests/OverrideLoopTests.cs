@@ -14,7 +14,7 @@ using Idrak.Onnx.Abstractions;
 // Plan 10, phase 6b (the override loop): an app overrides a sampler, a tokenizer part and a RoPE scaling. Each keeps the
 // library default behind it: a failure falls back to it (FallBack, the default) and is reported to telemetry, Shadow
 // lets the default answer and compares, Throw lets the failure through, and Unregister brings the default back.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] OverrideLoopGroup =
     [
@@ -41,7 +41,7 @@ internal static partial class Tests
         // A table whose default (from Idrak.Text, which this assembly references) moved to version 2 in a later release.
         Func<SamplerRequest, ITokenSampler> first = TokenSamplers.Default(TokenSamplers.DefaultName, 1)!.Create, second = TokenSampler.Create,
             mine = request => TokenSampler.Create(request);
-        string built = typeof(Tests).Assembly.GetReferencedAssemblies().Single(a => a.Name == "Idrak.Text").Version!.ToString(3);
+        string built = typeof(DesktopTests).Assembly.GetReferencedAssemblies().Single(a => a.Name == "Idrak.Text").Version!.ToString(3);
         foreach (var (since, outdated) in new[] { ("99.0.0", true), (built, false) })
         {
             var table = new SlotTable<string, Func<SamplerRequest, ITokenSampler>>("TestVersions");
@@ -318,7 +318,7 @@ internal static partial class Tests
                 ("TokenizerComponents.Normalizers", LowercaseType, typeof(InvalidDataException)),
                 ("TokenizerComponents.Normalizers", LowercaseType, typeof(FormatException)),
                 ("RopeScalings", LinearType, typeof(ArithmeticException))]), $"one telemetry event per fallback: {string.Join("; ", fellBack)}");
-            Check(recorder.Failed.Count == 4 && recorder.Failed.All(e => e.Origin == "Idrak.Tests" && e.Implementation.StartsWith("Tests", StringComparison.Ordinal)),
+            Check(recorder.Failed.Count == 4 && recorder.Failed.All(e => e.Origin == "Idrak.Tests" && (e.Implementation.StartsWith("Tests", StringComparison.Ordinal) || e.Implementation.StartsWith("DesktopTests", StringComparison.Ordinal))),
                 $"events name the app's implementation: {string.Join(", ", recorder.Failed.Select(e => e.Implementation))}");
             var report = Overrides.Report();
             Check(report.Single(o => o.Registry == "RopeScalings" && o.Name == LinearType) is { FallBacks: 1, Failures: 1, PolicyText: "fall back" }
@@ -482,7 +482,7 @@ internal static partial class Tests
             Check(e.Message.Contains("data", StringComparison.Ordinal), e.Message);
         }
 
-        data.Register(1, null, typeof(Tests).Assembly);
+        data.Register(1, null, typeof(DesktopTests).Assembly);
         Check(data.TryGet(1, out var value) && value is null && data.Origin(1) == "Idrak.Tests" && data.Unregister(1) && !data.Contains(1),
             "a description registered by an assembly, null included");
     }

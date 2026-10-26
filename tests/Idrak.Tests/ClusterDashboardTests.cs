@@ -18,7 +18,7 @@ using EventLog = Idrak.Cluster.EventLog;
 
 // Plan 23, phase C9: the cluster dashboard. Each test starts the real server on 127.0.0.1 (a port the system picks) and
 // calls it as the page does, over HTTP; every wait is bounded, and every server, run and process is ended in finally.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     // A file another handle is still writing (the pretrainer's log): Windows refuses a reader that does not share writing.
     private static List<string> SharedLines(string path)

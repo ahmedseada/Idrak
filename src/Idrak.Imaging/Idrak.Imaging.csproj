@@ -19,6 +19,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Idrak.Tests" />
+    <InternalsVisibleTo Include="Idrak.Tests.Library" />
   </ItemGroup>
 
 </Project>

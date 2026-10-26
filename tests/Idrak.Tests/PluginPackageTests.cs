@@ -18,7 +18,7 @@ using Idrak.Vision.Plugins;
 // Idrak.Reinforcement.Plugins), the plug-in contract they register through (IIdrakPlugin, IdrakPlugin, IdrakPlugins), the
 // tool registering them at startup and loading them with -P, their lack of internals, and the "not registered" messages
 // naming them. Each family the later phases move in gets its own group (plugins: <family>).
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] PluginPackageGroup =
     [
@@ -302,7 +302,7 @@ internal static partial class Tests
         foreach (var package in PluginPackages)
         {
             var granted = package.Root.Assembly.GetCustomAttributes<InternalsVisibleToAttribute>().Select(a => a.AssemblyName.Split(',')[0].Trim()).ToList();
-            Check(granted.All(a => a == "Idrak.Tests"), $"{package.Name} grants its internals to {string.Join(", ", granted)}: only the test runner may see them");
+            Check(granted.All(a => a is "Idrak.Tests" or "Idrak.Tests.Library"), $"{package.Name} grants its internals to {string.Join(", ", granted)}: only the tests (the runner and its test library) may see them");
             Check(ApiAssemblyNames.Contains(package.Name) && LibraryAssemblyNames.Contains(package.Name), $"{package.Name} is in the API guard and the abstraction inventory");
         }
 

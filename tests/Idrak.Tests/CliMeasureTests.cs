@@ -12,7 +12,7 @@ using BenchTiming = global::Idrak.Cli.Commands.Measure.BenchTiming;
 // The idrak tool's Measure and Retrieval groups (bench, eval, perplexity, profile, check, tuning show, rag ...), run
 // in-process through CommandLine.Run on the tiny fixture model and texts made here; speeds are not checked, only the
 // output's shape.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliMeasureGroup =
     [

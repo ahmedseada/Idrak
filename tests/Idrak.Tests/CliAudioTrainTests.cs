@@ -14,7 +14,7 @@ using Idrak.Models;
 // Plan 21, S7's training commands: create, pretrain, resume and runs show of speech models, data audio --align, tune and
 // run with an audio-language model's audio part, chat's /audio, each against the library's own call on the same data
 // (the IdrakAudio plug-in given with -P as a user gives it). And S6's frame-level CTC distillation in the library.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] AudioCliTrainGroup =
     [

@@ -19,7 +19,7 @@ using Formats = Idrak.Abstraction.Generation.ToolCallFormats;
 // llama3); the library keeps none of them. The families' outputs are checked by the groups that always checked them
 // (pretrained:, gguf:, decoder:, rope scaling:, chat templates:, mixture of experts:, ...), which the runner runs with the
 // package registered, as an app does.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] TextFamilyGroup =
     [
@@ -29,37 +29,6 @@ internal static partial class Tests
         ("plugins: deepseek: Register adds the deepseek tool-call format and the deepseek-r1-qwen pre-tokenizer (Qwen2's rule), once; unregistered, a DeepSeek template detects the library's json format and the format is refused naming Idrak.Text.Plugins", DeepSeekPluginRegistration),
         ("plugins: harmony: Register adds the harmony tool-call format, once, and a harmony template detects it; unregistered, the template detects the library's json format and the format is refused naming Idrak.Text.Plugins", HarmonyPluginRegistration),
     ];
-
-    // P7's plug-ins, in TextPlugins.All's order (re-registered in it, so the tool-call formats keep the order they are asked in).
-    private static readonly IIdrakPlugin[] TextFamilyPlugins = [LlamaPlugin.Plugin, QwenPlugin.Plugin, MistralPlugin.Plugin, HarmonyPlugin.Plugin, DeepSeekPlugin.Plugin];
-
-    // Runs `body` with P7's families taken away, then registers again, in TextPlugins.All's order, those that were.
-    private static void WithoutTextFamilies(Action body)
-    {
-        var was = TextFamilyPlugins.Where(p => p.IsRegistered).ToList();
-        try
-        {
-            foreach (var plugin in Enumerable.Reverse(TextFamilyPlugins))
-            {
-                IdrakPlugins.Unregister(plugin);
-            }
-
-            Check(TextFamilyPlugins.All(p => !p.IsRegistered && IdrakPlugins.Find(p.Name) is null), "P7's families taken away");
-            body();
-        }
-        finally
-        {
-            foreach (var plugin in Enumerable.Reverse(TextFamilyPlugins))
-            {
-                IdrakPlugins.Unregister(plugin);
-            }
-
-            foreach (var plugin in TextFamilyPlugins.Where(was.Contains))
-            {
-                IdrakPlugins.Register(plugin);
-            }
-        }
-    }
 
     // The plug-in's place: named so, in its family's namespace of Idrak.Text.Plugins, listed in TextPlugins.All.
     private static void CheckTextPlugin(IIdrakPlugin plugin, string name, string ns) =>

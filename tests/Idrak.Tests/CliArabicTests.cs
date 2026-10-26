@@ -14,7 +14,7 @@ using Idrak.Imaging.Shaping;
 // standard), lines checked against an independent implementation (GNU FriBidi, tests/Idrak.Tests/data/arabic), the
 // column-keeping line renderer and its writer, terminal detection, the message catalogs (every message and summary in
 // both languages) and the tool end to end (help, doctor and devices in Arabic, JSON never translated).
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliArabicGroup =
     [
@@ -147,7 +147,7 @@ internal static partial class Tests
     private static void CliArabicVectors(Device device)
     {
         _ = device;
-        string path = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data", "arabic", "visual-order.jsonl");
+        string path = Path.Combine(DataFolder(), "arabic", "visual-order.jsonl");
         int count = 0;
         var failed = new List<string>();
         foreach (string line in File.ReadLines(path))
@@ -246,7 +246,7 @@ internal static partial class Tests
     {
         _ = device;
         // Every message written at a call (Messages.T("...")) in the tool's sources.
-        string root = Path.Combine(RepositoryRoot(), "src", "Idrak.Cli");
+        string root = RepositoryPath("src", "Idrak.Cli");
         var used = new HashSet<string>(StringComparer.Ordinal);
         foreach (string file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories).Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")))
         {

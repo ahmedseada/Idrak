@@ -19,7 +19,7 @@ using Idrak.Training;
 // measured on the first step, compression by name (bf16, top-k with error feedback), local SGD beside all-reduce; and the
 // open item of C2 and C3: the trainers' step loop takes part in ClusterRank.BeginStep, so a simulated training run gets
 // its faults (a slow worker, a late joiner, a replay's end) with the right group and token weighting.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     // Measured on the CPU (2026-10-18, see plans/done/23-cluster.md "C4 as built"): top-k 10% with error feedback against the
     // full gradient on the Spirals sample, the last epoch's training loss.
@@ -54,19 +54,6 @@ internal static partial class Tests
 
         model.Add(new Linear(width, 3, device: device, random: init));
         return model;
-    }
-
-    // Runs `work` on every rank with the network telemetry recorded.
-    private static (T[] Results, MetricsRecorder Metrics) OverlapRun<T>(IClusterTopology topology, ClusterOptions options, Func<ClusterRank, T> work)
-    {
-        var metrics = new MetricsRecorder(TelemetryLevel.Network);
-        T[] results;
-        using (Telemetry.Subscribe(metrics))
-        {
-            results = DpRun(topology, options, work);
-        }
-
-        return (results, metrics);
     }
 
     private static void ClusterGradientReadyHook(Device device)

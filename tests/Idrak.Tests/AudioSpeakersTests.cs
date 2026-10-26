@@ -9,9 +9,9 @@ using Idrak.Audio.Plugins.Vits;
 // Plan 21, S9 route A: a multi-speaker VITS checkpoint (VCTK's shape) speaks each recorded speaker by its embedding,
 // against transformers' VitsModel on tiny-vits-speakers/ (the stochastic duration predictor) and tiny-vits-speakers-det/
 // (the deterministic one), from tools/audio/make_tiny_audio.py --sections vits-speakers.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] AudioSpeakersGroup =
+    internal static readonly (string Name, Action<Device> Run)[] AudioSpeakersGroup =
     [
         ("audio voices: recorded speakers: the VITS plug-in reads tiny-vits-speakers and tiny-vits-speakers-det (3 speakers, an 8-wide speaker embedding conditioning the duration predictor, the flow and the decoder) and speaks the fixture's ids as each speaker within 1e-3 of the largest sample of transformers' waveform (noise 0), the speakers named by speakers.json (any case) or by index, no voice the first speaker, the speakers' sounds different; an unknown speaker refused listing them", AudioSpeakersFixture),
         ("audio voices: recorded speakers: speakers.json as a list or as a map of names to indices (the others keep their indices), none gives the indices, a name out of range or repeated refused; VoicedSynthesizer resolves a checkpoint speaker by name, any case or index before the store; idrak speak --voice p226 writes the library's samples and --list-voices lists the speakers", d => { if (d == Device.Cpu) AudioSpeakersNames(); }),

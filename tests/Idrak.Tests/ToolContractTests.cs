@@ -25,7 +25,7 @@ using ModelContextProtocol.Server;
 // The tool contracts of Idrak.Abstraction (IToolRegistry, IToolChatModel, ChatTools.WithTools) and the bridges built
 // on them alone: server-side tool execution in the ASP.NET Core chat endpoint, the engine's models as MCP tools
 // (IModelCatalog) in process, and idrak serve --mcp over pipes.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ToolContractGroup =
     [

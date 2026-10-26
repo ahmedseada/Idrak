@@ -13,7 +13,7 @@ using Idrak.Text.Inference;
 
 // Plan 11, phase 1: message content as parts (ChatPart: text, images, kinds of one's own) registered in ChatParts, and
 // what a chat model or template takes (PartKinds), checked by one shared function before anything answers.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ChatPartGroup =
     [
@@ -140,7 +140,7 @@ internal static partial class Tests
         ChatParts.Register(new BrokenImageKind(() => calls++));
         try
         {
-            Check(ChatParts.Origin("image") == typeof(Tests).Assembly.GetName().Name && ReferenceEquals(ChatParts.Default("image"), library)
+            Check(ChatParts.Origin("image") == typeof(DesktopTests).Assembly.GetName().Name && ReferenceEquals(ChatParts.Default("image"), library)
                   && Overrides.Report().Any(o => o.Registry == "ChatParts" && o.Name == "image"), "the app's kind shadows the default and shows in the report");
             Throws<InvalidDataException>(() => ChatParts.FromJson(json), "Throw: the app's failure reaches the caller");
             ChatParts.SetPolicy("image", SlotPolicy.FallBack);

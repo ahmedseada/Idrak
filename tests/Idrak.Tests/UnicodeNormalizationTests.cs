@@ -13,7 +13,7 @@ using Idrak.Models;
 // Plan 24, "What is left" item 1: Unicode normalization owned by the library (UnicodeNormalization, tables made by
 // tools/unicode/make_normalization_tables.py), so NFC, NFD, NFKC and NFKD work alike on every platform and under
 // invariant globalization (the CLI), where .NET's own normalization returns the text unchanged.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] UnicodeNormalizationGroup =
     [
@@ -304,7 +304,7 @@ internal static partial class Tests
     private static void UnicodeNormalizationNoPlatformCalls(Device device)
     {
         var platform = new Regex(@"\.(?:Normalize|IsNormalized)\(\s*(?:\)|NormalizationForm\.|\w*[Ff]orm\w*\s*\))|(?<!UnicodeNormalization)\.(?:TryNormalize|GetNormalizedLength)\(", RegexOptions.CultureInvariant);
-        string src = Path.Combine(RepositoryRoot(), "src");
+        string src = RepositoryPath("src");
         var found = new List<string>();
         int files = 0;
         foreach (string file in Directory.EnumerateFiles(src, "*.cs", SearchOption.AllDirectories))

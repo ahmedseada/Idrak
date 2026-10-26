@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="Idrak.Tests" />
+    <InternalsVisibleTo Include="Idrak.Tests.Library" />
     <InternalsVisibleTo Include="Idrak.Text" />
   </ItemGroup>
 

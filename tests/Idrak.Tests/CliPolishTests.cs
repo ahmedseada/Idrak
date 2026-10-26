@@ -14,7 +14,7 @@ using Idrak.Cli.Shared;
 // plan groups them, the environment table against the command table, --cache and --offline through model resolution
 // (pull, then run offline from the same cache), --timeout on server calls, --format on every table, --seed, and the
 // progress line. Run in-process through CommandLine.Run with captured output; the hub is the local stand-in.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliPolishGroup =
     [

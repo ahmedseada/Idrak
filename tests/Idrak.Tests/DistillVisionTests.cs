@@ -10,9 +10,9 @@ using Idrak.Text;
 using Idrak.Text.Abstractions;
 
 // Plan 19, phase B5: distillation from a vision-language teacher: the teacher reads the student's images itself.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] DistillVisionGroup =
+    internal static readonly (string Name, Action<Device> Run)[] DistillVisionGroup =
     [
         ("distill vision: a vision-language teacher scores a student's image sequences (other image token counts) as it scores its own encoding of the same records", DistillVisionTeacher),
         ("distill vision: pretraining with a teacher: alpha 0 is the plain loss, alpha 0.5 learns from the teacher; stored top-k logits with images read back; a text teacher is refused", DistillVisionTraining),

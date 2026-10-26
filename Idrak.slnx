@@ -58,5 +58,6 @@
   <Folder Name="/tests/">
     <Project Path="tests/Idrak.PluginTests/Idrak.PluginTests.csproj" />
     <Project Path="tests/Idrak.Tests/Idrak.Tests.csproj" />
+    <Project Path="tests/Idrak.Tests.Library/Idrak.Tests.Library.csproj" />
   </Folder>
 </Solution>

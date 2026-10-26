@@ -10,9 +10,9 @@ using Idrak.Models;
 // Plan 29: fine-tuning Whisper. The plug-in's recognizer as an ISequenceSpeechModel on the fixture
 // tests/Idrak.Tests/data/audio/tiny-whisper, its loss and gradients against transformers' (tools/audio/make_tiny_audio.py,
 // section whisper-train), its labels, its saved folder, a short SpeechTrainer run and the command line.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] AudioWhisperTrainGroup =
+    internal static readonly (string Name, Action<Device> Run)[] AudioWhisperTrainGroup =
     [
         ("audio whisper train: the seq2seq loss of a two-utterance batch and every trained parameter's gradient under transformers' names within 1e-4 of transformers' (tiny-whisper; the labels the prompt after <|startoftranscript|> then the text's tokens, as transformers'; the encoder's fixed positions get none, as OpenAI's Whisper keeps them)", WhisperTrainReference),
         ("audio whisper train: the labels name the language and task given (or generation_config.json's), a multilingual checkpoint without a language refuses naming --language, Text drops the prompt's tokens, the encoder steps of a segment and past it, a network of packed (bfloat16) weights refused naming SpeechModelOptions.Weights", WhisperTrainLabels),

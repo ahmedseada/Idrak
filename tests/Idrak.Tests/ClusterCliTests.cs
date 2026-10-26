@@ -21,7 +21,7 @@ using Idrak.Networking.Abstractions;
 // tune and train, with --check-prediction and with --placement pipeline; profile --cluster's hops; runs show's network share;
 // --cluster on the training commands with the rank and world-size rules of decision 3. Every run is in-process or a
 // bounded child process; nothing is left running.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ClusterCliGroup =
     [

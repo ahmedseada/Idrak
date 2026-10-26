@@ -9,7 +9,7 @@ using Idrak.Text;
 using Idrak.Text.Generation;
 
 // Coding tools: the workspace sandbox, reading, searching, exact edits, writes and allowlisted commands.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CodingToolsGroup =
     [

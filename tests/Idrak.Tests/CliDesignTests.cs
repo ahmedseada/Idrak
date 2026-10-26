@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.Buffers.Binary;
 using System.Globalization;
-using System.IO.Compression;
 using System.Text;
 using System.Text.Json.Nodes;
 using Idrak;
@@ -16,7 +14,7 @@ using Idrak.Optimizers;
 // The Design group of the idrak tool (suggest, explain, viz), run in-process: the networks suggest writes for a
 // table, an image folder, text and chat rows are read by Network.FromJson, build and train a step on the device;
 // --search keeps its best candidate; explain counts the parameters of the built network.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliDesignGroup =
     [
@@ -415,57 +413,4 @@ internal static partial class Tests
         }
     }
 
-    // A grayscale 8-bit PNG (filter 0 on every row), with real CRCs.
-    private static byte[] GrayPng(byte[] pixels, int width, int height)
-    {
-        var raw = new MemoryStream();
-        for (int y = 0; y < height; y++)
-        {
-            raw.WriteByte(0);
-            raw.Write(pixels, y * width, width);
-        }
-
-        var compressed = new MemoryStream();
-        using (var z = new ZLibStream(compressed, CompressionLevel.Optimal, leaveOpen: true))
-        {
-            z.Write(raw.ToArray());
-        }
-
-        var png = new MemoryStream();
-        png.Write([0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A]);
-        void Chunk(string type, byte[] data)
-        {
-            var header = new byte[4];
-            BinaryPrimitives.WriteInt32BigEndian(header, data.Length);
-            png.Write(header);
-            byte[] body = [.. Encoding.ASCII.GetBytes(type), .. data];
-            png.Write(body);
-            BinaryPrimitives.WriteUInt32BigEndian(header, Crc32(body));
-            png.Write(header);
-        }
-
-        var ihdr = new byte[13];
-        BinaryPrimitives.WriteInt32BigEndian(ihdr, width);
-        BinaryPrimitives.WriteInt32BigEndian(ihdr.AsSpan(4), height);
-        ihdr[8] = 8;                                                                    // bit depth; colour type 0 (gray)
-        Chunk("IHDR", ihdr);
-        Chunk("IDAT", compressed.ToArray());
-        Chunk("IEND", []);
-        return png.ToArray();
-    }
-
-    private static uint Crc32(byte[] data)
-    {
-        uint crc = 0xFFFFFFFF;
-        foreach (byte b in data)
-        {
-            crc ^= b;
-            for (int k = 0; k < 8; k++)
-            {
-                crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320 : crc >> 1;
-            }
-        }
-
-        return ~crc;
-    }
 }

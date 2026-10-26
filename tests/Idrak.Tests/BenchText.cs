@@ -45,7 +45,7 @@ using Idrak.Text.Retrieval;
 //   IDRAK_BENCH_TEXT_TRAIN_MB     the default training text's size in MB (default 16: a few seconds a run)
 //   IDRAK_BENCH_TEXT_TRAIN_VOCAB  the vocabulary size each trainer learns (default 3000)
 //   IDRAK_BENCH_TEXT_TRAINERS     the trainers timed, comma-separated (default bpe,unigram,wordpiece; a plug-in's name works)
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly string[] BenchTextSections = ["text", "tokenizers", "trainers"];
 
@@ -210,24 +210,6 @@ internal static partial class Tests
     }
 
     private static string BenchTextMegabytes(long bytes) => string.Create(CultureInfo.InvariantCulture, $"{bytes / 1048576.0:F2} MB");
-
-    // The fixture corpus as tools/tokenizers/make_fixtures.py --bench takes it: the lines that are not blank (blank as
-    // Python's str.strip sees it, so the \x1c-\x1f separators count as blank too), repeated whole until they hold
-    // `codePoints` code points (Python's len), so both sides encode the same texts. Shared with "tokenizers: unigram: speed".
-    private static List<string> TokenizerBenchTexts(int codePoints)
-    {
-        static bool Blank(string line) => line.All(c => char.IsWhiteSpace(c) || c is >= '\u001c' and <= '\u001f');
-        static int CodePoints(string text) => text.Length - text.Count(char.IsLowSurrogate);
-        var lines = TokenizerCorpusLines().Where(line => !Blank(line)).ToArray();
-        long perCopy = lines.Sum(CodePoints);
-        var texts = new List<string>();
-        for (long total = 0; total < codePoints; total += perCopy)
-        {
-            texts.AddRange(lines);
-        }
-
-        return texts;
-    }
 
     // One encoding row: `pass` encodes every text and returns the tokens it made. Cold is the first pass, warm the best of
     // the passes that follow for at least `seconds`; bytes are the fewest a warm pass allocated, per text (the calling

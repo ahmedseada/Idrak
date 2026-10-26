@@ -5,9 +5,9 @@ using System.Text.Json.Nodes;
 using Idrak.Models;
 
 // Plan 19, phase A4: models made from scratch on the command line (data tokenizer, data tokens, create, pretrain, resume).
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] CliPretrainGroup =
+    internal static readonly (string Name, Action<Device> Run)[] CliPretrainGroup =
     [
         ("cli pretrain: data tokenizer learns the reference's tokenizer from the corpus, and data tokens writes the reference's token file; --model unigram writes tokenizer.json and tokenizer.model (with SentencePiece's switches and normalization rules carried into it), --model wordpiece BERT's tokenizer, and bad options and --model with --trainer are refused naming them", CliPretrainData),
         ("cli pretrain: create makes a model from a spec file (and create init's), pretrain trains it, Ctrl+C-like stops checkpoint, resume finishes, runs show reads the steps, run answers", CliPretrainRun),

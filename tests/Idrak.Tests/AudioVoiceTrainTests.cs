@@ -14,7 +14,7 @@ using Idrak.Audio.Plugins.Vits;
 // train). The fixture comes from tools/audio/make_tiny_audio.py --sections vits-train (vits-train/: a tiny VitsModel with
 // a weight-normed decoder and tiny weight-normed discriminators in torch, VITS's step on two utterances with its draws
 // saved: both losses and every gradient of step 1, the alignment search's scores and paths, three SGD steps).
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] AudioVoiceTrainGroup =
     [

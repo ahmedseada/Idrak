@@ -9,12 +9,11 @@ using Idrak.Models;
 using Idrak.Models.Abstractions;
 using Idrak.Text;
 using Idrak.Text.Generation;
-using Idrak.Text.Plugins.Gemma;
 
 // Plan 11, "Vision contracts (families are applications)": the library registers no vision family. Gemma 3's is a
 // registration from outside it (Idrak.Vision.Plugins), registered by the tests that use it; without it a Gemma 3
 // vision checkpoint is refused, naming the registry.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] VisionContractGroup =
     [
@@ -23,8 +22,6 @@ internal static partial class Tests
         ("vision contracts: the testing kit's vision-encoder suite passes for the Gemma 3 and LLaVA encoders (deterministic, token counts, batch equals single, device equals CPU)", VisionEncoderConformance),
         ("vision contracts: the library registers no vision family; image token formats expand by each image's blocks (several with Join's text); images whose tokens touch are told apart by their counts; M-RoPE position ids are refused by a decoder without rotary sections", VisionContractRules),
     ];
-
-    private static string LlavaData(string name) => TestData($"vlm-llava/{name}");
 
     private static void LlavaMatchesReference(Device device)
     {
@@ -267,18 +264,6 @@ internal static partial class Tests
 
         RegisterGemma3Vision();
     }
-    /// <summary>Registers the Gemma 3 vision family (Idrak.Vision.Plugins' plug-in, with its text decoder), as an app or <c>-P</c> does.</summary>
-    private static void RegisterGemma3Vision() => Gemma3VisionPlugin.Register();
-
-    /// <summary>
-    /// Takes the Gemma 3 vision family away and keeps its text decoder (Idrak.Text.Plugins' Gemma family) registered, as for
-    /// an app that registers the text plug-ins only; <see cref="RegisterGemma3Vision"/> puts it back.
-    /// </summary>
-    private static void UnregisterGemma3Vision()
-    {
-        Gemma3VisionPlugin.Unregister();
-        GemmaPlugin.Register();
-    }
 
     /// <summary>Runs the idrak tool's in-process <paramref name="run"/> with none of its plug-in packages registered at startup (a family the test took away stays away).</summary>
     private static T WithoutPluginPackages<T>(Func<T> run)
@@ -286,33 +271,6 @@ internal static partial class Tests
         T result = default!;
         WithEnvironment(new Dictionary<string, string?> { [Idrak.Cli.CommandLine.PluginPackagesVariable] = "none" }, () => result = run());
         return result;
-    }
-
-    /// <summary>
-    /// Removes the Gemma 3 vision family and its attention rule, and checks that the tiny Gemma 3 vision checkpoint then
-    /// fails to load with the "not registered" error naming the registry (no fallback to any family).
-    /// </summary>
-    private static void Gemma3VisionNotRegistered(Device device)
-    {
-        UnregisterGemma3Vision();
-        ImageAttentionRules.Unregister(Gemma3VisionPlugin.ImageBlocks);
-        Check(VisionFamilies.Find(Gemma3VisionFamily.Architecture) is null && VisionFamilies.Default(Gemma3VisionFamily.Architecture) is null
-              && ImageAttentionRules.Origin(Gemma3VisionPlugin.ImageBlocks) == Overrides.Library
-              && ImageAttentionRules.Names.SequenceEqual([ImageAttentionRules.Causal, ImageAttentionRules.ImageBlocks]),
-            "the library registers no vision family; its image attention rules are causal and image-blocks (the plug-in uses the library's)");
-        try
-        {
-            using var _ = PretrainedModel.Load(TestData("vlm/tiny-gemma3-v5"), new PretrainedOptions { Device = device });
-            Check(false, "a vision checkpoint whose family is not registered is refused");
-        }
-        catch (NotSupportedException e)
-        {
-            Check(e.Message.Contains("Vision family 'Gemma3ForConditionalGeneration' is not registered", StringComparison.Ordinal)
-                  && e.Message.Contains("VisionFamilies.Register", StringComparison.Ordinal) && e.Message.Contains("Idrak.Vision.Plugins", StringComparison.Ordinal),
-                $"the error names the registry and the plug-in package: {e.Message}");
-        }
-
-        Check(VisionFamilies.For("Gemma3ForCausalLM", new System.Text.Json.Nodes.JsonObject()) is null, "a text checkpoint needs no vision family");
     }
 
     // Views of an image joined as "whole … parts …".

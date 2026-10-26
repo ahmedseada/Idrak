@@ -17,9 +17,9 @@ using Idrak.Vision.Abstractions;
 // what it replaced: the image-block attention rule (IdrakVision's and Gemma 3's copies), pixel noise (the Arabic OCR
 // app's), line segmentation, text matching and the reading order (the Arabic OCR app's), and the line-recognition task of
 // the image model families (its predictor, its suite, idrak predict and idrak train).
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] GenericVisionComponentGroup =
+    internal static readonly (string Name, Action<Device> Run)[] GenericVisionComponentGroup =
     [
         ("generic components: image blocks: the library's image-blocks rule beside causal sees each image whole and keeps the window (KeySpans.ImageBlocks); IdrakVision and Gemma 3 use it and register no rule of their own; an app's rule over it falls back under FallBack", GenericImageBlocks),
         ("generic components: noise: Augmentations' noise (std, p) gives the Arabic OCR app's pixels for the same seed, clamped to [0, 1], keeps the objects, does nothing at p=0, refuses unknown options and passes the augmentation suite", GenericNoise),
@@ -330,25 +330,6 @@ internal static partial class Tests
         File.WriteAllText(Path.Combine(folder, "config.json"),
             $$$"""{"architectures": ["{{{architecture}}}"], "line_height": 8, "id2label": {"0": "", "1": "a", "2": "b", "3": "c"}}""");
         return folder;
-    }
-
-    // A line of dark marks on a light page: a full stroke for a, the upper half for b, the lower half for c, a gap between.
-    private static ImageData LineImage(string text, int height = 12)
-    {
-        int width = 2 + text.Length * 5;
-        var pixels = new float[width * height];
-        Array.Fill(pixels, 0.95f);
-        for (int i = 0; i < text.Length; i++)
-        {
-            int x = 2 + i * 5;
-            var (top, bottom) = text[i] switch { 'a' => (1, height - 1), 'b' => (1, height / 2), 'c' => (height / 2, height - 1), _ => (0, 0) };
-            for (int y = top; y < bottom; y++)
-            {
-                pixels[y * width + x] = pixels[y * width + x + 1] = pixels[y * width + x + 2] = 0.1f;
-            }
-        }
-
-        return new ImageData(pixels, 1, height, width);
     }
 
     private static ImageModelUnderTest LineModelUnderTest(string path, Device device)

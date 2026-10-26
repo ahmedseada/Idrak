@@ -10,7 +10,7 @@ using System.Text;
 // assemblies' metadata (types, members, signatures with nullability, the attributes that change what callers may do), and
 // compared on every run. An intended change rewrites the files (IDRAK_UPDATE_API=1) in the same commit, with a changelog
 // line; an accidental one fails here.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ApiSurfaceGroup =
     [
@@ -62,7 +62,7 @@ internal static partial class Tests
             return;
         }
 
-        string folder = Path.Combine(RepositoryRoot(), "api");
+        string folder = RepositoryPath("api");
         var problems = new List<string>();
         foreach (string name in ApiAssemblyNames)
         {

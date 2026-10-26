@@ -22,9 +22,9 @@ using Idrak.Training.Abstractions;
 // and a run resumed from it ends as the uninterrupted one. Every run is an in-process cluster carved from the device under
 // test (the "shared" agreement by default, "all-reduce" forced where it is the one under test), each awaited far within the
 // collectives' timeout; one process stops as before.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] ClusterStopGroup =
+    internal static readonly (string Name, Action<Device> Run)[] ClusterStopGroup =
     [
         ("cluster stop: the settings (IDRAK_CLUSTER_STOP, _STOP_EVERY, _STOP_WAIT; a bad value named) and the registry (all-reduce from Idrak.Network, shared from Idrak.Cluster, auto by the collectives); on 3 ranks both agreements stop every rank at the same boundary, a carried flag needs no message, StopEvery spaces the exchanges, a reset starts afresh, and a rank that waits past StopWait gives up loudly", StopAgreementRules),
         ("cluster stop: a Trainer cancelled on one rank of 2 (after a batch, and beside a slow rank) stops every rank at the same step under both agreements, rank 0's checkpoint resumes to the uninterrupted run's weights bit for bit; on 3 ranks an unstopped run's weights and losses are the same with either agreement (the carried flag changes no result)", StopTrainer),

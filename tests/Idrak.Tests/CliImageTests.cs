@@ -18,7 +18,7 @@ using Idrak.Text.Generation;
 // give transformers' greedy tokens through the CLI's own path (the real encoder, and phase 0's features fed in);
 // --grayscale reads the pixels Pillow's convert("L") gives; EXIF orientations turn images as exif_transpose does; the
 // chat template's image parts expand to the processor's ids; a text-only model refuses images.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliImageGroup =
     [
@@ -100,8 +100,6 @@ internal static partial class Tests
         Check(code == 2 && error.Contains("KEY=VALUE"), $"a vision option without a value: {code} {error}");
     }
 
-    private static string VlmModel => TestData("vlm/tiny-gemma3");
-
     private static void CliImageExif(Device device)
     {
         _ = device;
@@ -158,50 +156,6 @@ internal static partial class Tests
             Check(withImages.PartKinds.Contains(ChatParts.Image) && withImages.RenderPrompt(new ChatRequest(messages)) == expanded, "RenderPrompt expands the images");
             Check(Fails(() => withImages.ChatBatch([new ChatRequest(messages)])), "a chat batch with images is refused");
         }
-    }
-
-    private static bool Fails(Action action)
-    {
-        try
-        {
-            action();
-            return false;
-        }
-        catch (Exception e) when (e is InvalidOperationException or NotSupportedException or ArgumentException)
-        {
-            return true;
-        }
-    }
-
-    // The default sampler, recording the ids of the first row it hands out (the CLI's generations, seen from outside).
-    private sealed class RecordingSampler(ITokenSampler inner, List<int> ids) : ITokenSampler
-    {
-        public int Rows => inner.Rows;
-
-        public int Vocabulary => inner.Vocabulary;
-
-        public Tensor Ids => inner.Ids;
-
-        public bool Recordable => inner.Recordable;
-
-        public void Sample(Tensor logits) => inner.Sample(logits);
-
-        public void SetHistory(IReadOnlyList<int> tokens) => inner.SetHistory(tokens);
-
-        public void Reset() => inner.Reset();
-
-        public SampledToken[][] Read(int fromStep, int toStep)
-        {
-            var steps = inner.Read(fromStep, toStep);
-            if (fromStep > 0 || toStep > 1)
-            {
-                ids.AddRange(steps.Select(s => s[0].Id));                // the prompt's own step (0 to 1) is read again later
-            }
-
-            return steps;
-        }
-
-        public void Dispose() => inner.Dispose();
     }
 
     private static void CliImageRun(Device device)

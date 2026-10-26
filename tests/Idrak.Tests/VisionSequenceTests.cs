@@ -12,9 +12,9 @@ using Idrak.Abstraction.Generation;
 // kernels, strides, padding, dilation and groups, rectangular pooling, bidirectional and stacked recurrent layers. Checked
 // against PyTorch (tests/Idrak.Tests/data/vision-sequence, written by tools/pytorch/vision_sequence_reference.py), plain
 // loops and finite differences.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] VisionSequenceGroup =
+    internal static readonly (string Name, Action<Device> Run)[] VisionSequenceGroup =
     [
         ("vision sequence: CTC loss matches PyTorch (none, sum, mean, zero infinity, an impossible sequence, batch first, blank 4) and so does its gradient on the logits", CtcMatchesPyTorch),
         ("vision sequence: gradient: CTC loss against finite differences (time-major and batch-first, padded and concatenated targets, sum and mean)", CtcGradient),
@@ -29,7 +29,7 @@ internal static partial class Tests
     ];
 
     private static readonly Lazy<JsonObject> SequenceReference = new(() => JsonNode.Parse(File.ReadAllText(
-        Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data", "vision-sequence", "reference.json")))!.AsObject());
+        Path.Combine(DataFolder(), "vision-sequence", "reference.json")))!.AsObject());
 
     private static JsonObject Case(string name) => SequenceReference.Value[name]!.AsObject();
 
@@ -432,7 +432,7 @@ internal static partial class Tests
         CheckImport(stacked, [6, 3], s, "stacked GRU and a bidirectional LSTM's last states imported again");
 
         // PyTorch's own exports.
-        string folder = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data", "vision-sequence");
+        string folder = Path.Combine(DataFolder(), "vision-sequence");
         foreach (var (file, name) in new[] { ("conv.onnx", "onnx_conv"), ("recurrent.onnx", "onnx_recurrent") })
         {
             var c = Case(name);

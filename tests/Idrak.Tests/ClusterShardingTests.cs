@@ -21,7 +21,7 @@ using Idrak.Training.Abstractions;
 // collectives over transports that move device memory (C5's), and the shared-memory doorbell (the owner's measurements).
 // Every run is an in-process cluster of devices carved from the device under test, or real transports in one process, or
 // child processes of this program.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ClusterShardingGroup =
     [
@@ -731,7 +731,7 @@ internal static partial class Tests
         {
             string path = Path.Combine(folder, "topology.json");
             File.WriteAllText(path, RealTopology([2]).ToJson());
-            var (file, prefix) = LocalhostCluster.ProgramOf(typeof(Tests).Assembly);
+            var (file, prefix) = LocalhostCluster.ProgramOf(typeof(DesktopTests).Assembly);
             var launch = new LocalhostLaunch(file, [.. prefix, "--cluster-child", "shm-speed", folder])
             {
                 Environment = new Dictionary<string, string> { ["IDRAK_CLUSTER_TIMEOUT"] = "60" }, Limit = TimeSpan.FromSeconds(120),

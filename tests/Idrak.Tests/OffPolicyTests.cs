@@ -11,7 +11,7 @@ using Idrak.Reinforcement.Plugins.Classic;
 // Plan 27, phase R6: off-policy learning in Idrak.Reinforcement: the replay buffer, the Q-learning losses (QLosses, "dqn"
 // with double Q-learning), and the off-policy trainer (DQN): reproducible on 1 and 4 threads, resumed bit for bit, memory
 // that does not grow, its settings, progress, telemetry and log. Its runs are on the classic plug-in's environments.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] OffPolicyGroup =
     [

@@ -20,7 +20,7 @@ using Idrak.Text;
 // nvlink), one group over several transports, Backend.CopyTo, the localhost cluster of child processes with its throttle,
 // the link bench, and idrak cluster start, bench and sim --mode localhost. Child processes are this test program again
 // (--cluster-child) or the CLI; every one is ended by the launcher's finally, and each watches its launcher's process.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ClusterTransportGroup =
     [
@@ -484,7 +484,7 @@ internal static partial class Tests
             {
                 string path = Path.Combine(folder, "two.json");
                 File.WriteAllText(path, RealTopology([2]).ToJson());
-                var (file, prefix) = LocalhostCluster.ProgramOf(typeof(Tests).Assembly);
+                var (file, prefix) = LocalhostCluster.ProgramOf(typeof(DesktopTests).Assembly);
                 var launch = new LocalhostLaunch(file, [.. prefix, "--cluster-child", "die", folder])
                 {
                     Environment = new Dictionary<string, string> { ["IDRAK_CLUSTER_TRANSPORT"] = transport, ["IDRAK_CLUSTER_TIMEOUT"] = "60" },
@@ -666,7 +666,7 @@ internal static partial class Tests
                 var topology = RealTopology(nodes);
                 string path = Path.Combine(folder, "topology.json");
                 File.WriteAllText(path, topology.ToJson());
-                var (file, prefix) = LocalhostCluster.ProgramOf(typeof(Tests).Assembly);
+                var (file, prefix) = LocalhostCluster.ProgramOf(typeof(DesktopTests).Assembly);
                 var environment = new Dictionary<string, string> { ["IDRAK_CLUSTER_TIMEOUT"] = "60", ["IDRAK_CLUSTER_SHM_BYTES"] = "64KB" };
                 if (forced is not null)
                 {
@@ -794,7 +794,7 @@ internal static partial class Tests
                 new ClusterNodeSpec("elsewhere", null, [new ClusterDeviceSpec("cpu", null)])], null, "ethernet-1g");
             string path = Path.Combine(folder, "lan.json");
             File.WriteAllText(path, topology.ToJson());
-            var (file, prefix) = LocalhostCluster.ProgramOf(typeof(Tests).Assembly);
+            var (file, prefix) = LocalhostCluster.ProgramOf(typeof(DesktopTests).Assembly);
             var (code, text, error) = IdrakCli(["cluster", "start", "--topology", path, "--", file, .. prefix, "--cluster-child", "env", folder]);
             Check(code == ExitCodes.Ok, $"cluster start ran this host's node: exit {code}: {error}\n{text}");
             Check(text.Contains("starting 2 rank(s) of node " + Environment.MachineName, StringComparison.Ordinal) && text.Contains("rank 1 (cpu): done", StringComparison.Ordinal),

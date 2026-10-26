@@ -2,14 +2,13 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text.Json.Nodes;
-using Idrak.Abstraction.Data;
 using Idrak.Imaging;
 
 // Plan 18, phase 1: the library's OpenType reader and outline rasterizer, checked against fontTools' reading of a DejaVu
 // Sans subset and FreeType's unhinted renders of its glyphs (tools/fonts/make_font_references.py, tests/Idrak.Tests/data/fonts).
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] FontGroup =
+    internal static readonly (string Name, Action<Device> Run)[] FontGroup =
     [
         ("fonts: the OpenType reader gives fontTools' names, metrics, character map, every advance and every glyph's bounds (composites resolved) for a DejaVu Sans subset; a collection gives its two fonts", FontReaderMatchesFontTools),
         ("fonts: glyphs drawn by the coverage rasterizer match FreeType's unhinted renders (Latin, a composite, Arabic, digits; 24 and 48 pixels per em)", FontRasterMatchesFreeType),
@@ -18,10 +17,6 @@ internal static partial class Tests
         ("fonts: a CFF2 font, a damaged file and bytes that are no font are refused with the reason; the registries list opentype and coverage", FontRefusals),
         ("fonts: a font's layout features for a script (Amiri's joining forms, rlig, mark); idrak data fonts checks characters, features and every line against HarfBuzz's references, and says what a font lacks or cannot read", FontCheckCommand),
     ];
-
-    private static string FontData(string name) => TestData($"fonts/{name}");
-
-    private static IFontFace SubsetFace() => FontFormats.Read(FontData("dejavu-sans-subset.ttf")).Single();
 
     private static void FontReaderMatchesFontTools(Device device)
     {

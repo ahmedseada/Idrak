@@ -19,7 +19,7 @@ using Idrak.Training;
 // directly by the thread that queued its message, and a stopped pipeline writes its checkpoint. Every model is plan 19's
 // tiny one; every run an in-process cluster carved from the device under test, real transports in one process, or child
 // processes of this program.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ClusterMemoryGroup =
     [
@@ -349,7 +349,7 @@ internal static partial class Tests
             {
                 string path = Path.Combine(folder, "topology.json");
                 File.WriteAllText(path, RealTopology([2]).ToJson());
-                var (file, prefix) = LocalhostCluster.ProgramOf(typeof(Tests).Assembly);
+                var (file, prefix) = LocalhostCluster.ProgramOf(typeof(DesktopTests).Assembly);
                 var launch = new LocalhostLaunch(file, [.. prefix, "--cluster-child", "shm-speed", folder])
                 {
                     Environment = new Dictionary<string, string> { ["IDRAK_CLUSTER_TIMEOUT"] = "60", ["IDRAK_CLUSTER_DIRECT_WAKE"] = direct ? "1" : "0" },

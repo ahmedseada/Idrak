@@ -22,7 +22,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 // Idrak.AspNetCore over a real Kestrel server on a free port (CPU only; the endpoints do not depend on the device).
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] AspNetCore =
     [

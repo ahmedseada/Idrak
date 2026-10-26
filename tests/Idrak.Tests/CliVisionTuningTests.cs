@@ -1,7 +1,6 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
-using System.IO.Compression;
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Data;
@@ -18,66 +17,8 @@ using Idrak.Text.Generation;
 // the trained projector and tuning_images.json written, a generated-text score (cer), the run plan; run --adapter applies
 // the projector and the saved preparation; the refusals (an unregistered family, an adapter of another family); tune init
 // writes a vision example; tune.json's image keys; tune evaluate with --metric cer.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    // The fixture's three records as LlamaFactory writes them (train.json): a JSON array of ShareGPT records.
-    private static string WriteShareGpt(string folder, string family, string name, int records = 3)
-    {
-        var tuning = JsonNode.Parse(File.ReadAllText(TuningData($"{family}/tuning.json")))!;
-        var array = new JsonArray();
-        foreach (var record in tuning["records"]!.AsArray().Take(records))
-        {
-            var sharegpt = record!["sharegpt"]?.DeepClone() ?? ShareGptOf(record);
-            array.Add(sharegpt);
-        }
-
-        string path = Path.Combine(folder, name);
-        File.WriteAllText(path, array.ToJsonString());
-        return path;
-    }
-
-    // A record's messages in ShareGPT (for a model whose fixture keeps none): <image> where each image part is.
-    private static JsonNode ShareGptOf(JsonNode record)
-    {
-        var conversations = new JsonArray();
-        string? system = null;
-        foreach (var m in record["messages"]!.AsArray())
-        {
-            string role = (string)m!["role"]!;
-            string text = m["content"] is JsonValue v ? (string)v! : string.Concat(m["content"]!.AsArray().Select(p => (string?)p!["type"] == "image" ? "<image>" : (string?)p!["text"]));
-            if (role == "system")
-            {
-                system = text;
-                continue;
-            }
-
-            conversations.Add(new JsonObject { ["from"] = role == "user" ? "human" : "gpt", ["value"] = text });
-        }
-
-        var json = new JsonObject { ["conversations"] = conversations, ["images"] = record["images"]!.DeepClone() };
-        if (system is not null)
-        {
-            json["system"] = system;
-        }
-
-        return json;
-    }
-
-    // The images the records name, in a folder and in a zip.
-    private static (string Folder, string Zip) WriteTuningImages(string folder)
-    {
-        string images = Path.Combine(folder, "images");
-        Directory.CreateDirectory(images);
-        foreach (string name in new[] { "image.png", "image-palette.png" })
-        {
-            File.Copy(TestData($"vlm/{name}"), Path.Combine(images, name));
-        }
-
-        string zip = Path.Combine(folder, "images.zip");
-        ZipFile.CreateFromDirectory(images, zip);
-        return (images, zip);
-    }
-
     private static readonly string[] TinyTuning =
     [
         "--rank", "2", "--alpha", "4", "--targets", "q,k,v,o", "--lr", "0.2", "--optimizer", "sgd", "--schedule", "constant", "--warmup", "0",

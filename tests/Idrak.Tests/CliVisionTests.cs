@@ -19,9 +19,9 @@ using Idrak.Vision.Abstractions;
 // and the library; a classifier and a segmenter trained from builder JSON (augmentations, metrics, packages predicted
 // again), the plug-in's classifier and grid detector fine-tuned (COCO training data, YOLO evaluation data, COCO's mAP);
 // unregistered families, decoders and heads refused with their registry's message.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] CliVisionGroup =
+    internal static readonly (string Name, Action<Device> Run)[] CliVisionGroup =
     [
         ("cli vision: ImageEncoders write PNG and PGM that the codecs read back exactly (an unknown extension refused naming the registry); explain knows every step; kernels lists the vision operations", CliVisionBasics),
         ("cli vision: predict -P with the plug-in's families: the classifier's classes and probabilities as PyTorch's (--top, -j, --format csv, -o rows), the grid detector's boxes as PyTorch's (--threshold, --iou, --decoder by name), a segmenter's pixels and mask PNGs (--out) as the library's, a backbone's .npy features; an unregistered family or decoder exits 1 with its registry's message and -P", CliVisionPredict),

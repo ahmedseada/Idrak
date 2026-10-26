@@ -8,9 +8,9 @@ using Idrak.Text;
 using Idrak.Text.Abstractions;
 
 // Plan 18: random text in a language for drawing training pages when there is no text to draw (idrak data text).
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] RandomTextGroup =
+    internal static readonly (string Name, Action<Device> Run)[] RandomTextGroup =
     [
         ("random text: pages, lines or words as asked, each line its number of words within the range, the same seed the same text and another seed other text", RandomTextUnits),
         ("random text: the Arabic source writes every letter, its own digits at their share, marks only when asked and never after a letter that takes none", RandomTextArabic),

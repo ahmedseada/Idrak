@@ -23,6 +23,7 @@
        package's; no other assembly does. -->
   <ItemGroup>
     <InternalsVisibleTo Include="Idrak.Tests" />
+    <InternalsVisibleTo Include="Idrak.Tests.Library" />
   </ItemGroup>
 
 </Project>

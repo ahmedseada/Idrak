@@ -21,7 +21,7 @@ using Idrak.Text.Plugins.TypeScript;
 // Idrak.Text.Abstractions) the library fills with none; the coding agent and tools compose their defaults from the
 // registered ones; C#, TypeScript and Angular, and Python are Idrak.Text.Plugins' profiles. Idrak.Data skips only .git and
 // the editors' folders unless told; the tool's data commands pass the languages' folders.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CodingLanguageGroup =
     [

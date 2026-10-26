@@ -17,7 +17,7 @@ using Idrak.Text.Reinforcement;
 // samples (and encodes the data's answers of) its shards' prompts, the sequences are exchanged and sorted by prompt number,
 // and the step is the session's data-parallel step; a stop is agreed at one step (R7). Every cluster here is an in-process
 // one (a thread per rank on devices carved from the device under test, the "sim" transport); the CLI runs in this process.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] DistillationClusterGroup =
     [

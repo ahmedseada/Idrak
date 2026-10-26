@@ -13,7 +13,7 @@ using Idrak.Generation;
 
 // The idrak run commands (chat, run, batch, compare, complete, embed, tokenize, template, agent, tools), run in-process
 // through CommandLine.Run with captured output against the tiny model in tests/Idrak.Tests/data (no network).
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliRunGroup =
     [

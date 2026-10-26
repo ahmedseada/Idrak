@@ -8,9 +8,9 @@ using Idrak.Audio.Abstractions;
 
 // Plan 30: live transcription. The stream input, the library's LiveTranscriber on a scripted recognizer and on
 // tiny-whisper, the audio captures (ALSA's null device where libasound is installed) and idrak transcribe --live.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] AudioLiveGroup =
+    internal static readonly (string Name, Action<Device> Run)[] AudioLiveGroup =
     [
         ("audio live: PcmStreamInput reads raw s16le stereo and f32le, a WAV header of unknown size with a chunk before its data, a stream shorter than a header, all through reads of three bytes at a time; frames split between reads wait for their rest", AudioLiveStream),
         ("audio live: LiveTranscriber on a scripted recognizer: quiet before speech never transcribed, words committed once two readings agree, a segment ended by a pause and the last by the end, the first segment's text the second's prompt; a click under MinSpeechSeconds never read; a long tone cut by the window", AudioLiveScripted),

@@ -11,9 +11,9 @@ using Idrak.Onnx;
 // upsampling (nearest, bilinear), adaptive pooling, group norm, ceil-mode pooling and padding below and right. Checked
 // against PyTorch (tests/Idrak.Tests/data/vision-layers, written by tools/pytorch/vision_layers_reference.py), onnx's
 // reference evaluator, ONNX Runtime and finite differences.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] VisionLayersGroup =
+    internal static readonly (string Name, Action<Device> Run)[] VisionLayersGroup =
     [
         ("vision layers: ConvTranspose2d (rectangular, strided, padded, output padding, dilation, groups; a square decoder step) matches PyTorch's output and gradients (input, weight, bias)", TransposedConvMatchesPyTorch),
         ("vision layers: 1-D convolutions (one row, stride 1: dilated, padded unevenly, more channels than one stretch of the CPU's direct kernel holds, filters not a multiple of four, outputs shorter than a vector, a batch, a fused ReLU) equal the window's sum in double", Convolution1DMatchesSums),
@@ -28,7 +28,7 @@ internal static partial class Tests
     ];
 
     private static readonly Lazy<JsonObject> LayersReference = new(() => JsonNode.Parse(File.ReadAllText(
-        Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data", "vision-layers", "reference.json")))!.AsObject());
+        Path.Combine(DataFolder(), "vision-layers", "reference.json")))!.AsObject());
 
     private static JsonObject LayerCase(string name) => LayersReference.Value[name]!.AsObject();
 
@@ -315,7 +315,7 @@ internal static partial class Tests
         CheckImport(model, [2, 9, 10], x, "a decoder imported again");
 
         // PyTorch's export and onnx's reference evaluator.
-        string folder = Path.Combine(RepositoryRoot(), "tests", "Idrak.Tests", "data", "vision-layers");
+        string folder = Path.Combine(DataFolder(), "vision-layers");
         foreach (var (file, name) in new[] { ("decoder.onnx", "onnx_decoder"), ("windows.onnx", "onnx_windows") })
         {
             var c = LayerCase(name);

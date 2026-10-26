@@ -9,7 +9,7 @@ using Idrak.Onnx.Abstractions;
 using Idrak.Onnx.Runtime;
 
 // ONNX export: every supported layer is exported, run by ONNX Runtime and compared with Idrak's own output.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] Onnx =
     [
@@ -271,20 +271,6 @@ internal static partial class Tests
         }
     }
 
-    private static float[] TransposeRows(float[] values, int rows, int columns)
-    {
-        var result = new float[values.Length];
-        for (int i = 0; i < rows; i++)
-        {
-            for (int j = 0; j < columns; j++)
-            {
-                result[j * rows + i] = values[i * columns + j];
-            }
-        }
-
-        return result;
-    }
-
     private static void CheckOnnx(Module model, int[] sampleShape, Tensor input, string what, Func<OnnxExporter, OnnxExporter>? configure = null)
     {
         model.Eval();
@@ -297,12 +283,6 @@ internal static partial class Tests
         float worst = a.Zip(e, (x, y) => MathF.Abs(x - y)).Max();
         Check(worst < 1e-4f, $"{what}: largest difference {worst}");
     }
-
-    private static Tensor RandomInput(Device device, Random r, params int[] shape) =>
-        Tensor.From([.. Enumerable.Range(0, shape.Aggregate(1, (a, b) => a * b)).Select(_ => (float)(r.NextDouble() * 2 - 1))], shape, device);
-
-    private static Tensor RandomIds(Device device, Random r, int vocabulary, params int[] shape) =>
-        Tensor.From([.. Enumerable.Range(0, shape.Aggregate(1, (a, b) => a * b)).Select(_ => (float)r.Next(vocabulary))], shape, device);
 
     // Runs a few training-mode batches so BatchNorm's running statistics are not the initial 0 / 1.
     private static void WarmBatchNorm(Module model, Tensor input)

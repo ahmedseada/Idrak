@@ -27,7 +27,7 @@ using Idrak.Text.Plugins.T5;
 // for erf, a missing d_model^-0.5 or one applied to an untied head, a transposed projection each move them by 1e-3 or more.
 // Generations are compared token for token, so a near tie between two tokens could flip; the fixtures' logits are far
 // enough apart that none does.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private const float T5Tolerance = 1e-4f;
 

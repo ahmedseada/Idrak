@@ -9,9 +9,9 @@ using Idrak.Audio.Plugins.Vits;
 
 // The cleaning stages (AudioCleaners: highpass, denoise, trim, normalize) on made signals, through the trainer's options
 // and feature cache, and through idrak data audio --clean.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] AudioCleaningGroup =
+    internal static readonly (string Name, Action<Device> Run)[] AudioCleaningGroup =
     [
         ("audio cleaning: the registry names highpass, denoise, trim and normalize as the library's; an unregistered stage is refused naming the registered ones; the options round-trip through JSON (a plug-in's settings included) and refuse values out of range", AudioCleaningRegistry),
         ("audio cleaning: highpass takes a DC offset and a 10 Hz rumble out of a 1 kHz tone (each down over 20 dB) and keeps the tone within 0.5 dB on both channels; trim cuts the silence at both ends of a tone to the pad and leaves a silent clip and a tight one as they are; normalize brings the speech frames to the target level within 0.5 dB and never over the peak ceiling", AudioCleaningStages),

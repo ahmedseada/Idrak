@@ -20,7 +20,7 @@ using Idrak.Text.Reinforcement;
 // the dashboard's in-process control or a launcher's control file holds every rank at the same boundary while paused (a
 // resume goes on bit for bit) and stops every rank there through the ranks' agreement, with one checkpoint. In-process ranks
 // and in-process command runs only; every wait is bounded and every run awaited far within the collectives' timeout.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ClusterControlGroup =
     [

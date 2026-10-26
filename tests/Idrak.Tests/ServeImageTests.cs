@@ -33,7 +33,7 @@ using Microsoft.Extensions.Logging;
 // greedy answer equal to transformers' 20 tokens; and `idrak serve` with the same answers as `idrak run --image`,
 // grayscale per request and per server, and its limits. Text-only models, bad base64, unsupported formats, http URLs
 // without the option and requests over the limits are refused.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     // A 1 x 1 GIF: a real image no registered codec reads.
     private static readonly byte[] TinyGif = Convert.FromBase64String("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7");
@@ -87,21 +87,6 @@ internal static partial class Tests
         }
 
         return form;
-    }
-
-    // Records the greedy tokens of every generation while it runs (the default sampler wrapped).
-    private static T WithRecordedTokens<T>(List<int> sampled, Func<T> run)
-    {
-        var library = TokenSamplers.Default(TokenSamplers.DefaultName)!;
-        TokenSamplers.Register(TestKinds.Sampler(TokenSamplers.DefaultName, request => new RecordingSampler(library.Create(request), sampled)));
-        try
-        {
-            return run();
-        }
-        finally
-        {
-            TokenSamplers.Unregister(TokenSamplers.DefaultName);
-        }
     }
 
     // Idrak.AspNetCore over the engine: a vision-language chat model of one's own (the library's encoder, no CLI).

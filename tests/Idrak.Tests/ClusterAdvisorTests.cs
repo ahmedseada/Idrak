@@ -21,7 +21,7 @@ using Idrak.Training;
 // IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE; accumulation and local SGD by the factor A = ceil(E'(1-T)/(T·C)) (E' the exposed
 // network time, halved where bf16 is suggested, C the step's compute, T the share) where E'/(C+E') is still above T, and
 // top-k with the share T·C/((1-T)·E·W) beside them; a bucket size where one pinned bucket holds every gradient.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ClusterAdvisorGroup =
     [

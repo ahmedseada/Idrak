@@ -19,7 +19,7 @@ using Idrak.Training;
 
 // The idrak CLI's Train and data group: tune, train, resume, runs, predict, package, distill, and data with its
 // subcommands, run in-process on data built here and tiny models.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliTrainDataGroup =
     [

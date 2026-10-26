@@ -17,7 +17,7 @@ using Idrak.Audio.Plugins.Whisper;
 // Plan 21, S7: the audio commands run in-process through CommandLine.Run with captured output, their families given
 // with -P as a user gives them (the plug-in projects the tests reference), against the fixtures of the audio tests:
 // transcribe, speak, voice, data audio, data mel and --audio, each against the library's own call on the same input.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] AudioCliGroup =
     [

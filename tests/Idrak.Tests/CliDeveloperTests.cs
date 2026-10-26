@@ -12,7 +12,7 @@ using Idrak.Layers;
 
 // The idrak tool's developer commands (plans/done/idrak-cli.md, "Developers"): new, test, onnx import/export/check, kernels
 // dump, trace, demo and shell, run in-process through CommandLine.Run with captured output.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliDeveloperGroup =
     [

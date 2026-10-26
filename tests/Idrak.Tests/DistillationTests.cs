@@ -15,9 +15,9 @@ using Idrak.Training;
 // The teacher pattern (knowledge distillation): the per-token divergence and its gradient, the classifier loss, the
 // fine-tuning loss against both models' full logits, stored top-k logits, the vocabulary check, teacher-written data,
 // and a tiny student that ends closer to its teacher by distillation than by its labels.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] DistillationGroup =
+    internal static readonly (string Name, Action<Device> Run)[] DistillationGroup =
     [
         ("distillation: the token divergence (full and top-k teachers, chunked, repeated rows, a temperature) and its gradient match a dense computation", DivergenceFormula),
         ("distillation: the classifier loss matches its formula and gradient, alone and mixed with one-hot or index labels; WithTeacher puts the teacher's logits before the targets", ClassifierDistillation),

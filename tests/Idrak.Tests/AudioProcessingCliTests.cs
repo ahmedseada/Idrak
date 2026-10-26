@@ -13,7 +13,7 @@ using Idrak.Cli.Shared;
 // idrak audio processors and audio process, transcribe --audio-clean (files and --live), --clean taking a pipeline in
 // data audio (the old stage names keeping their files), and SpeechTrainingOptions.Processing through JSON, checkpoints
 // and the feature cache.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] AudioProcessingCliGroup =
     [

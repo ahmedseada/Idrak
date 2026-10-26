@@ -15,6 +15,12 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
+  <!-- The groups any process can run, and the runner (plan 34, M2); this program adds the groups that need the desktop:
+       Idrak.Cli, ASP.NET Core, the native ONNX Runtime, a child process or an outside program. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak.Tests.Library\Idrak.Tests.Library.csproj" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\Idrak\Idrak.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Gpu\Idrak.Gpu.csproj" />

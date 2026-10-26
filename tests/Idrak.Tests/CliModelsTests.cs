@@ -12,7 +12,7 @@ using Idrak.Models;
 // The idrak model commands (pull, list, rm, show, search, alias, memory, quantize, merge, inspect, verify, convert, diff,
 // families), run in-process through CommandLine.Run with captured output. No network: the hub is a local HTTP server
 // (HF_ENDPOINT) serving the tiny fixtures of tests/Idrak.Tests/data/gguf, and every cache is a temporary folder.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliModelsGroup =
     [

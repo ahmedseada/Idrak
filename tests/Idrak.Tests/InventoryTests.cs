@@ -16,7 +16,7 @@ using Idrak;
 // cannot drift; the rule that every abstraction is declared under Idrak.Abstraction.* or a package's own *.Abstractions
 // namespace (its allow list is empty and may only shrink); and, from phase 8c, decision 10: a contract lives in
 // Idrak.Abstraction when Abstraction itself or several library packages use it, else in the one package that does.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] InventoryGroup =
     [
@@ -48,18 +48,6 @@ internal static partial class Tests
 
     private static bool UpdateInventory => Environment.GetEnvironmentVariable("IDRAK_UPDATE_INVENTORY") == "1";
 
-    // These checks do not depend on the device: each runs once, on the first device of the run. The group runs first so
-    // the registries hold their built-in names only (later tests register plug-ins of their own).
-    private static readonly HashSet<string> InventoryDone = [];
-
-    private static bool FirstRun(string check)
-    {
-        lock (InventoryDone)
-        {
-            return InventoryDone.Add(check);
-        }
-    }
-
     private static void InventoryCurrent(Device device)
     {
         _ = device;
@@ -68,7 +56,7 @@ internal static partial class Tests
             return;
         }
 
-        string path = Path.Combine(RepositoryRoot(), InventoryPath);
+        string path = RepositoryPath(InventoryPath);
         string expected = Inventory();
         string actual = File.Exists(path) ? File.ReadAllText(path).ReplaceLineEndings("\n") : "";
         if (UpdateInventory)
@@ -95,7 +83,7 @@ internal static partial class Tests
         }
 
         var outside = Abstractions().Where(a => !DeclaredWhereAllowed(a.Type)).Select(a => Display(a.Type)).ToHashSet(StringComparer.Ordinal);
-        string path = Path.Combine(RepositoryRoot(), AllowListPath);
+        string path = RepositoryPath(AllowListPath);
         bool exists = File.Exists(path);
         var allowed = exists
             ? File.ReadLines(path).Select(l => l.Trim()).Where(l => l.Length > 0 && !l.StartsWith('#')).ToHashSet(StringComparer.Ordinal)
@@ -133,7 +121,7 @@ internal static partial class Tests
 
         // Plan 10, phase 4: the GPU devices in Idrak, and every other library assembly, see Idrak.Abstraction's public surface only.
         var friends = typeof(Device).Assembly.GetCustomAttributes<InternalsVisibleToAttribute>().Select(a => a.AssemblyName).Order(StringComparer.Ordinal).ToList();
-        Check(friends.SequenceEqual(["Idrak.Tests"]), $"Idrak.Abstraction grants its internals to {string.Join(", ", friends)}; only Idrak.Tests may see them");
+        Check(friends.SequenceEqual(["Idrak.Tests", "Idrak.Tests.Library"]), $"Idrak.Abstraction grants its internals to {string.Join(", ", friends)}; only the tests (Idrak.Tests and Idrak.Tests.Library) may see them");
 
         var used = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (target, users) in FriendAssemblies)
@@ -147,7 +135,7 @@ internal static partial class Tests
             }
         }
 
-        var listed = File.ReadLines(Path.Combine(RepositoryRoot(), JustifiedPath))
+        var listed = File.ReadLines(RepositoryPath(JustifiedPath))
             .Where(l => l.Length > 0 && !l.StartsWith('#'))
             .Select(l => l.Split(" | ", 4))
             .ToList();
@@ -383,7 +371,7 @@ internal static partial class Tests
     private static Dictionary<Type, string> SharedContracts()
     {
         var shared = new Dictionary<Type, string>();
-        foreach (string line in File.ReadLines(Path.Combine(RepositoryRoot(), SharedContractsPath)).Where(l => l.Length > 0 && !l.StartsWith('#')))
+        foreach (string line in File.ReadLines(RepositoryPath(SharedContractsPath)).Where(l => l.Length > 0 && !l.StartsWith('#')))
         {
             var fields = line.Split(" | ", 2);
             Check(fields.Length == 2 && fields[1].Trim().Length > 0, $"{SharedContractsPath}: '{line}' is not contract | why");

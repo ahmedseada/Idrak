@@ -18,9 +18,9 @@ using Idrak.Text.Plugins.CSharp;
 // and tested by the real dotnet), its rewards from the build's logs and the tests' TRX results, the shared package folder,
 // no build nodes left running, the protected files, and the plug-in's registration over the coding plug-in and the C#
 // language. The model is a script of replies: no download but the test project's NuGet packages (once, into a kept folder).
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] CSharpCodingGroup =
+    internal static readonly (string Name, Action<Device> Run)[] CSharpCodingGroup =
     [
         ("plugins: csharp: CSharpCodingPlugin is the plug-in \"csharp\" of ReinforcementPlugins.All; Register twice registers the csharp environment and its two rewards once, and the coding plug-in and the C# language when missing; Unregister takes back only what it registered (coding stays as found); the rewards pass the reward suite and read the TRX results and the build's logs", d => { if (d == Device.Cpu) CSharpPluginRegisters(); }),
         ("plugins: csharp: on a C# solution (a library, an xunit test project): a task with no commands gets dotnet's defaults; a partly right answer gets the share of tests it passes; a build with errors gets csharp-build's penalty per error; edits to the test project and the build's shared files are refused when asked; two episodes in parallel share the package folder and leave no build nodes running", d => { if (d == Device.Cpu) CSharpEpisodes(); }),

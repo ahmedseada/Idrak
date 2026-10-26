@@ -10,7 +10,7 @@ using Idrak.Reinforcement;
 // Plan 27, phase R2: Idrak.Reinforcement, the general part: the advantage estimators and policy losses (their contract
 // suites and direct computations on fixed inputs), the module policy, the rollout collector and the trainer, on fakes
 // written here (not shipped): a two-armed bandit, a short corridor and a box with a rewarded point.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ReinforcementGroup =
     [
@@ -241,12 +241,6 @@ internal static partial class Tests
         public void OnTrainingCompleted(in TrainingCompleted e) => Completed++;
     }
 
-    private static (Space Observations, Space Actions) Spaces(IEnvironmentKind kind)
-    {
-        using var environment = kind.Create(new EnvironmentRequest());
-        return (environment.ObservationSpace, environment.ActionSpace);
-    }
-
     // A categorical policy over the kind's spaces: a perceptron of one hidden layer of 16, a critic of the same shape when
     // asked, weights from `seed`.
     private static ModulePolicy<int> RlPolicy(IEnvironmentKind kind, Device device, int seed, float rate, bool critic = false, bool reference = false)
@@ -260,44 +254,6 @@ internal static partial class Tests
     }
 
     private static float[] Weights<TAction>(ModulePolicy<TAction> policy) => [.. policy.Parameters.SelectMany(p => p.ToArray())];
-
-    private static string? SameBits(float[] expected, float[] actual, string what)
-    {
-        if (expected.Length != actual.Length)
-        {
-            return $"{what}: {actual.Length} values, {expected.Length} expected";
-        }
-
-        for (int i = 0; i < expected.Length; i++)
-        {
-            if (BitConverter.SingleToInt32Bits(expected[i]) != BitConverter.SingleToInt32Bits(actual[i]))
-            {
-                return FormattableString.Invariant($"{what}: element {i} is {actual[i]:R}, {expected[i]:R} expected");
-            }
-        }
-
-        return null;
-    }
-
-    // Trains until `done` says so (the run is then cancelled before its next iteration); the iteration it was reached at, or 0.
-    private static (ReinforcementResult Result, int Reached) TrainUntil<TAction>(IEnvironmentKind kind, IPolicy<float[], TAction> policy, ReinforcementOptions options,
-        Func<IterationSummary, bool> done)
-    {
-        using var stop = new CancellationTokenSource();
-        int reached = 0;
-        var trainer = new ReinforcementTrainer<float[], TAction>(kind, policy, options)
-        {
-            OnIteration = s =>
-            {
-                if (reached == 0 && done(s))
-                {
-                    reached = s.Iteration;
-                    stop.Cancel();
-                }
-            },
-        };
-        return (trainer.Train(stop.Token), reached);
-    }
 
     // ---------------------------------------------------------------- estimators
 

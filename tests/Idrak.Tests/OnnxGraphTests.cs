@@ -11,7 +11,7 @@ using Idrak.Onnx.Abstractions;
 using Idrak.Onnx.Runtime;
 
 // ONNX export registry, graph export (import → export → import), graph operations and layer types of your own.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     // y = x · factor, a custom layer exported through a registered translator.
     private sealed class Times(float factor) : Module

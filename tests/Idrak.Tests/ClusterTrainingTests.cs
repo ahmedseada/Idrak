@@ -21,7 +21,7 @@ using Idrak.Training.Abstractions;
 // Idrak.Abstraction's GradientSyncs), the Cluster hook of the Trainer, the fine-tuner and the pretrainer, the HostOptimizer
 // reducing on its host pieces, the split by measured speed, and idrak cluster sim. Every run is an in-process cluster of
 // devices carved from the device under test.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ClusterTrainingGroup =
     [
@@ -39,27 +39,6 @@ internal static partial class Tests
         ("cluster: the Spirals sample's Trainer with a cluster: 2 ranks learn the spirals as one process does, the weights and batch-norm statistics the same on every rank", ClusterSpirals),
         ("cluster: cli cluster sim runs pretrain on every rank of a topology file: rank 0 writes the run, each rank's network time is reported; another command and a missing run folder are usage errors", ClusterCliSim),
     ];
-
-    // `world` ranks of one node, every one carved from `device`.
-    private static ClusterTopology DpTopology(Device device, int world) => DpTopology([.. Enumerable.Repeat(device.ToString(), world)]);
-
-    // Different devices in the node (cpu beside a GPU) are joined by pcie, measured here; ranks on one device by same-device.
-    private static ClusterTopology DpTopology(IReadOnlyList<string> devices) =>
-        ClusterTopology.Create([new ClusterNodeSpec("box", null, [.. devices.Select(d => new ClusterDeviceSpec(d, null))])],
-            devices.Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1 ? "pcie" : null, null);
-
-    // Equal splits (no speed measured), so a rerun splits alike.
-    private static ClusterOptions DpOptions(WireType wire = WireType.Float32) => new() { RebalanceSteps = 0, Wire = wire, Timeout = TimeSpan.FromSeconds(300) };
-
-    // Runs `work` on every rank of an in-process cluster and returns each rank's result, failing with every rank's error.
-    private static T[] DpRun<T>(IClusterTopology topology, ClusterOptions options, Func<ClusterRank, T> work)
-    {
-        var results = new T[topology.WorldSize];
-        InProcessCluster.Run(topology, options, rank => results[rank.Rank] = work(rank)).ThrowIfFailed();
-        return results;
-    }
-
-    private static float Gap(float[] a, float[] b) => a.Zip(b, (x, y) => MathF.Abs(x - y)).DefaultIfEmpty(0f).Max();
 
     private static void ClusterDrawShares(Device device)
     {
@@ -301,25 +280,6 @@ internal static partial class Tests
     {
         var init = new Random(3);
         return new Sequential { new Linear(2, 16, device: device, random: init), new ReLU(), new Linear(16, 3, device: device, random: init) };
-    }
-
-    private static PretrainingOptions DpPretraining(string tokens, int steps, ICollectives? cluster, ClusterOptions? options) => new()
-    {
-        Stages = [new PretrainingStage("text") { Sources = [new PretrainingSource(PretrainingSources.Tokens, [tokens])], Steps = steps, LearningRate = 0.2f, Schedule = "constant", WarmupFraction = 0 }],
-        MaxLength = 32, BatchTokens = 64, GradientAccumulation = 2, Optimizer = "sgd", WeightDecay = 0f, Momentum = 0f, MaxGradientNorm = 0f, CudaGraphs = false,
-        KeepCheckpoints = 0, Seed = 3, Cluster = cluster, ClusterOptions = options,
-    };
-
-    // A pretraining run's losses and its last checkpoint's weights (concatenated in name order).
-    private static (float[] Losses, float[] Weights) DpPretrain(Device device, PretrainingOptions options, string folder, Action<string>? trace = null, PretrainingCheckpoint? resume = null,
-        string? model = null)
-    {
-        using var loaded = PretrainedModel.Load(model ?? TinyLlama, new PretrainedOptions { Device = device });
-        var result = Pretrainer.Train(loaded, options, folder, resume, trace: trace);
-        float[] weights = result.LastCheckpoint is { } last && File.Exists(Path.Combine(last, "model.safetensors"))
-            ? [.. ReadTensors(Path.Combine(last, "model.safetensors")).OrderBy(t => t.Key, StringComparer.Ordinal).SelectMany(t => t.Value.Values)]
-            : [];
-        return ([.. result.Losses], weights);
     }
 
     private static void ClusterEqualsOneProcess(Device device)

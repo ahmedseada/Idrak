@@ -13,7 +13,7 @@ using Idrak.Cli.Shared;
 // version, report, env, init, cache, config, plugins list, formats, completion, update, login, setup android, help
 // topics; the common options (@file, --log, --output, --format, --color, --timeout, --threads); and the checks over
 // every command of every group (short forms, provider names, the environment variable table).
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliHealthGroup =
     [
@@ -135,28 +135,6 @@ internal static partial class Tests
         string folder = Path.Combine(Path.GetTempPath(), $"idrak-cli-health-{Guid.NewGuid():N}");
         Directory.CreateDirectory(folder);
         return folder;
-    }
-
-    // Sets environment variables for the length of an action, then restores them.
-    private static void WithEnvironment(IReadOnlyDictionary<string, string?> values, Action action)
-    {
-        var old = values.Keys.ToDictionary(k => k, Environment.GetEnvironmentVariable);
-        try
-        {
-            foreach (var (k, v) in values)
-            {
-                Environment.SetEnvironmentVariable(k, v);
-            }
-
-            action();
-        }
-        finally
-        {
-            foreach (var (k, v) in old)
-            {
-                Environment.SetEnvironmentVariable(k, v);
-            }
-        }
     }
 
     private static void CliShortFormsUnique(Device device)

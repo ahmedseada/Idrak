@@ -11,7 +11,7 @@ using Idrak.Text.Abstractions;
 
 // Plan 18, phase 5: tuning data from text: records' answers drawn as pages, scanned, written again with the page and the
 // drawn text, read back by the tuning data formats.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] SyntheticDataGroup =
     [

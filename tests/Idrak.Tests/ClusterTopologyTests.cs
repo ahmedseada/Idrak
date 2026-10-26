@@ -10,9 +10,9 @@ using Idrak.Cluster;
 // Plan 23, phase C3: the hierarchical collective and its predicted win on a two-level topology, the transport selector
 // across mixed pipes, the seeded faults (slow worker, dropped worker, link loss, partition, late join) with their
 // telemetry, the event log and replay.
-internal static partial class Tests
+internal abstract partial class DesktopTests : Tests
 {
-    private static readonly (string Name, Action<Device> Run)[] ClusterTopologyGroup =
+    internal static readonly (string Name, Action<Device> Run)[] ClusterTopologyGroup =
     [
         ("cluster: hierarchical equals ring within float rounding, exactly on whole numbers, every rank and rerun identical; the kit's CollectivesSuite passes it over sim on nodes of different sizes", ClusterHierarchicalEqualsRing),
         ("cluster: hierarchical beats ring in simulated time on a two-level topology (two machines of four fake devices, nvlink inside, ethernet-1g between): the ratio printed and above 1, each run's time the clock's played prediction; cluster inspect shows it as the default", ClusterHierarchicalBeatsRing),
