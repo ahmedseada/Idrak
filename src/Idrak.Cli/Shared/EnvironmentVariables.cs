@@ -183,6 +183,8 @@ internal static class EnvironmentVariables
         new("VK_INSTANCE_LAYERS", Vulkan, "none", "The Vulkan loader: layers to enable (e.g. validation), read by the loader itself", OnDevice),
 
         new("IDRAK_HIP_KERNELS", Hip, "on", "0 or false: every HIP operation through the host fallback", OnDevice),
+        new("IDRAK_HIP_RUNTIME", Hip, "the system's search", "A HIP runtime (a file name or path) tried before the graphics driver's and the SDK's", OnDevice),
+        new("IDRAK_HIP_CODE_OBJECT", Hip, "the compiler's own, then 5, then 4", "The code object version HIP kernels are compiled for (4, 5, 6), or 'default': the compiler's own only", OnDevice),
         new("HIP_PATH", Hip, "not set", "Where the HIP SDK is (Windows)", OnDevice),
         new("ROCM_PATH", Hip, "/opt/rocm", "Where ROCm is (Linux)", OnDevice),
 

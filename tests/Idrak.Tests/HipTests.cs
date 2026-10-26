@@ -14,7 +14,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] HipGroup =
     [
-        ("hip runtime: library names per system; the install's folder (HIP_PATH, ROCM_PATH) before the system's search; a refusal names both releases; a missing runtime means no HIP devices, a reason and no exception", HipMissingRuntime),
+        ("hip runtime: library names per system; the system's search (the driver's runtime) before the install's folder; older code object formats for an older runtime; a refusal names both releases; a missing runtime means no HIP devices, a reason and no exception", HipMissingRuntime),
         ("hip devices: named hip:N, parsed like the others, listed in --list-devices (with the reason when there are none)", HipDeviceNames),
         ("hip kernels: the source declares every kernel with the parameters launches pass; block sizes and limits come from what the device reports", HipKernelSource),
         ("hip kernels: the architecture string is read from the device properties by content; compiler options name it", HipArchitecture),
@@ -41,16 +41,33 @@ internal static partial class Tests
         bool opened = HipRuntime.TryOpen(["libidrak-no-such-hip-runtime.so"], [Path.GetTempPath()], out var handle, out string reason, out string from);
         Check(!opened && handle == IntPtr.Zero && from.Length == 0 && reason.Contains("libidrak-no-such-hip-runtime.so", StringComparison.Ordinal), $"missing library: {reason}");
 
-        // The install's folder comes before the system's search: a library present in both opens from the folder (on
-        // Windows the driver's older amdhip64.dll on the search path refused an installed SDK's compiled kernels).
-        // The runtime's own JIT is a native library every system has, already loaded by the process.
+        // A library found opens and says from where (the system's search first, then the install's folders).
         string folder = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
         string file = OperatingSystem.IsWindows() ? "clrjit.dll" : OperatingSystem.IsMacOS() ? "libclrjit.dylib" : "libclrjit.so";
         bool found = HipRuntime.TryOpen([file], [folder], out var both, out _, out string where);
-        Check(found && where == Path.Combine(folder, file), $"the install's folder first: opened {where}");
+        Check(found && where.EndsWith(file, StringComparison.Ordinal), $"opened from: {where}");
         if (found)
         {
             System.Runtime.InteropServices.NativeLibrary.Free(both);
+        }
+
+        // The code object formats: the compiler's own, then older ones for an older runtime; the one that loaded first
+        // from then on; IDRAK_HIP_CODE_OBJECT chooses one.
+        Check(HipRtc.CodeObjectFormats(null).SequenceEqual([null, "-mcode-object-version=5", "-mcode-object-version=4"]), "the compiler's own format, then 5 and 4");
+        Check(HipRtc.CodeObjectFormats("default").SequenceEqual([null]) && HipRtc.CodeObjectFormats("4").SequenceEqual(["-mcode-object-version=4"]),
+            "IDRAK_HIP_CODE_OBJECT: default, or one version");
+        HipRtc.FormatLoaded("-mcode-object-version=5");
+        var remembered = HipRtc.CodeObjectFormats("");
+        HipRtc.FormatLoaded(null);
+        Check(remembered.SequenceEqual(["-mcode-object-version=5", null, "-mcode-object-version=4"]), $"the format that loaded first: {string.Join(", ", remembered)}");
+        try
+        {
+            _ = HipRtc.CodeObjectFormats("newest");
+            Check(false, "an unknown IDRAK_HIP_CODE_OBJECT value is refused");
+        }
+        catch (HipException e)
+        {
+            Check(e.Message.Contains("IDRAK_HIP_CODE_OBJECT=newest", StringComparison.Ordinal), $"refused naming the value: {e.Message}");
         }
 
         // A refusal names both releases and files, and says when the runtime is older than the compiler.

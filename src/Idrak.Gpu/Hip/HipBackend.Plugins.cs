@@ -142,12 +142,7 @@ internal sealed unsafe partial class HipBackend : IKernelLauncher<HipKernel>
             KernelCache.Delete(key, architecture);                         // refused by this runtime: compile again
         }
 
-        byte[] code = HipRtc.Compile(kernel.Source, kernel.Name + ".hip", options, $"HIP kernel '{kernel.Name}'");
-        if (!TryLoadModule(code, out module, out string error))
-        {
-            throw new HipException($"the runtime refused the compiled HIP kernel '{kernel.Name}': {error}");
-        }
-
+        (byte[] code, module) = CompileAndLoad(kernel.Source, kernel.Name + ".hip", options, $"the compiled HIP kernel '{kernel.Name}'");
         KernelCache.Store(key, architecture, code);
         return _pluginModules[key] = module;
     }

@@ -54,15 +54,25 @@ internal static unsafe class HipRuntime
     internal static string CurrentOs => OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : "";
 
     /// <summary>
-    /// Opens the first library of <paramref name="names"/> found in <paramref name="folders"/> (the install HIP_PATH or
-    /// ROCM_PATH names), else by the system's default search; false (with the names tried) when none is there;
-    /// <paramref name="opened"/> is the path or name opened. The folders come first so the runtime and the compiler are
-    /// the same release: on Windows the graphics driver puts an older runtime (amdhip64.dll) on the default search path,
-    /// which cannot load the code an installed SDK's compiler makes (hipErrorSharedObjectInitFailed).
+    /// Opens the first library of <paramref name="names"/> found by the system's default search, else in
+    /// <paramref name="folders"/> (the install HIP_PATH or ROCM_PATH names); false (with the names tried) when none is
+    /// there; <paramref name="opened"/> is the name or path opened. The default search comes first: on Windows it finds the
+    /// runtime the graphics driver installed, the one matched to that driver (an SDK's newer runtime beside an older driver
+    /// can crash the process inside hipInit, which no handler catches). A runtime older than the SDK's compiler is met by
+    /// compiling for older code object formats (HipRtc.CodeObjectFormats); IDRAK_HIP_RUNTIME names another runtime to try first.
     /// Touches no shared state, so tests can ask for libraries that do not exist.
     /// </summary>
     internal static bool TryOpen(IReadOnlyList<string> names, IEnumerable<string> folders, out IntPtr handle, out string reason, out string opened)
     {
+        foreach (string name in names)
+        {
+            if (NativeLibrary.TryLoad(name, out handle))
+            {
+                (reason, opened) = ("", name);
+                return true;
+            }
+        }
+
         foreach (string folder in folders)
         {
             foreach (string name in names)
@@ -73,15 +83,6 @@ internal static unsafe class HipRuntime
                     (reason, opened) = ("", path);
                     return true;
                 }
-            }
-        }
-
-        foreach (string name in names)
-        {
-            if (NativeLibrary.TryLoad(name, out handle))
-            {
-                (reason, opened) = ("", name);
-                return true;
             }
         }
 
@@ -102,7 +103,9 @@ internal static unsafe class HipRuntime
         }
 
         string os = CurrentOs;
-        if (!TryOpen(CandidateNames(os), SearchFolders(os, Environment.GetEnvironmentVariable), out var handle, out reason, out string opened))
+        string[] names = Environment.GetEnvironmentVariable("IDRAK_HIP_RUNTIME") is { Length: > 0 } chosen
+            ? [chosen.Trim(), .. CandidateNames(os)] : CandidateNames(os);                  // a runtime (name or path) to try first
+        if (!TryOpen(names, SearchFolders(os, Environment.GetEnvironmentVariable), out var handle, out reason, out string opened))
         {
             return false;
         }

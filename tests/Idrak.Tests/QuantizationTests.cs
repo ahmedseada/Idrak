@@ -510,6 +510,12 @@ internal static partial class Tests
     // the products' backward closures made on every call though nothing was recorded. A failure names the types allocated.
     private static void FewRowProductsAllocateNothing(Device device)
     {
+        // A device whose kernels are off runs every product through the host fallback, which copies the operands each call.
+        if (device.Backend is IKernelAvailability { } availability && availability.KernelsUnavailable() is { } off)
+        {
+            Skip($"{device}'s kernels are unavailable ({off}): its products take the host fallback, which allocates its copies");
+        }
+
         const int K = 1024, N = 3072;                                     // large enough for the CPU to split the product across threads
         const double OutputTensorBytes = 320;                             // a Tensor, its shape array and its storage: about 220 bytes on the CPU
         var random = new Random(31);

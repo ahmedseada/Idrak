@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -51,6 +52,28 @@ internal static unsafe class HipRtc
         names.Add("hiprtc.dll");
         return [.. names];
     }
+
+    /// <summary>
+    /// The code object formats a compilation is tried with, in order: the compiler's own (null), then older ones
+    /// ("-mcode-object-version=5", then 4) for a runtime older than the compiler (the graphics driver's, refusing newer
+    /// code with hipErrorSharedObjectInitFailed). <paramref name="setting"/> (IDRAK_HIP_CODE_OBJECT) chooses one: a
+    /// version number, or "default" for the compiler's own only. The format that loads is kept for the process, so later
+    /// compilations start with it (<see cref="FormatLoaded"/>).
+    /// </summary>
+    internal static string?[] CodeObjectFormats(string? setting) => setting?.Trim() switch
+    {
+        null or "" => [s_loadedFormat, .. AllFormats.Where(f => f != s_loadedFormat)],
+        "default" => [null],
+        var version when int.TryParse(version, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) && v > 0 => [$"-mcode-object-version={v}"],
+        var other => throw new HipException($"IDRAK_HIP_CODE_OBJECT={other}: give a code object version (4, 5, 6) or 'default'"),
+    };
+
+    private static readonly string?[] AllFormats = [null, "-mcode-object-version=5", "-mcode-object-version=4"];
+
+    private static string? s_loadedFormat;
+
+    /// <summary>Records the code object format a runtime loaded (null: the compiler's own), tried first from then on.</summary>
+    internal static void FormatLoaded(string? format) => s_loadedFormat = format;
 
     /// <summary>The options of a compilation for the architecture <paramref name="architecture"/> (null: the current device's).</summary>
     internal static string[] Options(string? architecture, int blockSize)

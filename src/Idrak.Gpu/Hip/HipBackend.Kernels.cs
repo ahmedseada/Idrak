@@ -107,16 +107,43 @@ internal sealed unsafe partial class HipBackend
             return null;
         }
 
-        byte[] code = HipRtc.Compile(HipKernels.Source, "idrak_kernels.hip", options);
-        if (!TryLoadModule(code, out var compiled, out string error))
-        {
-            throw new HipException($"the runtime refused the compiled kernels: {error} ({Releases(_device.RuntimeVersion)})");
-        }
+        var (code, compiled) = CompileAndLoad(HipKernels.Source, "idrak_kernels.hip", options, "the compiled kernels");
 
         KernelCache.Store(key, architecture, code);
         KernelsOrigin = "compiled";
         _blockSize = block;
         return Functions(compiled);
+    }
+
+    // Compiles `source` and loads it on this device, in the compiler's own code object format, else older ones (a runtime
+    // older than the compiler refuses newer code: the graphics driver's runtime beside an SDK's compiler). A format the
+    // compiler lacks is passed over; when the runtime refuses every one, the error names each refusal and both releases.
+    private (byte[] Code, IntPtr Module) CompileAndLoad(string source, string name, string[] options, string what)
+    {
+        var refused = new List<string>();
+        foreach (string? format in HipRtc.CodeObjectFormats(Environment.GetEnvironmentVariable("IDRAK_HIP_CODE_OBJECT")))
+        {
+            byte[] code;
+            try
+            {
+                code = HipRtc.Compile(source, name, format is null ? options : [.. options, format], what);
+            }
+            catch (HipException e) when (format is not null)
+            {
+                refused.Add($"{format}: not compiled ({e.Message.Split('\n')[0]})");
+                continue;
+            }
+
+            if (TryLoadModule(code, out IntPtr module, out string error))
+            {
+                HipRtc.FormatLoaded(format);
+                return (code, module);
+            }
+
+            refused.Add($"{format ?? "the compiler's own format"}: {error}");
+        }
+
+        throw new HipException($"the runtime refused {what} in every code object format tried ({string.Join("; ", refused)}; {Releases(_device.RuntimeVersion)})");
     }
 
     // The runtime's and the compiler's releases and files, for a refusal: a runtime older than the compiler cannot load
@@ -127,7 +154,7 @@ internal sealed unsafe partial class HipBackend
         int dot = compilerVersion.IndexOf('.');
         bool older = int.TryParse(dot < 0 ? compilerVersion : compilerVersion.AsSpan(0, dot), System.Globalization.NumberStyles.Integer,
             System.Globalization.CultureInfo.InvariantCulture, out int compilerMajor) && runtimeVersion / 10_000_000 < compilerMajor;
-        return older ? text + "; the runtime is older than the compiler: install both from one SDK and point HIP_PATH at it" : text;
+        return older ? text + "; the runtime is older than the compiler: a newer graphics driver brings a newer runtime" : text;
     }
 
     private static string Releases(int runtimeVersion) => Releases(runtimeVersion, HipRuntime.LoadedFrom, HipRtc.Version, HipRtc.LoadedFrom);
