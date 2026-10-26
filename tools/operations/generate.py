@@ -221,6 +221,24 @@ def as_code(lines):
     return [re.sub(r'<paramref name="(\w+)"\s*/>', r"<c>\1</c>", line) for line in lines]
 
 
+def choose(d, returns, guarded, own, indent, last=False):
+    """Appends the call of a device's own kernel from NameRegistered: through NameGuarded where refused kernels fall back."""
+    if returns == "void":
+        d.append(f"{indent}if (RefusedKernelsFallBack)")
+        d.append(f"{indent}{{")
+        d.append(f"{indent}    {guarded};")
+        d.append(f"{indent}}}")
+        d.append(f"{indent}else")
+        d.append(f"{indent}{{")
+        d.append(f"{indent}    {own};")
+        d.append(f"{indent}}}")
+        if not last:
+            d.append("")
+            d.append(f"{indent}return;")
+    else:
+        d.append(f"{indent}return RefusedKernelsFallBack ? {guarded} : {own};")
+
+
 def generate():
     source = BACKEND.read_text(encoding="utf-8")
     ops = operations(source)
@@ -312,9 +330,12 @@ def generate():
     d.append("// has no kernel of its own for already runs its host fallback: it is not retried (it would only run twice).")
     d.append("// On a device that guards its moves (an IOffloadingBackend) every call takes the second path, inside an operation scope.")
     d.append("// On a device that builds its kernels when first used (BuildsKernelsWhenUsed: a driver may refuse one, throwing a")
-    d.append("// KernelUnavailableException) every call takes the second path too, and a refused kernel falls back whatever RetryOnHost")
-    d.append("// says: an operation with a host fallback runs NameOnHost, a composed one NameComposed (a copy of its default body), one")
-    d.append("// with no kernel otherwise returns its \"none\" value so the caller takes its own path; other errors reach the caller.")
+    d.append("// KernelUnavailableException) a refused kernel falls back whatever RetryOnHost says: an operation with a host fallback")
+    d.append("// runs NameOnHost, a composed one NameComposed (a copy of its default body), one with no kernel otherwise returns its")
+    d.append("// \"none\" value so the caller takes its own path; other errors reach the caller. Its calls take a third path,")
+    d.append("// NameGuarded (the device's kernel in a try region, free until it throws), straight from Name(...) when nothing else")
+    d.append("// takes them off the fast path (its slots are s_guardedKernels), else from NameRegistered; which operations the device")
+    d.append("// owns is looked up only when a kernel is refused (the catch's filter).")
     d.append("public abstract partial class Backend")
     d.append("{")
     for i, (method, op, returns, parameters, docs, default) in enumerate(named):
@@ -323,6 +344,7 @@ def generate():
         call = f"kernel(this{', ' + arguments if arguments else ''})"
         own = f"{method}Kernel({arguments})"
         registered = f"{op}Registered({arguments})"
+        guarded = f"{op}Guarded({arguments})"
         if i:
             d.append("")
         # The fast path (no kernel registered for this device and no trace: one field read) is inlined into the call
@@ -341,12 +363,16 @@ def generate():
             d.append("        {")
             d.append(f"            {own};")
             d.append("        }")
+            d.append("        else if (ReferenceEquals(_kernels, s_guardedKernels))")
+            d.append("        {")
+            d.append(f"            {guarded};")
+            d.append("        }")
             d.append("        else")
             d.append("        {")
             d.append(f"            {registered};")
             d.append("        }")
         else:
-            d.append(f"        return _kernels is null && _moves is null ? {own} : {registered};")
+            d.append(f"        return _kernels is null && _moves is null ? {own} : ReferenceEquals(_kernels, s_guardedKernels) ? {guarded} : {registered};")
         d.append("    }")
         d.append("")
         d.append("    [MethodImpl(MethodImplOptions.NoInlining)]")
@@ -366,19 +392,24 @@ def generate():
                 d.append("            return;")
             d.append("        }")
             d.append("")
-            d.append(f"        if (!RetriesOnHost || !OwnsKernel(OperationIndex.{op}))")
+            d.append("        if (!RetryOnHost)")
+            d.append("        {")
+            choose(d, returns, guarded, own, "            ")
+            d.append("        }")
+            d.append("")
+            d.append(f"        if (!OwnsKernel(OperationIndex.{op}))")
             d.append("        {")
             d.append(f"            {ret}{own};")
             if returns == "void":
                 d.append("            return;")
             d.append("        }")
             d.append("")
-            d.append(f"        var retry = new HostRetry(Ops.{op}, RetryOnHost);")
+            d.append(f"        var retry = new HostRetry(Ops.{op});")
             d.append("        try")
             d.append("        {")
             d.append(f"            {ret}{own};")
             d.append("        }")
-            d.append("        catch (DeviceException failure) when (retry.Takes(failure))")
+            d.append("        catch (DeviceException failure)")
             d.append("        {")
             d.append("            retry.Failed(this, failure);")
             d.append(f"            {ret}{host};")
@@ -387,6 +418,7 @@ def generate():
             d.append("        {")
             d.append("            retry.End();")
             d.append("        }")
+            fallback_call, where = host, "the host"
         else:
             # A composed operation falls back to a copy of its default body, one with no kernel otherwise to its "none".
             ret = "" if returns == "void" else "return "
@@ -400,25 +432,24 @@ def generate():
                 d.append("            return;")
             d.append("        }")
             d.append("")
-            d.append(f"        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.{op}))")
-            d.append("        {")
-            d.append(f"            {ret}{own};")
-            if returns == "void":
-                d.append("            return;")
-            d.append("        }")
-            d.append("")
-            d.append("        try")
-            d.append("        {")
-            d.append(f"            {ret}{own};")
-            d.append("        }")
-            d.append("        catch (KernelUnavailableException refused)")
-            d.append("        {")
-            d.append(f"            FellBack(Ops.{op}.Name, refused, \"{where}\");")
-            if returns == "void":
-                d.append(f"            {fallback_call};")
-            else:
-                d.append(f"            return {fallback_call};")
-            d.append("        }")
+            choose(d, returns, guarded, own, "        ", last=True)
+        d.append("    }")
+        # The call on a device whose refused kernels fall back: the device's kernel, and a refused one's fallback (only
+        # for a kernel of the device's own: an operation it has none for runs its fallback already).
+        d.append("")
+        d.append(f"    // {op} on a device whose refused kernels fall back (BuildsKernelsWhenUsed): {where} when its kernel is refused.")
+        d.append("    [MethodImpl(MethodImplOptions.NoInlining)]")
+        d.append(f"    private {returns} {op}Guarded({plain})")
+        d.append("    {")
+        d.append("        try")
+        d.append("        {")
+        d.append(f"            {'' if returns == 'void' else 'return '}{own};")
+        d.append("        }")
+        d.append(f"        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.{op}))")
+        d.append("        {")
+        d.append(f"            FellBack(Ops.{op}.Name, refused, \"{where}\");")
+        d.append(f"            {'' if returns == 'void' else 'return '}{fallback_call};")
+        d.append("        }")
         d.append("    }")
         if default == "Host":
             # The default body of NameKernel, not virtual: the host fallback whatever the device overrides (or whichever

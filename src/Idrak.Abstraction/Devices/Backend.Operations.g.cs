@@ -22,9 +22,12 @@ namespace Idrak.Abstraction.Devices;
 // has no kernel of its own for already runs its host fallback: it is not retried (it would only run twice).
 // On a device that guards its moves (an IOffloadingBackend) every call takes the second path, inside an operation scope.
 // On a device that builds its kernels when first used (BuildsKernelsWhenUsed: a driver may refuse one, throwing a
-// KernelUnavailableException) every call takes the second path too, and a refused kernel falls back whatever RetryOnHost
-// says: an operation with a host fallback runs NameOnHost, a composed one NameComposed (a copy of its default body), one
-// with no kernel otherwise returns its "none" value so the caller takes its own path; other errors reach the caller.
+// KernelUnavailableException) a refused kernel falls back whatever RetryOnHost says: an operation with a host fallback
+// runs NameOnHost, a composed one NameComposed (a copy of its default body), one with no kernel otherwise returns its
+// "none" value so the caller takes its own path; other errors reach the caller. Its calls take a third path,
+// NameGuarded (the device's kernel in a try region, free until it throws), straight from Name(...) when nothing else
+// takes them off the fast path (its slots are s_guardedKernels), else from NameRegistered; which operations the device
+// owns is looked up only when a kernel is refused (the catch's filter).
 public abstract partial class Backend
 {
     /// <summary>y[i] = value for i &lt; n.</summary>
@@ -35,6 +38,10 @@ public abstract partial class Backend
         if (_kernels is null && _moves is null)
         {
             FillKernel(y, n, value);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            FillGuarded(y, n, value);
         }
         else
         {
@@ -52,18 +59,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Fill))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                FillGuarded(y, n, value);
+            }
+            else
+            {
+                FillKernel(y, n, value);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Fill))
         {
             FillKernel(y, n, value);
             return;
         }
 
-        var retry = new HostRetry(Ops.Fill, RetryOnHost);
+        var retry = new HostRetry(Ops.Fill);
         try
         {
             FillKernel(y, n, value);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             FillOnHost(y, n, value);
@@ -71,6 +92,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Fill on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void FillGuarded(Storage y, int n, float value)
+    {
+        try
+        {
+            FillKernel(y, n, value);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Fill))
+        {
+            FellBack(Ops.Fill.Name, refused, "the host");
+            FillOnHost(y, n, value);
         }
     }
 
@@ -90,6 +126,10 @@ public abstract partial class Backend
         {
             UnaryKernel(op, x, y, n);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            UnaryGuarded(op, x, y, n);
+        }
         else
         {
             UnaryRegistered(op, x, y, n);
@@ -106,18 +146,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Unary))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                UnaryGuarded(op, x, y, n);
+            }
+            else
+            {
+                UnaryKernel(op, x, y, n);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Unary))
         {
             UnaryKernel(op, x, y, n);
             return;
         }
 
-        var retry = new HostRetry(Ops.Unary, RetryOnHost);
+        var retry = new HostRetry(Ops.Unary);
         try
         {
             UnaryKernel(op, x, y, n);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             UnaryOnHost(op, x, y, n);
@@ -125,6 +179,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Unary on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void UnaryGuarded(UnaryOp op, Storage x, Storage y, int n)
+    {
+        try
+        {
+            UnaryKernel(op, x, y, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Unary))
+        {
+            FellBack(Ops.Unary.Name, refused, "the host");
+            UnaryOnHost(op, x, y, n);
         }
     }
 
@@ -144,6 +213,10 @@ public abstract partial class Backend
         {
             UnaryBackwardKernel(op, x, y, dy, dx, n);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            UnaryBackwardGuarded(op, x, y, dy, dx, n);
+        }
         else
         {
             UnaryBackwardRegistered(op, x, y, dy, dx, n);
@@ -160,18 +233,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.UnaryBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                UnaryBackwardGuarded(op, x, y, dy, dx, n);
+            }
+            else
+            {
+                UnaryBackwardKernel(op, x, y, dy, dx, n);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.UnaryBackward))
         {
             UnaryBackwardKernel(op, x, y, dy, dx, n);
             return;
         }
 
-        var retry = new HostRetry(Ops.UnaryBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.UnaryBackward);
         try
         {
             UnaryBackwardKernel(op, x, y, dy, dx, n);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             UnaryBackwardOnHost(op, x, y, dy, dx, n);
@@ -179,6 +266,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // UnaryBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void UnaryBackwardGuarded(UnaryOp op, Storage x, Storage y, Storage dy, Storage dx, int n)
+    {
+        try
+        {
+            UnaryBackwardKernel(op, x, y, dy, dx, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.UnaryBackward))
+        {
+            FellBack(Ops.UnaryBackward.Name, refused, "the host");
+            UnaryBackwardOnHost(op, x, y, dy, dx, n);
         }
     }
 
@@ -198,6 +300,10 @@ public abstract partial class Backend
         {
             BinaryKernel(op, a, b, c, n);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BinaryGuarded(op, a, b, c, n);
+        }
         else
         {
             BinaryRegistered(op, a, b, c, n);
@@ -214,18 +320,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Binary))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                BinaryGuarded(op, a, b, c, n);
+            }
+            else
+            {
+                BinaryKernel(op, a, b, c, n);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Binary))
         {
             BinaryKernel(op, a, b, c, n);
             return;
         }
 
-        var retry = new HostRetry(Ops.Binary, RetryOnHost);
+        var retry = new HostRetry(Ops.Binary);
         try
         {
             BinaryKernel(op, a, b, c, n);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             BinaryOnHost(op, a, b, c, n);
@@ -233,6 +353,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Binary on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BinaryGuarded(BinaryOp op, Storage a, Storage b, Storage c, int n)
+    {
+        try
+        {
+            BinaryKernel(op, a, b, c, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Binary))
+        {
+            FellBack(Ops.Binary.Name, refused, "the host");
+            BinaryOnHost(op, a, b, c, n);
         }
     }
 
@@ -255,6 +390,10 @@ public abstract partial class Backend
         {
             ExtremumBackwardKernel(op, a, b, dy, da, db, n);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ExtremumBackwardGuarded(op, a, b, dy, da, db, n);
+        }
         else
         {
             ExtremumBackwardRegistered(op, a, b, dy, da, db, n);
@@ -271,18 +410,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.ExtremumBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                ExtremumBackwardGuarded(op, a, b, dy, da, db, n);
+            }
+            else
+            {
+                ExtremumBackwardKernel(op, a, b, dy, da, db, n);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.ExtremumBackward))
         {
             ExtremumBackwardKernel(op, a, b, dy, da, db, n);
             return;
         }
 
-        var retry = new HostRetry(Ops.ExtremumBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.ExtremumBackward);
         try
         {
             ExtremumBackwardKernel(op, a, b, dy, da, db, n);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             ExtremumBackwardOnHost(op, a, b, dy, da, db, n);
@@ -290,6 +443,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // ExtremumBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ExtremumBackwardGuarded(BinaryOp op, Storage a, Storage b, Storage dy, Storage? da, Storage? db, int n)
+    {
+        try
+        {
+            ExtremumBackwardKernel(op, a, b, dy, da, db, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ExtremumBackward))
+        {
+            FellBack(Ops.ExtremumBackward.Name, refused, "the host");
+            ExtremumBackwardOnHost(op, a, b, dy, da, db, n);
         }
     }
 
@@ -309,6 +477,10 @@ public abstract partial class Backend
         {
             PowKernel(x, y, n, exponent);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            PowGuarded(x, y, n, exponent);
+        }
         else
         {
             PowRegistered(x, y, n, exponent);
@@ -325,18 +497,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Pow))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                PowGuarded(x, y, n, exponent);
+            }
+            else
+            {
+                PowKernel(x, y, n, exponent);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Pow))
         {
             PowKernel(x, y, n, exponent);
             return;
         }
 
-        var retry = new HostRetry(Ops.Pow, RetryOnHost);
+        var retry = new HostRetry(Ops.Pow);
         try
         {
             PowKernel(x, y, n, exponent);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             PowOnHost(x, y, n, exponent);
@@ -344,6 +530,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Pow on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PowGuarded(Storage x, Storage y, int n, float exponent)
+    {
+        try
+        {
+            PowKernel(x, y, n, exponent);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Pow))
+        {
+            FellBack(Ops.Pow.Name, refused, "the host");
+            PowOnHost(x, y, n, exponent);
         }
     }
 
@@ -363,6 +564,10 @@ public abstract partial class Backend
         {
             PowBackwardKernel(x, dy, dx, n, exponent);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            PowBackwardGuarded(x, dy, dx, n, exponent);
+        }
         else
         {
             PowBackwardRegistered(x, dy, dx, n, exponent);
@@ -379,18 +584,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.PowBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                PowBackwardGuarded(x, dy, dx, n, exponent);
+            }
+            else
+            {
+                PowBackwardKernel(x, dy, dx, n, exponent);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.PowBackward))
         {
             PowBackwardKernel(x, dy, dx, n, exponent);
             return;
         }
 
-        var retry = new HostRetry(Ops.PowBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.PowBackward);
         try
         {
             PowBackwardKernel(x, dy, dx, n, exponent);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             PowBackwardOnHost(x, dy, dx, n, exponent);
@@ -398,6 +617,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // PowBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PowBackwardGuarded(Storage x, Storage dy, Storage dx, int n, float exponent)
+    {
+        try
+        {
+            PowBackwardKernel(x, dy, dx, n, exponent);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.PowBackward))
+        {
+            FellBack(Ops.PowBackward.Name, refused, "the host");
+            PowBackwardOnHost(x, dy, dx, n, exponent);
         }
     }
 
@@ -417,6 +651,10 @@ public abstract partial class Backend
         {
             ClampKernel(x, y, n, min, max);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ClampGuarded(x, y, n, min, max);
+        }
         else
         {
             ClampRegistered(x, y, n, min, max);
@@ -433,18 +671,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Clamp))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                ClampGuarded(x, y, n, min, max);
+            }
+            else
+            {
+                ClampKernel(x, y, n, min, max);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Clamp))
         {
             ClampKernel(x, y, n, min, max);
             return;
         }
 
-        var retry = new HostRetry(Ops.Clamp, RetryOnHost);
+        var retry = new HostRetry(Ops.Clamp);
         try
         {
             ClampKernel(x, y, n, min, max);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             ClampOnHost(x, y, n, min, max);
@@ -452,6 +704,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Clamp on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ClampGuarded(Storage x, Storage y, int n, float min, float max)
+    {
+        try
+        {
+            ClampKernel(x, y, n, min, max);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Clamp))
+        {
+            FellBack(Ops.Clamp.Name, refused, "the host");
+            ClampOnHost(x, y, n, min, max);
         }
     }
 
@@ -471,6 +738,10 @@ public abstract partial class Backend
         {
             ClampBackwardKernel(x, dy, dx, n, min, max);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ClampBackwardGuarded(x, dy, dx, n, min, max);
+        }
         else
         {
             ClampBackwardRegistered(x, dy, dx, n, min, max);
@@ -487,18 +758,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.ClampBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                ClampBackwardGuarded(x, dy, dx, n, min, max);
+            }
+            else
+            {
+                ClampBackwardKernel(x, dy, dx, n, min, max);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.ClampBackward))
         {
             ClampBackwardKernel(x, dy, dx, n, min, max);
             return;
         }
 
-        var retry = new HostRetry(Ops.ClampBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.ClampBackward);
         try
         {
             ClampBackwardKernel(x, dy, dx, n, min, max);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             ClampBackwardOnHost(x, dy, dx, n, min, max);
@@ -506,6 +791,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // ClampBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ClampBackwardGuarded(Storage x, Storage dy, Storage dx, int n, float min, float max)
+    {
+        try
+        {
+            ClampBackwardKernel(x, dy, dx, n, min, max);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ClampBackward))
+        {
+            FellBack(Ops.ClampBackward.Name, refused, "the host");
+            ClampBackwardOnHost(x, dy, dx, n, min, max);
         }
     }
 
@@ -525,6 +825,10 @@ public abstract partial class Backend
         {
             LeakyReluKernel(x, y, n, slope);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            LeakyReluGuarded(x, y, n, slope);
+        }
         else
         {
             LeakyReluRegistered(x, y, n, slope);
@@ -541,18 +845,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.LeakyRelu))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                LeakyReluGuarded(x, y, n, slope);
+            }
+            else
+            {
+                LeakyReluKernel(x, y, n, slope);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.LeakyRelu))
         {
             LeakyReluKernel(x, y, n, slope);
             return;
         }
 
-        var retry = new HostRetry(Ops.LeakyRelu, RetryOnHost);
+        var retry = new HostRetry(Ops.LeakyRelu);
         try
         {
             LeakyReluKernel(x, y, n, slope);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             LeakyReluOnHost(x, y, n, slope);
@@ -560,6 +878,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // LeakyRelu on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LeakyReluGuarded(Storage x, Storage y, int n, float slope)
+    {
+        try
+        {
+            LeakyReluKernel(x, y, n, slope);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LeakyRelu))
+        {
+            FellBack(Ops.LeakyRelu.Name, refused, "the host");
+            LeakyReluOnHost(x, y, n, slope);
         }
     }
 
@@ -579,6 +912,10 @@ public abstract partial class Backend
         {
             LeakyReluBackwardKernel(x, dy, dx, n, slope);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            LeakyReluBackwardGuarded(x, dy, dx, n, slope);
+        }
         else
         {
             LeakyReluBackwardRegistered(x, dy, dx, n, slope);
@@ -595,18 +932,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.LeakyReluBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                LeakyReluBackwardGuarded(x, dy, dx, n, slope);
+            }
+            else
+            {
+                LeakyReluBackwardKernel(x, dy, dx, n, slope);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.LeakyReluBackward))
         {
             LeakyReluBackwardKernel(x, dy, dx, n, slope);
             return;
         }
 
-        var retry = new HostRetry(Ops.LeakyReluBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.LeakyReluBackward);
         try
         {
             LeakyReluBackwardKernel(x, dy, dx, n, slope);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             LeakyReluBackwardOnHost(x, dy, dx, n, slope);
@@ -614,6 +965,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // LeakyReluBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LeakyReluBackwardGuarded(Storage x, Storage dy, Storage dx, int n, float slope)
+    {
+        try
+        {
+            LeakyReluBackwardKernel(x, dy, dx, n, slope);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LeakyReluBackward))
+        {
+            FellBack(Ops.LeakyReluBackward.Name, refused, "the host");
+            LeakyReluBackwardOnHost(x, dy, dx, n, slope);
         }
     }
 
@@ -633,6 +999,10 @@ public abstract partial class Backend
         {
             WhereKernel(condition, a, b, y, n);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            WhereGuarded(condition, a, b, y, n);
+        }
         else
         {
             WhereRegistered(condition, a, b, y, n);
@@ -649,18 +1019,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Where))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                WhereGuarded(condition, a, b, y, n);
+            }
+            else
+            {
+                WhereKernel(condition, a, b, y, n);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Where))
         {
             WhereKernel(condition, a, b, y, n);
             return;
         }
 
-        var retry = new HostRetry(Ops.Where, RetryOnHost);
+        var retry = new HostRetry(Ops.Where);
         try
         {
             WhereKernel(condition, a, b, y, n);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             WhereOnHost(condition, a, b, y, n);
@@ -668,6 +1052,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Where on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void WhereGuarded(Storage condition, Storage a, Storage b, Storage y, int n)
+    {
+        try
+        {
+            WhereKernel(condition, a, b, y, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Where))
+        {
+            FellBack(Ops.Where.Name, refused, "the host");
+            WhereOnHost(condition, a, b, y, n);
         }
     }
 
@@ -687,6 +1086,10 @@ public abstract partial class Backend
         {
             WhereBackwardKernel(condition, dy, da, db, n);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            WhereBackwardGuarded(condition, dy, da, db, n);
+        }
         else
         {
             WhereBackwardRegistered(condition, dy, da, db, n);
@@ -703,18 +1106,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.WhereBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                WhereBackwardGuarded(condition, dy, da, db, n);
+            }
+            else
+            {
+                WhereBackwardKernel(condition, dy, da, db, n);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.WhereBackward))
         {
             WhereBackwardKernel(condition, dy, da, db, n);
             return;
         }
 
-        var retry = new HostRetry(Ops.WhereBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.WhereBackward);
         try
         {
             WhereBackwardKernel(condition, dy, da, db, n);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             WhereBackwardOnHost(condition, dy, da, db, n);
@@ -722,6 +1139,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // WhereBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void WhereBackwardGuarded(Storage condition, Storage dy, Storage? da, Storage? db, int n)
+    {
+        try
+        {
+            WhereBackwardKernel(condition, dy, da, db, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.WhereBackward))
+        {
+            FellBack(Ops.WhereBackward.Name, refused, "the host");
+            WhereBackwardOnHost(condition, dy, da, db, n);
         }
     }
 
@@ -741,6 +1173,10 @@ public abstract partial class Backend
         {
             AffineKernel(x, y, n, alpha, beta);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AffineGuarded(x, y, n, alpha, beta);
+        }
         else
         {
             AffineRegistered(x, y, n, alpha, beta);
@@ -757,18 +1193,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Affine))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AffineGuarded(x, y, n, alpha, beta);
+            }
+            else
+            {
+                AffineKernel(x, y, n, alpha, beta);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Affine))
         {
             AffineKernel(x, y, n, alpha, beta);
             return;
         }
 
-        var retry = new HostRetry(Ops.Affine, RetryOnHost);
+        var retry = new HostRetry(Ops.Affine);
         try
         {
             AffineKernel(x, y, n, alpha, beta);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AffineOnHost(x, y, n, alpha, beta);
@@ -776,6 +1226,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Affine on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AffineGuarded(Storage x, Storage y, int n, float alpha, float beta)
+    {
+        try
+        {
+            AffineKernel(x, y, n, alpha, beta);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Affine))
+        {
+            FellBack(Ops.Affine.Name, refused, "the host");
+            AffineOnHost(x, y, n, alpha, beta);
         }
     }
 
@@ -795,6 +1260,10 @@ public abstract partial class Backend
         {
             AxpyKernel(x, y, n, alpha);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AxpyGuarded(x, y, n, alpha);
+        }
         else
         {
             AxpyRegistered(x, y, n, alpha);
@@ -811,18 +1280,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Axpy))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AxpyGuarded(x, y, n, alpha);
+            }
+            else
+            {
+                AxpyKernel(x, y, n, alpha);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Axpy))
         {
             AxpyKernel(x, y, n, alpha);
             return;
         }
 
-        var retry = new HostRetry(Ops.Axpy, RetryOnHost);
+        var retry = new HostRetry(Ops.Axpy);
         try
         {
             AxpyKernel(x, y, n, alpha);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AxpyOnHost(x, y, n, alpha);
@@ -830,6 +1313,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Axpy on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AxpyGuarded(Storage x, Storage y, int n, float alpha)
+    {
+        try
+        {
+            AxpyKernel(x, y, n, alpha);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Axpy))
+        {
+            FellBack(Ops.Axpy.Name, refused, "the host");
+            AxpyOnHost(x, y, n, alpha);
         }
     }
 
@@ -849,6 +1347,10 @@ public abstract partial class Backend
         {
             MulAddKernel(a, b, c, n);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            MulAddGuarded(a, b, c, n);
+        }
         else
         {
             MulAddRegistered(a, b, c, n);
@@ -865,18 +1367,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.MulAdd))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                MulAddGuarded(a, b, c, n);
+            }
+            else
+            {
+                MulAddKernel(a, b, c, n);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.MulAdd))
         {
             MulAddKernel(a, b, c, n);
             return;
         }
 
-        var retry = new HostRetry(Ops.MulAdd, RetryOnHost);
+        var retry = new HostRetry(Ops.MulAdd);
         try
         {
             MulAddKernel(a, b, c, n);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             MulAddOnHost(a, b, c, n);
@@ -884,6 +1400,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // MulAdd on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MulAddGuarded(Storage a, Storage b, Storage c, int n)
+    {
+        try
+        {
+            MulAddKernel(a, b, c, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.MulAdd))
+        {
+            FellBack(Ops.MulAdd.Name, refused, "the host");
+            MulAddOnHost(a, b, c, n);
         }
     }
 
@@ -903,6 +1434,10 @@ public abstract partial class Backend
         {
             AddRowVectorKernel(a, v, c, rows, cols);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AddRowVectorGuarded(a, v, c, rows, cols);
+        }
         else
         {
             AddRowVectorRegistered(a, v, c, rows, cols);
@@ -919,18 +1454,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AddRowVector))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AddRowVectorGuarded(a, v, c, rows, cols);
+            }
+            else
+            {
+                AddRowVectorKernel(a, v, c, rows, cols);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AddRowVector))
         {
             AddRowVectorKernel(a, v, c, rows, cols);
             return;
         }
 
-        var retry = new HostRetry(Ops.AddRowVector, RetryOnHost);
+        var retry = new HostRetry(Ops.AddRowVector);
         try
         {
             AddRowVectorKernel(a, v, c, rows, cols);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AddRowVectorOnHost(a, v, c, rows, cols);
@@ -938,6 +1487,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AddRowVector on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AddRowVectorGuarded(Storage a, Storage v, Storage c, int rows, int cols)
+    {
+        try
+        {
+            AddRowVectorKernel(a, v, c, rows, cols);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AddRowVector))
+        {
+            FellBack(Ops.AddRowVector.Name, refused, "the host");
+            AddRowVectorOnHost(a, v, c, rows, cols);
         }
     }
 
@@ -957,6 +1521,10 @@ public abstract partial class Backend
         {
             SumRowsKernel(x, y, rows, cols);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SumRowsGuarded(x, y, rows, cols);
+        }
         else
         {
             SumRowsRegistered(x, y, rows, cols);
@@ -973,18 +1541,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.SumRows))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                SumRowsGuarded(x, y, rows, cols);
+            }
+            else
+            {
+                SumRowsKernel(x, y, rows, cols);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.SumRows))
         {
             SumRowsKernel(x, y, rows, cols);
             return;
         }
 
-        var retry = new HostRetry(Ops.SumRows, RetryOnHost);
+        var retry = new HostRetry(Ops.SumRows);
         try
         {
             SumRowsKernel(x, y, rows, cols);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             SumRowsOnHost(x, y, rows, cols);
@@ -992,6 +1574,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // SumRows on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumRowsGuarded(Storage x, Storage y, int rows, int cols)
+    {
+        try
+        {
+            SumRowsKernel(x, y, rows, cols);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SumRows))
+        {
+            FellBack(Ops.SumRows.Name, refused, "the host");
+            SumRowsOnHost(x, y, rows, cols);
         }
     }
 
@@ -1011,6 +1608,10 @@ public abstract partial class Backend
         {
             SumKernel(x, result, n, scale);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SumGuarded(x, result, n, scale);
+        }
         else
         {
             SumRegistered(x, result, n, scale);
@@ -1027,18 +1628,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Sum))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                SumGuarded(x, result, n, scale);
+            }
+            else
+            {
+                SumKernel(x, result, n, scale);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Sum))
         {
             SumKernel(x, result, n, scale);
             return;
         }
 
-        var retry = new HostRetry(Ops.Sum, RetryOnHost);
+        var retry = new HostRetry(Ops.Sum);
         try
         {
             SumKernel(x, result, n, scale);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             SumOnHost(x, result, n, scale);
@@ -1046,6 +1661,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Sum on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumGuarded(Storage x, Storage result, int n, float scale)
+    {
+        try
+        {
+            SumKernel(x, result, n, scale);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Sum))
+        {
+            FellBack(Ops.Sum.Name, refused, "the host");
+            SumOnHost(x, result, n, scale);
         }
     }
 
@@ -1065,6 +1695,10 @@ public abstract partial class Backend
         {
             AxpyAtKernel(x, y, offset, alpha);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AxpyAtGuarded(x, y, offset, alpha);
+        }
         else
         {
             AxpyAtRegistered(x, y, offset, alpha);
@@ -1081,18 +1715,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AxpyAt))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AxpyAtGuarded(x, y, offset, alpha);
+            }
+            else
+            {
+                AxpyAtKernel(x, y, offset, alpha);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AxpyAt))
         {
             AxpyAtKernel(x, y, offset, alpha);
             return;
         }
 
-        var retry = new HostRetry(Ops.AxpyAt, RetryOnHost);
+        var retry = new HostRetry(Ops.AxpyAt);
         try
         {
             AxpyAtKernel(x, y, offset, alpha);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AxpyAtOnHost(x, y, offset, alpha);
@@ -1100,6 +1748,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AxpyAt on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AxpyAtGuarded(Storage x, Storage y, int offset, float alpha)
+    {
+        try
+        {
+            AxpyAtKernel(x, y, offset, alpha);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AxpyAt))
+        {
+            FellBack(Ops.AxpyAt.Name, refused, "the host");
+            AxpyAtOnHost(x, y, offset, alpha);
         }
     }
 
@@ -1119,6 +1782,10 @@ public abstract partial class Backend
         {
             AddBroadcastScalarKernel(s, y, n, scale);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AddBroadcastScalarGuarded(s, y, n, scale);
+        }
         else
         {
             AddBroadcastScalarRegistered(s, y, n, scale);
@@ -1135,18 +1802,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AddBroadcastScalar))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AddBroadcastScalarGuarded(s, y, n, scale);
+            }
+            else
+            {
+                AddBroadcastScalarKernel(s, y, n, scale);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AddBroadcastScalar))
         {
             AddBroadcastScalarKernel(s, y, n, scale);
             return;
         }
 
-        var retry = new HostRetry(Ops.AddBroadcastScalar, RetryOnHost);
+        var retry = new HostRetry(Ops.AddBroadcastScalar);
         try
         {
             AddBroadcastScalarKernel(s, y, n, scale);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AddBroadcastScalarOnHost(s, y, n, scale);
@@ -1154,6 +1835,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AddBroadcastScalar on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AddBroadcastScalarGuarded(Storage s, Storage y, int n, float scale)
+    {
+        try
+        {
+            AddBroadcastScalarKernel(s, y, n, scale);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AddBroadcastScalar))
+        {
+            FellBack(Ops.AddBroadcastScalar.Name, refused, "the host");
+            AddBroadcastScalarOnHost(s, y, n, scale);
         }
     }
 
@@ -1172,7 +1868,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulLarge(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
-        return _kernels is null && _moves is null ? PackedMatMulLargeKernel(format, x, packed, scales, y, m, n, k) : PackedMatMulLargeRegistered(format, x, packed, scales, y, m, n, k);
+        return _kernels is null && _moves is null ? PackedMatMulLargeKernel(format, x, packed, scales, y, m, n, k) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulLargeGuarded(format, x, packed, scales, y, m, n, k) : PackedMatMulLargeRegistered(format, x, packed, scales, y, m, n, k);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1184,16 +1880,18 @@ public abstract partial class Backend
             return kernel(this, format, x, packed, scales, y, m, n, k);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.PackedMatMulLarge))
-        {
-            return PackedMatMulLargeKernel(format, x, packed, scales, y, m, n, k);
-        }
+        return RefusedKernelsFallBack ? PackedMatMulLargeGuarded(format, x, packed, scales, y, m, n, k) : PackedMatMulLargeKernel(format, x, packed, scales, y, m, n, k);
+    }
 
+    // PackedMatMulLarge on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulLargeGuarded(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
+    {
         try
         {
             return PackedMatMulLargeKernel(format, x, packed, scales, y, m, n, k);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.PackedMatMulLarge))
         {
             FellBack(Ops.PackedMatMulLarge.Name, refused, "the caller's path");
             return default;
@@ -1217,6 +1915,10 @@ public abstract partial class Backend
         {
             PackedMatMulEpilogueKernel(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            PackedMatMulEpilogueGuarded(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+        }
         else
         {
             PackedMatMulEpilogueRegistered(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
@@ -1233,17 +1935,25 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.PackedMatMulEpilogue))
+        if (RefusedKernelsFallBack)
+        {
+            PackedMatMulEpilogueGuarded(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
+        }
+        else
         {
             PackedMatMulEpilogueKernel(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
-            return;
         }
+    }
 
+    // PackedMatMulEpilogue on a device whose refused kernels fall back (BuildsKernelsWhenUsed): its composed path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PackedMatMulEpilogueGuarded(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias, Storage? residual, bool gelu)
+    {
         try
         {
             PackedMatMulEpilogueKernel(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.PackedMatMulEpilogue))
         {
             FellBack(Ops.PackedMatMulEpilogue.Name, refused, "its composed path");
             PackedMatMulEpilogueComposed(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
@@ -1310,7 +2020,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulGated(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
-        return _kernels is null && _moves is null ? PackedMatMulGatedKernel(format, activation, gate, up, packed, scales, y, m, n, k) : PackedMatMulGatedRegistered(format, activation, gate, up, packed, scales, y, m, n, k);
+        return _kernels is null && _moves is null ? PackedMatMulGatedKernel(format, activation, gate, up, packed, scales, y, m, n, k) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulGatedGuarded(format, activation, gate, up, packed, scales, y, m, n, k) : PackedMatMulGatedRegistered(format, activation, gate, up, packed, scales, y, m, n, k);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1322,16 +2032,18 @@ public abstract partial class Backend
             return kernel(this, format, activation, gate, up, packed, scales, y, m, n, k);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.PackedMatMulGated))
-        {
-            return PackedMatMulGatedKernel(format, activation, gate, up, packed, scales, y, m, n, k);
-        }
+        return RefusedKernelsFallBack ? PackedMatMulGatedGuarded(format, activation, gate, up, packed, scales, y, m, n, k) : PackedMatMulGatedKernel(format, activation, gate, up, packed, scales, y, m, n, k);
+    }
 
+    // PackedMatMulGated on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulGatedGuarded(PackedFormat format, int activation, Storage gate, Storage up, Storage packed, Storage? scales, Storage y, int m, int n, int k)
+    {
         try
         {
             return PackedMatMulGatedKernel(format, activation, gate, up, packed, scales, y, m, n, k);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.PackedMatMulGated))
         {
             FellBack(Ops.PackedMatMulGated.Name, refused, "the caller's path");
             return default;
@@ -1347,7 +2059,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
-        return _kernels is null && _moves is null ? PackedMatMulAddRmsNormKernel(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : PackedMatMulAddRmsNormRegistered(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+        return _kernels is null && _moves is null ? PackedMatMulAddRmsNormKernel(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulAddRmsNormGuarded(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : PackedMatMulAddRmsNormRegistered(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1359,16 +2071,18 @@ public abstract partial class Backend
             return kernel(this, format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.PackedMatMulAddRmsNorm))
-        {
-            return PackedMatMulAddRmsNormKernel(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
-        }
+        return RefusedKernelsFallBack ? PackedMatMulAddRmsNormGuarded(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset) : PackedMatMulAddRmsNormKernel(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
+    }
 
+    // PackedMatMulAddRmsNorm on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulAddRmsNormGuarded(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
         try
         {
             return PackedMatMulAddRmsNormKernel(format, x, packed, scales, y, m, n, k, residual, sum, gain, normalized, eps, offset);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.PackedMatMulAddRmsNorm))
         {
             FellBack(Ops.PackedMatMulAddRmsNorm.Name, refused, "the caller's path");
             return default;
@@ -1388,7 +2102,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulNormAddRmsNorm(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
     {
-        return _kernels is null && _moves is null ? PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset) : PackedMatMulNormAddRmsNormRegistered(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
+        return _kernels is null && _moves is null ? PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulNormAddRmsNormGuarded(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset) : PackedMatMulNormAddRmsNormRegistered(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1400,16 +2114,18 @@ public abstract partial class Backend
             return kernel(this, format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.PackedMatMulNormAddRmsNorm))
-        {
-            return PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
-        }
+        return RefusedKernelsFallBack ? PackedMatMulNormAddRmsNormGuarded(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset) : PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
+    }
 
+    // PackedMatMulNormAddRmsNorm on a device whose refused kernels fall back (BuildsKernelsWhenUsed): its composed path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulNormAddRmsNormGuarded(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage yGain, float yEps, float yOffset, Storage residual, Storage sum, Storage gain, Storage normalized, float eps, float offset)
+    {
         try
         {
             return PackedMatMulNormAddRmsNormKernel(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.PackedMatMulNormAddRmsNorm))
         {
             FellBack(Ops.PackedMatMulNormAddRmsNorm.Name, refused, "its composed path");
             return PackedMatMulNormAddRmsNormComposed(format, x, packed, scales, y, m, n, k, yGain, yEps, yOffset, residual, sum, gain, normalized, eps, offset);
@@ -1454,7 +2170,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulMany(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products)
     {
-        return _kernels is null && _moves is null ? PackedMatMulManyKernel(format, x, m, k, products) : PackedMatMulManyRegistered(format, x, m, k, products);
+        return _kernels is null && _moves is null ? PackedMatMulManyKernel(format, x, m, k, products) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulManyGuarded(format, x, m, k, products) : PackedMatMulManyRegistered(format, x, m, k, products);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1466,16 +2182,18 @@ public abstract partial class Backend
             return kernel(this, format, x, m, k, products);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.PackedMatMulMany))
-        {
-            return PackedMatMulManyKernel(format, x, m, k, products);
-        }
+        return RefusedKernelsFallBack ? PackedMatMulManyGuarded(format, x, m, k, products) : PackedMatMulManyKernel(format, x, m, k, products);
+    }
 
+    // PackedMatMulMany on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulManyGuarded(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products)
+    {
         try
         {
             return PackedMatMulManyKernel(format, x, m, k, products);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.PackedMatMulMany))
         {
             FellBack(Ops.PackedMatMulMany.Name, refused, "the caller's path");
             return default;
@@ -1491,7 +2209,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulGatedPair(PackedFormat format, int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden)
     {
-        return _kernels is null && _moves is null ? PackedMatMulGatedPairKernel(format, activation, x, m, k, products, hidden) : PackedMatMulGatedPairRegistered(format, activation, x, m, k, products, hidden);
+        return _kernels is null && _moves is null ? PackedMatMulGatedPairKernel(format, activation, x, m, k, products, hidden) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulGatedPairGuarded(format, activation, x, m, k, products, hidden) : PackedMatMulGatedPairRegistered(format, activation, x, m, k, products, hidden);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1503,16 +2221,18 @@ public abstract partial class Backend
             return kernel(this, format, activation, x, m, k, products, hidden);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.PackedMatMulGatedPair))
-        {
-            return PackedMatMulGatedPairKernel(format, activation, x, m, k, products, hidden);
-        }
+        return RefusedKernelsFallBack ? PackedMatMulGatedPairGuarded(format, activation, x, m, k, products, hidden) : PackedMatMulGatedPairKernel(format, activation, x, m, k, products, hidden);
+    }
 
+    // PackedMatMulGatedPair on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulGatedPairGuarded(PackedFormat format, int activation, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, Storage hidden)
+    {
         try
         {
             return PackedMatMulGatedPairKernel(format, activation, x, m, k, products, hidden);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.PackedMatMulGatedPair))
         {
             FellBack(Ops.PackedMatMulGatedPair.Name, refused, "the caller's path");
             return default;
@@ -1531,6 +2251,10 @@ public abstract partial class Backend
         {
             MatMulManyKernel(a, m, k, products);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            MatMulManyGuarded(a, m, k, products);
+        }
         else
         {
             MatMulManyRegistered(a, m, k, products);
@@ -1547,17 +2271,25 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.MatMulMany))
+        if (RefusedKernelsFallBack)
+        {
+            MatMulManyGuarded(a, m, k, products);
+        }
+        else
         {
             MatMulManyKernel(a, m, k, products);
-            return;
         }
+    }
 
+    // MatMulMany on a device whose refused kernels fall back (BuildsKernelsWhenUsed): its composed path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MatMulManyGuarded(Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products)
+    {
         try
         {
             MatMulManyKernel(a, m, k, products);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.MatMulMany))
         {
             FellBack(Ops.MatMulMany.Name, refused, "its composed path");
             MatMulManyComposed(a, m, k, products);
@@ -1585,7 +2317,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool MatMulBias(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
     {
-        return _kernels is null && _moves is null ? MatMulBiasKernel(a, b, bias, c, m, n, k) : MatMulBiasRegistered(a, b, bias, c, m, n, k);
+        return _kernels is null && _moves is null ? MatMulBiasKernel(a, b, bias, c, m, n, k) : ReferenceEquals(_kernels, s_guardedKernels) ? MatMulBiasGuarded(a, b, bias, c, m, n, k) : MatMulBiasRegistered(a, b, bias, c, m, n, k);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1597,16 +2329,18 @@ public abstract partial class Backend
             return kernel(this, a, b, bias, c, m, n, k);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.MatMulBias))
-        {
-            return MatMulBiasKernel(a, b, bias, c, m, n, k);
-        }
+        return RefusedKernelsFallBack ? MatMulBiasGuarded(a, b, bias, c, m, n, k) : MatMulBiasKernel(a, b, bias, c, m, n, k);
+    }
 
+    // MatMulBias on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool MatMulBiasGuarded(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k)
+    {
         try
         {
             return MatMulBiasKernel(a, b, bias, c, m, n, k);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.MatMulBias))
         {
             FellBack(Ops.MatMulBias.Name, refused, "the caller's path");
             return default;
@@ -1622,7 +2356,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool MatMulLowRank(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
     {
-        return _kernels is null && _moves is null ? MatMulLowRankKernel(a, b, c, m, n, k, transB, beta, u, v, rank) : MatMulLowRankRegistered(a, b, c, m, n, k, transB, beta, u, v, rank);
+        return _kernels is null && _moves is null ? MatMulLowRankKernel(a, b, c, m, n, k, transB, beta, u, v, rank) : ReferenceEquals(_kernels, s_guardedKernels) ? MatMulLowRankGuarded(a, b, c, m, n, k, transB, beta, u, v, rank) : MatMulLowRankRegistered(a, b, c, m, n, k, transB, beta, u, v, rank);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1634,16 +2368,18 @@ public abstract partial class Backend
             return kernel(this, a, b, c, m, n, k, transB, beta, u, v, rank);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.MatMulLowRank))
-        {
-            return MatMulLowRankKernel(a, b, c, m, n, k, transB, beta, u, v, rank);
-        }
+        return RefusedKernelsFallBack ? MatMulLowRankGuarded(a, b, c, m, n, k, transB, beta, u, v, rank) : MatMulLowRankKernel(a, b, c, m, n, k, transB, beta, u, v, rank);
+    }
 
+    // MatMulLowRank on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool MatMulLowRankGuarded(Storage a, Storage b, Storage c, int m, int n, int k, bool transB, float beta, Storage u, Storage v, int rank)
+    {
         try
         {
             return MatMulLowRankKernel(a, b, c, m, n, k, transB, beta, u, v, rank);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.MatMulLowRank))
         {
             FellBack(Ops.MatMulLowRank.Name, refused, "the caller's path");
             return default;
@@ -1660,7 +2396,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool BFloat16TransposedMatMul(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank)
     {
-        return _kernels is null && _moves is null ? BFloat16TransposedMatMulKernel(a, packed, c, m, n, k, beta, u, v, rank) : BFloat16TransposedMatMulRegistered(a, packed, c, m, n, k, beta, u, v, rank);
+        return _kernels is null && _moves is null ? BFloat16TransposedMatMulKernel(a, packed, c, m, n, k, beta, u, v, rank) : ReferenceEquals(_kernels, s_guardedKernels) ? BFloat16TransposedMatMulGuarded(a, packed, c, m, n, k, beta, u, v, rank) : BFloat16TransposedMatMulRegistered(a, packed, c, m, n, k, beta, u, v, rank);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1672,16 +2408,18 @@ public abstract partial class Backend
             return kernel(this, a, packed, c, m, n, k, beta, u, v, rank);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.BFloat16TransposedMatMul))
-        {
-            return BFloat16TransposedMatMulKernel(a, packed, c, m, n, k, beta, u, v, rank);
-        }
+        return RefusedKernelsFallBack ? BFloat16TransposedMatMulGuarded(a, packed, c, m, n, k, beta, u, v, rank) : BFloat16TransposedMatMulKernel(a, packed, c, m, n, k, beta, u, v, rank);
+    }
 
+    // BFloat16TransposedMatMul on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool BFloat16TransposedMatMulGuarded(Storage a, Storage packed, Storage c, int m, int n, int k, float beta, Storage? u, Storage? v, int rank)
+    {
         try
         {
             return BFloat16TransposedMatMulKernel(a, packed, c, m, n, k, beta, u, v, rank);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BFloat16TransposedMatMul))
         {
             FellBack(Ops.BFloat16TransposedMatMul.Name, refused, "the caller's path");
             return default;
@@ -1702,7 +2440,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Float8QuantizeWeight(Storage w, int k, int n, Storage values, Storage scales)
     {
-        return _kernels is null && _moves is null ? Float8QuantizeWeightKernel(w, k, n, values, scales) : Float8QuantizeWeightRegistered(w, k, n, values, scales);
+        return _kernels is null && _moves is null ? Float8QuantizeWeightKernel(w, k, n, values, scales) : ReferenceEquals(_kernels, s_guardedKernels) ? Float8QuantizeWeightGuarded(w, k, n, values, scales) : Float8QuantizeWeightRegistered(w, k, n, values, scales);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1714,16 +2452,18 @@ public abstract partial class Backend
             return kernel(this, w, k, n, values, scales);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.Float8QuantizeWeight))
-        {
-            return Float8QuantizeWeightKernel(w, k, n, values, scales);
-        }
+        return RefusedKernelsFallBack ? Float8QuantizeWeightGuarded(w, k, n, values, scales) : Float8QuantizeWeightKernel(w, k, n, values, scales);
+    }
 
+    // Float8QuantizeWeight on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool Float8QuantizeWeightGuarded(Storage w, int k, int n, Storage values, Storage scales)
+    {
         try
         {
             return Float8QuantizeWeightKernel(w, k, n, values, scales);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Float8QuantizeWeight))
         {
             FellBack(Ops.Float8QuantizeWeight.Name, refused, "the caller's path");
             return default;
@@ -1741,7 +2481,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool Float8MatMul(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta)
     {
-        return _kernels is null && _moves is null ? Float8MatMulKernel(x, m, k, values, scales, n, y, beta) : Float8MatMulRegistered(x, m, k, values, scales, n, y, beta);
+        return _kernels is null && _moves is null ? Float8MatMulKernel(x, m, k, values, scales, n, y, beta) : ReferenceEquals(_kernels, s_guardedKernels) ? Float8MatMulGuarded(x, m, k, values, scales, n, y, beta) : Float8MatMulRegistered(x, m, k, values, scales, n, y, beta);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1753,16 +2493,18 @@ public abstract partial class Backend
             return kernel(this, x, m, k, values, scales, n, y, beta);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.Float8MatMul))
-        {
-            return Float8MatMulKernel(x, m, k, values, scales, n, y, beta);
-        }
+        return RefusedKernelsFallBack ? Float8MatMulGuarded(x, m, k, values, scales, n, y, beta) : Float8MatMulKernel(x, m, k, values, scales, n, y, beta);
+    }
 
+    // Float8MatMul on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool Float8MatMulGuarded(Storage x, int m, int k, Storage values, Storage scales, int n, Storage y, float beta)
+    {
         try
         {
             return Float8MatMulKernel(x, m, k, values, scales, n, y, beta);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Float8MatMul))
         {
             FellBack(Ops.Float8MatMul.Name, refused, "the caller's path");
             return default;
@@ -1778,7 +2520,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool PackedMatMulLowRank(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank)
     {
-        return _kernels is null && _moves is null ? PackedMatMulLowRankKernel(format, x, m, k, products, rank) : PackedMatMulLowRankRegistered(format, x, m, k, products, rank);
+        return _kernels is null && _moves is null ? PackedMatMulLowRankKernel(format, x, m, k, products, rank) : ReferenceEquals(_kernels, s_guardedKernels) ? PackedMatMulLowRankGuarded(format, x, m, k, products, rank) : PackedMatMulLowRankRegistered(format, x, m, k, products, rank);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1790,16 +2532,18 @@ public abstract partial class Backend
             return kernel(this, format, x, m, k, products, rank);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.PackedMatMulLowRank))
-        {
-            return PackedMatMulLowRankKernel(format, x, m, k, products, rank);
-        }
+        return RefusedKernelsFallBack ? PackedMatMulLowRankGuarded(format, x, m, k, products, rank) : PackedMatMulLowRankKernel(format, x, m, k, products, rank);
+    }
 
+    // PackedMatMulLowRank on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool PackedMatMulLowRankGuarded(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank)
+    {
         try
         {
             return PackedMatMulLowRankKernel(format, x, m, k, products, rank);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.PackedMatMulLowRank))
         {
             FellBack(Ops.PackedMatMulLowRank.Name, refused, "the caller's path");
             return default;
@@ -1818,7 +2562,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GemmStrided(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias = null, GemmEpilogue epilogue = GemmEpilogue.None, Storage? aux = null, long auxOffset = 0)
     {
-        return _kernels is null && _moves is null ? GemmStridedKernel(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : GemmStridedRegistered(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
+        return _kernels is null && _moves is null ? GemmStridedKernel(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : ReferenceEquals(_kernels, s_guardedKernels) ? GemmStridedGuarded(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : GemmStridedRegistered(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1830,16 +2574,18 @@ public abstract partial class Backend
             return kernel(this, a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.GemmStrided))
-        {
-            return GemmStridedKernel(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
-        }
+        return RefusedKernelsFallBack ? GemmStridedGuarded(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset) : GemmStridedKernel(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
+    }
 
+    // GemmStrided on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GemmStridedGuarded(Storage a, long aOffset, int lda, bool transA, Storage b, long bOffset, int ldb, bool transB, Storage c, long cOffset, int ldc, int m, int n, int k, float beta, Storage? bias, GemmEpilogue epilogue, Storage? aux, long auxOffset)
+    {
         try
         {
             return GemmStridedKernel(a, aOffset, lda, transA, b, bOffset, ldb, transB, c, cOffset, ldc, m, n, k, beta, bias, epilogue, aux, auxOffset);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GemmStrided))
         {
             FellBack(Ops.GemmStrided.Name, refused, "the caller's path");
             return default;
@@ -1861,7 +2607,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionStrided(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
-        return _kernels is null && _moves is null ? AttentionStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : AttentionStridedRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
+        return _kernels is null && _moves is null ? AttentionStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionStridedGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : AttentionStridedRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1873,16 +2619,18 @@ public abstract partial class Backend
             return kernel(this, q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.AttentionStrided))
-        {
-            return AttentionStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
-        }
+        return RefusedKernelsFallBack ? AttentionStridedGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale) : AttentionStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
+    }
 
+    // AttentionStrided on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionStridedGuarded(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
+    {
         try
         {
             return AttentionStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, batch, kvHeads, group, steps, dim, scale);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionStrided))
         {
             FellBack(Ops.AttentionStrided.Name, refused, "the caller's path");
             return default;
@@ -1901,7 +2649,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionStridedBackward(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset, int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
-        return _kernels is null && _moves is null ? AttentionStridedBackwardKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : AttentionStridedBackwardRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
+        return _kernels is null && _moves is null ? AttentionStridedBackwardKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionStridedBackwardGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : AttentionStridedBackwardRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -1913,16 +2661,18 @@ public abstract partial class Backend
             return kernel(this, q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.AttentionStridedBackward))
-        {
-            return AttentionStridedBackwardKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
-        }
+        return RefusedKernelsFallBack ? AttentionStridedBackwardGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale) : AttentionStridedBackwardKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
+    }
 
+    // AttentionStridedBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionStridedBackwardGuarded(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset, int batch, int kvHeads, int group, int steps, int dim, float scale)
+    {
         try
         {
             return AttentionStridedBackwardKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, y, logSumExp, dOutput, dq, dqOffset, dk, dkOffset, dv, dvOffset, batch, kvHeads, group, steps, dim, scale);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionStridedBackward))
         {
             FellBack(Ops.AttentionStridedBackward.Name, refused, "the caller's path");
             return default;
@@ -1937,6 +2687,10 @@ public abstract partial class Backend
         if (_kernels is null && _moves is null)
         {
             SumColumnsKernel(x, offset, ld, y, rows, cols);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SumColumnsGuarded(x, offset, ld, y, rows, cols);
         }
         else
         {
@@ -1954,18 +2708,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.SumColumns))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                SumColumnsGuarded(x, offset, ld, y, rows, cols);
+            }
+            else
+            {
+                SumColumnsKernel(x, offset, ld, y, rows, cols);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.SumColumns))
         {
             SumColumnsKernel(x, offset, ld, y, rows, cols);
             return;
         }
 
-        var retry = new HostRetry(Ops.SumColumns, RetryOnHost);
+        var retry = new HostRetry(Ops.SumColumns);
         try
         {
             SumColumnsKernel(x, offset, ld, y, rows, cols);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             SumColumnsOnHost(x, offset, ld, y, rows, cols);
@@ -1973,6 +2741,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // SumColumns on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumColumnsGuarded(Storage x, long offset, int ld, Storage y, int rows, int cols)
+    {
+        try
+        {
+            SumColumnsKernel(x, offset, ld, y, rows, cols);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SumColumns))
+        {
+            FellBack(Ops.SumColumns.Name, refused, "the host");
+            SumColumnsOnHost(x, offset, ld, y, rows, cols);
         }
     }
 
@@ -1992,6 +2775,10 @@ public abstract partial class Backend
         {
             AddDropoutKernel(residual, x, output, n, p, seed);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AddDropoutGuarded(residual, x, output, n, p, seed);
+        }
         else
         {
             AddDropoutRegistered(residual, x, output, n, p, seed);
@@ -2008,17 +2795,25 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.AddDropout))
+        if (RefusedKernelsFallBack)
+        {
+            AddDropoutGuarded(residual, x, output, n, p, seed);
+        }
+        else
         {
             AddDropoutKernel(residual, x, output, n, p, seed);
-            return;
         }
+    }
 
+    // AddDropout on a device whose refused kernels fall back (BuildsKernelsWhenUsed): its composed path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AddDropoutGuarded(Storage residual, Storage x, Storage output, int n, float p, uint seed)
+    {
         try
         {
             AddDropoutKernel(residual, x, output, n, p, seed);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AddDropout))
         {
             FellBack(Ops.AddDropout.Name, refused, "its composed path");
             AddDropoutComposed(residual, x, output, n, p, seed);
@@ -2041,6 +2836,10 @@ public abstract partial class Backend
         {
             BatchedMatMulKernel(a, b, c, batch, m, n, k, transA, transB, beta);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BatchedMatMulGuarded(a, b, c, batch, m, n, k, transA, transB, beta);
+        }
         else
         {
             BatchedMatMulRegistered(a, b, c, batch, m, n, k, transA, transB, beta);
@@ -2057,18 +2856,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.BatchedMatMul))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                BatchedMatMulGuarded(a, b, c, batch, m, n, k, transA, transB, beta);
+            }
+            else
+            {
+                BatchedMatMulKernel(a, b, c, batch, m, n, k, transA, transB, beta);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.BatchedMatMul))
         {
             BatchedMatMulKernel(a, b, c, batch, m, n, k, transA, transB, beta);
             return;
         }
 
-        var retry = new HostRetry(Ops.BatchedMatMul, RetryOnHost);
+        var retry = new HostRetry(Ops.BatchedMatMul);
         try
         {
             BatchedMatMulKernel(a, b, c, batch, m, n, k, transA, transB, beta);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             BatchedMatMulOnHost(a, b, c, batch, m, n, k, transA, transB, beta);
@@ -2076,6 +2889,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // BatchedMatMul on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BatchedMatMulGuarded(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    {
+        try
+        {
+            BatchedMatMulKernel(a, b, c, batch, m, n, k, transA, transB, beta);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BatchedMatMul))
+        {
+            FellBack(Ops.BatchedMatMul.Name, refused, "the host");
+            BatchedMatMulOnHost(a, b, c, batch, m, n, k, transA, transB, beta);
         }
     }
 
@@ -2095,6 +2923,10 @@ public abstract partial class Backend
         {
             SoftmaxKernel(x, y, rows, cols, log);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SoftmaxGuarded(x, y, rows, cols, log);
+        }
         else
         {
             SoftmaxRegistered(x, y, rows, cols, log);
@@ -2111,18 +2943,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Softmax))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                SoftmaxGuarded(x, y, rows, cols, log);
+            }
+            else
+            {
+                SoftmaxKernel(x, y, rows, cols, log);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Softmax))
         {
             SoftmaxKernel(x, y, rows, cols, log);
             return;
         }
 
-        var retry = new HostRetry(Ops.Softmax, RetryOnHost);
+        var retry = new HostRetry(Ops.Softmax);
         try
         {
             SoftmaxKernel(x, y, rows, cols, log);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             SoftmaxOnHost(x, y, rows, cols, log);
@@ -2130,6 +2976,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Softmax on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SoftmaxGuarded(Storage x, Storage y, int rows, int cols, bool log)
+    {
+        try
+        {
+            SoftmaxKernel(x, y, rows, cols, log);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Softmax))
+        {
+            FellBack(Ops.Softmax.Name, refused, "the host");
+            SoftmaxOnHost(x, y, rows, cols, log);
         }
     }
 
@@ -2151,6 +3012,10 @@ public abstract partial class Backend
         {
             SoftmaxBackwardKernel(y, dy, dx, rows, cols, log);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SoftmaxBackwardGuarded(y, dy, dx, rows, cols, log);
+        }
         else
         {
             SoftmaxBackwardRegistered(y, dy, dx, rows, cols, log);
@@ -2167,18 +3032,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.SoftmaxBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                SoftmaxBackwardGuarded(y, dy, dx, rows, cols, log);
+            }
+            else
+            {
+                SoftmaxBackwardKernel(y, dy, dx, rows, cols, log);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.SoftmaxBackward))
         {
             SoftmaxBackwardKernel(y, dy, dx, rows, cols, log);
             return;
         }
 
-        var retry = new HostRetry(Ops.SoftmaxBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.SoftmaxBackward);
         try
         {
             SoftmaxBackwardKernel(y, dy, dx, rows, cols, log);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             SoftmaxBackwardOnHost(y, dy, dx, rows, cols, log);
@@ -2186,6 +3065,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // SoftmaxBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SoftmaxBackwardGuarded(Storage y, Storage dy, Storage dx, int rows, int cols, bool log)
+    {
+        try
+        {
+            SoftmaxBackwardKernel(y, dy, dx, rows, cols, log);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SoftmaxBackward))
+        {
+            FellBack(Ops.SoftmaxBackward.Name, refused, "the host");
+            SoftmaxBackwardOnHost(y, dy, dx, rows, cols, log);
         }
     }
 
@@ -2205,6 +3099,10 @@ public abstract partial class Backend
         {
             ArgMaxKernel(x, y, rows, cols);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ArgMaxGuarded(x, y, rows, cols);
+        }
         else
         {
             ArgMaxRegistered(x, y, rows, cols);
@@ -2221,18 +3119,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.ArgMax))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                ArgMaxGuarded(x, y, rows, cols);
+            }
+            else
+            {
+                ArgMaxKernel(x, y, rows, cols);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.ArgMax))
         {
             ArgMaxKernel(x, y, rows, cols);
             return;
         }
 
-        var retry = new HostRetry(Ops.ArgMax, RetryOnHost);
+        var retry = new HostRetry(Ops.ArgMax);
         try
         {
             ArgMaxKernel(x, y, rows, cols);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             ArgMaxOnHost(x, y, rows, cols);
@@ -2240,6 +3152,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // ArgMax on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ArgMaxGuarded(Storage x, Storage y, int rows, int cols)
+    {
+        try
+        {
+            ArgMaxKernel(x, y, rows, cols);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ArgMax))
+        {
+            FellBack(Ops.ArgMax.Name, refused, "the host");
+            ArgMaxOnHost(x, y, rows, cols);
         }
     }
 
@@ -2267,6 +3194,10 @@ public abstract partial class Backend
         {
             LogSoftmaxTopKKernel(x, values, indices, rows, cols, k);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            LogSoftmaxTopKGuarded(x, values, indices, rows, cols, k);
+        }
         else
         {
             LogSoftmaxTopKRegistered(x, values, indices, rows, cols, k);
@@ -2283,18 +3214,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.LogSoftmaxTopK))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                LogSoftmaxTopKGuarded(x, values, indices, rows, cols, k);
+            }
+            else
+            {
+                LogSoftmaxTopKKernel(x, values, indices, rows, cols, k);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.LogSoftmaxTopK))
         {
             LogSoftmaxTopKKernel(x, values, indices, rows, cols, k);
             return;
         }
 
-        var retry = new HostRetry(Ops.LogSoftmaxTopK, RetryOnHost);
+        var retry = new HostRetry(Ops.LogSoftmaxTopK);
         try
         {
             LogSoftmaxTopKKernel(x, values, indices, rows, cols, k);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             LogSoftmaxTopKOnHost(x, values, indices, rows, cols, k);
@@ -2302,6 +3247,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // LogSoftmaxTopK on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LogSoftmaxTopKGuarded(Storage x, Storage values, Storage indices, int rows, int cols, int k)
+    {
+        try
+        {
+            LogSoftmaxTopKKernel(x, values, indices, rows, cols, k);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LogSoftmaxTopK))
+        {
+            FellBack(Ops.LogSoftmaxTopK.Name, refused, "the host");
+            LogSoftmaxTopKOnHost(x, values, indices, rows, cols, k);
         }
     }
 
@@ -2324,6 +3284,10 @@ public abstract partial class Backend
         {
             ClassMatchKernel(predictions, targets, y, rows, cols, threshold);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ClassMatchGuarded(predictions, targets, y, rows, cols, threshold);
+        }
         else
         {
             ClassMatchRegistered(predictions, targets, y, rows, cols, threshold);
@@ -2340,18 +3304,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.ClassMatch))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                ClassMatchGuarded(predictions, targets, y, rows, cols, threshold);
+            }
+            else
+            {
+                ClassMatchKernel(predictions, targets, y, rows, cols, threshold);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.ClassMatch))
         {
             ClassMatchKernel(predictions, targets, y, rows, cols, threshold);
             return;
         }
 
-        var retry = new HostRetry(Ops.ClassMatch, RetryOnHost);
+        var retry = new HostRetry(Ops.ClassMatch);
         try
         {
             ClassMatchKernel(predictions, targets, y, rows, cols, threshold);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             ClassMatchOnHost(predictions, targets, y, rows, cols, threshold);
@@ -2359,6 +3337,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // ClassMatch on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ClassMatchGuarded(Storage predictions, Storage targets, Storage y, int rows, int cols, float threshold)
+    {
+        try
+        {
+            ClassMatchKernel(predictions, targets, y, rows, cols, threshold);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ClassMatch))
+        {
+            FellBack(Ops.ClassMatch.Name, refused, "the host");
+            ClassMatchOnHost(predictions, targets, y, rows, cols, threshold);
         }
     }
 
@@ -2378,6 +3371,10 @@ public abstract partial class Backend
         {
             NormStatsKernel(x, mean, variance, invStd, outer, groups, inner, eps);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            NormStatsGuarded(x, mean, variance, invStd, outer, groups, inner, eps);
+        }
         else
         {
             NormStatsRegistered(x, mean, variance, invStd, outer, groups, inner, eps);
@@ -2394,18 +3391,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.NormStats))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                NormStatsGuarded(x, mean, variance, invStd, outer, groups, inner, eps);
+            }
+            else
+            {
+                NormStatsKernel(x, mean, variance, invStd, outer, groups, inner, eps);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.NormStats))
         {
             NormStatsKernel(x, mean, variance, invStd, outer, groups, inner, eps);
             return;
         }
 
-        var retry = new HostRetry(Ops.NormStats, RetryOnHost);
+        var retry = new HostRetry(Ops.NormStats);
         try
         {
             NormStatsKernel(x, mean, variance, invStd, outer, groups, inner, eps);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             NormStatsOnHost(x, mean, variance, invStd, outer, groups, inner, eps);
@@ -2413,6 +3424,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // NormStats on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void NormStatsGuarded(Storage x, Storage mean, Storage variance, Storage invStd, int outer, int groups, int inner, float eps)
+    {
+        try
+        {
+            NormStatsKernel(x, mean, variance, invStd, outer, groups, inner, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.NormStats))
+        {
+            FellBack(Ops.NormStats.Name, refused, "the host");
+            NormStatsOnHost(x, mean, variance, invStd, outer, groups, inner, eps);
         }
     }
 
@@ -2432,6 +3458,10 @@ public abstract partial class Backend
         {
             NormApplyKernel(x, mean, invStd, y, outer, groups, inner);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            NormApplyGuarded(x, mean, invStd, y, outer, groups, inner);
+        }
         else
         {
             NormApplyRegistered(x, mean, invStd, y, outer, groups, inner);
@@ -2448,18 +3478,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.NormApply))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                NormApplyGuarded(x, mean, invStd, y, outer, groups, inner);
+            }
+            else
+            {
+                NormApplyKernel(x, mean, invStd, y, outer, groups, inner);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.NormApply))
         {
             NormApplyKernel(x, mean, invStd, y, outer, groups, inner);
             return;
         }
 
-        var retry = new HostRetry(Ops.NormApply, RetryOnHost);
+        var retry = new HostRetry(Ops.NormApply);
         try
         {
             NormApplyKernel(x, mean, invStd, y, outer, groups, inner);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             NormApplyOnHost(x, mean, invStd, y, outer, groups, inner);
@@ -2467,6 +3511,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // NormApply on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void NormApplyGuarded(Storage x, Storage mean, Storage invStd, Storage y, int outer, int groups, int inner)
+    {
+        try
+        {
+            NormApplyKernel(x, mean, invStd, y, outer, groups, inner);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.NormApply))
+        {
+            FellBack(Ops.NormApply.Name, refused, "the host");
+            NormApplyOnHost(x, mean, invStd, y, outer, groups, inner);
         }
     }
 
@@ -2486,6 +3545,10 @@ public abstract partial class Backend
         {
             NormBackwardKernel(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            NormBackwardGuarded(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+        }
         else
         {
             NormBackwardRegistered(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
@@ -2502,18 +3565,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.NormBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                NormBackwardGuarded(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+            }
+            else
+            {
+                NormBackwardKernel(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.NormBackward))
         {
             NormBackwardKernel(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
             return;
         }
 
-        var retry = new HostRetry(Ops.NormBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.NormBackward);
         try
         {
             NormBackwardKernel(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             NormBackwardOnHost(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
@@ -2521,6 +3598,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // NormBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void NormBackwardGuarded(Storage dxhat, Storage xhat, Storage sum1, Storage sum2, Storage invStd, Storage dx, int outer, int groups, int inner)
+    {
+        try
+        {
+            NormBackwardKernel(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.NormBackward))
+        {
+            FellBack(Ops.NormBackward.Name, refused, "the host");
+            NormBackwardOnHost(dxhat, xhat, sum1, sum2, invStd, dx, outer, groups, inner);
         }
     }
 
@@ -2542,6 +3634,10 @@ public abstract partial class Backend
         {
             GroupScaleShiftKernel(x, scale, shift, y, n, groups, inner, accumulate);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GroupScaleShiftGuarded(x, scale, shift, y, n, groups, inner, accumulate);
+        }
         else
         {
             GroupScaleShiftRegistered(x, scale, shift, y, n, groups, inner, accumulate);
@@ -2558,18 +3654,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.GroupScaleShift))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                GroupScaleShiftGuarded(x, scale, shift, y, n, groups, inner, accumulate);
+            }
+            else
+            {
+                GroupScaleShiftKernel(x, scale, shift, y, n, groups, inner, accumulate);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.GroupScaleShift))
         {
             GroupScaleShiftKernel(x, scale, shift, y, n, groups, inner, accumulate);
             return;
         }
 
-        var retry = new HostRetry(Ops.GroupScaleShift, RetryOnHost);
+        var retry = new HostRetry(Ops.GroupScaleShift);
         try
         {
             GroupScaleShiftKernel(x, scale, shift, y, n, groups, inner, accumulate);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             GroupScaleShiftOnHost(x, scale, shift, y, n, groups, inner, accumulate);
@@ -2577,6 +3687,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // GroupScaleShift on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GroupScaleShiftGuarded(Storage x, Storage? scale, Storage? shift, Storage y, int n, int groups, int inner, bool accumulate)
+    {
+        try
+        {
+            GroupScaleShiftKernel(x, scale, shift, y, n, groups, inner, accumulate);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GroupScaleShift))
+        {
+            FellBack(Ops.GroupScaleShift.Name, refused, "the host");
+            GroupScaleShiftOnHost(x, scale, shift, y, n, groups, inner, accumulate);
         }
     }
 
@@ -2596,6 +3721,10 @@ public abstract partial class Backend
         {
             GroupReduceKernel(a, b, sumA, sumAB, outer, groups, inner);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GroupReduceGuarded(a, b, sumA, sumAB, outer, groups, inner);
+        }
         else
         {
             GroupReduceRegistered(a, b, sumA, sumAB, outer, groups, inner);
@@ -2612,18 +3741,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.GroupReduce))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                GroupReduceGuarded(a, b, sumA, sumAB, outer, groups, inner);
+            }
+            else
+            {
+                GroupReduceKernel(a, b, sumA, sumAB, outer, groups, inner);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.GroupReduce))
         {
             GroupReduceKernel(a, b, sumA, sumAB, outer, groups, inner);
             return;
         }
 
-        var retry = new HostRetry(Ops.GroupReduce, RetryOnHost);
+        var retry = new HostRetry(Ops.GroupReduce);
         try
         {
             GroupReduceKernel(a, b, sumA, sumAB, outer, groups, inner);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             GroupReduceOnHost(a, b, sumA, sumAB, outer, groups, inner);
@@ -2631,6 +3774,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // GroupReduce on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GroupReduceGuarded(Storage a, Storage? b, Storage sumA, Storage? sumAB, int outer, int groups, int inner)
+    {
+        try
+        {
+            GroupReduceKernel(a, b, sumA, sumAB, outer, groups, inner);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GroupReduce))
+        {
+            FellBack(Ops.GroupReduce.Name, refused, "the host");
+            GroupReduceOnHost(a, b, sumA, sumAB, outer, groups, inner);
         }
     }
 
@@ -2653,6 +3811,10 @@ public abstract partial class Backend
         {
             WeightNormKernel(gain, direction, weight, rows, columns);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            WeightNormGuarded(gain, direction, weight, rows, columns);
+        }
         else
         {
             WeightNormRegistered(gain, direction, weight, rows, columns);
@@ -2669,18 +3831,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.WeightNorm))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                WeightNormGuarded(gain, direction, weight, rows, columns);
+            }
+            else
+            {
+                WeightNormKernel(gain, direction, weight, rows, columns);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.WeightNorm))
         {
             WeightNormKernel(gain, direction, weight, rows, columns);
             return;
         }
 
-        var retry = new HostRetry(Ops.WeightNorm, RetryOnHost);
+        var retry = new HostRetry(Ops.WeightNorm);
         try
         {
             WeightNormKernel(gain, direction, weight, rows, columns);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             WeightNormOnHost(gain, direction, weight, rows, columns);
@@ -2688,6 +3864,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // WeightNorm on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void WeightNormGuarded(Storage gain, Storage direction, Storage weight, int rows, int columns)
+    {
+        try
+        {
+            WeightNormKernel(gain, direction, weight, rows, columns);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.WeightNorm))
+        {
+            FellBack(Ops.WeightNorm.Name, refused, "the host");
+            WeightNormOnHost(gain, direction, weight, rows, columns);
         }
     }
 
@@ -2710,6 +3901,10 @@ public abstract partial class Backend
         {
             WeightNormBackwardKernel(gain, direction, dweight, dgain, ddirection, rows, columns);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            WeightNormBackwardGuarded(gain, direction, dweight, dgain, ddirection, rows, columns);
+        }
         else
         {
             WeightNormBackwardRegistered(gain, direction, dweight, dgain, ddirection, rows, columns);
@@ -2726,18 +3921,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.WeightNormBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                WeightNormBackwardGuarded(gain, direction, dweight, dgain, ddirection, rows, columns);
+            }
+            else
+            {
+                WeightNormBackwardKernel(gain, direction, dweight, dgain, ddirection, rows, columns);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.WeightNormBackward))
         {
             WeightNormBackwardKernel(gain, direction, dweight, dgain, ddirection, rows, columns);
             return;
         }
 
-        var retry = new HostRetry(Ops.WeightNormBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.WeightNormBackward);
         try
         {
             WeightNormBackwardKernel(gain, direction, dweight, dgain, ddirection, rows, columns);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             WeightNormBackwardOnHost(gain, direction, dweight, dgain, ddirection, rows, columns);
@@ -2745,6 +3954,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // WeightNormBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void WeightNormBackwardGuarded(Storage gain, Storage direction, Storage dweight, Storage? dgain, Storage? ddirection, int rows, int columns)
+    {
+        try
+        {
+            WeightNormBackwardKernel(gain, direction, dweight, dgain, ddirection, rows, columns);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.WeightNormBackward))
+        {
+            FellBack(Ops.WeightNormBackward.Name, refused, "the host");
+            WeightNormBackwardOnHost(gain, direction, dweight, dgain, ddirection, rows, columns);
         }
     }
 
@@ -2764,6 +3988,10 @@ public abstract partial class Backend
         {
             InvSqrtKernel(x, y, n, eps);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            InvSqrtGuarded(x, y, n, eps);
+        }
         else
         {
             InvSqrtRegistered(x, y, n, eps);
@@ -2780,18 +4008,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.InvSqrt))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                InvSqrtGuarded(x, y, n, eps);
+            }
+            else
+            {
+                InvSqrtKernel(x, y, n, eps);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.InvSqrt))
         {
             InvSqrtKernel(x, y, n, eps);
             return;
         }
 
-        var retry = new HostRetry(Ops.InvSqrt, RetryOnHost);
+        var retry = new HostRetry(Ops.InvSqrt);
         try
         {
             InvSqrtKernel(x, y, n, eps);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             InvSqrtOnHost(x, y, n, eps);
@@ -2799,6 +4041,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // InvSqrt on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void InvSqrtGuarded(Storage x, Storage y, int n, float eps)
+    {
+        try
+        {
+            InvSqrtKernel(x, y, n, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.InvSqrt))
+        {
+            FellBack(Ops.InvSqrt.Name, refused, "the host");
+            InvSqrtOnHost(x, y, n, eps);
         }
     }
 
@@ -2818,6 +4075,10 @@ public abstract partial class Backend
         {
             GatherKernel(table, indices, y, count, dim, vocabulary);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GatherGuarded(table, indices, y, count, dim, vocabulary);
+        }
         else
         {
             GatherRegistered(table, indices, y, count, dim, vocabulary);
@@ -2834,18 +4095,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Gather))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                GatherGuarded(table, indices, y, count, dim, vocabulary);
+            }
+            else
+            {
+                GatherKernel(table, indices, y, count, dim, vocabulary);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Gather))
         {
             GatherKernel(table, indices, y, count, dim, vocabulary);
             return;
         }
 
-        var retry = new HostRetry(Ops.Gather, RetryOnHost);
+        var retry = new HostRetry(Ops.Gather);
         try
         {
             GatherKernel(table, indices, y, count, dim, vocabulary);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             GatherOnHost(table, indices, y, count, dim, vocabulary);
@@ -2853,6 +4128,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Gather on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatherGuarded(Storage table, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        try
+        {
+            GatherKernel(table, indices, y, count, dim, vocabulary);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Gather))
+        {
+            FellBack(Ops.Gather.Name, refused, "the host");
+            GatherOnHost(table, indices, y, count, dim, vocabulary);
         }
     }
 
@@ -2872,6 +4162,10 @@ public abstract partial class Backend
         {
             GatherBFloat16Kernel(packed, indices, y, count, dim, vocabulary);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GatherBFloat16Guarded(packed, indices, y, count, dim, vocabulary);
+        }
         else
         {
             GatherBFloat16Registered(packed, indices, y, count, dim, vocabulary);
@@ -2888,18 +4182,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.GatherBFloat16))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                GatherBFloat16Guarded(packed, indices, y, count, dim, vocabulary);
+            }
+            else
+            {
+                GatherBFloat16Kernel(packed, indices, y, count, dim, vocabulary);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.GatherBFloat16))
         {
             GatherBFloat16Kernel(packed, indices, y, count, dim, vocabulary);
             return;
         }
 
-        var retry = new HostRetry(Ops.GatherBFloat16, RetryOnHost);
+        var retry = new HostRetry(Ops.GatherBFloat16);
         try
         {
             GatherBFloat16Kernel(packed, indices, y, count, dim, vocabulary);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             GatherBFloat16OnHost(packed, indices, y, count, dim, vocabulary);
@@ -2907,6 +4215,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // GatherBFloat16 on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatherBFloat16Guarded(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        try
+        {
+            GatherBFloat16Kernel(packed, indices, y, count, dim, vocabulary);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GatherBFloat16))
+        {
+            FellBack(Ops.GatherBFloat16.Name, refused, "the host");
+            GatherBFloat16OnHost(packed, indices, y, count, dim, vocabulary);
         }
     }
 
@@ -2930,6 +4253,10 @@ public abstract partial class Backend
         {
             GatherBFloat16ColumnsKernel(packed, indices, y, count, dim, vocabulary);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GatherBFloat16ColumnsGuarded(packed, indices, y, count, dim, vocabulary);
+        }
         else
         {
             GatherBFloat16ColumnsRegistered(packed, indices, y, count, dim, vocabulary);
@@ -2946,18 +4273,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.GatherBFloat16Columns))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                GatherBFloat16ColumnsGuarded(packed, indices, y, count, dim, vocabulary);
+            }
+            else
+            {
+                GatherBFloat16ColumnsKernel(packed, indices, y, count, dim, vocabulary);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.GatherBFloat16Columns))
         {
             GatherBFloat16ColumnsKernel(packed, indices, y, count, dim, vocabulary);
             return;
         }
 
-        var retry = new HostRetry(Ops.GatherBFloat16Columns, RetryOnHost);
+        var retry = new HostRetry(Ops.GatherBFloat16Columns);
         try
         {
             GatherBFloat16ColumnsKernel(packed, indices, y, count, dim, vocabulary);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             GatherBFloat16ColumnsOnHost(packed, indices, y, count, dim, vocabulary);
@@ -2965,6 +4306,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // GatherBFloat16Columns on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatherBFloat16ColumnsGuarded(Storage packed, Storage indices, Storage y, int count, int dim, int vocabulary)
+    {
+        try
+        {
+            GatherBFloat16ColumnsKernel(packed, indices, y, count, dim, vocabulary);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GatherBFloat16Columns))
+        {
+            FellBack(Ops.GatherBFloat16Columns.Name, refused, "the host");
+            GatherBFloat16ColumnsOnHost(packed, indices, y, count, dim, vocabulary);
         }
     }
 
@@ -2984,6 +4340,10 @@ public abstract partial class Backend
         {
             OneHotKernel(indices, y, count, classes);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            OneHotGuarded(indices, y, count, classes);
+        }
         else
         {
             OneHotRegistered(indices, y, count, classes);
@@ -3000,18 +4360,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.OneHot))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                OneHotGuarded(indices, y, count, classes);
+            }
+            else
+            {
+                OneHotKernel(indices, y, count, classes);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.OneHot))
         {
             OneHotKernel(indices, y, count, classes);
             return;
         }
 
-        var retry = new HostRetry(Ops.OneHot, RetryOnHost);
+        var retry = new HostRetry(Ops.OneHot);
         try
         {
             OneHotKernel(indices, y, count, classes);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             OneHotOnHost(indices, y, count, classes);
@@ -3019,6 +4393,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // OneHot on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void OneHotGuarded(Storage indices, Storage y, int count, int classes)
+    {
+        try
+        {
+            OneHotKernel(indices, y, count, classes);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.OneHot))
+        {
+            FellBack(Ops.OneHot.Name, refused, "the host");
+            OneHotOnHost(indices, y, count, classes);
         }
     }
 
@@ -3038,6 +4427,10 @@ public abstract partial class Backend
         {
             ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ScatterAddGuarded(dy, indices, dtable, count, dim, vocabulary);
+        }
         else
         {
             ScatterAddRegistered(dy, indices, dtable, count, dim, vocabulary);
@@ -3054,18 +4447,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.ScatterAdd))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                ScatterAddGuarded(dy, indices, dtable, count, dim, vocabulary);
+            }
+            else
+            {
+                ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.ScatterAdd))
         {
             ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
             return;
         }
 
-        var retry = new HostRetry(Ops.ScatterAdd, RetryOnHost);
+        var retry = new HostRetry(Ops.ScatterAdd);
         try
         {
             ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             ScatterAddOnHost(dy, indices, dtable, count, dim, vocabulary);
@@ -3073,6 +4480,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // ScatterAdd on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ScatterAddGuarded(Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
+    {
+        try
+        {
+            ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ScatterAdd))
+        {
+            FellBack(Ops.ScatterAdd.Name, refused, "the host");
+            ScatterAddOnHost(dy, indices, dtable, count, dim, vocabulary);
         }
     }
 
@@ -3092,6 +4514,10 @@ public abstract partial class Backend
         {
             Im2ColKernel(x, cols, in g);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Im2ColGuarded(x, cols, in g);
+        }
         else
         {
             Im2ColRegistered(x, cols, in g);
@@ -3108,18 +4534,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Im2Col))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                Im2ColGuarded(x, cols, in g);
+            }
+            else
+            {
+                Im2ColKernel(x, cols, in g);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Im2Col))
         {
             Im2ColKernel(x, cols, in g);
             return;
         }
 
-        var retry = new HostRetry(Ops.Im2Col, RetryOnHost);
+        var retry = new HostRetry(Ops.Im2Col);
         try
         {
             Im2ColKernel(x, cols, in g);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             Im2ColOnHost(x, cols, in g);
@@ -3127,6 +4567,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Im2Col on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Im2ColGuarded(Storage x, Storage cols, in ConvGeometry g)
+    {
+        try
+        {
+            Im2ColKernel(x, cols, in g);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Im2Col))
+        {
+            FellBack(Ops.Im2Col.Name, refused, "the host");
+            Im2ColOnHost(x, cols, in g);
         }
     }
 
@@ -3146,6 +4601,10 @@ public abstract partial class Backend
         {
             Col2ImKernel(dcols, dx, in g);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Col2ImGuarded(dcols, dx, in g);
+        }
         else
         {
             Col2ImRegistered(dcols, dx, in g);
@@ -3162,18 +4621,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Col2Im))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                Col2ImGuarded(dcols, dx, in g);
+            }
+            else
+            {
+                Col2ImKernel(dcols, dx, in g);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Col2Im))
         {
             Col2ImKernel(dcols, dx, in g);
             return;
         }
 
-        var retry = new HostRetry(Ops.Col2Im, RetryOnHost);
+        var retry = new HostRetry(Ops.Col2Im);
         try
         {
             Col2ImKernel(dcols, dx, in g);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             Col2ImOnHost(dcols, dx, in g);
@@ -3181,6 +4654,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Col2Im on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Col2ImGuarded(Storage dcols, Storage dx, in ConvGeometry g)
+    {
+        try
+        {
+            Col2ImKernel(dcols, dx, in g);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Col2Im))
+        {
+            FellBack(Ops.Col2Im.Name, refused, "the host");
+            Col2ImOnHost(dcols, dx, in g);
         }
     }
 
@@ -3200,6 +4688,10 @@ public abstract partial class Backend
         {
             MaxPoolKernel(x, y, argmax, in g);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            MaxPoolGuarded(x, y, argmax, in g);
+        }
         else
         {
             MaxPoolRegistered(x, y, argmax, in g);
@@ -3216,18 +4708,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.MaxPool))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                MaxPoolGuarded(x, y, argmax, in g);
+            }
+            else
+            {
+                MaxPoolKernel(x, y, argmax, in g);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.MaxPool))
         {
             MaxPoolKernel(x, y, argmax, in g);
             return;
         }
 
-        var retry = new HostRetry(Ops.MaxPool, RetryOnHost);
+        var retry = new HostRetry(Ops.MaxPool);
         try
         {
             MaxPoolKernel(x, y, argmax, in g);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             MaxPoolOnHost(x, y, argmax, in g);
@@ -3235,6 +4741,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // MaxPool on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MaxPoolGuarded(Storage x, Storage y, Storage argmax, in ConvGeometry g)
+    {
+        try
+        {
+            MaxPoolKernel(x, y, argmax, in g);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.MaxPool))
+        {
+            FellBack(Ops.MaxPool.Name, refused, "the host");
+            MaxPoolOnHost(x, y, argmax, in g);
         }
     }
 
@@ -3254,6 +4775,10 @@ public abstract partial class Backend
         {
             MaxPoolBackwardKernel(dy, argmax, dx, count);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            MaxPoolBackwardGuarded(dy, argmax, dx, count);
+        }
         else
         {
             MaxPoolBackwardRegistered(dy, argmax, dx, count);
@@ -3270,18 +4795,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.MaxPoolBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                MaxPoolBackwardGuarded(dy, argmax, dx, count);
+            }
+            else
+            {
+                MaxPoolBackwardKernel(dy, argmax, dx, count);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.MaxPoolBackward))
         {
             MaxPoolBackwardKernel(dy, argmax, dx, count);
             return;
         }
 
-        var retry = new HostRetry(Ops.MaxPoolBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.MaxPoolBackward);
         try
         {
             MaxPoolBackwardKernel(dy, argmax, dx, count);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             MaxPoolBackwardOnHost(dy, argmax, dx, count);
@@ -3289,6 +4828,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // MaxPoolBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MaxPoolBackwardGuarded(Storage dy, Storage argmax, Storage dx, int count)
+    {
+        try
+        {
+            MaxPoolBackwardKernel(dy, argmax, dx, count);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.MaxPoolBackward))
+        {
+            FellBack(Ops.MaxPoolBackward.Name, refused, "the host");
+            MaxPoolBackwardOnHost(dy, argmax, dx, count);
         }
     }
 
@@ -3311,6 +4865,10 @@ public abstract partial class Backend
         {
             MaxPoolBackwardKernel(dy, argmax, dx, in g);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            MaxPoolBackward2Guarded(dy, argmax, dx, in g);
+        }
         else
         {
             MaxPoolBackward2Registered(dy, argmax, dx, in g);
@@ -3327,17 +4885,25 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.MaxPoolBackward2))
+        if (RefusedKernelsFallBack)
+        {
+            MaxPoolBackward2Guarded(dy, argmax, dx, in g);
+        }
+        else
         {
             MaxPoolBackwardKernel(dy, argmax, dx, in g);
-            return;
         }
+    }
 
+    // MaxPoolBackward2 on a device whose refused kernels fall back (BuildsKernelsWhenUsed): its composed path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void MaxPoolBackward2Guarded(Storage dy, Storage argmax, Storage dx, in ConvGeometry g)
+    {
         try
         {
             MaxPoolBackwardKernel(dy, argmax, dx, in g);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.MaxPoolBackward2))
         {
             FellBack(Ops.MaxPoolBackward2.Name, refused, "its composed path");
             MaxPoolBackward2Composed(dy, argmax, dx, in g);
@@ -3364,6 +4930,10 @@ public abstract partial class Backend
         {
             ConvolutionKernel(x, weight, bias, y, in g, filters, groups, activation);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ConvolutionGuarded(x, weight, bias, y, in g, filters, groups, activation);
+        }
         else
         {
             ConvolutionRegistered(x, weight, bias, y, in g, filters, groups, activation);
@@ -3380,17 +4950,25 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.Convolution))
+        if (RefusedKernelsFallBack)
+        {
+            ConvolutionGuarded(x, weight, bias, y, in g, filters, groups, activation);
+        }
+        else
         {
             ConvolutionKernel(x, weight, bias, y, in g, filters, groups, activation);
-            return;
         }
+    }
 
+    // Convolution on a device whose refused kernels fall back (BuildsKernelsWhenUsed): its composed path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ConvolutionGuarded(Storage x, Storage weight, Storage? bias, Storage y, in ConvGeometry g, int filters, int groups, ConvActivation activation)
+    {
         try
         {
             ConvolutionKernel(x, weight, bias, y, in g, filters, groups, activation);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Convolution))
         {
             FellBack(Ops.Convolution.Name, refused, "its composed path");
             ConvolutionComposed(x, weight, bias, y, in g, filters, groups, activation);
@@ -3415,6 +4993,10 @@ public abstract partial class Backend
         {
             ConvolutionBackwardInputKernel(dy, weight, dx, in g, filters, groups);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ConvolutionBackwardInputGuarded(dy, weight, dx, in g, filters, groups);
+        }
         else
         {
             ConvolutionBackwardInputRegistered(dy, weight, dx, in g, filters, groups);
@@ -3431,17 +5013,25 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.ConvolutionBackwardInput))
+        if (RefusedKernelsFallBack)
+        {
+            ConvolutionBackwardInputGuarded(dy, weight, dx, in g, filters, groups);
+        }
+        else
         {
             ConvolutionBackwardInputKernel(dy, weight, dx, in g, filters, groups);
-            return;
         }
+    }
 
+    // ConvolutionBackwardInput on a device whose refused kernels fall back (BuildsKernelsWhenUsed): its composed path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ConvolutionBackwardInputGuarded(Storage dy, Storage weight, Storage dx, in ConvGeometry g, int filters, int groups)
+    {
         try
         {
             ConvolutionBackwardInputKernel(dy, weight, dx, in g, filters, groups);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ConvolutionBackwardInput))
         {
             FellBack(Ops.ConvolutionBackwardInput.Name, refused, "its composed path");
             ConvolutionBackwardInputComposed(dy, weight, dx, in g, filters, groups);
@@ -3465,6 +5055,10 @@ public abstract partial class Backend
         {
             ConvolutionBackwardWeightKernel(x, dy, dweight, in g, filters, groups);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ConvolutionBackwardWeightGuarded(x, dy, dweight, in g, filters, groups);
+        }
         else
         {
             ConvolutionBackwardWeightRegistered(x, dy, dweight, in g, filters, groups);
@@ -3481,17 +5075,25 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.ConvolutionBackwardWeight))
+        if (RefusedKernelsFallBack)
+        {
+            ConvolutionBackwardWeightGuarded(x, dy, dweight, in g, filters, groups);
+        }
+        else
         {
             ConvolutionBackwardWeightKernel(x, dy, dweight, in g, filters, groups);
-            return;
         }
+    }
 
+    // ConvolutionBackwardWeight on a device whose refused kernels fall back (BuildsKernelsWhenUsed): its composed path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ConvolutionBackwardWeightGuarded(Storage x, Storage dy, Storage dweight, in ConvGeometry g, int filters, int groups)
+    {
         try
         {
             ConvolutionBackwardWeightKernel(x, dy, dweight, in g, filters, groups);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ConvolutionBackwardWeight))
         {
             FellBack(Ops.ConvolutionBackwardWeight.Name, refused, "its composed path");
             ConvolutionBackwardWeightComposed(x, dy, dweight, in g, filters, groups);
@@ -3518,6 +5120,10 @@ public abstract partial class Backend
         {
             AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AvgPoolGuarded(x, y, in g, countIncludePad, padBottom, padRight);
+        }
         else
         {
             AvgPoolRegistered(x, y, in g, countIncludePad, padBottom, padRight);
@@ -3534,18 +5140,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AvgPool))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AvgPoolGuarded(x, y, in g, countIncludePad, padBottom, padRight);
+            }
+            else
+            {
+                AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AvgPool))
         {
             AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
             return;
         }
 
-        var retry = new HostRetry(Ops.AvgPool, RetryOnHost);
+        var retry = new HostRetry(Ops.AvgPool);
         try
         {
             AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AvgPoolOnHost(x, y, in g, countIncludePad, padBottom, padRight);
@@ -3553,6 +5173,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AvgPool on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AvgPoolGuarded(Storage x, Storage y, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        try
+        {
+            AvgPoolKernel(x, y, in g, countIncludePad, padBottom, padRight);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AvgPool))
+        {
+            FellBack(Ops.AvgPool.Name, refused, "the host");
+            AvgPoolOnHost(x, y, in g, countIncludePad, padBottom, padRight);
         }
     }
 
@@ -3575,6 +5210,10 @@ public abstract partial class Backend
         {
             AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AvgPoolBackwardGuarded(dy, dx, in g, countIncludePad, padBottom, padRight);
+        }
         else
         {
             AvgPoolBackwardRegistered(dy, dx, in g, countIncludePad, padBottom, padRight);
@@ -3591,18 +5230,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AvgPoolBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AvgPoolBackwardGuarded(dy, dx, in g, countIncludePad, padBottom, padRight);
+            }
+            else
+            {
+                AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AvgPoolBackward))
         {
             AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
             return;
         }
 
-        var retry = new HostRetry(Ops.AvgPoolBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.AvgPoolBackward);
         try
         {
             AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AvgPoolBackwardOnHost(dy, dx, in g, countIncludePad, padBottom, padRight);
@@ -3610,6 +5263,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AvgPoolBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AvgPoolBackwardGuarded(Storage dy, Storage dx, in ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
+    {
+        try
+        {
+            AvgPoolBackwardKernel(dy, dx, in g, countIncludePad, padBottom, padRight);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AvgPoolBackward))
+        {
+            FellBack(Ops.AvgPoolBackward.Name, refused, "the host");
+            AvgPoolBackwardOnHost(dy, dx, in g, countIncludePad, padBottom, padRight);
         }
     }
 
@@ -3640,6 +5308,10 @@ public abstract partial class Backend
         {
             ResizeNormalizeKernel(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ResizeNormalizeGuarded(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+        }
         else
         {
             ResizeNormalizeRegistered(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
@@ -3656,18 +5328,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.ResizeNormalize))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                ResizeNormalizeGuarded(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+            }
+            else
+            {
+                ResizeNormalizeKernel(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.ResizeNormalize))
         {
             ResizeNormalizeKernel(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
             return;
         }
 
-        var retry = new HostRetry(Ops.ResizeNormalize, RetryOnHost);
+        var retry = new HostRetry(Ops.ResizeNormalize);
         try
         {
             ResizeNormalizeKernel(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             ResizeNormalizeOnHost(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
@@ -3675,6 +5361,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // ResizeNormalize on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ResizeNormalizeGuarded(Storage x, Storage coefficients, Storage values, Storage y, int planes, int channels, int height, int width, int outHeight, int outWidth, int xTaps, int yTaps, bool bytes)
+    {
+        try
+        {
+            ResizeNormalizeKernel(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ResizeNormalize))
+        {
+            FellBack(Ops.ResizeNormalize.Name, refused, "the host");
+            ResizeNormalizeOnHost(x, coefficients, values, y, planes, channels, height, width, outHeight, outWidth, xTaps, yTaps, bytes);
         }
     }
 
@@ -3700,6 +5401,10 @@ public abstract partial class Backend
         {
             Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Interpolate2dGuarded(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
         else
         {
             Interpolate2dRegistered(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
@@ -3716,18 +5421,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Interpolate2d))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                Interpolate2dGuarded(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+            }
+            else
+            {
+                Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Interpolate2d))
         {
             Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
             return;
         }
 
-        var retry = new HostRetry(Ops.Interpolate2d, RetryOnHost);
+        var retry = new HostRetry(Ops.Interpolate2d);
         try
         {
             Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             Interpolate2dOnHost(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
@@ -3735,6 +5454,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Interpolate2d on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Interpolate2dGuarded(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        try
+        {
+            Interpolate2dKernel(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Interpolate2d))
+        {
+            FellBack(Ops.Interpolate2d.Name, refused, "the host");
+            Interpolate2dOnHost(x, y, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
         }
     }
 
@@ -3754,6 +5488,10 @@ public abstract partial class Backend
         {
             Interpolate2dBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Interpolate2dBackwardGuarded(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
         else
         {
             Interpolate2dBackwardRegistered(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
@@ -3770,18 +5508,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Interpolate2dBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                Interpolate2dBackwardGuarded(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+            }
+            else
+            {
+                Interpolate2dBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Interpolate2dBackward))
         {
             Interpolate2dBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
             return;
         }
 
-        var retry = new HostRetry(Ops.Interpolate2dBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.Interpolate2dBackward);
         try
         {
             Interpolate2dBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             Interpolate2dBackwardOnHost(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
@@ -3789,6 +5541,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Interpolate2dBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Interpolate2dBackwardGuarded(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth, InterpolationMode mode, bool alignCorners, float scaleHeight, float scaleWidth)
+    {
+        try
+        {
+            Interpolate2dBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Interpolate2dBackward))
+        {
+            FellBack(Ops.Interpolate2dBackward.Name, refused, "the host");
+            Interpolate2dBackwardOnHost(dy, dx, planes, height, width, outHeight, outWidth, mode, alignCorners, scaleHeight, scaleWidth);
         }
     }
 
@@ -3812,6 +5579,10 @@ public abstract partial class Backend
         {
             AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AdaptiveAvgPoolGuarded(x, y, planes, height, width, outHeight, outWidth);
+        }
         else
         {
             AdaptiveAvgPoolRegistered(x, y, planes, height, width, outHeight, outWidth);
@@ -3828,18 +5599,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AdaptiveAvgPool))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AdaptiveAvgPoolGuarded(x, y, planes, height, width, outHeight, outWidth);
+            }
+            else
+            {
+                AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AdaptiveAvgPool))
         {
             AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
             return;
         }
 
-        var retry = new HostRetry(Ops.AdaptiveAvgPool, RetryOnHost);
+        var retry = new HostRetry(Ops.AdaptiveAvgPool);
         try
         {
             AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AdaptiveAvgPoolOnHost(x, y, planes, height, width, outHeight, outWidth);
@@ -3847,6 +5632,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AdaptiveAvgPool on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveAvgPoolGuarded(Storage x, Storage y, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        try
+        {
+            AdaptiveAvgPoolKernel(x, y, planes, height, width, outHeight, outWidth);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AdaptiveAvgPool))
+        {
+            FellBack(Ops.AdaptiveAvgPool.Name, refused, "the host");
+            AdaptiveAvgPoolOnHost(x, y, planes, height, width, outHeight, outWidth);
         }
     }
 
@@ -3866,6 +5666,10 @@ public abstract partial class Backend
         {
             AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AdaptiveAvgPoolBackwardGuarded(dy, dx, planes, height, width, outHeight, outWidth);
+        }
         else
         {
             AdaptiveAvgPoolBackwardRegistered(dy, dx, planes, height, width, outHeight, outWidth);
@@ -3882,18 +5686,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AdaptiveAvgPoolBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AdaptiveAvgPoolBackwardGuarded(dy, dx, planes, height, width, outHeight, outWidth);
+            }
+            else
+            {
+                AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AdaptiveAvgPoolBackward))
         {
             AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
             return;
         }
 
-        var retry = new HostRetry(Ops.AdaptiveAvgPoolBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.AdaptiveAvgPoolBackward);
         try
         {
             AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AdaptiveAvgPoolBackwardOnHost(dy, dx, planes, height, width, outHeight, outWidth);
@@ -3901,6 +5719,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AdaptiveAvgPoolBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveAvgPoolBackwardGuarded(Storage dy, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        try
+        {
+            AdaptiveAvgPoolBackwardKernel(dy, dx, planes, height, width, outHeight, outWidth);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AdaptiveAvgPoolBackward))
+        {
+            FellBack(Ops.AdaptiveAvgPoolBackward.Name, refused, "the host");
+            AdaptiveAvgPoolBackwardOnHost(dy, dx, planes, height, width, outHeight, outWidth);
         }
     }
 
@@ -3923,6 +5756,10 @@ public abstract partial class Backend
         {
             AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AdaptiveMaxPoolGuarded(x, y, argmax, planes, height, width, outHeight, outWidth);
+        }
         else
         {
             AdaptiveMaxPoolRegistered(x, y, argmax, planes, height, width, outHeight, outWidth);
@@ -3939,18 +5776,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AdaptiveMaxPool))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AdaptiveMaxPoolGuarded(x, y, argmax, planes, height, width, outHeight, outWidth);
+            }
+            else
+            {
+                AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AdaptiveMaxPool))
         {
             AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
             return;
         }
 
-        var retry = new HostRetry(Ops.AdaptiveMaxPool, RetryOnHost);
+        var retry = new HostRetry(Ops.AdaptiveMaxPool);
         try
         {
             AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AdaptiveMaxPoolOnHost(x, y, argmax, planes, height, width, outHeight, outWidth);
@@ -3958,6 +5809,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AdaptiveMaxPool on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveMaxPoolGuarded(Storage x, Storage y, Storage argmax, int planes, int height, int width, int outHeight, int outWidth)
+    {
+        try
+        {
+            AdaptiveMaxPoolKernel(x, y, argmax, planes, height, width, outHeight, outWidth);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AdaptiveMaxPool))
+        {
+            FellBack(Ops.AdaptiveMaxPool.Name, refused, "the host");
+            AdaptiveMaxPoolOnHost(x, y, argmax, planes, height, width, outHeight, outWidth);
         }
     }
 
@@ -3981,6 +5847,10 @@ public abstract partial class Backend
         {
             AdaptiveMaxPoolBackwardKernel(dy, argmax, dx, planes, height, width, outHeight, outWidth);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AdaptiveMaxPoolBackwardGuarded(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+        }
         else
         {
             AdaptiveMaxPoolBackwardRegistered(dy, argmax, dx, planes, height, width, outHeight, outWidth);
@@ -3997,17 +5867,25 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.AdaptiveMaxPoolBackward))
+        if (RefusedKernelsFallBack)
+        {
+            AdaptiveMaxPoolBackwardGuarded(dy, argmax, dx, planes, height, width, outHeight, outWidth);
+        }
+        else
         {
             AdaptiveMaxPoolBackwardKernel(dy, argmax, dx, planes, height, width, outHeight, outWidth);
-            return;
         }
+    }
 
+    // AdaptiveMaxPoolBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): its composed path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdaptiveMaxPoolBackwardGuarded(Storage dy, Storage argmax, Storage dx, int planes, int height, int width, int outHeight, int outWidth)
+    {
         try
         {
             AdaptiveMaxPoolBackwardKernel(dy, argmax, dx, planes, height, width, outHeight, outWidth);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AdaptiveMaxPoolBackward))
         {
             FellBack(Ops.AdaptiveMaxPoolBackward.Name, refused, "its composed path");
             AdaptiveMaxPoolBackwardComposed(dy, argmax, dx, planes, height, width, outHeight, outWidth);
@@ -4035,6 +5913,10 @@ public abstract partial class Backend
         {
             CtcLossKernel(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            CtcLossGuarded(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
         else
         {
             CtcLossRegistered(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
@@ -4051,18 +5933,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.CtcLoss))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                CtcLossGuarded(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+            }
+            else
+            {
+                CtcLossKernel(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.CtcLoss))
         {
             CtcLossKernel(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
             return;
         }
 
-        var retry = new HostRetry(Ops.CtcLoss, RetryOnHost);
+        var retry = new HostRetry(Ops.CtcLoss);
         try
         {
             CtcLossKernel(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             CtcLossOnHost(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
@@ -4070,6 +5966,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // CtcLoss on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void CtcLossGuarded(Storage logProbs, Storage targets, Storage losses, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        try
+        {
+            CtcLossKernel(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.CtcLoss))
+        {
+            FellBack(Ops.CtcLoss.Name, refused, "the host");
+            CtcLossOnHost(logProbs, targets, losses, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
         }
     }
 
@@ -4093,6 +6004,10 @@ public abstract partial class Backend
         {
             CtcLossBackwardKernel(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            CtcLossBackwardGuarded(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
         else
         {
             CtcLossBackwardRegistered(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
@@ -4109,18 +6024,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.CtcLossBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                CtcLossBackwardGuarded(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+            }
+            else
+            {
+                CtcLossBackwardKernel(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.CtcLossBackward))
         {
             CtcLossBackwardKernel(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
             return;
         }
 
-        var retry = new HostRetry(Ops.CtcLossBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.CtcLossBackward);
         try
         {
             CtcLossBackwardKernel(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             CtcLossBackwardOnHost(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
@@ -4128,6 +6057,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // CtcLossBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void CtcLossBackwardGuarded(Storage logProbs, Storage targets, Storage lossGrads, Storage dLogProbs, ReadOnlySpan<int> inputLengths, ReadOnlySpan<int> targetLengths, ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
+    {
+        try
+        {
+            CtcLossBackwardKernel(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.CtcLossBackward))
+        {
+            FellBack(Ops.CtcLossBackward.Name, refused, "the host");
+            CtcLossBackwardOnHost(logProbs, targets, lossGrads, dLogProbs, inputLengths, targetLengths, targetOffsets, steps, batch, classes, blank, batchFirst, zeroInfinity);
         }
     }
 
@@ -4155,7 +6099,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmCell(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells, int step, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : LstmCellRegistered(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmCellGuarded(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : LstmCellRegistered(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -4167,16 +6111,18 @@ public abstract partial class Backend
             return kernel(this, projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.LstmCell))
-        {
-            return LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
-        }
+        return RefusedKernelsFallBack ? LstmCellGuarded(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize) : LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
+    }
 
+    // LstmCell on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmCellGuarded(Storage projected, Storage recurrent, Storage cell, Storage hidden, Storage output, Storage? gates, Storage? cells, int step, int steps, int batch, int hiddenSize)
+    {
         try
         {
             return LstmCellKernel(projected, recurrent, cell, hidden, output, gates, cells, step, steps, batch, hiddenSize);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LstmCell))
         {
             FellBack(Ops.LstmCell.Name, refused, "the caller's path");
             return default;
@@ -4197,7 +6143,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmCellBackward(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : LstmCellBackwardRegistered(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmCellBackwardGuarded(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : LstmCellBackwardRegistered(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -4209,16 +6155,18 @@ public abstract partial class Backend
             return kernel(this, gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.LstmCellBackward))
-        {
-            return LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
-        }
+        return RefusedKernelsFallBack ? LstmCellBackwardGuarded(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize) : LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
+    }
 
+    // LstmCellBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmCellBackwardGuarded(Storage gates, Storage cells, Storage? dOutput, Storage dHidden, Storage dCell, Storage dGates, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
+    {
         try
         {
             return LstmCellBackwardKernel(gates, cells, dOutput, dHidden, dCell, dGates, dStep, step, previous, steps, batch, hiddenSize);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LstmCellBackward))
         {
             FellBack(Ops.LstmCellBackward.Name, refused, "the caller's path");
             return default;
@@ -4239,7 +6187,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruCell(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates, int step, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : GruCellRegistered(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruCellGuarded(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : GruCellRegistered(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -4251,16 +6199,18 @@ public abstract partial class Backend
             return kernel(this, projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.GruCell))
-        {
-            return GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
-        }
+        return RefusedKernelsFallBack ? GruCellGuarded(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize) : GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
+    }
 
+    // GruCell on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruCellGuarded(Storage projected, Storage recurrent, Storage? hiddenBias, Storage hidden, Storage output, Storage? gates, int step, int steps, int batch, int hiddenSize)
+    {
         try
         {
             return GruCellKernel(projected, recurrent, hiddenBias, hidden, output, gates, step, steps, batch, hiddenSize);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GruCell))
         {
             FellBack(Ops.GruCell.Name, refused, "the caller's path");
             return default;
@@ -4281,7 +6231,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruCellBackward(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : GruCellBackwardRegistered(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruCellBackwardGuarded(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : GruCellBackwardRegistered(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -4293,16 +6243,18 @@ public abstract partial class Backend
             return kernel(this, gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.GruCellBackward))
-        {
-            return GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
-        }
+        return RefusedKernelsFallBack ? GruCellBackwardGuarded(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize) : GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
+    }
 
+    // GruCellBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruCellBackwardGuarded(Storage gates, Storage output, Storage? dOutput, Storage dHidden, Storage dGates, Storage dRecurrent, Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
+    {
         try
         {
             return GruCellBackwardKernel(gates, output, dOutput, dHidden, dGates, dRecurrent, dStep, step, previous, steps, batch, hiddenSize);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GruCellBackward))
         {
             FellBack(Ops.GruCellBackward.Name, refused, "the caller's path");
             return default;
@@ -4323,7 +6275,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmStep(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : LstmStepRegistered(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmStepGuarded(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : LstmStepRegistered(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -4335,16 +6287,18 @@ public abstract partial class Backend
             return kernel(this, projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.LstmStep))
-        {
-            return LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
-        }
+        return RefusedKernelsFallBack ? LstmStepGuarded(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize) : LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
+    }
 
+    // LstmStep on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmStepGuarded(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int step, int previous, int steps, int batch, int hiddenSize)
+    {
         try
         {
             return LstmStepKernel(projected, weights, cell, output, gates, cells, step, previous, steps, batch, hiddenSize);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LstmStep))
         {
             FellBack(Ops.LstmStep.Name, refused, "the caller's path");
             return default;
@@ -4363,7 +6317,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmStepBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step, int next, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : LstmStepBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmStepBackwardGuarded(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : LstmStepBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -4375,16 +6329,18 @@ public abstract partial class Backend
             return kernel(this, gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.LstmStepBackward))
-        {
-            return LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
-        }
+        return RefusedKernelsFallBack ? LstmStepBackwardGuarded(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize) : LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
+    }
 
+    // LstmStepBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmStepBackwardGuarded(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int step, int next, int previous, int steps, int batch, int hiddenSize)
+    {
         try
         {
             return LstmStepBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, step, next, previous, steps, batch, hiddenSize);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LstmStepBackward))
         {
             FellBack(Ops.LstmStepBackward.Name, refused, "the caller's path");
             return default;
@@ -4401,7 +6357,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruStep(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : GruStepRegistered(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruStepGuarded(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : GruStepRegistered(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -4413,16 +6369,18 @@ public abstract partial class Backend
             return kernel(this, projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.GruStep))
-        {
-            return GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
-        }
+        return RefusedKernelsFallBack ? GruStepGuarded(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize) : GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
+    }
 
+    // GruStep on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruStepGuarded(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int step, int previous, int steps, int batch, int hiddenSize)
+    {
         try
         {
             return GruStepKernel(projected, weights, hiddenBias, output, gates, step, previous, steps, batch, hiddenSize);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GruStep))
         {
             FellBack(Ops.GruStep.Name, refused, "the caller's path");
             return default;
@@ -4441,7 +6399,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruStepBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
     {
-        return _kernels is null && _moves is null ? GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : GruStepBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
+        return _kernels is null && _moves is null ? GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : ReferenceEquals(_kernels, s_guardedKernels) ? GruStepBackwardGuarded(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : GruStepBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -4453,16 +6411,18 @@ public abstract partial class Backend
             return kernel(this, gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.GruStepBackward))
-        {
-            return GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
-        }
+        return RefusedKernelsFallBack ? GruStepBackwardGuarded(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize) : GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
+    }
 
+    // GruStepBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruStepBackwardGuarded(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
+    {
         try
         {
             return GruStepBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, step, next, previous, steps, batch, hiddenSize);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GruStepBackward))
         {
             FellBack(Ops.GruStepBackward.Name, refused, "the caller's path");
             return default;
@@ -4480,7 +6440,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmSequence(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps, int batch, int hiddenSize, bool reverse)
     {
-        return _kernels is null && _moves is null ? LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : LstmSequenceRegistered(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
+        return _kernels is null && _moves is null ? LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmSequenceGuarded(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : LstmSequenceRegistered(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -4492,16 +6452,18 @@ public abstract partial class Backend
             return kernel(this, projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.LstmSequence))
-        {
-            return LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
-        }
+        return RefusedKernelsFallBack ? LstmSequenceGuarded(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse) : LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
+    }
 
+    // LstmSequence on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmSequenceGuarded(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps, int batch, int hiddenSize, bool reverse)
+    {
         try
         {
             return LstmSequenceKernel(projected, weights, cell, output, gates, cells, steps, batch, hiddenSize, reverse);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LstmSequence))
         {
             FellBack(Ops.LstmSequence.Name, refused, "the caller's path");
             return default;
@@ -4519,7 +6481,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool LstmSequenceBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps, int batch, int hiddenSize, bool reverse)
     {
-        return _kernels is null && _moves is null ? LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : LstmSequenceBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
+        return _kernels is null && _moves is null ? LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? LstmSequenceBackwardGuarded(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : LstmSequenceBackwardRegistered(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -4531,16 +6493,18 @@ public abstract partial class Backend
             return kernel(this, gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.LstmSequenceBackward))
-        {
-            return LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
-        }
+        return RefusedKernelsFallBack ? LstmSequenceBackwardGuarded(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse) : LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
+    }
 
+    // LstmSequenceBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool LstmSequenceBackwardGuarded(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps, int batch, int hiddenSize, bool reverse)
+    {
         try
         {
             return LstmSequenceBackwardKernel(gates, cells, dOutput, weightsT, dCell, dGates, steps, batch, hiddenSize, reverse);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LstmSequenceBackward))
         {
             FellBack(Ops.LstmSequenceBackward.Name, refused, "the caller's path");
             return default;
@@ -4556,7 +6520,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruSequence(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch, int hiddenSize, bool reverse)
     {
-        return _kernels is null && _moves is null ? GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : GruSequenceRegistered(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
+        return _kernels is null && _moves is null ? GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? GruSequenceGuarded(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : GruSequenceRegistered(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -4568,16 +6532,18 @@ public abstract partial class Backend
             return kernel(this, projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.GruSequence))
-        {
-            return GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
-        }
+        return RefusedKernelsFallBack ? GruSequenceGuarded(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse) : GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
+    }
 
+    // GruSequence on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruSequenceGuarded(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch, int hiddenSize, bool reverse)
+    {
         try
         {
             return GruSequenceKernel(projected, weights, hiddenBias, output, gates, steps, batch, hiddenSize, reverse);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GruSequence))
         {
             FellBack(Ops.GruSequence.Name, refused, "the caller's path");
             return default;
@@ -4594,7 +6560,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool GruSequenceBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse)
     {
-        return _kernels is null && _moves is null ? GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : GruSequenceBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
+        return _kernels is null && _moves is null ? GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : ReferenceEquals(_kernels, s_guardedKernels) ? GruSequenceBackwardGuarded(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : GruSequenceBackwardRegistered(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -4606,16 +6572,18 @@ public abstract partial class Backend
             return kernel(this, gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.GruSequenceBackward))
-        {
-            return GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
-        }
+        return RefusedKernelsFallBack ? GruSequenceBackwardGuarded(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse) : GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
+    }
 
+    // GruSequenceBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool GruSequenceBackwardGuarded(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates, Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse)
+    {
         try
         {
             return GruSequenceBackwardKernel(gates, output, dOutput, weightsT, dHidden, dGates, dRecurrent, steps, batch, hiddenSize, reverse);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GruSequenceBackward))
         {
             FellBack(Ops.GruSequenceBackward.Name, refused, "the caller's path");
             return default;
@@ -4637,6 +6605,10 @@ public abstract partial class Backend
         {
             BoxIouLossKernel(predicted, target, losses, count, overlap, eps);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BoxIouLossGuarded(predicted, target, losses, count, overlap, eps);
+        }
         else
         {
             BoxIouLossRegistered(predicted, target, losses, count, overlap, eps);
@@ -4653,18 +6625,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.BoxIouLoss))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                BoxIouLossGuarded(predicted, target, losses, count, overlap, eps);
+            }
+            else
+            {
+                BoxIouLossKernel(predicted, target, losses, count, overlap, eps);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.BoxIouLoss))
         {
             BoxIouLossKernel(predicted, target, losses, count, overlap, eps);
             return;
         }
 
-        var retry = new HostRetry(Ops.BoxIouLoss, RetryOnHost);
+        var retry = new HostRetry(Ops.BoxIouLoss);
         try
         {
             BoxIouLossKernel(predicted, target, losses, count, overlap, eps);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             BoxIouLossOnHost(predicted, target, losses, count, overlap, eps);
@@ -4672,6 +6658,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // BoxIouLoss on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BoxIouLossGuarded(Storage predicted, Storage target, Storage losses, int count, BoxOverlap overlap, float eps)
+    {
+        try
+        {
+            BoxIouLossKernel(predicted, target, losses, count, overlap, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BoxIouLoss))
+        {
+            FellBack(Ops.BoxIouLoss.Name, refused, "the host");
+            BoxIouLossOnHost(predicted, target, losses, count, overlap, eps);
         }
     }
 
@@ -4695,6 +6696,10 @@ public abstract partial class Backend
         {
             BoxIouLossBackwardKernel(predicted, target, lossGrads, dPredicted, count, overlap, eps);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BoxIouLossBackwardGuarded(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+        }
         else
         {
             BoxIouLossBackwardRegistered(predicted, target, lossGrads, dPredicted, count, overlap, eps);
@@ -4711,18 +6716,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.BoxIouLossBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                BoxIouLossBackwardGuarded(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+            }
+            else
+            {
+                BoxIouLossBackwardKernel(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.BoxIouLossBackward))
         {
             BoxIouLossBackwardKernel(predicted, target, lossGrads, dPredicted, count, overlap, eps);
             return;
         }
 
-        var retry = new HostRetry(Ops.BoxIouLossBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.BoxIouLossBackward);
         try
         {
             BoxIouLossBackwardKernel(predicted, target, lossGrads, dPredicted, count, overlap, eps);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             BoxIouLossBackwardOnHost(predicted, target, lossGrads, dPredicted, count, overlap, eps);
@@ -4730,6 +6749,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // BoxIouLossBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BoxIouLossBackwardGuarded(Storage predicted, Storage target, Storage lossGrads, Storage dPredicted, int count, BoxOverlap overlap, float eps)
+    {
+        try
+        {
+            BoxIouLossBackwardKernel(predicted, target, lossGrads, dPredicted, count, overlap, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BoxIouLossBackward))
+        {
+            FellBack(Ops.BoxIouLossBackward.Name, refused, "the host");
+            BoxIouLossBackwardOnHost(predicted, target, lossGrads, dPredicted, count, overlap, eps);
         }
     }
 
@@ -4753,6 +6787,10 @@ public abstract partial class Backend
         {
             SigmoidFocalLossKernel(logits, targets, losses, count, alpha, gamma);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SigmoidFocalLossGuarded(logits, targets, losses, count, alpha, gamma);
+        }
         else
         {
             SigmoidFocalLossRegistered(logits, targets, losses, count, alpha, gamma);
@@ -4769,18 +6807,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.SigmoidFocalLoss))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                SigmoidFocalLossGuarded(logits, targets, losses, count, alpha, gamma);
+            }
+            else
+            {
+                SigmoidFocalLossKernel(logits, targets, losses, count, alpha, gamma);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.SigmoidFocalLoss))
         {
             SigmoidFocalLossKernel(logits, targets, losses, count, alpha, gamma);
             return;
         }
 
-        var retry = new HostRetry(Ops.SigmoidFocalLoss, RetryOnHost);
+        var retry = new HostRetry(Ops.SigmoidFocalLoss);
         try
         {
             SigmoidFocalLossKernel(logits, targets, losses, count, alpha, gamma);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             SigmoidFocalLossOnHost(logits, targets, losses, count, alpha, gamma);
@@ -4788,6 +6840,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // SigmoidFocalLoss on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SigmoidFocalLossGuarded(Storage logits, Storage targets, Storage losses, int count, float alpha, float gamma)
+    {
+        try
+        {
+            SigmoidFocalLossKernel(logits, targets, losses, count, alpha, gamma);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SigmoidFocalLoss))
+        {
+            FellBack(Ops.SigmoidFocalLoss.Name, refused, "the host");
+            SigmoidFocalLossOnHost(logits, targets, losses, count, alpha, gamma);
         }
     }
 
@@ -4807,6 +6874,10 @@ public abstract partial class Backend
         {
             SigmoidFocalLossBackwardKernel(logits, targets, lossGrads, dLogits, count, alpha, gamma);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SigmoidFocalLossBackwardGuarded(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+        }
         else
         {
             SigmoidFocalLossBackwardRegistered(logits, targets, lossGrads, dLogits, count, alpha, gamma);
@@ -4823,18 +6894,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.SigmoidFocalLossBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                SigmoidFocalLossBackwardGuarded(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+            }
+            else
+            {
+                SigmoidFocalLossBackwardKernel(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.SigmoidFocalLossBackward))
         {
             SigmoidFocalLossBackwardKernel(logits, targets, lossGrads, dLogits, count, alpha, gamma);
             return;
         }
 
-        var retry = new HostRetry(Ops.SigmoidFocalLossBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.SigmoidFocalLossBackward);
         try
         {
             SigmoidFocalLossBackwardKernel(logits, targets, lossGrads, dLogits, count, alpha, gamma);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             SigmoidFocalLossBackwardOnHost(logits, targets, lossGrads, dLogits, count, alpha, gamma);
@@ -4842,6 +6927,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // SigmoidFocalLossBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SigmoidFocalLossBackwardGuarded(Storage logits, Storage targets, Storage lossGrads, Storage dLogits, int count, float alpha, float gamma)
+    {
+        try
+        {
+            SigmoidFocalLossBackwardKernel(logits, targets, lossGrads, dLogits, count, alpha, gamma);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SigmoidFocalLossBackward))
+        {
+            FellBack(Ops.SigmoidFocalLossBackward.Name, refused, "the host");
+            SigmoidFocalLossBackwardOnHost(logits, targets, lossGrads, dLogits, count, alpha, gamma);
         }
     }
 
@@ -4864,6 +6964,10 @@ public abstract partial class Backend
         {
             PermuteKernel(x, y, outShape, inStrides, accumulate);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            PermuteGuarded(x, y, outShape, inStrides, accumulate);
+        }
         else
         {
             PermuteRegistered(x, y, outShape, inStrides, accumulate);
@@ -4880,18 +6984,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Permute))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                PermuteGuarded(x, y, outShape, inStrides, accumulate);
+            }
+            else
+            {
+                PermuteKernel(x, y, outShape, inStrides, accumulate);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Permute))
         {
             PermuteKernel(x, y, outShape, inStrides, accumulate);
             return;
         }
 
-        var retry = new HostRetry(Ops.Permute, RetryOnHost);
+        var retry = new HostRetry(Ops.Permute);
         try
         {
             PermuteKernel(x, y, outShape, inStrides, accumulate);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             PermuteOnHost(x, y, outShape, inStrides, accumulate);
@@ -4899,6 +7017,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Permute on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PermuteGuarded(Storage x, Storage y, ReadOnlySpan<int> outShape, ReadOnlySpan<int> inStrides, bool accumulate)
+    {
+        try
+        {
+            PermuteKernel(x, y, outShape, inStrides, accumulate);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Permute))
+        {
+            FellBack(Ops.Permute.Name, refused, "the host");
+            PermuteOnHost(x, y, outShape, inStrides, accumulate);
         }
     }
 
@@ -4918,6 +7051,10 @@ public abstract partial class Backend
         {
             SumAxisKernel(x, y, outer, dim, inner, scale, accumulate);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SumAxisGuarded(x, y, outer, dim, inner, scale, accumulate);
+        }
         else
         {
             SumAxisRegistered(x, y, outer, dim, inner, scale, accumulate);
@@ -4934,18 +7071,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.SumAxis))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                SumAxisGuarded(x, y, outer, dim, inner, scale, accumulate);
+            }
+            else
+            {
+                SumAxisKernel(x, y, outer, dim, inner, scale, accumulate);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.SumAxis))
         {
             SumAxisKernel(x, y, outer, dim, inner, scale, accumulate);
             return;
         }
 
-        var retry = new HostRetry(Ops.SumAxis, RetryOnHost);
+        var retry = new HostRetry(Ops.SumAxis);
         try
         {
             SumAxisKernel(x, y, outer, dim, inner, scale, accumulate);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             SumAxisOnHost(x, y, outer, dim, inner, scale, accumulate);
@@ -4953,6 +7104,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // SumAxis on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumAxisGuarded(Storage x, Storage y, int outer, int dim, int inner, float scale, bool accumulate)
+    {
+        try
+        {
+            SumAxisKernel(x, y, outer, dim, inner, scale, accumulate);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SumAxis))
+        {
+            FellBack(Ops.SumAxis.Name, refused, "the host");
+            SumAxisOnHost(x, y, outer, dim, inner, scale, accumulate);
         }
     }
 
@@ -4972,6 +7138,10 @@ public abstract partial class Backend
         {
             BroadcastAxisKernel(dy, dx, outer, dim, inner, scale);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BroadcastAxisGuarded(dy, dx, outer, dim, inner, scale);
+        }
         else
         {
             BroadcastAxisRegistered(dy, dx, outer, dim, inner, scale);
@@ -4988,18 +7158,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.BroadcastAxis))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                BroadcastAxisGuarded(dy, dx, outer, dim, inner, scale);
+            }
+            else
+            {
+                BroadcastAxisKernel(dy, dx, outer, dim, inner, scale);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.BroadcastAxis))
         {
             BroadcastAxisKernel(dy, dx, outer, dim, inner, scale);
             return;
         }
 
-        var retry = new HostRetry(Ops.BroadcastAxis, RetryOnHost);
+        var retry = new HostRetry(Ops.BroadcastAxis);
         try
         {
             BroadcastAxisKernel(dy, dx, outer, dim, inner, scale);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             BroadcastAxisOnHost(dy, dx, outer, dim, inner, scale);
@@ -5007,6 +7191,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // BroadcastAxis on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BroadcastAxisGuarded(Storage dy, Storage dx, int outer, int dim, int inner, float scale)
+    {
+        try
+        {
+            BroadcastAxisKernel(dy, dx, outer, dim, inner, scale);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BroadcastAxis))
+        {
+            FellBack(Ops.BroadcastAxis.Name, refused, "the host");
+            BroadcastAxisOnHost(dy, dx, outer, dim, inner, scale);
         }
     }
 
@@ -5026,6 +7225,10 @@ public abstract partial class Backend
         {
             SgdStepKernel(p, g, v, n, lr, momentum);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SgdStepGuarded(p, g, v, n, lr, momentum);
+        }
         else
         {
             SgdStepRegistered(p, g, v, n, lr, momentum);
@@ -5042,18 +7245,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.SgdStep))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                SgdStepGuarded(p, g, v, n, lr, momentum);
+            }
+            else
+            {
+                SgdStepKernel(p, g, v, n, lr, momentum);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.SgdStep))
         {
             SgdStepKernel(p, g, v, n, lr, momentum);
             return;
         }
 
-        var retry = new HostRetry(Ops.SgdStep, RetryOnHost);
+        var retry = new HostRetry(Ops.SgdStep);
         try
         {
             SgdStepKernel(p, g, v, n, lr, momentum);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             SgdStepOnHost(p, g, v, n, lr, momentum);
@@ -5061,6 +7278,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // SgdStep on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SgdStepGuarded(Storage p, Storage g, Storage? v, int n, float lr, float momentum)
+    {
+        try
+        {
+            SgdStepKernel(p, g, v, n, lr, momentum);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SgdStep))
+        {
+            FellBack(Ops.SgdStep.Name, refused, "the host");
+            SgdStepOnHost(p, g, v, n, lr, momentum);
         }
     }
 
@@ -5080,6 +7312,10 @@ public abstract partial class Backend
         {
             AdamStepKernel(p, g, m, v, n, lr, beta1, beta2, eps);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AdamStepGuarded(p, g, m, v, n, lr, beta1, beta2, eps);
+        }
         else
         {
             AdamStepRegistered(p, g, m, v, n, lr, beta1, beta2, eps);
@@ -5096,18 +7332,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AdamStep))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AdamStepGuarded(p, g, m, v, n, lr, beta1, beta2, eps);
+            }
+            else
+            {
+                AdamStepKernel(p, g, m, v, n, lr, beta1, beta2, eps);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AdamStep))
         {
             AdamStepKernel(p, g, m, v, n, lr, beta1, beta2, eps);
             return;
         }
 
-        var retry = new HostRetry(Ops.AdamStep, RetryOnHost);
+        var retry = new HostRetry(Ops.AdamStep);
         try
         {
             AdamStepKernel(p, g, m, v, n, lr, beta1, beta2, eps);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AdamStepOnHost(p, g, m, v, n, lr, beta1, beta2, eps);
@@ -5115,6 +7365,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AdamStep on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdamStepGuarded(Storage p, Storage g, Storage m, Storage v, int n, float lr, float beta1, float beta2, float eps)
+    {
+        try
+        {
+            AdamStepKernel(p, g, m, v, n, lr, beta1, beta2, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AdamStep))
+        {
+            FellBack(Ops.AdamStep.Name, refused, "the host");
+            AdamStepOnHost(p, g, m, v, n, lr, beta1, beta2, eps);
         }
     }
 
@@ -5141,6 +7406,10 @@ public abstract partial class Backend
         {
             AdamStep8BitKernel(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AdamStep8BitGuarded(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
+        }
         else
         {
             AdamStep8BitRegistered(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
@@ -5157,18 +7426,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AdamStep8Bit))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AdamStep8BitGuarded(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
+            }
+            else
+            {
+                AdamStep8BitKernel(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AdamStep8Bit))
         {
             AdamStep8BitKernel(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
             return;
         }
 
-        var retry = new HostRetry(Ops.AdamStep8Bit, RetryOnHost);
+        var retry = new HostRetry(Ops.AdamStep8Bit);
         try
         {
             AdamStep8BitKernel(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AdamStep8BitOnHost(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
@@ -5176,6 +7459,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AdamStep8Bit on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AdamStep8BitGuarded(Storage p, Storage g, Storage m, Storage v, Storage absMax, Storage map, int n, float lr, float beta1, float beta2, float eps, float gradientScale, float decay)
+    {
+        try
+        {
+            AdamStep8BitKernel(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AdamStep8Bit))
+        {
+            FellBack(Ops.AdamStep8Bit.Name, refused, "the host");
+            AdamStep8BitOnHost(p, g, m, v, absMax, map, n, lr, beta1, beta2, eps, gradientScale, decay);
         }
     }
 
@@ -5195,6 +7493,10 @@ public abstract partial class Backend
         {
             SumSquaresKernel(x, total, n);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SumSquaresGuarded(x, total, n);
+        }
         else
         {
             SumSquaresRegistered(x, total, n);
@@ -5211,18 +7513,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.SumSquares))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                SumSquaresGuarded(x, total, n);
+            }
+            else
+            {
+                SumSquaresKernel(x, total, n);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.SumSquares))
         {
             SumSquaresKernel(x, total, n);
             return;
         }
 
-        var retry = new HostRetry(Ops.SumSquares, RetryOnHost);
+        var retry = new HostRetry(Ops.SumSquares);
         try
         {
             SumSquaresKernel(x, total, n);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             SumSquaresOnHost(x, total, n);
@@ -5230,6 +7546,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // SumSquares on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SumSquaresGuarded(Storage x, Storage total, int n)
+    {
+        try
+        {
+            SumSquaresKernel(x, total, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SumSquares))
+        {
+            FellBack(Ops.SumSquares.Name, refused, "the host");
+            SumSquaresOnHost(x, total, n);
         }
     }
 
@@ -5251,7 +7582,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool FusedAdamW(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm, float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
     {
-        return _kernels is null && _moves is null ? FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients) : FusedAdamWRegistered(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
+        return _kernels is null && _moves is null ? FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients) : ReferenceEquals(_kernels, s_guardedKernels) ? FusedAdamWGuarded(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients) : FusedAdamWRegistered(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -5263,17 +7594,22 @@ public abstract partial class Backend
             return kernel(this, tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.FusedAdamW))
+        if (!RetryOnHost)
+        {
+            return RefusedKernelsFallBack ? FusedAdamWGuarded(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients) : FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
+        }
+
+        if (!OwnsKernel(OperationIndex.FusedAdamW))
         {
             return FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
         }
 
-        var retry = new HostRetry(Ops.FusedAdamW, RetryOnHost);
+        var retry = new HostRetry(Ops.FusedAdamW);
         try
         {
             return FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             return FusedAdamWOnHost(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
@@ -5281,6 +7617,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // FusedAdamW on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool FusedAdamWGuarded(ReadOnlySpan<(Storage P, Storage G, Storage M, Storage V, int N)> tensors, ref IDisposable? cache, float maxNorm, float lr, float decay, float beta1, float beta2, float eps, bool zeroGradients)
+    {
+        try
+        {
+            return FusedAdamWKernel(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.FusedAdamW))
+        {
+            FellBack(Ops.FusedAdamW.Name, refused, "the host");
+            return FusedAdamWOnHost(tensors, ref cache, maxNorm, lr, decay, beta1, beta2, eps, zeroGradients);
         }
     }
 
@@ -5311,6 +7662,10 @@ public abstract partial class Backend
         {
             ClipFactorKernel(sumSquares, factor, maxNorm);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ClipFactorGuarded(sumSquares, factor, maxNorm);
+        }
         else
         {
             ClipFactorRegistered(sumSquares, factor, maxNorm);
@@ -5327,18 +7682,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.ClipFactor))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                ClipFactorGuarded(sumSquares, factor, maxNorm);
+            }
+            else
+            {
+                ClipFactorKernel(sumSquares, factor, maxNorm);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.ClipFactor))
         {
             ClipFactorKernel(sumSquares, factor, maxNorm);
             return;
         }
 
-        var retry = new HostRetry(Ops.ClipFactor, RetryOnHost);
+        var retry = new HostRetry(Ops.ClipFactor);
         try
         {
             ClipFactorKernel(sumSquares, factor, maxNorm);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             ClipFactorOnHost(sumSquares, factor, maxNorm);
@@ -5346,6 +7715,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // ClipFactor on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ClipFactorGuarded(Storage sumSquares, Storage factor, float maxNorm)
+    {
+        try
+        {
+            ClipFactorKernel(sumSquares, factor, maxNorm);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ClipFactor))
+        {
+            FellBack(Ops.ClipFactor.Name, refused, "the host");
+            ClipFactorOnHost(sumSquares, factor, maxNorm);
         }
     }
 
@@ -5365,6 +7749,10 @@ public abstract partial class Backend
         {
             DropoutKernel(x, y, n, p, seed);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            DropoutGuarded(x, y, n, p, seed);
+        }
         else
         {
             DropoutRegistered(x, y, n, p, seed);
@@ -5381,18 +7769,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Dropout))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                DropoutGuarded(x, y, n, p, seed);
+            }
+            else
+            {
+                DropoutKernel(x, y, n, p, seed);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Dropout))
         {
             DropoutKernel(x, y, n, p, seed);
             return;
         }
 
-        var retry = new HostRetry(Ops.Dropout, RetryOnHost);
+        var retry = new HostRetry(Ops.Dropout);
         try
         {
             DropoutKernel(x, y, n, p, seed);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             DropoutOnHost(x, y, n, p, seed);
@@ -5400,6 +7802,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Dropout on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void DropoutGuarded(Storage x, Storage y, int n, float p, uint seed)
+    {
+        try
+        {
+            DropoutKernel(x, y, n, p, seed);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Dropout))
+        {
+            FellBack(Ops.Dropout.Name, refused, "the host");
+            DropoutOnHost(x, y, n, p, seed);
         }
     }
 
@@ -5419,6 +7836,10 @@ public abstract partial class Backend
         {
             DropoutBackwardKernel(dy, dx, n, p, seed);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            DropoutBackwardGuarded(dy, dx, n, p, seed);
+        }
         else
         {
             DropoutBackwardRegistered(dy, dx, n, p, seed);
@@ -5435,18 +7856,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.DropoutBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                DropoutBackwardGuarded(dy, dx, n, p, seed);
+            }
+            else
+            {
+                DropoutBackwardKernel(dy, dx, n, p, seed);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.DropoutBackward))
         {
             DropoutBackwardKernel(dy, dx, n, p, seed);
             return;
         }
 
-        var retry = new HostRetry(Ops.DropoutBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.DropoutBackward);
         try
         {
             DropoutBackwardKernel(dy, dx, n, p, seed);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             DropoutBackwardOnHost(dy, dx, n, p, seed);
@@ -5454,6 +7889,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // DropoutBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void DropoutBackwardGuarded(Storage dy, Storage dx, int n, float p, uint seed)
+    {
+        try
+        {
+            DropoutBackwardKernel(dy, dx, n, p, seed);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.DropoutBackward))
+        {
+            FellBack(Ops.DropoutBackward.Name, refused, "the host");
+            DropoutBackwardOnHost(dy, dx, n, p, seed);
         }
     }
 
@@ -5473,6 +7923,10 @@ public abstract partial class Backend
         {
             ScaleMaskSoftmaxKernel(x, mask, y, rows, cols, maskRows, scale);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            ScaleMaskSoftmaxGuarded(x, mask, y, rows, cols, maskRows, scale);
+        }
         else
         {
             ScaleMaskSoftmaxRegistered(x, mask, y, rows, cols, maskRows, scale);
@@ -5489,18 +7943,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.ScaleMaskSoftmax))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                ScaleMaskSoftmaxGuarded(x, mask, y, rows, cols, maskRows, scale);
+            }
+            else
+            {
+                ScaleMaskSoftmaxKernel(x, mask, y, rows, cols, maskRows, scale);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.ScaleMaskSoftmax))
         {
             ScaleMaskSoftmaxKernel(x, mask, y, rows, cols, maskRows, scale);
             return;
         }
 
-        var retry = new HostRetry(Ops.ScaleMaskSoftmax, RetryOnHost);
+        var retry = new HostRetry(Ops.ScaleMaskSoftmax);
         try
         {
             ScaleMaskSoftmaxKernel(x, mask, y, rows, cols, maskRows, scale);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             ScaleMaskSoftmaxOnHost(x, mask, y, rows, cols, maskRows, scale);
@@ -5508,6 +7976,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // ScaleMaskSoftmax on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void ScaleMaskSoftmaxGuarded(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
+    {
+        try
+        {
+            ScaleMaskSoftmaxKernel(x, mask, y, rows, cols, maskRows, scale);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.ScaleMaskSoftmax))
+        {
+            FellBack(Ops.ScaleMaskSoftmax.Name, refused, "the host");
+            ScaleMaskSoftmaxOnHost(x, mask, y, rows, cols, maskRows, scale);
         }
     }
 
@@ -5527,6 +8010,10 @@ public abstract partial class Backend
         {
             LayerNormFusedKernel(x, gamma, beta, y, rows, cols, eps);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            LayerNormFusedGuarded(x, gamma, beta, y, rows, cols, eps);
+        }
         else
         {
             LayerNormFusedRegistered(x, gamma, beta, y, rows, cols, eps);
@@ -5543,18 +8030,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.LayerNormFused))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                LayerNormFusedGuarded(x, gamma, beta, y, rows, cols, eps);
+            }
+            else
+            {
+                LayerNormFusedKernel(x, gamma, beta, y, rows, cols, eps);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.LayerNormFused))
         {
             LayerNormFusedKernel(x, gamma, beta, y, rows, cols, eps);
             return;
         }
 
-        var retry = new HostRetry(Ops.LayerNormFused, RetryOnHost);
+        var retry = new HostRetry(Ops.LayerNormFused);
         try
         {
             LayerNormFusedKernel(x, gamma, beta, y, rows, cols, eps);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             LayerNormFusedOnHost(x, gamma, beta, y, rows, cols, eps);
@@ -5562,6 +8063,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // LayerNormFused on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LayerNormFusedGuarded(Storage x, Storage gamma, Storage beta, Storage y, int rows, int cols, float eps)
+    {
+        try
+        {
+            LayerNormFusedKernel(x, gamma, beta, y, rows, cols, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LayerNormFused))
+        {
+            FellBack(Ops.LayerNormFused.Name, refused, "the host");
+            LayerNormFusedOnHost(x, gamma, beta, y, rows, cols, eps);
         }
     }
 
@@ -5581,6 +8097,10 @@ public abstract partial class Backend
         {
             LayerNormTrainKernel(x, gamma, beta, y, stats, rows, cols, eps);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            LayerNormTrainGuarded(x, gamma, beta, y, stats, rows, cols, eps);
+        }
         else
         {
             LayerNormTrainRegistered(x, gamma, beta, y, stats, rows, cols, eps);
@@ -5597,18 +8117,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.LayerNormTrain))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                LayerNormTrainGuarded(x, gamma, beta, y, stats, rows, cols, eps);
+            }
+            else
+            {
+                LayerNormTrainKernel(x, gamma, beta, y, stats, rows, cols, eps);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.LayerNormTrain))
         {
             LayerNormTrainKernel(x, gamma, beta, y, stats, rows, cols, eps);
             return;
         }
 
-        var retry = new HostRetry(Ops.LayerNormTrain, RetryOnHost);
+        var retry = new HostRetry(Ops.LayerNormTrain);
         try
         {
             LayerNormTrainKernel(x, gamma, beta, y, stats, rows, cols, eps);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             LayerNormTrainOnHost(x, gamma, beta, y, stats, rows, cols, eps);
@@ -5616,6 +8150,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // LayerNormTrain on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LayerNormTrainGuarded(Storage x, Storage gamma, Storage beta, Storage y, Storage stats, int rows, int cols, float eps)
+    {
+        try
+        {
+            LayerNormTrainKernel(x, gamma, beta, y, stats, rows, cols, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LayerNormTrain))
+        {
+            FellBack(Ops.LayerNormTrain.Name, refused, "the host");
+            LayerNormTrainOnHost(x, gamma, beta, y, stats, rows, cols, eps);
         }
     }
 
@@ -5637,6 +8186,10 @@ public abstract partial class Backend
         {
             LayerNormBackwardKernel(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            LayerNormBackwardGuarded(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+        }
         else
         {
             LayerNormBackwardRegistered(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
@@ -5653,18 +8206,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.LayerNormBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                LayerNormBackwardGuarded(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+            }
+            else
+            {
+                LayerNormBackwardKernel(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.LayerNormBackward))
         {
             LayerNormBackwardKernel(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
             return;
         }
 
-        var retry = new HostRetry(Ops.LayerNormBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.LayerNormBackward);
         try
         {
             LayerNormBackwardKernel(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             LayerNormBackwardOnHost(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
@@ -5672,6 +8239,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // LayerNormBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void LayerNormBackwardGuarded(Storage x, Storage gamma, Storage dy, Storage stats, Storage? dx, Storage? dgamma, Storage? dbeta, int rows, int cols)
+    {
+        try
+        {
+            LayerNormBackwardKernel(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.LayerNormBackward))
+        {
+            FellBack(Ops.LayerNormBackward.Name, refused, "the host");
+            LayerNormBackwardOnHost(x, gamma, dy, stats, dx, dgamma, dbeta, rows, cols);
         }
     }
 
@@ -5691,6 +8273,10 @@ public abstract partial class Backend
         {
             BiasGeluKernel(x, bias, y, n, cols);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BiasGeluGuarded(x, bias, y, n, cols);
+        }
         else
         {
             BiasGeluRegistered(x, bias, y, n, cols);
@@ -5707,18 +8293,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.BiasGelu))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                BiasGeluGuarded(x, bias, y, n, cols);
+            }
+            else
+            {
+                BiasGeluKernel(x, bias, y, n, cols);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.BiasGelu))
         {
             BiasGeluKernel(x, bias, y, n, cols);
             return;
         }
 
-        var retry = new HostRetry(Ops.BiasGelu, RetryOnHost);
+        var retry = new HostRetry(Ops.BiasGelu);
         try
         {
             BiasGeluKernel(x, bias, y, n, cols);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             BiasGeluOnHost(x, bias, y, n, cols);
@@ -5726,6 +8326,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // BiasGelu on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BiasGeluGuarded(Storage x, Storage bias, Storage y, int n, int cols)
+    {
+        try
+        {
+            BiasGeluKernel(x, bias, y, n, cols);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BiasGelu))
+        {
+            FellBack(Ops.BiasGelu.Name, refused, "the host");
+            BiasGeluOnHost(x, bias, y, n, cols);
         }
     }
 
@@ -5748,6 +8363,10 @@ public abstract partial class Backend
         {
             Int8MatMulKernel(x, q, scales, y, m, n, k);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Int8MatMulGuarded(x, q, scales, y, m, n, k);
+        }
         else
         {
             Int8MatMulRegistered(x, q, scales, y, m, n, k);
@@ -5764,18 +8383,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Int8MatMul))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                Int8MatMulGuarded(x, q, scales, y, m, n, k);
+            }
+            else
+            {
+                Int8MatMulKernel(x, q, scales, y, m, n, k);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Int8MatMul))
         {
             Int8MatMulKernel(x, q, scales, y, m, n, k);
             return;
         }
 
-        var retry = new HostRetry(Ops.Int8MatMul, RetryOnHost);
+        var retry = new HostRetry(Ops.Int8MatMul);
         try
         {
             Int8MatMulKernel(x, q, scales, y, m, n, k);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             Int8MatMulOnHost(x, q, scales, y, m, n, k);
@@ -5783,6 +8416,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Int8MatMul on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Int8MatMulGuarded(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    {
+        try
+        {
+            Int8MatMulKernel(x, q, scales, y, m, n, k);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Int8MatMul))
+        {
+            FellBack(Ops.Int8MatMul.Name, refused, "the host");
+            Int8MatMulOnHost(x, q, scales, y, m, n, k);
         }
     }
 
@@ -5805,6 +8453,10 @@ public abstract partial class Backend
         {
             BFloat16MatMulKernel(x, packed, y, m, n, k);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BFloat16MatMulGuarded(x, packed, y, m, n, k);
+        }
         else
         {
             BFloat16MatMulRegistered(x, packed, y, m, n, k);
@@ -5821,18 +8473,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.BFloat16MatMul))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                BFloat16MatMulGuarded(x, packed, y, m, n, k);
+            }
+            else
+            {
+                BFloat16MatMulKernel(x, packed, y, m, n, k);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.BFloat16MatMul))
         {
             BFloat16MatMulKernel(x, packed, y, m, n, k);
             return;
         }
 
-        var retry = new HostRetry(Ops.BFloat16MatMul, RetryOnHost);
+        var retry = new HostRetry(Ops.BFloat16MatMul);
         try
         {
             BFloat16MatMulKernel(x, packed, y, m, n, k);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             BFloat16MatMulOnHost(x, packed, y, m, n, k);
@@ -5840,6 +8506,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // BFloat16MatMul on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BFloat16MatMulGuarded(Storage x, Storage packed, Storage y, int m, int n, int k)
+    {
+        try
+        {
+            BFloat16MatMulKernel(x, packed, y, m, n, k);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BFloat16MatMul))
+        {
+            FellBack(Ops.BFloat16MatMul.Name, refused, "the host");
+            BFloat16MatMulOnHost(x, packed, y, m, n, k);
         }
     }
 
@@ -5859,6 +8540,10 @@ public abstract partial class Backend
         {
             BFloat16DequantizeKernel(packed, w, k, n);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BFloat16DequantizeGuarded(packed, w, k, n);
+        }
         else
         {
             BFloat16DequantizeRegistered(packed, w, k, n);
@@ -5875,18 +8560,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.BFloat16Dequantize))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                BFloat16DequantizeGuarded(packed, w, k, n);
+            }
+            else
+            {
+                BFloat16DequantizeKernel(packed, w, k, n);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.BFloat16Dequantize))
         {
             BFloat16DequantizeKernel(packed, w, k, n);
             return;
         }
 
-        var retry = new HostRetry(Ops.BFloat16Dequantize, RetryOnHost);
+        var retry = new HostRetry(Ops.BFloat16Dequantize);
         try
         {
             BFloat16DequantizeKernel(packed, w, k, n);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             BFloat16DequantizeOnHost(packed, w, k, n);
@@ -5894,6 +8593,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // BFloat16Dequantize on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BFloat16DequantizeGuarded(Storage packed, Storage w, int k, int n)
+    {
+        try
+        {
+            BFloat16DequantizeKernel(packed, w, k, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BFloat16Dequantize))
+        {
+            FellBack(Ops.BFloat16Dequantize.Name, refused, "the host");
+            BFloat16DequantizeOnHost(packed, w, k, n);
         }
     }
 
@@ -5918,6 +8632,10 @@ public abstract partial class Backend
         {
             Float16MatMulKernel(x, packed, y, m, n, k);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Float16MatMulGuarded(x, packed, y, m, n, k);
+        }
         else
         {
             Float16MatMulRegistered(x, packed, y, m, n, k);
@@ -5934,17 +8652,25 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.Float16MatMul))
+        if (RefusedKernelsFallBack)
+        {
+            Float16MatMulGuarded(x, packed, y, m, n, k);
+        }
+        else
         {
             Float16MatMulKernel(x, packed, y, m, n, k);
-            return;
         }
+    }
 
+    // Float16MatMul on a device whose refused kernels fall back (BuildsKernelsWhenUsed): its composed path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Float16MatMulGuarded(Storage x, Storage packed, Storage y, int m, int n, int k)
+    {
         try
         {
             Float16MatMulKernel(x, packed, y, m, n, k);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Float16MatMul))
         {
             FellBack(Ops.Float16MatMul.Name, refused, "its composed path");
             Float16MatMulComposed(x, packed, y, m, n, k);
@@ -5978,6 +8704,10 @@ public abstract partial class Backend
         {
             Float16DequantizeKernel(packed, w, k, n);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Float16DequantizeGuarded(packed, w, k, n);
+        }
         else
         {
             Float16DequantizeRegistered(packed, w, k, n);
@@ -5994,18 +8724,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Float16Dequantize))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                Float16DequantizeGuarded(packed, w, k, n);
+            }
+            else
+            {
+                Float16DequantizeKernel(packed, w, k, n);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Float16Dequantize))
         {
             Float16DequantizeKernel(packed, w, k, n);
             return;
         }
 
-        var retry = new HostRetry(Ops.Float16Dequantize, RetryOnHost);
+        var retry = new HostRetry(Ops.Float16Dequantize);
         try
         {
             Float16DequantizeKernel(packed, w, k, n);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             Float16DequantizeOnHost(packed, w, k, n);
@@ -6013,6 +8757,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Float16Dequantize on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Float16DequantizeGuarded(Storage packed, Storage w, int k, int n)
+    {
+        try
+        {
+            Float16DequantizeKernel(packed, w, k, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Float16Dequantize))
+        {
+            FellBack(Ops.Float16Dequantize.Name, refused, "the host");
+            Float16DequantizeOnHost(packed, w, k, n);
         }
     }
 
@@ -6035,6 +8794,10 @@ public abstract partial class Backend
         {
             PackBFloat16Kernel(x, packed, n);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            PackBFloat16Guarded(x, packed, n);
+        }
         else
         {
             PackBFloat16Registered(x, packed, n);
@@ -6051,18 +8814,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.PackBFloat16))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                PackBFloat16Guarded(x, packed, n);
+            }
+            else
+            {
+                PackBFloat16Kernel(x, packed, n);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.PackBFloat16))
         {
             PackBFloat16Kernel(x, packed, n);
             return;
         }
 
-        var retry = new HostRetry(Ops.PackBFloat16, RetryOnHost);
+        var retry = new HostRetry(Ops.PackBFloat16);
         try
         {
             PackBFloat16Kernel(x, packed, n);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             PackBFloat16OnHost(x, packed, n);
@@ -6070,6 +8847,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // PackBFloat16 on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PackBFloat16Guarded(Storage x, Storage packed, int n)
+    {
+        try
+        {
+            PackBFloat16Kernel(x, packed, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.PackBFloat16))
+        {
+            FellBack(Ops.PackBFloat16.Name, refused, "the host");
+            PackBFloat16OnHost(x, packed, n);
         }
     }
 
@@ -6089,6 +8881,10 @@ public abstract partial class Backend
         {
             Int8DequantizeKernel(q, scales, w, k, n);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Int8DequantizeGuarded(q, scales, w, k, n);
+        }
         else
         {
             Int8DequantizeRegistered(q, scales, w, k, n);
@@ -6105,18 +8901,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Int8Dequantize))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                Int8DequantizeGuarded(q, scales, w, k, n);
+            }
+            else
+            {
+                Int8DequantizeKernel(q, scales, w, k, n);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Int8Dequantize))
         {
             Int8DequantizeKernel(q, scales, w, k, n);
             return;
         }
 
-        var retry = new HostRetry(Ops.Int8Dequantize, RetryOnHost);
+        var retry = new HostRetry(Ops.Int8Dequantize);
         try
         {
             Int8DequantizeKernel(q, scales, w, k, n);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             Int8DequantizeOnHost(q, scales, w, k, n);
@@ -6124,6 +8934,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Int8Dequantize on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Int8DequantizeGuarded(Storage q, Storage scales, Storage w, int k, int n)
+    {
+        try
+        {
+            Int8DequantizeKernel(q, scales, w, k, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Int8Dequantize))
+        {
+            FellBack(Ops.Int8Dequantize.Name, refused, "the host");
+            Int8DequantizeOnHost(q, scales, w, k, n);
         }
     }
 
@@ -6147,6 +8972,10 @@ public abstract partial class Backend
         {
             Int4MatMulKernel(x, q, scales, y, m, n, k);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Int4MatMulGuarded(x, q, scales, y, m, n, k);
+        }
         else
         {
             Int4MatMulRegistered(x, q, scales, y, m, n, k);
@@ -6163,18 +8992,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Int4MatMul))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                Int4MatMulGuarded(x, q, scales, y, m, n, k);
+            }
+            else
+            {
+                Int4MatMulKernel(x, q, scales, y, m, n, k);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Int4MatMul))
         {
             Int4MatMulKernel(x, q, scales, y, m, n, k);
             return;
         }
 
-        var retry = new HostRetry(Ops.Int4MatMul, RetryOnHost);
+        var retry = new HostRetry(Ops.Int4MatMul);
         try
         {
             Int4MatMulKernel(x, q, scales, y, m, n, k);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             Int4MatMulOnHost(x, q, scales, y, m, n, k);
@@ -6182,6 +9025,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Int4MatMul on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Int4MatMulGuarded(Storage x, Storage q, Storage scales, Storage y, int m, int n, int k)
+    {
+        try
+        {
+            Int4MatMulKernel(x, q, scales, y, m, n, k);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Int4MatMul))
+        {
+            FellBack(Ops.Int4MatMul.Name, refused, "the host");
+            Int4MatMulOnHost(x, q, scales, y, m, n, k);
         }
     }
 
@@ -6201,6 +9059,10 @@ public abstract partial class Backend
         {
             Int4DequantizeKernel(q, scales, w, k, n);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            Int4DequantizeGuarded(q, scales, w, k, n);
+        }
         else
         {
             Int4DequantizeRegistered(q, scales, w, k, n);
@@ -6217,18 +9079,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Int4Dequantize))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                Int4DequantizeGuarded(q, scales, w, k, n);
+            }
+            else
+            {
+                Int4DequantizeKernel(q, scales, w, k, n);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Int4Dequantize))
         {
             Int4DequantizeKernel(q, scales, w, k, n);
             return;
         }
 
-        var retry = new HostRetry(Ops.Int4Dequantize, RetryOnHost);
+        var retry = new HostRetry(Ops.Int4Dequantize);
         try
         {
             Int4DequantizeKernel(q, scales, w, k, n);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             Int4DequantizeOnHost(q, scales, w, k, n);
@@ -6236,6 +9112,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Int4Dequantize on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void Int4DequantizeGuarded(Storage q, Storage scales, Storage w, int k, int n)
+    {
+        try
+        {
+            Int4DequantizeKernel(q, scales, w, k, n);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Int4Dequantize))
+        {
+            FellBack(Ops.Int4Dequantize.Name, refused, "the host");
+            Int4DequantizeOnHost(q, scales, w, k, n);
         }
     }
 
@@ -6255,6 +9146,10 @@ public abstract partial class Backend
         {
             RmsNormKernel(x, y, inv, rows, cols, eps);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            RmsNormGuarded(x, y, inv, rows, cols, eps);
+        }
         else
         {
             RmsNormRegistered(x, y, inv, rows, cols, eps);
@@ -6271,18 +9166,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.RmsNorm))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                RmsNormGuarded(x, y, inv, rows, cols, eps);
+            }
+            else
+            {
+                RmsNormKernel(x, y, inv, rows, cols, eps);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.RmsNorm))
         {
             RmsNormKernel(x, y, inv, rows, cols, eps);
             return;
         }
 
-        var retry = new HostRetry(Ops.RmsNorm, RetryOnHost);
+        var retry = new HostRetry(Ops.RmsNorm);
         try
         {
             RmsNormKernel(x, y, inv, rows, cols, eps);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             RmsNormOnHost(x, y, inv, rows, cols, eps);
@@ -6290,6 +9199,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // RmsNorm on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormGuarded(Storage x, Storage y, Storage inv, int rows, int cols, float eps)
+    {
+        try
+        {
+            RmsNormKernel(x, y, inv, rows, cols, eps);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.RmsNorm))
+        {
+            FellBack(Ops.RmsNorm.Name, refused, "the host");
+            RmsNormOnHost(x, y, inv, rows, cols, eps);
         }
     }
 
@@ -6309,6 +9233,10 @@ public abstract partial class Backend
         {
             RmsNormBackwardKernel(dy, y, inv, dx, rows, cols);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            RmsNormBackwardGuarded(dy, y, inv, dx, rows, cols);
+        }
         else
         {
             RmsNormBackwardRegistered(dy, y, inv, dx, rows, cols);
@@ -6325,18 +9253,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.RmsNormBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                RmsNormBackwardGuarded(dy, y, inv, dx, rows, cols);
+            }
+            else
+            {
+                RmsNormBackwardKernel(dy, y, inv, dx, rows, cols);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.RmsNormBackward))
         {
             RmsNormBackwardKernel(dy, y, inv, dx, rows, cols);
             return;
         }
 
-        var retry = new HostRetry(Ops.RmsNormBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.RmsNormBackward);
         try
         {
             RmsNormBackwardKernel(dy, y, inv, dx, rows, cols);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             RmsNormBackwardOnHost(dy, y, inv, dx, rows, cols);
@@ -6344,6 +9286,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // RmsNormBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormBackwardGuarded(Storage dy, Storage y, Storage inv, Storage dx, int rows, int cols)
+    {
+        try
+        {
+            RmsNormBackwardKernel(dy, y, inv, dx, rows, cols);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.RmsNormBackward))
+        {
+            FellBack(Ops.RmsNormBackward.Name, refused, "the host");
+            RmsNormBackwardOnHost(dy, y, inv, dx, rows, cols);
         }
     }
 
@@ -6367,6 +9324,10 @@ public abstract partial class Backend
         {
             RopeKernel(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            RopeGuarded(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+        }
         else
         {
             RopeRegistered(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
@@ -6383,18 +9344,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.Rope))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                RopeGuarded(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+            }
+            else
+            {
+                RopeKernel(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.Rope))
         {
             RopeKernel(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
             return;
         }
 
-        var retry = new HostRetry(Ops.Rope, RetryOnHost);
+        var retry = new HostRetry(Ops.Rope);
         try
         {
             RopeKernel(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             RopeOnHost(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
@@ -6402,6 +9377,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // Rope on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RopeGuarded(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved, float sign)
+    {
+        try
+        {
+            RopeKernel(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.Rope))
+        {
+            FellBack(Ops.Rope.Name, refused, "the host");
+            RopeOnHost(x, y, cos, sin, positions, rows, heads, steps, dim, half, interleaved, sign);
         }
     }
 
@@ -6421,6 +9411,10 @@ public abstract partial class Backend
         {
             RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            RmsNormAffineGuarded(x, gain, y, rows, cols, eps, offset);
+        }
         else
         {
             RmsNormAffineRegistered(x, gain, y, rows, cols, eps, offset);
@@ -6437,18 +9431,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.RmsNormAffine))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                RmsNormAffineGuarded(x, gain, y, rows, cols, eps, offset);
+            }
+            else
+            {
+                RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.RmsNormAffine))
         {
             RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
             return;
         }
 
-        var retry = new HostRetry(Ops.RmsNormAffine, RetryOnHost);
+        var retry = new HostRetry(Ops.RmsNormAffine);
         try
         {
             RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             RmsNormAffineOnHost(x, gain, y, rows, cols, eps, offset);
@@ -6456,6 +9464,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // RmsNormAffine on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormAffineGuarded(Storage x, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    {
+        try
+        {
+            RmsNormAffineKernel(x, gain, y, rows, cols, eps, offset);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.RmsNormAffine))
+        {
+            FellBack(Ops.RmsNormAffine.Name, refused, "the host");
+            RmsNormAffineOnHost(x, gain, y, rows, cols, eps, offset);
         }
     }
 
@@ -6475,6 +9498,10 @@ public abstract partial class Backend
         {
             AddRmsNormAffineKernel(a, b, sum, gain, y, rows, cols, eps, offset);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AddRmsNormAffineGuarded(a, b, sum, gain, y, rows, cols, eps, offset);
+        }
         else
         {
             AddRmsNormAffineRegistered(a, b, sum, gain, y, rows, cols, eps, offset);
@@ -6491,18 +9518,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AddRmsNormAffine))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AddRmsNormAffineGuarded(a, b, sum, gain, y, rows, cols, eps, offset);
+            }
+            else
+            {
+                AddRmsNormAffineKernel(a, b, sum, gain, y, rows, cols, eps, offset);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AddRmsNormAffine))
         {
             AddRmsNormAffineKernel(a, b, sum, gain, y, rows, cols, eps, offset);
             return;
         }
 
-        var retry = new HostRetry(Ops.AddRmsNormAffine, RetryOnHost);
+        var retry = new HostRetry(Ops.AddRmsNormAffine);
         try
         {
             AddRmsNormAffineKernel(a, b, sum, gain, y, rows, cols, eps, offset);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AddRmsNormAffineOnHost(a, b, sum, gain, y, rows, cols, eps, offset);
@@ -6510,6 +9551,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AddRmsNormAffine on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AddRmsNormAffineGuarded(Storage a, Storage b, Storage sum, Storage gain, Storage y, int rows, int cols, float eps, float offset)
+    {
+        try
+        {
+            AddRmsNormAffineKernel(a, b, sum, gain, y, rows, cols, eps, offset);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AddRmsNormAffine))
+        {
+            FellBack(Ops.AddRmsNormAffine.Name, refused, "the host");
+            AddRmsNormAffineOnHost(a, b, sum, gain, y, rows, cols, eps, offset);
         }
     }
 
@@ -6532,6 +9588,10 @@ public abstract partial class Backend
         {
             RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            RmsNormRopeGuarded(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+        }
         else
         {
             RmsNormRopeRegistered(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
@@ -6548,18 +9608,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.RmsNormRope))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                RmsNormRopeGuarded(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+            }
+            else
+            {
+                RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.RmsNormRope))
         {
             RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
             return;
         }
 
-        var retry = new HostRetry(Ops.RmsNormRope, RetryOnHost);
+        var retry = new HostRetry(Ops.RmsNormRope);
         try
         {
             RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             RmsNormRopeOnHost(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
@@ -6567,6 +9641,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // RmsNormRope on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormRopeGuarded(Storage x, Storage gain, Storage cos, Storage sin, Storage positions, Storage y, int rows, int cols, float eps, float offset, int heads, int steps, int half, bool interleaved)
+    {
+        try
+        {
+            RmsNormRopeKernel(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.RmsNormRope))
+        {
+            FellBack(Ops.RmsNormRope.Name, refused, "the host");
+            RmsNormRopeOnHost(x, gain, cos, sin, positions, y, rows, cols, eps, offset, heads, steps, half, interleaved);
         }
     }
 
@@ -6589,6 +9678,10 @@ public abstract partial class Backend
         {
             RmsNormRopePairKernel(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            RmsNormRopePairGuarded(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
+        }
         else
         {
             RmsNormRopePairRegistered(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
@@ -6605,17 +9698,25 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.RmsNormRopePair))
+        if (RefusedKernelsFallBack)
+        {
+            RmsNormRopePairGuarded(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
+        }
+        else
         {
             RmsNormRopePairKernel(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
-            return;
         }
+    }
 
+    // RmsNormRopePair on a device whose refused kernels fall back (BuildsKernelsWhenUsed): its composed path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void RmsNormRopePairGuarded(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads, Storage x2, Storage gain2, Storage y2, int rows2, float eps2, float offset2, int heads2, Storage cos, Storage sin, Storage positions, int cols, int steps, int half, bool interleaved)
+    {
         try
         {
             RmsNormRopePairKernel(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.RmsNormRopePair))
         {
             FellBack(Ops.RmsNormRopePair.Name, refused, "its composed path");
             RmsNormRopePairComposed(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
@@ -6641,7 +9742,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool NormRopeHeads(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
     {
-        return _kernels is null && _moves is null ? NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : NormRopeHeadsRegistered(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
+        return _kernels is null && _moves is null ? NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : ReferenceEquals(_kernels, s_guardedKernels) ? NormRopeHeadsGuarded(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : NormRopeHeadsRegistered(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -6653,16 +9754,18 @@ public abstract partial class Backend
             return kernel(this, q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.NormRopeHeads))
-        {
-            return NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
-        }
+        return RefusedKernelsFallBack ? NormRopeHeadsGuarded(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16) : NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
+    }
 
+    // NormRopeHeads on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool NormRopeHeadsGuarded(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols, Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions, int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
+    {
         try
         {
             return NormRopeHeadsKernel(q, k, v, batch, steps, heads, kvHeads, cols, gainQ, epsQ, offsetQ, gainK, epsK, offsetK, cos, sin, positions, half, interleaved, yq, yk, yv, position, capacity, stride, bfloat16);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.NormRopeHeads))
         {
             FellBack(Ops.NormRopeHeads.Name, refused, "the caller's path");
             return default;
@@ -6682,6 +9785,10 @@ public abstract partial class Backend
         {
             SoftmaxCrossEntropyRowsKernel(logits, targets, weights, losses, rows, vocabulary, scale);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SoftmaxCrossEntropyRowsGuarded(logits, targets, weights, losses, rows, vocabulary, scale);
+        }
         else
         {
             SoftmaxCrossEntropyRowsRegistered(logits, targets, weights, losses, rows, vocabulary, scale);
@@ -6698,18 +9805,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.SoftmaxCrossEntropyRows))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                SoftmaxCrossEntropyRowsGuarded(logits, targets, weights, losses, rows, vocabulary, scale);
+            }
+            else
+            {
+                SoftmaxCrossEntropyRowsKernel(logits, targets, weights, losses, rows, vocabulary, scale);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.SoftmaxCrossEntropyRows))
         {
             SoftmaxCrossEntropyRowsKernel(logits, targets, weights, losses, rows, vocabulary, scale);
             return;
         }
 
-        var retry = new HostRetry(Ops.SoftmaxCrossEntropyRows, RetryOnHost);
+        var retry = new HostRetry(Ops.SoftmaxCrossEntropyRows);
         try
         {
             SoftmaxCrossEntropyRowsKernel(logits, targets, weights, losses, rows, vocabulary, scale);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             SoftmaxCrossEntropyRowsOnHost(logits, targets, weights, losses, rows, vocabulary, scale);
@@ -6717,6 +9838,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // SoftmaxCrossEntropyRows on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SoftmaxCrossEntropyRowsGuarded(Storage logits, Storage targets, Storage weights, Storage losses, int rows, int vocabulary, float scale)
+    {
+        try
+        {
+            SoftmaxCrossEntropyRowsKernel(logits, targets, weights, losses, rows, vocabulary, scale);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SoftmaxCrossEntropyRows))
+        {
+            FellBack(Ops.SoftmaxCrossEntropyRows.Name, refused, "the host");
+            SoftmaxCrossEntropyRowsOnHost(logits, targets, weights, losses, rows, vocabulary, scale);
         }
     }
 
@@ -6736,6 +9872,10 @@ public abstract partial class Backend
         {
             GatedActivationKernel(gate, up, y, n, kind);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GatedActivationGuarded(gate, up, y, n, kind);
+        }
         else
         {
             GatedActivationRegistered(gate, up, y, n, kind);
@@ -6752,18 +9892,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.GatedActivation))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                GatedActivationGuarded(gate, up, y, n, kind);
+            }
+            else
+            {
+                GatedActivationKernel(gate, up, y, n, kind);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.GatedActivation))
         {
             GatedActivationKernel(gate, up, y, n, kind);
             return;
         }
 
-        var retry = new HostRetry(Ops.GatedActivation, RetryOnHost);
+        var retry = new HostRetry(Ops.GatedActivation);
         try
         {
             GatedActivationKernel(gate, up, y, n, kind);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             GatedActivationOnHost(gate, up, y, n, kind);
@@ -6771,6 +9925,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // GatedActivation on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatedActivationGuarded(Storage gate, Storage up, Storage y, int n, int kind)
+    {
+        try
+        {
+            GatedActivationKernel(gate, up, y, n, kind);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GatedActivation))
+        {
+            FellBack(Ops.GatedActivation.Name, refused, "the host");
+            GatedActivationOnHost(gate, up, y, n, kind);
         }
     }
 
@@ -6790,6 +9959,10 @@ public abstract partial class Backend
         {
             GatedActivationBackwardKernel(gate, up, dy, dgate, dup, n, kind, flags);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GatedActivationBackwardGuarded(gate, up, dy, dgate, dup, n, kind, flags);
+        }
         else
         {
             GatedActivationBackwardRegistered(gate, up, dy, dgate, dup, n, kind, flags);
@@ -6806,18 +9979,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.GatedActivationBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                GatedActivationBackwardGuarded(gate, up, dy, dgate, dup, n, kind, flags);
+            }
+            else
+            {
+                GatedActivationBackwardKernel(gate, up, dy, dgate, dup, n, kind, flags);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.GatedActivationBackward))
         {
             GatedActivationBackwardKernel(gate, up, dy, dgate, dup, n, kind, flags);
             return;
         }
 
-        var retry = new HostRetry(Ops.GatedActivationBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.GatedActivationBackward);
         try
         {
             GatedActivationBackwardKernel(gate, up, dy, dgate, dup, n, kind, flags);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             GatedActivationBackwardOnHost(gate, up, dy, dgate, dup, n, kind, flags);
@@ -6825,6 +10012,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // GatedActivationBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatedActivationBackwardGuarded(Storage gate, Storage up, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    {
+        try
+        {
+            GatedActivationBackwardKernel(gate, up, dy, dgate, dup, n, kind, flags);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GatedActivationBackward))
+        {
+            FellBack(Ops.GatedActivationBackward.Name, refused, "the host");
+            GatedActivationBackwardOnHost(gate, up, dy, dgate, dup, n, kind, flags);
         }
     }
 
@@ -6849,6 +10051,10 @@ public abstract partial class Backend
         {
             GatedActivationPackedKernel(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GatedActivationPackedGuarded(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
+        }
         else
         {
             GatedActivationPackedRegistered(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
@@ -6865,18 +10071,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.GatedActivationPacked))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                GatedActivationPackedGuarded(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
+            }
+            else
+            {
+                GatedActivationPackedKernel(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.GatedActivationPacked))
         {
             GatedActivationPackedKernel(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
             return;
         }
 
-        var retry = new HostRetry(Ops.GatedActivationPacked, RetryOnHost);
+        var retry = new HostRetry(Ops.GatedActivationPacked);
         try
         {
             GatedActivationPackedKernel(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             GatedActivationPackedOnHost(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
@@ -6884,6 +10104,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // GatedActivationPacked on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatedActivationPackedGuarded(Storage gate, Storage up, Storage packedGate, Storage packedUp, Storage y, Storage packedY, int n, int kind, int flags)
+    {
+        try
+        {
+            GatedActivationPackedKernel(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GatedActivationPacked))
+        {
+            FellBack(Ops.GatedActivationPacked.Name, refused, "the host");
+            GatedActivationPackedOnHost(gate, up, packedGate, packedUp, y, packedY, n, kind, flags);
         }
     }
 
@@ -6903,6 +10138,10 @@ public abstract partial class Backend
         {
             GatedActivationBackwardPackedKernel(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            GatedActivationBackwardPackedGuarded(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
+        }
         else
         {
             GatedActivationBackwardPackedRegistered(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
@@ -6919,18 +10158,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.GatedActivationBackwardPacked))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                GatedActivationBackwardPackedGuarded(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
+            }
+            else
+            {
+                GatedActivationBackwardPackedKernel(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.GatedActivationBackwardPacked))
         {
             GatedActivationBackwardPackedKernel(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
             return;
         }
 
-        var retry = new HostRetry(Ops.GatedActivationBackwardPacked, RetryOnHost);
+        var retry = new HostRetry(Ops.GatedActivationBackwardPacked);
         try
         {
             GatedActivationBackwardPackedKernel(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             GatedActivationBackwardPackedOnHost(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
@@ -6938,6 +10191,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // GatedActivationBackwardPacked on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void GatedActivationBackwardPackedGuarded(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    {
+        try
+        {
+            GatedActivationBackwardPackedKernel(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.GatedActivationBackwardPacked))
+        {
+            FellBack(Ops.GatedActivationBackwardPacked.Name, refused, "the host");
+            GatedActivationBackwardPackedOnHost(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
         }
     }
 
@@ -6957,6 +10225,10 @@ public abstract partial class Backend
         {
             KeyValueWriteInt8Kernel(source, cache, scales, position, heads, steps, capacity, dim);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            KeyValueWriteInt8Guarded(source, cache, scales, position, heads, steps, capacity, dim);
+        }
         else
         {
             KeyValueWriteInt8Registered(source, cache, scales, position, heads, steps, capacity, dim);
@@ -6973,18 +10245,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.KeyValueWriteInt8))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                KeyValueWriteInt8Guarded(source, cache, scales, position, heads, steps, capacity, dim);
+            }
+            else
+            {
+                KeyValueWriteInt8Kernel(source, cache, scales, position, heads, steps, capacity, dim);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.KeyValueWriteInt8))
         {
             KeyValueWriteInt8Kernel(source, cache, scales, position, heads, steps, capacity, dim);
             return;
         }
 
-        var retry = new HostRetry(Ops.KeyValueWriteInt8, RetryOnHost);
+        var retry = new HostRetry(Ops.KeyValueWriteInt8);
         try
         {
             KeyValueWriteInt8Kernel(source, cache, scales, position, heads, steps, capacity, dim);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             KeyValueWriteInt8OnHost(source, cache, scales, position, heads, steps, capacity, dim);
@@ -6992,6 +10278,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // KeyValueWriteInt8 on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void KeyValueWriteInt8Guarded(Storage source, Storage cache, Storage scales, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        try
+        {
+            KeyValueWriteInt8Kernel(source, cache, scales, position, heads, steps, capacity, dim);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.KeyValueWriteInt8))
+        {
+            FellBack(Ops.KeyValueWriteInt8.Name, refused, "the host");
+            KeyValueWriteInt8OnHost(source, cache, scales, position, heads, steps, capacity, dim);
         }
     }
 
@@ -7011,6 +10312,10 @@ public abstract partial class Backend
         {
             AttentionScoresInt8Kernel(q, cache, scales, y, rows, steps, capacity, dim);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionScoresInt8Guarded(q, cache, scales, y, rows, steps, capacity, dim);
+        }
         else
         {
             AttentionScoresInt8Registered(q, cache, scales, y, rows, steps, capacity, dim);
@@ -7027,18 +10332,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AttentionScoresInt8))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AttentionScoresInt8Guarded(q, cache, scales, y, rows, steps, capacity, dim);
+            }
+            else
+            {
+                AttentionScoresInt8Kernel(q, cache, scales, y, rows, steps, capacity, dim);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionScoresInt8))
         {
             AttentionScoresInt8Kernel(q, cache, scales, y, rows, steps, capacity, dim);
             return;
         }
 
-        var retry = new HostRetry(Ops.AttentionScoresInt8, RetryOnHost);
+        var retry = new HostRetry(Ops.AttentionScoresInt8);
         try
         {
             AttentionScoresInt8Kernel(q, cache, scales, y, rows, steps, capacity, dim);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AttentionScoresInt8OnHost(q, cache, scales, y, rows, steps, capacity, dim);
@@ -7046,6 +10365,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AttentionScoresInt8 on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionScoresInt8Guarded(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
+    {
+        try
+        {
+            AttentionScoresInt8Kernel(q, cache, scales, y, rows, steps, capacity, dim);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionScoresInt8))
+        {
+            FellBack(Ops.AttentionScoresInt8.Name, refused, "the host");
+            AttentionScoresInt8OnHost(q, cache, scales, y, rows, steps, capacity, dim);
         }
     }
 
@@ -7065,6 +10399,10 @@ public abstract partial class Backend
         {
             AttentionContextInt8Kernel(weights, cache, scales, y, rows, steps, capacity, dim);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionContextInt8Guarded(weights, cache, scales, y, rows, steps, capacity, dim);
+        }
         else
         {
             AttentionContextInt8Registered(weights, cache, scales, y, rows, steps, capacity, dim);
@@ -7081,18 +10419,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AttentionContextInt8))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AttentionContextInt8Guarded(weights, cache, scales, y, rows, steps, capacity, dim);
+            }
+            else
+            {
+                AttentionContextInt8Kernel(weights, cache, scales, y, rows, steps, capacity, dim);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionContextInt8))
         {
             AttentionContextInt8Kernel(weights, cache, scales, y, rows, steps, capacity, dim);
             return;
         }
 
-        var retry = new HostRetry(Ops.AttentionContextInt8, RetryOnHost);
+        var retry = new HostRetry(Ops.AttentionContextInt8);
         try
         {
             AttentionContextInt8Kernel(weights, cache, scales, y, rows, steps, capacity, dim);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AttentionContextInt8OnHost(weights, cache, scales, y, rows, steps, capacity, dim);
@@ -7100,6 +10452,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AttentionContextInt8 on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionContextInt8Guarded(Storage weights, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
+    {
+        try
+        {
+            AttentionContextInt8Kernel(weights, cache, scales, y, rows, steps, capacity, dim);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionContextInt8))
+        {
+            FellBack(Ops.AttentionContextInt8.Name, refused, "the host");
+            AttentionContextInt8OnHost(weights, cache, scales, y, rows, steps, capacity, dim);
         }
     }
 
@@ -7126,6 +10493,10 @@ public abstract partial class Backend
         {
             AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionDecodeGuarded(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
         else
         {
             AttentionDecodeRegistered(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -7142,18 +10513,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AttentionDecode))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AttentionDecodeGuarded(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            }
+            else
+            {
+                AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionDecode))
         {
             AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
         }
 
-        var retry = new HostRetry(Ops.AttentionDecode, RetryOnHost);
+        var retry = new HostRetry(Ops.AttentionDecode);
         try
         {
             AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AttentionDecodeOnHost(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -7161,6 +10546,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AttentionDecode on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionDecodeGuarded(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        try
+        {
+            AttentionDecodeKernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionDecode))
+        {
+            FellBack(Ops.AttentionDecode.Name, refused, "the host");
+            AttentionDecodeOnHost(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
     }
 
@@ -7184,6 +10584,10 @@ public abstract partial class Backend
         {
             AttentionInt8Kernel(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionInt8Guarded(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+        }
         else
         {
             AttentionInt8Registered(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
@@ -7200,18 +10604,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AttentionInt8))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AttentionInt8Guarded(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+            }
+            else
+            {
+                AttentionInt8Kernel(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionInt8))
         {
             AttentionInt8Kernel(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
             return;
         }
 
-        var retry = new HostRetry(Ops.AttentionInt8, RetryOnHost);
+        var retry = new HostRetry(Ops.AttentionInt8);
         try
         {
             AttentionInt8Kernel(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AttentionInt8OnHost(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
@@ -7219,6 +10637,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AttentionInt8 on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionInt8Guarded(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant)
+    {
+        try
+        {
+            AttentionInt8Kernel(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionInt8))
+        {
+            FellBack(Ops.AttentionInt8.Name, refused, "the host");
+            AttentionInt8OnHost(q, keys, values, keyScales, valueScales, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
         }
     }
 
@@ -7241,6 +10674,10 @@ public abstract partial class Backend
         {
             AttentionBFloat16Kernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionBFloat16Guarded(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+        }
         else
         {
             AttentionBFloat16Registered(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
@@ -7257,18 +10694,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AttentionBFloat16))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AttentionBFloat16Guarded(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+            }
+            else
+            {
+                AttentionBFloat16Kernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionBFloat16))
         {
             AttentionBFloat16Kernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
             return;
         }
 
-        var retry = new HostRetry(Ops.AttentionBFloat16, RetryOnHost);
+        var retry = new HostRetry(Ops.AttentionBFloat16);
         try
         {
             AttentionBFloat16Kernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AttentionBFloat16OnHost(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
@@ -7276,6 +10727,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AttentionBFloat16 on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionBFloat16Guarded(Storage q, Storage keys, Storage values, Storage position, Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant)
+    {
+        try
+        {
+            AttentionBFloat16Kernel(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionBFloat16))
+        {
+            FellBack(Ops.AttentionBFloat16.Name, refused, "the host");
+            AttentionBFloat16OnHost(q, keys, values, position, y, heads, rowsPerHead, steps, capacity, dim, scale, tiled, variant);
         }
     }
 
@@ -7295,6 +10761,10 @@ public abstract partial class Backend
         {
             KeyValueWriteBFloat16Kernel(source, cache, position, heads, steps, capacity, dim);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            KeyValueWriteBFloat16Guarded(source, cache, position, heads, steps, capacity, dim);
+        }
         else
         {
             KeyValueWriteBFloat16Registered(source, cache, position, heads, steps, capacity, dim);
@@ -7311,18 +10781,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.KeyValueWriteBFloat16))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                KeyValueWriteBFloat16Guarded(source, cache, position, heads, steps, capacity, dim);
+            }
+            else
+            {
+                KeyValueWriteBFloat16Kernel(source, cache, position, heads, steps, capacity, dim);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.KeyValueWriteBFloat16))
         {
             KeyValueWriteBFloat16Kernel(source, cache, position, heads, steps, capacity, dim);
             return;
         }
 
-        var retry = new HostRetry(Ops.KeyValueWriteBFloat16, RetryOnHost);
+        var retry = new HostRetry(Ops.KeyValueWriteBFloat16);
         try
         {
             KeyValueWriteBFloat16Kernel(source, cache, position, heads, steps, capacity, dim);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             KeyValueWriteBFloat16OnHost(source, cache, position, heads, steps, capacity, dim);
@@ -7330,6 +10814,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // KeyValueWriteBFloat16 on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void KeyValueWriteBFloat16Guarded(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        try
+        {
+            KeyValueWriteBFloat16Kernel(source, cache, position, heads, steps, capacity, dim);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.KeyValueWriteBFloat16))
+        {
+            FellBack(Ops.KeyValueWriteBFloat16.Name, refused, "the host");
+            KeyValueWriteBFloat16OnHost(source, cache, position, heads, steps, capacity, dim);
         }
     }
 
@@ -7353,6 +10852,10 @@ public abstract partial class Backend
         {
             AttentionTiledBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionTiledBackwardGuarded(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
         else
         {
             AttentionTiledBackwardRegistered(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -7369,18 +10872,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AttentionTiledBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AttentionTiledBackwardGuarded(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            }
+            else
+            {
+                AttentionTiledBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionTiledBackward))
         {
             AttentionTiledBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
         }
 
-        var retry = new HostRetry(Ops.AttentionTiledBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.AttentionTiledBackward);
         try
         {
             AttentionTiledBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AttentionTiledBackwardOnHost(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -7388,6 +10905,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AttentionTiledBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionTiledBackwardGuarded(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        try
+        {
+            AttentionTiledBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionTiledBackward))
+        {
+            FellBack(Ops.AttentionTiledBackward.Name, refused, "the host");
+            AttentionTiledBackwardOnHost(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
     }
 
@@ -7409,7 +10941,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionSegmented(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
-        return _kernels is null && _moves is null ? AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedRegistered(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        return _kernels is null && _moves is null ? AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionSegmentedGuarded(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedRegistered(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -7421,17 +10953,22 @@ public abstract partial class Backend
             return kernel(this, q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AttentionSegmented))
+        if (!RetryOnHost)
+        {
+            return RefusedKernelsFallBack ? AttentionSegmentedGuarded(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionSegmented))
         {
             return AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
         }
 
-        var retry = new HostRetry(Ops.AttentionSegmented, RetryOnHost);
+        var retry = new HostRetry(Ops.AttentionSegmented);
         try
         {
             return AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             return AttentionSegmentedOnHost(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
@@ -7439,6 +10976,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AttentionSegmented on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionSegmentedGuarded(Storage q, Storage keys, Storage values, Storage y, Storage? logSumExp, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
+    {
+        try
+        {
+            return AttentionSegmentedKernel(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionSegmented))
+        {
+            FellBack(Ops.AttentionSegmented.Name, refused, "the host");
+            return AttentionSegmentedOnHost(q, keys, values, y, logSumExp, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
         }
     }
 
@@ -7461,7 +11013,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
-        return _kernels is null && _moves is null ? AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsRegistered(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        return _kernels is null && _moves is null ? AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionRowsGuarded(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsRegistered(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -7473,17 +11025,22 @@ public abstract partial class Backend
             return kernel(this, q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AttentionRows))
+        if (!RetryOnHost)
+        {
+            return RefusedKernelsFallBack ? AttentionRowsGuarded(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionRows))
         {
             return AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
         }
 
-        var retry = new HostRetry(Ops.AttentionRows, RetryOnHost);
+        var retry = new HostRetry(Ops.AttentionRows);
         try
         {
             return AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             return AttentionRowsOnHost(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -7491,6 +11048,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AttentionRows on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionRowsGuarded(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        try
+        {
+            return AttentionRowsKernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionRows))
+        {
+            FellBack(Ops.AttentionRows.Name, refused, "the host");
+            return AttentionRowsOnHost(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
         }
     }
 
@@ -7513,7 +11085,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionRowsBFloat16(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
-        return _kernels is null && _moves is null ? AttentionRowsBFloat16Kernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsBFloat16Registered(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        return _kernels is null && _moves is null ? AttentionRowsBFloat16Kernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionRowsBFloat16Guarded(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsBFloat16Registered(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -7525,17 +11097,22 @@ public abstract partial class Backend
             return kernel(this, q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AttentionRowsBFloat16))
+        if (!RetryOnHost)
+        {
+            return RefusedKernelsFallBack ? AttentionRowsBFloat16Guarded(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant) : AttentionRowsBFloat16Kernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionRowsBFloat16))
         {
             return AttentionRowsBFloat16Kernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
         }
 
-        var retry = new HostRetry(Ops.AttentionRowsBFloat16, RetryOnHost);
+        var retry = new HostRetry(Ops.AttentionRowsBFloat16);
         try
         {
             return AttentionRowsBFloat16Kernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             return AttentionRowsBFloat16OnHost(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -7543,6 +11120,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AttentionRowsBFloat16 on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionRowsBFloat16Guarded(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        try
+        {
+            return AttentionRowsBFloat16Kernel(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionRowsBFloat16))
+        {
+            FellBack(Ops.AttentionRowsBFloat16.Name, refused, "the host");
+            return AttentionRowsBFloat16OnHost(q, keys, values, position, y, starts, heads, headsPerRow, rowsPerHead, steps, capacity, dim, scale, variant);
         }
     }
 
@@ -7569,7 +11161,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionMaskedBFloat16(Storage q, Storage keys, Storage values, Storage? mask, Storage y, int heads, int rowsPerHead, int maskRows, int capacity, int dim, float scale)
     {
-        return _kernels is null && _moves is null ? AttentionMaskedBFloat16Kernel(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale) : AttentionMaskedBFloat16Registered(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale);
+        return _kernels is null && _moves is null ? AttentionMaskedBFloat16Kernel(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionMaskedBFloat16Guarded(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale) : AttentionMaskedBFloat16Registered(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -7581,16 +11173,18 @@ public abstract partial class Backend
             return kernel(this, q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale);
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.AttentionMaskedBFloat16))
-        {
-            return AttentionMaskedBFloat16Kernel(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale);
-        }
+        return RefusedKernelsFallBack ? AttentionMaskedBFloat16Guarded(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale) : AttentionMaskedBFloat16Kernel(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale);
+    }
 
+    // AttentionMaskedBFloat16 on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the caller's path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionMaskedBFloat16Guarded(Storage q, Storage keys, Storage values, Storage? mask, Storage y, int heads, int rowsPerHead, int maskRows, int capacity, int dim, float scale)
+    {
         try
         {
             return AttentionMaskedBFloat16Kernel(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionMaskedBFloat16))
         {
             FellBack(Ops.AttentionMaskedBFloat16.Name, refused, "the caller's path");
             return default;
@@ -7602,7 +11196,7 @@ public abstract partial class Backend
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool AttentionSegmentedBackward(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant = default)
     {
-        return _kernels is null && _moves is null ? AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedBackwardRegistered(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        return _kernels is null && _moves is null ? AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : ReferenceEquals(_kernels, s_guardedKernels) ? AttentionSegmentedBackwardGuarded(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedBackwardRegistered(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -7614,17 +11208,22 @@ public abstract partial class Backend
             return kernel(this, q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AttentionSegmentedBackward))
+        if (!RetryOnHost)
+        {
+            return RefusedKernelsFallBack ? AttentionSegmentedBackwardGuarded(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant) : AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionSegmentedBackward))
         {
             return AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
         }
 
-        var retry = new HostRetry(Ops.AttentionSegmentedBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.AttentionSegmentedBackward);
         try
         {
             return AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             return AttentionSegmentedBackwardOnHost(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
@@ -7632,6 +11231,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AttentionSegmentedBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionSegmentedBackwardGuarded(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, Storage starts, Storage ends, int heads, int headsPerRow, int rowsPerHead, int steps, int dim, float scale, AttentionVariant variant)
+    {
+        try
+        {
+            return AttentionSegmentedBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionSegmentedBackward))
+        {
+            FellBack(Ops.AttentionSegmentedBackward.Name, refused, "the host");
+            return AttentionSegmentedBackwardOnHost(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, starts, ends, heads, headsPerRow, rowsPerHead, steps, dim, scale, variant);
         }
     }
 
@@ -7660,6 +11274,10 @@ public abstract partial class Backend
         {
             AttentionTiledKernel(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionTiledGuarded(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
         else
         {
             AttentionTiledRegistered(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -7676,18 +11294,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AttentionTiled))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AttentionTiledGuarded(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            }
+            else
+            {
+                AttentionTiledKernel(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionTiled))
         {
             AttentionTiledKernel(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
             return;
         }
 
-        var retry = new HostRetry(Ops.AttentionTiled, RetryOnHost);
+        var retry = new HostRetry(Ops.AttentionTiled);
         try
         {
             AttentionTiledKernel(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AttentionTiledOnHost(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
@@ -7695,6 +11327,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AttentionTiled on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionTiledGuarded(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        try
+        {
+            AttentionTiledKernel(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionTiled))
+        {
+            FellBack(Ops.AttentionTiled.Name, refused, "the host");
+            AttentionTiledOnHost(q, keys, values, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
         }
     }
 
@@ -7732,6 +11379,10 @@ public abstract partial class Backend
         {
             AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionSpansGuarded(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
         else
         {
             AttentionSpansRegistered(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
@@ -7748,18 +11399,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AttentionSpans))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AttentionSpansGuarded(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+            }
+            else
+            {
+                AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionSpans))
         {
             AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
             return;
         }
 
-        var retry = new HostRetry(Ops.AttentionSpans, RetryOnHost);
+        var retry = new HostRetry(Ops.AttentionSpans);
         try
         {
             AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AttentionSpansOnHost(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
@@ -7767,6 +11432,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AttentionSpans on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionSpansGuarded(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage y, Storage? logSumExp, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    {
+        try
+        {
+            AttentionSpansKernel(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionSpans))
+        {
+            FellBack(Ops.AttentionSpans.Name, refused, "the host");
+            AttentionSpansOnHost(q, keys, values, starts, ends, y, logSumExp, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
         }
     }
 
@@ -7796,6 +11476,10 @@ public abstract partial class Backend
         {
             AttentionSpansStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionSpansStridedGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
+        }
         else
         {
             AttentionSpansStridedRegistered(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
@@ -7812,17 +11496,25 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.AttentionSpansStrided))
+        if (RefusedKernelsFallBack)
+        {
+            AttentionSpansStridedGuarded(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
+        }
+        else
         {
             AttentionSpansStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
-            return;
         }
+    }
 
+    // AttentionSpansStrided on a device whose refused kernels fall back (BuildsKernelsWhenUsed): its composed path when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionSpansStridedGuarded(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow, Storage starts, Storage ends, Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
+    {
         try
         {
             AttentionSpansStridedKernel(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
         }
-        catch (KernelUnavailableException refused)
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionSpansStrided))
         {
             FellBack(Ops.AttentionSpansStrided.Name, refused, "its composed path");
             AttentionSpansStridedComposed(q, qOffset, k, kOffset, v, vOffset, qRow, kRow, starts, ends, y, batch, heads, kvHeads, headsPerTable, rows, dim, scale);
@@ -7894,6 +11586,10 @@ public abstract partial class Backend
         {
             AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionSpansBackwardGuarded(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
         else
         {
             AttentionSpansBackwardRegistered(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
@@ -7910,18 +11606,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.AttentionSpansBackward))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AttentionSpansBackwardGuarded(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+            }
+            else
+            {
+                AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionSpansBackward))
         {
             AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
             return;
         }
 
-        var retry = new HostRetry(Ops.AttentionSpansBackward, RetryOnHost);
+        var retry = new HostRetry(Ops.AttentionSpansBackward);
         try
         {
             AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             AttentionSpansBackwardOnHost(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
@@ -7929,6 +11639,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // AttentionSpansBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionSpansBackwardGuarded(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale, AttentionVariant variant)
+    {
+        try
+        {
+            AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionSpansBackward))
+        {
+            FellBack(Ops.AttentionSpansBackward.Name, refused, "the host");
+            AttentionSpansBackwardOnHost(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows, keyRows, dim, scale, variant);
         }
     }
 
@@ -7949,6 +11674,10 @@ public abstract partial class Backend
         {
             DecoderMaskKernel(position, mask, rows, capacity);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            DecoderMaskGuarded(position, mask, rows, capacity);
+        }
         else
         {
             DecoderMaskRegistered(position, mask, rows, capacity);
@@ -7965,18 +11694,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.DecoderMask))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                DecoderMaskGuarded(position, mask, rows, capacity);
+            }
+            else
+            {
+                DecoderMaskKernel(position, mask, rows, capacity);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.DecoderMask))
         {
             DecoderMaskKernel(position, mask, rows, capacity);
             return;
         }
 
-        var retry = new HostRetry(Ops.DecoderMask, RetryOnHost);
+        var retry = new HostRetry(Ops.DecoderMask);
         try
         {
             DecoderMaskKernel(position, mask, rows, capacity);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             DecoderMaskOnHost(position, mask, rows, capacity);
@@ -7984,6 +11727,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // DecoderMask on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void DecoderMaskGuarded(Storage position, Storage mask, int rows, int capacity)
+    {
+        try
+        {
+            DecoderMaskKernel(position, mask, rows, capacity);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.DecoderMask))
+        {
+            FellBack(Ops.DecoderMask.Name, refused, "the host");
+            DecoderMaskOnHost(position, mask, rows, capacity);
         }
     }
 
@@ -8003,6 +11761,10 @@ public abstract partial class Backend
         {
             KeyValueWriteKernel(source, cache, position, heads, steps, capacity, dim);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            KeyValueWriteGuarded(source, cache, position, heads, steps, capacity, dim);
+        }
         else
         {
             KeyValueWriteRegistered(source, cache, position, heads, steps, capacity, dim);
@@ -8019,18 +11781,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.KeyValueWrite))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                KeyValueWriteGuarded(source, cache, position, heads, steps, capacity, dim);
+            }
+            else
+            {
+                KeyValueWriteKernel(source, cache, position, heads, steps, capacity, dim);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.KeyValueWrite))
         {
             KeyValueWriteKernel(source, cache, position, heads, steps, capacity, dim);
             return;
         }
 
-        var retry = new HostRetry(Ops.KeyValueWrite, RetryOnHost);
+        var retry = new HostRetry(Ops.KeyValueWrite);
         try
         {
             KeyValueWriteKernel(source, cache, position, heads, steps, capacity, dim);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             KeyValueWriteOnHost(source, cache, position, heads, steps, capacity, dim);
@@ -8038,6 +11814,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // KeyValueWrite on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void KeyValueWriteGuarded(Storage source, Storage cache, Storage position, int heads, int steps, int capacity, int dim)
+    {
+        try
+        {
+            KeyValueWriteKernel(source, cache, position, heads, steps, capacity, dim);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.KeyValueWrite))
+        {
+            FellBack(Ops.KeyValueWrite.Name, refused, "the host");
+            KeyValueWriteOnHost(source, cache, position, heads, steps, capacity, dim);
         }
     }
 
@@ -8071,6 +11862,10 @@ public abstract partial class Backend
         {
             SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            SampleRowsGuarded(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+        }
         else
         {
             SampleRowsRegistered(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
@@ -8087,18 +11882,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.SampleRows))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                SampleRowsGuarded(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+            }
+            else
+            {
+                SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.SampleRows))
         {
             SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
             return;
         }
 
-        var retry = new HostRetry(Ops.SampleRows, RetryOnHost);
+        var retry = new HostRetry(Ops.SampleRows);
         try
         {
             SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             SampleRowsOnHost(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
@@ -8106,6 +11915,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // SampleRows on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void SampleRowsGuarded(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
+    {
+        try
+        {
+            SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.SampleRows))
+        {
+            FellBack(Ops.SampleRows.Name, refused, "the host");
+            SampleRowsOnHost(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
         }
     }
 
@@ -8130,6 +11954,10 @@ public abstract partial class Backend
         {
             PenalizeRowsKernel(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            PenalizeRowsGuarded(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+        }
         else
         {
             PenalizeRowsRegistered(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
@@ -8146,18 +11974,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.PenalizeRows))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                PenalizeRowsGuarded(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+            }
+            else
+            {
+                PenalizeRowsKernel(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.PenalizeRows))
         {
             PenalizeRowsKernel(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
             return;
         }
 
-        var retry = new HostRetry(Ops.PenalizeRows, RetryOnHost);
+        var retry = new HostRetry(Ops.PenalizeRows);
         try
         {
             PenalizeRowsKernel(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             PenalizeRowsOnHost(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
@@ -8165,6 +12007,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // PenalizeRows on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void PenalizeRowsGuarded(Storage logits, Storage work, Storage history, Storage length, int rows, int vocabulary, int rowStride, int rowOffset, int capacity, int lastN, float repeat, float presence, float frequency)
+    {
+        try
+        {
+            PenalizeRowsKernel(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.PenalizeRows))
+        {
+            FellBack(Ops.PenalizeRows.Name, refused, "the host");
+            PenalizeRowsOnHost(logits, work, history, length, rows, vocabulary, rowStride, rowOffset, capacity, lastN, repeat, presence, frequency);
         }
     }
 
@@ -8184,6 +12041,10 @@ public abstract partial class Backend
         {
             HistoryPushKernel(ids, history, length, rows, capacity);
         }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            HistoryPushGuarded(ids, history, length, rows, capacity);
+        }
         else
         {
             HistoryPushRegistered(ids, history, length, rows, capacity);
@@ -8200,18 +12061,32 @@ public abstract partial class Backend
             return;
         }
 
-        if (!RetriesOnHost || !OwnsKernel(OperationIndex.HistoryPush))
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                HistoryPushGuarded(ids, history, length, rows, capacity);
+            }
+            else
+            {
+                HistoryPushKernel(ids, history, length, rows, capacity);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.HistoryPush))
         {
             HistoryPushKernel(ids, history, length, rows, capacity);
             return;
         }
 
-        var retry = new HostRetry(Ops.HistoryPush, RetryOnHost);
+        var retry = new HostRetry(Ops.HistoryPush);
         try
         {
             HistoryPushKernel(ids, history, length, rows, capacity);
         }
-        catch (DeviceException failure) when (retry.Takes(failure))
+        catch (DeviceException failure)
         {
             retry.Failed(this, failure);
             HistoryPushOnHost(ids, history, length, rows, capacity);
@@ -8219,6 +12094,21 @@ public abstract partial class Backend
         finally
         {
             retry.End();
+        }
+    }
+
+    // HistoryPush on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void HistoryPushGuarded(Storage ids, Storage history, Storage length, int rows, int capacity)
+    {
+        try
+        {
+            HistoryPushKernel(ids, history, length, rows, capacity);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.HistoryPush))
+        {
+            FellBack(Ops.HistoryPush.Name, refused, "the host");
+            HistoryPushOnHost(ids, history, length, rows, capacity);
         }
     }
 

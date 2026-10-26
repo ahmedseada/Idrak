@@ -440,8 +440,11 @@ public abstract partial class Backend : IDeviceBackend
     /// Whether this device builds its kernels when they are first used (a Vulkan driver compiles a pipeline on its first
     /// dispatch), so its driver may refuse one (<see cref="KernelUnavailableException"/>). On such a device, unless
     /// IDRAK_REFUSED_KERNELS=throw, an operation whose kernel is refused falls back instead of failing: the operation's host
-    /// fallback, its composed path, or "no kernel" (the caller's own path), whichever its default is; and its calls take
-    /// the dispatcher's out-of-line path (a few field reads a call), so the first refusal is caught too. Off by default.
+    /// fallback, its composed path, or "no kernel" (the caller's own path), whichever its default is. With nothing else
+    /// taking its calls off the inlined fast path (no kernel registered, no trace, no RetryOnHost, no guarded moves), each
+    /// call runs the device's kernel through NameGuarded: one call whose only addition is a try region (free until it
+    /// throws), so the first refusal is caught too; which operations the device owns is looked up only when one is refused.
+    /// Off by default.
     /// </summary>
     protected virtual bool BuildsKernelsWhenUsed => false;
 
@@ -471,8 +474,11 @@ public abstract partial class Backend : IDeviceBackend
         }
     }
 
-    // Whether the dispatcher runs the device's own kernel of an operation with a host fallback under a HostRetry.
-    private bool RetriesOnHost => RetryOnHost || RefusedKernelsFallBack;
+    // The slots of a device whose only reason to leave the fast path is RefusedKernelsFallBack (none registered, no trace,
+    // no RetryOnHost, no guarded moves): every slot empty, and the generated Name(...) sends its calls to NameGuarded
+    // directly when it finds this instance. Stored in _kernels like the slots it stands for, so a change of the kernels
+    // (KernelsChanged) ends it atomically.
+    private static readonly Delegate?[] s_guardedKernels = new Delegate?[OperationIndex.Count];
 
     // Reports a refused kernel's fallback once per operation and kernel (KernelFellBack).
     private void FellBack(string operation, KernelUnavailableException refused, string fallback)
@@ -533,32 +539,24 @@ public abstract partial class Backend : IDeviceBackend
     // while the device's kernel runs, a DeviceException does not report itself; Failed reports it once, with the
     // operation, before the call runs again on the host (NameOnHost), where errors report themselves again. A mutable
     // struct, so a plain local (not a `using` one, which would be read-only).
-    // With `all` (RetryOnHost) every DeviceException is retried; without, only a refused kernel (KernelUnavailableException,
-    // RefusedKernelsFallBack), and the other errors report themselves and reach the caller as before.
+    // Without RetryOnHost a refused kernel (KernelUnavailableException, RefusedKernelsFallBack) falls back through
+    // NameGuarded instead, and the other errors report themselves and reach the caller.
     private struct HostRetry
     {
         private readonly Operation _operation;
-        private readonly bool _all;
         private bool _ended;
 
-        public HostRetry(Operation operation, bool all)
+        public HostRetry(Operation operation)
         {
             _operation = operation;
-            _all = all;
-            if (all)
-            {
-                DeviceException.EnterRetry();
-            }
+            DeviceException.EnterRetry();
         }
-
-        // Whether the failure is retried on the host.
-        public readonly bool Takes(DeviceException failure) => _all || failure is KernelUnavailableException;
 
         // The device's kernel threw: ends the quiet part and reports the retry (a refused kernel: to the device, once).
         public void Failed(Backend backend, DeviceException failure)
         {
             End();
-            if (_all && Telemetry.IsEnabled(TelemetryLevel.Devices))
+            if (Telemetry.IsEnabled(TelemetryLevel.Devices))
             {
                 Telemetry.DeviceFailed(new DeviceFailed(failure.Device, _operation.Name, failure.Message, RetriedOnHost: true, Hint: null));
             }
@@ -574,10 +572,7 @@ public abstract partial class Backend : IDeviceBackend
             if (!_ended)
             {
                 _ended = true;
-                if (_all)
-                {
-                    DeviceException.LeaveRetry();
-                }
+                DeviceException.LeaveRetry();
             }
         }
     }
@@ -644,12 +639,15 @@ public abstract partial class Backend : IDeviceBackend
     }
 
     // Resolves the slots; stores them unless Kernels changed meanwhile (then the next call resolves again). With nothing
-    // registered, no trace and no retry on the host the slots are dropped, so calls take the fast path again.
+    // registered, no trace and no retry on the host the slots are dropped, so calls take the fast path again; or, on a
+    // device whose refused kernels fall back, replaced by s_guardedKernels, so calls take NameGuarded (unless the device
+    // guards its moves: then every call is an operation, NameRegistered, which runs NameGuarded inside it).
     private Delegate?[] ResolveKernels(Delegate?[] unresolved)
     {
         var slots = Operations.Kernels.Resolve(this);
-        bool direct = Array.TrueForAll(slots, k => k is null) && Volatile.Read(ref _trace) is null && !RetryOnHost && !RefusedKernelsFallBack;
-        Interlocked.CompareExchange(ref _kernels, direct ? null : slots, unresolved);
+        bool direct = Array.TrueForAll(slots, k => k is null) && Volatile.Read(ref _trace) is null && !RetryOnHost;
+        var kept = !direct ? slots : !RefusedKernelsFallBack ? null : _moves is null ? s_guardedKernels : slots;
+        Interlocked.CompareExchange(ref _kernels, kept, unresolved);
         return slots;
     }
 
