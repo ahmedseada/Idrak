@@ -45,7 +45,8 @@ internal sealed class DevicesCommand : Command
         [
             d.Device, d.Backend, d.Error is null ? d.Name : Messages.T("cannot start: {0}", d.Error), Machine.Bytes(d.MemoryBytes), Machine.Number(d.ComputeUnits),
             Machine.Number(d.SubgroupSize), Machine.Number(d.KernelWidth), d.Error is null ? d.MatrixUnits ? yes : no : "-",
-            d.Listed ? yes : Messages.T("by name"), d.IsDefault ? Messages.T("default device") : d.Note ?? "",
+            d.Listed ? yes : Messages.T("by name"), Joined(d.KernelsUnavailable is { } off ? Messages.T("kernels unavailable: {0}", off) : null,
+                d.IsDefault ? Messages.T("default device") : d.Note),
         ]).Concat(missing.Select(b => (IReadOnlyList<string>)[$"{b.Kind}:-", b.Display, Messages.T("none found: {0}", b.UnavailableReason), "-", "-", "-", "-", "-", "-", ""]));
         context.Table([Messages.T("Device"), Messages.T("Backend"), Messages.T("Name"), Messages.T("Memory"), Messages.T("CUs"), Messages.T("Lanes"),
             Messages.T("Width"), Messages.T("Matrix"), Messages.T("In a plain run"), Messages.T("Note")], rows);
@@ -56,6 +57,8 @@ internal sealed class DevicesCommand : Command
             ["backends"] = new JsonArray([.. DeviceListing.Backends.Select(b => (JsonNode)Machine.Json(b))]),
         });
         // The listing itself succeeds whatever a device reports; a device asked for by name that cannot start fails.
+        static string Joined(string? first, string? second) => first is null ? second ?? "" : second is { Length: > 0 } ? $"{first}; {second}" : first;
+
         return context.Option("--device") is not null && devices[0].Error is not null ? ExitCodes.Failed : ExitCodes.Ok;
     }
 }

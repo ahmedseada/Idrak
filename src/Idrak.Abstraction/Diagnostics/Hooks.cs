@@ -124,7 +124,9 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
 
     /// <inheritdoc />
     public void OnHostFallback(in HostFallback e) =>
-        _out.WriteLine($"Device {e.Device} {e.Operation} runs on the host: the device has no kernel of its own for it here, so each call copies its operands to the CPU and back");
+        _out.WriteLine(e.KernelsUnavailable is { } why
+            ? $"Device {e.Device} {e.Operation} runs on the host: the device's kernels are unavailable ({why}), so each call copies its operands to the CPU and back"
+            : $"Device {e.Device} {e.Operation} runs on the host: the device has no kernel of its own for it here, so each call copies its operands to the CPU and back");
 
     /// <inheritdoc />
     public void OnTuning(in TuningCompleted e) =>
@@ -733,6 +735,7 @@ public static class TelemetryJson
                 w.WriteString("event", "host_fallback");
                 w.WriteString("device", e.Device);
                 w.WriteString("operation", e.Operation);
+                if (e.KernelsUnavailable is { } why) w.WriteString("kernels_unavailable", why);
                 break;
             case TuningCompleted e:
                 w.WriteString("event", "tuning");

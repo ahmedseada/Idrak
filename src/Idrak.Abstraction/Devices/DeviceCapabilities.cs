@@ -268,6 +268,18 @@ public interface IPeerCopyBackend
     void CopyTo(Storage source, Storage destination, int count);
 }
 
+/// <summary>
+/// A backend whose own kernels can be unavailable as a whole (compiled at run time by a compiler that may be missing, refused
+/// by the driver, turned off by a setting): why, or null while they run. Every operation then takes the host fallback (each
+/// call copying its operands to the CPU and back), and device listings, diagnostics and <see cref="Diagnostics.HostFallback"/>
+/// name the reason.
+/// </summary>
+public interface IKernelAvailability
+{
+    /// <summary>Why the backend's kernels are unavailable (loading them first when they were not tried yet), or null when they run.</summary>
+    string? KernelsUnavailable();
+}
+
 /// <summary>What a device reports about its memory beyond <see cref="Backend.GetMemoryUsage"/> (<see cref="Backend.AvailableMemory"/>, <see cref="Backend.FreeMemory"/>).</summary>
 public interface IMemoryReport
 {

@@ -241,6 +241,7 @@ public sealed record Idrak.Diagnostics.DeviceInfo : System.IEquatable<Idrak.Diag
   public string? Driver { get; init; }
   public string? Error { get; init; }
   public string? HardwareKind { get; init; }
+  public string? KernelsUnavailable { get; init; }
   public string? Note { get; init; }
 
 public static class Idrak.Diagnostics.DeviceListing

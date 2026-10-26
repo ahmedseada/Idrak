@@ -290,6 +290,15 @@ internal sealed class DoctorCommand : Command
 
             facts.Add(d.MatrixUnits ? Messages.T("matrix units") : Messages.T("no matrix units"));
             string use = d.IsDefault ? Messages.T("default device") : d.Listed ? Messages.T("listed") : d.Note is { Length: > 0 } n ? n : Messages.T("by name only");
+            if (d.KernelsUnavailable is { } off)
+            {
+                // Found and started, but its own kernels did not load: every operation copies to the CPU and back.
+                checks.Add(new("device", d.Device, Status.Warn, $"{d.Name}; {Messages.T("kernels unavailable: {0}; every operation runs on the host", off)}",
+                    Messages.T("install what it names, or run on another device"),
+                    Messages.T("A device whose kernels are unavailable runs every operation through the host, copying its operands both ways: slower than the CPU alone.")));
+                continue;
+            }
+
             checks.Add(new("device", d.Device, Status.Ok, $"{d.Name}; {string.Join(", ", facts)}; {use}", null,
                 Messages.T("Each device's limits (memory, subgroup size, matrix units) decide which kernels run and what models fit.")));
         }

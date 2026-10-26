@@ -12,7 +12,7 @@ namespace Idrak.Gpu.Vulkan;
 // where an operation binds it in windows: VulkanBackend.LargeStorage.cs; a head size beyond the attention kernels, more
 // workgroups than the device takes, a permutation of more than six dimensions) goes to the host fallback, as every
 // operation without a kernel does.
-internal sealed partial class VulkanBackend
+internal sealed partial class VulkanBackend : IKernelAvailability
 {
     // One VulkanKernel per generated kernel and workgroup width for the process (two devices of one width share them;
     // pipelines are cached per backend by kernel identity), and this backend's by name.
@@ -57,6 +57,9 @@ internal sealed partial class VulkanBackend
 
     // IDRAK_VULKAN_KERNELS=0 runs every operation through the host fallback (to compare or to isolate a kernel).
     private static readonly bool KernelsOff = Environment.GetEnvironmentVariable("IDRAK_VULKAN_KERNELS") is "0" or "false";
+
+    // Why the kernels are off as a whole, for listings, diagnostics and the host-fallback event.
+    string? IKernelAvailability.KernelsUnavailable() => KernelsOff ? "turned off by IDRAK_VULKAN_KERNELS=0" : null;
 
     /// <summary>Whether the kernels are on and every storage fits in one binding (maxStorageBufferRange).</summary>
     private bool Fit(params ReadOnlySpan<Storage> storages)

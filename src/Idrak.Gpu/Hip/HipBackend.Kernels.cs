@@ -34,6 +34,9 @@ internal sealed unsafe partial class HipBackend
     /// <summary>Whether this device's kernels loaded (compiling or reading them on first use).</summary>
     internal bool HasKernels => Kernels() is not null;
 
+    // Why the kernels did not load (trying them first), for listings, diagnostics and the host-fallback event.
+    string? IKernelAvailability.KernelsUnavailable() => HasKernels ? null : KernelsUnavailableReason ?? "the kernels did not load";
+
     private Dictionary<string, IntPtr>? Kernels()
     {
         lock (_kernelGate)

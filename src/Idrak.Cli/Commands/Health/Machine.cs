@@ -69,6 +69,7 @@ internal static class Machine
         ["default"] = d.IsDefault,
         ["note"] = d.Note,
         ["error"] = d.Error,
+        ["kernelsUnavailable"] = d.KernelsUnavailable,
     };
 
     /// <summary>A backend as JSON.</summary>

@@ -1935,6 +1935,9 @@ public interface Idrak.Abstraction.Devices.IHostStaging : System.IDisposable
 public interface Idrak.Abstraction.Devices.IHostStorage
   public System.Span<float> HostMemory { get; }
 
+public interface Idrak.Abstraction.Devices.IKernelAvailability
+  public string? KernelsUnavailable()
+
 public interface Idrak.Abstraction.Devices.IKernelProfiler
   public System.Collections.Generic.Dictionary<string, (long, long, double)> StopProfile()
   public void StartProfile()
@@ -2311,9 +2314,10 @@ public readonly record struct Idrak.Abstraction.Diagnostics.GraphRecordingFailed
   public string Work { get; init; }
 
 public readonly record struct Idrak.Abstraction.Diagnostics.HostFallback : System.IEquatable<Idrak.Abstraction.Diagnostics.HostFallback>
-  public HostFallback(string Device, string Operation)
+  public HostFallback(string Device, string Operation, string? KernelsUnavailable = null)
   public string Device { get; init; }
   public string Operation { get; init; }
+  public string? KernelsUnavailable { get; init; }
 
 public interface Idrak.Abstraction.Diagnostics.IProfileProbe
   public (default) bool Watched { get; }

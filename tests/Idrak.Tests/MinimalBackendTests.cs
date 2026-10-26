@@ -25,9 +25,12 @@ internal static partial class Tests
         public float[] Data = data;
     }
 
-    internal sealed class MinimalBackend : Backend, IMemoryReport
+    internal sealed class MinimalBackend(string? kernelsUnavailable = null) : Backend, IMemoryReport, IKernelAvailability
     {
         public static readonly MinimalBackend Instance = new();
+
+        // A test's reason its kernels are off as a whole (IKernelAvailability), or none: no kernels of its own either way.
+        string? IKernelAvailability.KernelsUnavailable() => kernelsUnavailable;
         private readonly MemoryAccountant _memory = new(() => ComputeResources.GpuMemoryLimit, "minimal:0");
 
         // The CPU's limits, and no attention over key ranges of its own (every head size takes the host fallback): attention
@@ -221,6 +224,31 @@ internal static partial class Tests
 
         string line = Encoding.UTF8.GetString(json.ToArray());
         Check(line.Contains("\"event\":\"host_fallback\"", StringComparison.Ordinal) && line.Contains("\"operation\":\"Softmax\"", StringComparison.Ordinal)
-              && line.Contains("\"device\":\"minimal\"", StringComparison.Ordinal), $"JSON Lines: {line}");
+              && line.Contains("\"device\":\"minimal\"", StringComparison.Ordinal) && !line.Contains("kernels_unavailable", StringComparison.Ordinal), $"JSON Lines: {line}");
+
+        // A device whose kernels are unavailable as a whole (a missing run-time compiler): the event, the console line and
+        // the JSON line name why.
+        var off = new MinimalBackend("the run-time compiler was not found");
+        var offX = off.Allocate(6, zeroed: false);
+        var offY = off.Allocate(6, zeroed: true);
+        off.Upload([1f, 2f, 3f, -1f, 0f, 1f], offX);
+        var offEvents = new HostFallbacks("minimal");
+        var offPrinted = new StringWriter();
+        using (Telemetry.Subscribe(offEvents))
+        using (Telemetry.Subscribe(new ConsoleLogger(TelemetryLevel.Training, output: offPrinted)))
+        {
+            off.Softmax(offX, offY, 2, 3, log: false);
+        }
+
+        Check(offEvents.Events is [{ Operation: "Softmax", KernelsUnavailable: "the run-time compiler was not found" }], $"the event names why the kernels are off: {string.Join(", ", offEvents.Events)}");
+        Check(offPrinted.ToString().Contains("kernels are unavailable (the run-time compiler was not found)", StringComparison.Ordinal), $"the console line names why: {offPrinted}");
+        json.SetLength(0);
+        using (var writer = new Utf8JsonWriter(json))
+        {
+            TelemetryJson.Write(writer, new TelemetryRecord(DateTimeOffset.UtcNow, offEvents.Events[0]));
+        }
+
+        line = Encoding.UTF8.GetString(json.ToArray());
+        Check(line.Contains("\"kernels_unavailable\":\"the run-time compiler was not found\"", StringComparison.Ordinal), $"JSON Lines name why: {line}");
     }
 }

@@ -486,6 +486,11 @@ internal static partial class Tests
 
             Check(!kernels || Idrak.Abstraction.Operations.Kernels.HostCalls(hip) == before, $"with kernels, none of these took the host fallback ({Idrak.Abstraction.Operations.Kernels.HostCalls(hip) - before} did)");
             hip.Synchronize();
+            if (!kernels)
+            {
+                // Seen even with --failures-only: a run whose kernels never loaded is not a pass of the kernels.
+                Skip($"the kernels are unavailable ({hip.KernelsUnavailableReason}): memory, copies and the host fallback were checked against the CPU, the kernels were not");
+            }
         }
         finally
         {

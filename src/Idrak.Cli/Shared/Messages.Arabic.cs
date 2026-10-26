@@ -41,7 +41,8 @@ internal static partial class Messages
             "  -d, --device NAME   الجهاز: cpu أو cuda:0 أو vulkan:1 أو hip:0 (الافتراضي: الجهاز الافتراضي)\n" +
             "  -P, --plugin PATH   تحميل مكتبة تسجل صيغا وعائلات نماذج وغير ذلك (يمكن تكراره)\n" +
             "  -j, --json          مخرجات تقرؤها البرامج (بالإنجليزية دائما)\n" +
-            "  -q, --quiet         مخرجات أقل؛ و -v, --verbose: مخرجات أكثر\n" +
+            "  -q, --quiet         مخرجات أقل؛ و -v, --verbose: مخرجات أكثر وعمل المكتبة أثناء حدوثه (مرات قراءة الطلب،\n" +
+            "                      وفك الترميز، واختيارات النوى المقيسة، والرجوع إلى المضيف؛ IDRAK_VERBOSE=1)\n" +
             "      --cache DIR     مجلد التخزين المؤقت (الافتراضي IDRAK_CACHE أو ~/.cache/idrak)\n" +
             "  -C, --config FILE   ملف الإعدادات (الافتراضي IDRAK_CONFIG أو ~/.idrak/config.json)\n" +
             "      --log FILE      كتابة كل سطر، ومعه السطور التفصيلية، إلى FILE أيضا\n" +
@@ -84,6 +85,11 @@ internal static partial class Messages
         ["In a plain run"] = "في التشغيل العادي",
         ["Note"] = "ملاحظة",
         ["cannot start: {0}"] = "تعذر التشغيل: {0}",
+        ["kernels unavailable: {0}"] = "النوى غير متاحة: {0}",
+        ["kernels unavailable: {0}; every operation runs on the host"] = "النوى غير متاحة: {0}؛ كل عملية تعمل على المضيف",
+        ["install what it names, or run on another device"] = "ثبت ما يذكره، أو استخدم جهازا آخر",
+        ["A device whose kernels are unavailable runs every operation through the host, copying its operands both ways: slower than the CPU alone."] =
+            "الجهاز الذي نواه غير متاحة يشغل كل عملية عبر المضيف وينسخ معطياتها في الاتجاهين: أبطأ من المعالج وحده.",
         ["by name"] = "بالاسم",
         ["default device"] = "الجهاز الافتراضي",
         ["none found: {0}"] = "لم يعثر على شيء: {0}",

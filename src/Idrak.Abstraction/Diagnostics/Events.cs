@@ -265,7 +265,9 @@ public readonly record struct DeviceFailed(string Device, string? Operation, str
 /// </summary>
 /// <param name="Device">The kind of device ("cuda", "vulkan", "hip", …).</param>
 /// <param name="Operation">The operation (as <c>Operation.Name</c>, or a copy's method name).</param>
-public readonly record struct HostFallback(string Device, string Operation);
+/// <param name="KernelsUnavailable">Why the device's kernels are unavailable as a whole (<see cref="Devices.IKernelAvailability"/>:
+/// a missing run-time compiler, a setting), or null when the device runs kernels and has none of its own for this one.</param>
+public readonly record struct HostFallback(string Device, string Operation, string? KernelsUnavailable = null);
 
 /// <summary>
 /// A device measured the candidates of an operation at a shape class it had not seen and kept the fastest

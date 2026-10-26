@@ -525,7 +525,8 @@ public abstract partial class Backend : IDeviceBackend
             LazyInitializer.EnsureInitialized(ref _hostCallsByOperation, static () => new(StringComparer.Ordinal)).AddOrUpdate(operation, 1, static (_, n) => n + 1);
             if (LazyInitializer.EnsureInitialized(ref _hostFallbacksReported, static () => new(StringComparer.Ordinal)).TryAdd(operation, true))
             {
-                Telemetry.HostFallback(new HostFallback(Kind, operation));     // once per operation, while someone listens
+                // once per operation, while someone listens; with why the kernels are off when they all are
+                Telemetry.HostFallback(new HostFallback(Kind, operation, (this as IKernelAvailability)?.KernelsUnavailable()));
             }
         }
     }

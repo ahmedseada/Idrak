@@ -92,7 +92,8 @@ internal static partial class Tests
             var table = minimalReport.Runs[0].Tables.Single(t => t.Name == "host fallbacks");
             Check(minimalReport["fallback calls"]?.Value == Idrak.Abstraction.Operations.Kernels.HostCalls(minimal.Backend) - before && minimalReport["fallback calls"]?.Value > 0
                   && table.Rows.Any(r => r[0] == "minimal" && r[1] == "Softmax" && long.Parse(r[2], CultureInfo.InvariantCulture) >= 1)
-                  && table.Rows.Where(r => r[0] == "minimal").Sum(r => long.Parse(r[2], CultureInfo.InvariantCulture)) == minimalReport["fallback calls"]?.Value,
+                  && table.Rows.Where(r => r[0] == "minimal").Sum(r => long.Parse(r[2], CultureInfo.InvariantCulture)) == minimalReport["fallback calls"]?.Value
+                  && table.Columns[^1] == "why" && table.Rows.Where(r => r[0] == "minimal").All(r => r[3] == "no kernel of its own"),
                 $"the host fallbacks by operation: {minimalReport["fallback calls"]}, {string.Join("; ", table.Rows.Select(r => string.Join(' ', r)))}");
         }
     }

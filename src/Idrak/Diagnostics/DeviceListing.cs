@@ -60,6 +60,12 @@ public sealed record DeviceInfo
 
     /// <summary>Why the device's backend could not start, or null.</summary>
     public string? Error { get; init; }
+
+    /// <summary>
+    /// Why the device's own kernels are unavailable as a whole (<see cref="Idrak.Abstraction.Devices.IKernelAvailability"/>:
+    /// a missing run-time compiler, a setting), so every operation runs through the host; null while they run.
+    /// </summary>
+    public string? KernelsUnavailable { get; init; }
 }
 
 /// <summary>
@@ -128,6 +134,7 @@ public static class DeviceListing
             KernelWidth = hardware.KernelWidth,
             HardwareKind = hardware.HardwareKind,
             Driver = hardware.Driver,
+            KernelsUnavailable = (backend as Idrak.Abstraction.Devices.IKernelAvailability)?.KernelsUnavailable(),
         };
     }
 }

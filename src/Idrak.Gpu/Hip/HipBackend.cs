@@ -23,7 +23,7 @@ internal sealed class HipStorage(HipBackend backend, ulong pointer, int length, 
 /// written after they return. The device reports its memory (<see cref="IMemoryReport"/>), so paths that need much at
 /// once (the composed attention's scores, a prompt's pieces) are sized by it.
 /// </summary>
-internal sealed unsafe partial class HipBackend : Backend, IMemoryReport
+internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKernelAvailability
 {
     private static readonly Lazy<(HipDevice[] Devices, string Reason)> Probe = new(ProbeDevices);
     private static readonly Lazy<Lazy<HipBackend>[]> Instances = new(() =>

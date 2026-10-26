@@ -917,20 +917,23 @@ public static class ProfileProbes
                 long total = Operations.Kernels.HostCalls(backend) - calls;
                 var after = Operations.Kernels.HostCallsByOperation(backend);
                 subscription.Dispose();
+                // Why: the device's kernels unavailable as a whole (IKernelAvailability), else no kernel of its own for it.
+                string own = total > 0 && (backend as IKernelAvailability)?.KernelsUnavailable() is { } off ? $"kernels unavailable: {off}" : "no kernel of its own";
                 var rows = after.Select(c => (Device: backend.Kind, Operation: c.Key, Calls: c.Value - before.GetValueOrDefault(c.Key)))
                     .Where(c => c.Calls > 0).OrderByDescending(c => c.Calls).ThenBy(c => c.Operation, StringComparer.Ordinal)
-                    .Select(c => (c.Device, c.Operation, Calls: Text(c.Calls))).ToList();
+                    .Select(c => (c.Device, c.Operation, Calls: Text(c.Calls), Why: own)).ToList();
                 lock (hook)
                 {
                     // Another device's first fallback of an operation: its count is that device's, not watched here.
-                    rows.AddRange(hook.Seen.Where(f => f.Device != backend.Kind).Select(f => (f.Device, f.Operation, Calls: "first")));
+                    rows.AddRange(hook.Seen.Where(f => f.Device != backend.Kind)
+                        .Select(f => (f.Device, f.Operation, Calls: "first", Why: f.Why is { } why ? $"kernels unavailable: {why}" : "no kernel of its own")));
                 }
 
                 run.Record("fallback calls", total, "calls");
                 run.Record("fallback operations", rows.Count);
                 if (rows.Count > 0)
                 {
-                    run.Add(new ProfileTable("host fallbacks", ["device", "operation", "calls"], [.. rows.Select(r => (IReadOnlyList<string>)[r.Device, r.Operation, r.Calls])]));
+                    run.Add(new ProfileTable("host fallbacks", ["device", "operation", "calls", "why"], [.. rows.Select(r => (IReadOnlyList<string>)[r.Device, r.Operation, r.Calls, r.Why])]));
                 }
             };
         }
@@ -939,13 +942,13 @@ public static class ProfileProbes
         {
             public TelemetryLevel Levels => TelemetryLevel.Devices;
 
-            public List<(string Device, string Operation)> Seen { get; } = [];
+            public List<(string Device, string Operation, string? Why)> Seen { get; } = [];
 
             public void OnHostFallback(in HostFallback e)
             {
                 lock (this)
                 {
-                    Seen.Add((e.Device, e.Operation));
+                    Seen.Add((e.Device, e.Operation, e.KernelsUnavailable));
                 }
             }
         }

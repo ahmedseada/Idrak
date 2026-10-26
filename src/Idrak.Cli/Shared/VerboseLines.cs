@@ -96,7 +96,14 @@ internal sealed class VerboseLines : ITelemetryHook, IDisposable
     {
         lock (_lock)
         {
-            Line($"{e.Operation} ran on the host: {e.Device} has no kernel for it (its later calls are counted in the report)");
+            if (e.KernelsUnavailable is { } why)
+            {
+                Line($"{e.Operation} ran on the host: {e.Device}'s kernels are unavailable ({why}; its later calls are counted in the report)");
+            }
+            else
+            {
+                Line($"{e.Operation} ran on the host: {e.Device} has no kernel for it (its later calls are counted in the report)");
+            }
         }
     }
 
