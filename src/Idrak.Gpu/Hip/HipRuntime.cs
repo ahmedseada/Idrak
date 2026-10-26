@@ -19,6 +19,9 @@ internal static unsafe class HipRuntime
 {
     private static IntPtr s_handle;
 
+    /// <summary>The file the runtime was opened from (a path, or a bare name the system's search found); empty until loaded.</summary>
+    public static string LoadedFrom { get; private set; } = "";
+
     /// <summary>The runtime library's file names tried in order on <paramref name="os"/> ("windows" or "linux"; none elsewhere).</summary>
     internal static string[] CandidateNames(string os) => os switch
     {
@@ -51,20 +54,15 @@ internal static unsafe class HipRuntime
     internal static string CurrentOs => OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : "";
 
     /// <summary>
-    /// Opens the first library of <paramref name="names"/> found by the default search or in <paramref name="folders"/>;
-    /// false (with the names tried) when none is there. Touches no shared state, so tests can ask for libraries that do not exist.
+    /// Opens the first library of <paramref name="names"/> found in <paramref name="folders"/> (the install HIP_PATH or
+    /// ROCM_PATH names), else by the system's default search; false (with the names tried) when none is there;
+    /// <paramref name="opened"/> is the path or name opened. The folders come first so the runtime and the compiler are
+    /// the same release: on Windows the graphics driver puts an older runtime (amdhip64.dll) on the default search path,
+    /// which cannot load the code an installed SDK's compiler makes (hipErrorSharedObjectInitFailed).
+    /// Touches no shared state, so tests can ask for libraries that do not exist.
     /// </summary>
-    internal static bool TryOpen(IReadOnlyList<string> names, IEnumerable<string> folders, out IntPtr handle, out string reason)
+    internal static bool TryOpen(IReadOnlyList<string> names, IEnumerable<string> folders, out IntPtr handle, out string reason, out string opened)
     {
-        foreach (string name in names)
-        {
-            if (NativeLibrary.TryLoad(name, out handle))
-            {
-                reason = "";
-                return true;
-            }
-        }
-
         foreach (string folder in folders)
         {
             foreach (string name in names)
@@ -72,13 +70,23 @@ internal static unsafe class HipRuntime
                 string path = Path.Combine(folder, name);
                 if (File.Exists(path) && NativeLibrary.TryLoad(path, out handle))
                 {
-                    reason = "";
+                    (reason, opened) = ("", path);
                     return true;
                 }
             }
         }
 
+        foreach (string name in names)
+        {
+            if (NativeLibrary.TryLoad(name, out handle))
+            {
+                (reason, opened) = ("", name);
+                return true;
+            }
+        }
+
         handle = IntPtr.Zero;
+        opened = "";
         reason = names.Count == 0 ? "HIP is not used on this operating system"
             : $"the HIP runtime ({string.Join(" / ", names)}) was not found; install ROCm (Linux) or the HIP SDK (Windows)";
         return false;
@@ -94,7 +102,7 @@ internal static unsafe class HipRuntime
         }
 
         string os = CurrentOs;
-        if (!TryOpen(CandidateNames(os), SearchFolders(os, Environment.GetEnvironmentVariable), out var handle, out reason))
+        if (!TryOpen(CandidateNames(os), SearchFolders(os, Environment.GetEnvironmentVariable), out var handle, out reason, out string opened))
         {
             return false;
         }
@@ -155,6 +163,7 @@ internal static unsafe class HipRuntime
         }
 
         s_handle = handle;                                                      // kept for the process
+        LoadedFrom = opened;
         reason = "";
         return true;
     }

@@ -22,6 +22,9 @@ internal static unsafe class HipRtc
     /// <summary>The compiler's version ("major.minor"), or "" when it did not load.</summary>
     public static string Version { get; private set; } = "";
 
+    /// <summary>The file the compiler was opened from (a path, or a bare name the system's search found); empty until loaded.</summary>
+    public static string LoadedFrom { get; private set; } = "";
+
     /// <summary>The compiler's file names tried in order on <paramref name="os"/> ("windows" or "linux"; none elsewhere).</summary>
     internal static string[] CandidateNames(string os)
     {
@@ -66,7 +69,11 @@ internal static unsafe class HipRtc
         string os = HipRuntime.CurrentOs;
         var folders = HipRuntime.SearchFolders(os, Environment.GetEnvironmentVariable).ToList();
         string[] names = CandidateNames(os);
-        if (!HipRuntime.TryOpen(names, folders, out var handle, out _))
+        if (HipRuntime.TryOpen(names, folders, out var handle, out _, out string opened))
+        {
+            LoadedFrom = opened;
+        }
+        else
         {
             // A Windows SDK release newer than the names above: any hiprtcMMmm.dll in its bin folder.
             string? found = os != "windows" ? null : folders.Where(Directory.Exists)
@@ -77,6 +84,8 @@ internal static unsafe class HipRtc
             {
                 return $"the HIP run-time compiler ({names.FirstOrDefault() ?? "hiprtc"}) was not found; install ROCm (Linux) or the HIP SDK (Windows)";
             }
+
+            LoadedFrom = found;
         }
 
         var missing = new List<string>();

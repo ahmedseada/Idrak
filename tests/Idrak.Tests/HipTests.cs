@@ -14,7 +14,7 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] HipGroup =
     [
-        ("hip runtime: library names per system; a missing runtime means no HIP devices, a reason and no exception", HipMissingRuntime),
+        ("hip runtime: library names per system; the install's folder (HIP_PATH, ROCM_PATH) before the system's search; a refusal names both releases; a missing runtime means no HIP devices, a reason and no exception", HipMissingRuntime),
         ("hip devices: named hip:N, parsed like the others, listed in --list-devices (with the reason when there are none)", HipDeviceNames),
         ("hip kernels: the source declares every kernel with the parameters launches pass; block sizes and limits come from what the device reports", HipKernelSource),
         ("hip kernels: the architecture string is read from the device properties by content; compiler options name it", HipArchitecture),
@@ -38,8 +38,27 @@ internal static partial class Tests
         Check(HipRuntime.SearchFolders("linux", _ => null).Contains("/opt/rocm/lib"), "ROCm's default folder is searched on Linux");
 
         // A runtime that is not there: no handle, no exception, a reason naming what was looked for.
-        bool opened = HipRuntime.TryOpen(["libidrak-no-such-hip-runtime.so"], [Path.GetTempPath()], out var handle, out string reason);
-        Check(!opened && handle == IntPtr.Zero && reason.Contains("libidrak-no-such-hip-runtime.so", StringComparison.Ordinal), $"missing library: {reason}");
+        bool opened = HipRuntime.TryOpen(["libidrak-no-such-hip-runtime.so"], [Path.GetTempPath()], out var handle, out string reason, out string from);
+        Check(!opened && handle == IntPtr.Zero && from.Length == 0 && reason.Contains("libidrak-no-such-hip-runtime.so", StringComparison.Ordinal), $"missing library: {reason}");
+
+        // The install's folder comes before the system's search: a library present in both opens from the folder (on
+        // Windows the driver's older amdhip64.dll on the search path refused an installed SDK's compiled kernels).
+        // The runtime's own JIT is a native library every system has, already loaded by the process.
+        string folder = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
+        string file = OperatingSystem.IsWindows() ? "clrjit.dll" : OperatingSystem.IsMacOS() ? "libclrjit.dylib" : "libclrjit.so";
+        bool found = HipRuntime.TryOpen([file], [folder], out var both, out _, out string where);
+        Check(found && where == Path.Combine(folder, file), $"the install's folder first: opened {where}");
+        if (found)
+        {
+            System.Runtime.InteropServices.NativeLibrary.Free(both);
+        }
+
+        // A refusal names both releases and files, and says when the runtime is older than the compiler.
+        string releases = HipBackend.Releases(50731541, @"C:\Windows\System32\amdhip64.dll", "7.2", @"C:\ROCm\7.2\bin\hiprtc0702.dll");
+        Check(releases.Contains("runtime HIP 5.7.31541 from C:\\Windows\\System32\\amdhip64.dll", StringComparison.Ordinal)
+              && releases.Contains("compiler hipRTC 7.2", StringComparison.Ordinal) && releases.Contains("older than the compiler", StringComparison.Ordinal),
+            $"an older runtime named: {releases}");
+        Check(!HipBackend.Releases(70253211, "amdhip64_7.dll", "7.2", "hiprtc0702.dll").Contains("older", StringComparison.Ordinal), "the same release: no hint");
 
         var provider = DeviceProviders.Find("hip");
         Check(provider is { Type: DeviceType.Hip, Display: "HIP" }, "the HIP provider is registered");

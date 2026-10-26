@@ -110,7 +110,7 @@ internal sealed unsafe partial class HipBackend
         byte[] code = HipRtc.Compile(HipKernels.Source, "idrak_kernels.hip", options);
         if (!TryLoadModule(code, out var compiled, out string error))
         {
-            throw new HipException($"the runtime refused the compiled kernels: {error}");
+            throw new HipException($"the runtime refused the compiled kernels: {error} ({Releases(_device.RuntimeVersion)})");
         }
 
         KernelCache.Store(key, architecture, code);
@@ -118,6 +118,19 @@ internal sealed unsafe partial class HipBackend
         _blockSize = block;
         return Functions(compiled);
     }
+
+    // The runtime's and the compiler's releases and files, for a refusal: a runtime older than the compiler cannot load
+    // its code (the graphics driver's runtime on the default search path beside an installed SDK's compiler).
+    internal static string Releases(int runtimeVersion, string runtimeFile, string compilerVersion, string compilerFile)
+    {
+        string text = $"runtime HIP {FormatVersion(runtimeVersion)} from {runtimeFile}, compiler hipRTC {compilerVersion} from {compilerFile}";
+        int dot = compilerVersion.IndexOf('.');
+        bool older = int.TryParse(dot < 0 ? compilerVersion : compilerVersion.AsSpan(0, dot), System.Globalization.NumberStyles.Integer,
+            System.Globalization.CultureInfo.InvariantCulture, out int compilerMajor) && runtimeVersion / 10_000_000 < compilerMajor;
+        return older ? text + "; the runtime is older than the compiler: install both from one SDK and point HIP_PATH at it" : text;
+    }
+
+    private static string Releases(int runtimeVersion) => Releases(runtimeVersion, HipRuntime.LoadedFrom, HipRtc.Version, HipRtc.LoadedFrom);
 
     private static bool TryLoadModule(byte[] code, out IntPtr module, out string error)
     {
