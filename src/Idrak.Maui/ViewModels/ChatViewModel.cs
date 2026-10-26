@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Text;
 using System.Windows.Input;
 using Idrak.Maui.Abstractions;
+using Idrak.Maui.Markdown;
 using Microsoft.Maui.Dispatching;
 
 namespace Idrak.Maui.ViewModels;
@@ -65,14 +66,114 @@ public sealed class ChatBubble : ViewModel
     private string _text = "";
     private string _thinking = "";
     private string _footer = "";
-    private bool _streaming;
+    private string _rate = "", _tokens = "", _first = "", _live = "";
+    private double _thinkingSeconds;
+    private bool _streaming, _expanded, _canRegenerate;
 
-    internal ChatBubble(string role, string text, Func<string, Task> copy)
+    internal ChatBubble(string role, string text, Func<string, Task> copy, string model = "", ICommand? regenerate = null, ICommand? stop = null)
     {
+        StopCommand = stop ?? new Command(() => { });
         Role = role;
         _text = text;
+        ModelName = model;
         CopyCommand = new Command(async () => await copy(Text));
+        RegenerateCommand = regenerate ?? new Command(() => { });
+        ToggleThinkingCommand = new Command(() => IsThinkingExpanded = !IsThinkingExpanded);
+        Document = new MarkdownDocument(copy);
+        if (Role != "user" && text.Length > 0)
+        {
+            Document.Update(text);
+        }
     }
+
+    /// <summary>The answer as Markdown blocks (paragraphs, lists, code), kept up to date as it streams.</summary>
+    public MarkdownDocument Document { get; }
+
+    /// <summary>The model that answered ("Qwen3-0.6B"), or "".</summary>
+    public string ModelName { get; }
+
+    /// <summary>The letter on the model's avatar.</summary>
+    public string ModelInitial => ModelName.Length > 0 ? char.ToUpperInvariant(ModelName[0]).ToString() : "AI";
+
+    /// <summary>Whether the message reads right to left (its first strong letter is Arabic, Hebrew…).</summary>
+    public bool IsRightToLeft => MarkdownBlock.IsRightToLeft(Text);
+
+    /// <summary>How long the model reasoned before it answered, in seconds (0 when it did not).</summary>
+    public double ThinkingSeconds
+    {
+        get => _thinkingSeconds;
+        internal set
+        {
+            if (SetProperty(ref _thinkingSeconds, value))
+            {
+                OnPropertyChanged(nameof(ThinkingTitle));
+            }
+        }
+    }
+
+    /// <summary>"Thought for 1.4 s", or "Thinking…" while it reasons.</summary>
+    public string ThinkingTitle => IsStreaming && Text.Length == 0 ? "Thinking…"
+        : string.Create(CultureInfo.InvariantCulture, $"Thought for {ThinkingSeconds:0.0} s");
+
+    /// <summary>Whether the reasoning is shown.</summary>
+    public bool IsThinkingExpanded
+    {
+        get => _expanded;
+        set => SetProperty(ref _expanded, value);
+    }
+
+    /// <summary>Shows or hides the reasoning.</summary>
+    public ICommand ToggleThinkingCommand { get; }
+
+    /// <summary>"18.1 tok/s", or "".</summary>
+    public string RateText
+    {
+        get => _rate;
+        internal set
+        {
+            if (SetProperty(ref _rate, value))
+            {
+                OnPropertyChanged(nameof(HasMeta));
+            }
+        }
+    }
+
+    /// <summary>"212 tokens", or "".</summary>
+    public string TokensText
+    {
+        get => _tokens;
+        internal set => SetProperty(ref _tokens, value);
+    }
+
+    /// <summary>"first in 0.4 s", or "".</summary>
+    public string FirstTokenText
+    {
+        get => _first;
+        internal set => SetProperty(ref _first, value);
+    }
+
+    /// <summary>Whether the finished answer has its measures to show.</summary>
+    public bool HasMeta => !IsStreaming && IsAssistant && (RateText.Length > 0 || TokensText.Length > 0);
+
+    /// <summary>While it streams: "17.4 tok/s · 31 tokens".</summary>
+    public string LiveText
+    {
+        get => _live;
+        internal set => SetProperty(ref _live, value);
+    }
+
+    /// <summary>Whether this answer can be asked again (the last one, when nothing streams).</summary>
+    public bool CanRegenerate
+    {
+        get => _canRegenerate;
+        internal set => SetProperty(ref _canRegenerate, value);
+    }
+
+    /// <summary>Asks the last question again, in place of this answer.</summary>
+    public ICommand RegenerateCommand { get; }
+
+    /// <summary>Stops the answer streaming (the chat's Stop, beside the live rate).</summary>
+    public ICommand StopCommand { get; }
 
     /// <summary>"user" or "assistant".</summary>
     public string Role { get; }
@@ -110,7 +211,14 @@ public sealed class ChatBubble : ViewModel
     public bool IsStreaming
     {
         get => _streaming;
-        internal set => SetProperty(ref _streaming, value);
+        internal set
+        {
+            if (SetProperty(ref _streaming, value))
+            {
+                OnPropertyChanged(nameof(HasMeta));
+                OnPropertyChanged(nameof(ThinkingTitle));
+            }
+        }
     }
 
     /// <summary>What it took ("85 tokens · 14.2 tokens/s · warm"), or "".</summary>
@@ -139,7 +247,14 @@ public sealed class ChatBubble : ViewModel
     {
         if (text.Length > 0)
         {
+            bool first = Text.Length == 0;
             Text += text;
+            Document.Update(Text);
+            if (first)
+            {
+                OnPropertyChanged(nameof(IsRightToLeft));
+                OnPropertyChanged(nameof(ThinkingTitle));
+            }
         }
 
         if (thinking.Length > 0)
@@ -193,6 +308,14 @@ public sealed class ChatViewModel : ViewModel
     private string _liveText = "";
     private string _status = "";
     private string _error = "";
+    private readonly IConversationStore? _conversations;
+    private readonly List<double> _rates = [];
+    private string _conversationId;
+    private string _conversationQuery = "";
+    private string _lastRateText = "";
+    private string _firstTokenText = "";
+    private double _liveRate;
+    private int _liveTokens;
 
     /// <summary>A chat over <paramref name="store"/>'s models, loaded by <paramref name="chats"/>, with <paramref name="options"/>' settings.</summary>
     /// <param name="store">The model store.</param>
@@ -200,8 +323,11 @@ public sealed class ChatViewModel : ViewModel
     /// <param name="options">The app's options (read at each load and answer: a setting saved meanwhile applies to the next).</param>
     /// <param name="dispatcher">The UI thread's dispatcher; null: the app's (<c>Application.Current.Dispatcher</c>) when there is one, else the streaming thread itself.</param>
     /// <param name="time">The clock the batching reads (tests give their own).</param>
-    public ChatViewModel(IModelStore store, IChatModelService chats, IdrakMauiOptions options, IDispatcher? dispatcher = null, TimeProvider? time = null)
+    /// <param name="conversations">Where the chats are kept between runs; null: none kept.</param>
+    public ChatViewModel(IModelStore store, IChatModelService chats, IdrakMauiOptions options, IDispatcher? dispatcher = null, TimeProvider? time = null,
+        IConversationStore? conversations = null)
     {
+        _conversations = conversations;
         _store = store ?? throw new ArgumentNullException(nameof(store));
         _chats = chats ?? throw new ArgumentNullException(nameof(chats));
         _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -212,6 +338,293 @@ public sealed class ChatViewModel : ViewModel
         _newChat = new Command(NewChat, () => !IsStreaming);
         RefreshCommand = new Command(async () => await RefreshAsync());
         GoToModelsCommand = new Command(async () => await (OpenModels?.Invoke() ?? Task.CompletedTask));
+        _conversationId = ConversationText.NewId(_time.GetUtcNow());
+        RegenerateCommand = new Command(async () => await RegenerateAsync());
+        SuggestCommand = new Command<string>(async text =>
+        {
+            Draft = text ?? "";
+            await SendAsync();
+        });
+        OpenConversationCommand = new Command<string>(id => OpenConversation(id ?? ""));
+        DeleteConversationCommand = new Command<string>(id => DeleteConversation(id ?? ""));
+        foreach (string suggestion in options.ChatSuggestions)
+        {
+            Suggestions.Add(suggestion);
+        }
+
+        Messages.CollectionChanged += (_, _) => OnPropertyChanged(nameof(ShowSuggestions));
+        ListConversations();
+    }
+
+    /// <summary>The model chosen, by its name without the owner ("Qwen3-0.6B"), or what to do.</summary>
+    public string ModelName => SelectedModel is { } model ? ShortName(model.Title) : HasModels ? "Choose a model" : "No model yet";
+
+    /// <summary>The letter on the model's avatar.</summary>
+    public string ModelInitial => SelectedModel is { } model && ShortName(model.Title) is { Length: > 0 } name ? char.ToUpperInvariant(name[0]).ToString() : "?";
+
+    /// <summary>"int8 · vulkan:0 · loaded in 3.1 s", or what is happening.</summary>
+    public string ModelMeta => Model is { } m ? string.Create(CultureInfo.InvariantCulture, $"{m.Weights} · {m.Device} · loaded in {m.LoadTime.TotalSeconds:F1} s")
+        : IsLoading ? "Loading…" : SelectedModel is null ? (HasModels ? "Tap to choose one of the store's models" : "Pull one in Models") : "Not loaded";
+
+    /// <summary>Whether a model is loaded (the green dot).</summary>
+    public bool IsModelLoaded => Model is not null;
+
+    /// <summary>Questions to ask while the chat is empty.</summary>
+    public ObservableCollection<string> Suggestions { get; } = [];
+
+    /// <summary>Whether the suggestions show: nothing streams and nothing has been asked.</summary>
+    public bool ShowSuggestions => IsIdle && Messages.Count == 0 && Suggestions.Count > 0;
+
+    /// <summary>Asks a suggestion.</summary>
+    public ICommand SuggestCommand { get; }
+
+    /// <summary>Asks the last question again.</summary>
+    public ICommand RegenerateCommand { get; }
+
+    /// <summary>The live tokens per second of the answer streaming (the last answer's when none streams).</summary>
+    public double LiveRate
+    {
+        get => _liveRate;
+        private set
+        {
+            if (SetProperty(ref _liveRate, value))
+            {
+                OnPropertyChanged(nameof(LiveRateText));
+            }
+        }
+    }
+
+    /// <summary>"17.4".</summary>
+    public string LiveRateText => LiveRate > 0 ? LiveRate.ToString("F1", CultureInfo.InvariantCulture) : "–";
+
+    /// <summary>The tokens of the answer streaming (the last answer's when none streams).</summary>
+    public int LiveTokens
+    {
+        get => _liveTokens;
+        private set => SetProperty(ref _liveTokens, value);
+    }
+
+    /// <summary>The recent rates of the answer streaming, one a showing (the inspector's sparkline).</summary>
+    public IReadOnlyList<double> RateHistory { get; private set; } = [];
+
+    /// <summary>"0.38 s · warm", or "".</summary>
+    public string FirstTokenText
+    {
+        get => _firstTokenText;
+        private set => SetProperty(ref _firstTokenText, value);
+    }
+
+    /// <summary>The last answer's speed and device ("17.4 tok/s on vulkan:0"), or "" before any.</summary>
+    public string LastRateText
+    {
+        get => _lastRateText;
+        private set => SetProperty(ref _lastRateText, value);
+    }
+
+    /// <summary>The device the model is on, or "–".</summary>
+    public string DeviceText => Model?.Device ?? "–";
+
+    /// <summary>"0.91 GB of 5.6 GB": the model's weights and cache against the memory measured before loading, or "".</summary>
+    public string MemoryText => Model?.Estimate is { } e
+        ? $"{ProgressText.Bytes(e.NeededBytes)}" + (e.AvailableBytes is { } a ? $" of {ProgressText.Bytes(a)}" : "") : "";
+
+    /// <summary>The weights' share of the memory measured (0 when unknown).</summary>
+    public double WeightsShare => Model?.Estimate is { AvailableBytes: > 0 } e ? (double)e.WeightBytes / e.AvailableBytes.Value : 0;
+
+    /// <summary>The cache's share of the memory measured (0 when unknown).</summary>
+    public double CacheShare => Model?.Estimate is { AvailableBytes: > 0 } e ? (double)e.CacheBytes / e.AvailableBytes.Value : 0;
+
+    /// <summary>"weights 734 MB".</summary>
+    public string WeightsText => Model?.Estimate is { } e ? $"weights {ProgressText.Bytes(e.WeightBytes)}" : "";
+
+    /// <summary>"cache 212 MB".</summary>
+    public string CacheText => Model?.Estimate is { } e ? $"cache {ProgressText.Bytes(e.CacheBytes)}" : "";
+
+    /// <summary>The sampling temperature of the next answers (the settings' value, changed here for this run).</summary>
+    public double Temperature
+    {
+        get => _options.ChatTemperature ?? new GenerationOptions().Temperature;
+        set
+        {
+            double rounded = Math.Round(Math.Clamp(value, 0, 2), 2);
+            if (_options.ChatTemperature != rounded)
+            {
+                _options.ChatTemperature = rounded;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(TemperatureText));
+            }
+        }
+    }
+
+    /// <summary>"0.7".</summary>
+    public string TemperatureText => Temperature.ToString("0.0#", CultureInfo.InvariantCulture);
+
+    /// <summary>The most tokens of the next answers, as text ("" for until the turn ends).</summary>
+    public string MaxNewTokensText
+    {
+        get => _options.ChatMaxNewTokens?.ToString(CultureInfo.InvariantCulture) ?? "";
+        set
+        {
+            int? next = int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) && n > 0 ? n : null;
+            if (_options.ChatMaxNewTokens != next)
+            {
+                _options.ChatMaxNewTokens = next;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    /// <summary>The kept chats, grouped by day (Today, Yesterday, This week, Earlier), filtered by <see cref="ConversationQuery"/>.</summary>
+    public ObservableCollection<ConversationGroup> Conversations { get; } = [];
+
+    /// <summary>The search over the kept chats.</summary>
+    public string ConversationQuery
+    {
+        get => _conversationQuery;
+        set
+        {
+            if (SetProperty(ref _conversationQuery, (value ?? "").Trim()))
+            {
+                ListConversations();
+            }
+        }
+    }
+
+    /// <summary>The id of the chat shown.</summary>
+    public string ConversationId => _conversationId;
+
+    /// <summary>Opens a kept chat (by id).</summary>
+    public ICommand OpenConversationCommand { get; }
+
+    /// <summary>Forgets a kept chat (by id).</summary>
+    public ICommand DeleteConversationCommand { get; }
+
+    /// <summary>Lists the kept chats again (matching <see cref="ConversationQuery"/>), the one shown marked.</summary>
+    public void ListConversations()
+    {
+        Conversations.Clear();
+        if (_conversations is null)
+        {
+            return;
+        }
+
+        IReadOnlyList<ConversationSummary> kept;
+        try
+        {
+            kept = _conversations.List();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Error = $"The kept chats could not be read: {e.Message}";
+            return;
+        }
+
+        var now = _time.GetUtcNow();
+        foreach (var group in kept.Where(c => _conversationQuery.Length == 0 || c.Title.Contains(_conversationQuery, StringComparison.CurrentCultureIgnoreCase)
+                     || c.Preview.Contains(_conversationQuery, StringComparison.CurrentCultureIgnoreCase))
+                     .GroupBy(c => ConversationText.Group(c.Updated, now)))
+        {
+            Conversations.Add(new ConversationGroup(group.Key, group.Select(c => new ConversationEntry(c, ConversationText.When(c.Updated, now), c.Id == _conversationId,
+                OpenConversationCommand))));
+        }
+    }
+
+    /// <summary>Shows the kept chat <paramref name="id"/> (its messages; the model chosen stays); false when it is not kept or an answer streams.</summary>
+    public bool OpenConversation(string id)
+    {
+        if (IsStreaming || _conversations?.Load(id) is not { } chat)
+        {
+            return false;
+        }
+
+        _history.Clear();
+        Messages.Clear();
+        foreach (var message in chat.Messages.Where(m => m.Role is "user" or "assistant"))
+        {
+            _history.Add(message);
+            var bubble = new ChatBubble(message.Role, message.Content, CopyAsync, ShortName(chat.Model ?? ""), RegenerateCommand);
+            if (message.Thinking is { Length: > 0 } thinking)
+            {
+                bubble.Append("", thinking);
+            }
+
+            Messages.Add(bubble);
+        }
+
+        _conversationId = chat.Id;
+        MarkLast();
+        LiveText = "";
+        Error = "";
+        Status = "";
+        ListConversations();
+        return true;
+    }
+
+    /// <summary>Forgets the kept chat <paramref name="id"/> (the chat shown starts afresh when it is that one).</summary>
+    public bool DeleteConversation(string id)
+    {
+        if (_conversations is null || !_conversations.Delete(id))
+        {
+            return false;
+        }
+
+        if (id == _conversationId)
+        {
+            NewChat();
+        }
+
+        ListConversations();
+        return true;
+    }
+
+    /// <summary>
+    /// Asks the last question again: the last answer and its question leave the chat, and the question is sent anew. False
+    /// while an answer streams or when there is no answer to replace.
+    /// </summary>
+    public async Task<bool> RegenerateAsync()
+    {
+        if (IsStreaming || Messages.Count < 2 || Messages[^1].IsUser || _history.Count < 2 || _history[^2].Role != "user")
+        {
+            return false;
+        }
+
+        string question = _history[^2].Content;
+        _history.RemoveRange(_history.Count - 2, 2);
+        Messages.RemoveAt(Messages.Count - 1);
+        Messages.RemoveAt(Messages.Count - 1);
+        Draft = question;
+        return await SendAsync().ConfigureAwait(true);
+    }
+
+    private static string ShortName(string id) => id.Length == 0 ? "" : id[(id.TrimEnd('/').LastIndexOf('/') + 1)..];
+
+    // Only the last answer can be asked again.
+    private void MarkLast()
+    {
+        for (int i = 0; i < Messages.Count; i++)
+        {
+            Messages[i].CanRegenerate = i == Messages.Count - 1 && Messages[i].IsAssistant && !IsStreaming;
+        }
+    }
+
+    // Keeps the chat shown (after each answer), titled by its first question.
+    private void Keep()
+    {
+        if (_conversations is null || _history.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            string first = _history.FirstOrDefault(m => m.Role == "user")?.Content ?? "Chat";
+            _conversations.Save(new ChatConversation(_conversationId, ConversationText.Title(first), _time.GetUtcNow(), SelectedModel?.Model.Id, [.. _history]));
+            ListConversations();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Error = $"The chat was not kept: {e.Message}";
+        }
     }
 
     /// <summary>The page's title.</summary>
@@ -236,6 +649,9 @@ public sealed class ChatViewModel : ViewModel
             {
                 _send.ChangeCanExecute();
                 OnPropertyChanged(nameof(CanSend));
+                OnPropertyChanged(nameof(ModelName));
+                OnPropertyChanged(nameof(ModelInitial));
+                OnPropertyChanged(nameof(ModelMeta));
                 if (value is not null)
                 {
                     Loading = LoadAsync(value);
@@ -256,6 +672,14 @@ public sealed class ChatViewModel : ViewModel
             if (SetProperty(ref _info, value))
             {
                 OnPropertyChanged(nameof(HasThinkingSwitch));
+                OnPropertyChanged(nameof(ModelMeta));
+                OnPropertyChanged(nameof(IsModelLoaded));
+                OnPropertyChanged(nameof(DeviceText));
+                OnPropertyChanged(nameof(MemoryText));
+                OnPropertyChanged(nameof(WeightsShare));
+                OnPropertyChanged(nameof(CacheShare));
+                OnPropertyChanged(nameof(WeightsText));
+                OnPropertyChanged(nameof(CacheText));
             }
         }
     }
@@ -291,7 +715,13 @@ public sealed class ChatViewModel : ViewModel
     public bool IsLoading
     {
         get => _loading;
-        private set => SetProperty(ref _loading, value);
+        private set
+        {
+            if (SetProperty(ref _loading, value))
+            {
+                OnPropertyChanged(nameof(ModelMeta));
+            }
+        }
     }
 
     /// <summary>Whether an answer is streaming.</summary>
@@ -303,6 +733,7 @@ public sealed class ChatViewModel : ViewModel
             if (SetProperty(ref _streaming, value))
             {
                 OnPropertyChanged(nameof(IsIdle));
+                OnPropertyChanged(nameof(ShowSuggestions));
                 OnPropertyChanged(nameof(CanSend));
                 _send.ChangeCanExecute();
                 _stop.ChangeCanExecute();
@@ -472,6 +903,8 @@ public sealed class ChatViewModel : ViewModel
 
             OnPropertyChanged(nameof(HasModels));
             OnPropertyChanged(nameof(HasNoModels));
+            OnPropertyChanged(nameof(ModelName));
+            OnPropertyChanged(nameof(ModelMeta));
             if (chosen is not null && Models.FirstOrDefault(m => m.Path == chosen) is { } same)
             {
                 _selected = same;                                               // the same model: not loaded again
@@ -543,8 +976,16 @@ public sealed class ChatViewModel : ViewModel
         Error = "";
         Status = "";
         Messages.Add(new ChatBubble("user", text, CopyAsync));
-        var bubble = new ChatBubble("assistant", "", CopyAsync) { IsStreaming = true };
+        var bubble = new ChatBubble("assistant", "", CopyAsync, ShortName(model.Title), RegenerateCommand, StopCommand) { IsStreaming = true };
         Messages.Add(bubble);
+        MarkLast();
+        lock (_pending)
+        {
+            _rates.Clear();
+        }
+
+        RateHistory = [];
+        OnPropertyChanged(nameof(RateHistory));
         _history.Add(new ChatMessage("user", text));
         var request = new ChatRequest(RequestMessages(), Think: HasThinkingSwitch ? Thinking : _options.ChatThinking, Options: Options(_options));
         var load = LoadRequest(model, _options);
@@ -564,6 +1005,7 @@ public sealed class ChatViewModel : ViewModel
 
             _history.Add(answer.Message);
             Report(answer, bubble);
+            Keep();
             return true;
         }
         catch (Exception e)
@@ -582,6 +1024,7 @@ public sealed class ChatViewModel : ViewModel
         {
             _cancellation = null;
             IsStreaming = false;
+            MarkLast();
         }
     }
 
@@ -611,6 +1054,8 @@ public sealed class ChatViewModel : ViewModel
         LiveText = "";
         Error = "";
         Status = "A new chat.";
+        _conversationId = ConversationText.NewId(_time.GetUtcNow());
+        ListConversations();
     }
 
     /// <summary>
@@ -680,7 +1125,7 @@ public sealed class ChatViewModel : ViewModel
             _generated = 0;
         }
 
-        long start = _time.GetTimestamp(), first = 0;
+        long start = _time.GetTimestamp(), first = 0, thinkStart = 0, thinkEnd = 0;
         int firstGenerated = 0;
         ChatChunk? final = null;
         var content = new StringBuilder();
@@ -702,6 +1147,15 @@ public sealed class ChatViewModel : ViewModel
                     (first, firstGenerated) = (_time.GetTimestamp(), chunk.Generated);
                 }
 
+                if (thinkStart == 0 && chunk.Delta.Thinking is { Length: > 0 })
+                {
+                    thinkStart = _time.GetTimestamp();
+                }
+                else if (thinkStart != 0 && thinkEnd == 0 && chunk.Delta.Content.Length > 0)
+                {
+                    thinkEnd = _time.GetTimestamp();
+                }
+
                 if (chunk.Done)
                 {
                     final = chunk;
@@ -721,7 +1175,9 @@ public sealed class ChatViewModel : ViewModel
         Flush(bubble, first, firstGenerated, final: true);
         var message = final?.Message is { } reply ? reply : new ChatMessage("assistant", content.ToString());
         _answersSinceLoad++;
-        return new Answer(message, final?.Stats, final?.Generated ?? _generated, cold, stopped, _time.GetElapsedTime(start), lease.Loaded ? lease.Info : null);
+        double thinking = thinkStart == 0 ? 0 : _time.GetElapsedTime(thinkStart, thinkEnd == 0 ? _time.GetTimestamp() : thinkEnd).TotalSeconds;
+        var firstToken = first == 0 ? TimeSpan.Zero : _time.GetElapsedTime(start, first);
+        return new Answer(message, final?.Stats, final?.Generated ?? _generated, cold, stopped, _time.GetElapsedTime(start), lease.Loaded ? lease.Info : null, thinking, firstToken);
     }
 
     // Hands what came since the last showing to the UI thread: at once for the first piece and the last, else once the
@@ -755,8 +1211,24 @@ public sealed class ChatViewModel : ViewModel
 
             bubble.Append(text, thinking);
             double seconds = first == 0 ? 0 : _time.GetElapsedTime(first, now).TotalSeconds;
+            double rate = seconds > 0 && generated > firstGenerated ? (generated - firstGenerated) / seconds : 0;
             LiveText = generated == 0 ? "" : string.Create(CultureInfo.InvariantCulture, $"{generated:N0} token{(generated == 1 ? "" : "s")}")
-                + (seconds > 0 && generated > firstGenerated ? string.Create(CultureInfo.InvariantCulture, $" · {(generated - firstGenerated) / seconds:F1} tokens/s") : "");
+                + (rate > 0 ? string.Create(CultureInfo.InvariantCulture, $" · {rate:F1} tokens/s") : "");
+            bubble.LiveText = string.Create(CultureInfo.InvariantCulture, $"{rate:F1} tok/s · {generated:N0} token{(generated == 1 ? "" : "s")}");
+            LiveTokens = generated;
+            if (rate > 0)
+            {
+                LiveRate = rate;
+                _rates.Add(rate);
+                if (_rates.Count > 48)
+                {
+                    _rates.RemoveAt(0);
+                }
+
+                RateHistory = [.. _rates];
+                OnPropertyChanged(nameof(RateHistory));
+            }
+
             ScrollToEndRequested?.Invoke(this, EventArgs.Empty);
         });
     }
@@ -771,11 +1243,24 @@ public sealed class ChatViewModel : ViewModel
             + (rate > 0 ? string.Create(CultureInfo.InvariantCulture, $" · {rate:F1} tokens/s") : "")
             + (stats is { } s ? string.Create(CultureInfo.InvariantCulture, $" · prompt {s.PromptTokens:N0} tokens in {s.PromptDuration.TotalSeconds:F2} s") : "");
         string footer = speed + (answer.Cold ? " · cold" : " · warm") + (answer.Stopped ? " · stopped" : "");
+        string firstToken = answer.FirstToken > TimeSpan.Zero ? string.Create(CultureInfo.InvariantCulture, $"{answer.FirstToken.TotalSeconds:0.0#} s") : "";
         Post(() =>
         {
             bubble.IsStreaming = false;
             bubble.Footer = footer;
+            bubble.RateText = rate > 0 ? string.Create(CultureInfo.InvariantCulture, $"{rate:F1} tok/s") : "";
+            bubble.TokensText = string.Create(CultureInfo.InvariantCulture, $"{tokens:N0} token{(tokens == 1 ? "" : "s")}");
+            bubble.FirstTokenText = firstToken.Length > 0 ? "first in " + firstToken : "";
+            bubble.ThinkingSeconds = answer.ThinkingSeconds;
             LiveText = answer.Stopped ? "Stopped: " + speed : speed;
+            LiveTokens = tokens;
+            if (rate > 0)
+            {
+                LiveRate = rate;
+                LastRateText = string.Create(CultureInfo.InvariantCulture, $"{rate:F1} tok/s on {Model?.Device ?? "the device"}");
+            }
+
+            FirstTokenText = firstToken.Length > 0 ? firstToken + (answer.Cold ? " · cold" : " · warm") : "";
         });
         if (answer.Stopped)
         {
@@ -807,5 +1292,38 @@ public sealed class ChatViewModel : ViewModel
         }
     }
 
-    private sealed record Answer(ChatMessage Message, GenerationStats? Stats, int Generated, bool Cold, bool Stopped, TimeSpan Elapsed, ChatModelInfo? Info);
+    private sealed record Answer(ChatMessage Message, GenerationStats? Stats, int Generated, bool Cold, bool Stopped, TimeSpan Elapsed, ChatModelInfo? Info,
+        double ThinkingSeconds, TimeSpan FirstToken);
+}
+
+/// <summary>A kept chat as the conversations list shows it.</summary>
+public sealed class ConversationEntry(ConversationSummary summary, string when, bool current, ICommand open)
+{
+    /// <summary>Its id.</summary>
+    public string Id => summary.Id;
+
+    /// <summary>Its title.</summary>
+    public string Title => summary.Title;
+
+    /// <summary>The start of its last message.</summary>
+    public string Preview => summary.Preview;
+
+    /// <summary>When it last changed ("9:38", "Sun", "3 Oct").</summary>
+    public string When { get; } = when;
+
+    /// <summary>Whether it is the chat shown.</summary>
+    public bool IsCurrent { get; } = current;
+
+    /// <summary>Whether its preview reads right to left.</summary>
+    public bool IsRightToLeft => MarkdownBlock.IsRightToLeft(Preview);
+
+    /// <summary>Opens it (its id is the parameter).</summary>
+    public ICommand OpenCommand { get; } = open;
+}
+
+/// <summary>The kept chats of one day group ("Today").</summary>
+public sealed class ConversationGroup(string title, IEnumerable<ConversationEntry> chats) : ObservableCollection<ConversationEntry>(chats)
+{
+    /// <summary>Its heading.</summary>
+    public string Title { get; } = title;
 }

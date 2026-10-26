@@ -29,6 +29,15 @@ public sealed class DevicesFeature : IMobileFeature
     public int Order => 0;
 
     /// <inheritdoc />
+    public FeatureGroup Group => FeatureGroup.Device;
+
+    /// <inheritdoc />
+    public string Tagline => "CPU, GPU, memory";
+
+    /// <inheritdoc />
+    public string Icon => "cpu";
+
+    /// <inheritdoc />
     public PhoneNeeds Needs => PhoneNeeds.None;
 
     /// <inheritdoc />
@@ -44,4 +53,8 @@ public sealed class DevicesFeature : IMobileFeature
     /// <inheritdoc />
     public Page CreatePage(IServiceProvider services, object viewModel) =>
         new DevicesPage(viewModel as DevicesViewModel ?? throw new ArgumentException($"The devices page takes a {nameof(DevicesViewModel)}.", nameof(viewModel)));
+
+    /// <inheritdoc />
+    public View? CreateView(IServiceProvider services, object viewModel) =>
+        viewModel is DevicesViewModel vm ? new DevicesView(vm, services) : throw new ArgumentException($"The {Name} view takes a {nameof(DevicesViewModel)}.", nameof(viewModel));
 }

@@ -14,14 +14,29 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   default, `ComputeResources.CacheFolder`), the device (`auto`, `cpu`, `vulkan:0`), every `ComputeResources` limit
   (empty means measured), the Hugging Face token and the progress interval. Settings are kept between runs (MAUI
   Preferences; the token in SecureStorage) and a change that needs a restart says so.
-- **Features** (`IMobileFeature` in `MobileFeatures`): a page and its view model, with what it needs from the phone. The
-  library registers its own (Devices, Models, Chat, Transcribe, Speak, Audio process, OCR, Image); an app adds its own
-  or replaces one by name.
+- **Features** (`IMobileFeature` in `MobileFeatures`): a page and its view model, with what it needs from the phone, its
+  group among the labs (Language, Voice, Vision, the device's), a tagline and an icon, and its content as a view a section
+  hosts (`CreateView`; the page wraps the same view). The library registers its own (Devices, Models, Chat, Transcribe,
+  Speak, Studio, Read text, Image); an app adds its own or replaces one by name.
+- **Navigation** (no Shell, no Blazor; the approved design in `apps/Idrak.Mobile/Design`): `AppHostPage` shows one
+  section of `AppSections` at a time (Home, Chat, Voice with Transcribe, Speak and Studio, Vision with Read text and
+  Image; All labs and Settings at the rail's foot), with a floating bottom bar on a narrow window and a side rail on a
+  wide one, chosen by the window's measured width against `WideLayoutWidth` (840 by default, a setting) and switched
+  live on rotation or split screen (`AppLayout`). All labs is a sheet over Home on a narrow window and a page on a wide
+  one (grouped, searchable, filtered by state and needs). Views open places through `IAppNavigator`; an app adds a
+  section or replaces one by name. `AppHostPage.CreateWindow(services)` is the app's window.
+- **Home**: the source commit the app was built from ("main · 628b6bb", read from git at build time into assembly
+  metadata, `SourceInfo`), the device's status, a carousel of the app's slides (`IdrakMauiOptions.Home`, moving every
+  `CarouselInterval` while shown), the device measured (`DeviceStatus`), the labs to try with live previews; two
+  columns with the models on a wide window.
 - **Models** page: pull a Hugging Face id (and a revision) into the cache folder with its progress (bytes, rate, time
   left), cancellable and resumed by pulling again; the token from the settings when set; the space checked before the
   first byte (`StorageHeadroomMiB` keeps some free); the models stored with sizes and folders, removing one after a
   confirmation; the storage's free space. `SuggestedModels` (set by the app) shows as chips to tap.
-- **Chat** page: a finished model of the store, loaded once through the model service on the settings' device in the
+- **Chat** (the answers in Markdown: paragraphs, lists, bold, inline and fenced code with Copy, `MarkdownView`, a block
+  redrawn only when it changes; "Thought for N s"; tokens per second, tokens, first token, copy and ask again; the chats
+  kept between runs through `IConversationStore`, files in the app's storage by default; on a wide window the
+  conversations with search and an inspector with the live rate's line, the memory split and quick settings) page: a finished model of the store, loaded once through the model service on the settings' device in the
   settings' weights and key/value cache formats, after checking it fits the memory the device has (refused with the
   limit named otherwise); the answer streams into a bubble with its token count and tokens per second, the bubble
   updated at most once a progress interval; Stop, a new chat, copy, thinking where the template has a switch; the first
@@ -51,7 +66,7 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   the speaker and the saved format are settings (empty: the library's default), kept under `idrak.speak.`. The library
   registers no family: Idrak.Mobile calls `VitsPlugin.RegisterFamily()` (VITS without espeak-ng) and
   `IdrakAudioPlugin.Register()`.
-- **Audio process** page: a recording from the microphone (the permission asked first; kept in pooled buffers up to the
+- **Studio** (the audio process) page, its pipeline also as a flow of steps: a recording from the microphone (the permission asked first; kept in pooled buffers up to the
   longest recording, a setting) or a file decoded by the library's codecs, run through a pipeline written as the
   library's text (`AudioPipeline`, checked as it is written), the registered processors listed as chips (name, summary,
   parameters, live or whole recording) that append a step; applied whole or in blocks as live sound goes, timed cold
@@ -62,7 +77,7 @@ builder.UseMauiApp<App>().UseIdrak(options =>
 - **Sound out**: `ISoundPlayer` (`SoundPlayer`, registered by `UseIdrak`) plays a recording or blocks as they come
   through the library's `AudioPlaybacks` (aaudio on Android), held to the sound's pace by the output's back-pressure,
   drained at the end; one sound at a time.
-- **OCR** page: a photo taken with the camera (the permission asked first) or picked from the gallery through MAUI's
+- **Read text** (OCR) page, the photo first and large: a photo taken with the camera (the permission asked first) or picked from the gallery through MAUI's
   media picker, its bytes as they came, decoded once by the library's own codecs and turned upright by its EXIF
   orientation (HEIC is refused, naming the formats the library reads); an optional preprocessing pipeline
   (`ImageTransformPipeline` text, such as `grayscale,max_width=1024,contrast=1.5`) run on it once, and the page shown as
@@ -90,5 +105,9 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   not change. A feature that sets no order or state is ready and takes the library's place of its name, else comes last.
 - **`maui`** progress reporter: the library's progress (downloads, loads, runs) as a bindable model, updated on the UI
   thread at most once a progress interval.
-- **Themes**: `IdrakStyles` merged by the app, with a light and a dark colour dictionary from the library's icon, swapped
-  by `IdrakThemes.Apply`; every key may be overridden by the app.
+- **Themes**: `IdrakStyles` merged by the app (with Idrak's icons, `IdrakIcons`: the design's 24-unit stroke icons as
+  path geometries, drawn by `IconView`), with a light and a dark colour dictionary (the design's palette; text at 4.5:1 or
+  more on its grounds) and gradients as brushes, swapped by `IdrakThemes.Apply`; Inter and JetBrains Mono by alias (the
+  app bundles them). No page sets a colour or a size but through a key; every key may be overridden by the app. Motion
+  is light and only on screen: a cross-fade between sections, the record button's pulse, the streaming caret, the
+  carousel.

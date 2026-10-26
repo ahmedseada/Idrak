@@ -1,0 +1,13 @@
+html, body { width: 1280px; height: 800px; }
+.tstatus { height: 30px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px 0 26px; font-size: 13px; font-weight: 600; }
+.rail { position: absolute; left: 0; top: 30px; bottom: 0; width: 92px; display: flex; flex-direction: column; align-items: center; padding: 14px 0 22px; border-right: 1px solid var(--line); background: rgba(10,16,32,.7); }
+.rail .logo { width: 44px; height: 44px; border-radius: 14px; background: #0b1020; border: 1px solid #334155; display: flex; align-items: center; justify-content: center; margin-bottom: 26px; }
+.rt { display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; color: var(--faint); margin-bottom: 18px; }
+.rt .pill { width: 56px; height: 32px; border-radius: 16px; display: flex; align-items: center; justify-content: center; }
+.rt .ico { width: 22px; height: 22px; }
+.rt.on { color: var(--text); }
+.rt.on .pill { background: linear-gradient(135deg, rgba(56,189,248,.28), rgba(99,102,241,.28)); color: var(--sky); }
+.rail .sp { flex: 1; }
+.main { position: absolute; left: 92px; right: 0; top: 30px; bottom: 0; }
+.ico { display: block; }
+[data-i] { display: inline-flex; }

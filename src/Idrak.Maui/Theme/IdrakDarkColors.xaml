@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<!-- The dark theme's colours (plan 34): the ground, sky and amber of the library's icon (assets/icon.svg). Every key may be
-     overridden by the app (a key in its own App.xaml resources wins over the merged dictionaries). -->
+<!--
+  The dark theme (plan 34, phase R): the approved design's palette (apps/Idrak.Mobile/Design/base.css) on the ground, sky
+  and amber of the library's icon (assets/icon.svg). Text colours read at 4.5:1 or more on the grounds they sit on (the
+  tests measure it): the design's faint grey is lifted to #7A87A5 for that, and the gradient that carries white text
+  (buttons, the user's bubbles) runs from a deeper sky to a deeper indigo than the glow behind it. Every key may be
+  overridden by the app (a key in its own App.xaml resources wins over the merged dictionaries).
+-->
 <ResourceDictionary xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
                     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
                     x:Class="Idrak.Maui.Theme.IdrakDarkColors">
@@ -10,22 +15,159 @@
     <Color x:Key="IdrakAmber">#F59E0B</Color>
     <Color x:Key="IdrakWhite">#FFFFFF</Color>
 
-    <!-- What pages use. -->
-    <Color x:Key="IdrakPageBackground">#0B1020</Color>
-    <Color x:Key="IdrakCardBackground">#141B2E</Color>
-    <Color x:Key="IdrakCardStroke">#334155</Color>
-    <Color x:Key="IdrakText">#F1F5F9</Color>
-    <Color x:Key="IdrakTextMuted">#94A3B8</Color>
+    <!-- Grounds and surfaces. -->
+    <Color x:Key="IdrakPageBackground">#060A14</Color>
+    <Color x:Key="IdrakPageBackground2">#0A1020</Color>
+    <Color x:Key="IdrakSurface">#0F1729</Color>
+    <Color x:Key="IdrakSurface2">#141D33</Color>
+    <Color x:Key="IdrakSurface3">#1A2440</Color>
+    <Color x:Key="IdrakCardBackground">#0F1729</Color>
+    <Color x:Key="IdrakSheetBackground">#121A30</Color>
+    <Color x:Key="IdrakCodeBackground">#0A0F1D</Color>
+    <Color x:Key="IdrakNavBackground">#F5141D33</Color>
+    <Color x:Key="IdrakRailBackground">#B30A1020</Color>
+    <Color x:Key="IdrakScrim">#B3000000</Color>
+    <Color x:Key="IdrakShadow">#73000000</Color>
+
+    <!-- Lines. -->
+    <Color x:Key="IdrakLine">#1A94A3B8</Color>
+    <Color x:Key="IdrakLine2">#2E94A3B8</Color>
+    <Color x:Key="IdrakCardStroke">#1A94A3B8</Color>
+    <Color x:Key="IdrakSeparator">#1A94A3B8</Color>
+
+    <!-- Text. -->
+    <Color x:Key="IdrakText">#EAF0FA</Color>
+    <Color x:Key="IdrakTextSoft">#DBE3F2</Color>
+    <Color x:Key="IdrakTextMuted">#8B98B4</Color>
+    <Color x:Key="IdrakTextFaint">#7A87A5</Color>
+    <Color x:Key="IdrakOnGradient">#FFFFFF</Color>
+
+    <!-- Accents (the design's sky, indigo, amber, green, red and violet). -->
     <Color x:Key="IdrakAccent">#38BDF8</Color>
-    <Color x:Key="IdrakOnAccent">#0B1020</Color>
+    <Color x:Key="IdrakAccentText">#38BDF8</Color>
+    <Color x:Key="IdrakOnAccent">#060A14</Color>
+    <Color x:Key="IdrakIndigo">#6366F1</Color>
+    <Color x:Key="IdrakViolet">#A78BFA</Color>
+    <Color x:Key="IdrakGreen">#34D399</Color>
+    <Color x:Key="IdrakRed">#F43F5E</Color>
     <Color x:Key="IdrakHighlight">#F59E0B</Color>
-    <Color x:Key="IdrakError">#F87171</Color>
-    <Color x:Key="IdrakSuccess">#4ADE80</Color>
-    <Color x:Key="IdrakFlyoutBackground">#0E1528</Color>
-    <Color x:Key="IdrakSeparator">#26304A</Color>
-    <Color x:Key="IdrakBarBackground">#0B1020</Color>
-    <Color x:Key="IdrakBarText">#F1F5F9</Color>
+    <Color x:Key="IdrakError">#FB5A74</Color>
+    <Color x:Key="IdrakSuccess">#34D399</Color>
+    <Color x:Key="IdrakRecordText">#FDA4AF</Color>
+    <Color x:Key="IdrakGradientStart">#0277B6</Color>
+    <Color x:Key="IdrakGradientEnd">#5B5BD6</Color>
+
+    <!-- Tones: an icon's colour and the tint of its badge, a tone a kind of lab. -->
+    <Color x:Key="IdrakToneIndigo">#A5B4FC</Color>
+    <Color x:Key="IdrakToneIndigoBackground">#2E6366F1</Color>
+    <Color x:Key="IdrakToneViolet">#A78BFA</Color>
+    <Color x:Key="IdrakToneVioletBackground">#29A78BFA</Color>
+    <Color x:Key="IdrakToneGreen">#34D399</Color>
+    <Color x:Key="IdrakToneGreenBackground">#2434D399</Color>
+    <Color x:Key="IdrakToneRose">#FB7185</Color>
+    <Color x:Key="IdrakToneRoseBackground">#21F43F5E</Color>
+    <Color x:Key="IdrakToneAmber">#F59E0B</Color>
+    <Color x:Key="IdrakToneAmberBackground">#26F59E0B</Color>
+    <Color x:Key="IdrakToneSky">#38BDF8</Color>
+    <Color x:Key="IdrakToneSkyBackground">#2438BDF8</Color>
+    <Color x:Key="IdrakToneNeutral">#EAF0FA</Color>
+    <Color x:Key="IdrakToneNeutralBackground">#1A2440</Color>
+
+    <!-- Marks and states. -->
+    <Color x:Key="IdrakSelectedStroke">#7338BDF8</Color>
+    <Color x:Key="IdrakComposerStroke">#5938BDF8</Color>
+    <Color x:Key="IdrakPlannedStroke">#47F59E0B</Color>
+    <Color x:Key="IdrakPlannedText">#F59E0B</Color>
+    <Color x:Key="IdrakThinkBackground">#1AA78BFA</Color>
+    <Color x:Key="IdrakThinkStroke">#38A78BFA</Color>
+    <Color x:Key="IdrakThinkText">#C4B5FD</Color>
+    <Color x:Key="IdrakRateBackground">#1A34D399</Color>
+    <Color x:Key="IdrakRateStroke">#4034D399</Color>
+    <Color x:Key="IdrakWaveStroke">#38A78BFA</Color>
+    <Color x:Key="IdrakWaveHead">#7DD3FC</Color>
+    <Color x:Key="IdrakWaveIdle">#4094A3B8</Color>
+    <Color x:Key="IdrakCaret">#38BDF8</Color>
+    <Color x:Key="IdrakChipText">#C7D2E8</Color>
+    <Color x:Key="IdrakFlyoutBackground">#0F1729</Color>
+    <Color x:Key="IdrakBarBackground">#060A14</Color>
+    <Color x:Key="IdrakBarText">#EAF0FA</Color>
     <Color x:Key="IdrakBadgeBackground">#3B2A0A</Color>
     <Color x:Key="IdrakBadgeForeground">#FBBF24</Color>
     <Color x:Key="IdrakBadgeStroke">#B45309</Color>
+
+    <!-- Gradients. -->
+    <LinearGradientBrush x:Key="IdrakBrushAccent" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#0277B6" Offset="0" />
+        <GradientStop Color="#5B5BD6" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="IdrakBrushGlow" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#38BDF8" Offset="0" />
+        <GradientStop Color="#6366F1" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="IdrakBrushPill" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#4738BDF8" Offset="0" />
+        <GradientStop Color="#476366F1" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="IdrakBrushSelected" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#1A38BDF8" Offset="0" />
+        <GradientStop Color="#146366F1" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="IdrakBrushMeter" StartPoint="0,0" EndPoint="1,0">
+        <GradientStop Color="#34D399" Offset="0" />
+        <GradientStop Color="#38BDF8" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="IdrakBrushAvatar" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#6366F1" Offset="0" />
+        <GradientStop Color="#38BDF8" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="IdrakBrushHeroSky" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#13203F" Offset="0" />
+        <GradientStop Color="#101A33" Offset="0.45" />
+        <GradientStop Color="#1B1F4A" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="IdrakBrushHeroAmber" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#2A1F0C" Offset="0" />
+        <GradientStop Color="#1A1408" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="IdrakBrushHeroGreen" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#0C2A22" Offset="0" />
+        <GradientStop Color="#08191A" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="IdrakBrushHeroViolet" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#1F1640" Offset="0" />
+        <GradientStop Color="#140F2A" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="IdrakBrushChatTile" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#121C36" Offset="0" />
+        <GradientStop Color="#16163A" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="IdrakBrushWaveCard" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#1AA78BFA" Offset="0" />
+        <GradientStop Color="#0A38BDF8" Offset="1" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="IdrakBrushSheet" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#121A30" Offset="0" />
+        <GradientStop Color="#0B1122" Offset="0.6" />
+    </LinearGradientBrush>
+    <LinearGradientBrush x:Key="IdrakBrushNavFade" StartPoint="0,0" EndPoint="0,1">
+        <GradientStop Color="#00060A14" Offset="0" />
+        <GradientStop Color="#EB060A14" Offset="0.28" />
+        <GradientStop Color="#060A14" Offset="1" />
+    </LinearGradientBrush>
+    <RadialGradientBrush x:Key="IdrakBrushRecord" Center="0.3,0.3" Radius="0.8">
+        <GradientStop Color="#FB7185" Offset="0" />
+        <GradientStop Color="#E11D48" Offset="1" />
+    </RadialGradientBrush>
+    <RadialGradientBrush x:Key="IdrakBrushGlowSky" Center="0.85,0" Radius="0.7">
+        <GradientStop Color="#2938BDF8" Offset="0" />
+        <GradientStop Color="#0038BDF8" Offset="1" />
+    </RadialGradientBrush>
+    <RadialGradientBrush x:Key="IdrakBrushGlowIndigo" Center="0.5,0" Radius="0.6">
+        <GradientStop Color="#296366F1" Offset="0" />
+        <GradientStop Color="#006366F1" Offset="1" />
+    </RadialGradientBrush>
+    <RadialGradientBrush x:Key="IdrakBrushGlowViolet" Center="0.5,0.22" Radius="0.6">
+        <GradientStop Color="#2EA78BFA" Offset="0" />
+        <GradientStop Color="#00A78BFA" Offset="1" />
+    </RadialGradientBrush>
 </ResourceDictionary>

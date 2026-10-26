@@ -34,6 +34,15 @@ public sealed class ChatFeature : IMobileFeature
     public int Order => 20;
 
     /// <inheritdoc />
+    public FeatureGroup Group => FeatureGroup.Language;
+
+    /// <inheritdoc />
+    public string Tagline => "Stream a model";
+
+    /// <inheritdoc />
+    public string Icon => "chat";
+
+    /// <inheritdoc />
     public PhoneNeeds Needs => PhoneNeeds.Model;
 
     /// <inheritdoc />
@@ -53,10 +62,15 @@ public sealed class ChatFeature : IMobileFeature
 
         var options = services.GetService<IdrakMauiOptions>() ?? new IdrakMauiOptions();
         var models = services.GetService<IModelService>() ?? new ModelService(new ManualMemoryPressure(), options);
-        return new ChatViewModel(services.GetService<IModelStore>() ?? new ModelStore(options), services.GetService<IChatModelService>() ?? new ChatModelService(models), options);
+        return new ChatViewModel(services.GetService<IModelStore>() ?? new ModelStore(options), services.GetService<IChatModelService>() ?? new ChatModelService(models), options,
+            conversations: services.GetService<IConversationStore>());
     }
 
     /// <inheritdoc />
     public Page CreatePage(IServiceProvider services, object viewModel) =>
         new ChatPage(viewModel as ChatViewModel ?? throw new ArgumentException($"The chat page takes a {nameof(ChatViewModel)}.", nameof(viewModel)), services);
+
+    /// <inheritdoc />
+    public View? CreateView(IServiceProvider services, object viewModel) =>
+        viewModel is ChatViewModel vm ? new ChatView(vm, services) : throw new ArgumentException($"The {Name} view takes a {nameof(ChatViewModel)}.", nameof(viewModel));
 }

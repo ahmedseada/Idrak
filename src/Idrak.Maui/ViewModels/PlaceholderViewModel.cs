@@ -29,6 +29,9 @@ public sealed class PlaceholderViewModel : ViewModel
     /// <summary>The feature's mark.</summary>
     public string Glyph => Feature.Glyph;
 
+    /// <summary>The feature's icon among Idrak's ("grid" when it names none).</summary>
+    public string Icon => Feature.Icon.Length > 0 ? Feature.Icon : "grid";
+
     /// <summary>One line on what it is.</summary>
     public string Summary => Feature.Summary;
 

@@ -1,0 +1,123 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+body { background: radial-gradient(120% 60% at 85% -5%, rgba(56,189,248,.16), transparent 60%), radial-gradient(90% 50% at -10% 30%, rgba(99,102,241,.14), transparent 60%), var(--bg); }
+.head { height: 58px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand .mark { width: 34px; height: 34px; border-radius: 11px; background: #0b1020; border: 1px solid #334155; display: flex; align-items: center; justify-content: center; }
+.brand b { font-size: 21px; font-weight: 800; letter-spacing: -.4px; }
+.brand small { display:block; font-size: 10.5px; margin-top:1px; color: var(--faint); font-weight: 600; margin-left: 2px; }
+.head .right { display: flex; gap: 8px; align-items: center; }
+
+.carousel { position: relative; height: 236px; margin-top: 6px; padding-left: 20px; overflow: hidden; }
+.slides { display: flex; gap: 12px; }
+.slide { flex: 0 0 326px; height: 236px; border-radius: 28px; position: relative; overflow: hidden; padding: 22px 22px; }
+.s1 { background: linear-gradient(145deg, #13203f 0%, #101a33 45%, #1b1f4a 100%); border: 1px solid rgba(56,189,248,.25); box-shadow: 0 20px 50px rgba(14,165,233,.12), inset 0 1px 0 rgba(255,255,255,.06); }
+.s2 { background: linear-gradient(145deg, #2a1f0c, #1a1408); border: 1px solid rgba(245,158,11,.3); }
+.kicker { font-size: 10.5px; font-weight: 800; letter-spacing: 1.4px; color: var(--sky); display: flex; align-items: center; gap: 6px; }
+.slide h1 { font-size: 26px; line-height: 1.12; font-weight: 800; letter-spacing: -.8px; margin-top: 12px; max-width: 200px; }
+.slide h1 em { font-style: normal; background: linear-gradient(90deg, #7dd3fc, #a5b4fc); -webkit-background-clip: text; color: transparent; }
+.slide p { font-size: 12.5px; line-height: 1.45; color: #aab6cf; margin-top: 9px; max-width: 190px; }
+.cta { position: absolute; left: 22px; bottom: 20px; height: 38px; padding: 0 16px; border-radius: 19px; background: linear-gradient(135deg, #38bdf8, #6366f1); color: #fff; font-size: 13px; font-weight: 700; display: flex; align-items: center; gap: 8px; box-shadow: 0 8px 22px rgba(56,189,248,.35); }
+.art { position: absolute; right: -26px; top: 26px; width: 178px; height: 178px; opacity: .95; }
+.glow { position: absolute; right: 10px; top: 40px; width: 150px; height: 150px; border-radius: 50%; background: radial-gradient(circle, rgba(56,189,248,.35), transparent 65%); filter: blur(6px); }
+.dots { display: flex; gap: 6px; padding: 12px 20px 0; align-items: center; }
+.dots i { width: 6px; height: 6px; border-radius: 3px; background: var(--line2); display: block; }
+.dots i.on { width: 22px; background: var(--sky); }
+.dots span { margin-left: auto; font-size: 11.5px; color: var(--faint); font-weight: 600; }
+
+.sect { display: flex; align-items: baseline; justify-content: space-between; padding: 18px 20px 10px; }
+.sect a { font-size: 12px; font-weight: 700; color: var(--sky); text-decoration: none; }
+.stats { display: flex; gap: 10px; padding: 0 20px; }
+.stat { flex: 1; height: 84px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); padding: 11px 12px; position: relative; overflow: hidden; }
+.stat .k { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); font-weight: 600; }
+.stat .k svg { width: 15px; height: 15px; }
+.stat .v { font-size: 16px; font-weight: 800; margin-top: 8px; letter-spacing: -.3px; }
+.stat .s { font-size: 10.5px; color: var(--faint); margin-top: 2px; font-weight: 500; }
+.bar { position: absolute; left: 12px; right: 12px; bottom: 8px; height: 3px; border-radius: 2px; background: var(--line2); }
+.bar i { display: block; height: 3px; border-radius: 2px; background: linear-gradient(90deg, var(--green), var(--sky)); width: 38%; }
+
+.bento { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; padding: 0 20px; }
+.tile { border-radius: 20px; background: var(--surface); border: 1px solid var(--line); padding: 13px; position: relative; overflow: hidden; height: 112px; }
+.tile .t { font-size: 13.5px; font-weight: 700; margin-top: 10px; }
+.tile .d { font-size: 10.5px; color: var(--muted); margin-top: 2px; }
+.badge { width: 34px; height: 34px; border-radius: 11px; display: flex; align-items: center; justify-content: center; }
+.big { grid-column: span 3; height: 118px; background: linear-gradient(120deg, #121c36, #16163a); border-color: rgba(99,102,241,.25); display: flex; gap: 14px; }
+.big .left { width: 150px; }
+.big .preview { flex: 1; display: flex; flex-direction: column; gap: 6px; justify-content: center; }
+.b { font-size: 10.5px; padding: 7px 10px; border-radius: 12px; max-width: 165px; line-height: 1.3; }
+.b.u { align-self: flex-end; background: linear-gradient(135deg, #38bdf8, #6366f1); color: #fff; border-bottom-right-radius: 4px; }
+.b.a { background: var(--surface3); color: #c7d2e8; border-bottom-left-radius: 4px; }
+.speed { position: absolute; left: 13px; bottom: 12px; font-size: 10.5px; color: var(--green); font-weight: 700; display: flex; gap: 5px; align-items: center; }
+.wave { position: absolute; right: 13px; top: 17px; display: flex; gap: 2px; align-items: center; height: 26px; }
+.wave i { width: 3px; border-radius: 2px; background: var(--violet); display: block; }
+</style></head>
+<body>
+<div class="status"><span>9:41</span><div class="icons"><svg width="17" height="12" viewBox="0 0 17 12"><rect x="0" y="8" width="3" height="4" rx="1" fill="#eaf0fa"/><rect x="4.5" y="5.5" width="3" height="6.5" rx="1" fill="#eaf0fa"/><rect x="9" y="3" width="3" height="9" rx="1" fill="#eaf0fa"/><rect x="13.5" y="0" width="3" height="12" rx="1" fill="#eaf0fa"/></svg><svg width="25" height="12" viewBox="0 0 25 12"><rect x=".5" y=".5" width="21" height="11" rx="3" stroke="#eaf0fa" fill="none" opacity=".5"/><rect x="2" y="2" width="15" height="8" rx="1.5" fill="#eaf0fa"/><rect x="22.5" y="4" width="1.5" height="4" rx=".7" fill="#eaf0fa" opacity=".5"/></svg></div></div>
+
+<div class="head">
+  <div class="brand">
+    <div class="mark"><svg width="24" height="24" viewBox="0 0 512 512"><g stroke="#38bdf8" stroke-width="28" stroke-linecap="round"><line x1="160" y1="140" x2="352" y2="140"/><line x1="256" y1="140" x2="256" y2="372"/><line x1="160" y1="372" x2="352" y2="372"/><line x1="160" y1="140" x2="256" y2="256"/><line x1="352" y1="140" x2="256" y2="256"/><line x1="160" y1="372" x2="256" y2="256"/><line x1="352" y1="372" x2="256" y2="256"/></g><g fill="#f59e0b"><circle cx="160" cy="140" r="44"/><circle cx="352" cy="140" r="44"/><circle cx="160" cy="372" r="44"/><circle cx="352" cy="372" r="44"/></g><circle cx="256" cy="256" r="54" fill="#fff"/></svg></div>
+    <div><b>Idrak</b><small>main · 628b6bb</small></div>
+  </div>
+  <div class="right">
+    <div class="chip"><i class="dot"></i>GPU ready</div>
+    <div class="iconbtn"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></div>
+  </div>
+</div>
+
+<div class="carousel">
+  <div class="slides">
+    <div class="slide s1">
+      <div class="glow"></div>
+      <svg class="art" viewBox="0 0 512 512"><g stroke="#38bdf8" stroke-width="14" stroke-linecap="round" opacity=".9"><line x1="160" y1="140" x2="352" y2="140"/><line x1="256" y1="140" x2="256" y2="372"/><line x1="160" y1="372" x2="352" y2="372"/><line x1="160" y1="140" x2="256" y2="256"/><line x1="352" y1="140" x2="256" y2="256"/><line x1="160" y1="372" x2="256" y2="256"/><line x1="352" y1="372" x2="256" y2="256"/></g><g fill="#f59e0b"><circle cx="160" cy="140" r="30"/><circle cx="352" cy="140" r="30"/><circle cx="160" cy="372" r="30"/><circle cx="352" cy="372" r="30"/></g><g fill="#fff"><circle cx="256" cy="140" r="24"/><circle cx="256" cy="372" r="24"/><circle cx="256" cy="256" r="38"/></g></svg>
+      <div class="kicker"><svg class="ico" style="width:13px;height:13px" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/></svg>WHAT IS IDRAK</div>
+      <h1>AI that runs <em>on this phone.</em></h1>
+      <p>Language, speech and vision models in pure .NET, on the CPU and this phone's own GPU.</p>
+      <div class="cta">Start a chat <svg class="ico" style="width:16px;height:16px" viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></div>
+    </div>
+    <div class="slide s2"></div>
+  </div>
+</div>
+<div class="dots"><i class="on"></i><i></i><i></i><i></i><span>1 of 4 · The library</span></div>
+
+<div class="sect"><div class="label">This phone, measured</div><a>Devices</a></div>
+<div class="stats">
+  <div class="stat"><div class="k"><svg class="ico" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>CPU</div><div class="v">8 cores</div><div class="s">3 core groups</div></div>
+  <div class="stat"><div class="k" style="color:var(--sky)"><svg class="ico" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>GPU</div><div class="v">Vulkan</div><div class="s">kernels tuned</div></div>
+  <div class="stat"><div class="k"><svg class="ico" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>Memory</div><div class="v">4.2 GB</div><div class="s">of 11 GB free</div><div class="bar"><i></i></div></div>
+</div>
+
+<div class="sect"><div class="label">Try it</div><a>All labs</a></div>
+<div class="bento">
+  <div class="tile big">
+    <div class="left">
+      <div class="badge" style="background:rgba(99,102,241,.18);color:#a5b4fc"><svg class="ico" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.8 7L4 20.5l1.5-4.6A8 8 0 1 1 21 12z"/></svg></div>
+      <div class="t">Chat</div><div class="d">Qwen3 0.6B · int8</div>
+      <div class="speed"><svg class="ico" style="width:12px;height:12px" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>17.4 tok/s on GPU</div>
+    </div>
+    <div class="preview"><div class="b u">Summarise this in Arabic</div><div class="b a">بالتأكيد! إليك الملخص…</div></div>
+  </div>
+  <div class="tile">
+    <div class="badge" style="background:rgba(167,139,250,.16);color:var(--violet)"><svg class="ico" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>
+    <div class="t">Transcribe</div><div class="d">Live speech</div>
+    <div class="wave"><i style="height:8px"></i><i style="height:16px"></i><i style="height:24px"></i><i style="height:12px"></i><i style="height:20px"></i><i style="height:9px"></i></div>
+  </div>
+  <div class="tile">
+    <div class="badge" style="background:rgba(245,158,11,.16);color:var(--amber)"><svg class="ico" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M8 9h8M8 12h8M8 15h5"/></svg></div>
+    <div class="t">Read text</div><div class="d">Camera to text</div>
+  </div>
+  <div class="tile">
+    <div class="badge" style="background:rgba(52,211,153,.14);color:var(--green)"><svg class="ico" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg></div>
+    <div class="t">Speak</div><div class="d">Text to voice</div>
+  </div>
+</div>
+
+<div class="nav"><div class="nav-inner">
+  <div class="tab on"><div class="pill"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg></div>Home</div>
+  <div class="tab"><div class="pill"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.8 7L4 20.5l1.5-4.6A8 8 0 1 1 21 12z"/></svg></div>Chat</div>
+  <div class="tab"><div class="pill"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>Voice</div>
+  <div class="tab"><div class="pill"><svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="12" r="3.2"/></svg></div>Vision</div>
+</div></div>
+<div class="gesture"></div>
+</body></html>

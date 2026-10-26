@@ -1,0 +1,81 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css"><link rel="stylesheet" href="tab.css">
+<style>
+body { background: radial-gradient(50% 55% at 30% 35%, rgba(167,139,250,.16), transparent 65%), var(--bg); }
+.main { display: flex; gap: 22px; padding: 20px 26px 22px; }
+.left { width: 600px; display: flex; flex-direction: column; }
+.right { flex: 1; display: flex; flex-direction: column; }
+.hd { display: flex; align-items: center; justify-content: space-between; }
+.hd h2 { font-size: 28px; font-weight: 800; letter-spacing: -.7px; }
+.seg { height: 40px; border-radius: 13px; background: var(--surface); border: 1px solid var(--line); display: flex; padding: 4px; gap: 4px; width: 360px; }
+.seg div { flex: 1; border-radius: 9px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.seg div .ico { width: 15px; height: 15px; }
+.seg .on { background: var(--surface3); color: var(--text); }
+.chips { display: flex; gap: 8px; margin-top: 14px; }
+.chips .chip .ico { width: 14px; height: 14px; }
+.viz { margin-top: 14px; height: 300px; border-radius: 28px; background: linear-gradient(180deg, rgba(167,139,250,.10), rgba(56,189,248,.04)); border: 1px solid rgba(167,139,250,.22); position: relative; overflow: hidden; }
+.rec { position: absolute; left: 20px; top: 18px; display: flex; align-items: center; gap: 8px; font-size: 11.5px; font-weight: 800; letter-spacing: 1px; color: #fda4af; }
+.rec i { width: 9px; height: 9px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 4px rgba(244,63,94,.2), 0 0 12px rgba(244,63,94,.8); display: block; }
+.time { position: absolute; right: 20px; top: 12px; font-family: "JetBrains Mono"; font-size: 30px; font-weight: 700; }
+.time small { font-size: 18px; color: var(--muted); }
+.bars { position: absolute; left: 20px; right: 20px; top: 62px; height: 196px; display: flex; align-items: center; justify-content: space-between; }
+.bars i { width: 3.2px; border-radius: 2px; display: block; }
+.head { position: absolute; left: 79%; top: 56px; bottom: 34px; width: 2px; background: linear-gradient(180deg, transparent, #7dd3fc, transparent); }
+.ticks { position: absolute; left: 20px; right: 20px; bottom: 12px; display: flex; justify-content: space-between; font-family: "JetBrains Mono"; font-size: 10px; color: var(--faint); }
+.stats { display: flex; gap: 10px; margin-top: 12px; }
+.st { flex: 1; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); padding: 10px 12px; }
+.st .k { font-size: 11px; color: var(--muted); font-weight: 600; }
+.st .v { font-size: 17px; font-weight: 800; margin-top: 3px; }
+.ok { color: var(--green); }
+.pipe { margin-top: 12px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line); padding: 12px 14px; display: flex; align-items: center; gap: 8px; }
+.pipe .label { margin-right: 6px; }
+.step { height: 30px; padding: 0 11px; border-radius: 10px; background: rgba(167,139,250,.12); border: 1px solid rgba(167,139,250,.28); color: #ddd6fe; font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 6px; }
+.step small { color: var(--muted); font-weight: 600; }
+.arr { color: var(--faint); font-size: 14px; }
+.add { height: 30px; width: 30px; border-radius: 10px; border: 1px dashed var(--line2); display: flex; align-items: center; justify-content: center; color: var(--muted); margin-left: auto; }
+.add .ico { width: 15px; height: 15px; }
+.ctl { margin-top: auto; display: flex; align-items: center; justify-content: center; gap: 40px; padding-top: 10px; }
+.side { width: 52px; height: 52px; border-radius: 17px; background: var(--surface); border: 1px solid var(--line2); display: flex; align-items: center; justify-content: center; }
+.side .ico { width: 21px; height: 21px; }
+.cap { font-size: 11px; color: var(--muted); text-align: center; margin-top: 6px; font-weight: 600; }
+.big { width: 84px; height: 84px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: radial-gradient(circle at 30% 30%, #fb7185, #e11d48); box-shadow: 0 0 0 9px rgba(244,63,94,.16), 0 0 0 20px rgba(244,63,94,.07), 0 14px 40px rgba(225,29,72,.5); }
+.big i { width: 26px; height: 26px; border-radius: 7px; background: #fff; display: block; }
+.tx { flex: 1; border-radius: 28px; background: var(--surface); border: 1px solid var(--line); padding: 20px 24px; display: flex; flex-direction: column; }
+.tx .row { display: flex; justify-content: space-between; align-items: center; }
+.tx .row h3 { white-space: nowrap; font-size: 18px; font-weight: 800; letter-spacing: -.3px; }
+.tx .row small { font-size: 12px; color: var(--muted); font-weight: 600; margin-left: 10px; }
+.acts { display: flex; gap: 8px; }
+.ab { height: 34px; padding: 0 12px; border-radius: 11px; background: var(--surface2); border: 1px solid var(--line2); display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; }
+.ab .ico { width: 15px; height: 15px; }
+.seg2 { display: flex; gap: 14px; margin-top: 18px; }
+.seg2 .ts { font-family: "JetBrains Mono"; font-size: 11px; color: var(--faint); padding-top: 4px; width: 42px; flex: none; }
+.seg2 p { font-size: 15.5px; line-height: 1.6; color: #dbe3f2; }
+.seg2.cur { border-left: 2px solid var(--violet); margin-left: -12px; padding-left: 10px; }
+.tent { color: var(--faint); font-style: italic; }
+.caret { display: inline-block; width: 2px; height: 18px; background: var(--violet); vertical-align: -3px; margin-left: 2px; box-shadow: 0 0 8px var(--violet); }
+.foot { margin-top: auto; display: flex; gap: 18px; font-size: 12px; color: var(--muted); font-weight: 600; padding-top: 14px; border-top: 1px solid var(--line); }
+.foot b { color: var(--text); }
+</style></head>
+<body data-tab="voice">
+<div class="main">
+  <div class="left">
+    <div class="hd"><h2>Voice</h2><div class="seg"><div class="on"><span data-i="mic"></span>Transcribe</div><div><span data-i="speak"></span>Speak</div><div><span data-i="wave"></span>Studio</div></div></div>
+    <div class="chips"><span class="chip"><i class="dot"></i>whisper-tiny · cpu</span><span class="chip">Auto · English</span><span class="chip">Step 1.0 s · agree 2</span></div>
+    <div class="viz"><div class="rec"><i></i>LISTENING</div><div class="time">00:42<small>.6</small></div><div class="bars"><i style="height:38px;background:var(--violet)"></i><i style="height:55px;background:var(--violet)"></i><i style="height:80px;background:var(--violet)"></i><i style="height:87px;background:var(--violet)"></i><i style="height:103px;background:var(--violet)"></i><i style="height:120px;background:var(--violet)"></i><i style="height:112px;background:var(--violet)"></i><i style="height:139px;background:var(--violet)"></i><i style="height:154px;background:var(--violet)"></i><i style="height:171px;background:var(--violet)"></i><i style="height:127px;background:var(--violet)"></i><i style="height:142px;background:var(--violet)"></i><i style="height:126px;background:var(--violet)"></i><i style="height:169px;background:var(--violet)"></i><i style="height:153px;background:var(--violet)"></i><i style="height:107px;background:var(--violet)"></i><i style="height:145px;background:var(--violet)"></i><i style="height:127px;background:var(--violet)"></i><i style="height:99px;background:var(--violet)"></i><i style="height:81px;background:var(--violet)"></i><i style="height:57px;background:var(--violet)"></i><i style="height:42px;background:var(--violet)"></i><i style="height:48px;background:var(--violet)"></i><i style="height:58px;background:var(--violet)"></i><i style="height:74px;background:var(--violet)"></i><i style="height:88px;background:var(--violet)"></i><i style="height:91px;background:var(--violet)"></i><i style="height:122px;background:var(--violet)"></i><i style="height:131px;background:var(--violet)"></i><i style="height:164px;background:var(--violet)"></i><i style="height:151px;background:var(--violet)"></i><i style="height:163px;background:var(--violet)"></i><i style="height:155px;background:var(--violet)"></i><i style="height:165px;background:var(--violet)"></i><i style="height:148px;background:var(--violet)"></i><i style="height:131px;background:var(--violet)"></i><i style="height:165px;background:var(--violet)"></i><i style="height:151px;background:var(--violet)"></i><i style="height:129px;background:var(--violet)"></i><i style="height:107px;background:var(--violet)"></i><i style="height:79px;background:var(--violet)"></i><i style="height:63px;background:var(--violet)"></i><i style="height:49px;background:var(--violet)"></i><i style="height:40px;background:var(--violet)"></i><i style="height:62px;background:var(--violet)"></i><i style="height:73px;background:var(--violet)"></i><i style="height:102px;background:var(--violet)"></i><i style="height:101px;background:var(--violet)"></i><i style="height:141px;background:var(--violet)"></i><i style="height:150px;background:var(--violet)"></i><i style="height:110px;background:var(--violet)"></i><i style="height:129px;background:var(--violet)"></i><i style="height:180px;background:var(--violet)"></i><i style="height:153px;background:var(--violet)"></i><i style="height:188px;background:var(--violet)"></i><i style="height:146px;background:var(--violet)"></i><i style="height:120px;background:var(--violet)"></i><i style="height:148px;background:var(--violet)"></i><i style="height:145px;background:var(--violet)"></i><i style="height:108px;background:var(--violet)"></i><i style="height:89px;background:var(--violet)"></i><i style="height:85px;background:var(--violet)"></i><i style="height:84px;background:var(--violet)"></i><i style="height:61px;background:var(--violet)"></i><i style="height:40px;background:var(--violet)"></i><i style="height:50px;background:var(--violet)"></i><i style="height:62px;background:var(--violet)"></i><i style="height:73px;background:var(--violet)"></i><i style="height:111px;background:var(--violet)"></i><i style="height:100px;background:var(--violet)"></i><i style="height:130px;background:var(--violet)"></i><i style="height:134px;background:var(--violet)"></i><i style="height:126px;background:var(--violet)"></i><i style="height:166px;background:var(--violet)"></i><i style="height:129px;background:#7dd3fc"></i><i style="height:165px;background:#7dd3fc"></i><i style="height:128px;background:#7dd3fc"></i><i style="height:144px;background:#7dd3fc"></i><i style="height:125px;background:#7dd3fc"></i><i style="height:121px;background:#7dd3fc"></i><i style="height:147px;background:#7dd3fc"></i><i style="height:123px;background:#7dd3fc"></i><i style="height:90px;background:#7dd3fc"></i><i style="height:90px;background:#7dd3fc"></i><i style="height:60px;background:#7dd3fc"></i><i style="height:47px;background:#7dd3fc"></i><i style="height:47px;background:rgba(148,163,184,.25)"></i><i style="height:64px;background:rgba(148,163,184,.25)"></i><i style="height:69px;background:rgba(148,163,184,.25)"></i><i style="height:111px;background:rgba(148,163,184,.25)"></i><i style="height:97px;background:rgba(148,163,184,.25)"></i><i style="height:110px;background:rgba(148,163,184,.25)"></i><i style="height:148px;background:rgba(148,163,184,.25)"></i><i style="height:132px;background:rgba(148,163,184,.25)"></i><i style="height:136px;background:rgba(148,163,184,.25)"></i><i style="height:125px;background:rgba(148,163,184,.25)"></i></div><div class="head"></div><div class="ticks"><span>00:30</span><span>00:33</span><span>00:36</span><span>00:39</span><span>00:42</span></div></div>
+    <div class="stats"><div class="st"><div class="k">Heard</div><div class="v">41.9 s</div></div><div class="st"><div class="k">Model behind</div><div class="v ok">0.3 s</div></div><div class="st"><div class="k">Level</div><div class="v">−18 dB</div></div><div class="st"><div class="k">Real time</div><div class="v">6.2×</div></div></div>
+    <div class="pipe"><span class="label">Clean</span><span class="step">highpass <small>80 Hz</small></span><span class="arr">›</span><span class="step">denoise-live</span><span class="arr">›</span><span class="step">agc</span><div class="add"><span data-i="plus"></span></div></div>
+    <div class="ctl"><div><div class="side"><span data-i="file"></span></div><div class="cap">File</div></div><div class="big"><i></i></div><div><div class="side"><span data-i="sliders"></span></div><div class="cap">Tune</div></div></div>
+  </div>
+  <div class="right">
+    <div class="tx">
+      <div class="row"><div><h3>Live transcript</h3><small style="margin-left:0;display:block;margin-top:2px">4 segments · 96 words</small></div><div class="acts"><div class="ab"><span data-i="copy"></span>Copy</div><div class="ab"><span data-i="share"></span>Share</div><div class="ab"><span data-i="down"></span>.txt</div></div></div>
+      <div class="seg2"><span class="ts">00:02</span><p>Good evening. This recording never leaves the tablet: the microphone, the cleaning steps and the speech model all run right here.</p></div>
+      <div class="seg2"><span class="ts">00:12</span><p>Everything you hear is transcribed on the device itself, with no server in between, on its processor or its own graphics chip.</p></div>
+      <div class="seg2"><span class="ts">00:24</span><p>Each pause closes a sentence, and the next one is read with the last as its prompt, so names stay spelled the same way.</p></div>
+      <div class="seg2 cur"><span class="ts">00:36</span><p>The words settle once two readings agree, <span class="tent">and the rest stay light until they</span><span class="caret"></span></p></div>
+      <div class="foot"><span>Language <b>English</b></span><span>Segment ends after <b>0.6 s</b> of quiet</span><span>Window <b>30 s</b></span></div>
+    </div>
+  </div>
+</div>
+<script src="tab.js"></script><script src="icons.js"></script>
+</body></html>

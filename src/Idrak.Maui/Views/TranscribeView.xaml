@@ -1,0 +1,229 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Transcribe (plan 34, phase R; apps/Idrak.Mobile/Design/record.html and t-record.html): the model, language and cleaning
+  chips; the live card (listening, the timer, the waveform, what was heard, how far behind the model is, the level); the
+  transcript a segment a line with its time, the tentative words light and italic and a caret; the record button with File
+  and Tune. A wide window: the controls and the measures on the left, the transcript on the right. Theme keys only.
+-->
+<ctl:AdaptiveView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                  xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+                  xmlns:ctl="clr-namespace:Idrak.Maui.Controls"
+                  xmlns:views="clr-namespace:Idrak.Maui.Views"
+                  x:Class="Idrak.Maui.Views.TranscribeView"
+                  x:DataType="vm:TranscribeViewModel">
+    <Grid x:Name="Root" ColumnDefinitions="*" ColumnSpacing="{DynamicResource IdrakSpacingColumns}" Padding="{DynamicResource IdrakLabPadding}">
+        <Grid x:Name="Left" RowDefinitions="*,Auto">
+            <ScrollView x:Name="Scroll">
+                <VerticalStackLayout x:Name="LeftStack" Spacing="{DynamicResource IdrakSpacing}">
+                    <!-- The chips: the model, the language, the cleaning (each opens its choice). -->
+                    <FlexLayout Wrap="Wrap" Direction="Row" AlignItems="Center">
+                        <Grid Margin="{DynamicResource IdrakChipMargin}">
+                            <Border Style="{DynamicResource IdrakChipBorder}">
+                                <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                    <Ellipse Style="{DynamicResource IdrakStatusDot}" />
+                                    <Label Text="{Binding ModelChip}" Style="{DynamicResource IdrakChipLabel}" />
+                                </HorizontalStackLayout>
+                            </Border>
+                            <Picker Title="Speech model" ItemsSource="{Binding SpeechModels}" SelectedItem="{Binding SelectedModel}" Opacity="0" IsEnabled="{Binding IsIdle}" />
+                        </Grid>
+                        <Grid Margin="{DynamicResource IdrakChipMargin}" IsVisible="{Binding HasLanguages}">
+                            <Border Style="{DynamicResource IdrakChipBorder}">
+                                <Label Text="{Binding LanguageChip}" Style="{DynamicResource IdrakChipLabel}" />
+                            </Border>
+                            <Picker Title="Language" ItemsSource="{Binding Languages}" SelectedItem="{Binding SelectedLanguage}" Opacity="0" />
+                        </Grid>
+                        <Border Style="{DynamicResource IdrakChipBorder}" Margin="{DynamicResource IdrakChipMargin}" SemanticProperties.Description="The cleaning pipeline">
+                            <Border.Triggers>
+                                <DataTrigger TargetType="Border" Binding="{Binding HasCleaning}" Value="True">
+                                    <Setter Property="Stroke" Value="{DynamicResource IdrakThinkStroke}" />
+                                </DataTrigger>
+                            </Border.Triggers>
+                            <Border.GestureRecognizers>
+                                <TapGestureRecognizer Tapped="OnTune" />
+                            </Border.GestureRecognizers>
+                            <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                <ctl:IconView Glyph="filter" Size="14" Stroke="{DynamicResource IdrakThinkText}" />
+                                <Label Text="{Binding CleanChip}" Style="{DynamicResource IdrakChipLabel}" TextColor="{DynamicResource IdrakThinkText}" />
+                            </HorizontalStackLayout>
+                        </Border>
+                        <Border x:Name="StepChip" Style="{DynamicResource IdrakChipBorder}" Margin="{DynamicResource IdrakChipMargin}" IsVisible="False">
+                            <Label Text="{Binding StepChip}" Style="{DynamicResource IdrakChipLabel}" />
+                        </Border>
+                    </FlexLayout>
+
+                    <!-- The model's state, a load or a file's progress, what to do when there is none. -->
+                    <Label Text="{Binding ModelStatus}" Style="{DynamicResource IdrakCaption}" />
+                    <Button Text="Pull a speech model in Models" Command="{Binding GoToModelsCommand}" IsVisible="{Binding HasNoSpeechModels}" Style="{DynamicResource IdrakSecondaryButton}" />
+                    <VerticalStackLayout IsVisible="{Binding HasWork}" Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <Label Text="{Binding Work.Label}" Style="{DynamicResource IdrakCaption}" />
+                        <ctl:MeterBar Progress="{Binding Work.Fraction}" />
+                        <Label Text="{Binding Work.TimeLeftText}" Style="{DynamicResource IdrakMicro}" />
+                    </VerticalStackLayout>
+
+                    <!-- The live card. -->
+                    <Border x:Name="LiveCard" Style="{DynamicResource IdrakWaveCard}">
+                        <Grid RowDefinitions="Auto,*,Auto" RowSpacing="{DynamicResource IdrakSpacingSmall}">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingChip}" VerticalOptions="Center">
+                                    <Ellipse Style="{DynamicResource IdrakRecordDot}" IsVisible="{Binding IsRecording}" />
+                                    <Label Text="{Binding StateWord}" Style="{DynamicResource IdrakRecordWord}" />
+                                </HorizontalStackLayout>
+                                <Label Grid.Column="1" Style="{DynamicResource IdrakTimer}">
+                                    <Label.FormattedText>
+                                        <FormattedString>
+                                            <Span Text="{Binding ElapsedText}" />
+                                            <Span Text="{Binding ElapsedTenths}" FontSize="{DynamicResource IdrakFontSizeTimerSmall}" TextColor="{DynamicResource IdrakTextMuted}" />
+                                        </FormattedString>
+                                    </Label.FormattedText>
+                                </Label>
+                            </Grid>
+                            <ctl:WaveformView x:Name="Wave" Grid.Row="1" Level="{Binding Level}" IsLive="{Binding IsRunning}" HeightRequest="120" />
+                            <Grid x:Name="LiveFoot" Grid.Row="2" ColumnDefinitions="*,Auto,*">
+                                <Label Text="{Binding HeardText}" Style="{DynamicResource IdrakMeta}" />
+                                <Label Grid.Column="1" Text="{Binding BehindText}" Style="{DynamicResource IdrakSuccessText}">
+                                    <Label.Triggers>
+                                        <DataTrigger TargetType="Label" Binding="{Binding IsBehind}" Value="True">
+                                            <Setter Property="TextColor" Value="{DynamicResource IdrakHighlight}" />
+                                        </DataTrigger>
+                                    </Label.Triggers>
+                                </Label>
+                                <Label Grid.Column="2" Text="{Binding LevelText, StringFormat='level {0}'}" Style="{DynamicResource IdrakMeta}" HorizontalOptions="End" />
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <!-- A wide window: the measures as tiles, and the cleaning as a flow of steps. -->
+                    <Grid x:Name="Stats" ColumnDefinitions="*,*,*" ColumnSpacing="{DynamicResource IdrakSpacingTile}" IsVisible="False">
+                        <Border Style="{DynamicResource IdrakTile}">
+                            <VerticalStackLayout>
+                                <Label Text="Heard" Style="{DynamicResource IdrakStatKey}" />
+                                <Label Text="{Binding HeardText, FallbackValue='–'}" Style="{DynamicResource IdrakStatValue}" />
+                            </VerticalStackLayout>
+                        </Border>
+                        <Border Grid.Column="1" Style="{DynamicResource IdrakTile}">
+                            <VerticalStackLayout>
+                                <Label Text="Model behind" Style="{DynamicResource IdrakStatKey}" />
+                                <Label Text="{Binding BehindText, FallbackValue='–'}" Style="{DynamicResource IdrakStatValue}" TextColor="{DynamicResource IdrakGreen}" />
+                            </VerticalStackLayout>
+                        </Border>
+                        <Border Grid.Column="2" Style="{DynamicResource IdrakTile}">
+                            <VerticalStackLayout>
+                                <Label Text="Level" Style="{DynamicResource IdrakStatKey}" />
+                                <Label Text="{Binding LevelText, FallbackValue='–'}" Style="{DynamicResource IdrakStatValue}" />
+                            </VerticalStackLayout>
+                        </Border>
+                    </Grid>
+                    <Border x:Name="Pipe" Style="{DynamicResource IdrakPanel}" IsVisible="False">
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                            <Label Text="Clean" Style="{DynamicResource IdrakSectionLabel}" />
+                            <FlexLayout Grid.Column="1" BindableLayout.ItemsSource="{Binding CleanSteps}" Wrap="Wrap" Direction="Row" AlignItems="Center">
+                                <BindableLayout.ItemTemplate>
+                                    <DataTemplate x:DataType="x:String">
+                                        <Border Style="{DynamicResource IdrakStepChip}" Margin="{DynamicResource IdrakChipMargin}">
+                                            <Label Text="{Binding .}" Style="{DynamicResource IdrakStepLabel}" />
+                                        </Border>
+                                    </DataTemplate>
+                                </BindableLayout.ItemTemplate>
+                            </FlexLayout>
+                            <Label Grid.Column="1" Text="No cleaning: the sound goes to the model as heard." IsVisible="{Binding HasNoCleaning}" Style="{DynamicResource IdrakCaption}" />
+                            <Border Grid.Column="2" Style="{DynamicResource IdrakAddButton}" SemanticProperties.Description="Change the cleaning">
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Tapped="OnTune" />
+                                </Border.GestureRecognizers>
+                                <ctl:IconView Glyph="plus" Size="15" Stroke="{DynamicResource IdrakTextMuted}" />
+                            </Border>
+                        </Grid>
+                    </Border>
+
+                    <!-- The transcript (a narrow window: here, under the live card). -->
+                    <ContentView x:Name="TranscriptHost">
+                        <Border x:Name="Transcript" Style="{DynamicResource IdrakPanel}" HeightRequest="240">
+                            <Grid RowDefinitions="Auto,*,Auto" RowSpacing="{DynamicResource IdrakSpacingChip}">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <VerticalStackLayout VerticalOptions="Center">
+                                        <Label x:Name="TranscriptTitle" Text="Live transcript" Style="{DynamicResource IdrakSectionLabel}" />
+                                        <Label x:Name="Counts" Text="{Binding CountsText}" Style="{DynamicResource IdrakMicro}" IsVisible="False" />
+                                    </VerticalStackLayout>
+                                    <HorizontalStackLayout Grid.Column="1" Spacing="{DynamicResource IdrakSpacingSection}">
+                                        <ctl:IconView Glyph="copy" Size="17" Stroke="{DynamicResource IdrakTextMuted}" InputTransparent="False" SemanticProperties.Description="Copy">
+                                            <ctl:IconView.GestureRecognizers>
+                                                <TapGestureRecognizer Command="{Binding CopyCommand}" />
+                                            </ctl:IconView.GestureRecognizers>
+                                        </ctl:IconView>
+                                        <ctl:IconView Glyph="share" Size="17" Stroke="{DynamicResource IdrakTextMuted}" InputTransparent="False" SemanticProperties.Description="Share">
+                                            <ctl:IconView.GestureRecognizers>
+                                                <TapGestureRecognizer Command="{Binding ShareCommand}" />
+                                            </ctl:IconView.GestureRecognizers>
+                                        </ctl:IconView>
+                                        <ctl:IconView Glyph="trash" Size="17" Stroke="{DynamicResource IdrakTextMuted}" InputTransparent="False" SemanticProperties.Description="Clear">
+                                            <ctl:IconView.GestureRecognizers>
+                                                <TapGestureRecognizer Command="{Binding ClearCommand}" />
+                                            </ctl:IconView.GestureRecognizers>
+                                        </ctl:IconView>
+                                    </HorizontalStackLayout>
+                                </Grid>
+                                <CollectionView x:Name="LinesList" Grid.Row="1" ItemsSource="{Binding Lines}" SelectionMode="None" ItemsUpdatingScrollMode="KeepLastItemInView">
+                                    <CollectionView.EmptyView>
+                                        <Label Text="Nothing yet: record, or read a file." Style="{DynamicResource IdrakCaption}" />
+                                    </CollectionView.EmptyView>
+                                    <CollectionView.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:TranscriptLine">
+                                            <Grid ColumnDefinitions="44,*" Padding="{DynamicResource IdrakTranscriptLinePadding}">
+                                                <Label Text="{Binding Time}" Style="{DynamicResource IdrakTimestamp}" Margin="{DynamicResource IdrakTimestampMargin}" />
+                                                <VerticalStackLayout Grid.Column="1">
+                                                    <Label Style="{DynamicResource IdrakBody}">
+                                                        <Label.FormattedText>
+                                                            <FormattedString>
+                                                                <Span Text="{Binding Committed}" />
+                                                                <Span Text="{Binding Tentative}" TextColor="{DynamicResource IdrakTextFaint}" FontAttributes="Italic" />
+                                                            </FormattedString>
+                                                        </Label.FormattedText>
+                                                    </Label>
+                                                    <ctl:CaretView IsBlinking="{Binding IsCurrent}" WidthRequest="2" Color="{DynamicResource IdrakViolet}" />
+                                                </VerticalStackLayout>
+                                            </Grid>
+                                        </DataTemplate>
+                                    </CollectionView.ItemTemplate>
+                                </CollectionView>
+                                <Label x:Name="TranscriptFoot" Grid.Row="2" Text="{Binding SegmentRuleText}" Style="{DynamicResource IdrakMeta}" IsVisible="False" />
+                            </Grid>
+                        </Border>
+                    </ContentView>
+
+                    <Label Text="{Binding Status}" IsVisible="{Binding HasStatus}" Style="{DynamicResource IdrakHighlightText}" />
+                    <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+                    <Button Text="Allow the microphone" Command="{Binding OpenPermissionSettingsCommand}" IsVisible="{Binding IsPermissionRefused}" Style="{DynamicResource IdrakSecondaryButton}" />
+                    <Label Text="{Binding SettingsMessage}" IsVisible="{Binding HasSettingsMessage}" Style="{DynamicResource IdrakHighlightText}" />
+                    <views:LabSettingsList x:Name="SettingsPanel" ItemsSource="{Binding Settings}" KeepCommand="{Binding ApplySettingsCommand}" IsVisible="{Binding ShowSettings}" />
+                </VerticalStackLayout>
+            </ScrollView>
+
+            <!-- File, the record button, Tune. -->
+            <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto,Auto,*" ColumnSpacing="{DynamicResource IdrakSpacingRecord}" Padding="{DynamicResource IdrakControlsPadding}">
+                <VerticalStackLayout Grid.Column="1" Spacing="{DynamicResource IdrakSpacingSmall}" VerticalOptions="Center">
+                    <Border Style="{DynamicResource IdrakSideButton}" SemanticProperties.Description="Transcribe a file">
+                        <Border.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding TranscribeFileCommand}" />
+                        </Border.GestureRecognizers>
+                        <ctl:IconView Glyph="file" Size="21" />
+                    </Border>
+                    <Label Text="File" Style="{DynamicResource IdrakCaptionCentered}" />
+                </VerticalStackLayout>
+                <ctl:RecordButton Grid.Column="2" Command="{Binding RecordCommand}" IsRecording="{Binding IsRecording}" />
+                <VerticalStackLayout Grid.Column="3" Spacing="{DynamicResource IdrakSpacingSmall}" VerticalOptions="Center">
+                    <Border Style="{DynamicResource IdrakSideButton}" SemanticProperties.Description="Tune">
+                        <Border.GestureRecognizers>
+                            <TapGestureRecognizer Tapped="OnTune" />
+                        </Border.GestureRecognizers>
+                        <ctl:IconView Glyph="sliders" Size="21" />
+                    </Border>
+                    <Label Text="Tune" Style="{DynamicResource IdrakCaptionCentered}" />
+                </VerticalStackLayout>
+            </Grid>
+        </Grid>
+
+        <!-- A wide window: the transcript on the right. -->
+        <ContentView x:Name="Right" Grid.Column="1" IsVisible="False" />
+    </Grid>
+</ctl:AdaptiveView>

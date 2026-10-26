@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Maui.Abstractions;
+using Idrak.Maui.Navigation;
 using Idrak.Maui.ViewModels;
 using Idrak.Maui.Views;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,8 +20,10 @@ public static class IdrakMauiBuilderExtensions
     /// (<see cref="IdrakMauiStartup.Apply"/>); the "maui" progress reporter; the services (<see cref="IModelService"/>,
     /// <see cref="IModelStore"/>, <see cref="IDeviceInformation"/>, <see cref="IPermissionService"/>,
     /// <see cref="IShareService"/>, <see cref="ISoundPlayer"/>, the settings and the memory-pressure signal); the library's features
-    /// (<see cref="MobileFeatures"/>: Devices, Models, Chat with <see cref="IChatModelService"/>, Transcribe, Speak, Audio
-    /// process, OCR with <see cref="IVisionReaderService"/>, and Image) and the settings page. The app registers its own
+    /// (<see cref="MobileFeatures"/>: Devices, Models, Chat with <see cref="IChatModelService"/> and its kept conversations
+    /// (<see cref="IConversationStore"/>), Transcribe, Speak, Studio, Read text with <see cref="IVisionReaderService"/>, and
+    /// Image) and the settings page; the app's navigation (<see cref="AppHostPage"/> over <see cref="AppSections"/>, its
+    /// <see cref="AppLayout"/> and <see cref="IAppNavigator"/>, and <see cref="DeviceStatus"/>). The app registers its own
     /// features and model families after; it gives its own defaults for the OCR and Image labs' settings by registering an
     /// <see cref="OcrLabOptions"/> or <see cref="ImageLabOptions"/> (what the user saves is applied over them).
     /// </summary>
@@ -72,11 +75,20 @@ public static class IdrakMauiBuilderExtensions
         services.TryAddSingleton<ISoundPlayer, SoundPlayer>();                    // one speaker for the app: one sound at a time
         services.AddTransient<DevicesViewModel>();
         services.TryAddSingleton<ModelsViewModel>();                                // one for the app: a pull outlives its page
-        services.TryAddSingleton(sp => new ChatViewModel(sp.GetRequiredService<IModelStore>(), sp.GetRequiredService<IChatModelService>(), options));   // a chat outlives its page
+        services.TryAddSingleton<IConversationStore>(_ => new FileConversationStore(Path.Combine(startup.AppStorage, "conversations")));
+        services.TryAddSingleton(sp => new ChatViewModel(sp.GetRequiredService<IModelStore>(), sp.GetRequiredService<IChatModelService>(), options,
+            conversations: sp.GetService<IConversationStore>()));                                                                                   // a chat outlives its page
         services.TryAddSingleton(sp => new OcrViewModel(sp.GetRequiredService<IModelStore>(), sp.GetRequiredService<IVisionReaderService>(),   // a read outlives its page
             sp.GetRequiredService<IPermissionService>(), sp.GetRequiredService<IShareService>(), options, store, sp.GetService<OcrLabOptions>()));
         services.AddTransient(sp => new SettingsViewModel(options, settings, startup, progress));
         services.AddTransient<SettingsPage>();
+
+        // The navigation (no Shell): the host page with the bottom bar or the rail as the window's width says, its layout,
+        // the navigator views open places with, and the device's status shared by Home and All labs.
+        services.TryAddSingleton(_ => new AppLayout(options.WideLayoutWidth));
+        services.TryAddSingleton<IAppNavigator>(sp => new AppNavigator(sp));
+        services.TryAddSingleton(sp => new DeviceStatus(sp.GetRequiredService<IDeviceInformation>(), sp.GetService<IModelStore>()));
+        services.TryAddSingleton(sp => new AppHostPage(sp));
         services.TryAddEnumerable(ServiceDescriptor.Transient<IMauiInitializeService, IdrakInitializer>());
         return builder;
     }

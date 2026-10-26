@@ -24,6 +24,21 @@ public sealed class ModelEntry
     /// <summary>Its id.</summary>
     public string Title => Model.Id;
 
+    /// <summary>Its name without the owner ("Qwen3-0.6B").</summary>
+    public string Name => Model.Id[(Model.Id.IndexOf('/') + 1)..];
+
+    /// <summary>Its owner ("Qwen"), or "".</summary>
+    public string Owner => Model.Id.IndexOf('/') is > 0 and var at ? Model.Id[..at] : "";
+
+    /// <summary>The letter on its tile.</summary>
+    public string Initial => Name.Length > 0 ? char.ToUpperInvariant(Name[0]).ToString() : "?";
+
+    /// <summary>Its size ("734 MB").</summary>
+    public string SizeText => ProgressText.Bytes(Model.Bytes);
+
+    /// <summary>"9 files · revision c1899de2".</summary>
+    public string FilesText => $"{Model.Files} file{(Model.Files == 1 ? "" : "s")} · revision {Model.Revision}";
+
     /// <summary>Its size, files and revision ("1.2 GB in 9 files, revision c1899de289a0").</summary>
     public string Details => $"{ProgressText.Bytes(Model.Bytes)} in {Model.Files} file{(Model.Files == 1 ? "" : "s")}, revision {Model.Revision}";
 

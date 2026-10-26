@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Studio, the audio process lab (plan 34, phase R; the design's visual language for the Voice tab): a recording or a file
+  as the sound; the pipeline as a flow of steps (tap a processor to add it, a step to take it out) and as text; the A and B
+  players, the latency and delay, the level before and after, cold apart from warm; monitoring; save and share. A wide
+  window: the sound and the pipeline on the left, the result on the right. Theme keys only.
+-->
+<ctl:AdaptiveView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                  xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+                  xmlns:ctl="clr-namespace:Idrak.Maui.Controls"
+                  xmlns:views="clr-namespace:Idrak.Maui.Views"
+                  x:Class="Idrak.Maui.Views.StudioView"
+                  x:DataType="vm:AudioProcessViewModel">
+    <ScrollView x:Name="Scroll">
+        <Grid x:Name="Root" ColumnDefinitions="*" RowDefinitions="Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingColumns}" RowSpacing="{DynamicResource IdrakSpacing}"
+              Padding="{DynamicResource IdrakLabPadding}">
+            <VerticalStackLayout x:Name="Left" Spacing="{DynamicResource IdrakSpacing}">
+                <!-- The sound: record, or a file. -->
+                <Border Style="{DynamicResource IdrakWaveCard}">
+                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                        <ctl:RecordButton Command="{Binding RecordCommand}" IsRecording="{Binding IsRecording}" Scale="0.7" WidthRequest="86" HeightRequest="86" />
+                        <VerticalStackLayout Grid.Column="1" Spacing="{DynamicResource IdrakSpacingTiny}" VerticalOptions="Center">
+                            <Label Text="{Binding ElapsedText}" Style="{DynamicResource IdrakTimer}" />
+                            <ctl:MeterBar Progress="{Binding Level}" />
+                            <Label Text="{Binding LevelText}" Style="{DynamicResource IdrakMeta}" />
+                        </VerticalStackLayout>
+                        <VerticalStackLayout Grid.Column="2" Spacing="{DynamicResource IdrakSpacingSmall}" VerticalOptions="Center">
+                            <Border Style="{DynamicResource IdrakSideButton}" SemanticProperties.Description="Pick a sound file">
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Command="{Binding PickFileCommand}" />
+                                </Border.GestureRecognizers>
+                                <ctl:IconView Glyph="file" Size="21" />
+                            </Border>
+                            <Label Text="File" Style="{DynamicResource IdrakCaptionCentered}" />
+                        </VerticalStackLayout>
+                    </Grid>
+                </Border>
+                <Label Text="{Binding OriginalText}" Style="{DynamicResource IdrakValue}" />
+                <Button Text="Allow the microphone" Command="{Binding OpenPermissionSettingsCommand}" IsVisible="{Binding IsPermissionRefused}" Style="{DynamicResource IdrakSecondaryButton}" />
+
+                <!-- The pipeline: a flow of steps, and its text. -->
+                <Border Style="{DynamicResource IdrakPanel}">
+                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingChip}">
+                        <Label Text="Pipeline" Style="{DynamicResource IdrakSectionLabel}" />
+                        <FlexLayout BindableLayout.ItemsSource="{Binding Steps}" Wrap="Wrap" Direction="Row" AlignItems="Center" IsVisible="{Binding HasSteps}">
+                            <BindableLayout.ItemTemplate>
+                                <DataTemplate x:DataType="vm:PipelineStep">
+                                    <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}" Margin="{DynamicResource IdrakChipMargin}">
+                                        <Label Text="›" IsVisible="{Binding HasArrow}" Style="{DynamicResource IdrakMeta}" />
+                                        <Border Style="{DynamicResource IdrakStepChip}" SemanticProperties.Description="{Binding Name}">
+                                            <Border.GestureRecognizers>
+                                                <TapGestureRecognizer Command="{Binding RemoveCommand}" />
+                                            </Border.GestureRecognizers>
+                                            <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                                <Label Text="{Binding Name}" Style="{DynamicResource IdrakStepLabel}" />
+                                                <Label Text="{Binding Value}" IsVisible="{Binding HasValue}" Style="{DynamicResource IdrakMicro}" />
+                                                <ctl:IconView Glyph="close" Size="12" Stroke="{DynamicResource IdrakTextMuted}" />
+                                            </HorizontalStackLayout>
+                                        </Border>
+                                    </HorizontalStackLayout>
+                                </DataTemplate>
+                            </BindableLayout.ItemTemplate>
+                        </FlexLayout>
+                        <Editor Text="{Binding PipelineText}" Placeholder="highpass=80, denoise=1.5, normalize=-20" AutoSize="TextChanges"
+                                IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" FontFamily="{DynamicResource IdrakFontMono}" />
+                        <Label Text="{Binding PipelineCheck}" Style="{DynamicResource IdrakCaption}" />
+                        <Label Text="{Binding PipelineError}" IsVisible="{Binding HasPipelineError}" Style="{DynamicResource IdrakErrorText}" />
+                        <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingChip}">
+                            <Button Text="Apply" Command="{Binding ApplyCommand}" IsEnabled="{Binding IsIdle}" Style="{DynamicResource IdrakGradientButton}" />
+                            <Button Text="Clear" Command="{Binding ClearPipelineCommand}" Style="{DynamicResource IdrakGhostButton}" />
+                        </HorizontalStackLayout>
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- The processors to add. -->
+                <Label Text="Processors · tap one to add it" Style="{DynamicResource IdrakSectionLabel}" />
+                <FlexLayout BindableLayout.ItemsSource="{Binding Processors}" Wrap="Wrap" Direction="Row">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="vm:ProcessorChip">
+                            <Button Text="{Binding Name}" Command="{Binding AddCommand}" Style="{DynamicResource IdrakChip}"
+                                    ToolTipProperties.Text="{Binding Summary}" SemanticProperties.Description="{Binding Summary}" />
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </FlexLayout>
+            </VerticalStackLayout>
+
+            <VerticalStackLayout x:Name="Right" Grid.Row="1" Spacing="{DynamicResource IdrakSpacing}">
+                <!-- A and B. -->
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="{DynamicResource IdrakSpacingTile}">
+                    <Border Style="{DynamicResource IdrakTile}" SemanticProperties.Description="Play the original">
+                        <Border.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding PlayOriginalCommand}" />
+                        </Border.GestureRecognizers>
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{DynamicResource IdrakSpacingTile}">
+                            <ctl:IconBadge Glyph="play" Tone="Neutral" />
+                            <VerticalStackLayout Grid.Column="1" VerticalOptions="Center">
+                                <Label Text="A · Original" Style="{DynamicResource IdrakItemTitle}" />
+                                <Label Text="{Binding BeforeText}" Style="{DynamicResource IdrakMicro}" />
+                            </VerticalStackLayout>
+                        </Grid>
+                    </Border>
+                    <Border Grid.Column="1" Style="{DynamicResource IdrakTile}" SemanticProperties.Description="Play the processed">
+                        <Border.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding PlayProcessedCommand}" />
+                        </Border.GestureRecognizers>
+                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{DynamicResource IdrakSpacingTile}">
+                            <ctl:IconBadge Glyph="play" Tone="Rose" />
+                            <VerticalStackLayout Grid.Column="1" VerticalOptions="Center">
+                                <Label Text="B · Processed" Style="{DynamicResource IdrakItemTitle}" />
+                                <Label Text="{Binding AfterText}" Style="{DynamicResource IdrakMicro}" />
+                            </VerticalStackLayout>
+                        </Grid>
+                    </Border>
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                    <Label Text="{Binding PlayingText}" Style="{DynamicResource IdrakHighlightText}" VerticalOptions="Center" />
+                    <Button Grid.Column="1" Text="Stop" Command="{Binding StopCommand}" Style="{DynamicResource IdrakDangerButton}" />
+                </Grid>
+
+                <!-- The measures. -->
+                <Border Style="{DynamicResource IdrakPanel}">
+                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <Label Text="Result" Style="{DynamicResource IdrakSectionLabel}" />
+                        <Label Text="{Binding ProcessedText}" Style="{DynamicResource IdrakValue}" />
+                        <Label Text="{Binding LatencyText}" Style="{DynamicResource IdrakCaption}" />
+                        <Label Text="{Binding ColdText}" Style="{DynamicResource IdrakCaption}" />
+                        <Label Text="{Binding WarmText}" Style="{DynamicResource IdrakCaption}" />
+                        <FlexLayout Wrap="Wrap" Direction="Row">
+                            <Button Text="Save" Command="{Binding SaveCommand}" Style="{DynamicResource IdrakChip}" />
+                            <Button Text="Share" Command="{Binding ShareCommand}" Style="{DynamicResource IdrakChip}" />
+                        </FlexLayout>
+                        <Label Text="{Binding SavedText}" Style="{DynamicResource IdrakMicro}" />
+                    </VerticalStackLayout>
+                </Border>
+                <Label Text="{Binding Status}" IsVisible="{Binding HasStatus}" Style="{DynamicResource IdrakHighlightText}" />
+                <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+
+                <!-- Monitoring: off until asked, with its warning. -->
+                <Border Style="{DynamicResource IdrakPanel}">
+                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <Label Text="Monitor" Style="{DynamicResource IdrakSectionLabel}" />
+                        <Label Text="{Binding MonitorWarning}" Style="{DynamicResource IdrakCaption}" />
+                        <Button Text="{Binding MonitorButtonText}" Command="{Binding MonitorCommand}" Style="{DynamicResource IdrakSecondaryButton}" HorizontalOptions="Start" />
+                        <Label Text="{Binding MonitorText}" Style="{DynamicResource IdrakMicro}" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <Button Text="{Binding SettingsButtonText}" Command="{Binding ToggleSettingsCommand}" Style="{DynamicResource IdrakGhostButton}" />
+                <Label Text="{Binding SettingsMessage}" IsVisible="{Binding HasSettingsMessage}" Style="{DynamicResource IdrakHighlightText}" />
+                <views:LabSettingsList x:Name="SettingsPanel" ItemsSource="{Binding Settings}" KeepCommand="{Binding ApplySettingsCommand}" IsVisible="{Binding ShowSettings}" />
+            </VerticalStackLayout>
+        </Grid>
+    </ScrollView>
+</ctl:AdaptiveView>

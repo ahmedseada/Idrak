@@ -417,7 +417,7 @@ internal static partial class MauiTests
     {
         using var services = new ServiceCollection().BuildServiceProvider();
         var page = MobileFeatures.Open(MobileFeatures.Ocr, services);
-        Check(page is OcrPage { BindingContext: OcrViewModel { OpenModels: not null } } && page.Title == "OCR", $"page {page.GetType().Name}, title {page.Title}");
+        Check(page is OcrPage { BindingContext: OcrViewModel { OpenModels: not null } } && page.Title == "Read text", $"page {page.GetType().Name}, title {page.Title}");
         Check(MobileFeatures.Origin(MobileFeatures.Ocr) == Overrides.Library
               && MobileFeatures.Get(MobileFeatures.Ocr) is OcrFeature { Order: 60, Needs: PhoneNeeds.Camera | PhoneNeeds.Model } feature && ((IMobileFeature)feature).State == FeatureState.Ready
               && MobileFeatures.Place(feature) == 60 && feature.ModelFamilies.Count == 0, "the library's OCR feature");

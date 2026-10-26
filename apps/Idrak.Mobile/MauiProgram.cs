@@ -17,7 +17,11 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace Idrak.Mobile;
 
-/// <summary>The app's start: the library first (<c>UseIdrak</c>, before any device or download), then its pages.</summary>
+/// <summary>
+/// The app's start: its fonts, the library first (<c>UseIdrak</c>, before any device or download: the features, the
+/// navigation host with the bottom bar or the rail, the theme's services), then the model families it shows and its own
+/// Self-test feature.
+/// </summary>
 public static class MauiProgram
 {
     /// <summary>Builds the app.</summary>
@@ -25,6 +29,17 @@ public static class MauiProgram
     {
         var builder = MauiApp.CreateBuilder();
         builder.UseMauiApp<App>()
+            .ConfigureFonts(fonts =>
+            {
+                // The design's fonts (Resources/Fonts, SIL OFL 1.1), under the aliases Idrak.Maui's styles name.
+                fonts.AddFont("Inter-Regular.otf", "Inter");
+                fonts.AddFont("Inter-Medium.otf", "InterMedium");
+                fonts.AddFont("Inter-SemiBold.otf", "InterSemiBold");
+                fonts.AddFont("Inter-Bold.otf", "InterBold");
+                fonts.AddFont("Inter-ExtraBold.otf", "InterExtraBold");
+                fonts.AddFont("JetBrainsMono-Regular.ttf", "JetBrainsMono");
+                fonts.AddFont("JetBrainsMono-Bold.ttf", "JetBrainsMonoBold");
+            })
             .UseIdrak(options =>
             {
                 // The app's defaults; what the user saves in the settings page is applied over them.
@@ -65,9 +80,6 @@ public static class MauiProgram
         // The OCR lab reads with int8 weights by default (a quarter of float32's memory), as the chat does; the lab's
         // settings change it, and what the user keeps there is applied over this.
         builder.Services.AddSingleton(new OcrLabOptions { Weights = "int8" });
-
-        builder.Services.AddSingleton<AppFlyoutPage>();
-        builder.Services.AddSingleton<MenuPage>();
 
         // The app's own features, after the library's (UseIdrak registered those).
         AppFeatures.Register();

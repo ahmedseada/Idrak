@@ -63,6 +63,16 @@
     <MauiSplashScreen Include="$(IdrakIconMark)" Color="$(IdrakIconGround)" BaseSize="160,160" />
   </ItemGroup>
 
+  <!--
+    The fonts of the approved design (plan 34, phase R), bundled with their licence texts beside them (both SIL Open Font
+    License 1.1): Inter for text (Regular, Medium, SemiBold, Bold, ExtraBold) and JetBrains Mono for figures and code
+    (Regular, Bold). MauiProgram registers them under the aliases Idrak.Maui's styles name.
+  -->
+  <ItemGroup>
+    <MauiFont Include="Resources\Fonts\*.otf;Resources\Fonts\*.ttf" />
+    <None Include="Resources\Fonts\OFL-*.txt" />
+  </ItemGroup>
+
   <Target Name="IdrakIconMark" BeforeTargets="ResizetizeCollectItems;ProcessMauiSplashScreens;PrepareForBuild" Inputs="$(IdrakIconSource)" Outputs="$(IdrakIconMark)">
     <PropertyGroup>
       <_IdrakIcon>$([System.IO.File]::ReadAllText('$(IdrakIconSource)'))</_IdrakIcon>

@@ -43,4 +43,37 @@
     <ProjectReference Include="..\Idrak.Imaging\Idrak.Imaging.csproj" />
   </ItemGroup>
 
+  <!--
+    The source commit (plan 34, phase R): Home shows the branch and commit the app was built from ("main · 628b6bb"), not
+    the version. Read from git at each build into assembly metadata (SourceInfo); "unknown" when git or the repository is
+    not there. -p:IdrakSourceCommit=HASH (and -p:IdrakSourceBranch=NAME) set them without git.
+  -->
+  <Target Name="IdrakSourceCommit" BeforeTargets="GetAssemblyAttributes;CoreGenerateAssemblyInfo" Condition="'$(GenerateAssemblyInfo)' != 'false'">
+    <Exec Condition="'$(IdrakSourceCommit)' == ''" Command="git rev-parse --short=7 HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true"
+          IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low" EchoOff="true" ContinueOnError="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_IdrakGitCommit" />
+      <Output TaskParameter="ExitCode" PropertyName="_IdrakGitCommitExit" />
+    </Exec>
+    <Exec Condition="'$(IdrakSourceBranch)' == '' and '$(_IdrakGitCommitExit)' == '0'" Command="git rev-parse --abbrev-ref HEAD" WorkingDirectory="$(MSBuildProjectDirectory)"
+          ConsoleToMSBuild="true" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low" EchoOff="true" ContinueOnError="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_IdrakGitBranch" />
+      <Output TaskParameter="ExitCode" PropertyName="_IdrakGitBranchExit" />
+    </Exec>
+    <PropertyGroup>
+      <IdrakSourceCommit Condition="'$(IdrakSourceCommit)' == '' and '$(_IdrakGitCommitExit)' == '0'">$(_IdrakGitCommit.Trim())</IdrakSourceCommit>
+      <IdrakSourceCommit Condition="'$(IdrakSourceCommit)' == ''">unknown</IdrakSourceCommit>
+      <IdrakSourceBranch Condition="'$(IdrakSourceBranch)' == '' and '$(_IdrakGitBranchExit)' == '0'">$(_IdrakGitBranch.Trim())</IdrakSourceBranch>
+    </PropertyGroup>
+    <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>IdrakSourceCommit</_Parameter1>
+        <_Parameter2>$(IdrakSourceCommit)</_Parameter2>
+      </AssemblyAttribute>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>IdrakSourceBranch</_Parameter1>
+        <_Parameter2>$(IdrakSourceBranch)</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
+
 </Project>

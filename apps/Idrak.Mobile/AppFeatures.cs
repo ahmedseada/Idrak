@@ -23,5 +23,5 @@ public static class AppFeatures
     public static void Register() => MobileFeatures.Register(new PlannedFeature(SelfTest, "Self-test", "✓", SelfTestOrder,
         "The library's tests, run on this phone",
         "A test group by filter on cpu or vulkan:N with live progress; the failures file shared out",
-        PhoneNeeds.None, ["Idrak.Tests.Library"]));
+        PhoneNeeds.None, ["Idrak.Tests.Library"], icon: "shield", tagline: "The library's own tests"));
 }

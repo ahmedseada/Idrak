@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  A section of several labs (plan 34, phase R): its heading, the segmented control (Voice: Transcribe | Speak | Studio;
+  Vision: Read text | Image) beside it on a wide window and under it on a narrow one, the tune button, and the chosen
+  lab's own view below. Theme keys only.
+-->
+<ctl:AdaptiveView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                  xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+                  xmlns:ctl="clr-namespace:Idrak.Maui.Controls"
+                  x:Class="Idrak.Maui.Views.SegmentedSectionView"
+                  x:DataType="vm:SegmentedSectionViewModel">
+    <ctl:AdaptiveView.Resources>
+        <DataTemplate x:Key="Segment" x:DataType="vm:SegmentItem">
+            <Border Style="{DynamicResource IdrakSegment}" SemanticProperties.Description="{Binding Title}">
+                <Border.Triggers>
+                    <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
+                        <Setter Property="Background" Value="{DynamicResource IdrakSurface3}" />
+                    </DataTrigger>
+                </Border.Triggers>
+                <Border.GestureRecognizers>
+                    <TapGestureRecognizer Command="{Binding SelectCommand}" />
+                </Border.GestureRecognizers>
+                <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}" HorizontalOptions="Center">
+                    <ctl:IconView Glyph="{Binding Icon}" Size="16" Stroke="{DynamicResource IdrakTextMuted}">
+                        <ctl:IconView.Triggers>
+                            <DataTrigger TargetType="ctl:IconView" Binding="{Binding IsSelected}" Value="True">
+                                <Setter Property="Stroke" Value="{DynamicResource IdrakText}" />
+                            </DataTrigger>
+                        </ctl:IconView.Triggers>
+                    </ctl:IconView>
+                    <Label Text="{Binding Title}" Style="{DynamicResource IdrakChipLabel}" TextColor="{DynamicResource IdrakTextMuted}">
+                        <Label.Triggers>
+                            <DataTrigger TargetType="Label" Binding="{Binding IsSelected}" Value="True">
+                                <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+                            </DataTrigger>
+                        </Label.Triggers>
+                    </Label>
+                </HorizontalStackLayout>
+            </Border>
+        </DataTemplate>
+    </ctl:AdaptiveView.Resources>
+
+    <Grid RowDefinitions="Auto,*">
+        <BoxView Grid.RowSpan="2" Background="{DynamicResource IdrakBrushGlowViolet}" InputTransparent="True" />
+        <Grid x:Name="Header" ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}" RowSpacing="{DynamicResource IdrakSpacing}"
+              Padding="{DynamicResource IdrakSectionTopPadding}">
+            <Label Text="{Binding Title}" Style="{DynamicResource IdrakTitle}" VerticalOptions="Center" />
+            <Border x:Name="Tune" Grid.Column="1" Style="{DynamicResource IdrakIconButton}" SemanticProperties.Description="Tune the lab">
+                <Border.GestureRecognizers>
+                    <TapGestureRecognizer Tapped="OnTune" />
+                </Border.GestureRecognizers>
+                <ctl:IconView Glyph="sliders" Size="20" />
+            </Border>
+            <Border x:Name="SegmentBar" Grid.Row="1" Grid.ColumnSpan="2" Style="{DynamicResource IdrakSegmentBar}">
+                <Grid x:Name="SegmentGrid" ColumnSpacing="{DynamicResource IdrakSpacingSmall}" />
+            </Border>
+        </Grid>
+        <ContentView x:Name="Body" Grid.Row="1" />
+    </Grid>
+</ctl:AdaptiveView>

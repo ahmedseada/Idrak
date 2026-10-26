@@ -171,6 +171,8 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
     private string _language = AutoLanguage, _task = TranscribeTask;
     private double _level, _behind, _decibels = double.NegativeInfinity;
     private ProgressItem? _work;
+    private TranscriptLine? _open;
+    private string _tenths = ".0";
 
     /// <summary>The page over the app's services; <paramref name="clipboard"/> and <paramref name="picker"/> are MAUI's own when null.</summary>
     public TranscribeViewModel(IModelStore store, IModelService models, IPermissionService permissions, IShareService share, IdrakMauiOptions options, ISettingsStore settings,
@@ -259,6 +261,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
         {
             if (SetProperty(ref _selected, value) && value is not null)
             {
+                OnPropertyChanged(nameof(ModelChip));
                 _options.Model = value.Key;
                 Keep();
                 _ = LoadModelAsync();
@@ -303,6 +306,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
         {
             if (value is not null && SetProperty(ref _language, value))
             {
+                OnPropertyChanged(nameof(LanguageChip));
                 _options.Language = value == AutoLanguage ? null : value;
                 Keep();
             }
@@ -320,6 +324,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
         {
             if (value is not null && SetProperty(ref _task, value))
             {
+                OnPropertyChanged(nameof(LanguageChip));
                 _options.Task = value == TranscribeTask ? null : value;
                 Keep();
             }
@@ -335,6 +340,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
             if (SetProperty(ref _running, value))
             {
                 OnPropertyChanged(nameof(IsIdle));
+                OnPropertyChanged(nameof(StateWord));
             }
         }
     }
@@ -352,6 +358,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
             {
                 OnPropertyChanged(nameof(RecordText));
                 OnPropertyChanged(nameof(RecordGlyph));
+                OnPropertyChanged(nameof(StateWord));
             }
         }
     }
@@ -518,6 +525,89 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
     /// <summary>The finished segments with their times, in order.</summary>
     public IReadOnlyList<TranscriptSegment> Segments => _state.Segments();
 
+    /// <summary>The transcript as lines: each finished segment with its start time, then the open one (its tentative words apart).</summary>
+    public ObservableCollection<TranscriptLine> Lines { get; } = [];
+
+    /// <summary>The tenths of the elapsed time (".6"), shown smaller after <see cref="ElapsedText"/>.</summary>
+    public string ElapsedTenths
+    {
+        get => _tenths;
+        private set => SetProperty(ref _tenths, value);
+    }
+
+    /// <summary>"Listening", "Reading" (a file) or "Ready".</summary>
+    public string StateWord => IsRecording ? "Listening" : IsRunning ? "Reading" : "Ready";
+
+    /// <summary>"4 segments · 96 words".</summary>
+    public string CountsText
+    {
+        get
+        {
+            int segments = _state.SegmentCount, words = CountWords(Text);
+            return string.Create(CultureInfo.InvariantCulture, $"{segments} segment{(segments == 1 ? "" : "s")} · {words} word{(words == 1 ? "" : "s")}");
+        }
+    }
+
+    /// <summary>The model chip: "whisper-tiny · cpu", or what to do.</summary>
+    public string ModelChip => SelectedModel is { } model ? $"{model.Title[(model.Title.LastIndexOf('/') + 1)..]} · {_app.Device}" : HasSpeechModels ? "Choose a model" : "No model yet";
+
+    /// <summary>The language chip: "Auto", "EN" or the language chosen, with the task when it translates.</summary>
+    public string LanguageChip => (SelectedLanguage is null or AutoLanguage ? "Auto" : SelectedLanguage.ToUpperInvariant())
+        + (SelectedTask == TranslateTask ? " → EN" : "");
+
+    /// <summary>The cleaning steps (the pipeline setting), by name, in order; empty when none.</summary>
+    public IReadOnlyList<string> CleanSteps => [.. (_options.Pipeline ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
+
+    /// <summary>Whether a cleaning pipeline is set.</summary>
+    public bool HasCleaning => CleanSteps.Count > 0;
+
+    /// <summary>Whether none is.</summary>
+    public bool HasNoCleaning => !HasCleaning;
+
+    /// <summary>The cleaning chip: the steps' names ("denoise", "highpass › agc"), or "No cleaning".</summary>
+    public string CleanChip => HasCleaning ? string.Join(" › ", CleanSteps.Select(StepName)) : "No cleaning";
+
+    /// <summary>"Step 1.0 s · agree 2": how the live reading moves.</summary>
+    public string StepChip
+    {
+        get
+        {
+            var live = _options.ToLive();
+            return string.Create(CultureInfo.InvariantCulture, $"Step {live.StepSeconds:0.0} s · agree {live.Agreement}");
+        }
+    }
+
+    /// <summary>"Window 30 s · ends after 0.6 s of quiet": what a segment is.</summary>
+    public string SegmentRuleText
+    {
+        get
+        {
+            var live = _options.ToLive();
+            return string.Create(CultureInfo.InvariantCulture, $"Window {live.WindowSeconds:0.#} s · a segment ends after {live.SilenceSeconds:0.0#} s of quiet");
+        }
+    }
+
+    // "denoise=1.5" → "denoise".
+    private static string StepName(string step)
+    {
+        int end = step.IndexOfAny(['=', ' ']);
+        return end < 0 ? step : step[..end];
+    }
+
+    private static int CountWords(string text)
+    {
+        int words = 0;
+        bool inWord = false;
+        foreach (char c in text)
+        {
+            bool letter = !char.IsWhiteSpace(c);
+            words += letter && !inWord ? 1 : 0;
+            inWord = letter;
+        }
+
+        return words;
+    }
+
     /// <summary>The settings on the page (empty: the library's default, shown in the field).</summary>
     public ObservableCollection<TranscribeSettingEntry> Settings { get; } = [];
 
@@ -611,6 +701,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
             }
 
             OnPropertyChanged(nameof(HasSpeechModels));
+            OnPropertyChanged(nameof(ModelChip));
             OnPropertyChanged(nameof(HasNoSpeechModels));
             var families = SpeechFamilies.Names;
             ModelsText = speech.Count > 0 ? $"{speech.Count} speech model{(speech.Count == 1 ? "" : "s")} on this phone."
@@ -989,6 +1080,11 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
         _options = next;
         Keep();
         SettingsMessage = IsRunning ? "Kept: they apply from the next run." : "Kept.";
+        foreach (string name in (string[])[nameof(CleanSteps), nameof(HasCleaning), nameof(HasNoCleaning), nameof(CleanChip), nameof(StepChip), nameof(SegmentRuleText), nameof(LanguageChip)])
+        {
+            OnPropertyChanged(name);
+        }
+
         return true;
     }
 
@@ -1351,7 +1447,46 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
             HeardText = s.Heard > 0 ? $"{AudioSeconds(s.Heard)} of sound" : "";
             Behind = s.Behind;
             BehindText = s.Heard <= 0 ? "" : s.Behind >= _step ? $"{AudioSeconds(s.Behind)} behind" : "keeping up";
+            ElapsedTenths = string.Create(CultureInfo.InvariantCulture, $".{(int)(s.Elapsed.TotalMilliseconds / 100 % 10)}");
+            ShowLines(s);
         }
+    }
+
+    // The transcript's lines: each finished segment once (only those not shown yet are copied), then the open one.
+    private void ShowLines(LiveSnapshot s)
+    {
+        int shown = Lines.Count - (_open is null ? 0 : 1);
+        if (shown < 0 || shown > _state.SegmentCount)
+        {
+            Lines.Clear();                                                      // cleared meanwhile
+            _open = null;
+            shown = 0;
+        }
+
+        foreach (var segment in _state.SegmentsFrom(shown))
+        {
+            Lines.Insert(Lines.Count - (_open is null ? 0 : 1), new TranscriptLine(Clock(TimeSpan.FromSeconds(segment.Start)), segment.Text.Trim(), "", isCurrent: false));
+        }
+
+        if (s.Current.Length > 0 || s.Tentative.Length > 0)
+        {
+            if (_open is null)
+            {
+                _open = new TranscriptLine(Clock(TimeSpan.FromSeconds(s.OpenStart)), "", "", isCurrent: true);
+                Lines.Add(_open);
+            }
+
+            _open.Time = Clock(TimeSpan.FromSeconds(s.OpenStart));
+            _open.Committed = s.Current;
+            _open.Tentative = s.Tentative.Length == 0 ? "" : (s.Current.Length > 0 ? " " : "") + s.Tentative;
+        }
+        else if (_open is not null)
+        {
+            Lines.Remove(_open);
+            _open = null;
+        }
+
+        OnPropertyChanged(nameof(CountsText));
     }
 
     private static string Clock(TimeSpan time) => time.ToString(time.TotalHours >= 1 ? @"h\:mm\:ss" : @"mm\:ss", CultureInfo.InvariantCulture);
@@ -1403,7 +1538,8 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
     }
 
     // What the page shows of a run, at one moment.
-    private sealed record LiveSnapshot(long Sequence, string Committed, string Tentative, double Decibels, TimeSpan Elapsed, double Heard, double Behind);
+    private sealed record LiveSnapshot(long Sequence, string Committed, string Tentative, double Decibels, TimeSpan Elapsed, double Heard, double Behind,
+        string Current = "", double OpenStart = 0);
 
     // The run's text and meter, written by the worker threads (the blocks' reader and the transcription), read by snapshots.
     private sealed class LiveState
@@ -1446,6 +1582,15 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
             lock (_gate)
             {
                 return [.. _segments];
+            }
+        }
+
+        // The segments from the start-th on (those a page has not shown yet), copied once.
+        public IReadOnlyList<TranscriptSegment> SegmentsFrom(int start)
+        {
+            lock (_gate)
+            {
+                return start >= _segments.Count ? [] : _segments.GetRange(start, _segments.Count - start);
             }
         }
 
@@ -1542,7 +1687,8 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
                 string committed = _current.Length == 0 ? _finished.ToString()
                     : _finished.Length == 0 ? _current.ToString()
                     : string.Concat(_finished.ToString(), "\n", _current.ToString());
-                return new LiveSnapshot(++_sequence, committed, _tentative, _decibels, time.GetElapsedTime(_started, now), _heard, _behind);
+                return new LiveSnapshot(++_sequence, committed, _tentative, _decibels, time.GetElapsedTime(_started, now), _heard, _behind, _current.ToString(),
+                    _segments.Count > 0 ? _segments[^1].End : 0);
             }
         }
 
@@ -1614,4 +1760,42 @@ public static class LevelMeter
 
         return 20 * Math.Log10(Math.Max(peak, 1e-6));
     }
+}
+
+/// <summary>One line of the transcript: a segment's start time and its words, the open segment's tentative words apart.</summary>
+public sealed class TranscriptLine : ViewModel
+{
+    private string _time, _committed, _tentative;
+
+    internal TranscriptLine(string time, string committed, string tentative, bool isCurrent)
+    {
+        _time = time;
+        _committed = committed;
+        _tentative = tentative;
+        IsCurrent = isCurrent;
+    }
+
+    /// <summary>When the segment starts ("00:12").</summary>
+    public string Time
+    {
+        get => _time;
+        internal set => SetProperty(ref _time, value);
+    }
+
+    /// <summary>Its final words.</summary>
+    public string Committed
+    {
+        get => _committed;
+        internal set => SetProperty(ref _committed, value);
+    }
+
+    /// <summary>The open segment's words that may still change (shown light and italic, a space before them), or "".</summary>
+    public string Tentative
+    {
+        get => _tentative;
+        internal set => SetProperty(ref _tentative, value);
+    }
+
+    /// <summary>Whether it is the open segment (the caret after it).</summary>
+    public bool IsCurrent { get; }
 }

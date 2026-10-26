@@ -1,0 +1,315 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Chat (plan 34, phase R; apps/Idrak.Mobile/Design/chat.html and t-chat.html): the model card (its state, format, device
+  and load time); the user's messages in the gradient; the answers full width with "Thought for", their Markdown (lists,
+  bold, code with Copy), the meta row (tokens per second, tokens, first token, copy, ask again); the streaming answer with
+  its caret, its live rate and Stop; suggestions while the chat is empty; the composer. A wide window: three panes, the
+  kept conversations with search, the chat, and the inspector (the live rate's line, the memory, quick settings).
+  Theme keys only.
+-->
+<ctl:AdaptiveView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                  xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+                  xmlns:ctl="clr-namespace:Idrak.Maui.Controls"
+                  xmlns:md="clr-namespace:Idrak.Maui.Markdown"
+                  xmlns:views="clr-namespace:Idrak.Maui.Views"
+                  x:Class="Idrak.Maui.Views.ChatView"
+                  x:DataType="vm:ChatViewModel">
+    <ctl:AdaptiveView.Resources>
+        <!-- The user's message: the gradient bubble on the right. -->
+        <DataTemplate x:Key="UserBubble" x:DataType="vm:ChatBubble">
+            <Grid Padding="{DynamicResource IdrakBubblePadding}">
+                <Border Style="{DynamicResource IdrakUserBubble}" Margin="{DynamicResource IdrakUserBubbleMargin}">
+                    <Label Text="{Binding Text}" Style="{DynamicResource IdrakOnGradientText}">
+                        <Label.Triggers>
+                            <DataTrigger TargetType="Label" Binding="{Binding IsRightToLeft}" Value="True">
+                                <Setter Property="FlowDirection" Value="RightToLeft" />
+                            </DataTrigger>
+                        </Label.Triggers>
+                    </Label>
+                </Border>
+            </Grid>
+        </DataTemplate>
+
+        <!-- The model's answer: full width, its reasoning folded, its Markdown, then live or its measures. -->
+        <DataTemplate x:Key="AssistantBubble" x:DataType="vm:ChatBubble">
+            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingChip}" Padding="{DynamicResource IdrakBubblePadding}">
+                <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingChip}">
+                    <Border Style="{DynamicResource IdrakAvatarSmall}">
+                        <Label Text="{Binding ModelInitial}" Style="{DynamicResource IdrakAvatarLetterSmall}" />
+                    </Border>
+                    <Label Text="{Binding ModelName}" Style="{DynamicResource IdrakMeta}" TextColor="{DynamicResource IdrakTextMuted}" />
+                </HorizontalStackLayout>
+                <Border Style="{DynamicResource IdrakThinkPill}" IsVisible="{Binding HasThinking}" SemanticProperties.Description="Show the reasoning">
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding ToggleThinkingCommand}" />
+                    </Border.GestureRecognizers>
+                    <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <ctl:IconView Glyph="brain" Size="14" Stroke="{DynamicResource IdrakThinkText}" />
+                        <Label Text="{Binding ThinkingTitle}" Style="{DynamicResource IdrakChipLabel}" TextColor="{DynamicResource IdrakThinkText}" />
+                        <ctl:IconView Glyph="chev" Size="14" Stroke="{DynamicResource IdrakThinkText}" />
+                    </HorizontalStackLayout>
+                </Border>
+                <Label Text="{Binding Thinking}" IsVisible="{Binding IsThinkingExpanded}" Style="{DynamicResource IdrakCaption}" FontAttributes="Italic" />
+                <md:MarkdownView Document="{Binding Document}" />
+                <ctl:CaretView IsBlinking="{Binding IsStreaming}" />
+                <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingTile}" IsVisible="{Binding IsStreaming}">
+                    <Border Style="{DynamicResource IdrakRatePill}">
+                        <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                            <ctl:IconView Glyph="zap" Size="13" Stroke="{DynamicResource IdrakGreen}" />
+                            <Label Text="{Binding LiveText}" Style="{DynamicResource IdrakSuccessText}" />
+                        </HorizontalStackLayout>
+                    </Border>
+                    <Border Style="{DynamicResource IdrakStopPill}" SemanticProperties.Description="Stop">
+                        <Border.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding StopCommand}" />
+                        </Border.GestureRecognizers>
+                        <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                            <BoxView Style="{DynamicResource IdrakStopMark}" />
+                            <Label Text="Stop" Style="{DynamicResource IdrakChipLabel}" />
+                        </HorizontalStackLayout>
+                    </Border>
+                </HorizontalStackLayout>
+                <Grid ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingTile}" IsVisible="{Binding HasMeta}">
+                    <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}">
+                        <ctl:IconView Glyph="zap" Size="15" Stroke="{DynamicResource IdrakGreen}" />
+                        <Label Text="{Binding RateText}" Style="{DynamicResource IdrakSuccessText}" VerticalOptions="Center" />
+                    </HorizontalStackLayout>
+                    <Label Grid.Column="1" Text="{Binding TokensText}" Style="{DynamicResource IdrakMeta}" />
+                    <Label Grid.Column="2" Text="{Binding FirstTokenText}" Style="{DynamicResource IdrakMeta}" />
+                    <ctl:IconView Grid.Column="4" Glyph="copy" Size="15" Stroke="{DynamicResource IdrakTextMuted}" InputTransparent="False" SemanticProperties.Description="Copy">
+                        <ctl:IconView.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding CopyCommand}" />
+                        </ctl:IconView.GestureRecognizers>
+                    </ctl:IconView>
+                    <ctl:IconView Grid.Column="5" Glyph="redo" Size="15" Stroke="{DynamicResource IdrakTextMuted}" IsVisible="{Binding CanRegenerate}" InputTransparent="False"
+                                  SemanticProperties.Description="Ask again">
+                        <ctl:IconView.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding RegenerateCommand}" />
+                        </ctl:IconView.GestureRecognizers>
+                    </ctl:IconView>
+                </Grid>
+                <Label Text="{Binding Footer}" IsVisible="{Binding HasFooter}" Style="{DynamicResource IdrakMicro}" />
+            </VerticalStackLayout>
+        </DataTemplate>
+
+        <views:ChatBubbleTemplates x:Key="Bubbles" User="{StaticResource UserBubble}" Assistant="{StaticResource AssistantBubble}" />
+    </ctl:AdaptiveView.Resources>
+
+    <Grid x:Name="Root" ColumnDefinitions="*">
+        <!-- The kept conversations (a wide window). -->
+        <Grid x:Name="ListPane" RowDefinitions="Auto,Auto,*" RowSpacing="{DynamicResource IdrakSpacingSection}" Padding="{DynamicResource IdrakPanePadding}"
+              BackgroundColor="{DynamicResource IdrakRailBackground}" IsVisible="False">
+            <Grid ColumnDefinitions="*,Auto">
+                <Label Text="Chat" Style="{DynamicResource IdrakTitle}" VerticalOptions="Center" />
+                <Border Grid.Column="1" Style="{DynamicResource IdrakGradientIconButton}" SemanticProperties.Description="New chat">
+                    <Border.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding NewChatCommand}" />
+                    </Border.GestureRecognizers>
+                    <ctl:IconView Glyph="pen" Size="18" Stroke="{DynamicResource IdrakOnGradient}" />
+                </Border>
+            </Grid>
+            <Border Grid.Row="1" Style="{DynamicResource IdrakSearchBox}">
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                    <ctl:IconView Glyph="search" Size="16" Stroke="{DynamicResource IdrakTextFaint}" />
+                    <Entry Grid.Column="1" Text="{Binding ConversationQuery}" Placeholder="Search chats" ClearButtonVisibility="WhileEditing" VerticalOptions="Center" />
+                </Grid>
+            </Border>
+            <CollectionView Grid.Row="2" ItemsSource="{Binding Conversations}" IsGrouped="True" SelectionMode="None">
+                <CollectionView.EmptyView>
+                    <Label Text="Kept chats show here." Style="{DynamicResource IdrakCaption}" />
+                </CollectionView.EmptyView>
+                <CollectionView.GroupHeaderTemplate>
+                    <DataTemplate x:DataType="vm:ConversationGroup">
+                        <Label Text="{Binding Title}" Style="{DynamicResource IdrakSectionLabel}" Margin="{DynamicResource IdrakGroupHeaderMargin}" />
+                    </DataTemplate>
+                </CollectionView.GroupHeaderTemplate>
+                <CollectionView.ItemTemplate>
+                    <DataTemplate x:DataType="vm:ConversationEntry">
+                        <Border Style="{DynamicResource IdrakConversation}">
+                            <Border.Triggers>
+                                <DataTrigger TargetType="Border" Binding="{Binding IsCurrent}" Value="True">
+                                    <Setter Property="Background" Value="{DynamicResource IdrakBrushSelected}" />
+                                    <Setter Property="Stroke" Value="{DynamicResource IdrakSelectedStroke}" />
+                                </DataTrigger>
+                            </Border.Triggers>
+                            <Border.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="{Binding Id}" />
+                            </Border.GestureRecognizers>
+                            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}">
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                                    <Label Text="{Binding Title}" Style="{DynamicResource IdrakItemTitle}" />
+                                    <Label Grid.Column="1" Text="{Binding When}" Style="{DynamicResource IdrakMicro}" />
+                                </Grid>
+                                <Label Text="{Binding Preview}" Style="{DynamicResource IdrakCaption}" MaxLines="1" LineBreakMode="TailTruncation">
+                                    <Label.Triggers>
+                                        <DataTrigger TargetType="Label" Binding="{Binding IsRightToLeft}" Value="True">
+                                            <Setter Property="FlowDirection" Value="RightToLeft" />
+                                        </DataTrigger>
+                                    </Label.Triggers>
+                                </Label>
+                            </VerticalStackLayout>
+                        </Border>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+        </Grid>
+
+        <!-- The chat. -->
+        <Grid x:Name="Main" RowDefinitions="Auto,*,Auto">
+            <BoxView Grid.RowSpan="3" Background="{DynamicResource IdrakBrushGlowIndigo}" InputTransparent="True" />
+            <VerticalStackLayout x:Name="Top" Padding="{DynamicResource IdrakChatTopPadding}" Spacing="{DynamicResource IdrakSpacingSmall}">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingTile}">
+                    <!-- The model: tap to choose another of the store's. -->
+                    <Grid>
+                        <Border x:Name="ModelCard" Style="{DynamicResource IdrakModelCard}">
+                            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{DynamicResource IdrakSpacingTile}">
+                                <Border Style="{DynamicResource IdrakAvatar}">
+                                    <Label Text="{Binding ModelInitial}" Style="{DynamicResource IdrakAvatarLetter}" />
+                                </Border>
+                                <VerticalStackLayout Grid.Column="1" VerticalOptions="Center">
+                                    <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                        <Label Text="{Binding ModelName}" Style="{DynamicResource IdrakItemTitle}" />
+                                        <ctl:IconView Glyph="chev" Size="15" Stroke="{DynamicResource IdrakTextMuted}" />
+                                    </HorizontalStackLayout>
+                                    <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                        <Ellipse Style="{DynamicResource IdrakStatusDot}" IsVisible="{Binding IsModelLoaded}" WidthRequest="6" HeightRequest="6" />
+                                        <ActivityIndicator IsRunning="{Binding IsLoading}" IsVisible="{Binding IsLoading}" WidthRequest="12" HeightRequest="12" />
+                                        <Label Text="{Binding ModelMeta}" Style="{DynamicResource IdrakMicro}" TextColor="{DynamicResource IdrakTextMuted}" />
+                                    </HorizontalStackLayout>
+                                </VerticalStackLayout>
+                            </Grid>
+                        </Border>
+                        <Picker Title="Choose a model" ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" IsEnabled="{Binding IsIdle}" Opacity="0" />
+                    </Grid>
+                    <Border x:Name="NewChat" Grid.Column="1" Style="{DynamicResource IdrakIconButton}" WidthRequest="46" HeightRequest="46" SemanticProperties.Description="New chat">
+                        <Border.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding NewChatCommand}" />
+                        </Border.GestureRecognizers>
+                        <ctl:IconView Glyph="pen" Size="20" />
+                    </Border>
+                </Grid>
+                <Button Text="Pull a model in Models" Command="{Binding GoToModelsCommand}" IsVisible="{Binding HasNoModels}" Style="{DynamicResource IdrakSecondaryButton}" HorizontalOptions="Start" />
+                <Label Text="{Binding Status}" IsVisible="{Binding HasStatus}" Style="{DynamicResource IdrakHighlightText}" />
+                <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+            </VerticalStackLayout>
+
+            <!-- The conversation: virtualised; each answer redraws its changed block only, once a progress interval. -->
+            <CollectionView x:Name="MessageList" Grid.Row="1" ItemsSource="{Binding Messages}" ItemTemplate="{StaticResource Bubbles}" SelectionMode="None"
+                            ItemsUpdatingScrollMode="KeepLastItemInView" Margin="{DynamicResource IdrakFeedPadding}">
+                <CollectionView.EmptyView>
+                    <VerticalStackLayout VerticalOptions="Center" HorizontalOptions="Center" Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <ctl:IconBadge Glyph="chat" Tone="Indigo" BadgeSize="56" HorizontalOptions="Center" />
+                        <Label Text="Ask anything: it runs here." Style="{DynamicResource IdrakHeading}" HorizontalOptions="Center" />
+                        <Label Text="Choose a model above, then write below." Style="{DynamicResource IdrakCaption}" HorizontalOptions="Center" />
+                    </VerticalStackLayout>
+                </CollectionView.EmptyView>
+            </CollectionView>
+
+            <!-- Suggestions (an empty chat), then the composer. -->
+            <VerticalStackLayout Grid.Row="2" Padding="{DynamicResource IdrakComposerPadding}" Spacing="{DynamicResource IdrakSpacingChip}">
+                <ScrollView Orientation="Horizontal" HorizontalScrollBarVisibility="Never" IsVisible="{Binding ShowSuggestions}">
+                    <HorizontalStackLayout BindableLayout.ItemsSource="{Binding Suggestions}" Spacing="{DynamicResource IdrakSpacingChip}">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="x:String">
+                                <Border Style="{DynamicResource IdrakSuggestion}">
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer Tapped="OnSuggestion" CommandParameter="{Binding .}" />
+                                    </Border.GestureRecognizers>
+                                    <Label Text="{Binding .}" Style="{DynamicResource IdrakChipLabel}" TextColor="{DynamicResource IdrakChipText}" />
+                                </Border>
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </HorizontalStackLayout>
+                </ScrollView>
+                <Border Style="{DynamicResource IdrakComposer}">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                        <Border Style="{DynamicResource IdrakRoundButton}" VerticalOptions="End" SemanticProperties.Description="Models">
+                            <Border.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding GoToModelsCommand}" />
+                            </Border.GestureRecognizers>
+                            <ctl:IconView Glyph="plus" Size="20" />
+                        </Border>
+                        <Editor Grid.Column="1" Text="{Binding Draft}" Placeholder="{Binding ModelName, StringFormat='Message {0}…'}" AutoSize="TextChanges" MaximumHeightRequest="160"
+                                VerticalOptions="Center" />
+                        <Border Grid.Column="2" Style="{DynamicResource IdrakRoundButtonPlain}" VerticalOptions="End" SemanticProperties.Description="Speak instead (Transcribe)">
+                            <Border.GestureRecognizers>
+                                <TapGestureRecognizer Tapped="OnMicrophone" />
+                            </Border.GestureRecognizers>
+                            <ctl:IconView Glyph="mic" Size="20" Stroke="{DynamicResource IdrakTextMuted}" />
+                        </Border>
+                        <Border Grid.Column="3" Style="{DynamicResource IdrakGradientIconButton}" IsVisible="{Binding IsIdle}" VerticalOptions="End" SemanticProperties.Description="Send">
+                            <Border.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding SendCommand}" />
+                            </Border.GestureRecognizers>
+                            <ctl:IconView Glyph="up" Size="20" Stroke="{DynamicResource IdrakOnGradient}" />
+                        </Border>
+                        <Border Grid.Column="3" Style="{DynamicResource IdrakRoundButton}" IsVisible="{Binding IsStreaming}" VerticalOptions="End" SemanticProperties.Description="Stop">
+                            <Border.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding StopCommand}" />
+                            </Border.GestureRecognizers>
+                            <BoxView Style="{DynamicResource IdrakStopMark}" />
+                        </Border>
+                    </Grid>
+                </Border>
+            </VerticalStackLayout>
+        </Grid>
+
+        <!-- The inspector (a wide window): this answer, live; the memory; quick settings. -->
+        <ScrollView x:Name="Inspector" BackgroundColor="{DynamicResource IdrakRailBackground}" IsVisible="False">
+            <VerticalStackLayout Padding="{DynamicResource IdrakPanePadding}" Spacing="{DynamicResource IdrakSpacingTile}">
+                <Label Text="This answer, live" Style="{DynamicResource IdrakSectionLabel}" />
+                <Border Style="{DynamicResource IdrakPanel}">
+                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                            <Label Text="{Binding LiveRateText}" Style="{DynamicResource IdrakBigNumber}" />
+                            <Label Text="tokens / s" Style="{DynamicResource IdrakCaption}" VerticalOptions="End" />
+                        </HorizontalStackLayout>
+                        <ctl:SparklineView Values="{Binding RateHistory}" />
+                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="{DynamicResource IdrakSpacingSmall}">
+                            <Label Text="Tokens" Style="{DynamicResource IdrakCaption}" />
+                            <Label Grid.Column="1" Text="{Binding LiveTokens}" Style="{DynamicResource IdrakItemTitle}" />
+                            <Label Grid.Row="1" Text="First token" Style="{DynamicResource IdrakCaption}" />
+                            <Label Grid.Row="1" Grid.Column="1" Text="{Binding FirstTokenText}" Style="{DynamicResource IdrakItemTitle}" />
+                            <Label Grid.Row="2" Text="Device" Style="{DynamicResource IdrakCaption}" />
+                            <Label Grid.Row="2" Grid.Column="1" Text="{Binding DeviceText}" Style="{DynamicResource IdrakItemTitle}" />
+                        </Grid>
+                    </VerticalStackLayout>
+                </Border>
+                <Label Text="Memory" Style="{DynamicResource IdrakSectionLabel}" />
+                <Border Style="{DynamicResource IdrakPanel}">
+                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Text="In use" Style="{DynamicResource IdrakCaption}" />
+                            <Label Grid.Column="1" Text="{Binding MemoryText}" Style="{DynamicResource IdrakItemTitle}" />
+                        </Grid>
+                        <ctl:MeterBar Progress="{Binding WeightsShare}" Second="{Binding CacheShare}" HeightRequest="6" StartColor="{DynamicResource IdrakIndigo}" EndColor="{DynamicResource IdrakSky}" />
+                        <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacing}">
+                            <Label Text="{Binding WeightsText}" Style="{DynamicResource IdrakMicro}" TextColor="{DynamicResource IdrakTextMuted}" />
+                            <Label Text="{Binding CacheText}" Style="{DynamicResource IdrakMicro}" TextColor="{DynamicResource IdrakTextMuted}" />
+                        </HorizontalStackLayout>
+                    </VerticalStackLayout>
+                </Border>
+                <Label Text="Settings" Style="{DynamicResource IdrakSectionLabel}" />
+                <Border Style="{DynamicResource IdrakPanel}">
+                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Text="Temperature" Style="{DynamicResource IdrakCaption}" />
+                            <Label Grid.Column="1" Text="{Binding TemperatureText}" Style="{DynamicResource IdrakItemTitle}" />
+                        </Grid>
+                        <Slider Minimum="0" Maximum="2" Value="{Binding Temperature}" />
+                        <Grid ColumnDefinitions="*,Auto" IsVisible="{Binding HasThinkingSwitch}">
+                            <Label Text="Thinking" Style="{DynamicResource IdrakCaption}" VerticalOptions="Center" />
+                            <Switch Grid.Column="1" IsToggled="{Binding Thinking}" />
+                        </Grid>
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Text="Max new tokens" Style="{DynamicResource IdrakCaption}" VerticalOptions="Center" />
+                            <Entry Grid.Column="1" Text="{Binding MaxNewTokensText}" Placeholder="no cap" Keyboard="Numeric" WidthRequest="96" HorizontalTextAlignment="End" />
+                        </Grid>
+                        <Label Text="For this run; Settings keeps them." Style="{DynamicResource IdrakMicro}" />
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+        </ScrollView>
+    </Grid>
+</ctl:AdaptiveView>

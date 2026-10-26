@@ -36,8 +36,10 @@ public sealed class IdrakSetting
     private readonly Action<IdrakMauiOptions, string> _write;
 
     internal IdrakSetting(string key, string title, string summary, IdrakSettingKind kind, Func<IdrakMauiOptions, string> read, Action<IdrakMauiOptions, string> write,
-        bool needsRestart = false, string placeholder = "", IReadOnlyList<string>? choices = null)
+        bool needsRestart = false, string placeholder = "", IReadOnlyList<string>? choices = null, string group = "", (double Minimum, double Maximum, double Step)? range = null)
     {
+        Group = group.Length > 0 ? group : GroupOf(key);
+        Range = range;
         Key = key;
         Title = title;
         Summary = summary;
@@ -69,6 +71,23 @@ public sealed class IdrakSetting
 
     /// <summary>The values a <see cref="IdrakSettingKind.Choice"/> takes.</summary>
     public IReadOnlyList<string> Choices { get; }
+
+    /// <summary>The group the settings page shows it in ("General", "Storage", "Limits", "Models", "Chat", "Layout").</summary>
+    public string Group { get; }
+
+    /// <summary>For a number that has one, the range a slider shows (its least, its most, its step); null for the rest.</summary>
+    public (double Minimum, double Maximum, double Step)? Range { get; }
+
+    // The group of a setting by its key: the chat's, the GPU's and CPU's limits, storage, models in memory, the rest general.
+    private static string GroupOf(string key) => key switch
+    {
+        _ when key.StartsWith("chat_", StringComparison.Ordinal) => "Chat",
+        "cache_folder" or "hf_token" or "storage_headroom_mb" => "Storage",
+        "model_keep_alive_s" or "max_loaded_models" or "unload_models_at" => "Models in memory",
+        "wide_layout_dp" or "carousel_s" or "progress_interval_ms" => "Layout and motion",
+        "device" or "theme" => "General",
+        _ => "Limits",
+    };
 
     /// <summary>The value in <paramref name="options"/> as text ("" for the library's own).</summary>
     public string Get(IdrakMauiOptions options) => _read(options ?? throw new ArgumentNullException(nameof(options)));
@@ -216,7 +235,7 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
         new("gpu_stack_bytes", "GPU thread stack (bytes)", "The stack each GPU thread gets (ComputeResources.GpuStackBytes, IDRAK_GPU_STACK_BYTES).",
             IdrakSettingKind.Number, o => Text(o.GpuStackBytes), (o, t) => o.GpuStackBytes = Whole(t, 0), needsRestart: true, placeholder: "what kernels need"),
         new("workspace_share", "Workspace share", "The share of available memory one operation's buffers may take, in (0, 1] (ComputeResources.WorkspaceShare).",
-            IdrakSettingKind.Number, o => Text(o.WorkspaceShare), (o, t) => o.WorkspaceShare = Fraction(t), placeholder: "the library's"),
+            IdrakSettingKind.Number, o => Text(o.WorkspaceShare), (o, t) => o.WorkspaceShare = Fraction(t), placeholder: "the library's", range: (0.05, 1, 0.05)),
         new("tuning_budget_ms", "Tuning budget (ms)", "How long a shape's first use may measure kernel choices (ComputeResources.TuningBudget, IDRAK_TUNE_BUDGET_MS).",
             IdrakSettingKind.Number, o => Text(o.TuningBudgetMs), (o, t) => o.TuningBudgetMs = Real(t, exclusiveMinimum: 0), placeholder: "the library's"),
         new("tuning_neighbour_octaves", "Tuning reach (octaves)", "How far a measured choice reaches (ComputeResources.TuningNeighbourOctaves, IDRAK_TUNE_NEIGHBOUR_OCTAVES).",
@@ -229,6 +248,11 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
             IdrakSettingKind.Number, o => Text(o.StorageHeadroomMiB), (o, t) => o.StorageHeadroomMiB = Whole(t, 0), placeholder: "none"),
         new("progress_interval_ms", "Progress interval (ms)", "The least time between two updates of a progress view.", IdrakSettingKind.Number,
             o => Text(o.ProgressInterval.TotalMilliseconds), (o, t) => o.ProgressInterval = TimeSpan.FromMilliseconds(Real(t, exclusiveMinimum: 0) ?? 250), placeholder: "250"),
+        new("wide_layout_dp", "Wide layout from (dp)", "The window width from which the app shows the side rail and pages in columns; below it, the bottom bar. It follows rotation and split screen.",
+            IdrakSettingKind.Number, o => Text(o.WideLayoutWidth), (o, t) => o.WideLayoutWidth = Real(t, minimum: 320) ?? 840, placeholder: "840"),
+        new("carousel_s", "Home carousel (s)", "How long Home's carousel shows a slide before the next; 0 keeps it still.", IdrakSettingKind.Number,
+            o => o.CarouselInterval is { } c ? Text(c.TotalSeconds) : "0", (o, t) => o.CarouselInterval = Real(t, minimum: 0) is { } s && s > 0 ? TimeSpan.FromSeconds(s) : t.Length == 0 ? TimeSpan.FromSeconds(6) : null,
+            placeholder: "6", range: (0, 20, 1)),
         new("model_keep_alive_s", "Model keep-alive (s)", "How long a model stays loaded after its last use; empty: until memory pressure.", IdrakSettingKind.Number,
             o => o.ModelKeepAlive is { } k ? Text(k.TotalSeconds) : "", (o, t) => o.ModelKeepAlive = Real(t, minimum: 0) is { } s ? TimeSpan.FromSeconds(s) : null,
             placeholder: "until memory pressure"),
@@ -242,9 +266,11 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
         new("chat_system_prompt", "Chat: system prompt", "The instructions every chat starts with, as a system message the model's own chat template renders. Empty: none.",
             IdrakSettingKind.Text, o => o.ChatSystemPrompt ?? "", (o, t) => o.ChatSystemPrompt = t.Length == 0 ? null : t, placeholder: "none"),
         new("chat_temperature", "Chat: temperature", "How varied the answers are (GenerationOptions.Temperature): 0 takes the likeliest token, above 1 more varied.",
-            IdrakSettingKind.Number, o => Text(o.ChatTemperature), (o, t) => o.ChatTemperature = Real(t, minimum: 0), placeholder: Library.Temperature.ToString(CultureInfo.InvariantCulture)),
+            IdrakSettingKind.Number, o => Text(o.ChatTemperature), (o, t) => o.ChatTemperature = Real(t, minimum: 0), placeholder: Library.Temperature.ToString(CultureInfo.InvariantCulture),
+            range: (0, 2, 0.05)),
         new("chat_top_p", "Chat: top-p", "Sample among the likeliest tokens holding this share, in (0, 1] (GenerationOptions.TopP); 1 is off.",
-            IdrakSettingKind.Number, o => Text(o.ChatTopP), (o, t) => o.ChatTopP = Fraction(t), placeholder: Library.TopP.ToString(CultureInfo.InvariantCulture)),
+            IdrakSettingKind.Number, o => Text(o.ChatTopP), (o, t) => o.ChatTopP = Fraction(t), placeholder: Library.TopP.ToString(CultureInfo.InvariantCulture),
+            range: (0.05, 1, 0.05)),
         new("chat_top_k", "Chat: top-k", "Sample among this many likeliest tokens (GenerationOptions.TopK); 0: all.",
             IdrakSettingKind.Number, o => Text(o.ChatTopK), (o, t) => o.ChatTopK = (int?)Whole(t, 0, int.MaxValue), placeholder: Text(Library.TopK)),
         new("chat_max_new_tokens", "Chat: max new tokens", "The most tokens one answer has (GenerationOptions.NumPredict). Empty: until the turn ends or the context is full.",

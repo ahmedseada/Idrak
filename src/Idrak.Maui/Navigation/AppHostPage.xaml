@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  The app's host (plan 34, phase R; no Shell, no Blazor): the section shown, with the bottom bar under it on a narrow
+  window and the side rail beside it on a wide one, chosen by the window's measured width (AppLayout); All labs as a sheet
+  over the page on a narrow window. Pages a section opens are pushed over it (the window's navigation page).
+-->
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:nav="clr-namespace:Idrak.Maui.Navigation"
+             x:Class="Idrak.Maui.Navigation.AppHostPage"
+             x:DataType="nav:AppHostViewModel"
+             NavigationPage.HasNavigationBar="False"
+             Title="Idrak">
+    <Grid ColumnDefinitions="Auto,*">
+        <nav:NavigationRail x:Name="Rail" IsVisible="{Binding IsWide}" />
+
+        <Grid Grid.Column="1">
+            <ContentView x:Name="Body" Margin="{DynamicResource IdrakNoInset}">
+                <ContentView.Triggers>
+                    <DataTrigger TargetType="ContentView" Binding="{Binding IsNarrow}" Value="True">
+                        <Setter Property="Margin" Value="{DynamicResource IdrakBottomBarInset}" />
+                    </DataTrigger>
+                </ContentView.Triggers>
+            </ContentView>
+
+            <!-- All labs over the page (a narrow window). -->
+            <Grid x:Name="Sheet" IsVisible="{Binding IsSheetOpen}">
+                <BoxView Color="{DynamicResource IdrakScrim}">
+                    <BoxView.GestureRecognizers>
+                        <TapGestureRecognizer Command="{Binding CloseSheetCommand}" />
+                    </BoxView.GestureRecognizers>
+                </BoxView>
+                <Border x:Name="SheetPanel" Style="{DynamicResource IdrakSheet}" VerticalOptions="End">
+                    <Grid RowDefinitions="Auto,*">
+                        <Border Style="{DynamicResource IdrakSheetHandle}">
+                            <Border.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding CloseSheetCommand}" />
+                                <SwipeGestureRecognizer Direction="Down" Command="{Binding CloseSheetCommand}" />
+                            </Border.GestureRecognizers>
+                        </Border>
+                        <ContentView x:Name="SheetBody" Grid.Row="1" />
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <nav:BottomNavigationBar x:Name="Bar" VerticalOptions="End" IsVisible="{Binding IsNarrow}" />
+        </Grid>
+    </Grid>
+</ContentPage>

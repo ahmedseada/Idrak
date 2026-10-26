@@ -1,40 +1,110 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!--
-  Idrak's look (plan 34): type sizes, spacing and corner radii as keys, and the styles that use them with the colours of
-  the theme in effect (IdrakLightColors or IdrakDarkColors, swapped by IdrakThemes.Apply) through DynamicResource, so a
-  theme change restyles every page at once. The system font throughout, and no fixed heights around text, so the phone's
-  text size has room. The app merges this dictionary in its App.xaml; a key or style of the same name in the app's own
-  resources wins.
+  Idrak's look (plan 34, phase R: the approved design, apps/Idrak.Mobile/Design): the type scale, spacing and corner radii
+  as keys, and the styles that use them with the colours of the theme in effect (IdrakLightColors or IdrakDarkColors,
+  swapped by IdrakThemes.Apply) through DynamicResource, so a theme change restyles every page at once. Inter for text and
+  JetBrains Mono for figures and code (the app bundles both; without them the system's fonts stand in). No fixed heights
+  around text, so the phone's text size has room. The app merges this dictionary in its App.xaml; a key or style of the
+  same name in the app's own resources wins.
 -->
 <ResourceDictionary xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
                     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                    xmlns:theme="clr-namespace:Idrak.Maui.Theme"
                     x:Class="Idrak.Maui.Theme.IdrakStyles">
 
+    <!-- The icons (IdrakIcons.xaml), merged here so an app that merges the styles has them too. -->
+    <ResourceDictionary.MergedDictionaries>
+        <theme:IdrakIconDictionary />
+    </ResourceDictionary.MergedDictionaries>
+
+    <!-- Fonts (the aliases the app registers; an alias it lacks falls back to the system's font). -->
+    <x:String x:Key="IdrakFontRegular">Inter</x:String>
+    <x:String x:Key="IdrakFontMedium">InterMedium</x:String>
+    <x:String x:Key="IdrakFontSemiBold">InterSemiBold</x:String>
+    <x:String x:Key="IdrakFontBold">InterBold</x:String>
+    <x:String x:Key="IdrakFontExtraBold">InterExtraBold</x:String>
+    <x:String x:Key="IdrakFontMono">JetBrainsMono</x:String>
+    <x:String x:Key="IdrakFontMonoBold">JetBrainsMonoBold</x:String>
+
     <!-- Type sizes (scaled by the phone's text size setting). -->
-    <x:Double x:Key="IdrakFontSizeTitle">24</x:Double>
-    <x:Double x:Key="IdrakFontSizeHeading">18</x:Double>
-    <x:Double x:Key="IdrakFontSizeBody">15</x:Double>
-    <x:Double x:Key="IdrakFontSizeCaption">13</x:Double>
+    <x:Double x:Key="IdrakFontSizeHero">30</x:Double>
+    <x:Double x:Key="IdrakFontSizeTitle">26</x:Double>
+    <x:Double x:Key="IdrakFontSizeLarge">22</x:Double>
+    <x:Double x:Key="IdrakFontSizeHeading">16</x:Double>
+    <x:Double x:Key="IdrakFontSizeStat">16</x:Double>
+    <x:Double x:Key="IdrakFontSizeBody">14</x:Double>
+    <x:Double x:Key="IdrakFontSizeCaption">12.5</x:Double>
+    <x:Double x:Key="IdrakFontSizeSmall">11.5</x:Double>
+    <x:Double x:Key="IdrakFontSizeLabel">11</x:Double>
+    <x:Double x:Key="IdrakFontSizeMicro">10.5</x:Double>
     <x:Double x:Key="IdrakFontSizeBadge">11</x:Double>
+    <x:Double x:Key="IdrakFontSizeTimer">22</x:Double>
+    <x:Double x:Key="IdrakFontSizeTimerSmall">14</x:Double>
+    <x:Double x:Key="IdrakFontSizeBigNumber">30</x:Double>
+    <x:Double x:Key="IdrakFontSizeCode">11.5</x:Double>
 
     <!-- Spacing. -->
+    <x:Double x:Key="IdrakSpacingTiny">3</x:Double>
     <x:Double x:Key="IdrakSpacingSmall">6</x:Double>
+    <x:Double x:Key="IdrakSpacingChip">8</x:Double>
+    <x:Double x:Key="IdrakSpacingTile">10</x:Double>
     <x:Double x:Key="IdrakSpacing">12</x:Double>
+    <x:Double x:Key="IdrakSpacingSection">14</x:Double>
     <x:Double x:Key="IdrakSpacingLarge">20</x:Double>
+    <x:Double x:Key="IdrakSpacingColumns">22</x:Double>
+    <x:Double x:Key="IdrakSpacingRecord">34</x:Double>
     <Thickness x:Key="IdrakBadgePadding">8,2</Thickness>
     <Thickness x:Key="IdrakMenuHeaderPadding">20,28,20,16</Thickness>
     <Thickness x:Key="IdrakMenuItemPadding">20,12</Thickness>
-    <Thickness x:Key="IdrakPagePadding">16,12</Thickness>
+    <Thickness x:Key="IdrakPagePadding">20,8,20,16</Thickness>
+    <Thickness x:Key="IdrakWidePagePadding">28,20,28,20</Thickness>
     <Thickness x:Key="IdrakCardPadding">16,14</Thickness>
     <Thickness x:Key="IdrakCardMargin">0,0,0,12</Thickness>
     <Thickness x:Key="IdrakSectionPadding">0,0,0,12</Thickness>
+    <Thickness x:Key="IdrakSectionHeaderPadding">0,18,0,10</Thickness>
     <Thickness x:Key="IdrakChipPadding">12,6</Thickness>
     <Thickness x:Key="IdrakChipMargin">0,0,8,8</Thickness>
+    <Thickness x:Key="IdrakBottomBarInset">0,0,0,92</Thickness>
+    <Thickness x:Key="IdrakNoInset">0</Thickness>
+    <Thickness x:Key="IdrakTopGap">0,12,0,0</Thickness>
+    <Thickness x:Key="IdrakTopGapSmall">0,6,0,0</Thickness>
+    <Thickness x:Key="IdrakBottomGap">0,0,0,24</Thickness>
+    <Thickness x:Key="IdrakComposerPadding">14,8,14,10</Thickness>
+    <Thickness x:Key="IdrakFeedPadding">16,6,16,12</Thickness>
+    <Thickness x:Key="IdrakWideFeedPadding">44,20,44,12</Thickness>
+    <Thickness x:Key="IdrakUserBubbleMargin">56,0,0,0</Thickness>
+    <Thickness x:Key="IdrakListIndent">18,0,0,0</Thickness>
+    <Thickness x:Key="IdrakPaneHeaderPadding">28,16</Thickness>
+    <Thickness x:Key="IdrakPanePadding">16,20</Thickness>
+    <Thickness x:Key="IdrakHeaderPadding">0,4,0,10</Thickness>
+    <Thickness x:Key="IdrakCarouselPeek">0,0,44,0</Thickness>
+    <Thickness x:Key="IdrakNavBarPadding">14,10,14,12</Thickness>
+    <Thickness x:Key="IdrakRailPadding">0,14,0,22</Thickness>
+    <Thickness x:Key="IdrakRailItemMargin">0,0,0,18</Thickness>
+    <Thickness x:Key="IdrakRailLogoMargin">0,0,0,26</Thickness>
+    <Thickness x:Key="IdrakLabPadding">20,4,20,12</Thickness>
+    <Thickness x:Key="IdrakSectionTopPadding">20,4,20,12</Thickness>
+    <Thickness x:Key="IdrakWideSectionTopPadding">26,20,26,14</Thickness>
+    <Thickness x:Key="IdrakChatTopPadding">16,6,16,6</Thickness>
+    <Thickness x:Key="IdrakWideChatTopPadding">28,16,28,10</Thickness>
+    <Thickness x:Key="IdrakControlsPadding">0,10,0,8</Thickness>
+    <Thickness x:Key="IdrakBubblePadding">0,6</Thickness>
+    <Thickness x:Key="IdrakLabCellPadding">4</Thickness>
+    <Thickness x:Key="IdrakGroupPadding">0,4,0,10</Thickness>
+    <Thickness x:Key="IdrakWideGroupPadding">0,0,16,0</Thickness>
+    <Thickness x:Key="IdrakGroupHeaderMargin">4,16,4,4</Thickness>
+    <Thickness x:Key="IdrakSettingRowPadding">0,4</Thickness>
+    <Thickness x:Key="IdrakTileWaveMargin">10,0,0,0</Thickness>
+    <Thickness x:Key="IdrakTimestampMargin">0,3,0,0</Thickness>
+    <Thickness x:Key="IdrakTranscriptLinePadding">0,5</Thickness>
+    <Thickness x:Key="IdrakEmptyPhotoPadding">16,28</Thickness>
+    <Thickness x:Key="IdrakPhotoLabelMargin">12,10,12,6</Thickness>
 
     <!-- Corner radii. -->
-    <x:Double x:Key="IdrakCornerRadius">16</x:Double>
-    <x:Int32 x:Key="IdrakButtonCornerRadius">12</x:Int32>
-    <x:Int32 x:Key="IdrakChipCornerRadius">16</x:Int32>
+    <x:Double x:Key="IdrakCornerRadius">20</x:Double>
+    <x:Int32 x:Key="IdrakButtonCornerRadius">14</x:Int32>
+    <x:Int32 x:Key="IdrakChipCornerRadius">14</x:Int32>
+    <x:Int32 x:Key="IdrakPillCornerRadius">21</x:Int32>
 
     <!-- Pages and navigation. -->
     <Style TargetType="ContentPage" ApplyToDerivedTypes="True">
@@ -50,49 +120,660 @@
     <!-- Text. -->
     <Style TargetType="Label">
         <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontRegular}" />
         <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
         <Setter Property="LineBreakMode" Value="WordWrap" />
     </Style>
+    <Style x:Key="IdrakHeroTitle" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontExtraBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeHero}" />
+        <Setter Property="CharacterSpacing" Value="-0.8" />
+    </Style>
     <Style x:Key="IdrakTitle" TargetType="Label">
         <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontExtraBold}" />
         <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeTitle}" />
-        <Setter Property="FontAttributes" Value="Bold" />
+        <Setter Property="CharacterSpacing" Value="-0.6" />
+    </Style>
+    <Style x:Key="IdrakSheetTitle" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontExtraBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeLarge}" />
+        <Setter Property="CharacterSpacing" Value="-0.5" />
     </Style>
     <Style x:Key="IdrakHeading" TargetType="Label">
         <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
         <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeHeading}" />
-        <Setter Property="FontAttributes" Value="Bold" />
         <Setter Property="LineBreakMode" Value="WordWrap" />
     </Style>
-    <Style x:Key="IdrakCaption" TargetType="Label">
-        <Setter Property="TextColor" Value="{DynamicResource IdrakTextMuted}" />
-        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeCaption}" />
+    <Style x:Key="IdrakItemTitle" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
+        <Setter Property="LineBreakMode" Value="TailTruncation" />
+        <Setter Property="MaxLines" Value="1" />
+    </Style>
+    <Style x:Key="IdrakBody" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakTextSoft}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontRegular}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
+        <Setter Property="LineHeight" Value="1.45" />
         <Setter Property="LineBreakMode" Value="WordWrap" />
     </Style>
     <Style x:Key="IdrakValue" TargetType="Label">
         <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontMedium}" />
         <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
         <Setter Property="LineBreakMode" Value="WordWrap" />
     </Style>
+    <Style x:Key="IdrakCaption" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakTextMuted}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontRegular}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeCaption}" />
+        <Setter Property="LineBreakMode" Value="WordWrap" />
+    </Style>
+    <Style x:Key="IdrakMicro" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakTextFaint}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontSemiBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeMicro}" />
+        <Setter Property="LineBreakMode" Value="TailTruncation" />
+    </Style>
+    <Style x:Key="IdrakMeta" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakTextFaint}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontSemiBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeSmall}" />
+        <Setter Property="VerticalOptions" Value="Center" />
+        <Setter Property="LineBreakMode" Value="NoWrap" />
+    </Style>
+    <!-- The design's section labels: small capitals, spaced. -->
+    <Style x:Key="IdrakSectionLabel" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakTextFaint}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeLabel}" />
+        <Setter Property="TextTransform" Value="Uppercase" />
+        <Setter Property="CharacterSpacing" Value="1.1" />
+        <Setter Property="VerticalOptions" Value="Center" />
+        <Setter Property="LineBreakMode" Value="NoWrap" />
+    </Style>
+    <Style x:Key="IdrakKicker" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakAccentText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontExtraBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeMicro}" />
+        <Setter Property="TextTransform" Value="Uppercase" />
+        <Setter Property="CharacterSpacing" Value="1.4" />
+        <Setter Property="VerticalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakLink" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakAccentText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeSmall}" />
+        <Setter Property="VerticalOptions" Value="Center" />
+        <Setter Property="LineBreakMode" Value="NoWrap" />
+    </Style>
+    <Style x:Key="IdrakStatKey" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakTextMuted}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontSemiBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeLabel}" />
+        <Setter Property="VerticalOptions" Value="Center" />
+        <Setter Property="LineBreakMode" Value="NoWrap" />
+    </Style>
+    <Style x:Key="IdrakStatValue" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontExtraBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeStat}" />
+        <Setter Property="CharacterSpacing" Value="-0.3" />
+        <Setter Property="LineBreakMode" Value="TailTruncation" />
+    </Style>
+    <Style x:Key="IdrakBigNumber" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontExtraBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBigNumber}" />
+        <Setter Property="CharacterSpacing" Value="-1" />
+    </Style>
+    <Style x:Key="IdrakTimer" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontMonoBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeTimer}" />
+        <Setter Property="LineBreakMode" Value="NoWrap" />
+    </Style>
+    <Style x:Key="IdrakMono" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakTextSoft}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontMono}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeCode}" />
+        <Setter Property="LineHeight" Value="1.5" />
+        <Setter Property="LineBreakMode" Value="WordWrap" />
+    </Style>
+    <Style x:Key="IdrakTimestamp" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakTextFaint}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontMono}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeMicro}" />
+        <Setter Property="LineBreakMode" Value="NoWrap" />
+    </Style>
     <Style x:Key="IdrakErrorText" TargetType="Label">
         <Setter Property="TextColor" Value="{DynamicResource IdrakError}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontMedium}" />
         <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeCaption}" />
         <Setter Property="LineBreakMode" Value="WordWrap" />
     </Style>
     <Style x:Key="IdrakHighlightText" TargetType="Label">
         <Setter Property="TextColor" Value="{DynamicResource IdrakHighlight}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontMedium}" />
         <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeCaption}" />
         <Setter Property="LineBreakMode" Value="WordWrap" />
     </Style>
+    <Style x:Key="IdrakSuccessText" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakSuccess}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeSmall}" />
+        <Setter Property="LineBreakMode" Value="NoWrap" />
+    </Style>
+    <Style x:Key="IdrakPlannedText" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakPlannedText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeSmall}" />
+        <Setter Property="LineBreakMode" Value="NoWrap" />
+    </Style>
+    <Style x:Key="IdrakOnGradientText" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakOnGradient}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontRegular}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
+        <Setter Property="LineHeight" Value="1.35" />
+    </Style>
+    <Style x:Key="IdrakSlideTitle" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontExtraBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeTitle}" />
+        <Setter Property="CharacterSpacing" Value="-0.8" />
+        <Setter Property="LineHeight" Value="1.05" />
+    </Style>
 
-    <!-- Cards. -->
+    <!-- Cards and surfaces. -->
     <Style x:Key="IdrakCard" TargetType="Border">
-        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakCardBackground}" />
-        <Setter Property="Stroke" Value="{DynamicResource IdrakCardStroke}" />
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine}" />
         <Setter Property="StrokeThickness" Value="1" />
-        <Setter Property="StrokeShape" Value="RoundRectangle 16" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 20" />
         <Setter Property="Padding" Value="{DynamicResource IdrakCardPadding}" />
         <Setter Property="Margin" Value="{DynamicResource IdrakCardMargin}" />
+    </Style>
+    <Style x:Key="IdrakPanel" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 22" />
+        <Setter Property="Padding" Value="16,14" />
+    </Style>
+    <Style x:Key="IdrakTile" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 18" />
+        <Setter Property="Padding" Value="12,11" />
+    </Style>
+    <Style x:Key="IdrakLabCard" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 16" />
+        <Setter Property="Padding" Value="10,10" />
+        <Setter Property="MinimumHeightRequest" Value="58" />
+    </Style>
+    <Style x:Key="IdrakWaveCard" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushWaveCard}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakWaveStroke}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 26" />
+        <Setter Property="Padding" Value="16,12" />
+    </Style>
+    <Style x:Key="IdrakSheet" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushSheet}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 30,30,0,0" />
+        <Setter Property="Padding" Value="18,10,18,0" />
+    </Style>
+    <Style x:Key="IdrakSheetHandle" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 3" />
+        <Setter Property="WidthRequest" Value="40" />
+        <Setter Property="HeightRequest" Value="5" />
+        <Setter Property="HorizontalOptions" Value="Center" />
+        <Setter Property="Margin" Value="0,0,0,14" />
+    </Style>
+    <Style x:Key="IdrakCodeBlock" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakCodeBackground}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 14" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="IdrakUserBubble" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushAccent}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 20,20,20,6" />
+        <Setter Property="Padding" Value="14,11" />
+        <Setter Property="HorizontalOptions" Value="End" />
+    </Style>
+    <Style x:Key="IdrakComposer" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface2}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakComposerStroke}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 27" />
+        <Setter Property="Padding" Value="6,6,6,6" />
+        <Setter Property="MinimumHeightRequest" Value="54" />
+    </Style>
+    <Style x:Key="IdrakSearchBox" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 14" />
+        <Setter Property="Padding" Value="13,0" />
+        <Setter Property="MinimumHeightRequest" Value="42" />
+    </Style>
+    <Style x:Key="IdrakNavBar" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakNavBackground}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 22" />
+        <Setter Property="HeightRequest" Value="58" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="IdrakNavPill" TargetType="Border">
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 14" />
+        <Setter Property="WidthRequest" Value="52" />
+        <Setter Property="HeightRequest" Value="28" />
+        <Setter Property="HorizontalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakRailPill" TargetType="Border">
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 16" />
+        <Setter Property="WidthRequest" Value="56" />
+        <Setter Property="HeightRequest" Value="32" />
+        <Setter Property="HorizontalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakNavLabel" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakTextFaint}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontSemiBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeMicro}" />
+        <Setter Property="HorizontalOptions" Value="Center" />
+        <Setter Property="LineBreakMode" Value="NoWrap" />
+    </Style>
+    <Style x:Key="IdrakLogoTile" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakGround}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 11" />
+        <Setter Property="WidthRequest" Value="34" />
+        <Setter Property="HeightRequest" Value="34" />
+        <Setter Property="Padding" Value="5" />
+    </Style>
+    <Style x:Key="IdrakAvatar" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushAvatar}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 11" />
+        <Setter Property="WidthRequest" Value="34" />
+        <Setter Property="HeightRequest" Value="34" />
+    </Style>
+    <Style x:Key="IdrakAvatarSmall" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushAvatar}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 7" />
+        <Setter Property="WidthRequest" Value="22" />
+        <Setter Property="HeightRequest" Value="22" />
+    </Style>
+    <Style x:Key="IdrakAvatarLetter" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakOnGradient}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontExtraBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
+        <Setter Property="HorizontalOptions" Value="Center" />
+        <Setter Property="VerticalOptions" Value="Center" />
+    </Style>
+
+    <!-- Chips, pills and the segmented control. -->
+    <Style x:Key="IdrakChipBorder" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface2}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 14" />
+        <Setter Property="Padding" Value="11,5" />
+        <Setter Property="MinimumHeightRequest" Value="28" />
+        <Setter Property="VerticalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakChipBorderOn" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushPill}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakSelectedStroke}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 14" />
+        <Setter Property="Padding" Value="11,5" />
+        <Setter Property="MinimumHeightRequest" Value="28" />
+        <Setter Property="VerticalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakChipLabel" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontSemiBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeSmall}" />
+        <Setter Property="VerticalOptions" Value="Center" />
+        <Setter Property="LineBreakMode" Value="NoWrap" />
+    </Style>
+    <Style x:Key="IdrakStatusDot" TargetType="Ellipse">
+        <Setter Property="Fill" Value="{DynamicResource IdrakGreen}" />
+        <Setter Property="WidthRequest" Value="7" />
+        <Setter Property="HeightRequest" Value="7" />
+        <Setter Property="VerticalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakRatePill" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakRateBackground}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakRateStroke}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 13" />
+        <Setter Property="Padding" Value="10,4" />
+        <Setter Property="VerticalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakThinkPill" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakThinkBackground}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakThinkStroke}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 14" />
+        <Setter Property="Padding" Value="11,5" />
+        <Setter Property="HorizontalOptions" Value="Start" />
+    </Style>
+    <Style x:Key="IdrakSegmentBar" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 14" />
+        <Setter Property="Padding" Value="4" />
+    </Style>
+    <Style x:Key="IdrakSegment" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 10" />
+        <Setter Property="Padding" Value="8,7" />
+    </Style>
+    <Style x:Key="IdrakSegmentOn" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface3}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 10" />
+        <Setter Property="Padding" Value="8,7" />
+    </Style>
+    <Style x:Key="IdrakIconButton" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 13" />
+        <Setter Property="WidthRequest" Value="40" />
+        <Setter Property="HeightRequest" Value="40" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="IdrakGradientIconButton" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushAccent}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 20" />
+        <Setter Property="WidthRequest" Value="40" />
+        <Setter Property="HeightRequest" Value="40" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="IdrakRoundButton" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface3}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 20" />
+        <Setter Property="WidthRequest" Value="40" />
+        <Setter Property="HeightRequest" Value="40" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="IdrakSideButton" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 17" />
+        <Setter Property="WidthRequest" Value="50" />
+        <Setter Property="HeightRequest" Value="50" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="IdrakRecordButton" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushRecord}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 41" />
+        <Setter Property="WidthRequest" Value="82" />
+        <Setter Property="HeightRequest" Value="82" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="IdrakRecordHalo" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakToneRoseBackground}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 61" />
+        <Setter Property="WidthRequest" Value="122" />
+        <Setter Property="HeightRequest" Value="122" />
+        <Setter Property="HorizontalOptions" Value="Center" />
+        <Setter Property="VerticalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakMeterTrack" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 2" />
+        <Setter Property="HeightRequest" Value="4" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+
+    <!-- The design's pieces: the carousel's slides, Home's tiles and previews, the recording and playing controls, the chat's parts. -->
+    <Style x:Key="IdrakSlide" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushHeroSky}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakSelectedStroke}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 28" />
+        <Setter Property="Padding" Value="22,20" />
+    </Style>
+    <Style x:Key="IdrakSlideText" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakTextSoft}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontRegular}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeCaption}" />
+        <Setter Property="LineHeight" Value="1.4" />
+        <Setter Property="Margin" Value="0,9,0,0" />
+        <Setter Property="MaxLines" Value="4" />
+        <Setter Property="LineBreakMode" Value="TailTruncation" />
+    </Style>
+    <Style x:Key="IdrakChatTile" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushChatTile}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakToneIndigoBackground}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 20" />
+        <Setter Property="Padding" Value="13" />
+    </Style>
+    <Style x:Key="IdrakTryTile" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 20" />
+        <Setter Property="Padding" Value="13" />
+    </Style>
+    <Style x:Key="IdrakPreviewUser" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushAccent}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 12,12,12,4" />
+        <Setter Property="Padding" Value="10,7" />
+        <Setter Property="HorizontalOptions" Value="End" />
+    </Style>
+    <Style x:Key="IdrakPreviewAnswer" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakSurface3}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 12,12,4,12" />
+        <Setter Property="Padding" Value="10,7" />
+        <Setter Property="HorizontalOptions" Value="Start" />
+    </Style>
+    <Style x:Key="IdrakPreviewText" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakChipText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontRegular}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeMicro}" />
+        <Setter Property="MaxLines" Value="2" />
+        <Setter Property="LineBreakMode" Value="TailTruncation" />
+    </Style>
+    <Style x:Key="IdrakSpokenLine" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakGreen}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontMedium}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeHeading}" />
+        <Setter Property="Margin" Value="0,18,0,0" />
+        <Setter Property="HorizontalTextAlignment" Value="End" />
+    </Style>
+    <Style x:Key="IdrakDashedButton" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="Transparent" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeDashArray" Value="4,3" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 14" />
+        <Setter Property="Padding" Value="0,10" />
+    </Style>
+    <Style x:Key="IdrakOpenPill" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakSurface3}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 10" />
+        <Setter Property="Padding" Value="12,6" />
+    </Style>
+    <Style x:Key="IdrakPlannedPanel" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakPlannedStroke}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeDashArray" Value="4,3" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 22" />
+        <Setter Property="Padding" Value="16,14" />
+    </Style>
+    <Style x:Key="IdrakPhotoFrame" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 24" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="IdrakModelCard" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 18" />
+        <Setter Property="Padding" Value="12,9" />
+        <Setter Property="MinimumHeightRequest" Value="54" />
+    </Style>
+    <Style x:Key="IdrakConversation" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="Transparent" />
+        <Setter Property="Stroke" Value="Transparent" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 14" />
+        <Setter Property="Padding" Value="12,11" />
+        <Setter Property="Margin" Value="0,3" />
+    </Style>
+    <Style x:Key="IdrakSuggestion" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 14" />
+        <Setter Property="Padding" Value="12,6" />
+    </Style>
+    <Style x:Key="IdrakStopPill" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakSurface2}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 13" />
+        <Setter Property="Padding" Value="11,4" />
+        <Setter Property="VerticalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakStopMark" TargetType="BoxView">
+        <Setter Property="Color" Value="{DynamicResource IdrakRed}" />
+        <Setter Property="CornerRadius" Value="2" />
+        <Setter Property="WidthRequest" Value="9" />
+        <Setter Property="HeightRequest" Value="9" />
+        <Setter Property="VerticalOptions" Value="Center" />
+        <Setter Property="HorizontalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakRoundButtonPlain" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="Transparent" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 20" />
+        <Setter Property="WidthRequest" Value="40" />
+        <Setter Property="HeightRequest" Value="40" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="IdrakAddButton" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="Transparent" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeDashArray" Value="3,3" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 10" />
+        <Setter Property="WidthRequest" Value="30" />
+        <Setter Property="HeightRequest" Value="30" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="IdrakStepChip" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakThinkBackground}" />
+        <Setter Property="Stroke" Value="{DynamicResource IdrakThinkStroke}" />
+        <Setter Property="StrokeThickness" Value="1" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 10" />
+        <Setter Property="Padding" Value="11,5" />
+    </Style>
+    <Style x:Key="IdrakStepLabel" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakThinkText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeSmall}" />
+        <Setter Property="VerticalOptions" Value="Center" />
+        <Setter Property="LineBreakMode" Value="NoWrap" />
+    </Style>
+    <Style x:Key="IdrakStateBadge" TargetType="Border">
+        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakRateBackground}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 8" />
+        <Setter Property="Padding" Value="8,3" />
+        <Setter Property="VerticalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakStateBadgeLabel" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakSuccess}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeMicro}" />
+        <Setter Property="LineBreakMode" Value="NoWrap" />
+    </Style>
+    <Style x:Key="IdrakRecordDot" TargetType="Ellipse">
+        <Setter Property="Fill" Value="{DynamicResource IdrakRed}" />
+        <Setter Property="WidthRequest" Value="8" />
+        <Setter Property="HeightRequest" Value="8" />
+        <Setter Property="VerticalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakRecordWord" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakRecordText}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontExtraBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeLabel}" />
+        <Setter Property="TextTransform" Value="Uppercase" />
+        <Setter Property="CharacterSpacing" Value="1" />
+        <Setter Property="VerticalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakPlayButton" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushAccent}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 36" />
+        <Setter Property="WidthRequest" Value="72" />
+        <Setter Property="HeightRequest" Value="72" />
+        <Setter Property="Padding" Value="0" />
+    </Style>
+    <Style x:Key="IdrakCaptionCentered" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakTextMuted}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontSemiBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeMicro}" />
+        <Setter Property="HorizontalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakAvatarLetterSmall" TargetType="Label">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakOnGradient}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontExtraBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeMicro}" />
+        <Setter Property="HorizontalOptions" Value="Center" />
+        <Setter Property="VerticalOptions" Value="Center" />
+    </Style>
+    <Style x:Key="IdrakWideGradientButton" TargetType="Button">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushAccent}" />
+        <Setter Property="TextColor" Value="{DynamicResource IdrakOnGradient}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeCaption}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource IdrakButtonCornerRadius}" />
+        <Setter Property="Padding" Value="14,8" />
+        <Setter Property="MinimumHeightRequest" Value="38" />
     </Style>
 
     <!-- A small mark beside a title (a planned feature's "planned"): the amber of the icon, readable in both themes. -->
@@ -100,68 +781,112 @@
         <Setter Property="BackgroundColor" Value="{DynamicResource IdrakBadgeBackground}" />
         <Setter Property="Stroke" Value="{DynamicResource IdrakBadgeStroke}" />
         <Setter Property="StrokeThickness" Value="1" />
-        <Setter Property="StrokeShape" Value="RoundRectangle 8" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 6" />
         <Setter Property="Padding" Value="{DynamicResource IdrakBadgePadding}" />
         <Setter Property="HorizontalOptions" Value="Start" />
         <Setter Property="VerticalOptions" Value="Center" />
     </Style>
     <Style x:Key="IdrakBadgeLabel" TargetType="Label">
         <Setter Property="TextColor" Value="{DynamicResource IdrakBadgeForeground}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
         <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBadge}" />
-        <Setter Property="FontAttributes" Value="Bold" />
         <Setter Property="LineBreakMode" Value="NoWrap" />
     </Style>
 
     <!-- Controls. -->
     <Style TargetType="Button">
-        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakAccent}" />
-        <Setter Property="TextColor" Value="{DynamicResource IdrakOnAccent}" />
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushAccent}" />
+        <Setter Property="TextColor" Value="{DynamicResource IdrakOnGradient}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
         <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
-        <Setter Property="CornerRadius" Value="{DynamicResource IdrakButtonCornerRadius}" />
-        <Setter Property="Padding" Value="16,10" />
+        <Setter Property="CornerRadius" Value="{DynamicResource IdrakPillCornerRadius}" />
+        <Setter Property="Padding" Value="18,10" />
+        <Setter Property="MinimumHeightRequest" Value="42" />
+    </Style>
+    <Style x:Key="IdrakGradientButton" TargetType="Button">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushAccent}" />
+        <Setter Property="TextColor" Value="{DynamicResource IdrakOnGradient}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource IdrakPillCornerRadius}" />
+        <Setter Property="Padding" Value="18,10" />
+        <Setter Property="MinimumHeightRequest" Value="40" />
+        <Setter Property="HorizontalOptions" Value="Start" />
     </Style>
     <Style x:Key="IdrakSecondaryButton" TargetType="Button">
-        <Setter Property="BackgroundColor" Value="Transparent" />
-        <Setter Property="TextColor" Value="{DynamicResource IdrakAccent}" />
-        <Setter Property="BorderColor" Value="{DynamicResource IdrakAccent}" />
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface2}" />
+        <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="BorderColor" Value="{DynamicResource IdrakLine2}" />
         <Setter Property="BorderWidth" Value="1" />
-        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
-        <Setter Property="CornerRadius" Value="{DynamicResource IdrakButtonCornerRadius}" />
-        <Setter Property="Padding" Value="16,10" />
-    </Style>
-    <!-- A choice to tap (a suggested model): the page's ground inside a card, so it stands out in both themes. -->
-    <Style x:Key="IdrakChip" TargetType="Button">
-        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakPageBackground}" />
-        <Setter Property="TextColor" Value="{DynamicResource IdrakAccent}" />
-        <Setter Property="BorderColor" Value="{DynamicResource IdrakCardStroke}" />
-        <Setter Property="BorderWidth" Value="1" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
         <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeCaption}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource IdrakButtonCornerRadius}" />
+        <Setter Property="Padding" Value="14,8" />
+        <Setter Property="MinimumHeightRequest" Value="38" />
+    </Style>
+    <Style x:Key="IdrakGhostButton" TargetType="Button">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface}" />
+        <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="BorderColor" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="BorderWidth" Value="1" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
+        <Setter Property="CornerRadius" Value="{DynamicResource IdrakPillCornerRadius}" />
+        <Setter Property="Padding" Value="18,10" />
+        <Setter Property="HorizontalOptions" Value="Start" />
+    </Style>
+    <!-- A choice to tap (a suggested model, a processor, a transform). -->
+    <Style x:Key="IdrakChip" TargetType="Button">
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface2}" />
+        <Setter Property="TextColor" Value="{DynamicResource IdrakChipText}" />
+        <Setter Property="BorderColor" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="BorderWidth" Value="1" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontSemiBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeSmall}" />
         <Setter Property="CornerRadius" Value="{DynamicResource IdrakChipCornerRadius}" />
         <Setter Property="Padding" Value="{DynamicResource IdrakChipPadding}" />
         <Setter Property="Margin" Value="{DynamicResource IdrakChipMargin}" />
+        <Setter Property="MinimumHeightRequest" Value="30" />
     </Style>
-    <!-- What deletes something (removing a model). -->
+    <!-- What deletes something (removing a model) or stops what runs. -->
     <Style x:Key="IdrakDangerButton" TargetType="Button">
-        <Setter Property="BackgroundColor" Value="Transparent" />
+        <Setter Property="Background" Value="{DynamicResource IdrakSurface2}" />
         <Setter Property="TextColor" Value="{DynamicResource IdrakError}" />
-        <Setter Property="BorderColor" Value="{DynamicResource IdrakError}" />
+        <Setter Property="BorderColor" Value="{DynamicResource IdrakLine2}" />
         <Setter Property="BorderWidth" Value="1" />
-        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontBold}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeCaption}" />
         <Setter Property="CornerRadius" Value="{DynamicResource IdrakButtonCornerRadius}" />
         <Setter Property="Padding" Value="{DynamicResource IdrakChipPadding}" />
+        <Setter Property="MinimumHeightRequest" Value="34" />
     </Style>
     <Style TargetType="Entry">
         <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
-        <Setter Property="PlaceholderColor" Value="{DynamicResource IdrakTextMuted}" />
+        <Setter Property="PlaceholderColor" Value="{DynamicResource IdrakTextFaint}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontRegular}" />
         <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
+    </Style>
+    <Style TargetType="Editor">
+        <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+        <Setter Property="PlaceholderColor" Value="{DynamicResource IdrakTextFaint}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontRegular}" />
+        <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
+        <Setter Property="BackgroundColor" Value="Transparent" />
     </Style>
     <Style TargetType="Picker">
         <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
         <Setter Property="TitleColor" Value="{DynamicResource IdrakTextMuted}" />
+        <Setter Property="FontFamily" Value="{DynamicResource IdrakFontSemiBold}" />
         <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBody}" />
     </Style>
     <Style TargetType="Switch">
-        <Setter Property="OnColor" Value="{DynamicResource IdrakAccent}" />
+        <Setter Property="OnColor" Value="{DynamicResource IdrakGradientEnd}" />
+        <Setter Property="ThumbColor" Value="{DynamicResource IdrakWhite}" />
+    </Style>
+    <Style TargetType="Slider">
+        <Setter Property="MinimumTrackColor" Value="{DynamicResource IdrakAccent}" />
+        <Setter Property="MaximumTrackColor" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="ThumbColor" Value="{DynamicResource IdrakWhite}" />
     </Style>
     <Style TargetType="ProgressBar">
         <Setter Property="ProgressColor" Value="{DynamicResource IdrakAccent}" />
@@ -171,5 +896,10 @@
     </Style>
     <Style TargetType="RefreshView">
         <Setter Property="RefreshColor" Value="{DynamicResource IdrakAccent}" />
+    </Style>
+    <Style TargetType="IndicatorView">
+        <Setter Property="IndicatorColor" Value="{DynamicResource IdrakLine2}" />
+        <Setter Property="SelectedIndicatorColor" Value="{DynamicResource IdrakAccent}" />
+        <Setter Property="IndicatorSize" Value="6" />
     </Style>
 </ResourceDictionary>

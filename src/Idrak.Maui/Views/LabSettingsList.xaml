@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- A lab's settings (kept between runs; an empty field is the default, shown in it): a field or a picker each, and why a value was refused. -->
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+             xmlns:views="clr-namespace:Idrak.Maui.Views"
+             x:Class="Idrak.Maui.Views.LabSettingsList">
+    <ContentView.Resources>
+        <DataTemplate x:Key="LabSetting" x:DataType="vm:LabSettingEntry">
+            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}" Padding="{DynamicResource IdrakSettingRowPadding}">
+                <Label Text="{Binding Title}" Style="{DynamicResource IdrakItemTitle}" />
+                <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" />
+                <Entry Text="{Binding Text}" Placeholder="{Binding Placeholder}" Keyboard="{Binding Keyboard}" IsVisible="{Binding IsEntry}"
+                       IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" ClearButtonVisibility="WhileEditing" />
+                <Picker ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}" IsVisible="{Binding IsChoice}" Title="{Binding Title}" />
+                <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+            </VerticalStackLayout>
+        </DataTemplate>
+        <DataTemplate x:Key="TranscribeSetting" x:DataType="vm:TranscribeSettingEntry">
+            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}" Padding="{DynamicResource IdrakSettingRowPadding}">
+                <Label Text="{Binding Title}" Style="{DynamicResource IdrakItemTitle}" />
+                <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" />
+                <Entry Text="{Binding Text}" Placeholder="{Binding Placeholder}" Keyboard="{Binding Keyboard}" IsVisible="{Binding IsEntry}"
+                       IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" ClearButtonVisibility="WhileEditing" />
+                <Picker ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}" IsVisible="{Binding IsChoice}" Title="{Binding Title}" />
+                <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+            </VerticalStackLayout>
+        </DataTemplate>
+    </ContentView.Resources>
+
+    <Border Style="{DynamicResource IdrakPanel}">
+        <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+            <Label x:Name="Heading" Text="Settings" Style="{DynamicResource IdrakHeading}" />
+            <Label Text="Kept between runs. An empty field is the default, shown in it." Style="{DynamicResource IdrakCaption}" />
+            <VerticalStackLayout x:Name="Items" />
+            <Button x:Name="Keep" Text="Keep these settings" Style="{DynamicResource IdrakGradientButton}" />
+        </VerticalStackLayout>
+    </Border>
+</ContentView>

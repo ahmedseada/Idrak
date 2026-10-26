@@ -1,0 +1,113 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css"><link rel="stylesheet" href="tab.css">
+<style>
+body { background: radial-gradient(60% 60% at 75% -10%, rgba(56,189,248,.14), transparent 60%), radial-gradient(50% 60% at 10% 40%, rgba(99,102,241,.12), transparent 60%), var(--bg); }
+.main { padding: 22px 28px 0; }
+.hd { display: flex; justify-content: space-between; align-items: center; height: 54px; }
+.hd h1 { font-size: 30px; font-weight: 800; letter-spacing: -.8px; }
+.hd small { font-size: 12px; color: var(--faint); font-weight: 600; display: block; margin-top: 1px; }
+.hd .r { display: flex; gap: 10px; }
+.cols { display: flex; gap: 22px; margin-top: 14px; }
+.left { width: 720px; }
+.right { flex: 1; display: flex; flex-direction: column; gap: 14px; }
+.car { position: relative; height: 286px; overflow: hidden; border-radius: 30px; }
+.slides { display: flex; gap: 14px; }
+.slide { flex: 0 0 650px; height: 286px; border-radius: 30px; position: relative; overflow: hidden; padding: 30px 32px; }
+.s1 { background: linear-gradient(135deg, #13203f 0%, #101a33 50%, #1d1f52 100%); border: 1px solid rgba(56,189,248,.25); }
+.s2 { background: linear-gradient(145deg, #2a1f0c, #1a1408); border: 1px solid rgba(245,158,11,.3); }
+.kicker { font-size: 11px; font-weight: 800; letter-spacing: 1.5px; color: var(--sky); display: flex; align-items: center; gap: 7px; }
+.kicker .ico { width: 14px; height: 14px; }
+.slide h2 { font-size: 40px; line-height: 1.08; font-weight: 800; letter-spacing: -1.3px; margin-top: 14px; max-width: 380px; }
+.slide h2 em { font-style: normal; background: linear-gradient(90deg, #7dd3fc, #a5b4fc); -webkit-background-clip: text; color: transparent; }
+.slide p { font-size: 14px; line-height: 1.5; color: #aab6cf; margin-top: 12px; max-width: 360px; }
+.btns { position: absolute; left: 32px; bottom: 28px; display: flex; gap: 10px; }
+.cta { height: 42px; padding: 0 18px; border-radius: 21px; background: linear-gradient(135deg, #38bdf8, #6366f1); color: #fff; font-size: 14px; font-weight: 700; display: flex; align-items: center; gap: 8px; box-shadow: 0 8px 22px rgba(56,189,248,.35); }
+.cta .ico { width: 16px; height: 16px; }
+.ghost { height: 42px; padding: 0 18px; border-radius: 21px; border: 1px solid var(--line2); background: rgba(255,255,255,.03); font-size: 14px; font-weight: 700; display: flex; align-items: center; }
+.art { position: absolute; right: 26px; top: 30px; width: 226px; height: 226px; }
+.glow { position: absolute; right: 50px; top: 50px; width: 190px; height: 190px; border-radius: 50%; background: radial-gradient(circle, rgba(56,189,248,.35), transparent 65%); }
+.dots { display: flex; gap: 6px; padding: 12px 4px 0; align-items: center; }
+.dots i { width: 6px; height: 6px; border-radius: 3px; background: var(--line2); display: block; }
+.dots i.on { width: 24px; background: var(--sky); }
+.dots span { margin-left: auto; font-size: 12px; color: var(--faint); font-weight: 600; }
+.sect { display: flex; justify-content: space-between; align-items: baseline; padding: 16px 4px 10px; }
+.sect a { font-size: 12.5px; font-weight: 700; color: var(--sky); }
+.bento { display: grid; grid-template-columns: 1.6fr 1fr 1fr 1fr; gap: 12px; }
+.tile { border-radius: 22px; background: var(--surface); border: 1px solid var(--line); padding: 15px; height: 236px; position: relative; overflow: hidden; }
+.tile .t { font-size: 15px; font-weight: 700; margin-top: 12px; }
+.tile .d { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+.badge { width: 38px; height: 38px; border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+.badge .ico { width: 20px; height: 20px; }
+.big { background: linear-gradient(140deg, #121c36, #17163d); border-color: rgba(99,102,241,.25); }
+.pv { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; } .pv .u { align-self: flex-end; } .pv .a { align-self: flex-start; }
+.b { font-size: 11px; padding: 7px 10px; border-radius: 12px; line-height: 1.3; margin-top: 6px; display: inline-block; }
+.b.u { background: linear-gradient(135deg, #38bdf8, #6366f1); color: #fff; border-bottom-right-radius: 4px; }
+.b.a { background: var(--surface3); color: #c7d2e8; border-bottom-left-radius: 4px; }
+.speed { position: absolute; left: 15px; bottom: 14px; font-size: 11.5px; color: var(--green); font-weight: 700; display: flex; gap: 5px; align-items: center; }
+.speed .ico { width: 13px; height: 13px; }
+.wave { position: absolute; left: 15px; right: 15px; bottom: 18px; display: flex; gap: 3px; align-items: center; height: 80px; }
+.wave i { flex: 1; border-radius: 2px; background: var(--violet); display: block; }
+.say { margin-top: 22px; font-size: 16px; color: #a7f3d0; direction: rtl; text-align: right; line-height: 1.5; }
+.thumb { position: absolute; left: 15px; right: 15px; bottom: 14px; height: 100px; border-radius: 10px; background: #e9e4d6; transform: rotate(-3deg); padding: 12px 14px; box-shadow: 0 8px 20px rgba(0,0,0,.4); } .thumb i { display: block; height: 5px; border-radius: 3px; background: #9b9484; margin-top: 7px; } .scan { position: absolute; left: 10px; right: 10px; top: 46%; height: 2px; background: var(--amber); box-shadow: 0 0 12px var(--amber); }
+.card { border-radius: 24px; background: var(--surface); border: 1px solid var(--line); padding: 18px; }
+.card h3 { font-size: 15px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; }
+.card h3 a { font-size: 12px; color: var(--sky); }
+.m { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+.m .ic { width: 38px; height: 38px; border-radius: 12px; background: var(--surface3); display: flex; align-items: center; justify-content: center; color: var(--muted); flex: none; }
+.m .ic .ico { width: 19px; height: 19px; }
+.m .k { font-size: 12px; color: var(--muted); font-weight: 600; }
+.m .v { font-size: 15px; font-weight: 700; margin-top: 1px; }
+.m .x { margin-left: auto; text-align: right; font-size: 11.5px; color: var(--faint); font-weight: 600; }
+.bar { height: 4px; border-radius: 2px; background: var(--line2); margin-top: 6px; width: 120px; margin-left: auto; }
+.bar i { display: block; height: 4px; border-radius: 2px; background: linear-gradient(90deg, var(--green), var(--sky)); }
+.ok { color: var(--green); }
+.mod { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid var(--line); }
+.mod:first-of-type { border-top: 0; }
+.mod .av { width: 34px; height: 34px; border-radius: 11px; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; flex: none; }
+.mod b { font-size: 13.5px; display: block; }
+.mod span { font-size: 11.5px; color: var(--muted); }
+.mod .sz { margin-left: auto; font-size: 12px; color: var(--faint); font-weight: 600; }
+.pull { margin-top: 10px; height: 40px; border-radius: 14px; border: 1px dashed var(--line2); display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 13px; font-weight: 700; color: var(--sky); }
+.pull .ico { width: 17px; height: 17px; }
+</style></head>
+<body data-tab="home">
+<div class="main">
+  <div class="hd"><div><h1>Idrak</h1><small>main · 628b6bb · on this tablet</small></div><div class="r"><div class="chip"><i class="dot"></i>GPU ready</div><div class="chip">vulkan:0 · default</div></div></div>
+  <div class="cols">
+    <div class="left">
+      <div class="car"><div class="slides">
+        <div class="slide s1"><div class="glow"></div>
+          <svg class="art" viewBox="0 0 512 512"><g stroke="#38bdf8" stroke-width="14" stroke-linecap="round" opacity=".9"><line x1="160" y1="140" x2="352" y2="140"/><line x1="256" y1="140" x2="256" y2="372"/><line x1="160" y1="372" x2="352" y2="372"/><line x1="160" y1="140" x2="256" y2="256"/><line x1="352" y1="140" x2="256" y2="256"/><line x1="160" y1="372" x2="256" y2="256"/><line x1="352" y1="372" x2="256" y2="256"/></g><g fill="#f59e0b"><circle cx="160" cy="140" r="30"/><circle cx="352" cy="140" r="30"/><circle cx="160" cy="372" r="30"/><circle cx="352" cy="372" r="30"/></g><g fill="#fff"><circle cx="256" cy="140" r="24"/><circle cx="256" cy="372" r="24"/><circle cx="256" cy="256" r="38"/></g></svg>
+          <div class="kicker"><span data-i="spark"></span>WHAT IS IDRAK</div>
+          <h2>AI that runs <em>on this tablet.</em></h2>
+          <p>Language, speech and vision models in pure .NET, on the CPU and the device's own GPU. Nothing leaves it.</p>
+          <div class="btns"><div class="cta">Start a chat <span data-i="arrow"></span></div><div class="ghost">How it works</div></div>
+        </div>
+        <div class="slide s2"></div>
+      </div></div>
+      <div class="dots"><i class="on"></i><i></i><i></i><i></i><span>1 of 4 · The library</span></div>
+      <div class="sect"><div class="label">Try it</div><a>All labs</a></div>
+      <div class="bento">
+        <div class="tile big"><div class="badge" style="background:rgba(99,102,241,.18);color:#a5b4fc"><span data-i="chat"></span></div><div class="t">Chat</div><div class="d">Qwen3 0.6B · int8</div><div class="pv"><div class="b u">Summarise this in Arabic</div><div class="b a">بالتأكيد! إليك الملخص…</div></div><div class="speed"><span data-i="zap"></span>17.4 tok/s on GPU</div></div>
+        <div class="tile"><div class="badge" style="background:rgba(167,139,250,.16);color:var(--violet)"><span data-i="mic"></span></div><div class="t">Transcribe</div><div class="d">Live speech</div><div class="wave"><i style="height:18px"></i><i style="height:40px"></i><i style="height:66px"></i><i style="height:30px"></i><i style="height:58px"></i><i style="height:20px"></i><i style="height:44px"></i><i style="height:72px"></i><i style="height:26px"></i><i style="height:50px"></i><i style="height:34px"></i><i style="height:62px"></i></div></div>
+        <div class="tile"><div class="badge" style="background:rgba(245,158,11,.16);color:var(--amber)"><span data-i="ocr"></span></div><div class="t">Read text</div><div class="d">Photo to text</div><div class="thumb"><i style="width:70%"></i><i></i><i style="width:85%"></i><i style="width:60%"></i><i style="width:90%"></i><div class="scan"></div></div></div>
+        <div class="tile"><div class="badge" style="background:rgba(52,211,153,.14);color:var(--green)"><span data-i="speak"></span></div><div class="t">Speak</div><div class="d">Text to voice</div><div class="say">“مرحبا بكم في إدراك”</div><div class="speed" style="color:var(--muted)">12× real time</div></div>
+      </div>
+    </div>
+    <div class="right">
+      <div class="card"><h3>This tablet, measured <a>Devices</a></h3>
+        <div class="m"><div class="ic"><span data-i="cpu"></span></div><div><div class="k">CPU</div><div class="v">8 cores · NEON</div></div><div class="x">2 core groups</div></div>
+        <div class="m"><div class="ic" style="color:var(--sky)"><span data-i="zap"></span></div><div><div class="k">GPU</div><div class="v">Vulkan <span class="ok">● ready</span></div></div><div class="x">kernels 64 wide<br>measured</div></div>
+        <div class="m"><div class="ic"><span data-i="db"></span></div><div><div class="k">Memory</div><div class="v">3.1 GB free</div></div><div class="x">of 5.6 GB<div class="bar"><i style="width:55%"></i></div></div></div>
+      </div>
+      <div class="card"><h3>Models on this tablet <a>Models</a></h3>
+        <div class="mod" style="margin-top:6px"><div class="av" style="background:linear-gradient(135deg,#6366f1,#38bdf8)">Q</div><div><b>Qwen3 0.6B</b><span>chat · int8 · loaded</span></div><div class="sz">734 MB</div></div>
+        <div class="mod"><div class="av" style="background:rgba(167,139,250,.2);color:var(--violet)">W</div><div><b>whisper-tiny</b><span>speech · ready</span></div><div class="sz">151 MB</div></div>
+        <div class="mod"><div class="av" style="background:rgba(52,211,153,.16);color:var(--green)">V</div><div><b>mms-tts-ara</b><span>voice · ready</span></div><div class="sz">145 MB</div></div>
+        <div class="pull"><span data-i="down"></span>Pull a model</div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="tab.js"></script><script src="icons.js"></script>
+</body></html>

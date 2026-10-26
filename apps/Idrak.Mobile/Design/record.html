@@ -1,0 +1,83 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+body { background: radial-gradient(90% 45% at 50% 22%, rgba(167,139,250,.18), transparent 65%), var(--bg); }
+.hd { padding: 4px 20px 0; display: flex; align-items: center; justify-content: space-between; }
+.hd h2 { font-size: 26px; font-weight: 800; letter-spacing: -.6px; }
+.seg { margin: 12px 20px 0; height: 42px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); display: flex; padding: 4px; gap: 4px; }
+.seg div { flex: 1; border-radius: 10px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; font-weight: 700; color: var(--muted); }
+.seg div svg { width: 16px; height: 16px; }
+.seg .on { background: var(--surface3); color: var(--text); box-shadow: 0 2px 10px rgba(0,0,0,.35); }
+.chips { display: flex; gap: 8px; padding: 12px 20px 0; }
+.chips .chip svg { width: 14px; height: 14px; }
+.viz { margin: 14px 20px 0; height: 196px; border-radius: 26px; background: linear-gradient(180deg, rgba(167,139,250,.10), rgba(56,189,248,.04)); border: 1px solid rgba(167,139,250,.22); position: relative; overflow: hidden; }
+.rec { position: absolute; left: 16px; top: 14px; display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 800; letter-spacing: 1px; color: #fda4af; }
+.rec i { width: 8px; height: 8px; border-radius: 50%; background: var(--red); box-shadow: 0 0 0 4px rgba(244,63,94,.2), 0 0 12px rgba(244,63,94,.8); display: block; }
+.time { position: absolute; right: 16px; top: 10px; font-family: "JetBrains Mono"; font-size: 22px; font-weight: 700; letter-spacing: -.5px; }
+.time small { font-size: 14px; color: var(--muted); }
+.bars { position: absolute; left: 14px; right: 14px; top: 46px; height: 120px; display: flex; align-items: center; justify-content: space-between; }
+.bars i { width: 3.4px; border-radius: 2px; display: block; }
+.head { position: absolute; left: 76%; top: 40px; bottom: 28px; width: 2px; background: linear-gradient(180deg, transparent, #7dd3fc, transparent); }
+.foot { position: absolute; left: 16px; right: 16px; bottom: 10px; display: flex; justify-content: space-between; font-size: 10.5px; color: var(--muted); font-weight: 600; }
+.foot b { color: var(--text); font-weight: 700; }
+.foot .ok { color: var(--green); }
+.tx { margin: 12px 20px 0; border-radius: 22px; background: var(--surface); border: 1px solid var(--line); padding: 14px 16px; height: 222px; position: relative; overflow: hidden; }
+.tx .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.tx .acts { display: flex; gap: 14px; color: var(--muted); }
+.tx .acts svg { width: 17px; height: 17px; }
+.segm { display: flex; gap: 10px; margin-top: 9px; }
+.segm .ts { font-family: "JetBrains Mono"; font-size: 10.5px; color: var(--faint); padding-top: 3px; width: 34px; flex: none; }
+.segm p { font-size: 14px; line-height: 1.5; color: #dbe3f2; }
+.tent { color: var(--faint); font-style: italic; }
+.caret { display: inline-block; width: 2px; height: 16px; background: var(--violet); vertical-align: -3px; margin-left: 2px; box-shadow: 0 0 8px var(--violet); }
+.fade { position: absolute; left: 0; right: 0; top: 34px; height: 28px; background: linear-gradient(180deg, var(--surface), rgba(15,23,41,0)); }
+.ctl { position: absolute; left: 0; right: 0; bottom: 100px; display: flex; align-items: center; justify-content: center; gap: 34px; }
+.side { width: 50px; height: 50px; border-radius: 17px; background: var(--surface); border: 1px solid var(--line2); display: flex; align-items: center; justify-content: center; color: var(--text); }
+.side svg { width: 21px; height: 21px; }
+.cap { font-size: 10.5px; color: var(--muted); text-align: center; margin-top: 6px; font-weight: 600; }
+.big { width: 82px; height: 82px; border-radius: 50%; display: flex; align-items: center; justify-content: center; position: relative; background: radial-gradient(circle at 30% 30%, #fb7185, #e11d48); box-shadow: 0 0 0 9px rgba(244,63,94,.16), 0 0 0 20px rgba(244,63,94,.07), 0 14px 40px rgba(225,29,72,.5); }
+.big i { width: 26px; height: 26px; border-radius: 7px; background: #fff; display: block; }
+</style></head>
+<body>
+<div class="status"><span>9:41</span><div class="icons"><svg width="17" height="12" viewBox="0 0 17 12"><rect x="0" y="8" width="3" height="4" rx="1" fill="#eaf0fa"/><rect x="4.5" y="5.5" width="3" height="6.5" rx="1" fill="#eaf0fa"/><rect x="9" y="3" width="3" height="9" rx="1" fill="#eaf0fa"/><rect x="13.5" y="0" width="3" height="12" rx="1" fill="#eaf0fa"/></svg><svg width="25" height="12" viewBox="0 0 25 12"><rect x=".5" y=".5" width="21" height="11" rx="3" stroke="#eaf0fa" fill="none" opacity=".5"/><rect x="2" y="2" width="15" height="8" rx="1.5" fill="#eaf0fa"/></svg></div></div>
+
+<div class="hd"><h2>Voice</h2><div class="iconbtn"><svg class="ico" viewBox="0 0 24 24"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg></div></div>
+<div class="seg">
+  <div class="on"><svg class="ico" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>Transcribe</div>
+  <div><svg class="ico" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/></svg>Speak</div>
+  <div><svg class="ico" viewBox="0 0 24 24"><path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10"/></svg>Studio</div>
+</div>
+<div class="chips">
+  <span class="chip"><i class="dot"></i>whisper-tiny · cpu</span>
+  <span class="chip">Auto · EN</span>
+  <span class="chip" style="color:#c4b5fd;border-color:rgba(167,139,250,.35)"><svg class="ico" viewBox="0 0 24 24"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>denoise</span>
+</div>
+
+<div class="viz">
+  <div class="rec"><i></i>LISTENING</div>
+  <div class="time">00:42<small>.6</small></div>
+  <div class="bars"><i style="height:30px;background:var(--violet)"></i><i style="height:39px;background:var(--violet)"></i><i style="height:54px;background:var(--violet)"></i><i style="height:56px;background:var(--violet)"></i><i style="height:73px;background:var(--violet)"></i><i style="height:78px;background:var(--violet)"></i><i style="height:76px;background:var(--violet)"></i><i style="height:95px;background:var(--violet)"></i><i style="height:83px;background:var(--violet)"></i><i style="height:99px;background:var(--violet)"></i><i style="height:86px;background:var(--violet)"></i><i style="height:86px;background:var(--violet)"></i><i style="height:95px;background:var(--violet)"></i><i style="height:102px;background:var(--violet)"></i><i style="height:75px;background:var(--violet)"></i><i style="height:71px;background:var(--violet)"></i><i style="height:71px;background:var(--violet)"></i><i style="height:65px;background:var(--violet)"></i><i style="height:48px;background:var(--violet)"></i><i style="height:36px;background:var(--violet)"></i><i style="height:35px;background:var(--violet)"></i><i style="height:42px;background:var(--violet)"></i><i style="height:61px;background:var(--violet)"></i><i style="height:63px;background:var(--violet)"></i><i style="height:68px;background:var(--violet)"></i><i style="height:74px;background:var(--violet)"></i><i style="height:85px;background:var(--violet)"></i><i style="height:107px;background:var(--violet)"></i><i style="height:89px;background:var(--violet)"></i><i style="height:104px;background:var(--violet)"></i><i style="height:106px;background:var(--violet)"></i><i style="height:95px;background:var(--violet)"></i><i style="height:97px;background:var(--violet)"></i><i style="height:77px;background:var(--violet)"></i><i style="height:71px;background:var(--violet)"></i><i style="height:68px;background:var(--violet)"></i><i style="height:68px;background:var(--violet)"></i><i style="height:53px;background:var(--violet)"></i><i style="height:42px;background:var(--violet)"></i><i style="height:32px;background:var(--violet)"></i><i style="height:39px;background:var(--violet)"></i><i style="height:48px;background:var(--violet)"></i><i style="height:66px;background:var(--violet)"></i><i style="height:75px;background:var(--violet)"></i><i style="height:73px;background:#7dd3fc"></i><i style="height:89px;background:#7dd3fc"></i><i style="height:94px;background:#7dd3fc"></i><i style="height:111px;background:#7dd3fc"></i><i style="height:109px;background:#7dd3fc"></i><i style="height:93px;background:#7dd3fc"></i><i style="height:62px;background:#7dd3fc"></i><i style="height:61px;background:#7dd3fc"></i><i style="height:48px;background:rgba(148,163,184,.25)"></i><i style="height:81px;background:rgba(148,163,184,.25)"></i><i style="height:76px;background:rgba(148,163,184,.25)"></i><i style="height:56px;background:rgba(148,163,184,.25)"></i><i style="height:49px;background:rgba(148,163,184,.25)"></i><i style="height:45px;background:rgba(148,163,184,.25)"></i></div>
+  <div class="head"></div>
+  <div class="foot"><span>heard <b>41.9 s</b></span><span class="ok">● model 0.3 s behind</span><span>level <b>−18 dB</b></span></div>
+</div>
+
+<div class="tx">
+  <div class="row"><div class="label">Live transcript</div><div class="acts"><svg class="ico" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><svg class="ico" viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg></div></div>
+  <div class="segm"><span class="ts">00:12</span><p>Everything you hear is transcribed on the phone itself, with no server in between.</p></div>
+  <div class="segm"><span class="ts">00:31</span><p>The words settle once two readings agree, <span class="tent">and the rest stay light until they</span><span class="caret"></span></p></div>
+</div>
+
+<div class="ctl">
+  <div><div class="side"><svg class="ico" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-6M9 15l3 3 3-3"/></svg></div><div class="cap">File</div></div>
+  <div><div class="big"><i></i></div></div>
+  <div><div class="side"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M4.2 7.5l2.6 1.5M17.2 15l2.6 1.5M4.2 16.5l2.6-1.5M17.2 9l2.6-1.5"/><circle cx="12" cy="12" r="3"/></svg></div><div class="cap">Tune</div></div>
+</div>
+
+<div class="nav"><div class="nav-inner">
+  <div class="tab"><div class="pill"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg></div>Home</div>
+  <div class="tab"><div class="pill"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.8 7L4 20.5l1.5-4.6A8 8 0 1 1 21 12z"/></svg></div>Chat</div>
+  <div class="tab on"><div class="pill"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>Voice</div>
+  <div class="tab"><div class="pill"><svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="12" r="3.2"/></svg></div>Vision</div>
+</div></div>
+<div class="gesture"></div>
+</body></html>

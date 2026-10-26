@@ -2,7 +2,6 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Numerics;
-using System.Text.RegularExpressions;
 using Idrak.Maui.Abstractions;
 using Idrak.Maui.Theme;
 using Idrak.Maui.ViewModels;
@@ -220,14 +219,9 @@ internal static partial class MauiTests
             Check(!Get("IdrakBadgeStroke").Equals(Get("IdrakFlyoutBackground")), $"{theme}: the mark's edge is the menu's ground");
         }
 
-        // Sizes, spacing and colours on these pages come from theme keys ({DynamicResource ...}), never a literal.
-        var literal = new Regex("""\b(TextColor|BackgroundColor|BorderColor|Stroke|StrokeThickness|FontSize|Padding|Margin|Spacing|ColumnSpacing|RowSpacing)="(?!\{)""");
-        foreach (string file in (string[])[Path.Combine("apps", "Idrak.Mobile", "MenuPage.xaml"), Path.Combine("src", "Idrak.Maui", "Views", "PlaceholderPage.xaml")])
-        {
-            string xaml = File.ReadAllText(Path.Combine(RepositoryRoot(), file));
-            var found = literal.Matches(xaml).Select(m => m.Value).ToList();
-            Check(found.Count == 0, $"{file} sets {string.Join(", ", found)} without a theme key");
-            Check(xaml.Contains("IdrakBadge", StringComparison.Ordinal), $"{file} has no planned mark");
-        }
+        // The placeholder (a planned lab) shows the mark; every page's sizes, spacing and colours are theme keys (ThemeKeysEverywhere).
+        string xaml = File.ReadAllText(Path.Combine(RepositoryRoot(), "src", "Idrak.Maui", "Views", "PlaceholderView.xaml"));
+        Check(xaml.Contains("IdrakBadge", StringComparison.Ordinal), "the placeholder view has no planned mark");
+        ThemeKeysOnly(Path.Combine("src", "Idrak.Maui", "Views", "PlaceholderView.xaml"));
     }
 }

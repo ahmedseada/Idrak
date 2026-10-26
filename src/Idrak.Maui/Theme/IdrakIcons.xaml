@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Idrak's icons (plan 34, phase R): the approved design's stroke icons (apps/Idrak.Mobile/Design/icons.js, a 24-unit
+  view box, drawn with round caps and joins and no fill), as path geometries. Rectangles, circles and ellipses are written
+  as paths. Each key is IdrakIcon and the icon's name ("IdrakIconHome"); IdrakIcons.Get("home") gives the same geometry
+  to code. An IconView draws one at any size in the theme's colour.
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                    x:Class="Idrak.Maui.Theme.IdrakIconDictionary">
+    <PathGeometry x:Key="IdrakIconHome" Figures="M 3 10.5 12 3 l 9 7.5 V 20 a 1 1 0 0 1 -1 1 h -5 v -6 h -6 v 6 H 4 a 1 1 0 0 1 -1 -1 z" />
+    <PathGeometry x:Key="IdrakIconChat" Figures="M 21 12 a 8 8 0 0 1 -11.8 7 L 4 20.5 l 1.5 -4.6 A 8 8 0 1 1 21 12 z" />
+    <PathGeometry x:Key="IdrakIconMic" Figures="M 12 3 H 12 A 3 3 0 0 1 15 6 V 11 A 3 3 0 0 1 12 14 H 12 A 3 3 0 0 1 9 11 V 6 A 3 3 0 0 1 12 3 Z M 5 11 a 7 7 0 0 0 14 0 M 12 18 v 3" />
+    <PathGeometry x:Key="IdrakIconVision" Figures="M 4 8 V 5 a 1 1 0 0 1 1 -1 h 3 M 16 4 h 3 a 1 1 0 0 1 1 1 v 3 M 20 16 v 3 a 1 1 0 0 1 -1 1 h -3 M 8 20 H 5 a 1 1 0 0 1 -1 -1 v -3 M 8.8 12 A 3.2 3.2 0 1 0 15.2 12 A 3.2 3.2 0 1 0 8.8 12 Z" />
+    <PathGeometry x:Key="IdrakIconOcr" Figures="M 4 8 V 5 a 1 1 0 0 1 1 -1 h 3 M 16 4 h 3 a 1 1 0 0 1 1 1 v 3 M 20 16 v 3 a 1 1 0 0 1 -1 1 h -3 M 8 20 H 5 a 1 1 0 0 1 -1 -1 v -3 M 8 9 h 8 M 8 12 h 8 M 8 15 h 5" />
+    <PathGeometry x:Key="IdrakIconGrid" Figures="M 5.5 4 H 8.5 A 1.5 1.5 0 0 1 10 5.5 V 8.5 A 1.5 1.5 0 0 1 8.5 10 H 5.5 A 1.5 1.5 0 0 1 4 8.5 V 5.5 A 1.5 1.5 0 0 1 5.5 4 Z M 15.5 4 H 18.5 A 1.5 1.5 0 0 1 20 5.5 V 8.5 A 1.5 1.5 0 0 1 18.5 10 H 15.5 A 1.5 1.5 0 0 1 14 8.5 V 5.5 A 1.5 1.5 0 0 1 15.5 4 Z M 5.5 14 H 8.5 A 1.5 1.5 0 0 1 10 15.5 V 18.5 A 1.5 1.5 0 0 1 8.5 20 H 5.5 A 1.5 1.5 0 0 1 4 18.5 V 15.5 A 1.5 1.5 0 0 1 5.5 14 Z M 15.5 14 H 18.5 A 1.5 1.5 0 0 1 20 15.5 V 18.5 A 1.5 1.5 0 0 1 18.5 20 H 15.5 A 1.5 1.5 0 0 1 14 18.5 V 15.5 A 1.5 1.5 0 0 1 15.5 14 Z" />
+    <PathGeometry x:Key="IdrakIconGear" Figures="M 9 12 A 3 3 0 1 0 15 12 A 3 3 0 1 0 9 12 Z M 12 2 v 3 M 12 19 v 3 M 4.9 4.9 l 2.1 2.1 M 17 17 l 2.1 2.1 M 2 12 h 3 M 19 12 h 3 M 4.9 19.1 7 17 M 17 7 l 2.1 -2.1" />
+    <PathGeometry x:Key="IdrakIconCpu" Figures="M 8 6 H 16 A 2 2 0 0 1 18 8 V 16 A 2 2 0 0 1 16 18 H 8 A 2 2 0 0 1 6 16 V 8 A 2 2 0 0 1 8 6 Z M 9 2 v 4 M 15 2 v 4 M 9 18 v 4 M 15 18 v 4 M 2 9 h 4 M 2 15 h 4 M 18 9 h 4 M 18 15 h 4" />
+    <PathGeometry x:Key="IdrakIconZap" Figures="M 13 2 4 14 h 7 l -1 8 9 -12 h -7 z" />
+    <PathGeometry x:Key="IdrakIconDb" Figures="M 4 5 A 8 3 0 1 0 20 5 A 8 3 0 1 0 4 5 Z M 4 5 v 14 c 0 1.7 3.6 3 8 3 s 8 -1.3 8 -3 V 5 M 4 12 c 0 1.7 3.6 3 8 3 s 8 -1.3 8 -3" />
+    <PathGeometry x:Key="IdrakIconSpeak" Figures="M 11 5 6 9 H 3 v 6 h 3 l 5 4 z M 15.5 8.5 a 5 5 0 0 1 0 7 M 18.5 5.5 a 9 9 0 0 1 0 13" />
+    <PathGeometry x:Key="IdrakIconWave" Figures="M 3 12 h 2 M 7 8 v 8 M 11 5 v 14 M 15 9 v 6 M 19 7 v 10" />
+    <PathGeometry x:Key="IdrakIconImage" Figures="M 6 4 H 18 A 3 3 0 0 1 21 7 V 17 A 3 3 0 0 1 18 20 H 6 A 3 3 0 0 1 3 17 V 7 A 3 3 0 0 1 6 4 Z M 7 10 A 2 2 0 1 0 11 10 A 2 2 0 1 0 7 10 Z M 21 16 l -5 -5 -9 9" />
+    <PathGeometry x:Key="IdrakIconSearch" Figures="M 4 11 A 7 7 0 1 0 18 11 A 7 7 0 1 0 4 11 Z M 20 20 l -3.5 -3.5" />
+    <PathGeometry x:Key="IdrakIconShield" Figures="M 12 3 4 6 v 6 c 0 4.5 3.4 8.3 8 9 4.6 -.7 8 -4.5 8 -9 V 6 z M 9 12 l 2 2 4 -4" />
+    <PathGeometry x:Key="IdrakIconDown" Figures="M 12 3 v 12 m 0 0 -4 -4 m 4 4 4 -4 M 4 17 v 2 a 2 2 0 0 0 2 2 h 12 a 2 2 0 0 0 2 -2 v -2" />
+    <PathGeometry x:Key="IdrakIconArrow" Figures="M 5 12 h 14 m -6 -6 6 6 -6 6" />
+    <PathGeometry x:Key="IdrakIconSpark" Figures="M 12 3 v 4 M 12 17 v 4 M 3 12 h 4 M 17 12 h 4 M 6 6 l 2.5 2.5 M 15.5 15.5 18 18 M 6 18 l 2.5 -2.5 M 15.5 8.5 18 6" />
+    <PathGeometry x:Key="IdrakIconCopy" Figures="M 11 9 H 19 A 2 2 0 0 1 21 11 V 19 A 2 2 0 0 1 19 21 H 11 A 2 2 0 0 1 9 19 V 11 A 2 2 0 0 1 11 9 Z M 5 15 V 5 a 2 2 0 0 1 2 -2 h 10" />
+    <PathGeometry x:Key="IdrakIconShare" Figures="M 15 5 A 3 3 0 1 0 21 5 A 3 3 0 1 0 15 5 Z M 3 12 A 3 3 0 1 0 9 12 A 3 3 0 1 0 3 12 Z M 15 19 A 3 3 0 1 0 21 19 A 3 3 0 1 0 15 19 Z M 8.6 13.5 l 6.8 4 M 15.4 6.5 l -6.8 4" />
+    <PathGeometry x:Key="IdrakIconRedo" Figures="M 3 12 a 9 9 0 0 1 15.5 -6.2 L 21 8 M 21 3 v 5 h -5 M 21 12 a 9 9 0 0 1 -15.5 6.2 L 3 16 M 3 21 v -5 h 5" />
+    <PathGeometry x:Key="IdrakIconPen" Figures="M 12 20 h 9 M 16.5 3.5 a 2.1 2.1 0 0 1 3 3 L 7 19 l -4 1 1 -4 z" />
+    <PathGeometry x:Key="IdrakIconPlus" Figures="M 12 5 v 14 M 5 12 h 14" />
+    <PathGeometry x:Key="IdrakIconUp" Figures="M 12 19 V 5 m 0 0 -6 6 m 6 -6 6 6" />
+    <PathGeometry x:Key="IdrakIconChev" Figures="M 6 9 l 6 6 6 -6" />
+    <PathGeometry x:Key="IdrakIconBrain" Figures="M 12 5 a 3 3 0 0 0 -5.8 1 A 3 3 0 0 0 4 11 a 3 3 0 0 0 2 5 3 3 0 0 0 6 1 V 5 z M 12 5 a 3 3 0 0 1 5.8 1 A 3 3 0 0 1 20 11 a 3 3 0 0 1 -2 5 3 3 0 0 1 -6 1" />
+    <PathGeometry x:Key="IdrakIconFilter" Figures="M 3 5 h 18 l -7 8 v 6 l -4 2 v -8 z" />
+    <PathGeometry x:Key="IdrakIconFile" Figures="M 14 3 H 7 a 2 2 0 0 0 -2 2 v 14 a 2 2 0 0 0 2 2 h 10 a 2 2 0 0 0 2 -2 V 8 z M 14 3 v 5 h 5 M 12 18 v -6 M 9 15 l 3 3 3 -3" />
+    <PathGeometry x:Key="IdrakIconSliders" Figures="M 4 6 h 10 M 18 6 h 2 M 4 12 h 4 M 12 12 h 8 M 4 18 h 12 M 14 6 A 2 2 0 1 0 18 6 A 2 2 0 1 0 14 6 Z M 8 12 A 2 2 0 1 0 12 12 A 2 2 0 1 0 8 12 Z M 16 18 A 2 2 0 1 0 20 18 A 2 2 0 1 0 16 18 Z" />
+    <PathGeometry x:Key="IdrakIconClock" Figures="M 3 12 A 9 9 0 1 0 21 12 A 9 9 0 1 0 3 12 Z M 12 7 v 5 l 3 2" />
+    <PathGeometry x:Key="IdrakIconPlay" Figures="M 7 4.5 v 15 l 12 -7.5 z" />
+    <PathGeometry x:Key="IdrakIconStop" Figures="M 8 6 H 16 A 2 2 0 0 1 18 8 V 16 A 2 2 0 0 1 16 18 H 8 A 2 2 0 0 1 6 16 V 8 A 2 2 0 0 1 8 6 Z" />
+    <PathGeometry x:Key="IdrakIconPause" Figures="M 8 5 v 14 M 16 5 v 14" />
+    <PathGeometry x:Key="IdrakIconCamera" Figures="M 4 8 a 2 2 0 0 1 2 -2 h 2 l 1.5 -2 h 5 L 16 6 h 2 a 2 2 0 0 1 2 2 v 10 a 2 2 0 0 1 -2 2 H 6 a 2 2 0 0 1 -2 -2 z M 8.5 13 A 3.5 3.5 0 1 0 15.5 13 A 3.5 3.5 0 1 0 8.5 13 Z" />
+    <PathGeometry x:Key="IdrakIconTrash" Figures="M 4 7 h 16 M 10 11 v 6 M 14 11 v 6 M 6 7 l 1 12 a 2 2 0 0 0 2 2 h 6 a 2 2 0 0 0 2 -2 l 1 -12 M 9 7 V 4 h 6 v 3" />
+    <PathGeometry x:Key="IdrakIconClose" Figures="M 6 6 l 12 12 M 18 6 6 18" />
+    <PathGeometry x:Key="IdrakIconCheck" Figures="M 5 12 l 5 5 9 -10" />
+    <PathGeometry x:Key="IdrakIconChevr" Figures="M 9 6 l 6 6 -6 6" />
+    <PathGeometry x:Key="IdrakIconBack" Figures="M 19 12 H 5 m 6 -6 -6 6 6 6" />
+    <PathGeometry x:Key="IdrakIconInfo" Figures="M 3 12 A 9 9 0 1 0 21 12 A 9 9 0 1 0 3 12 Z M 12 11 v 6 M 12 7.5 v .5" />
+    <PathGeometry x:Key="IdrakIconCloud" Figures="M 7 18 a 5 5 0 1 1 .9 -9.9 A 6 6 0 0 1 19 11 a 3.5 3.5 0 0 1 -.5 7 z" />
+    <PathGeometry x:Key="IdrakIconLock" Figures="M 7 11 H 17 A 2 2 0 0 1 19 13 V 19 A 2 2 0 0 1 17 21 H 7 A 2 2 0 0 1 5 19 V 13 A 2 2 0 0 1 7 11 Z M 8 11 V 8 a 4 4 0 0 1 8 0 v 3" />
+    <PathGeometry x:Key="IdrakIconPlug" Figures="M 9 3 v 5 M 15 3 v 5 M 6 8 h 12 v 3 a 6 6 0 0 1 -12 0 z M 12 17 v 4" />
+    <PathGeometry x:Key="IdrakIconFlip" Figures="M 12 3 v 18 M 8 7 4 12 l 4 5 M 16 7 l 4 5 -4 5" />
+</ResourceDictionary>

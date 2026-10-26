@@ -449,6 +449,9 @@ internal static partial class MauiTests
             Check(lab.Vm.HasCold && lab.Vm.ColdText.StartsWith("Cold", StringComparison.Ordinal) && !lab.Vm.HasWarm && lab.Vm.FirstSound is not null && lab.Vm.RealTimeFactor > 0,
                 $"cold: {lab.Vm.ColdText}; warm: {lab.Vm.WarmText}");
             Check(lab.Vm.Status.StartsWith("Done", StringComparison.Ordinal) && lab.Vm.ProgressLine.StartsWith("3 pieces", StringComparison.Ordinal), $"status {lab.Vm.Status}; {lab.Vm.ProgressLine}");
+            Check(lab.Vm.Pieces.Select(p => p.Number).SequenceEqual(["#1", "#2", "#3"]) && lab.Vm.Pieces.All(p => p.Length.EndsWith(" s", StringComparison.Ordinal))
+                  && lab.Vm.HasMeasures && lab.Vm.FirstSoundText != "–" && lab.Vm.RealTimeText.EndsWith("× real time", StringComparison.Ordinal),
+                $"pieces: {string.Join(", ", lab.Vm.Pieces.Select(p => p.Number + " " + p.Length))}; {lab.Vm.FirstSoundText}; {lab.Vm.RealTimeText}");
 
             Check(lab.Vm.SpeakAsync().GetAwaiter().GetResult() && lab.Vm.HasWarm && lab.Vm.WarmText.StartsWith("Warm", StringComparison.Ordinal) && lab.Vm.HasCold,
                 $"warm after cold: {lab.Vm.WarmText}");
@@ -665,7 +668,7 @@ internal static partial class MauiTests
         Check(none.HasNoModels && (none.ModelsText.StartsWith("No", StringComparison.Ordinal)), $"none: {none.ModelsText}");
         none.Text = "hello";
         Check(!none.SpeakAsync().GetAwaiter().GetResult() && none.Error.Contains("pull one in Models", StringComparison.Ordinal), $"error: {none.Error}");
-        ThemeKeysOnly(Path.Combine("src", "Idrak.Maui", "Views", "SpeakPage.xaml"));
+        ThemeKeysOnly(Path.Combine("src", "Idrak.Maui", "Views", "SpeakView.xaml"));
     }
 
     // A page's sizes, spacing and colours come from theme keys ({DynamicResource ...}) or its own styles, never a literal on an element.

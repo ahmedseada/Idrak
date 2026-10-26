@@ -1,0 +1,57 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css"><link rel="stylesheet" href="tab.css">
+<style>
+body { background: radial-gradient(60% 50% at 60% -10%, rgba(56,189,248,.12), transparent 60%), var(--bg); }
+.main { padding: 22px 28px; }
+.hd { display: flex; align-items: center; gap: 16px; }
+.hd h2 { font-size: 30px; font-weight: 800; letter-spacing: -.8px; }
+.hd .sub { font-size: 13px; color: var(--muted); font-weight: 600; }
+.search { margin-left: auto; width: 360px; height: 42px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line2); display: flex; align-items: center; gap: 9px; padding: 0 14px; color: var(--faint); font-size: 13.5px; }
+.search .ico { width: 17px; height: 17px; }
+.flt { display: flex; gap: 8px; margin-top: 14px; }
+.flt .chip.on { background: linear-gradient(135deg, rgba(56,189,248,.22), rgba(99,102,241,.22)); border-color: rgba(56,189,248,.45); color: #bae6fd; }
+.cols { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-top: 18px; }
+.col .label { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.col .label i { flex: 1; height: 1px; background: var(--line); display: block; }
+.card { border-radius: 22px; background: var(--surface); border: 1px solid var(--line); padding: 16px; margin-bottom: 12px; position: relative; overflow: hidden; }
+.card .top { display: flex; align-items: center; gap: 12px; }
+.ic { width: 42px; height: 42px; border-radius: 13px; display: flex; align-items: center; justify-content: center; flex: none; }
+.ic .ico { width: 21px; height: 21px; }
+.card b { font-size: 15px; font-weight: 700; display: block; }
+.card .st { font-size: 11.5px; font-weight: 700; color: var(--green); }
+.card .st.pl { color: var(--amber); }
+.card p { font-size: 12.5px; color: var(--muted); line-height: 1.5; margin-top: 10px; }
+.card .ft { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; font-size: 11.5px; color: var(--faint); font-weight: 600; }
+.go { height: 30px; padding: 0 12px; border-radius: 10px; background: var(--surface3); color: var(--text); display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; }
+.go .ico { width: 14px; height: 14px; }
+.card.dim { border-style: dashed; border-color: rgba(245,158,11,.3); background: rgba(15,23,41,.6); }
+.card.hero { background: linear-gradient(150deg, #141f3e, #17163d); border-color: rgba(99,102,241,.3); }
+.spark { position: absolute; right: -10px; top: -10px; width: 90px; height: 90px; border-radius: 50%; background: radial-gradient(circle, rgba(99,102,241,.35), transparent 65%); }
+</style></head>
+<body data-tab="labs">
+<div class="main">
+  <div class="hd"><h2>All labs</h2><span class="sub">8 ready · 2 planned · everything runs on this tablet</span><div class="search"><span data-i="search"></span>Find a lab, a model or a setting</div></div>
+  <div class="flt"><span class="chip on">All</span><span class="chip">Ready</span><span class="chip">Planned</span><span class="chip">Needs the microphone</span><span class="chip">Needs the camera</span></div>
+  <div class="cols">
+    <div class="col"><div class="label">Language<i></i></div>
+      <div class="card hero"><div class="spark"></div><div class="top"><div class="ic" style="background:rgba(99,102,241,.22);color:#a5b4fc"><span data-i="chat"></span></div><div><b>Chat</b><span class="st">● Ready</span></div></div><p>A small language model streams its answer with tokens per second, on the CPU or the GPU.</p><div class="ft"><span>Qwen3 0.6B loaded</span><span class="go">Open <span data-i="arrow"></span></span></div></div>
+      <div class="card dim"><div class="top"><div class="ic" style="background:rgba(56,189,248,.14);color:var(--sky)"><span data-i="search"></span></div><div><b>Search</b><span class="st pl">● Planned</span></div></div><p>Embeddings of your own notes, and retrieval over them on the device.</p><div class="ft"><span>Needs a text encoder</span></div></div>
+    </div>
+    <div class="col"><div class="label">Voice<i></i></div>
+      <div class="card"><div class="top"><div class="ic" style="background:rgba(167,139,250,.16);color:var(--violet)"><span data-i="mic"></span></div><div><b>Transcribe</b><span class="st">● Ready</span></div></div><p>Speech written as it is spoken, cleaned live before the model.</p><div class="ft"><span>whisper-tiny</span><span class="go">Open <span data-i="arrow"></span></span></div></div>
+      <div class="card"><div class="top"><div class="ic" style="background:rgba(52,211,153,.14);color:var(--green)"><span data-i="speak"></span></div><div><b>Speak</b><span class="st">● Ready</span></div></div><p>Text read aloud as each sentence is ready, saved or shared.</p><div class="ft"><span>mms-tts-ara</span><span class="go">Open <span data-i="arrow"></span></span></div></div>
+      <div class="card"><div class="top"><div class="ic" style="background:rgba(244,63,94,.13);color:#fb7185"><span data-i="wave"></span></div><div><b>Studio</b><span class="st">● Ready</span></div></div><p>Any recording through a named pipeline, before and after.</p><div class="ft"><span>30 processors</span><span class="go">Open <span data-i="arrow"></span></span></div></div>
+    </div>
+    <div class="col"><div class="label">Vision<i></i></div>
+      <div class="card"><div class="top"><div class="ic" style="background:rgba(245,158,11,.15);color:var(--amber)"><span data-i="ocr"></span></div><div><b>Read text</b><span class="st">● Ready</span></div></div><p>A photo or the camera, read by a vision-language model that fits this device.</p><div class="ft"><span>Pull a reader</span><span class="go">Open <span data-i="arrow"></span></span></div></div>
+      <div class="card"><div class="top"><div class="ic" style="background:rgba(56,189,248,.14);color:var(--sky)"><span data-i="image"></span></div><div><b>Image</b><span class="st">● Ready</span></div></div><p>Named transforms and scan looks on a photo, with cold and warm times.</p><div class="ft"><span>No model needed</span><span class="go">Open <span data-i="arrow"></span></span></div></div>
+    </div>
+    <div class="col"><div class="label">This tablet<i></i></div>
+      <div class="card"><div class="top"><div class="ic" style="background:var(--surface3)"><span data-i="down"></span></div><div><b>Models</b><span class="st">● 3 pulled · 1.0 GB</span></div></div><p>Pull, resume and remove models; free space measured before each pull.</p></div>
+      <div class="card"><div class="top"><div class="ic" style="background:var(--surface3)"><span data-i="cpu"></span></div><div><b>Devices</b><span class="st">● CPU · GPU ready</span></div></div><p>What the library measured: cores, vectors, the GPU's kernels and memory.</p></div>
+      <div class="card dim"><div class="top"><div class="ic" style="background:var(--surface3)"><span data-i="shield"></span></div><div><b>Self-test</b><span class="st pl">● Planned</span></div></div><p>The library's own tests on this device, the failures shared out.</p></div>
+    </div>
+  </div>
+</div>
+<script src="tab.js"></script><script src="icons.js"></script>
+</body></html>

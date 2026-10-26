@@ -25,9 +25,16 @@ public sealed class PlannedFeature : IMobileFeature
     /// <param name="needs">What it will need from the phone.</param>
     /// <param name="packages">The library's packages it will use.</param>
     /// <param name="modelFamilies">The model families it will need registered; none when null.</param>
+    /// <param name="group">Where All labs lists it.</param>
+    /// <param name="icon">The name of its icon among Idrak's ("" draws the glyph).</param>
+    /// <param name="tagline">A few words for its card ("" uses the summary).</param>
     public PlannedFeature(string name, string title, string glyph, int order, string summary, string coming,
-        PhoneNeeds needs = PhoneNeeds.None, IReadOnlyList<string>? packages = null, IReadOnlyList<string>? modelFamilies = null)
+        PhoneNeeds needs = PhoneNeeds.None, IReadOnlyList<string>? packages = null, IReadOnlyList<string>? modelFamilies = null,
+        FeatureGroup group = FeatureGroup.Device, string icon = "", string tagline = "")
     {
+        Group = group;
+        Icon = icon ?? "";
+        Tagline = tagline ?? "";
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         ArgumentException.ThrowIfNullOrWhiteSpace(title);
         ArgumentNullException.ThrowIfNull(glyph);
@@ -66,6 +73,15 @@ public sealed class PlannedFeature : IMobileFeature
     public string Coming { get; }
 
     /// <inheritdoc />
+    public FeatureGroup Group { get; }
+
+    /// <inheritdoc />
+    public string Tagline { get; }
+
+    /// <inheritdoc />
+    public string Icon { get; }
+
+    /// <inheritdoc />
     public PhoneNeeds Needs { get; }
 
     /// <inheritdoc />
@@ -80,6 +96,10 @@ public sealed class PlannedFeature : IMobileFeature
     /// <inheritdoc />
     public Page CreatePage(IServiceProvider services, object viewModel) =>
         new PlaceholderPage(viewModel as PlaceholderViewModel ?? throw new ArgumentException($"The placeholder page takes a {nameof(PlaceholderViewModel)}.", nameof(viewModel)));
+
+    /// <inheritdoc />
+    public View? CreateView(IServiceProvider services, object viewModel) =>
+        new PlaceholderView(viewModel as PlaceholderViewModel ?? throw new ArgumentException($"The placeholder view takes a {nameof(PlaceholderViewModel)}.", nameof(viewModel)));
 }
 
 /// <summary>
@@ -93,7 +113,7 @@ internal static class PlannedFeatures
         new(MobileFeatures.Search, "Search", "⌕", 80,
             "Retrieval over your own notes",
             "Embeddings of your own notes and retrieval over them, on the phone",
-            PhoneNeeds.Model | PhoneNeeds.Network, ["Idrak.Text"]),
+            PhoneNeeds.Model | PhoneNeeds.Network, ["Idrak.Text"], group: FeatureGroup.Language, icon: "search", tagline: "Retrieval over your notes"),
     ];
 
     public static void RegisterDefaults(SlotTable<string, IMobileFeature> table)

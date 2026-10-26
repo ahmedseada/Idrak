@@ -20,6 +20,69 @@ public sealed class SettingEntry : ViewModel
         Setting = setting;
         _text = text;
         Choices = choices;
+        ResetCommand = new Command(() => Text = "");
+        foreach (string choice in IsSegmented ? choices : [])
+        {
+            Segments.Add(new ChoiceChip(choice, new Command(() => SelectedChoice = choice)));
+        }
+
+        MarkSegments();
+    }
+
+    /// <summary>The group it shows in.</summary>
+    public string Group => Setting.Group;
+
+    /// <summary>Whether it is a choice of a few (four or fewer): a row of segments.</summary>
+    public bool IsSegmented => Setting.Kind == IdrakSettingKind.Choice && Choices.Count is > 0 and <= 4;
+
+    /// <summary>Whether it is a choice of many, or a device: a picker.</summary>
+    public bool IsPicker => IsChoice && !IsSegmented;
+
+    /// <summary>Whether it is a number with a range: a slider (and its value, and a reset to the default).</summary>
+    public bool IsSlider => Setting.Kind == IdrakSettingKind.Number && Setting.Range is not null;
+
+    /// <summary>Whether it is typed: text, a secret, or a number without a range.</summary>
+    public bool IsField => IsEntry && !IsSlider;
+
+    /// <summary>The slider's least value.</summary>
+    public double Minimum => Setting.Range?.Minimum ?? 0;
+
+    /// <summary>The slider's most value.</summary>
+    public double Maximum => Setting.Range?.Maximum ?? 1;
+
+    /// <summary>The value as a number on the slider (the default's, or the least, when empty); setting it rounds to the step.</summary>
+    public double Number
+    {
+        get => double.TryParse(Text.Length > 0 ? Text : Setting.Placeholder, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double v)
+            ? Math.Clamp(v, Minimum, Maximum) : Minimum;
+        set
+        {
+            double step = Setting.Range?.Step ?? 0;
+            double v = step > 0 ? Math.Round(Math.Round(value / step) * step, 6) : value;
+            string text = v.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            if (text != (Text.Length > 0 ? Text : null))
+            {
+                Text = text;
+            }
+        }
+    }
+
+    /// <summary>The value as the slider's label shows it: the number, or "default (…)" when empty.</summary>
+    public string NumberText => Text.Length > 0 ? Text : $"default ({Setting.Placeholder})";
+
+    /// <summary>The segments of a choice of a few.</summary>
+    public ObservableCollection<ChoiceChip> Segments { get; } = [];
+
+    /// <summary>Empties the value: the library's own.</summary>
+    public ICommand ResetCommand { get; }
+
+    private void MarkSegments()
+    {
+        string? selected = SelectedChoice;
+        foreach (var segment in Segments)
+        {
+            segment.IsSelected = segment.Text == selected;
+        }
     }
 
     /// <summary>The setting.</summary>
@@ -58,6 +121,9 @@ public sealed class SettingEntry : ViewModel
             if (SetProperty(ref _text, value ?? ""))
             {
                 OnPropertyChanged(nameof(SelectedChoice));
+                OnPropertyChanged(nameof(Number));
+                OnPropertyChanged(nameof(NumberText));
+                MarkSegments();
             }
         }
     }
@@ -143,6 +209,14 @@ public sealed class SettingsViewModel : ViewModel
 
     /// <summary>Every registered feature, with whether it shows.</summary>
     public ObservableCollection<FeatureToggle> Features { get; } = [];
+
+    /// <summary>The settings by group, in the page's order (General first, the limits last).</summary>
+    public ObservableCollection<SettingGroup> Groups { get; } = [];
+
+    /// <summary>The order of the groups on the page.</summary>
+    public static IReadOnlyList<string> GroupOrder => Order;
+
+    private static readonly string[] Order = ["General", "Layout and motion", "Chat", "Models in memory", "Storage", "Limits"];
 
     /// <summary>The app's storage, where the default cache folder is.</summary>
     public string AppStorage => _startup.AppStorage;
@@ -254,6 +328,12 @@ public sealed class SettingsViewModel : ViewModel
             Entries.Add(new SettingEntry(setting, setting.Kind == IdrakSettingKind.Device && text == "auto" ? "" : text, choices));
         }
 
+        Groups.Clear();
+        foreach (var group in Entries.GroupBy(e => e.Group).OrderBy(g => Array.IndexOf(Order, g.Key) is var i and >= 0 ? i : Order.Length))
+        {
+            Groups.Add(new SettingGroup(group.Key, group));
+        }
+
         Features.Clear();
         foreach (var feature in MobileFeatures.All)
         {
@@ -287,4 +367,30 @@ public sealed class SettingsViewModel : ViewModel
 
         return names;
     }
+}
+
+/// <summary>One choice of a setting shown as segments ("system", "light", "dark").</summary>
+public sealed class ChoiceChip(string text, ICommand select) : ViewModel
+{
+    private bool _selected;
+
+    /// <summary>The choice.</summary>
+    public string Text { get; } = text;
+
+    /// <summary>Whether it is the value.</summary>
+    public bool IsSelected
+    {
+        get => _selected;
+        internal set => SetProperty(ref _selected, value);
+    }
+
+    /// <summary>Chooses it.</summary>
+    public ICommand SelectCommand { get; } = select;
+}
+
+/// <summary>The settings of one group ("Chat").</summary>
+public sealed class SettingGroup(string title, IEnumerable<SettingEntry> entries) : ObservableCollection<SettingEntry>(entries)
+{
+    /// <summary>Its heading.</summary>
+    public string Title { get; } = title;
 }

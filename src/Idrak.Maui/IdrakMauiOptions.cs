@@ -139,6 +139,23 @@ public sealed class IdrakMauiOptions
     /// <summary>The chat's key/value cache format (a registered one, <see cref="KeyValueLayouts.Names"/>: "int8" halves it); null: the library's (float32). Taken at the next load.</summary>
     public string? ChatKeyValueFormat { get; set; }
 
+    /// <summary>
+    /// The window width, in device-independent units, from which the app shows its wide layout: the side rail and the
+    /// pages in several columns or panes (the measured width of the window, so it follows rotation and split screen); below
+    /// it, the bottom bar and one column. 840 by default.
+    /// </summary>
+    public double WideLayoutWidth { get; set; } = 840;
+
+    /// <summary>How long Home's carousel shows a slide before the next; null or zero: it moves only when swiped. Six seconds by default.</summary>
+    public TimeSpan? CarouselInterval { get; set; } = TimeSpan.FromSeconds(6);
+
+    /// <summary>What Home says: its slides and its tiles' samples (the app's own words; the library's by default).</summary>
+    public HomeOptions Home { get; set; } = new();
+
+    /// <summary>Questions the chat offers to ask while a chat is empty; the library's few by default, empty for none.</summary>
+    public IReadOnlyList<string> ChatSuggestions { get; set; } =
+        ["Explain what runs on this phone", "Summarise this in one paragraph", "Write a haiku about GPUs"];
+
     /// <summary>The features turned off in the settings (by name); every other registered feature shows.</summary>
     public ISet<string> DisabledFeatures { get; set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -166,6 +183,7 @@ public sealed class IdrakMauiOptions
         var copy = (IdrakMauiOptions)MemberwiseClone();
         copy.DisabledFeatures = new HashSet<string>(DisabledFeatures, StringComparer.OrdinalIgnoreCase);
         copy.SuggestedModels = [.. SuggestedModels];
+        copy.ChatSuggestions = [.. ChatSuggestions];
         return copy;
     }
 
@@ -180,6 +198,8 @@ public sealed class IdrakMauiOptions
 
         DisabledFeatures = new HashSet<string>(other.DisabledFeatures, StringComparer.OrdinalIgnoreCase);
         SuggestedModels = [.. other.SuggestedModels];
+        ChatSuggestions = [.. other.ChatSuggestions];
+        Home = other.Home;
         KeepSettings = other.KeepSettings;
         UseMauiProgress = other.UseMauiProgress;
         SettingsStore = other.SettingsStore;

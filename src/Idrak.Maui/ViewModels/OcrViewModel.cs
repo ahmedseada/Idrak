@@ -139,7 +139,7 @@ public sealed class OcrViewModel : ViewModel
     }
 
     /// <summary>The page's title.</summary>
-    public string Title => "OCR";
+    public string Title => "Read text";
 
     /// <summary>The settings in effect.</summary>
     public OcrLabOptions Options => _options;

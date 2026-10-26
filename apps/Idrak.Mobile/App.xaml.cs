@@ -2,12 +2,15 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Maui;
+using Idrak.Maui.Navigation;
 using Idrak.Maui.Theme;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace Idrak.Mobile;
 
-/// <summary>The app: the theme the settings choose (the phone's by default), and the flyout as its window's page.</summary>
+/// <summary>
+/// The app: the theme the settings choose (the phone's by default), and the library's navigation host as its window's page
+/// (Home, Chat, Voice and Vision on the bottom bar of a narrow window, on the side rail of a wide one).
+/// </summary>
 public partial class App : Application
 {
     private readonly IServiceProvider _services;
@@ -21,5 +24,5 @@ public partial class App : Application
     }
 
     /// <inheritdoc />
-    protected override Window CreateWindow(IActivationState? activationState) => new(_services.GetRequiredService<AppFlyoutPage>());
+    protected override Window CreateWindow(IActivationState? activationState) => AppHostPage.CreateWindow(_services);
 }

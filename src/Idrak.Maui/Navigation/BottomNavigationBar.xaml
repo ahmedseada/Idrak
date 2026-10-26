@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The bottom bar of a narrow window (the approved design's floating bar): the tabs, the one shown in the gradient pill. -->
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:nav="clr-namespace:Idrak.Maui.Navigation"
+             xmlns:ctl="clr-namespace:Idrak.Maui.Controls"
+             x:Class="Idrak.Maui.Navigation.BottomNavigationBar"
+             x:DataType="nav:AppHostViewModel">
+    <Grid Background="{DynamicResource IdrakBrushNavFade}" Padding="{DynamicResource IdrakNavBarPadding}">
+        <Border Style="{DynamicResource IdrakNavBar}">
+            <FlexLayout BindableLayout.ItemsSource="{Binding Tabs}" Direction="Row" JustifyContent="SpaceAround" AlignItems="Center">
+                <BindableLayout.ItemTemplate>
+                    <DataTemplate x:DataType="nav:NavItem">
+                        <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}" WidthRequest="74" VerticalOptions="Center"
+                                             SemanticProperties.Description="{Binding Title}">
+                            <VerticalStackLayout.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding SelectCommand}" />
+                            </VerticalStackLayout.GestureRecognizers>
+                            <Border Style="{DynamicResource IdrakNavPill}">
+                                <Border.Triggers>
+                                    <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource IdrakBrushPill}" />
+                                    </DataTrigger>
+                                </Border.Triggers>
+                                <ctl:IconView Glyph="{Binding Icon}" Size="22" Stroke="{DynamicResource IdrakTextFaint}">
+                                    <ctl:IconView.Triggers>
+                                        <DataTrigger TargetType="ctl:IconView" Binding="{Binding IsSelected}" Value="True">
+                                            <Setter Property="Stroke" Value="{DynamicResource IdrakAccentText}" />
+                                        </DataTrigger>
+                                    </ctl:IconView.Triggers>
+                                </ctl:IconView>
+                            </Border>
+                            <Label Text="{Binding Title}" Style="{DynamicResource IdrakNavLabel}">
+                                <Label.Triggers>
+                                    <DataTrigger TargetType="Label" Binding="{Binding IsSelected}" Value="True">
+                                        <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+                                    </DataTrigger>
+                                </Label.Triggers>
+                            </Label>
+                        </VerticalStackLayout>
+                    </DataTemplate>
+                </BindableLayout.ItemTemplate>
+            </FlexLayout>
+        </Border>
+    </Grid>
+</ContentView>

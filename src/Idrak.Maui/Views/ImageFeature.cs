@@ -34,6 +34,15 @@ public sealed class ImageFeature : IMobileFeature
     public int Order => 70;
 
     /// <inheritdoc />
+    public FeatureGroup Group => FeatureGroup.Vision;
+
+    /// <inheritdoc />
+    public string Tagline => "Transforms, scans";
+
+    /// <inheritdoc />
+    public string Icon => "image";
+
+    /// <inheritdoc />
     public PhoneNeeds Needs => PhoneNeeds.Camera;
 
     /// <inheritdoc />
@@ -57,4 +66,8 @@ public sealed class ImageFeature : IMobileFeature
     /// <inheritdoc />
     public Page CreatePage(IServiceProvider services, object viewModel) =>
         new ImagePage(viewModel as ImageViewModel ?? throw new ArgumentException($"The image page takes an {nameof(ImageViewModel)}.", nameof(viewModel)));
+
+    /// <inheritdoc />
+    public View? CreateView(IServiceProvider services, object viewModel) =>
+        viewModel is ImageViewModel vm ? new ImageView(vm, services) : throw new ArgumentException($"The {Name} view takes a {nameof(ImageViewModel)}.", nameof(viewModel));
 }

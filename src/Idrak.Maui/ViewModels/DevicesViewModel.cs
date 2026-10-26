@@ -33,6 +33,56 @@ public sealed class DevicesViewModel : ViewModel
     /// <summary>The cards: the process first, then each device and each backend that found none.</summary>
     public ObservableCollection<InfoCard> Cards { get; } = [];
 
+    /// <summary>The process and the devices that compute, as summary cards (the process first).</summary>
+    public ObservableCollection<DeviceCard> Devices { get; } = [];
+
+    /// <summary>The virtual devices (reached by name only, or reporting themselves virtual: deferred, minimal, simulated), apart.</summary>
+    public ObservableCollection<DeviceCard> VirtualDevices { get; } = [];
+
+    /// <summary>Whether there is a virtual device to list.</summary>
+    public bool HasVirtualDevices => VirtualDevices.Count > 0;
+
+    /// <summary>
+    /// A reading as summary cards: the process ("This phone"), then each device with its state (ready, failed, the default)
+    /// and its few key facts, every other fact folded under it; virtual devices marked apart. <paramref name="cards"/> are
+    /// the reading's full cards (<see cref="Describe"/>), made again when not given.
+    /// </summary>
+    public static IReadOnlyList<DeviceCard> Summarize(DeviceReport report, IReadOnlyList<InfoCard>? cards = null)
+    {
+        ArgumentNullException.ThrowIfNull(report);
+        cards ??= Describe(report);
+        var list = new List<DeviceCard>();
+        if (cards.Count > 0)
+        {
+            var process = cards[0];
+            list.Add(new DeviceCard(process.Title, process.Subtitle, "", "Process", DeviceState.Ready, isDefault: false, isVirtual: false, "spark",
+                Pick(process.Rows, "runtime", "architecture", "memory the process may use", "working set"), process.Rows, ""));
+        }
+
+        foreach (var d in report.Devices)
+        {
+            var info = d.Info;
+            var card = cards.FirstOrDefault(c => c.Title == info.Device);
+            var rows = card?.Rows ?? [];
+            var state = info.Error is not null ? DeviceState.Failed : DeviceState.Ready;
+            bool isVirtual = !info.Listed || string.Equals(info.HardwareKind, "virtual", StringComparison.OrdinalIgnoreCase);
+            list.Add(new DeviceCard(info.Backend, info.Name.Length > 0 ? info.Name : info.Device, info.Device, info.HardwareKind ?? info.Kind, state, info.IsDefault, isVirtual,
+                info.Kind == "cpu" ? "cpu" : "zap", Pick(rows, "memory", "kernel width", "lanes", "compute units", "instruction sets", "driver"), rows, card?.Problem ?? ""));
+        }
+
+        foreach (var b in report.Backends.Where(b => b.Count == 0))
+        {
+            list.Add(new DeviceCard(b.Display, "none found", b.Kind, "", DeviceState.None, isDefault: false, isVirtual: false, "zap", [], [],
+                b.UnavailableReason ?? "no device found"));
+        }
+
+        return list;
+    }
+
+    // The rows named, in that order, at most four.
+    private static IReadOnlyList<InfoRow> Pick(IReadOnlyList<InfoRow> rows, params string[] names) =>
+        [.. names.Select(n => rows.FirstOrDefault(r => r.Name == n)).OfType<InfoRow>().Take(4)];
+
     /// <summary>One line about the reading (how many devices, the default, how long it took).</summary>
     public string Summary
     {
@@ -81,10 +131,20 @@ public sealed class DevicesViewModel : ViewModel
         {
             var report = await Task.Run(() => _devices.Read()).ConfigureAwait(true);
             Cards.Clear();
-            foreach (var card in Describe(report))
+            var cards = Describe(report);
+            foreach (var card in cards)
             {
                 Cards.Add(card);
             }
+
+            Devices.Clear();
+            VirtualDevices.Clear();
+            foreach (var device in Summarize(report, cards))
+            {
+                (device.IsVirtual ? VirtualDevices : Devices).Add(device);
+            }
+
+            OnPropertyChanged(nameof(HasVirtualDevices));
 
             Summary = string.Create(CultureInfo.InvariantCulture,
                 $"{report.Devices.Count} device{(report.Devices.Count == 1 ? "" : "s")}, default {report.DefaultDevice}, read in {report.Elapsed.TotalMilliseconds:0} ms");
@@ -171,4 +231,110 @@ public sealed class DevicesViewModel : ViewModel
             rows.Add(new(name, value));
         }
     }
+}
+
+/// <summary>Whether a device started.</summary>
+public enum DeviceState
+{
+    /// <summary>It started.</summary>
+    Ready,
+
+    /// <summary>It was found and could not start.</summary>
+    Failed,
+
+    /// <summary>A backend found none.</summary>
+    None,
+}
+
+/// <summary>A device as a summary card: its kind and name, its state as a badge, a few key facts, the rest folded.</summary>
+public sealed class DeviceCard : ViewModel
+{
+    private bool _expanded;
+
+    internal DeviceCard(string title, string name, string device, string kind, DeviceState state, bool isDefault, bool isVirtual, string icon,
+        IReadOnlyList<InfoRow> facts, IReadOnlyList<InfoRow> details, string problem)
+    {
+        Title = title;
+        Name = name;
+        Device = device;
+        Kind = kind;
+        State = state;
+        IsDefault = isDefault;
+        IsVirtual = isVirtual;
+        Icon = icon;
+        Facts = facts;
+        Details = details;
+        Problem = problem;
+        ToggleCommand = new Command(() => IsExpanded = !IsExpanded);
+    }
+
+    /// <summary>The backend ("Vulkan", "CPU") or "This phone" for the process.</summary>
+    public string Title { get; }
+
+    /// <summary>The device's own name.</summary>
+    public string Name { get; }
+
+    /// <summary>Its name in options ("vulkan:0"), or "".</summary>
+    public string Device { get; }
+
+    /// <summary>What it reports itself to be ("discrete", "integrated", "cpu"), or "".</summary>
+    public string Kind { get; }
+
+    /// <summary>Whether it started.</summary>
+    public DeviceState State { get; }
+
+    /// <summary>Whether it started.</summary>
+    public bool IsReady => State == DeviceState.Ready;
+
+    /// <summary>Whether it could not start.</summary>
+    public bool IsFailed => State == DeviceState.Failed;
+
+    /// <summary>Whether a backend found none.</summary>
+    public bool IsNone => State == DeviceState.None;
+
+    /// <summary>The badge: "Default", "Ready", "Failed" or "None".</summary>
+    public string Badge => IsFailed ? "Failed" : IsNone ? "None" : IsDefault ? "Default" : "Ready";
+
+    /// <summary>Whether it is the device models load on.</summary>
+    public bool IsDefault { get; }
+
+    /// <summary>Whether it is virtual (deferred, minimal, simulated): listed apart.</summary>
+    public bool IsVirtual { get; }
+
+    /// <summary>Its icon's name.</summary>
+    public string Icon { get; }
+
+    /// <summary>Its few key facts.</summary>
+    public IReadOnlyList<InfoRow> Facts { get; }
+
+    /// <summary>Every fact it reported.</summary>
+    public IReadOnlyList<InfoRow> Details { get; }
+
+    /// <summary>Whether it has facts to unfold.</summary>
+    public bool HasDetails => Details.Count > 0;
+
+    /// <summary>What went wrong, or "".</summary>
+    public string Problem { get; }
+
+    /// <summary>Whether there is a problem to show.</summary>
+    public bool HasProblem => Problem.Length > 0;
+
+    /// <summary>Whether every fact shows.</summary>
+    public bool IsExpanded
+    {
+        get => _expanded;
+        set
+        {
+            if (SetProperty(ref _expanded, value))
+            {
+                OnPropertyChanged(nameof(ToggleText));
+            }
+        }
+    }
+
+    /// <summary>"Details" or "Less".</summary>
+    public string ToggleText => IsExpanded ? "Less" : $"All {Details.Count} details";
+
+    /// <summary>Folds or unfolds the facts.</summary>
+    public ICommand ToggleCommand { get; }
 }

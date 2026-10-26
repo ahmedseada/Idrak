@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The side rail of a wide window (the approved design's tablet rail): the logo, the tabs, and All labs and Settings at the foot. -->
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:nav="clr-namespace:Idrak.Maui.Navigation"
+             xmlns:ctl="clr-namespace:Idrak.Maui.Controls"
+             x:Class="Idrak.Maui.Navigation.NavigationRail"
+             x:DataType="nav:AppHostViewModel">
+    <ContentView.Resources>
+        <DataTemplate x:Key="RailItem" x:DataType="nav:NavItem">
+            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}" Margin="{DynamicResource IdrakRailItemMargin}" SemanticProperties.Description="{Binding Title}">
+                <VerticalStackLayout.GestureRecognizers>
+                    <TapGestureRecognizer Command="{Binding SelectCommand}" />
+                </VerticalStackLayout.GestureRecognizers>
+                <Border Style="{DynamicResource IdrakRailPill}">
+                    <Border.Triggers>
+                        <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
+                            <Setter Property="Background" Value="{DynamicResource IdrakBrushPill}" />
+                        </DataTrigger>
+                    </Border.Triggers>
+                    <ctl:IconView Glyph="{Binding Icon}" Size="22" Stroke="{DynamicResource IdrakTextFaint}">
+                        <ctl:IconView.Triggers>
+                            <DataTrigger TargetType="ctl:IconView" Binding="{Binding IsSelected}" Value="True">
+                                <Setter Property="Stroke" Value="{DynamicResource IdrakAccentText}" />
+                            </DataTrigger>
+                        </ctl:IconView.Triggers>
+                    </ctl:IconView>
+                </Border>
+                <Label Text="{Binding Title}" Style="{DynamicResource IdrakNavLabel}">
+                    <Label.Triggers>
+                        <DataTrigger TargetType="Label" Binding="{Binding IsSelected}" Value="True">
+                            <Setter Property="TextColor" Value="{DynamicResource IdrakText}" />
+                        </DataTrigger>
+                    </Label.Triggers>
+                </Label>
+            </VerticalStackLayout>
+        </DataTemplate>
+    </ContentView.Resources>
+
+    <Grid ColumnDefinitions="*,1" WidthRequest="92" BackgroundColor="{DynamicResource IdrakRailBackground}">
+        <Grid RowDefinitions="Auto,Auto,*,Auto" Padding="{DynamicResource IdrakRailPadding}">
+            <Border Style="{DynamicResource IdrakLogoTile}" WidthRequest="44" HeightRequest="44" Margin="{DynamicResource IdrakRailLogoMargin}" HorizontalOptions="Center"
+                    SemanticProperties.Description="Idrak">
+                <ctl:LogoMark />
+            </Border>
+            <VerticalStackLayout Grid.Row="1" BindableLayout.ItemsSource="{Binding Tabs}" BindableLayout.ItemTemplate="{StaticResource RailItem}" />
+            <VerticalStackLayout Grid.Row="3" BindableLayout.ItemsSource="{Binding Foot}" BindableLayout.ItemTemplate="{StaticResource RailItem}" />
+        </Grid>
+        <BoxView Grid.Column="1" Color="{DynamicResource IdrakLine}" />
+    </Grid>
+</ContentView>

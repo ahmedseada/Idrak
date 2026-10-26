@@ -1,0 +1,135 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css"><link rel="stylesheet" href="tab.css">
+<style>
+body { background: var(--bg); }
+.main { display: flex; }
+.list { width: 290px; flex: none; border-right: 1px solid var(--line); padding: 20px 16px; background: rgba(10,16,32,.5); }
+.list .hh { display: flex; justify-content: space-between; align-items: center; }
+.list h2 { font-size: 24px; font-weight: 800; letter-spacing: -.6px; }
+.new { width: 38px; height: 38px; border-radius: 12px; background: linear-gradient(135deg, #38bdf8, #6366f1); display: flex; align-items: center; justify-content: center; }
+.new .ico { width: 18px; height: 18px; }
+.srch { margin-top: 14px; height: 38px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line2); display: flex; align-items: center; gap: 8px; padding: 0 12px; color: var(--faint); font-size: 13px; }
+.srch .ico { width: 16px; height: 16px; }
+.conv { margin-top: 6px; padding: 11px 12px; border-radius: 14px; }
+.conv b { font-size: 13.5px; display: flex; justify-content: space-between; }
+.conv b small { font-size: 11px; color: var(--faint); font-weight: 600; }
+.conv span { font-size: 12px; color: var(--muted); display: block; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.conv.on { background: linear-gradient(135deg, rgba(56,189,248,.12), rgba(99,102,241,.10)); border: 1px solid rgba(56,189,248,.3); }
+.grp { font-size: 10.5px; font-weight: 800; letter-spacing: 1.1px; color: var(--faint); margin: 16px 4px 4px; }
+.mid { flex: 1; min-width: 0; position: relative; background: radial-gradient(70% 40% at 50% 0%, rgba(99,102,241,.12), transparent 60%); }
+.top { display: flex; align-items: center; gap: 12px; padding: 16px 28px; border-bottom: 1px solid var(--line); }
+.av { width: 34px; height: 34px; border-radius: 11px; background: linear-gradient(135deg, #6366f1, #38bdf8); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; }
+.top .n { font-size: 15px; font-weight: 700; display: flex; align-items: center; gap: 5px; }
+.top .n .ico { width: 15px; height: 15px; color: var(--muted); }
+.top .m { font-size: 11.5px; color: var(--muted); margin-top: 2px; display: flex; gap: 6px; align-items: center; }
+.top .m .dot { width: 6px; height: 6px; }
+.feed { padding: 20px 44px 0; display: flex; flex-direction: column; gap: 16px; }
+.u { align-self: flex-end; max-width: 70%; padding: 12px 16px; border-radius: 20px 20px 6px 20px; background: linear-gradient(135deg, #38bdf8, #6366f1); color: #fff; font-size: 14.5px; line-height: 1.45; box-shadow: 0 8px 24px rgba(56,189,248,.22); }
+.a { display: flex; flex-direction: column; gap: 9px; max-width: 88%; }
+.who { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.who .av { width: 22px; height: 22px; border-radius: 7px; font-size: 10px; }
+.think { align-self: flex-start; display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px; border-radius: 14px; background: rgba(167,139,250,.10); border: 1px solid rgba(167,139,250,.22); color: #c4b5fd; font-size: 11.5px; font-weight: 600; }
+.think .ico { width: 14px; height: 14px; }
+.body { font-size: 14.5px; line-height: 1.6; color: #dbe3f2; }
+.body b { color: var(--text); }
+.body ol { padding-left: 18px; margin-top: 4px; }
+.code { margin-top: 10px; border-radius: 14px; background: #0a0f1d; border: 1px solid var(--line2); overflow: hidden; }
+.code .bar2 { display: flex; justify-content: space-between; padding: 7px 12px; font-size: 11px; color: var(--faint); border-bottom: 1px solid var(--line); font-weight: 600; }
+.code pre { white-space: pre-wrap; font-family: "JetBrains Mono"; font-size: 12px; line-height: 1.55; padding: 10px 12px; color: #c9d4ea; }
+.k { color: #7dd3fc; } .s { color: #fcd34d; }
+.meta { display: flex; align-items: center; gap: 12px; font-size: 11.5px; color: var(--faint); font-weight: 600; }
+.meta .g { color: var(--green); display: flex; align-items: center; gap: 4px; }
+.meta .ico { width: 15px; height: 15px; }
+.meta .acts { margin-left: auto; display: flex; gap: 14px; color: var(--muted); }
+.caret { display: inline-block; width: 8px; height: 17px; background: var(--sky); border-radius: 2px; vertical-align: -3px; margin-left: 3px; box-shadow: 0 0 10px rgba(56,189,248,.8); }
+.live { display: flex; gap: 10px; }
+.live .rate { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 14px; background: rgba(52,211,153,.10); border: 1px solid rgba(52,211,153,.25); color: var(--green); font-size: 12px; font-weight: 700; }
+.live .rate .ico { width: 13px; height: 13px; }
+.live .stop { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 14px; background: var(--surface2); border: 1px solid var(--line2); font-size: 12px; font-weight: 700; }
+.live .stop i { width: 9px; height: 9px; border-radius: 2px; background: var(--red); display: block; }
+.composer { position: absolute; left: 44px; right: 44px; bottom: 20px; }
+.box { height: 56px; border-radius: 28px; background: var(--surface2); border: 1px solid rgba(56,189,248,.35); display: flex; align-items: center; padding: 0 7px 0 9px; gap: 8px; box-shadow: 0 0 0 4px rgba(56,189,248,.07), 0 18px 40px rgba(0,0,0,.4); }
+.box .ph { flex: 1; font-size: 14.5px; color: var(--faint); }
+.round { width: 42px; height: 42px; border-radius: 21px; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.send { background: linear-gradient(135deg, #38bdf8, #6366f1); color: #fff; }
+.insp { width: 300px; flex: none; border-left: 1px solid var(--line); padding: 20px 18px; background: rgba(10,16,32,.5); }
+.insp .label { margin-bottom: 10px; }
+.box2 { border-radius: 18px; background: var(--surface); border: 1px solid var(--line); padding: 14px; margin-bottom: 14px; }
+.big { font-size: 30px; font-weight: 800; letter-spacing: -1px; display: flex; align-items: baseline; gap: 6px; }
+.big small { font-size: 13px; color: var(--muted); font-weight: 600; letter-spacing: 0; }
+.kv { display: flex; justify-content: space-between; font-size: 12.5px; padding: 7px 0; border-top: 1px solid var(--line); }
+.kv span { color: var(--muted); } .kv b { font-weight: 700; }
+.mem { height: 6px; border-radius: 3px; background: var(--line2); margin: 8px 0 4px; overflow: hidden; display: flex; }
+.mem i { display: block; height: 6px; }
+.lg { display: flex; gap: 12px; font-size: 10.5px; color: var(--muted); font-weight: 600; }
+.lg i { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 4px; vertical-align: -1px; }
+.sl { margin-top: 12px; }
+.sl .h { display: flex; justify-content: space-between; font-size: 12.5px; } .sl .h span { color: var(--muted); }
+.track { height: 4px; border-radius: 2px; background: var(--line2); margin-top: 10px; position: relative; }
+.track i { display: block; height: 4px; border-radius: 2px; background: linear-gradient(90deg, #38bdf8, #6366f1); width: 35%; }
+.track b { position: absolute; left: 35%; top: -6px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transform: translateX(-50%); box-shadow: 0 2px 8px rgba(0,0,0,.4); }
+.tg { display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; margin-top: 14px; }
+.sw { width: 40px; height: 24px; border-radius: 12px; background: linear-gradient(135deg, #38bdf8, #6366f1); position: relative; }
+.sw::after { content: ""; position: absolute; right: 3px; top: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; }
+</style></head>
+<body data-tab="chat">
+<div class="main">
+  <div class="list">
+    <div class="hh"><h2>Chat</h2><div class="new"><span data-i="pen"></span></div></div>
+    <div class="srch"><span data-i="search"></span>Search chats</div>
+    <div class="grp">TODAY</div>
+    <div class="conv on"><b>Models without the cloud <small>9:38</small></b><span>النموذج صغير بما يكفي ليعمل…</span></div>
+    <div class="conv"><b>C# span tricks <small>8:12</small></b><span>Use ReadOnlySpan over string slices…</span></div>
+    <div class="grp">YESTERDAY</div>
+    <div class="conv"><b>Arabic letter summary <small>Sun</small></b><span>الخلاصة: يطلب المرسل تحديد موعد…</span></div>
+    <div class="conv"><b>Trip packing list <small>Sun</small></b><span>Passport, charger, the blue jacket…</span></div>
+    <div class="conv"><b>Explain Vulkan subgroups <small>Sun</small></b><span>A subgroup is the set of lanes that…</span></div>
+  </div>
+  <div class="mid">
+    <div class="top"><div class="av">Q</div><div><div class="n">Qwen3 0.6B <span data-i="chev"></span></div><div class="m"><i class="dot"></i>int8 · vulkan:0 · loaded in 3.1 s</div></div></div>
+    <div class="feed">
+      <div class="u">How can a tablet run a language model without the cloud?</div>
+      <div class="a">
+        <div class="who"><div class="av">Q</div>Qwen3 0.6B</div>
+        <div class="think"><span data-i="brain"></span>Thought for 1.4 s<span data-i="chev"></span></div>
+        <div class="body">Two things make it fit:
+          <ol><li><b>Small weights</b> — 0.6B parameters in int8 take about 0.7 GB.</li><li><b>The device's GPU</b> — Vulkan kernels, measured on this tablet.</li></ol>
+          <div class="code"><div class="bar2"><span>C#</span><span>Copy</span></div><pre><span class="k">var</span> model = PretrainedModel.Load(<span class="s">"Qwen3-0.6B"</span>,
+    <span class="k">new</span>() { Int8 = <span class="k">true</span>, Device = gpu });</pre></div>
+        </div>
+        <div class="meta"><span class="g"><span data-i="zap"></span>18.1 tok/s</span><span>212 tokens</span><span>first in 0.4 s</span><span class="acts"><span data-i="copy"></span><span data-i="redo"></span></span></div>
+      </div>
+      <div class="u">Say it in one sentence, in Arabic.</div>
+      <div class="a">
+        <div class="who"><div class="av">Q</div>Qwen3 0.6B</div>
+        <div class="body" dir="rtl" style="text-align:right">النموذج صغير بما يكفي ليعمل على معالج الجهاز الرسومي<span class="caret"></span></div>
+        <div class="live"><span class="rate"><span data-i="zap"></span>17.4 tok/s · 31 tokens</span><span class="stop"><i></i>Stop</span></div>
+      </div>
+    </div>
+    <div class="composer"><div class="box"><div class="round" style="background:var(--surface3)"><span data-i="plus"></span></div><div class="ph">Message Qwen3…</div><div class="round"><span data-i="mic"></span></div><div class="round send"><span data-i="up"></span></div></div></div>
+  </div>
+  <div class="insp">
+    <div class="label">This answer, live</div>
+    <div class="box2">
+      <div class="big">17.4<small>tokens / s</small></div>
+      <svg width="100%" height="58" viewBox="0 0 262 58" preserveAspectRatio="none" style="margin-top:6px;display:block"><defs><linearGradient id="g" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#34d399" stop-opacity=".35"/><stop offset="1" stop-color="#34d399" stop-opacity="0"/></linearGradient></defs><path d="M0 46 L18 30 L36 22 L54 18 L72 20 L90 16 L108 17 L126 15 L144 18 L162 16 L180 14 L198 17 L216 15 L234 16 L262 15 L262 58 L0 58Z" fill="url(#g)"/><path d="M0 46 L18 30 L36 22 L54 18 L72 20 L90 16 L108 17 L126 15 L144 18 L162 16 L180 14 L198 17 L216 15 L234 16 L262 15" fill="none" stroke="#34d399" stroke-width="2.2"/></svg>
+      <div class="kv"><span>Tokens</span><b>31</b></div>
+      <div class="kv"><span>First token</span><b>0.38 s · warm</b></div>
+      <div class="kv"><span>Device</span><b>vulkan:0</b></div>
+    </div>
+    <div class="label">Memory</div>
+    <div class="box2">
+      <div class="kv" style="border:0;padding-top:0"><span>In use</span><b>0.91 GB of 5.6 GB</b></div>
+      <div class="mem"><i style="width:12%;background:#6366f1"></i><i style="width:4%;background:#38bdf8"></i></div>
+      <div class="lg"><span><i style="background:#6366f1"></i>weights 0.70</span><span><i style="background:#38bdf8"></i>cache 0.21</span></div>
+    </div>
+    <div class="label">Settings</div>
+    <div class="box2">
+      <div class="sl" style="margin-top:0"><div class="h"><span>Temperature</span><b>0.7</b></div><div class="track"><i></i><b></b></div></div>
+      <div class="tg"><span style="color:var(--muted)">Thinking</span><div class="sw"></div></div>
+      <div class="kv" style="margin-top:12px"><span>Max new tokens</span><b>1024</b></div>
+    </div>
+  </div>
+</div>
+<script src="tab.js"></script><script src="icons.js"></script>
+</body></html>

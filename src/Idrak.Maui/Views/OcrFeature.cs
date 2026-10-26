@@ -28,13 +28,22 @@ public sealed class OcrFeature : IMobileFeature
     public string Summary => "Text read from a photo or the camera by a vision-language model of the store, streamed with its tokens per second; copied or shared";
 
     /// <inheritdoc />
-    public string Title => "OCR";
+    public string Title => "Read text";
 
     /// <inheritdoc />
     public string Glyph => "Aa";
 
     /// <inheritdoc />
     public int Order => 60;
+
+    /// <inheritdoc />
+    public FeatureGroup Group => FeatureGroup.Vision;
+
+    /// <inheritdoc />
+    public string Tagline => "Photo to text";
+
+    /// <inheritdoc />
+    public string Icon => "ocr";
 
     /// <inheritdoc />
     public PhoneNeeds Needs => PhoneNeeds.Camera | PhoneNeeds.Model;
@@ -71,4 +80,8 @@ public sealed class OcrFeature : IMobileFeature
     /// <inheritdoc />
     public Page CreatePage(IServiceProvider services, object viewModel) =>
         new OcrPage(viewModel as OcrViewModel ?? throw new ArgumentException($"The OCR page takes an {nameof(OcrViewModel)}.", nameof(viewModel)), services);
+
+    /// <inheritdoc />
+    public View? CreateView(IServiceProvider services, object viewModel) =>
+        viewModel is OcrViewModel vm ? new OcrView(vm, services) : throw new ArgumentException($"The {Name} view takes a {nameof(OcrViewModel)}.", nameof(viewModel));
 }

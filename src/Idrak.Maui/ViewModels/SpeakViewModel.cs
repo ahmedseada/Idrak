@@ -210,6 +210,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
             {
                 OnPropertyChanged(nameof(ModelReason));
                 OnPropertyChanged(nameof(HasModelReason));
+                OnPropertyChanged(nameof(ModelChip));
                 _options.Model = value.Key;
                 Keep();
                 if (value.CanSpeak)
@@ -411,6 +412,21 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
     /// <summary>The last real-time factor measured (the synthesis' time over the sound's), or 0.</summary>
     public double RealTimeFactor { get; private set; }
 
+    /// <summary>The speech's pieces as they were made: each one's length and making time.</summary>
+    public ObservableCollection<SpokenPiece> Pieces { get; } = [];
+
+    /// <summary>The time to the first sound of the last speech ("0.42 s"), or "–".</summary>
+    public string FirstSoundText => FirstSound is { } first ? AudioText.Time(first) : "–";
+
+    /// <summary>How much faster than real time the last speech was made ("12× real time"), or "–".</summary>
+    public string RealTimeText => RealTimeFactor > 0 ? string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{1 / RealTimeFactor:0.#}× real time") : "–";
+
+    /// <summary>Whether a speech was measured.</summary>
+    public bool HasMeasures => RealTimeFactor > 0;
+
+    /// <summary>The model chip: the model's name, or what to do.</summary>
+    public string ModelChip => SelectedModel is { } model ? model.Title[(model.Title.LastIndexOf('/') + 1)..] : HasModels ? "Choose a model" : "No model yet";
+
     /// <summary>The speech kept (the last one made, or what was made of it before Stop), or null.</summary>
     public AudioData? Speech
     {
@@ -542,6 +558,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
             }
 
             OnPropertyChanged(nameof(HasModels));
+            OnPropertyChanged(nameof(ModelChip));
             OnPropertyChanged(nameof(HasNoModels));
             var families = SpeechSynthesisFamilies.Names;
             int cannot = models.Count(m => !m.CanSpeak);
@@ -657,6 +674,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(_abort.Token);
         _stop = stop;
         _state.Begin();
+        Pieces.Clear();
         IsSpeaking = true;
         Status = $"Speaking {text.Length:N0} characters…";
         _batcher.Start();
@@ -1133,6 +1151,9 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
         double factor = snapshot.Seconds > 0 ? snapshot.Making.TotalSeconds / snapshot.Seconds : 0;
         FirstSound = played.FirstSound;
         RealTimeFactor = factor;
+        OnPropertyChanged(nameof(FirstSoundText));
+        OnPropertyChanged(nameof(RealTimeText));
+        OnPropertyChanged(nameof(HasMeasures));
         string line = $"first sound after {(played.FirstSound is { } first ? AudioText.Time(first) : "-")}, real-time factor {AudioText.Factor(factor)}; "
             + $"{snapshot.Pieces} piece{(snapshot.Pieces == 1 ? "" : "s")}, {AudioText.Seconds(snapshot.Seconds)} made in {AudioText.Time(snapshot.Making)}";
         if (cold)
@@ -1151,6 +1172,10 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
     {
         var s = _state.Snapshot();
         ProgressLine = s.Pieces == 0 ? "" : $"{s.Pieces} piece{(s.Pieces == 1 ? "" : "s")}, {AudioText.Seconds(s.Seconds)} of speech, made in {AudioText.Time(s.Making)}";
+        foreach (var (seconds, making) in _state.PiecesFrom(Pieces.Count))
+        {
+            Pieces.Add(new SpokenPiece(Pieces.Count + 1, AudioText.Seconds(seconds), AudioText.Time(making), seconds > 0 ? making.TotalSeconds / seconds : 0));
+        }
     }
 
     // What a speech has made so far.
@@ -1161,6 +1186,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
     {
         private readonly Lock _gate = new();
         private readonly List<AudioData> _pieces = [];
+        private readonly List<(double Seconds, TimeSpan Making)> _timings = [];
         private double _seconds;
         private TimeSpan _making;
 
@@ -1169,8 +1195,18 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
             lock (_gate)
             {
                 _pieces.Clear();
+                _timings.Clear();
                 _seconds = 0;
                 _making = TimeSpan.Zero;
+            }
+        }
+
+        // Each piece's length and making time, from the start-th on.
+        public IReadOnlyList<(double Seconds, TimeSpan Making)> PiecesFrom(int start)
+        {
+            lock (_gate)
+            {
+                return start >= _timings.Count ? [] : _timings.GetRange(start, _timings.Count - start);
             }
         }
 
@@ -1178,6 +1214,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
         {
             lock (_gate)
             {
+                _timings.Add((piece.Duration.TotalSeconds, making));
                 _pieces.Add(piece);
                 _seconds += piece.Duration.TotalSeconds;
                 _making += making;
@@ -1225,4 +1262,18 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
             }
         }
     }
+}
+
+/// <summary>One piece of a speech as it was made: its place, its length and how long it took to make.</summary>
+/// <param name="Index">Its place, from 1.</param>
+/// <param name="Length">Its length ("1.2 s").</param>
+/// <param name="Making">How long it took ("180 ms").</param>
+/// <param name="Factor">Its real-time factor (making time over length; under 1 is faster than it plays).</param>
+public sealed record SpokenPiece(int Index, string Length, string Making, double Factor)
+{
+    /// <summary>"#1".</summary>
+    public string Number => "#" + Index.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>"made in 180 ms".</summary>
+    public string MadeText => "made in " + Making;
 }

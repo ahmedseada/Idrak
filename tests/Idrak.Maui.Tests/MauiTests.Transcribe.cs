@@ -437,6 +437,7 @@ internal static partial class MauiTests
         Check(Math.Abs(LevelMeter.Decibels(tone) - 20 * Math.Log10(rms)) < 1e-3 && Math.Abs(LevelMeter.Decibels(tone) + 9.03) < 0.05, $"a tone at half scale: {LevelMeter.Decibels(tone)} dB");
         Check(LevelMeter.Decibels(new float[800]) == -120 && double.IsNegativeInfinity(LevelMeter.Decibels([])), "silence and nothing");
         var seen = new List<(string Committed, string Tentative, double Level, string Behind)>();
+        var seenLines = new List<(bool Current, string Tentative)>();
         lab.Vm.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName is nameof(TranscribeViewModel.TentativeText) or nameof(TranscribeViewModel.Level))
@@ -444,6 +445,13 @@ internal static partial class MauiTests
                 lock (seen)
                 {
                     seen.Add((lab.Vm.CommittedText, lab.Vm.TentativeText, lab.Vm.Level, lab.Vm.BehindText));
+                }
+            }
+            else if (e.PropertyName == nameof(TranscribeViewModel.CountsText) && lab.Vm.Lines.LastOrDefault() is { } last)
+            {
+                lock (seen)
+                {
+                    seenLines.Add((last.IsCurrent, last.Tentative));
                 }
             }
         };
@@ -465,6 +473,10 @@ internal static partial class MauiTests
         Check(lab.Vm.TentativeText.Length == 0 && lab.Vm.Text == lab.Vm.CommittedText, $"tentative at the end: '{lab.Vm.TentativeText}'");
         var segments = lab.Vm.Segments;
         Check(segments.Count == 2 && segments[0].Text == lines[0] && segments[1].Text == lines[1] && segments[1].Start > segments[0].End - 0.01, $"segments: {segments.Count}");
+        Check(lab.Vm.Lines.Count == 2 && lab.Vm.Lines.All(l => !l.IsCurrent && l.Tentative.Length == 0) && lab.Vm.Lines[0].Committed == lines[0] && lab.Vm.Lines[1].Committed == lines[1]
+              && lab.Vm.Lines[0].Time == "00:00" && lab.Vm.CountsText.StartsWith("2 segments · ", StringComparison.Ordinal),
+            $"the transcript's lines: {string.Join(" | ", lab.Vm.Lines.Select(l => $"{l.Time} {l.Committed}~{l.Tentative}"))}; {lab.Vm.CountsText}");
+        Check(seenLines.Any(l => l.Current && l.Tentative.Length > 0), "the open segment's line with its tentative words");
         Check(lab.Vm.ElapsedText != "00:00" && lab.Vm.HeardText.Length > 0 && double.IsFinite(lab.Vm.LevelDecibels) && !lab.Vm.IsRunning && !lab.Vm.IsRecording,
             $"elapsed {lab.Vm.ElapsedText}, heard {lab.Vm.HeardText}, level {lab.Vm.LevelDecibels}");
         Check(recognizer.Heard.All(h => h.Rate == Rate), "the capture's rate");

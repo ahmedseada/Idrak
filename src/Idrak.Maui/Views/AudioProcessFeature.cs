@@ -24,13 +24,22 @@ public sealed class AudioProcessFeature : IMobileFeature
     public string Summary => "A recording or a file through a pipeline of the library's processors, heard before and after, with its latency, delay and time";
 
     /// <inheritdoc />
-    public string Title => "Audio process";
+    public string Title => "Studio";
 
     /// <inheritdoc />
     public string Glyph => "≈";
 
     /// <inheritdoc />
     public int Order => 50;
+
+    /// <inheritdoc />
+    public FeatureGroup Group => FeatureGroup.Voice;
+
+    /// <inheritdoc />
+    public string Tagline => "Clean a recording";
+
+    /// <inheritdoc />
+    public string Icon => "wave";
 
     /// <inheritdoc />
     public PhoneNeeds Needs => PhoneNeeds.Microphone;
@@ -59,4 +68,8 @@ public sealed class AudioProcessFeature : IMobileFeature
     /// <inheritdoc />
     public Page CreatePage(IServiceProvider services, object viewModel) =>
         new AudioProcessPage(viewModel as AudioProcessViewModel ?? throw new ArgumentException($"The audio process page takes a {nameof(AudioProcessViewModel)}.", nameof(viewModel)));
+
+    /// <inheritdoc />
+    public View? CreateView(IServiceProvider services, object viewModel) =>
+        viewModel is AudioProcessViewModel vm ? new StudioView(vm, services) : throw new ArgumentException($"The {Name} view takes a {nameof(AudioProcessViewModel)}.", nameof(viewModel));
 }

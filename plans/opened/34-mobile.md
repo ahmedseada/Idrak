@@ -1,6 +1,6 @@
 # Plan 34: Idrak.Maui and Idrak.Mobile (the library on a phone, as an app; Android first)
 
-**Status:** planned 2026-10-26 against `main` 5c7d54a; M0, M1 and M3 built (459e41a, b7b6739, 44303bd); M2 and the Models lab under way; the Self-test lab after M7. Phases below, built in order, at most two agents
+**Status:** planned 2026-10-26 against `main` 5c7d54a; M0, M1 and M3 built (459e41a, b7b6739, 44303bd); M2 and the Models lab under way; the Self-test lab after M7; R (the redesign) built, the phone and the tablet to confirm. Phases below, built in order, at most two agents
 at a time. Android is the target; iOS is later and outside this plan.
 
 ## Why

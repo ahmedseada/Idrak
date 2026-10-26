@@ -275,6 +275,7 @@ public sealed class ImageViewModel : ViewModel
             if (SetProperty(ref _resultSource, value))
             {
                 OnPropertyChanged(nameof(HasResult));
+                OnPropertyChanged(nameof(HasNoResult));
             }
         }
     }
@@ -287,6 +288,9 @@ public sealed class ImageViewModel : ViewModel
 
     /// <summary>Whether there is a result.</summary>
     public bool HasResult => ResultSource is not null;
+
+    /// <summary>Whether there is none yet.</summary>
+    public bool HasNoResult => !HasResult;
 
     /// <summary>The photo: its name, format, size, orientation and read time; or "".</summary>
     public string PhotoText

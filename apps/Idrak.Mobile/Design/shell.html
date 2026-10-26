@@ -1,0 +1,65 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+.bg { position: absolute; inset: 0; background: url(landing.png) center/390px 844px no-repeat; filter: blur(1.5px) brightness(.45); transform: scale(.985); border-radius: 28px; }
+.sheet { position: absolute; left: 0; right: 0; top: 150px; bottom: 0; border-radius: 30px 30px 0 0; background: linear-gradient(180deg, #121a30, #0b1122 60%); border-top: 1px solid var(--line2); box-shadow: 0 -20px 60px rgba(0,0,0,.6); padding: 10px 18px 0; }
+.handle { width: 40px; height: 5px; border-radius: 3px; background: var(--line2); margin: 0 auto 14px; }
+.sh { display: flex; justify-content: space-between; align-items: center; }
+.sh h3 { font-size: 22px; font-weight: 800; letter-spacing: -.5px; }
+.sh small { font-size: 12px; color: var(--muted); font-weight: 600; }
+.search { margin-top: 12px; height: 42px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line2); display: flex; align-items: center; gap: 9px; padding: 0 13px; color: var(--faint); font-size: 13.5px; }
+.grp { margin-top: 14px; }
+.grp .label { margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+.grp .label i { flex: 1; height: 1px; background: var(--line); display: block; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.card { height: 58px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); display: flex; align-items: center; gap: 10px; padding: 0 10px; position: relative; }
+.card .ic { width: 36px; height: 36px; border-radius: 11px; display: flex; align-items: center; justify-content: center; flex: none; }
+.card .ic svg { width: 19px; height: 19px; }
+.card b { font-size: 13px; font-weight: 700; display: block; }
+.card span { font-size: 10.5px; color: var(--muted); }
+.card.on { border-color: rgba(56,189,248,.45); background: linear-gradient(135deg, rgba(56,189,248,.10), rgba(99,102,241,.08)); }
+.pl { position: absolute; right: 8px; top: 7px; font-size: 8.5px; font-weight: 800; letter-spacing: .6px; color: var(--amber); background: rgba(245,158,11,.12); border: 1px solid rgba(245,158,11,.3); padding: 2px 5px; border-radius: 6px; }
+.card .am { color: var(--amber); font-weight: 700; } .card.dim { border-style: dashed; border-color: rgba(245,158,11,.28); }
+.tabbed { position: absolute; left: 50%; transform: translateX(-50%); }
+</style></head>
+<body>
+<div class="bg"></div>
+<div class="status" style="position:relative"><span>9:41</span><div class="icons"><svg width="17" height="12" viewBox="0 0 17 12"><rect x="0" y="8" width="3" height="4" rx="1" fill="#eaf0fa"/><rect x="4.5" y="5.5" width="3" height="6.5" rx="1" fill="#eaf0fa"/><rect x="9" y="3" width="3" height="9" rx="1" fill="#eaf0fa"/><rect x="13.5" y="0" width="3" height="12" rx="1" fill="#eaf0fa"/></svg><svg width="25" height="12" viewBox="0 0 25 12"><rect x=".5" y=".5" width="21" height="11" rx="3" stroke="#eaf0fa" fill="none" opacity=".5"/><rect x="2" y="2" width="15" height="8" rx="1.5" fill="#eaf0fa"/></svg></div></div>
+
+<div class="sheet">
+  <div class="handle"></div>
+  <div class="sh"><h3>All labs</h3><small>9 ready · 2 planned</small></div>
+  <div class="search"><svg class="ico" style="width:17px;height:17px" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>Find a lab, a model or a setting</div>
+
+  <div class="grp"><div class="label">Language<i></i></div><div class="grid">
+    <div class="card on"><div class="ic" style="background:rgba(99,102,241,.2);color:#a5b4fc"><svg class="ico" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.8 7L4 20.5l1.5-4.6A8 8 0 1 1 21 12z"/></svg></div><div><b>Chat</b><span>Stream a model</span></div></div>
+    <div class="card dim"><div class="ic" style="background:rgba(56,189,248,.14);color:var(--sky)"><svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></div><div><b>Search</b><span class="am">● Planned</span></div></div>
+  </div></div>
+
+  <div class="grp"><div class="label">Voice<i></i></div><div class="grid">
+    <div class="card"><div class="ic" style="background:rgba(167,139,250,.16);color:var(--violet)"><svg class="ico" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div><div><b>Transcribe</b><span>Live speech to text</span></div></div>
+    <div class="card"><div class="ic" style="background:rgba(52,211,153,.14);color:var(--green)"><svg class="ico" viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg></div><div><b>Speak</b><span>Text read aloud</span></div></div>
+    <div class="card"><div class="ic" style="background:rgba(244,63,94,.13);color:#fb7185"><svg class="ico" viewBox="0 0 24 24"><path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 7v10"/></svg></div><div><b>Studio</b><span>Clean a recording</span></div></div>
+  </div></div>
+
+  <div class="grp"><div class="label">Vision<i></i></div><div class="grid">
+    <div class="card"><div class="ic" style="background:rgba(245,158,11,.15);color:var(--amber)"><svg class="ico" viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M8 9h8M8 12h8M8 15h5"/></svg></div><div><b>Read text</b><span>Photo to text</span></div></div>
+    <div class="card"><div class="ic" style="background:rgba(56,189,248,.14);color:var(--sky)"><svg class="ico" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg></div><div><b>Image</b><span>Transforms, scans</span></div></div>
+  </div></div>
+
+  <div class="grp"><div class="label">This phone<i></i></div><div class="grid">
+    <div class="card"><div class="ic" style="background:var(--surface3)"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></div><div><b>Models</b><span>3 pulled · 2.1 GB</span></div></div>
+    <div class="card"><div class="ic" style="background:var(--surface3)"><svg class="ico" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg></div><div><b>Devices</b><span>CPU · GPU ready</span></div></div>
+    <div class="card dim"><div class="ic" style="background:var(--surface3)"><svg class="ico" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/></svg></div><div><b>Self-test</b><span class="am">● Planned</span></div></div>
+    <div class="card"><div class="ic" style="background:var(--surface3)"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M2 12h3M19 12h3M4.9 19.1 7 17M17 7l2.1-2.1"/></svg></div><div><b>Settings</b><span>Device, theme, limits</span></div></div>
+  </div></div>
+</div>
+
+<div class="nav"><div class="nav-inner">
+  <div class="tab on"><div class="pill"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg></div>Home</div>
+  <div class="tab"><div class="pill"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.8 7L4 20.5l1.5-4.6A8 8 0 1 1 21 12z"/></svg></div>Chat</div>
+  <div class="tab"><div class="pill"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>Voice</div>
+  <div class="tab"><div class="pill"><svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="12" r="3.2"/></svg></div>Vision</div>
+</div></div>
+<div class="gesture"></div>
+</body></html>

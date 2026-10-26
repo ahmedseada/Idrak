@@ -1,0 +1,308 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Home (plan 34, phase R; apps/Idrak.Mobile/Design/landing.html and t-landing.html): the header with the source commit and
+  the device's status, the carousel on the library and the app, this device measured, the labs to try with live
+  previews; on a wide window two columns, the measured device and the models on the right. Theme keys only.
+-->
+<ctl:AdaptiveView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                  xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+                  xmlns:ctl="clr-namespace:Idrak.Maui.Controls"
+                  x:Class="Idrak.Maui.Views.HomeView"
+                  x:DataType="vm:HomeViewModel">
+    <Grid>
+        <BoxView Background="{DynamicResource IdrakBrushGlowSky}" InputTransparent="True" />
+        <ScrollView>
+            <VerticalStackLayout x:Name="Page" Padding="{DynamicResource IdrakPagePadding}">
+
+                <!-- The header: the mark, the name and the source; the device's status; the settings. -->
+                <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingTile}" Padding="{DynamicResource IdrakHeaderPadding}">
+                    <Border x:Name="LogoTile" Style="{DynamicResource IdrakLogoTile}" VerticalOptions="Center">
+                        <ctl:LogoMark />
+                    </Border>
+                    <VerticalStackLayout Grid.Column="1" VerticalOptions="Center">
+                        <Label x:Name="Brand" Text="Idrak" Style="{DynamicResource IdrakSheetTitle}" />
+                        <Label Text="{Binding SourceText}" Style="{DynamicResource IdrakMicro}" SemanticProperties.Description="The source this app was built from" />
+                    </VerticalStackLayout>
+                    <Border Grid.Column="2" Style="{DynamicResource IdrakChipBorder}">
+                        <Border.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="devices" />
+                        </Border.GestureRecognizers>
+                        <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                            <Ellipse Style="{DynamicResource IdrakStatusDot}">
+                                <Ellipse.Triggers>
+                                    <DataTrigger TargetType="Ellipse" Binding="{Binding Status.IsRead}" Value="False">
+                                        <Setter Property="Fill" Value="{DynamicResource IdrakTextFaint}" />
+                                    </DataTrigger>
+                                    <DataTrigger TargetType="Ellipse" Binding="{Binding Status.Summary.GpuFailed}" Value="True">
+                                        <Setter Property="Fill" Value="{DynamicResource IdrakAmber}" />
+                                    </DataTrigger>
+                                </Ellipse.Triggers>
+                            </Ellipse>
+                            <Label Text="{Binding Status.Chip}" Style="{DynamicResource IdrakChipLabel}" />
+                        </HorizontalStackLayout>
+                    </Border>
+                    <Border Grid.Column="3" Style="{DynamicResource IdrakIconButton}" SemanticProperties.Description="Settings">
+                        <Border.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="settings" />
+                        </Border.GestureRecognizers>
+                        <ctl:IconView Glyph="gear" Size="20" />
+                    </Border>
+                </Grid>
+
+                <Grid x:Name="Columns" ColumnDefinitions="*" ColumnSpacing="{DynamicResource IdrakSpacingColumns}">
+                    <VerticalStackLayout x:Name="Left">
+
+                        <!-- The carousel. -->
+                        <CarouselView x:Name="Carousel" ItemsSource="{Binding Slides}" Position="{Binding Position, Mode=TwoWay}" IndicatorView="Dots"
+                                      HeightRequest="236" PeekAreaInsets="{DynamicResource IdrakCarouselPeek}" Loop="False" HorizontalScrollBarVisibility="Never">
+                            <CarouselView.ItemsLayout>
+                                <LinearItemsLayout Orientation="Horizontal" ItemSpacing="12" SnapPointsType="MandatorySingle" SnapPointsAlignment="Start" />
+                            </CarouselView.ItemsLayout>
+                            <CarouselView.ItemTemplate>
+                                <DataTemplate x:DataType="vm:SlideItem">
+                                    <Border Style="{DynamicResource IdrakSlide}">
+                                        <Border.Triggers>
+                                            <DataTrigger TargetType="Border" Binding="{Binding Tone}" Value="Amber">
+                                                <Setter Property="Background" Value="{DynamicResource IdrakBrushHeroAmber}" />
+                                                <Setter Property="Stroke" Value="{DynamicResource IdrakPlannedStroke}" />
+                                            </DataTrigger>
+                                            <DataTrigger TargetType="Border" Binding="{Binding Tone}" Value="Green">
+                                                <Setter Property="Background" Value="{DynamicResource IdrakBrushHeroGreen}" />
+                                                <Setter Property="Stroke" Value="{DynamicResource IdrakRateStroke}" />
+                                            </DataTrigger>
+                                            <DataTrigger TargetType="Border" Binding="{Binding Tone}" Value="Violet">
+                                                <Setter Property="Background" Value="{DynamicResource IdrakBrushHeroViolet}" />
+                                                <Setter Property="Stroke" Value="{DynamicResource IdrakThinkStroke}" />
+                                            </DataTrigger>
+                                        </Border.Triggers>
+                                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,*,Auto">
+                                            <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                                <ctl:IconView Glyph="spark" Size="13" Stroke="{DynamicResource IdrakAccentText}" />
+                                                <Label Text="{Binding Kicker}" Style="{DynamicResource IdrakKicker}" />
+                                            </HorizontalStackLayout>
+                                            <Label Grid.Row="1" Style="{DynamicResource IdrakSlideTitle}" Margin="{DynamicResource IdrakTopGap}">
+                                                <Label.FormattedText>
+                                                    <FormattedString>
+                                                        <Span Text="{Binding Title}" />
+                                                        <Span Text="{Binding Emphasis}" TextColor="{DynamicResource IdrakAccentText}" />
+                                                    </FormattedString>
+                                                </Label.FormattedText>
+                                            </Label>
+                                            <Label Grid.Row="2" Text="{Binding Text}" Style="{DynamicResource IdrakSlideText}" />
+                                            <Button Grid.Row="4" Text="{Binding Action}" Command="{Binding OpenCommand}" Style="{DynamicResource IdrakGradientButton}" />
+                                            <ctl:LogoMark Grid.Column="1" Grid.RowSpan="5" IsArt="True" IsVisible="{Binding IsLogo}" WidthRequest="120" HeightRequest="150" VerticalOptions="Center" />
+                                            <ctl:IconView Grid.Column="1" Grid.RowSpan="5" Glyph="{Binding Art}" Size="84" IsVisible="{Binding IsIcon}" Stroke="{DynamicResource IdrakAccentText}" />
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </CarouselView.ItemTemplate>
+                        </CarouselView>
+                        <Grid ColumnDefinitions="Auto,*" Padding="{DynamicResource IdrakTopGap}">
+                            <IndicatorView x:Name="Dots" VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding SlideCaption}" Style="{DynamicResource IdrakMicro}" HorizontalOptions="End" />
+                        </Grid>
+
+                        <!-- This device, measured (a narrow window: three tiles). -->
+                        <VerticalStackLayout x:Name="MeasuredTiles">
+                            <Grid ColumnDefinitions="*,Auto" Padding="{DynamicResource IdrakSectionHeaderPadding}">
+                                <Label Text="{Binding MeasuredTitle}" Style="{DynamicResource IdrakSectionLabel}" />
+                                <Label Grid.Column="1" Text="Devices" Style="{DynamicResource IdrakLink}">
+                                    <Label.GestureRecognizers>
+                                        <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="devices" />
+                                    </Label.GestureRecognizers>
+                                </Label>
+                            </Grid>
+                            <Grid ColumnDefinitions="*,*,*" ColumnSpacing="{DynamicResource IdrakSpacingTile}">
+                                <Border Style="{DynamicResource IdrakTile}">
+                                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}">
+                                        <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                            <ctl:IconView Glyph="cpu" Size="15" Stroke="{DynamicResource IdrakTextMuted}" />
+                                            <Label Text="CPU" Style="{DynamicResource IdrakStatKey}" />
+                                        </HorizontalStackLayout>
+                                        <Label Text="{Binding Status.Summary.CpuTitle, FallbackValue='…'}" Style="{DynamicResource IdrakStatValue}" Margin="{DynamicResource IdrakTopGapSmall}" />
+                                        <Label Text="{Binding Status.Summary.CpuDetail}" Style="{DynamicResource IdrakMicro}" />
+                                    </VerticalStackLayout>
+                                </Border>
+                                <Border Grid.Column="1" Style="{DynamicResource IdrakTile}">
+                                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}">
+                                        <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                            <ctl:IconView Glyph="zap" Size="15" Stroke="{DynamicResource IdrakAccentText}" />
+                                            <Label Text="GPU" Style="{DynamicResource IdrakStatKey}" TextColor="{DynamicResource IdrakAccentText}" />
+                                        </HorizontalStackLayout>
+                                        <Label Text="{Binding Status.Summary.GpuTitle, FallbackValue='…'}" Style="{DynamicResource IdrakStatValue}" Margin="{DynamicResource IdrakTopGapSmall}" />
+                                        <Label Text="{Binding Status.Summary.GpuDetail}" Style="{DynamicResource IdrakMicro}" />
+                                    </VerticalStackLayout>
+                                </Border>
+                                <Border Grid.Column="2" Style="{DynamicResource IdrakTile}">
+                                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}">
+                                        <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                            <ctl:IconView Glyph="db" Size="15" Stroke="{DynamicResource IdrakTextMuted}" />
+                                            <Label Text="Memory" Style="{DynamicResource IdrakStatKey}" />
+                                        </HorizontalStackLayout>
+                                        <Label Text="{Binding Status.Summary.MemoryFree, FallbackValue='…'}" Style="{DynamicResource IdrakStatValue}" Margin="{DynamicResource IdrakTopGapSmall}" />
+                                        <Label Text="{Binding Status.Summary.MemoryTotal, StringFormat='of {0} free'}" Style="{DynamicResource IdrakMicro}" />
+                                        <ctl:MeterBar Progress="{Binding Status.Summary.MemoryUsed}" HeightRequest="3" Margin="{DynamicResource IdrakTopGapSmall}" />
+                                    </VerticalStackLayout>
+                                </Border>
+                            </Grid>
+                        </VerticalStackLayout>
+
+                        <!-- Try it. -->
+                        <Grid ColumnDefinitions="*,Auto" Padding="{DynamicResource IdrakSectionHeaderPadding}">
+                            <Label Text="Try it" Style="{DynamicResource IdrakSectionLabel}" />
+                            <Label Grid.Column="1" Text="All labs" Style="{DynamicResource IdrakLink}">
+                                <Label.GestureRecognizers>
+                                    <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="labs" />
+                                </Label.GestureRecognizers>
+                            </Label>
+                        </Grid>
+                        <Grid x:Name="Bento" ColumnDefinitions="*,*,*" RowDefinitions="Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingTile}" RowSpacing="{DynamicResource IdrakSpacingTile}">
+                            <!-- Chat, with its last exchange and its speed. -->
+                            <Border x:Name="ChatTile" Grid.ColumnSpan="3" Style="{DynamicResource IdrakChatTile}" SemanticProperties.Description="Chat">
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="chat" />
+                                </Border.GestureRecognizers>
+                                <Grid x:Name="ChatTileGrid" ColumnDefinitions="Auto,*" ColumnSpacing="{DynamicResource IdrakSpacingSection}">
+                                    <VerticalStackLayout x:Name="ChatTileText" Spacing="{DynamicResource IdrakSpacingTiny}" WidthRequest="150">
+                                        <ctl:IconBadge Glyph="chat" Tone="Indigo" />
+                                        <Label Text="Chat" Style="{DynamicResource IdrakItemTitle}" Margin="{DynamicResource IdrakTopGapSmall}" />
+                                        <Label Text="{Binding ChatModel}" Style="{DynamicResource IdrakMicro}" TextColor="{DynamicResource IdrakTextMuted}" />
+                                        <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}" IsVisible="{Binding HasChatRate}" Margin="{DynamicResource IdrakTopGapSmall}">
+                                            <ctl:IconView Glyph="zap" Size="12" Stroke="{DynamicResource IdrakGreen}" />
+                                            <Label Text="{Binding ChatRate}" Style="{DynamicResource IdrakSuccessText}" />
+                                        </HorizontalStackLayout>
+                                    </VerticalStackLayout>
+                                    <VerticalStackLayout x:Name="ChatPreview" Grid.Column="1" Spacing="{DynamicResource IdrakSpacingSmall}" VerticalOptions="Center">
+                                        <Border Style="{DynamicResource IdrakPreviewUser}">
+                                            <Label Text="{Binding ChatQuestion}" Style="{DynamicResource IdrakPreviewText}" TextColor="{DynamicResource IdrakOnGradient}" />
+                                        </Border>
+                                        <Border Style="{DynamicResource IdrakPreviewAnswer}">
+                                            <Label Text="{Binding ChatAnswer}" Style="{DynamicResource IdrakPreviewText}" />
+                                        </Border>
+                                    </VerticalStackLayout>
+                                </Grid>
+                            </Border>
+                            <!-- Transcribe, with a waveform. -->
+                            <Border x:Name="TranscribeTile" Grid.Row="1" Style="{DynamicResource IdrakTryTile}" SemanticProperties.Description="Transcribe">
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="transcribe" />
+                                </Border.GestureRecognizers>
+                                <Grid RowDefinitions="Auto,Auto,Auto,*">
+                                    <Grid ColumnDefinitions="Auto,*">
+                                        <ctl:IconBadge Glyph="mic" Tone="Violet" />
+                                        <ctl:WaveformView x:Name="TileWave" Grid.Column="1" HeightRequest="26" Margin="{DynamicResource IdrakTileWaveMargin}" />
+                                    </Grid>
+                                    <Label Grid.Row="1" Text="Transcribe" Style="{DynamicResource IdrakItemTitle}" Margin="{DynamicResource IdrakTopGap}" />
+                                    <Label Grid.Row="2" Text="Live speech" Style="{DynamicResource IdrakMicro}" TextColor="{DynamicResource IdrakTextMuted}" />
+                                </Grid>
+                            </Border>
+                            <!-- Read text. -->
+                            <Border x:Name="OcrTile" Grid.Row="1" Grid.Column="1" Style="{DynamicResource IdrakTryTile}" SemanticProperties.Description="Read text">
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="ocr" />
+                                </Border.GestureRecognizers>
+                                <VerticalStackLayout>
+                                    <ctl:IconBadge Glyph="ocr" Tone="Amber" />
+                                    <Label Text="Read text" Style="{DynamicResource IdrakItemTitle}" Margin="{DynamicResource IdrakTopGap}" />
+                                    <Label Text="Photo to text" Style="{DynamicResource IdrakMicro}" TextColor="{DynamicResource IdrakTextMuted}" />
+                                </VerticalStackLayout>
+                            </Border>
+                            <!-- Speak, with a line it says. -->
+                            <Border x:Name="SpeakTile" Grid.Row="1" Grid.Column="2" Style="{DynamicResource IdrakTryTile}" SemanticProperties.Description="Speak">
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="speak" />
+                                </Border.GestureRecognizers>
+                                <VerticalStackLayout>
+                                    <ctl:IconBadge Glyph="speak" Tone="Green" />
+                                    <Label Text="Speak" Style="{DynamicResource IdrakItemTitle}" Margin="{DynamicResource IdrakTopGap}" />
+                                    <Label Text="Text to voice" Style="{DynamicResource IdrakMicro}" TextColor="{DynamicResource IdrakTextMuted}" />
+                                    <Label x:Name="SpeakLine" Text="{Binding SpeakLine}" Style="{DynamicResource IdrakSpokenLine}" IsVisible="False" />
+                                </VerticalStackLayout>
+                            </Border>
+                        </Grid>
+                    </VerticalStackLayout>
+
+                    <!-- A wide window: the measured device and the models, on the right. -->
+                    <VerticalStackLayout x:Name="Right" Grid.Column="1" Spacing="{DynamicResource IdrakSpacingSection}" IsVisible="False">
+                        <Border Style="{DynamicResource IdrakPanel}">
+                            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSection}">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <Label Text="{Binding MeasuredTitle}" Style="{DynamicResource IdrakHeading}" />
+                                    <Label Grid.Column="1" Text="Devices" Style="{DynamicResource IdrakLink}">
+                                        <Label.GestureRecognizers>
+                                            <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="devices" />
+                                        </Label.GestureRecognizers>
+                                    </Label>
+                                </Grid>
+                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                                    <ctl:IconBadge Glyph="cpu" Tone="Neutral" BadgeSize="38" />
+                                    <VerticalStackLayout Grid.Column="1" VerticalOptions="Center">
+                                        <Label Text="CPU" Style="{DynamicResource IdrakStatKey}" />
+                                        <Label Text="{Binding Status.Summary.CpuTitle, FallbackValue='…'}" Style="{DynamicResource IdrakItemTitle}" />
+                                    </VerticalStackLayout>
+                                    <Label Grid.Column="2" Text="{Binding Status.Summary.CpuDetail}" Style="{DynamicResource IdrakMicro}" VerticalOptions="Center" />
+                                </Grid>
+                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                                    <ctl:IconBadge Glyph="zap" Tone="Sky" BadgeSize="38" />
+                                    <VerticalStackLayout Grid.Column="1" VerticalOptions="Center">
+                                        <Label Text="GPU" Style="{DynamicResource IdrakStatKey}" />
+                                        <Label Text="{Binding Status.Summary.GpuTitle, FallbackValue='…'}" Style="{DynamicResource IdrakItemTitle}" />
+                                    </VerticalStackLayout>
+                                    <Label Grid.Column="2" Text="{Binding Status.Summary.GpuDetail}" Style="{DynamicResource IdrakMicro}" VerticalOptions="Center" />
+                                </Grid>
+                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                                    <ctl:IconBadge Glyph="db" Tone="Neutral" BadgeSize="38" />
+                                    <VerticalStackLayout Grid.Column="1" VerticalOptions="Center">
+                                        <Label Text="Memory" Style="{DynamicResource IdrakStatKey}" />
+                                        <Label Text="{Binding Status.Summary.MemoryFree, StringFormat='{0} free', FallbackValue='…'}" Style="{DynamicResource IdrakItemTitle}" />
+                                    </VerticalStackLayout>
+                                    <VerticalStackLayout Grid.Column="2" VerticalOptions="Center" WidthRequest="120">
+                                        <Label Text="{Binding Status.Summary.MemoryTotal, StringFormat='of {0}'}" Style="{DynamicResource IdrakMicro}" HorizontalOptions="End" />
+                                        <ctl:MeterBar Progress="{Binding Status.Summary.MemoryUsed}" Margin="{DynamicResource IdrakTopGapSmall}" />
+                                    </VerticalStackLayout>
+                                </Grid>
+                            </VerticalStackLayout>
+                        </Border>
+                        <Border Style="{DynamicResource IdrakPanel}">
+                            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacing}">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <Label Text="{Binding ModelsTitle}" Style="{DynamicResource IdrakHeading}" />
+                                    <Label Grid.Column="1" Text="Models" Style="{DynamicResource IdrakLink}">
+                                        <Label.GestureRecognizers>
+                                            <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="models" />
+                                        </Label.GestureRecognizers>
+                                    </Label>
+                                </Grid>
+                                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Status.Models}" Spacing="{DynamicResource IdrakSpacing}">
+                                    <BindableLayout.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:ModelRow">
+                                            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                                                <ctl:IconBadge Glyph="db" Tone="{Binding Tone}" />
+                                                <VerticalStackLayout Grid.Column="1" VerticalOptions="Center">
+                                                    <Label Text="{Binding Title}" Style="{DynamicResource IdrakItemTitle}" />
+                                                    <Label Text="{Binding Detail}" Style="{DynamicResource IdrakMicro}" TextColor="{DynamicResource IdrakTextMuted}" />
+                                                </VerticalStackLayout>
+                                                <Label Grid.Column="2" Text="{Binding Size}" Style="{DynamicResource IdrakMeta}" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </BindableLayout.ItemTemplate>
+                                </VerticalStackLayout>
+                                <Label Text="{Binding Status.ModelsText}" Style="{DynamicResource IdrakCaption}" />
+                                <Border Style="{DynamicResource IdrakDashedButton}">
+                                    <Border.GestureRecognizers>
+                                        <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="models" />
+                                    </Border.GestureRecognizers>
+                                    <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingChip}" HorizontalOptions="Center">
+                                        <ctl:IconView Glyph="down" Size="17" Stroke="{DynamicResource IdrakAccentText}" />
+                                        <Label Text="Pull a model" Style="{DynamicResource IdrakLink}" />
+                                    </HorizontalStackLayout>
+                                </Border>
+                            </VerticalStackLayout>
+                        </Border>
+                    </VerticalStackLayout>
+                </Grid>
+            </VerticalStackLayout>
+        </ScrollView>
+    </Grid>
+</ctl:AdaptiveView>

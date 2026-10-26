@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Devices (plan 34, phase R): what the library measured in the app's own process, as summary cards (the process, then each
+  device with its state as a badge and a few key facts, every other fact folded under it), the virtual devices (deferred,
+  minimal, simulated) apart, and each backend that found none with why. Theme keys only.
+-->
+<ctl:AdaptiveView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                  xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+                  xmlns:ctl="clr-namespace:Idrak.Maui.Controls"
+                  x:Class="Idrak.Maui.Views.DevicesView"
+                  x:DataType="vm:DevicesViewModel">
+    <ctl:AdaptiveView.Resources>
+        <!-- A device: its icon, kind and name, its state as a badge, a few key facts, the rest folded. -->
+        <DataTemplate x:Key="DeviceCard" x:DataType="vm:DeviceCard">
+            <ContentView Padding="{DynamicResource IdrakLabCellPadding}">
+                <Border Style="{DynamicResource IdrakPanel}">
+                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingChip}">
+                        <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                            <ctl:IconBadge Glyph="{Binding Icon}" Tone="Sky" BadgeSize="38" />
+                            <VerticalStackLayout Grid.Column="1" VerticalOptions="Center">
+                                <Label Text="{Binding Title}" Style="{DynamicResource IdrakHeading}" />
+                                <Label Text="{Binding Name}" Style="{DynamicResource IdrakMicro}" TextColor="{DynamicResource IdrakTextMuted}" LineBreakMode="WordWrap" />
+                            </VerticalStackLayout>
+                            <Border Grid.Column="2" Style="{DynamicResource IdrakStateBadge}">
+                                <Border.Triggers>
+                                    <DataTrigger TargetType="Border" Binding="{Binding IsFailed}" Value="True">
+                                        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakToneRoseBackground}" />
+                                    </DataTrigger>
+                                    <DataTrigger TargetType="Border" Binding="{Binding IsNone}" Value="True">
+                                        <Setter Property="BackgroundColor" Value="{DynamicResource IdrakToneNeutralBackground}" />
+                                    </DataTrigger>
+                                </Border.Triggers>
+                                <Label Text="{Binding Badge}" Style="{DynamicResource IdrakStateBadgeLabel}">
+                                    <Label.Triggers>
+                                        <DataTrigger TargetType="Label" Binding="{Binding IsFailed}" Value="True">
+                                            <Setter Property="TextColor" Value="{DynamicResource IdrakError}" />
+                                        </DataTrigger>
+                                        <DataTrigger TargetType="Label" Binding="{Binding IsNone}" Value="True">
+                                            <Setter Property="TextColor" Value="{DynamicResource IdrakTextMuted}" />
+                                        </DataTrigger>
+                                    </Label.Triggers>
+                                </Label>
+                            </Border>
+                        </Grid>
+                        <Label Text="{Binding Device}" Style="{DynamicResource IdrakTimestamp}" />
+                        <Label Text="{Binding Problem}" IsVisible="{Binding HasProblem}" Style="{DynamicResource IdrakErrorText}" />
+                        <VerticalStackLayout BindableLayout.ItemsSource="{Binding Facts}" Spacing="{DynamicResource IdrakSpacingTiny}">
+                            <BindableLayout.ItemTemplate>
+                                <DataTemplate x:DataType="vm:InfoRow">
+                                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                                        <Label Text="{Binding Name}" Style="{DynamicResource IdrakCaption}" />
+                                        <Label Grid.Column="1" Text="{Binding Value}" Style="{DynamicResource IdrakValue}" HorizontalTextAlignment="End" />
+                                    </Grid>
+                                </DataTemplate>
+                            </BindableLayout.ItemTemplate>
+                        </VerticalStackLayout>
+                        <Label Text="{Binding ToggleText}" IsVisible="{Binding HasDetails}" Style="{DynamicResource IdrakLink}">
+                            <Label.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding ToggleCommand}" />
+                            </Label.GestureRecognizers>
+                        </Label>
+                        <VerticalStackLayout BindableLayout.ItemsSource="{Binding Details}" IsVisible="{Binding IsExpanded}" Spacing="{DynamicResource IdrakSpacingSmall}">
+                            <BindableLayout.ItemTemplate>
+                                <DataTemplate x:DataType="vm:InfoRow">
+                                    <VerticalStackLayout>
+                                        <Label Text="{Binding Name}" Style="{DynamicResource IdrakMicro}" />
+                                        <Label Text="{Binding Value}" Style="{DynamicResource IdrakMono}" />
+                                    </VerticalStackLayout>
+                                </DataTemplate>
+                            </BindableLayout.ItemTemplate>
+                        </VerticalStackLayout>
+                    </VerticalStackLayout>
+                </Border>
+            </ContentView>
+        </DataTemplate>
+    </ctl:AdaptiveView.Resources>
+    <RefreshView IsRefreshing="{Binding IsBusy}" Command="{Binding RefreshCommand}">
+        <ScrollView>
+            <VerticalStackLayout x:Name="Page" Padding="{DynamicResource IdrakPagePadding}" Spacing="{DynamicResource IdrakSpacing}">
+                <Grid ColumnDefinitions="*,Auto">
+                    <VerticalStackLayout>
+                        <Label Text="Devices" Style="{DynamicResource IdrakTitle}" />
+                        <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" />
+                    </VerticalStackLayout>
+                    <Border Grid.Column="1" Style="{DynamicResource IdrakIconButton}" SemanticProperties.Description="Read again" VerticalOptions="Center">
+                        <Border.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding RefreshCommand}" />
+                        </Border.GestureRecognizers>
+                        <ctl:IconView Glyph="redo" Size="18" />
+                    </Border>
+                </Grid>
+                <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+                <ActivityIndicator IsRunning="{Binding IsBusy}" IsVisible="{Binding IsBusy}" HorizontalOptions="Start" />
+
+                <FlexLayout x:Name="Cards" BindableLayout.ItemsSource="{Binding Devices}" BindableLayout.ItemTemplate="{StaticResource DeviceCard}" Wrap="Wrap" Direction="Row" AlignItems="Start" />
+
+                <VerticalStackLayout IsVisible="{Binding HasVirtualDevices}" Spacing="{DynamicResource IdrakSpacingChip}">
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{DynamicResource IdrakSpacingChip}" Padding="{DynamicResource IdrakSectionHeaderPadding}">
+                        <Label Text="Virtual devices" Style="{DynamicResource IdrakSectionLabel}" />
+                        <BoxView Grid.Column="1" HeightRequest="1" Color="{DynamicResource IdrakLine}" VerticalOptions="Center" />
+                    </Grid>
+                    <Label Text="Reached by name only: they hold no memory of their own or stand in for others (deferred, minimal, simulated)." Style="{DynamicResource IdrakCaption}" />
+                    <FlexLayout x:Name="VirtualCards" BindableLayout.ItemsSource="{Binding VirtualDevices}" BindableLayout.ItemTemplate="{StaticResource DeviceCard}" Wrap="Wrap" Direction="Row" AlignItems="Start" />
+                </VerticalStackLayout>
+            </VerticalStackLayout>
+        </ScrollView>
+    </RefreshView>
+</ctl:AdaptiveView>

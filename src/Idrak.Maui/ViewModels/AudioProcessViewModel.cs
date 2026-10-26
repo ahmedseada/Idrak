@@ -158,6 +158,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
 
         RefreshProcessors();
         CheckPipeline();
+        ShowSteps();
         RecordCommand = new Command(async () =>
         {
             if (IsRecording)
@@ -195,7 +196,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
     }
 
     /// <summary>The page's title.</summary>
-    public string Title => "Audio process";
+    public string Title => "Studio";
 
     /// <summary>What monitoring warns of: the speaker feeds back into the microphone without headphones.</summary>
     public string MonitorWarning => "Monitoring plays the microphone on the speaker as it is heard: use headphones, or the speaker feeds back into the microphone (a howl).";
@@ -215,8 +216,32 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
             if (SetProperty(ref _pipelineText, value ?? ""))
             {
                 CheckPipeline();
+                ShowSteps();
             }
         }
+    }
+
+    /// <summary>The pipeline's steps as chips (the design's flow: highpass › denoise › agc), each with its value and a remove.</summary>
+    public ObservableCollection<PipelineStep> Steps { get; } = [];
+
+    /// <summary>Whether the pipeline has a step.</summary>
+    public bool HasSteps => Steps.Count > 0;
+
+    // The steps of the text as written (split at its commas), each removable.
+    private void ShowSteps()
+    {
+        string[] parts = _pipelineText.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Steps.Clear();
+        for (int i = 0; i < parts.Length; i++)
+        {
+            int at = i;
+            string part = parts[i];
+            int end = part.IndexOfAny(['=', ' ']);
+            Steps.Add(new PipelineStep(end < 0 ? part : part[..end], end < 0 ? "" : part[(end + 1)..].Trim(), i > 0,
+                new Command(() => PipelineText = string.Join(", ", parts.Where((_, j) => j != at)))));
+        }
+
+        OnPropertyChanged(nameof(HasSteps));
     }
 
     /// <summary>What the pipeline is ("3 steps, all live"), or "" when it does not read.</summary>
@@ -1402,4 +1427,15 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
             }
         }
     }
+}
+
+/// <summary>One step of a pipeline as a chip: its processor, its value and options, and a remove.</summary>
+/// <param name="Name">The processor ("highpass").</param>
+/// <param name="Value">Its value and options as written ("80"), or "".</param>
+/// <param name="HasArrow">Whether a step comes before it (the flow's arrow).</param>
+/// <param name="RemoveCommand">Takes it out of the pipeline.</param>
+public sealed record PipelineStep(string Name, string Value, bool HasArrow, System.Windows.Input.ICommand RemoveCommand)
+{
+    /// <summary>Whether it has a value to show.</summary>
+    public bool HasValue => Value.Length > 0;
 }

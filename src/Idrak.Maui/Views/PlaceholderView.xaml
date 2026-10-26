@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- A lab not built yet (plan 34): its title, icon and the planned mark, what it will do and need, from its registration alone. Theme keys only. -->
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+             xmlns:ctl="clr-namespace:Idrak.Maui.Controls"
+             x:Class="Idrak.Maui.Views.PlaceholderView"
+             x:DataType="vm:PlaceholderViewModel">
+    <ScrollView>
+        <VerticalStackLayout Padding="{DynamicResource IdrakPagePadding}" Spacing="{DynamicResource IdrakSpacing}">
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                <ctl:IconBadge Glyph="{Binding Icon}" Tone="Amber" BadgeSize="48" />
+                <VerticalStackLayout Grid.Column="1" Spacing="{DynamicResource IdrakSpacingSmall}" VerticalOptions="Center">
+                    <Label Text="{Binding Title}" Style="{DynamicResource IdrakTitle}" />
+                    <Border Style="{DynamicResource IdrakBadge}" IsVisible="{Binding IsPlanned}">
+                        <Label Text="{Binding StateText}" Style="{DynamicResource IdrakBadgeLabel}" />
+                    </Border>
+                </VerticalStackLayout>
+            </Grid>
+            <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" />
+
+            <Border Style="{DynamicResource IdrakPlannedPanel}" IsVisible="{Binding HasComing}">
+                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                    <Label Text="What it will do" Style="{DynamicResource IdrakSectionLabel}" />
+                    <Label Text="{Binding Coming}" Style="{DynamicResource IdrakBody}" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Border Style="{DynamicResource IdrakPanel}">
+                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                    <Label Text="What it will need" Style="{DynamicResource IdrakSectionLabel}" />
+                    <VerticalStackLayout BindableLayout.ItemsSource="{Binding NeedLines}" Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="x:String">
+                                <Label Text="{Binding .}" Style="{DynamicResource IdrakValue}" />
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </VerticalStackLayout>
+                    <Label Text="Nothing from the phone" IsVisible="{Binding NeedsNothing}" Style="{DynamicResource IdrakValue}" />
+                    <Label Text="The library's packages" IsVisible="{Binding HasPackages}" Style="{DynamicResource IdrakCaption}" />
+                    <Label Text="{Binding Packages}" IsVisible="{Binding HasPackages}" Style="{DynamicResource IdrakMono}" />
+                    <Label Text="Model families" IsVisible="{Binding HasModelFamilies}" Style="{DynamicResource IdrakCaption}" />
+                    <Label Text="{Binding ModelFamilies}" IsVisible="{Binding HasModelFamilies}" Style="{DynamicResource IdrakMono}" />
+                </VerticalStackLayout>
+            </Border>
+
+            <Label Text="This page is a placeholder: the lab's own page replaces it when it is built, in the same place." Style="{DynamicResource IdrakMicro}" />
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentView>

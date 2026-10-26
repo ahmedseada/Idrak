@@ -35,6 +35,15 @@ public sealed class TranscribeFeature : IMobileFeature
     public int Order => 30;
 
     /// <inheritdoc />
+    public FeatureGroup Group => FeatureGroup.Voice;
+
+    /// <inheritdoc />
+    public string Tagline => "Live speech to text";
+
+    /// <inheritdoc />
+    public string Icon => "mic";
+
+    /// <inheritdoc />
     public PhoneNeeds Needs => PhoneNeeds.Microphone | PhoneNeeds.Model;
 
     /// <inheritdoc />
@@ -63,4 +72,8 @@ public sealed class TranscribeFeature : IMobileFeature
     /// <inheritdoc />
     public Page CreatePage(IServiceProvider services, object viewModel) =>
         new TranscribePage(viewModel as TranscribeViewModel ?? throw new ArgumentException($"The transcribe page takes a {nameof(TranscribeViewModel)}.", nameof(viewModel)), services);
+
+    /// <inheritdoc />
+    public View? CreateView(IServiceProvider services, object viewModel) =>
+        viewModel is TranscribeViewModel vm ? new TranscribeView(vm, services) : throw new ArgumentException($"The {Name} view takes a {nameof(TranscribeViewModel)}.", nameof(viewModel));
 }

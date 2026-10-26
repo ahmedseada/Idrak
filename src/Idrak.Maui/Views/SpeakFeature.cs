@@ -34,6 +34,15 @@ public sealed class SpeakFeature : IMobileFeature
     public int Order => 40;
 
     /// <inheritdoc />
+    public FeatureGroup Group => FeatureGroup.Voice;
+
+    /// <inheritdoc />
+    public string Tagline => "Text read aloud";
+
+    /// <inheritdoc />
+    public string Icon => "speak";
+
+    /// <inheritdoc />
     public PhoneNeeds Needs => PhoneNeeds.Model;
 
     /// <inheritdoc />
@@ -60,4 +69,8 @@ public sealed class SpeakFeature : IMobileFeature
     /// <inheritdoc />
     public Page CreatePage(IServiceProvider services, object viewModel) =>
         new SpeakPage(viewModel as SpeakViewModel ?? throw new ArgumentException($"The speak page takes a {nameof(SpeakViewModel)}.", nameof(viewModel)), services);
+
+    /// <inheritdoc />
+    public View? CreateView(IServiceProvider services, object viewModel) =>
+        viewModel is SpeakViewModel vm ? new SpeakView(vm, services) : throw new ArgumentException($"The {Name} view takes a {nameof(SpeakViewModel)}.", nameof(viewModel));
 }

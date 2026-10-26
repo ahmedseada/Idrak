@@ -1,0 +1,95 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+body { background: radial-gradient(100% 40% at 50% -10%, rgba(99,102,241,.16), transparent 60%), var(--bg); }
+.top { display: flex; align-items: center; gap: 10px; padding: 6px 16px 10px; }
+.model { flex: 1; display: flex; align-items: center; gap: 11px; height: 54px; padding: 0 12px; border-radius: 18px; background: var(--surface); border: 1px solid var(--line2); }
+.av { width: 34px; height: 34px; border-radius: 11px; background: linear-gradient(135deg, #6366f1, #38bdf8); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 15px; }
+.model .n { font-size: 14.5px; font-weight: 700; display: flex; align-items: center; gap: 5px; }
+.model .m { font-size: 11px; color: var(--muted); margin-top: 2px; display: flex; gap: 6px; align-items: center; }
+.model .m .dot { width: 6px; height: 6px; box-shadow: 0 0 0 2px rgba(52,211,153,.2); }
+.feed { padding: 6px 16px 0; display: flex; flex-direction: column; gap: 13px; }
+.day { text-align: center; font-size: 11px; color: var(--faint); font-weight: 600; }
+.u { align-self: flex-end; max-width: 78%; padding: 11px 14px; border-radius: 20px 20px 6px 20px; background: linear-gradient(135deg, #38bdf8, #6366f1); color: #fff; font-size: 14px; line-height: 1.4; box-shadow: 0 8px 24px rgba(56,189,248,.22); }
+.a { display: flex; flex-direction: column; gap: 8px; }
+.who { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.who .av { width: 22px; height: 22px; border-radius: 7px; font-size: 10px; }
+.think { align-self: flex-start; display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 11px; border-radius: 14px; background: rgba(167,139,250,.10); border: 1px solid rgba(167,139,250,.22); color: #c4b5fd; font-size: 11.5px; font-weight: 600; }
+.body { font-size: 14px; line-height: 1.55; color: #dbe3f2; }
+.body b { color: var(--text); }
+.body ol { padding-left: 18px; margin-top: 4px; }
+.body li { margin-top: 3px; }
+.code { margin-top: 8px; border-radius: 14px; background: #0a0f1d; border: 1px solid var(--line2); overflow: hidden; }
+.code .bar2 { display: flex; justify-content: space-between; align-items: center; padding: 7px 12px; font-size: 11px; color: var(--faint); border-bottom: 1px solid var(--line); font-weight: 600; }
+.code pre { font-family: "JetBrains Mono"; font-size: 11.5px; line-height: 1.5; padding: 9px 12px; color: #c9d4ea; }
+.k { color: #7dd3fc; } .s { color: #fcd34d; } .c { color: #64748b; }
+.meta { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--faint); font-weight: 600; }
+.meta .g { color: var(--green); display: flex; align-items: center; gap: 4px; }
+.meta .acts { margin-left: auto; display: flex; gap: 14px; color: var(--muted); }
+.meta svg { width: 15px; height: 15px; }
+.caret { display: inline-block; width: 8px; height: 16px; background: var(--sky); border-radius: 2px; vertical-align: -3px; margin-left: 2px; box-shadow: 0 0 10px rgba(56,189,248,.8); }
+.live { display: flex; align-items: center; gap: 10px; }
+.live .rate { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 13px; background: rgba(52,211,153,.10); border: 1px solid rgba(52,211,153,.25); color: var(--green); font-size: 11.5px; font-weight: 700; }
+.live .stop { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 11px; border-radius: 13px; background: var(--surface2); border: 1px solid var(--line2); font-size: 11.5px; font-weight: 700; }
+.live .stop i { width: 9px; height: 9px; border-radius: 2px; background: var(--red); display: block; }
+.composer { position: absolute; left: 0; right: 0; bottom: 88px; padding: 10px 14px 8px; background: linear-gradient(180deg, rgba(6,10,20,0), #060a14 30%); }
+.sugg { display: flex; gap: 8px; margin-bottom: 9px; overflow: hidden; }
+.sugg .chip { background: var(--surface); color: #c7d2e8; font-weight: 600; }
+.box { height: 54px; border-radius: 27px; background: var(--surface2); border: 1px solid rgba(56,189,248,.35); display: flex; align-items: center; padding: 0 6px 0 8px; gap: 8px; box-shadow: 0 0 0 4px rgba(56,189,248,.07); }
+.box .ph { flex: 1; font-size: 14px; color: var(--faint); }
+.round { width: 40px; height: 40px; border-radius: 20px; display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.send { background: linear-gradient(135deg, #38bdf8, #6366f1); color: #fff; box-shadow: 0 6px 18px rgba(56,189,248,.35); }
+</style></head>
+<body>
+<div class="status"><span>9:41</span><div class="icons"><svg width="17" height="12" viewBox="0 0 17 12"><rect x="0" y="8" width="3" height="4" rx="1" fill="#eaf0fa"/><rect x="4.5" y="5.5" width="3" height="6.5" rx="1" fill="#eaf0fa"/><rect x="9" y="3" width="3" height="9" rx="1" fill="#eaf0fa"/><rect x="13.5" y="0" width="3" height="12" rx="1" fill="#eaf0fa"/></svg><svg width="25" height="12" viewBox="0 0 25 12"><rect x=".5" y=".5" width="21" height="11" rx="3" stroke="#eaf0fa" fill="none" opacity=".5"/><rect x="2" y="2" width="15" height="8" rx="1.5" fill="#eaf0fa"/></svg></div></div>
+
+<div class="top">
+  <div class="model">
+    <div class="av">Q</div>
+    <div style="flex:1">
+      <div class="n">Qwen3 0.6B <svg class="ico" style="width:15px;height:15px;color:var(--muted)" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></div>
+      <div class="m"><i class="dot"></i>int8 · vulkan:0 · loaded in 3.1 s</div>
+    </div>
+  </div>
+  <div class="iconbtn" style="width:46px;height:46px;border-radius:15px"><svg class="ico" viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div>
+</div>
+
+<div class="feed">
+    <div class="u">How can a phone run a language model without the cloud?</div>
+  <div class="a">
+    <div class="who"><div class="av">Q</div>Qwen3 0.6B</div>
+    <div class="think"><svg class="ico" style="width:14px;height:14px" viewBox="0 0 24 24"><path d="M12 5a3 3 0 0 0-5.8 1A3 3 0 0 0 4 11a3 3 0 0 0 2 5 3 3 0 0 0 6 1V5zM12 5a3 3 0 0 1 5.8 1A3 3 0 0 1 20 11a3 3 0 0 1-2 5 3 3 0 0 1-6 1"/></svg>Thought for 1.4 s<svg class="ico" style="width:14px;height:14px" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></div>
+    <div class="body">Two things make it fit:
+      <ol><li><b>Small weights</b> — 0.6B parameters in int8 take about 0.7 GB.</li><li><b>The phone's GPU</b> — Vulkan kernels, measured on this device.</li></ol>
+      <div class="code"><div class="bar2"><span>C#</span><span>Copy</span></div><pre><span class="k">var</span> model = PretrainedModel.Load(<span class="s">"Qwen3-0.6B"</span>,
+    <span class="k">new</span>() { Int8 = <span class="k">true</span>, Device = gpu });</pre></div>
+    </div>
+    <div class="meta"><span class="g"><svg class="ico" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>18.1 tok/s</span><span>212 tokens</span><span>first in 0.4 s</span>
+      <span class="acts"><svg class="ico" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg><svg class="ico" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8M21 3v5h-5M21 12a9 9 0 0 1-15.5 6.2L3 16M3 21v-5h5"/></svg></span></div>
+  </div>
+  <div class="u">Say it in one sentence, in Arabic.</div>
+  <div class="a">
+    <div class="who"><div class="av">Q</div>Qwen3 0.6B</div>
+    <div class="body" dir="rtl" style="text-align:right">النموذج صغير بما يكفي ليعمل على معالج الهاتف الرسومي<span class="caret"></span></div>
+    <div class="live"><span class="rate"><svg class="ico" style="width:13px;height:13px" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>17.4 tok/s · 31 tokens</span><span class="stop"><i></i>Stop</span></div>
+  </div>
+</div>
+
+<div class="composer">
+
+  <div class="box">
+    <div class="round" style="background:var(--surface3)"><svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></div>
+    <div class="ph">Message Qwen3…</div>
+    <div class="round"><svg class="ico" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>
+    <div class="round send"><svg class="ico" viewBox="0 0 24 24"><path d="M12 19V5m0 0-6 6m6-6 6 6"/></svg></div>
+  </div>
+</div>
+
+<div class="nav"><div class="nav-inner">
+  <div class="tab"><div class="pill"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/></svg></div>Home</div>
+  <div class="tab on"><div class="pill"><svg viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.8 7L4 20.5l1.5-4.6A8 8 0 1 1 21 12z"/></svg></div>Chat</div>
+  <div class="tab"><div class="pill"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>Voice</div>
+  <div class="tab"><div class="pill"><svg viewBox="0 0 24 24"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><circle cx="12" cy="12" r="3.2"/></svg></div>Vision</div>
+</div></div>
+<div class="gesture"></div>
+</body></html>

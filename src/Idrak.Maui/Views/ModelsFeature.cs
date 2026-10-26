@@ -31,6 +31,15 @@ public sealed class ModelsFeature : IMobileFeature
     public int Order => 10;
 
     /// <inheritdoc />
+    public FeatureGroup Group => FeatureGroup.Device;
+
+    /// <inheritdoc />
+    public string Tagline => "Pull, list and remove";
+
+    /// <inheritdoc />
+    public string Icon => "down";
+
+    /// <inheritdoc />
     public PhoneNeeds Needs => PhoneNeeds.Network;
 
     /// <inheritdoc />
@@ -55,4 +64,8 @@ public sealed class ModelsFeature : IMobileFeature
     /// <inheritdoc />
     public Page CreatePage(IServiceProvider services, object viewModel) =>
         new ModelsPage(viewModel as ModelsViewModel ?? throw new ArgumentException($"The models page takes a {nameof(ModelsViewModel)}.", nameof(viewModel)));
+
+    /// <inheritdoc />
+    public View? CreateView(IServiceProvider services, object viewModel) =>
+        viewModel is ModelsViewModel vm ? new ModelsView(vm, services) : throw new ArgumentException($"The {Name} view takes a {nameof(ModelsViewModel)}.", nameof(viewModel));
 }

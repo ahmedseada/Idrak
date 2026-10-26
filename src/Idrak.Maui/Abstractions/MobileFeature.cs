@@ -39,6 +39,22 @@ public enum FeatureState
     Planned = 1,
 }
 
+/// <summary>Where a feature is listed among the labs (the All labs sheet or page): by what it works on.</summary>
+public enum FeatureGroup
+{
+    /// <summary>The phone itself and the app: models, devices, tests, settings (the default).</summary>
+    Device = 0,
+
+    /// <summary>Language: chat, retrieval.</summary>
+    Language = 1,
+
+    /// <summary>Voice: speech into text, text into speech, sound processing.</summary>
+    Voice = 2,
+
+    /// <summary>Vision: reading a photo, image transforms.</summary>
+    Vision = 3,
+}
+
 /// <summary>
 /// One feature of the app: a page and its view model, listed in the app's menu. Registered by its
 /// <see cref="IKind.Name"/> in <see cref="MobileFeatures"/>; the library registers its own as defaults and an app adds its
@@ -66,6 +82,15 @@ public interface IMobileFeature : IKind
     /// <summary>What it will do once built, one line for its placeholder page; "" for a ready feature (the default).</summary>
     string Coming => "";
 
+    /// <summary>Where it is listed among the labs (<see cref="FeatureGroup.Device"/> unless it says).</summary>
+    FeatureGroup Group => FeatureGroup.Device;
+
+    /// <summary>A few words for a lab's card ("Live speech to text"); "" uses <see cref="IKind.Summary"/> (the default).</summary>
+    string Tagline => "";
+
+    /// <summary>The name of its icon among Idrak's (<c>Idrak.Maui.Theme.IdrakIcons</c>: "chat", "mic"); "" draws <see cref="Glyph"/> (the default).</summary>
+    string Icon => "";
+
     /// <summary>What it needs from the phone.</summary>
     PhoneNeeds Needs { get; }
 
@@ -80,6 +105,13 @@ public interface IMobileFeature : IKind
 
     /// <summary>A new page bound to <paramref name="viewModel"/> (one <see cref="CreateViewModel"/> made).</summary>
     Page CreatePage(IServiceProvider services, object viewModel);
+
+    /// <summary>
+    /// Its content as a view bound to <paramref name="viewModel"/>, for a section of the app's navigation to host (a tab of
+    /// the bottom bar or the rail; <see cref="AppSections"/>); null (the default) when it has none, and the section opens its
+    /// page instead.
+    /// </summary>
+    View? CreateView(IServiceProvider services, object viewModel) => null;
 }
 
 /// <summary>

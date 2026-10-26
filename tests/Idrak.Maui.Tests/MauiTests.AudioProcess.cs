@@ -414,8 +414,8 @@ internal static partial class MauiTests
             .AddSingleton<ISoundPlayer>(new SoundPlayer()).AddSingleton<IPermissionService>(new FakePermissions(true)).AddSingleton<IShareService>(new FakeShare())
             .BuildServiceProvider();
         var page = MobileFeatures.Open(MobileFeatures.AudioProcess, services);
-        Check(page is AudioProcessPage { BindingContext: AudioProcessViewModel { Processors.Count: > 0 } } && page.Title == "Audio process", $"page {page.GetType().Name}, title {page.Title}");
+        Check(page is AudioProcessPage { BindingContext: AudioProcessViewModel { Processors.Count: > 0 } } && page.Title == "Studio", $"page {page.GetType().Name}, title {page.Title}");
         ((AudioProcessViewModel)page.BindingContext).Dispose();
-        ThemeKeysOnly(Path.Combine("src", "Idrak.Maui", "Views", "AudioProcessPage.xaml"));
+        ThemeKeysOnly(Path.Combine("src", "Idrak.Maui", "Views", "StudioView.xaml"));
     }
 }

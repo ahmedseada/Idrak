@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Settings (plan 34, phase R): every option of IdrakMauiOptions by group, each with the control its value takes: segments
+  for a choice of a few, a picker for many and for the device, a slider for a number with a range (and a reset to the
+  default), a field for the rest (the token hidden); the labs shown as switches; storage; save and forget. An empty value is
+  the library's own (what it measures). Theme keys only.
+-->
+<ctl:AdaptiveView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                  xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+                  xmlns:ctl="clr-namespace:Idrak.Maui.Controls"
+                  x:Class="Idrak.Maui.Views.SettingsView"
+                  x:DataType="vm:SettingsViewModel">
+    <ScrollView>
+        <VerticalStackLayout x:Name="Page" Padding="{DynamicResource IdrakPagePadding}" Spacing="{DynamicResource IdrakSpacing}">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                <VerticalStackLayout>
+                    <Label Text="Settings" Style="{DynamicResource IdrakTitle}" />
+                    <Label Text="Kept between runs and applied at start-up. An empty value is the library's own (what it measures)." Style="{DynamicResource IdrakCaption}" />
+                </VerticalStackLayout>
+                <Button Grid.Column="1" Text="Save" Command="{Binding SaveCommand}" Style="{DynamicResource IdrakGradientButton}" VerticalOptions="Center" />
+            </Grid>
+            <Label Text="{Binding Message}" IsVisible="{Binding HasMessage}" Style="{DynamicResource IdrakHighlightText}" />
+
+            <VerticalStackLayout BindableLayout.ItemsSource="{Binding Groups}" Spacing="{DynamicResource IdrakSpacing}">
+                <BindableLayout.ItemTemplate>
+                    <DataTemplate x:DataType="vm:SettingGroup">
+                        <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingChip}">
+                            <Label Text="{Binding Title}" Style="{DynamicResource IdrakSectionLabel}" />
+                            <Border Style="{DynamicResource IdrakPanel}">
+                                <VerticalStackLayout BindableLayout.ItemsSource="{Binding .}" Spacing="{DynamicResource IdrakSpacing}">
+                                    <BindableLayout.ItemTemplate>
+                                        <DataTemplate x:DataType="vm:SettingEntry">
+                                            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                                <Label Text="{Binding Title}" Style="{DynamicResource IdrakItemTitle}" />
+                                                <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" />
+                                                <!-- A choice of a few: segments. -->
+                                                <FlexLayout BindableLayout.ItemsSource="{Binding Segments}" IsVisible="{Binding IsSegmented}" Wrap="Wrap" Direction="Row">
+                                                    <BindableLayout.ItemTemplate>
+                                                        <DataTemplate x:DataType="vm:ChoiceChip">
+                                                            <Border Style="{DynamicResource IdrakChipBorder}" Margin="{DynamicResource IdrakChipMargin}">
+                                                                <Border.Triggers>
+                                                                    <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
+                                                                        <Setter Property="Background" Value="{DynamicResource IdrakBrushPill}" />
+                                                                        <Setter Property="Stroke" Value="{DynamicResource IdrakSelectedStroke}" />
+                                                                    </DataTrigger>
+                                                                </Border.Triggers>
+                                                                <Border.GestureRecognizers>
+                                                                    <TapGestureRecognizer Command="{Binding SelectCommand}" />
+                                                                </Border.GestureRecognizers>
+                                                                <Label Text="{Binding Text}" Style="{DynamicResource IdrakChipLabel}" />
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </BindableLayout.ItemTemplate>
+                                                </FlexLayout>
+                                                <!-- A choice of many, or the device: a picker. -->
+                                                <Picker ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}" IsVisible="{Binding IsPicker}" Title="{Binding Title}" />
+                                                <!-- A number with a range: a slider, its value and a reset. -->
+                                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}" IsVisible="{Binding IsSlider}">
+                                                    <Slider Maximum="{Binding Maximum}" Minimum="{Binding Minimum}" Value="{Binding Number}" />
+                                                    <Label Grid.Column="1" Text="{Binding NumberText}" Style="{DynamicResource IdrakMeta}" />
+                                                    <Label Grid.Column="2" Text="Default" Style="{DynamicResource IdrakLink}">
+                                                        <Label.GestureRecognizers>
+                                                            <TapGestureRecognizer Command="{Binding ResetCommand}" />
+                                                        </Label.GestureRecognizers>
+                                                    </Label>
+                                                </Grid>
+                                                <!-- The rest: a field (the token hidden). -->
+                                                <Entry Text="{Binding Text}" Placeholder="{Binding Placeholder}" IsPassword="{Binding IsPassword}" Keyboard="{Binding Keyboard}"
+                                                       IsVisible="{Binding IsField}" ClearButtonVisibility="WhileEditing" />
+                                                <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+                                            </VerticalStackLayout>
+                                        </DataTemplate>
+                                    </BindableLayout.ItemTemplate>
+                                </VerticalStackLayout>
+                            </Border>
+                        </VerticalStackLayout>
+                    </DataTemplate>
+                </BindableLayout.ItemTemplate>
+            </VerticalStackLayout>
+
+            <!-- The labs shown. -->
+            <Label Text="Labs shown" Style="{DynamicResource IdrakSectionLabel}" />
+            <Border Style="{DynamicResource IdrakPanel}">
+                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Features}" Spacing="{DynamicResource IdrakSpacing}">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="vm:FeatureToggle">
+                            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                                <VerticalStackLayout VerticalOptions="Center">
+                                    <Label Text="{Binding Title}" Style="{DynamicResource IdrakItemTitle}" />
+                                    <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" MaxLines="2" LineBreakMode="TailTruncation" />
+                                </VerticalStackLayout>
+                                <Switch Grid.Column="1" IsToggled="{Binding IsEnabled}" VerticalOptions="Center" />
+                            </Grid>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
+            </Border>
+
+            <!-- Storage. -->
+            <Label Text="Storage in effect" Style="{DynamicResource IdrakSectionLabel}" />
+            <Border Style="{DynamicResource IdrakPanel}">
+                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                    <Label Text="The cache folder in effect" Style="{DynamicResource IdrakCaption}" />
+                    <Label Text="{Binding CacheFolder}" Style="{DynamicResource IdrakMono}" />
+                    <Label Text="The app's storage" Style="{DynamicResource IdrakCaption}" />
+                    <Label Text="{Binding AppStorage}" Style="{DynamicResource IdrakMono}" />
+                </VerticalStackLayout>
+            </Border>
+
+            <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingChip}" Margin="{DynamicResource IdrakBottomGap}">
+                <Button Text="Save" Command="{Binding SaveCommand}" Style="{DynamicResource IdrakGradientButton}" />
+                <Button Text="Forget the saved settings" Command="{Binding ResetCommand}" Style="{DynamicResource IdrakGhostButton}" />
+            </HorizontalStackLayout>
+        </VerticalStackLayout>
+    </ScrollView>
+</ctl:AdaptiveView>

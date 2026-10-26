@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Read text, the OCR lab (plan 34, phase R; the design's visual language for the Vision tab): the photo first and large
+  (the page as the model sees it, after the preprocessing steps), the camera and the gallery, the reader chip, the answer
+  streamed with its tokens per second, Stop, copy and share. A wide window: the photo on the left, the answer on the
+  right. Theme keys only.
+-->
+<ctl:AdaptiveView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                  xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+                  xmlns:ctl="clr-namespace:Idrak.Maui.Controls"
+                  xmlns:views="clr-namespace:Idrak.Maui.Views"
+                  x:Class="Idrak.Maui.Views.OcrView"
+                  x:DataType="vm:OcrViewModel">
+    <ScrollView x:Name="Scroll">
+        <Grid x:Name="Root" ColumnDefinitions="*" RowDefinitions="Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingColumns}" RowSpacing="{DynamicResource IdrakSpacing}"
+              Padding="{DynamicResource IdrakLabPadding}">
+            <VerticalStackLayout x:Name="Left" Spacing="{DynamicResource IdrakSpacing}">
+                <!-- The reader. -->
+                <FlexLayout Wrap="Wrap" Direction="Row" AlignItems="Center">
+                    <Grid Margin="{DynamicResource IdrakChipMargin}">
+                        <Border Style="{DynamicResource IdrakChipBorder}">
+                            <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                <Ellipse Style="{DynamicResource IdrakStatusDot}" />
+                                <Label Text="{Binding SelectedModel.Title, FallbackValue='Choose a reader'}" Style="{DynamicResource IdrakChipLabel}" />
+                            </HorizontalStackLayout>
+                        </Border>
+                        <Picker Title="Vision-language model" ItemsSource="{Binding VisionModels}" SelectedItem="{Binding SelectedModel}" Opacity="0" IsEnabled="{Binding IsIdle}" />
+                    </Grid>
+                </FlexLayout>
+                <Label Text="{Binding ModelStatus}" Style="{DynamicResource IdrakCaption}" />
+                <Label Text="{Binding ModelsText}" IsVisible="{Binding HasNoVisionModels}" Style="{DynamicResource IdrakCaption}" />
+                <Button Text="Pull a reader in Models" Command="{Binding GoToModelsCommand}" IsVisible="{Binding HasNoVisionModels}" Style="{DynamicResource IdrakSecondaryButton}" />
+
+                <!-- The photo, large. -->
+                <Border Style="{DynamicResource IdrakPhotoFrame}">
+                    <Grid>
+                        <Image Source="{Binding PageSource}" IsVisible="{Binding HasPage}" Aspect="AspectFit" MinimumHeightRequest="260" SemanticProperties.Description="The page as the model sees it" />
+                        <VerticalStackLayout IsVisible="{Binding HasNoPage}" Spacing="{DynamicResource IdrakSpacingSmall}" VerticalOptions="Center" HorizontalOptions="Center"
+                                             Padding="{DynamicResource IdrakEmptyPhotoPadding}">
+                            <ctl:IconBadge Glyph="ocr" Tone="Amber" BadgeSize="56" HorizontalOptions="Center" />
+                            <Label Text="A page, a sign, a receipt" Style="{DynamicResource IdrakHeading}" HorizontalOptions="Center" />
+                            <Label Text="{Binding Formats}" Style="{DynamicResource IdrakCaption}" HorizontalTextAlignment="Center" />
+                        </VerticalStackLayout>
+                    </Grid>
+                </Border>
+                <Label Text="{Binding PhotoText}" Style="{DynamicResource IdrakMicro}" />
+                <Grid ColumnDefinitions="*,*" ColumnSpacing="{DynamicResource IdrakSpacingTile}">
+                    <Button Text="Take a photo" Command="{Binding TakePhotoCommand}" IsEnabled="{Binding IsIdle}" Style="{DynamicResource IdrakWideGradientButton}" />
+                    <Button Grid.Column="1" Text="From the gallery" Command="{Binding PickPhotoCommand}" IsEnabled="{Binding IsIdle}" Style="{DynamicResource IdrakSecondaryButton}" />
+                </Grid>
+                <Button Text="Allow the camera" Command="{Binding OpenPermissionSettingsCommand}" IsVisible="{Binding IsPermissionRefused}" Style="{DynamicResource IdrakSecondaryButton}" />
+
+                <!-- Preprocessing (optional). -->
+                <Border Style="{DynamicResource IdrakPanel}">
+                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <Label Text="Prepare · optional" Style="{DynamicResource IdrakSectionLabel}" />
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                            <Entry Text="{Binding Pipeline}" Placeholder="grayscale,max_width=1024,contrast=1.5" IsSpellCheckEnabled="False" IsTextPredictionEnabled="False"
+                                   ClearButtonVisibility="WhileEditing" FontFamily="{DynamicResource IdrakFontMono}" />
+                            <Button Grid.Column="1" Text="Prepare" Command="{Binding PrepareCommand}" IsEnabled="{Binding IsIdle}" Style="{DynamicResource IdrakSecondaryButton}" VerticalOptions="Center" />
+                        </Grid>
+                        <Label Text="{Binding PageText}" Style="{DynamicResource IdrakMicro}" />
+                    </VerticalStackLayout>
+                </Border>
+            </VerticalStackLayout>
+
+            <VerticalStackLayout x:Name="Right" Grid.Row="1" Spacing="{DynamicResource IdrakSpacing}">
+                <!-- The answer, streamed. -->
+                <Border Style="{DynamicResource IdrakPanel}">
+                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingChip}">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                            <Label Text="Text" Style="{DynamicResource IdrakHeading}" VerticalOptions="Center" />
+                            <HorizontalStackLayout Grid.Column="1" Spacing="{DynamicResource IdrakSpacingSection}" VerticalOptions="Center">
+                                <ctl:IconView Glyph="copy" Size="17" Stroke="{DynamicResource IdrakTextMuted}" InputTransparent="False" SemanticProperties.Description="Copy">
+                                    <ctl:IconView.GestureRecognizers>
+                                        <TapGestureRecognizer Command="{Binding CopyCommand}" />
+                                    </ctl:IconView.GestureRecognizers>
+                                </ctl:IconView>
+                                <ctl:IconView Glyph="share" Size="17" Stroke="{DynamicResource IdrakTextMuted}" InputTransparent="False" SemanticProperties.Description="Share">
+                                    <ctl:IconView.GestureRecognizers>
+                                        <TapGestureRecognizer Command="{Binding ShareCommand}" />
+                                    </ctl:IconView.GestureRecognizers>
+                                </ctl:IconView>
+                            </HorizontalStackLayout>
+                        </Grid>
+                        <Label Text="{Binding Prompt, StringFormat='Asked: {0}'}" Style="{DynamicResource IdrakMicro}" />
+                        <Label Text="{Binding Text}" IsVisible="{Binding HasText}" Style="{DynamicResource IdrakBody}" />
+                        <ctl:CaretView IsBlinking="{Binding IsReading}" />
+                        <Label Text="Nothing read yet: take a photo, then Read." IsVisible="{Binding HasNoText}" Style="{DynamicResource IdrakCaption}" />
+                        <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingTile}">
+                            <Border Style="{DynamicResource IdrakRatePill}" IsVisible="{Binding IsReading}">
+                                <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                    <ctl:IconView Glyph="zap" Size="13" Stroke="{DynamicResource IdrakGreen}" />
+                                    <Label Text="{Binding LiveText}" Style="{DynamicResource IdrakSuccessText}" />
+                                </HorizontalStackLayout>
+                            </Border>
+                            <Button Text="Read" Command="{Binding ReadCommand}" IsVisible="{Binding IsNotReading}" IsEnabled="{Binding IsIdle}" Style="{DynamicResource IdrakGradientButton}" />
+                            <Button Text="Stop" Command="{Binding StopCommand}" IsVisible="{Binding IsReading}" Style="{DynamicResource IdrakDangerButton}" />
+                        </HorizontalStackLayout>
+                        <ActivityIndicator IsRunning="{Binding IsBusy}" IsVisible="{Binding IsBusy}" HorizontalOptions="Start" />
+                        <Label Text="{Binding Status}" IsVisible="{Binding HasStatus}" Style="{DynamicResource IdrakHighlightText}" />
+                        <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+                        <Label Text="{Binding ColdText}" IsVisible="{Binding HasCold}" Style="{DynamicResource IdrakMicro}" />
+                        <Label Text="{Binding WarmText}" IsVisible="{Binding HasWarm}" Style="{DynamicResource IdrakMicro}" />
+                    </VerticalStackLayout>
+                </Border>
+                <Button Text="{Binding SettingsButtonText}" Command="{Binding ToggleSettingsCommand}" Style="{DynamicResource IdrakGhostButton}" />
+                <Label Text="{Binding SettingsMessage}" IsVisible="{Binding HasSettingsMessage}" Style="{DynamicResource IdrakHighlightText}" />
+                <views:LabSettingsList x:Name="SettingsPanel" ItemsSource="{Binding Settings}" KeepCommand="{Binding ApplySettingsCommand}" IsVisible="{Binding ShowSettings}" />
+            </VerticalStackLayout>
+        </Grid>
+    </ScrollView>
+</ctl:AdaptiveView>
