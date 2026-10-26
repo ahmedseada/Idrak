@@ -11,9 +11,9 @@ internal static partial class Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ProfilerGroup =
     [
-        ("profiler: a workload's stages and values, the cold run apart, the statistic over the warm runs; cpu, heap and memory around each timed run; the intrusive probes in runs of their own (operations and host fallbacks counted, kernels only where the device times them); an unknown probe refused naming the registered ones", ProfilerRuns),
+        ("profiler: a workload's stages and values, the cold run apart, the statistic over the warm runs; cpu, heap, jit and memory around each timed run; the intrusive probes in runs of their own (operations and host fallbacks counted, kernels only where the device times them); an unknown probe refused naming the registered ones", ProfilerRuns),
         ("profiler: the table, markdown, csv and json writers; an app's probe and writer registered, used and removed; the criteria from IDRAK_PROFILE_*", ProfilerWritersAndCriteria),
-        ("profiler: a watched run (Profiler.Watch) is one run with the probes that do not change it, the intrusive ones only when named (with a note), ended once from any thread, written with its notes; the tuning, fallbacks, graphs and inference probes record from telemetry", ProfilerWatch),
+        ("profiler: a watched run (Profiler.Watch) is one run with the probes that do not change it, the intrusive ones only when named (with a note), ended once from any thread, written with its notes; the jit probe records the compiling; the tuning, fallbacks, graphs and inference probes record from telemetry", ProfilerWatch),
     ];
 
     // One run of work watched as it runs: the watched probes around it, the kernel choices, host fallbacks and inference
@@ -44,7 +44,8 @@ internal static partial class Tests
         Check(report.Notes.Any(n => n.Contains("operations", StringComparison.Ordinal) && n.Contains("IDRAK_PROFILE_PROBES", StringComparison.Ordinal)),
             $"the probes left out are named: {string.Join(" | ", report.Notes)}");
         Check(report["wall"] is { Count: 1, Value: > 0, Cold: null } && report["product"] is { Value: > 0 } && report["items"]?.Value == 64
-              && report["cpu"] is { Source: "cpu" } && report["allocated"] is { Source: "heap" } && report["device peak"] is { Source: "memory" },
+              && report["cpu"] is { Source: "cpu" } && report["allocated"] is { Source: "heap" } && report["device peak"] is { Source: "memory" }
+              && report["jit time"] is { Source: "jit", Unit: "ms", Value: >= 0 } && report["jit methods"] is { Source: "jit", Value: >= 0 } && report["jit IL"] is { Source: "jit", Unit: "KB" },
             $"the run's own values and the probes': {string.Join("; ", report.Summary.Select(s => $"{s.Name} {s.Value}"))}");
         Check(report["tunings"]?.Value == 3 && report["tuning time"] is { Value: 35, Unit: "ms" } && report["tuned operations"]?.Value == 2
               && report.Runs[0].Tables.Single(t => t.Name == "tuning") is { Rows: [[_, "test product", "2", "1", "6", "40", _], [_, "test convolution", "1", "0", "3", "5", _]] },
@@ -132,7 +133,7 @@ internal static partial class Tests
         Check(staged.Runs.Count == 3 && staged["CacheAllocation size"] is { Value: 2, Unit: "MB", Count: 1 } && staged["CacheAllocation count"]?.Value == 128
               && staged["Encoder count"]?.Value == 1 && staged["encoder peak above start"] is { Value: >= 0 } peakAbove && (device.Type != DeviceType.Cpu || peakAbove.Value >= 1),
             $"the stages in a run of their own: {string.Join("; ", staged.Summary.Select(s => $"{s.Name} {s.Value}"))}");
-        foreach (string name in new[] { "cpu", "cores busy", "allocated", "gc0", "gc pause", "device in use", "device peak", "process peak" })
+        foreach (string name in new[] { "cpu", "cores busy", "allocated", "gc0", "gc pause", "jit time", "jit methods", "jit IL", "device in use", "device peak", "process peak" })
         {
             Check(report[name] is { Count: 3, Source: not null }, $"{name} measured around each warm run: {report[name]}");
         }
@@ -262,7 +263,7 @@ internal static partial class Tests
         }
 
         Check(ProfileProbes.Find("runs counted") is null && ProfileWriters.Find("names") is null, "unregistered");
-        Check(ProfileProbes.Names.SequenceEqual(["bandwidth", "cpu", "heap", "memory", "tuning", "fallbacks", "graphs", "inference", "operations", "kernels", "stages", "timings", "cluster", "network"]) && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
+        Check(ProfileProbes.Names.SequenceEqual(["bandwidth", "cpu", "heap", "jit", "memory", "tuning", "fallbacks", "graphs", "inference", "operations", "kernels", "stages", "timings", "cluster", "network"]) && ProfileWriters.Names.SequenceEqual(["table", "markdown", "csv", "json"]),
             $"the library's: {string.Join(", ", ProfileProbes.Names)}; {string.Join(", ", ProfileWriters.Names)}");
 
         // The criteria from the environment.

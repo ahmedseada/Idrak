@@ -373,10 +373,15 @@ internal sealed class BenchCommand : Command
             }, result =>
             {
                 progress.Erase();
+                // The JIT's share of the first call: .NET compiling the call's path, apart from the device's work.
+                string jit = result.ColdJitMs is { } jitMs
+                    ? Messages.T(" ({0} ms of it compiling {1} methods)", Format(jitMs), result.ColdJitMethods ?? 0)
+                    : "";
                 context.Detail(result.Settled is true
-                    ? Messages.T("    {0} {1} warm, {2} cold; settled after {3} warm-up calls", Format(result.Value), result.Unit, Format(result.Cold ?? 0), result.WarmupCalls ?? 0)
-                    : Messages.T("    {0} {1} warm, {2} cold; not settled after {3} warm-up calls (the budget ran out)", Format(result.Value), result.Unit, Format(result.Cold ?? 0),
-                        result.WarmupCalls ?? 0));
+                    ? Messages.T("    {0} {1} warm, {2} cold{3}; settled after {4} warm-up calls", Format(result.Value), result.Unit, Format(result.Cold ?? 0), jit,
+                        result.WarmupCalls ?? 0)
+                    : Messages.T("    {0} {1} warm, {2} cold{3}; not settled after {4} warm-up calls (the budget ran out)", Format(result.Value), result.Unit,
+                        Format(result.Cold ?? 0), jit, result.WarmupCalls ?? 0));
             });
             progress.Clear();
         }
@@ -591,6 +596,8 @@ internal sealed class BenchCommand : Command
         ["higher_is_better"] = r.HigherIsBetter,
         ["detail"] = r.Note,
         ["cold"] = r.Cold,
+        ["cold_jit_ms"] = r.ColdJitMs,
+        ["cold_jit_methods"] = r.ColdJitMethods,
         ["warmup_calls"] = r.WarmupCalls,
         ["settled"] = r.Settled,
     };

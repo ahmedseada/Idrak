@@ -43,7 +43,10 @@ internal sealed record BenchSettle(double Tolerance, int Rounds, TimeSpan Round,
 /// <param name="Micros">The median of the timed calls after the warm-up, in µs.</param>
 /// <param name="WarmupCalls">The warm-up calls between the first call and the timed ones.</param>
 /// <param name="Settled">Whether the warm-up settled (false: it stopped at its budget or call limit).</param>
-internal readonly record struct BenchTime(double ColdMicros, double Micros, int WarmupCalls, bool Settled);
+/// <param name="ColdJitMilliseconds">The time the JIT spent compiling during the first call, on every thread, in ms: the
+/// part of <paramref name="ColdMicros"/> that is .NET compiling the call's path rather than the device's work.</param>
+/// <param name="ColdJitMethods">The methods the JIT compiled during the first call, on every thread.</param>
+internal readonly record struct BenchTime(double ColdMicros, double Micros, int WarmupCalls, bool Settled, double ColdJitMilliseconds = 0, long ColdJitMethods = 0);
 
 /// <summary>The kernel benchmarks' timing: the first call apart (cold), a warm-up until the timing settles, then the median.</summary>
 internal static class BenchTiming
@@ -66,8 +69,9 @@ internal static class BenchTiming
     /// <param name="timestamp">The clock (default <see cref="Stopwatch.GetTimestamp"/>); a test passes a fake one.</param>
     /// <param name="ticksPerSecond">The clock's ticks per second (default <see cref="Stopwatch.Frequency"/>).</param>
     /// <param name="compiledMethods">The methods compiled so far in the process (default the JIT's count).</param>
+    /// <param name="compilationTime">The time the JIT has spent compiling so far in the process (default the JIT's, every thread).</param>
     public static BenchTime Measure(Action run, Action drain, int repeats, BenchSettle settle, Action? between = null,
-        Func<long>? timestamp = null, double ticksPerSecond = 0, Func<long>? compiledMethods = null)
+        Func<long>? timestamp = null, double ticksPerSecond = 0, Func<long>? compiledMethods = null, Func<TimeSpan>? compilationTime = null)
     {
         timestamp ??= Stopwatch.GetTimestamp;
         if (ticksPerSecond <= 0)
@@ -76,6 +80,7 @@ internal static class BenchTiming
         }
 
         compiledMethods ??= static () => System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: false);
+        compilationTime ??= static () => System.Runtime.JitInfo.GetCompilationTime(currentThread: false);
         double Call()
         {
             between?.Invoke();
@@ -86,7 +91,12 @@ internal static class BenchTiming
             return (timestamp() - start) * 1e6 / ticksPerSecond;
         }
 
+        // The JIT's share of the first call: what it compiled (on every thread) while the call ran.
+        long coldMethods = compiledMethods();
+        var coldCompiling = compilationTime();
         double cold = Call();
+        double coldJitMs = (compilationTime() - coldCompiling).TotalMilliseconds;
+        coldMethods = compiledMethods() - coldMethods;
         int calls = 0;
         bool settled = false;
         double budget = settle.Budget.TotalSeconds * ticksPerSecond, round = settle.Round.TotalSeconds * ticksPerSecond;
@@ -114,7 +124,7 @@ internal static class BenchTiming
             times.Add(Call());
         }
 
-        return new BenchTime(cold, Median(times), calls, settled);
+        return new BenchTime(cold, Median(times), calls, settled, coldJitMs, coldMethods);
     }
 
     /// <summary>Whether the last <paramref name="rounds"/> values lie within <paramref name="tolerance"/> of the smallest of them.</summary>

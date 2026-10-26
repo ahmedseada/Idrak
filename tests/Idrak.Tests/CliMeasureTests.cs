@@ -17,8 +17,8 @@ internal static partial class Tests
     private static readonly (string Name, Action<Device> Run)[] CliMeasureGroup =
     [
         ("cli measure: every command has help with an example and its environment; short forms are its own", d => { if (d == Device.Cpu) CliMeasureHelp(); }),
-        ("cli measure: bench without a model runs the kernel benchmarks (JSON shape, cold and warm apart, --save and --compare)", CliBenchKernels),
-        ("cli measure: bench warm-up settles on a fake clock: the first call apart, rounds until they agree and nothing compiles, the median", d => { if (d == Device.Cpu) CliBenchSettle(); }),
+        ("cli measure: bench without a model runs the kernel benchmarks (JSON shape, cold and warm apart, the cold call's compiling, --save and --compare)", CliBenchKernels),
+        ("cli measure: bench warm-up settles on a fake clock: the first call apart with the JIT's share of it, rounds until they agree and nothing compiles, the median", d => { if (d == Device.Cpu) CliBenchSettle(); }),
         ("cli measure: bench MODEL gives tokens per second, GFLOP/s and memory; --save and --compare", CliBenchModel),
         ("cli measure: bench --matrix and --devices give one run per format and device", CliBenchMatrix),
         ("cli measure: bench usage errors exit with 2", d => { if (d == Device.Cpu) CliBenchErrors(); }),
@@ -103,6 +103,8 @@ internal static partial class Tests
                 Check(r!["name"] is not null && (double)r["value"]! > 0 && r["unit"] is not null, $"result {r.ToJsonString()}");
                 Check((double?)r["cold"] > 0 && (int?)r["warmup_calls"] >= 0 && (int?)r["warmup_calls"] <= BenchSettle.Default.MaxCalls && r["settled"] is not null,
                     $"each kernel result has its first call (cold) apart, its warm-up calls and whether it settled: {r.ToJsonString()}");
+                Check((double?)r["cold_jit_ms"] >= 0 && (long?)r["cold_jit_methods"] >= 0,
+                    $"each kernel result has the JIT's share of its first call (ms and methods): {r.ToJsonString()}");
             }
 
             var gemv = IdrakJson(cache, "b", "--small", "-n", "1", "--kernels", "gemv", "-w", "int8", "--warmup", "0", "-d", device.ToString());
@@ -116,8 +118,10 @@ internal static partial class Tests
                 $"{BenchSettle.CallsVariable}=3 caps the warm-up: {capped.ToJsonString()}");
 
             string[] matmul = ["bench", "--small", "-n", "1", "--kernels", "matmul", "--warmup", "100ms", "-d", device.ToString()];
-            var (code, text, _) = MeasureIdrak(cache, matmul);
+            var (code, text, _) = MeasureIdrak(cache, [.. matmul, "-v"]);
             Check(code == 0 && text.Contains("matmul 128x128x128 float32") && text.Contains("GFLOP/s") && text.Contains("Cold") && text.Contains("median"), text);
+            Check(System.Text.RegularExpressions.Regex.IsMatch(text, @" warm, [0-9.]+ cold \([0-9.]+ ms of it compiling \d+ methods\); (not )?settled after \d+ warm-up calls"),
+                $"-v: each measurement's line names the JIT's share of its first call: {text}");
 
             // --save keeps the method; --compare against it compares warm with warm and cold with cold, and against
             // results saved before the method was recorded (no "timing", no cold values) it says the method changed.
@@ -132,6 +136,8 @@ internal static partial class Tests
             foreach (var r in old["results"]!.AsArray())
             {
                 r!.AsObject().Remove("cold");
+                r.AsObject().Remove("cold_jit_ms");
+                r.AsObject().Remove("cold_jit_methods");
             }
 
             File.WriteAllText(Path.Combine(cache, "bench", "old.json"), old.ToJsonString());
@@ -163,8 +169,10 @@ internal static partial class Tests
         }
 
         var settle = new BenchSettle(0.05, 3, TimeSpan.FromMilliseconds(1), TimeSpan.FromSeconds(1), 10_000);
-        var time = BenchTiming.Measure(Run, () => drains++, 9, settle, () => betweens++, () => now, 1e6, () => compiled);
+        var time = BenchTiming.Measure(Run, () => drains++, 9, settle, () => betweens++, () => now, 1e6, () => compiled, () => TimeSpan.FromMilliseconds(compiled * 0.5));
         Check(time.ColdMicros == 5000, $"the first call apart: {time.ColdMicros} µs, expected 5000");
+        Check(time.ColdJitMethods == 1 && time.ColdJitMilliseconds == 0.5,
+            $"the JIT's share of the first call (one method, 0.5 ms): {time.ColdJitMethods} methods, {time.ColdJitMilliseconds} ms");
         Check(time.Settled && time.WarmupCalls == 63, $"settled once three rounds agree and the JIT is quiet (call 63): settled {time.Settled}, {time.WarmupCalls} calls");
         Check(time.Micros == 100, $"the median of the timed calls (one 1000 µs outlier among 9): {time.Micros} µs, expected 100");
         Check(drains == 2 * (1 + 63 + 9) && betweens == 1 + 63 + 9, $"every call drained before and after, with the reset before it: {drains} drains, {betweens} resets");

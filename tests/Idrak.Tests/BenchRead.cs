@@ -34,8 +34,8 @@ using Idrak.Text.Generation;
 //                           IDRAK_BENCH_SUGGEST_AFTER the reads before the one measured (default 1); IDRAK_BENCH_SUGGEST_HEADROOM the
 //                           share of the device's memory left free beyond its reserve (default 0)
 // How it is measured and written (ProfileOptions.FromEnvironment): IDRAK_PROFILE_WARM (3), IDRAK_PROFILE_COLD (1),
-// IDRAK_PROFILE_PROBES (all: bandwidth, cpu, heap, memory, operations, kernels, stages), IDRAK_PROFILE_STATISTIC (median),
-// IDRAK_PROFILE_FORMAT (table, markdown, csv, json), IDRAK_PROFILE_OUT (a file, appended).
+// IDRAK_PROFILE_PROBES (all: bandwidth, cpu, heap, jit, memory, operations, kernels, stages),
+// IDRAK_PROFILE_STATISTIC (median), IDRAK_PROFILE_FORMAT (table, markdown, csv, json), IDRAK_PROFILE_OUT (a file, appended).
 // Two profiles: the page alone before any model (decode, transforms), then the read: its stages (prepare; encode, the
 // image through the encoder and the prompt built: the read's time less the generation's; prefill; decode; first text),
 // the speeds (prompt and answer tokens a second, ms a token) and estimated compute (2 x parameters a token: GFLOP/s; the

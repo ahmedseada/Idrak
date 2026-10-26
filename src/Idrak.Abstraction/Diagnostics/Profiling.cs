@@ -651,6 +651,9 @@ public sealed class ProfileSession : IDisposable
 /// <item>"cpu": the process's processor time ("cpu", ms) and the cores it kept busy ("cores busy": processor time over wall time).</item>
 /// <item>"heap": the managed heap: bytes allocated on every thread ("allocated", MB), collections of each generation
 /// ("gc0", "gc1", "gc2") and the time paused for them ("gc pause", ms).</item>
+/// <item>"jit": the methods the .NET JIT compiled during the run, on every thread (<see cref="System.Runtime.JitInfo"/>):
+/// the time spent compiling ("jit time", ms), the methods compiled ("jit methods": first compilations, tier-ups and
+/// on-stack replacements) and their IL ("jit IL", KB). What a first call pays beyond its kernels.</item>
 /// <item>"memory": the device's memory after the run ("device in use", "device cached", MB), its peak during the run
 /// ("device peak", MB) and the largest single block taken ("device largest block", MB), on devices that report it what
 /// their driver has free ("device free", MB) and what neither the library nor that holds ("device other", MB: the
@@ -703,7 +706,7 @@ public static class ProfileProbes
         // The bandwidth first: its one measurement (before the first run) is done before the other probes start theirs.
         foreach (var probe in new IProfileProbe[]
                  {
-                     new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new MemoryProbe(), new TuningProbe(), new FallbacksProbe(), new GraphsProbe(), new InferenceProbe(),
+                     new BandwidthProbe(), new CpuProbe(), new HeapProbe(), new JitProbe(), new MemoryProbe(), new TuningProbe(), new FallbacksProbe(), new GraphsProbe(), new InferenceProbe(),
                      new OperationsProbe(), new KernelsProbe(), new StagesProbe(), new TimingsProbe(),
                  })
         {
@@ -1300,6 +1303,30 @@ public static class ProfileProbes
                 run.Record("gc1", GC.CollectionCount(1) - gen1);
                 run.Record("gc2", GC.CollectionCount(2) - gen2);
                 run.Record("gc pause", (GC.GetTotalPauseDuration() - paused).TotalMilliseconds, "ms");
+            };
+        }
+    }
+
+    private sealed class JitProbe : IProfileProbe
+    {
+        public string Name => "jit";
+
+        public string Summary => "the methods the .NET JIT compiled on every thread: time compiling, methods, IL";
+
+        public bool Intrusive => false;
+
+        public bool Supports(Device device) => true;
+
+        public Action Begin(ProfileRun run)
+        {
+            var time = System.Runtime.JitInfo.GetCompilationTime(currentThread: false);
+            long methods = System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: false);
+            long il = System.Runtime.JitInfo.GetCompiledILBytes(currentThread: false);
+            return () =>
+            {
+                run.Record("jit time", (System.Runtime.JitInfo.GetCompilationTime(currentThread: false) - time).TotalMilliseconds, "ms");
+                run.Record("jit methods", System.Runtime.JitInfo.GetCompiledMethodCount(currentThread: false) - methods);
+                run.Record("jit IL", (System.Runtime.JitInfo.GetCompiledILBytes(currentThread: false) - il) / 1024.0, "KB");
             };
         }
     }
