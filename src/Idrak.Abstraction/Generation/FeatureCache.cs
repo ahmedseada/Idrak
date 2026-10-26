@@ -52,7 +52,7 @@ public sealed record FeatureCacheOptions
 {
     /// <summary>
     /// Where a cache that keeps entries on disk keeps them (<see cref="FeatureCaches.DefaultFolder"/> when null: under
-    /// <c>IDRAK_CACHE</c>).
+    /// <see cref="ComputeResources.CacheFolder"/>).
     /// </summary>
     public string? Folder { get; init; }
 
@@ -133,13 +133,9 @@ public static class FeatureCaches
 
     /// <summary>
     /// The folder the disk cache uses unless told otherwise: <c>features</c> under the library's cache folder
-    /// (<c>IDRAK_CACHE</c>, or <c>~/.cache/idrak</c>).
+    /// (<see cref="ComputeResources.CacheFolder"/>: <c>IDRAK_CACHE</c>, or <c>~/.cache/idrak</c>).
     /// </summary>
-    public static string DefaultFolder => Path.Combine(
-        Environment.GetEnvironmentVariable("IDRAK_CACHE") is { Length: > 0 } cache
-            ? cache
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile, Environment.SpecialFolderOption.DoNotVerify), ".cache", "idrak"),
-        "features");
+    public static string DefaultFolder => Path.Combine(ComputeResources.CacheFolder, "features");
 
     /// <summary>Registers <paramref name="kind"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)

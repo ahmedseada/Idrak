@@ -92,8 +92,29 @@ internal static unsafe partial class VulkanDriver
     {
         if (result != Success)
         {
-            throw new VulkanException($"{call} failed: {Describe(result)}");
+            throw new VulkanException(result == ErrorDeviceLost ? DeviceLostMessage(call, null, 0, "", retryOnHost: false) : $"{call} failed: {Describe(result)}");
         }
+    }
+
+    /// <summary>
+    /// What a lost device (VK_ERROR_DEVICE_LOST from <paramref name="call"/>) says: the device (<paramref name="device"/>)
+    /// and the work it was running when known (a batch of <paramref name="commands"/> commands, the last recorded
+    /// <paramref name="last"/>), that nothing it held survives, and the settings that help: the host retry
+    /// (IDRAK_RETRY_ON_HOST, on or off for it as <paramref name="retryOnHost"/> says) and another workgroup width
+    /// (IDRAK_VULKAN_WIDTH).
+    /// </summary>
+    internal static string DeviceLostMessage(string call, string? device, int commands, string last, bool retryOnHost)
+    {
+        string work = commands > 0
+            ? string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $" while it ran a batch of {commands:N0} command{(commands == 1 ? "" : "s")}{(last.Length > 0 ? $", the last recorded '{last}'" : "")}")
+            : last.Length > 0 ? $" while it ran '{last}'" : "";
+        string retry = retryOnHost
+            ? "The host retry is on (IDRAK_RETRY_ON_HOST): an operation whose kernel fails when it is launched runs again on the CPU, but one whose failure shows at a later wait, and every tensor the device held, cannot be recovered."
+            : "Set IDRAK_RETRY_ON_HOST=vulkan (or Backend.RetryOnHost = true) to run an operation whose kernel fails when it is launched on the CPU instead; a failure that shows at a later wait, and every tensor the device held, cannot be recovered.";
+        return $"{call} failed: {Describe(ErrorDeviceLost)}: {device ?? "the device"} was lost{work}. A lost device keeps nothing it held and fails every later call: "
+            + $"continue on another device (cpu) or in a new process. {retry} A kernel that runs past the driver's time limit is a frequent cause: "
+            + "IDRAK_VULKAN_WIDTH=<a power of two> forces another workgroup width, to see whether the measured one is the cause.";
     }
 
     // The specification's name for a result code, with the code.

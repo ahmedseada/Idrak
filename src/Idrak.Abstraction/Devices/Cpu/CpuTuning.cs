@@ -32,7 +32,7 @@ internal enum TiledKernel : byte
 /// caches or multiples of the vector width and thread count. The two parallel cut-overs (element-wise kernels and
 /// products) depend on how fast this machine starts a parallel loop against how fast one core streams, so they are
 /// measured the first time they are needed (about two seconds, once per machine), kept per machine, runtime and thread count in the
-/// library's cache folder (~/.cache/idrak/cpu, see <see cref="CacheFile"/>), and the cache-size formula is the fallback (IDRAK_AUTOTUNE=0, one thread, or an override).
+/// library's cache folder (<see cref="ComputeResources.CacheFolder"/>/cpu, see <see cref="CacheFile"/>), and the cache-size formula is the fallback (IDRAK_AUTOTUNE=0, one thread, or an override).
 /// <para>
 /// None of these choices changes a result: they decide how work is split and tiled, and every product element is still
 /// one FMA chain over k, every element-wise output one operation. The few values that decide a summation order are not
@@ -55,11 +55,27 @@ internal static class CpuTuning
     internal static TiledKernel? TiledKernelOverride;
 
     /// <summary>
-    /// Where measured cut-overs are kept: cpu/tuning.tsv in the library's cache folder (IDRAK_CACHE, or ~/.cache/idrak),
-    /// or the file IDRAK_CPU_TUNING_FILE names; null (not kept, measured again by each process) when IDRAK_TUNING_CACHE=0
-    /// or the file name is empty.
+    /// Where measured cut-overs are kept: cpu/tuning.tsv in the library's cache folder
+    /// (<see cref="ComputeResources.CacheFolder"/>), or the file IDRAK_CPU_TUNING_FILE names; null (not kept, measured
+    /// again by each process) when IDRAK_TUNING_CACHE=0 or the file name is empty. Read when the cut-overs are first
+    /// loaded or kept, not when the type starts, so a cache folder an app sets at start-up takes effect; a value set
+    /// here (tests) wins.
     /// </summary>
-    internal static string? CacheFile = DefaultCacheFile();
+    internal static string? CacheFile
+    {
+        get => Volatile.Read(ref s_cacheFileSet) ? s_cacheFile : DefaultCacheFile();
+        set
+        {
+            s_cacheFile = value;
+            Volatile.Write(ref s_cacheFileSet, true);
+        }
+    }
+
+    private static string? s_cacheFile;
+    private static bool s_cacheFileSet;
+
+    /// <summary>Tests: <see cref="CacheFile"/> follows the settings again (as before a value was set).</summary>
+    internal static void UseDefaultCacheFile() => Volatile.Write(ref s_cacheFileSet, false);
 
     internal static string? DefaultCacheFile()
     {
@@ -73,10 +89,7 @@ internal static class CpuTuning
             return file.Length > 0 ? file : null;
         }
 
-        string root = Environment.GetEnvironmentVariable("IDRAK_CACHE") is { Length: > 0 } cache
-            ? cache
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile, Environment.SpecialFolderOption.DoNotVerify), ".cache", "idrak");
-        return Path.Combine(root, "cpu", "tuning.tsv");
+        return Path.Combine(ComputeResources.CacheFolder, "cpu", "tuning.tsv");
     }
 
     /// <summary>
@@ -409,12 +422,12 @@ internal static class CpuTuning
     {
         try
         {
-            if (string.IsNullOrEmpty(CacheFile) || !File.Exists(CacheFile))
+            if (CacheFile is not { Length: > 0 } file || !File.Exists(file))
             {
                 return null;
             }
 
-            foreach (var line in File.ReadLines(CacheFile))
+            foreach (var line in File.ReadLines(file))
             {
                 var parts = line.Split('\t');
                 if (parts.Length == 3 && parts[0] == key
@@ -437,17 +450,17 @@ internal static class CpuTuning
     {
         try
         {
-            if (string.IsNullOrEmpty(CacheFile))
+            if (CacheFile is not { Length: > 0 } file)
             {
                 return;
             }
 
-            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(CacheFile))!);
-            var lines = File.Exists(CacheFile) ? File.ReadAllLines(CacheFile).Where(l => !l.StartsWith(key + "\t", StringComparison.Ordinal)).ToList() : [];
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(file))!);
+            var lines = File.Exists(file) ? File.ReadAllLines(file).Where(l => !l.StartsWith(key + "\t", StringComparison.Ordinal)).ToList() : [];
             lines.Add(string.Create(CultureInfo.InvariantCulture, $"{key}\t{cutovers.Elements}\t{cutovers.Flops}"));
-            string temporary = CacheFile + "." + Environment.ProcessId + ".tmp";
+            string temporary = file + "." + Environment.ProcessId + ".tmp";
             File.WriteAllLines(temporary, lines);
-            File.Move(temporary, CacheFile, overwrite: true);
+            File.Move(temporary, file, overwrite: true);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
         {

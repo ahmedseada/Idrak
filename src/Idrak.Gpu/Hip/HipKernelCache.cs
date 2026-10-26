@@ -8,7 +8,8 @@ namespace Idrak.Gpu.Hip;
 
 /// <summary>
 /// Compiled kernels kept on disk, so hipRTC runs once per device architecture, driver and library build rather than at
-/// every start. One code object per key, in IDRAK_CACHE (or ~/.cache/idrak) under hip/kernels/; the key hashes
+/// every start. One code object per key, in the library's cache folder (ComputeResources.CacheFolder: IDRAK_CACHE, or
+/// ~/.cache/idrak) under hip/kernels/; the key hashes
 /// everything the code depends on: the source, the compiler options (block size and target), the architecture, the
 /// runtime, driver and compiler versions, the device's identity and the library's version. A file of another key is
 /// never read, and a file the runtime refuses is deleted and compiled again. IDRAK_HIP_KERNEL_CACHE=0 keeps nothing,
@@ -23,11 +24,12 @@ internal sealed class HipKernelCache(string? folder)
     public string? Folder { get; } = folder;
 
     /// <summary>The cache the environment asks for.</summary>
-    public static HipKernelCache FromEnvironment() => new(DefaultFolder(Environment.GetEnvironmentVariable));
+    public static HipKernelCache FromEnvironment() => new(DefaultFolder());
 
-    internal static string? DefaultFolder(Func<string, string?> environment)
+    // Tests pass the environment read (then its IDRAK_CACHE, when given, stands for the cache folder).
+    internal static string? DefaultFolder(Func<string, string?>? environment = null)
     {
-        string? setting = environment("IDRAK_HIP_KERNEL_CACHE");
+        string? setting = (environment ?? Environment.GetEnvironmentVariable)("IDRAK_HIP_KERNEL_CACHE");
         if (setting is "0" or "false")
         {
             return null;
@@ -38,8 +40,7 @@ internal sealed class HipKernelCache(string? folder)
             return setting;
         }
 
-        string root = environment("IDRAK_CACHE") is { Length: > 0 } cache ? cache
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "idrak");
+        string root = environment?.Invoke("IDRAK_CACHE") is { Length: > 0 } cache ? cache : ComputeResources.CacheFolder;
         return Path.Combine(root, "hip", "kernels");
     }
 

@@ -161,7 +161,11 @@ internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
         public ulong Number;
         public bool Recording;
         public int Count;
+        public string Last = "";                                               // the last command recorded by name (a lost device names it)
     }
+
+    // What a batch's last command is called when it replayed a recorded graph.
+    private const string ReplayedGraph = "a recorded graph";
 
     private sealed class DescriptorPool(ulong handle, uint sets, uint descriptors)
     {
@@ -405,6 +409,7 @@ internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
             Check(vkBeginCommandBuffer(batch.Commands, &begin), nameof(vkBeginCommandBuffer));
             batch.Recording = true;
             batch.Number = _recording;
+            batch.Last = "";
             _boundPipeline = 0;
         }
 
@@ -420,6 +425,7 @@ internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
         if (name.Length > 0)
         {
             LogCommand(name);
+            batch.Last = name;
         }
 
         if (hazard)
@@ -517,7 +523,7 @@ internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
         Check(vkEndCommandBuffer(batch.Commands), nameof(vkEndCommandBuffer));
         IntPtr commands = batch.Commands;
         var submit = new VkSubmitInfo { SType = StructureSubmitInfo, CommandBufferCount = 1, CommandBuffers = &commands };
-        Check(vkQueueSubmit(_queue, 1, &submit, batch.Fence), nameof(vkQueueSubmit));
+        CheckWork(vkQueueSubmit(_queue, 1, &submit, batch.Fence), nameof(vkQueueSubmit), batch);
         _inFlight.Enqueue(batch);
         Submissions++;
         _recording++;
@@ -564,7 +570,7 @@ internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
     private void Retire(Batch batch)
     {
         ulong fence = batch.Fence;
-        Check(vkWaitForFences(_device, 1, &fence, 1, ulong.MaxValue), nameof(vkWaitForFences));
+        CheckWork(vkWaitForFences(_device, 1, &fence, 1, ulong.MaxValue), nameof(vkWaitForFences), batch);
         Check(vkResetFences(_device, 1, &fence), nameof(vkResetFences));
         foreach (var pool in batch.Pools)
         {
@@ -576,6 +582,18 @@ internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
         (batch.Pool, batch.Recording, batch.Count) = (0, false, 0);
         _completed = Math.Max(_completed, batch.Number);
         _free.Push(batch);
+    }
+
+    // The result of submitting or waiting for `batch`: a lost device names the batch's work (its last command) and the
+    // ways around it (VulkanDriver.DeviceLostMessage); any other failure as Check reports it.
+    private void CheckWork(int result, string call, Batch batch)
+    {
+        if (result == ErrorDeviceLost)
+        {
+            throw new VulkanException(DeviceLostMessage(call, Name, batch.Count, batch.Last, RetryOnHost));
+        }
+
+        Check(result, call);
     }
 
     // A descriptor set for this batch, from its pools (pools are counted here, so allocation never fails for lack of room).

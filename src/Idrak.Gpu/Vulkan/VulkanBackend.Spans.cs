@@ -254,12 +254,22 @@ internal sealed partial class VulkanBackend : IMemoryReport
 
     // What the device reports holding no live tensors: the storage heap less what is in use and less the reserve kept for
     // the display and other programs (ComputeResources.GpuMemoryReserve, else a sixteenth of the heap, at least 256 MiB, as
-    // the CUDA and HIP devices keep); Vulkan reports no free memory of its own without the memory-budget extension, and
-    // blocks kept in the pool count as available.
-    long? IMemoryReport.AvailableMemory() => StorageHeapBytes > 0 ? Math.Max(0, StorageHeapBytes - _memory.Usage.InUse - MemoryReserve) : null;
+    // the CUDA and HIP devices keep), blocks kept in the pool counting as available; with the memory-budget extension, at
+    // most what the driver's budget leaves this process (AvailableBytes, VulkanBackend.MemoryBudget.cs).
+    long? IMemoryReport.AvailableMemory()
+    {
+        if (StorageHeapBytes <= 0)
+        {
+            return null;
+        }
 
-    // The driver's free memory: Vulkan reports none without the memory-budget extension, which the backend does not read.
-    long? IMemoryReport.FreeMemory() => null;
+        var usage = _memory.Usage;
+        return AvailableBytes(StorageHeapBytes, usage.InUse, usage.Cached, MemoryReserve, StorageHeapBudget());
+    }
+
+    // The driver's free memory: with the memory-budget extension, what its budget leaves this process on the storage heap
+    // (budget less usage, never below 0); without it Vulkan reports none.
+    long? IMemoryReport.FreeMemory() => StorageHeapBudget() is { } budget ? Math.Max(0, budget.Budget - budget.Usage) : null;
 
     /// <summary>Memory kept free on this device (ComputeResources.GpuMemoryReserve, else a sixteenth of the storage heap, at least 256 MiB).</summary>
     internal long MemoryReserve => ComputeResources.GpuMemoryReserve ?? Math.Max(256L << 20, StorageHeapBytes / 16);

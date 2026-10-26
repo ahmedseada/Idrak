@@ -221,7 +221,8 @@ public static class ProgressReporters
     /// <summary>
     /// The reporter <see cref="Start"/> makes for <paramref name="options"/>: <see cref="ProgressOptions.Reporter"/>, else
     /// <c>IDRAK_PROGRESS</c>, else by the output: "console" when it is the console's error or standard output and that
-    /// goes to a terminal, "plain" when it is redirected, "quiet" for any other writer.
+    /// goes to a terminal, "plain" when it is redirected or the platform has no console window (a phone's app), "quiet"
+    /// for any other writer.
     /// </summary>
     public static string Choose(ProgressOptions? options = null)
     {
@@ -238,7 +239,7 @@ public static class ProgressReporters
         var output = options?.Output ?? Console.Error;
         bool error = ReferenceEquals(output, Console.Error), standard = ReferenceEquals(output, Console.Out);
         return !error && !standard ? QuietReporter
-            : (error ? Console.IsErrorRedirected : Console.IsOutputRedirected) ? PlainReporter : ConsoleReporter;
+            : !ConsoleWidth.Terminal.Supported || (error ? Console.IsErrorRedirected : Console.IsOutputRedirected) ? PlainReporter : ConsoleReporter;
     }
 
     /// <summary>Starts reporting the progress of <paramref name="label"/> with the reporter <see cref="Choose"/> picks.</summary>
@@ -354,10 +355,12 @@ internal sealed class LineProgressReporter : IProgressReporter
     private long _done;
     private volatile bool _finished;
     private readonly Timer? _clock;
+    private readonly ConsoleWidth _width;
 
-    public LineProgressReporter(ProgressRequest request, bool inPlace)
+    public LineProgressReporter(ProgressRequest request, bool inPlace, ConsoleWidth? width = null)
     {
         ArgumentNullException.ThrowIfNull(request);
+        _width = width ?? ConsoleWidth.Terminal;
         Label = request.Label;
         Total = request.Total;
         Unit = request.Unit;
@@ -514,19 +517,6 @@ internal sealed class LineProgressReporter : IProgressReporter
         return Detail?.Invoke() is { Length: > 0 } more ? text + "  " + more : text;
     }
 
-    // The terminal's columns, or 0 where there is no terminal to ask.
-    private static int TerminalWidth()
-    {
-        try
-        {
-            return Console.IsErrorRedirected && Console.IsOutputRedirected ? 0 : Console.WindowWidth;
-        }
-        catch (IOException)
-        {
-            return 0;
-        }
-    }
-
     private void Draw(bool force)
     {
         if (_finished)
@@ -557,7 +547,7 @@ internal sealed class LineProgressReporter : IProgressReporter
                 return;
             }
 
-            int width = TerminalWidth();
+            int width = _width.Read();
             if (width > 0 && text.Length >= width)
             {
                 text = text[..(width - 1)];                                      // one line: a wrapped one cannot be redrawn in place
@@ -767,5 +757,55 @@ internal sealed class QuietProgressReporter(ProgressRequest request) : IProgress
 
     public void Dispose()
     {
+    }
+}
+
+// The console window's width in columns, or 0 where there is none to ask: output to a file or a pipe, or a platform
+// without a console window (a phone's or a browser's app, where reading it throws PlatformNotSupportedException). Never
+// throws. A platform that said it has no window is not asked again, so a line drawn ten times a second costs no
+// exception a draw; an I/O error (no console attached at that moment) is asked again at the next draw, as before.
+internal sealed class ConsoleWidth(Func<int> read)
+{
+    /// <summary>The process's console: 0 when both its outputs are redirected, else its window's width.</summary>
+    public static ConsoleWidth Terminal { get; } = new(() => Console.IsErrorRedirected && Console.IsOutputRedirected ? 0 : Console.WindowWidth);
+
+    private volatile bool _unsupported, _asked;
+
+    /// <summary>Whether the platform has a console window to ask (false once it said it has none).</summary>
+    public bool Supported
+    {
+        get
+        {
+            if (!_asked)
+            {
+                _ = Read();                                                     // asks the first time only
+                _asked = true;
+            }
+
+            return !_unsupported;
+        }
+    }
+
+    /// <summary>The columns, or 0 where there is no window to ask.</summary>
+    public int Read()
+    {
+        if (_unsupported)
+        {
+            return 0;
+        }
+
+        try
+        {
+            return Math.Max(0, read());
+        }
+        catch (Exception e) when (e is NotSupportedException or InvalidOperationException)   // PlatformNotSupportedException is one
+        {
+            _unsupported = true;
+            return 0;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            return 0;
+        }
     }
 }

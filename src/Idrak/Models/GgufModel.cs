@@ -44,7 +44,7 @@ public static class GgufModel
 
     /// <summary>
     /// The folder describing <paramref name="gguf"/> in the Hugging Face layout, made once per file (by path, size and
-    /// time) under <paramref name="cacheRoot"/>/gguf (default: IDRAK_CACHE or ~/.cache/idrak).
+    /// time) under <paramref name="cacheRoot"/>/gguf (default: the library's cache folder, <see cref="ComputeResources.CacheFolder"/>).
     /// </summary>
     public static string Prepare(string gguf, string? cacheRoot = null)
     {
@@ -59,8 +59,7 @@ public static class GgufModel
             $"{FormatVersion}|{path}|{info.Length}|{info.LastWriteTimeUtc.Ticks}"))))[..12];
         string name = Path.GetFileNameWithoutExtension(path);
         name = name.StartsWith("sha256-", StringComparison.Ordinal) ? name[..Math.Min(name.Length, 19)] : name;   // blobs of the local model store
-        cacheRoot ??= Environment.GetEnvironmentVariable("IDRAK_CACHE")                                 // the downloads' cache root
-                      ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "idrak");
+        cacheRoot ??= ComputeResources.CacheFolder;                                                     // the downloads' cache root
         string folder = Path.Combine(cacheRoot, "gguf", $"{name}-{fingerprint}");
         if (IsPrepared(folder))
         {

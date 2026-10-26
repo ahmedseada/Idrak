@@ -198,8 +198,8 @@ internal static class TuneTiming
 internal sealed record TuningIdentity(string Device, string Driver, string Library);
 
 /// <summary>
-/// Measured choices kept per GPU in the user's cache folder (<c>IDRAK_CACHE</c> or <c>~/.cache/idrak</c>, under
-/// <c>tuning/cuda/</c>), so they are not measured again at every start. <c>IDRAK_TUNING_CACHE=0</c> turns it off;
+/// Measured choices kept per GPU in the library's cache folder (<see cref="ComputeResources.CacheFolder"/>:
+/// <c>IDRAK_CACHE</c> or <c>~/.cache/idrak</c>, under <c>tuning/cuda/</c>), so they are not measured again at every start. <c>IDRAK_TUNING_CACHE=0</c> turns it off;
 /// <c>IDRAK_TUNING_CACHE=&lt;folder&gt;</c> uses that folder. One text file per GPU:
 /// <code>
 /// idrak-tuning 2
@@ -224,11 +224,13 @@ internal static class TuningCache
 
     private static readonly Lock FileLock = new();
 
-    /// <summary>The folder for cache files, or null when the cache is off (<c>IDRAK_TUNING_CACHE=0</c>).</summary>
+    /// <summary>
+    /// The folder for cache files, or null when the cache is off (<c>IDRAK_TUNING_CACHE=0</c>); tests pass the
+    /// <paramref name="environment"/> it reads (then its IDRAK_CACHE, when given, stands for the cache folder).
+    /// </summary>
     internal static string? Folder(Func<string, string?>? environment = null)
     {
-        environment ??= Environment.GetEnvironmentVariable;
-        string? setting = environment("IDRAK_TUNING_CACHE");
+        string? setting = (environment ?? Environment.GetEnvironmentVariable)("IDRAK_TUNING_CACHE");
         if (setting is "0" || string.Equals(setting, "false", StringComparison.OrdinalIgnoreCase) || string.Equals(setting, "off", StringComparison.OrdinalIgnoreCase))
         {
             return null;
@@ -239,9 +241,7 @@ internal static class TuningCache
             return setting;
         }
 
-        string root = environment("IDRAK_CACHE") is { Length: > 0 } cache
-            ? cache
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "idrak");
+        string root = environment?.Invoke("IDRAK_CACHE") is { Length: > 0 } cache ? cache : ComputeResources.CacheFolder;
         return Path.Combine(root, "tuning", "cuda");
     }
 

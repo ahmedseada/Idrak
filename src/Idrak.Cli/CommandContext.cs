@@ -164,9 +164,11 @@ internal sealed class CommandContext : IDisposable
 
     public bool Verbose => Flag("--verbose") || Shared.VerboseLines.Requested();
 
-    /// <summary>The cache folder: <c>--cache</c>, the config, <c>IDRAK_CACHE</c>, or <c>~/.cache/idrak</c>.</summary>
-    public string CacheFolder => Option("--cache") ?? Config.Get("cache") ?? Environment.GetEnvironmentVariable("IDRAK_CACHE")
-        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "idrak");
+    /// <summary>
+    /// The cache folder: <c>--cache</c>, the config, or the library's (<see cref="ComputeResources.CacheFolder"/>:
+    /// <c>IDRAK_CACHE</c>, or <c>~/.cache/idrak</c>).
+    /// </summary>
+    public string CacheFolder => Option("--cache") ?? Config.Get("cache") ?? ComputeResources.CacheFolder;
 
     /// <summary>The device from <c>--device</c> or the config, else <see cref="Device.Default"/>.</summary>
     public Device Device => _device ??= (Option("--device") ?? Config.Get("device")) is { } name ? Device.Parse(name) : Device.Default;

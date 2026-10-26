@@ -118,14 +118,23 @@ internal sealed unsafe partial class VulkanBackend : Backend
         VkPhysicalDeviceShaderFloat16Int8Features float16Features;
         VkPhysicalDeviceShaderBfloat16Features bfloat16Features;
         void* features = MatrixFeatures(&matrixFeatures, &float16Features, &bfloat16Features, _sizeControl.Enabled ? &sizeFeatures : null);
+
+        // The memory budget only where the device reports it (VulkanBackend.MemoryBudget.cs): no features to ask for.
+        _memoryBudget = UsesMemoryBudget(physical.Handle);
         fixed (byte* extensionName = "VK_KHR_push_descriptor\0"u8, sizeName = "VK_EXT_subgroup_size_control\0"u8,
-            matrixName = CooperativeMatrixName, float16Name = ShaderFloat16Int8Name, bfloat16Name = ShaderBFloat16Name)
+            matrixName = CooperativeMatrixName, float16Name = ShaderFloat16Int8Name, bfloat16Name = ShaderBFloat16Name,
+            budgetName = "VK_EXT_memory_budget\0"u8)
         {
-            byte** extensions = stackalloc byte*[5];
+            byte** extensions = stackalloc byte*[6];
             uint count = 0;
             if (push)
             {
                 extensions[count++] = extensionName;
+            }
+
+            if (_memoryBudget)
+            {
+                extensions[count++] = budgetName;
             }
 
             if (_sizeControl.Extension)

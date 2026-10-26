@@ -183,6 +183,7 @@ internal sealed unsafe partial class VulkanBackend : IGraphCaptureBackend
             _boundPipeline = 0;
             Replays++;
             _batch.Count += graph.Count;
+            _batch.Last = ReplayedGraph;                                       // what a lost device names
             if (_batch.Count >= _maxBatchCommands)
             {
                 Submit();

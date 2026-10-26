@@ -35,8 +35,8 @@ public readonly record struct MemoryUsage(long InUse, long Cached, long? Limit, 
 public sealed class ResourceLimitExceededException(string message) : Exception(message);
 
 /// <summary>
-/// Controls how much of the machine Idrak may use. By default there are no limits:
-/// every CPU core is available and memory is allocated as the network needs it.
+/// Controls how much of the machine Idrak may use, and where it keeps its caches (<see cref="CacheFolder"/>). By default
+/// there are no limits: every CPU core is available and memory is allocated as the network needs it.
 /// </summary>
 /// <example>
 /// <code>
@@ -129,6 +129,60 @@ public static class ComputeResources
 
             s_tuningBudget = value;
         }
+    }
+
+    /// <summary>
+    /// The folder the library keeps what it downloads, prepares and measures in: downloads (<c>downloads/</c>), prepared
+    /// <c>.gguf</c> models (<c>gguf/</c>), the CPU's, Vulkan's, CUDA's, HIP's and the cluster's measured choices and
+    /// compiled kernels, the feature cache and the noise model. Set it at start-up, before the first device or download
+    /// (an app sets its own storage here): every cache reads it when it first needs a path, so a value set then takes
+    /// effect everywhere. Null (the default, and what setting null brings back): the folder <c>IDRAK_CACHE</c> names,
+    /// else <c>.cache/idrak</c> in the user's profile folder; where the profile folder is empty or not absolute (as it can
+    /// be inside a phone's app), <c>idrak</c> in the local application data folder, and where that is not absolute either,
+    /// <c>idrak</c> in the temporary folder. A relative value is made absolute against the current folder when it is read,
+    /// so the result is never relative. A cache's own variable still wins for that cache (<c>IDRAK_VULKAN_TUNING_CACHE</c>,
+    /// <c>IDRAK_TUNING_CACHE</c>, <c>IDRAK_CPU_TUNING_FILE</c>, <c>IDRAK_HIP_KERNEL_CACHE</c>, <c>IDRAK_RNNOISE_MODEL</c>, …).
+    /// </summary>
+    /// <exception cref="ArgumentException">Set to an empty or blank folder.</exception>
+    [System.Diagnostics.CodeAnalysis.AllowNull]
+    public static string CacheFolder
+    {
+        get => Volatile.Read(ref s_cacheFolder) is { } set ? Path.GetFullPath(set) : CacheFolderFrom(Environment.GetEnvironmentVariable("IDRAK_CACHE"));
+        set
+        {
+            if (value is not null)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(value);
+            }
+
+            Volatile.Write(ref s_cacheFolder, value);
+        }
+    }
+
+    // CacheFolder as set (null: from IDRAK_CACHE or the default, read each time it is asked).
+    private static string? s_cacheFolder;
+
+    /// <summary>
+    /// The cache folder when <see cref="CacheFolder"/> is not set: <paramref name="variable"/> (IDRAK_CACHE's value) made
+    /// absolute when given, else under the first absolute folder of <paramref name="profile"/> (the user's profile),
+    /// <paramref name="localData"/> (the local application data) and <paramref name="temporary"/> (the temporary folder),
+    /// each the system's when null.
+    /// </summary>
+    internal static string CacheFolderFrom(string? variable, string? profile = null, string? localData = null, string? temporary = null)
+    {
+        if (!string.IsNullOrWhiteSpace(variable))
+        {
+            return Path.GetFullPath(variable);
+        }
+
+        profile ??= Environment.GetFolderPath(Environment.SpecialFolder.UserProfile, Environment.SpecialFolderOption.DoNotVerify);
+        if (Path.IsPathFullyQualified(profile))
+        {
+            return Path.Combine(profile, ".cache", "idrak");
+        }
+
+        localData ??= Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData, Environment.SpecialFolderOption.DoNotVerify);
+        return Path.IsPathFullyQualified(localData) ? Path.Combine(localData, "idrak") : Path.GetFullPath(Path.Combine(temporary ?? Path.GetTempPath(), "idrak"));
     }
 
     private static double s_tuningNeighbourOctaves = EnvironmentDouble("IDRAK_TUNE_NEIGHBOUR_OCTAVES") is { } octaves && octaves >= 0 ? octaves : 1;

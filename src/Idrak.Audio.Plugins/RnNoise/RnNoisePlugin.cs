@@ -31,15 +31,12 @@ public static class RnNoisePlugin
 
     /// <summary>
     /// Where the model is looked for when neither a step's <c>model=</c> nor <see cref="ModelVariable"/> names one:
-    /// rnnoise/rnnoise.rnnn under the library's cache folder (<c>IDRAK_CACHE</c>, or <c>~/.cache/idrak</c>).
+    /// rnnoise/rnnoise.rnnn under the library's cache folder (<see cref="ComputeResources.CacheFolder"/>: <c>IDRAK_CACHE</c>,
+    /// or <c>~/.cache/idrak</c>).
     /// </summary>
     public static string DefaultModelPath => Path.Combine(ModelFolder, "rnnoise.rnnn");
 
-    private static string ModelFolder => Path.Combine(
-        Environment.GetEnvironmentVariable("IDRAK_CACHE") is { Length: > 0 } cache
-            ? cache
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile, Environment.SpecialFolderOption.DoNotVerify), ".cache", "idrak"),
-        "rnnoise");
+    private static string ModelFolder => Path.Combine(ComputeResources.CacheFolder, "rnnoise");
 
     /// <summary>Registers the processor (through <see cref="IdrakPlugins"/>); once: calling it again changes nothing.</summary>
     public static void Register() => IdrakPlugins.Register(Plugin);

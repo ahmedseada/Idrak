@@ -8,13 +8,13 @@ namespace Idrak.Data;
 
 /// <summary>
 /// Console output for dataset work: log lines, and one status line redrawn in place as a progress bar (downloads with
-/// size, speed and time left; rows with count and rate). When the output goes to a file, the bar becomes a plain line
-/// every few seconds. <see cref="CreateDownloader"/> and <see cref="Track"/> connect it to downloads and rows.
+/// size, speed and time left; rows with count and rate). When the output goes to a file, or the platform has no console
+/// window (a phone's app), the bar becomes a plain line every few seconds. <see cref="CreateDownloader"/> and <see cref="Track"/> connect it to downloads and rows.
 /// </summary>
 public sealed class ConsoleStatus
 {
     private readonly object _lock = new();
-    private readonly bool _interactive = !Console.IsOutputRedirected;
+    private readonly bool _interactive = Interactive();
     private readonly Stopwatch _sinceDraw = Stopwatch.StartNew();
     private int _shown;
 
@@ -112,15 +112,34 @@ public sealed class ConsoleStatus
     private static string Time(TimeSpan time) =>
         time.TotalHours >= 1 ? $"{(int)time.TotalHours}:{time.Minutes:D2}:{time.Seconds:D2}" : $"{time.Minutes:D2}:{time.Seconds:D2}";
 
+    // The console's columns; 120 where it cannot tell now (no console attached: an I/O error).
     private static int SafeWidth()
     {
         try
         {
             return Console.WindowWidth;
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException or NotSupportedException or InvalidOperationException or UnauthorizedAccessException)
         {
             return 120;
+        }
+    }
+
+    // Whether the line can be redrawn in place: the output goes to a console with a window. A platform without one (where
+    // reading it throws PlatformNotSupportedException, a NotSupportedException) gets plain lines, asked once here.
+    private static bool Interactive()
+    {
+        try
+        {
+            return !Console.IsOutputRedirected && Console.WindowWidth >= 0;
+        }
+        catch (Exception e) when (e is NotSupportedException or InvalidOperationException)
+        {
+            return false;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return true;                                                         // a console that cannot tell its width now, as before
         }
     }
 

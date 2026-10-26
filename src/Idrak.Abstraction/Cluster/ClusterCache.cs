@@ -55,8 +55,8 @@ public sealed record ClusterTuning(string Kind, string Key, long Value, DateTime
 /// Where a cluster keeps what it measured on this machine (plan 23, phase C8), beside the backends' tuning caches: the
 /// calibrated link profiles, one text file per link under <c>{cache}/cluster/</c> (header <c>idrak-cluster-profiles 1</c>,
 /// then <c>link bandwidth latency jitter residual samples adapter date source</c>), and the measured chunk and bucket sizes
-/// in <c>{cache}/cluster/tuning.txt</c> (header <c>idrak-cluster-tuning 1</c>). The cache folder is <c>IDRAK_CACHE</c> (or
-/// <c>~/.cache/idrak</c>); <c>IDRAK_TUNING_CACHE=0</c> keeps nothing; <c>IDRAK_CLUSTER_PROFILES_FILE</c> puts every
+/// in <c>{cache}/cluster/tuning.txt</c> (header <c>idrak-cluster-tuning 1</c>). The cache folder is
+/// <see cref="ComputeResources.CacheFolder"/> (<c>IDRAK_CACHE</c>, or <c>~/.cache/idrak</c>); <c>IDRAK_TUNING_CACHE=0</c> keeps nothing; <c>IDRAK_CLUSTER_PROFILES_FILE</c> puts every
 /// calibrated profile in one file of its own and <c>IDRAK_CLUSTER_TUNING_FILE</c> moves the sizes' file (an empty value
 /// keeps none). A file whose header does not match is ignored and written anew. <see cref="SerializeProfiles"/>,
 /// <see cref="ParseProfiles"/>, <see cref="SerializeTuning"/> and <see cref="ParseTuning"/> are pure, so the formats are
@@ -83,10 +83,7 @@ public static class ClusterCache
                 return null;
             }
 
-            string root = Environment.GetEnvironmentVariable("IDRAK_CACHE") is { Length: > 0 } cache
-                ? cache
-                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile, Environment.SpecialFolderOption.DoNotVerify), ".cache", "idrak");
-            return Path.Combine(root, "cluster");
+            return Path.Combine(ComputeResources.CacheFolder, "cluster");
         }
     }
 

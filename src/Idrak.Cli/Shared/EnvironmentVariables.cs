@@ -122,7 +122,7 @@ internal static class EnvironmentVariables
         new("IDRAK_WINDOW_KERNELS", Devices, "on", "0 or false: sliding-window and soft-capped attention through basic operations over the whole cache instead of the attention kernels (to compare or isolate them)", OnDevice),
         new("IDRAK_POWER_SOURCE", Devices, "as the system reports", "ac or battery: the power source tuning choices are measured and kept under", OnDevice),
 
-        new("IDRAK_CACHE", Tuning, "~/.cache/idrak", "The cache folder: downloaded models, tuning choices, compiled kernels (--cache wins for the tool)", [Every]),
+        new("IDRAK_CACHE", Tuning, "~/.cache/idrak", "The cache folder: downloaded models, tuning choices, compiled kernels (--cache wins for the tool; an app sets ComputeResources.CacheFolder)", [Every]),
         new("IDRAK_AUTOTUNE", Tuning, "1 (measure)", "0 or false: the formulas only, no measuring of kernel choices on the device", OnDevice),
         new("IDRAK_TUNING_CACHE", Tuning, "on, under the cache folder", "0, false or off: measured choices are not kept; a path: the CUDA tuning folder", Caches),
         new("IDRAK_TUNE_NEIGHBOUR_OCTAVES", Tuning, "1", "How far a measured kernel choice reaches, in octaves of the work that follows the data (a convolution's, product's or attention's batch and lengths): a size class none measured takes the nearest measured class's choice within it instead of measuring (ComputeResources.TuningNeighbourOctaves); 0: every class measured", OnDevice),
@@ -164,6 +164,7 @@ internal static class EnvironmentVariables
         new("IDRAK_VULKAN_SUBGROUPS", Vulkan, "on where reported", "0 or false: reductions through workgroup memory alone, as on devices without subgroup arithmetic", OnDevice),
         new("IDRAK_VULKAN_SUBGROUP_SIZE", Vulkan, "on where reported", "0 or false: no per-kernel subgroup size (every pipeline at the device's default)", OnDevice),
         new("IDRAK_VULKAN_STORAGE", Vulkan, "measured", "staging, mapped-device, mapped-cached or mapped-uncached: the memory tensors are kept in", OnDevice),
+        new("IDRAK_VULKAN_MEMORY_BUDGET", Vulkan, "on where reported", "0 or false: the driver's memory budget (VK_EXT_memory_budget) is not read; the memory available is the heap less what is in use and the reserve", OnDevice),
         new("IDRAK_VULKAN_SYSTEM_MEMORY_DEVICE", Devices, "on", "0 or false: an integrated GPU whose system memory is larger than its own is not listed a second time (after every device, as \"NAME, system memory\") with its tensors there", OnDevice),
         new("IDRAK_VULKAN_STAGING", Vulkan, "not set", "1 or true: copies go through staging buffers everywhere", OnDevice),
         new("IDRAK_VULKAN_STAGING_BYTES", Vulkan, "from the heap", "The staging buffer's size in bytes (tests)", OnDevice),

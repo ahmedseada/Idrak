@@ -16,8 +16,8 @@ namespace Idrak.Gpu.Vulkan;
 // environment override (IDRAK_VULKAN_PUSH_DESCRIPTORS, IDRAK_VULKAN_BATCH_COMMANDS, IDRAK_VULKAN_IN_FLIGHT).
 //
 // The cache is a tab-separated text file, one line per device, driver and choice (key, value, device name for people
-// reading it), in IDRAK_CACHE or ~/.cache/idrak (the library's download cache) under vulkan/; IDRAK_VULKAN_TUNING_CACHE
-// names another file, or 0 keeps nothing.
+// reading it), in the library's cache folder (ComputeResources.CacheFolder: IDRAK_CACHE or ~/.cache/idrak) under
+// vulkan/; IDRAK_VULKAN_TUNING_CACHE names another file, or 0 keeps nothing.
 internal sealed unsafe partial class VulkanBackend
 {
     /// <summary>A measured choice replaces the default only when this much faster (3%, as on CUDA).</summary>
@@ -29,8 +29,25 @@ internal sealed unsafe partial class VulkanBackend
     /// </summary>
     private const double SubmitShare = 0.05;
 
-    /// <summary>The file measured runtime choices are kept in (null: not kept); tests point it elsewhere.</summary>
-    internal static string? TuningCacheFile { get; set; } = DefaultTuningCacheFile();
+    /// <summary>
+    /// The file measured runtime choices are kept in (null: not kept); tests point it elsewhere. Read when a device first
+    /// reads or keeps its choices, not when the type starts, so a cache folder an app sets at start-up takes effect.
+    /// </summary>
+    internal static string? TuningCacheFile
+    {
+        get => Volatile.Read(ref s_tuningCacheFileSet) ? s_tuningCacheFile : DefaultTuningCacheFile();
+        set
+        {
+            s_tuningCacheFile = value;
+            Volatile.Write(ref s_tuningCacheFileSet, true);
+        }
+    }
+
+    private static string? s_tuningCacheFile;
+    private static bool s_tuningCacheFileSet;
+
+    /// <summary>Tests: <see cref="TuningCacheFile"/> follows the settings again (as before a value was set).</summary>
+    internal static void UseDefaultTuningCacheFile() => Volatile.Write(ref s_tuningCacheFileSet, false);
 
     /// <summary>How the runtime policy was chosen: "measured", "cached" or "override" (descriptor mode).</summary>
     public string PushDescriptorsChoice { get; private set; } = "measured";
@@ -51,7 +68,7 @@ internal sealed unsafe partial class VulkanBackend
     /// </summary>
     internal readonly record struct RuntimeMeasurement(double Pushed, double Sets, double Record, double Submit, double RoundTrip);
 
-    private static string? DefaultTuningCacheFile()
+    internal static string? DefaultTuningCacheFile()
     {
         string? setting = Environment.GetEnvironmentVariable("IDRAK_VULKAN_TUNING_CACHE");
         if (setting is "0" or "false")
@@ -64,9 +81,7 @@ internal sealed unsafe partial class VulkanBackend
             return setting;
         }
 
-        string root = Environment.GetEnvironmentVariable("IDRAK_CACHE")
-                      ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "idrak");
-        return Path.Combine(root, "vulkan", "tuning.tsv");
+        return Path.Combine(ComputeResources.CacheFolder, "vulkan", "tuning.tsv");
     }
 
     // The cache key prefix of this device and driver: by what the device reports, never its ordinal (vulkan:N), so a

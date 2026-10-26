@@ -24,8 +24,8 @@ public sealed record DownloadProgress(string Url, long Received, long? Total, st
 
 /// <summary>
 /// Downloads files once into a cache folder and returns the local path: interrupted downloads resume (HTTP ranges),
-/// failures are retried, a file appears only when complete. The cache is <c>IDRAK_CACHE</c> or
-/// <c>~/.cache/idrak</c>, under <c>downloads/</c>, laid out by source: huggingface/datasets/&lt;owner&gt;/&lt;name&gt;/&lt;commit&gt;/…,
+/// failures are retried, a file appears only when complete. The cache is the library's cache folder
+/// (<see cref="ComputeResources.CacheFolder"/>: <c>IDRAK_CACHE</c>, or <c>~/.cache/idrak</c>), under <c>downloads/</c>, laid out by source: huggingface/datasets/&lt;owner&gt;/&lt;name&gt;/&lt;commit&gt;/…,
 /// github/&lt;owner&gt;/&lt;repo&gt;/…, kaggle/…, zenodo/…, and urls/&lt;host&gt;/&lt;path&gt; for plain URLs.
 /// </summary>
 public sealed class Downloader : IDownloader
@@ -48,9 +48,8 @@ public sealed class Downloader : IDownloader
     /// <summary>The downloader <see cref="DatasetRows"/> sources use unless given another.</summary>
     public static Downloader Shared => SharedInstance.Value;
 
-    /// <summary><c>IDRAK_CACHE</c>, or <c>~/.cache/idrak</c>.</summary>
-    public static string DefaultCacheRoot => Environment.GetEnvironmentVariable("IDRAK_CACHE")
-        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cache", "idrak");
+    /// <summary>The library's cache folder, <see cref="ComputeResources.CacheFolder"/> (<c>IDRAK_CACHE</c>, or <c>~/.cache/idrak</c>).</summary>
+    public static string DefaultCacheRoot => ComputeResources.CacheFolder;
 
     /// <summary>Where files are kept.</summary>
     public string CacheFolder { get; }
