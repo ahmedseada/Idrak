@@ -1,6 +1,6 @@
 # Plan 34: Idrak.Maui and Idrak.Mobile (the library on a phone, as an app; Android first)
 
-**Status:** planned 2026-10-26 against `main` 5c7d54a; not started. Phases below, built in order, at most two agents
+**Status:** planned 2026-10-26 against `main` 5c7d54a; M0 and M1 built (459e41a, b7b6739), M2 and M3 under way. Phases below, built in order, at most two agents
 at a time. Android is the target; iOS is later and outside this plan.
 
 ## Why
@@ -109,8 +109,8 @@ nothing that needs a shell.
 | M0 | **Library: running inside an app.** One cache-root setting in Idrak.Abstraction (`IDRAK_CACHE` its variable), read by downloads, `.gguf` preparing, every tuning and feature cache, the voice store and RnNoise; never a relative path. Console width reads catch every failure. Vulkan reads `VK_EXT_memory_budget` when the driver has it; a lost device names the operation and takes the existing host retry where it is on | none | A |
 | M1 | **Library: sound out, and Android sound.** `IAudioPlayback` / `IAudioOutput` in `Idrak.Audio.Abstractions`, in **`AudioPlaybacks`** (a `SlotTable`), mirroring capture (available here and why not, devices, open, blocks written in order, drain). Built in: `winmm` (waveOut), `alsa` (PCM playback), and `aaudio` capture and playback for Android, from `libaaudio.so` loaded at run time (no Java binding, nothing shipped). `ForThisMachine` picks `aaudio` on Android; a refused microphone permission is named | none | B |
 | M2 | **The test groups as a library.** The groups and the runner's logic (filter, devices, progress, failures file, timeout) move to `tests/Idrak.Tests.Library`; `tests/Idrak.Tests` keeps its program and its commands unchanged. Tests find repository files through one root; where it is missing (on a phone), a test that needs the repository reports "not run here: needs the repository" instead of failing, and the summary counts them apart | M0 | A |
-| M3 | **Idrak.Maui core.** The project (`net10.0-android`), `UseIdrak`, the options, `IMobileFeature` and `MobileFeatures`, the services and the `maui` reporter | M0, M1 | B |
-| M4 | **Idrak.Mobile: the test harness.** The app, its navigation, both themes and the settings page; the Devices, Self-test and Models labs | M2, M3 | A |
+| M3 | **Idrak.Maui core, and a first app to open.** The project (`net10.0;net10.0-android`), `UseIdrak`, the options, `IMobileFeature` and `MobileFeatures`, the services, the `maui` reporter, the theme; the app `apps/Idrak.Mobile` (`apps/Idrak.Mobile.slnx`) with its navigation, both themes, the icon, the settings page and the Devices lab, so the owner can open it in Visual Studio early | M0, M1 | B |
+| M4 | **Idrak.Mobile: the test harness.** The Self-test lab (the app's own feature over the test library) and the Models lab | M2, M3 | A |
 | M5 | Chat lab; Transcribe lab | M4 | A; B |
 | M6 | Speak and Audio process labs; OCR and Image labs | M5 | A; B |
 | M7 | Search lab | M6 | A |
