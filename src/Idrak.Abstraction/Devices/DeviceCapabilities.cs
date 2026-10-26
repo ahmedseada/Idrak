@@ -69,6 +69,19 @@ public interface IFloat8Backend
 }
 
 /// <summary>
+/// Masked attention over every slot of a bfloat16 key/value cache in one pass (<see cref="Backend.AttentionMaskedBFloat16"/>),
+/// reading the cache in place: what a cache layout attends with where its result must be the composed products' (the
+/// multi-head attention layer's), without a float32 copy of the whole cache per step. A device without it, or whose
+/// kernel returns false for a shape, attends through the composed operations (the cache expanded, then the products).
+/// </summary>
+public interface IMaskedCacheAttentionBackend
+{
+    /// <inheritdoc cref="Backend.AttentionMaskedBFloat16Kernel"/>
+    bool AttentionMaskedBFloat16(Storage q, Storage keys, Storage values, Storage? mask, Storage y, int heads, int rowsPerHead, int maskRows,
+        int capacity, int dim, float scale);
+}
+
+/// <summary>
 /// Attention for rows of different lengths decoded together, each row from its own start (<see cref="Backend.AttentionRows"/>,
 /// <see cref="Backend.AttentionRowsBFloat16"/>), run by the device's own kernels. A device without it says what the
 /// segmented attention says (<see cref="Backend.SupportsSegmentedAttention"/>) and runs the rows on the host.

@@ -369,6 +369,33 @@ public sealed partial class Tensor
         return Tensor.Traced("attention_bf16", y, start);
     }
 
+    /// <summary>
+    /// softmax(scale · q·Kᵀ + mask)·V of q [rows, queries, headDim] over every slot of a bfloat16 cache, read in place,
+    /// equal bit for bit to the products over the expanded cache; null when the device has no such pass for this shape
+    /// (or q takes part in a gradient), so the caller composes it.
+    /// </summary>
+    internal static Tensor? AttentionMaskedBFloat16(Tensor q, KeyValueCache cache, Tensor? mask, float scale)
+    {
+        int capacity = cache.Keys._shape[1];
+        if (q.Rank != 3 || q._shape[0] != cache.Keys._shape[0] || q._shape[2] != cache.HeadDim || q.Device != cache.Keys.Device
+            || mask is not null && (mask.Device != q.Device || mask.Size % capacity != 0 || mask.Size == 0) || q.RequiresGrad && Autograd.IsEnabled)
+        {
+            return null;
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        int heads = q._shape[0], rowsPerHead = q._shape[1], dim = q._shape[2];
+        var y = Tensor.Empty([heads, rowsPerHead, dim], q.Device);
+        if (!q.Backend.AttentionMaskedBFloat16(q.Storage, cache.Keys.Storage, cache.Values.Storage, mask?.Storage, y.Storage, heads, rowsPerHead,
+                mask is null ? 1 : mask.Size / capacity, capacity, dim, scale))
+        {
+            y.Dispose();
+            return null;
+        }
+
+        return Tensor.Traced("attention_masked_bf16", y, start);
+    }
+
 
 
     /// <summary>q [rows, steps, dim] · int8 keysᵀ → [rows, steps, capacity].</summary>

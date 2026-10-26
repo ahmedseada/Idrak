@@ -6772,6 +6772,28 @@ public abstract partial class Backend
             scale, variant);
     }
 
+    /// <summary>
+    /// softmax(scale · q·Kᵀ + mask)·V over every slot of a bfloat16 cache, read in place: for q [heads, rowsPerHead, dim]
+    /// and keys and values [heads, capacity, ⌈dim / 2⌉ words] (as <see cref="AttentionBFloat16"/> reads them), y [heads,
+    /// rowsPerHead, dim] equals the composed operations bit for bit: <see cref="BatchedMatMul"/> of q and the widened keys
+    /// (transposed), <see cref="ScaleMaskSoftmax"/> with mask row r % maskRows ([maskRows, capacity]; null: none), and
+    /// <see cref="BatchedMatMul"/> of the weights and the widened values. Returns false when the device has no such pass
+    /// for this shape (the caller then runs those operations over the expanded cache).
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionMaskedBFloat16"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionMaskedBFloat16Kernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool AttentionMaskedBFloat16(Storage q, Storage keys, Storage values, Storage? mask, Storage y, int heads, int rowsPerHead, int maskRows, int capacity, int dim, float scale)
+    {
+        return _kernels is null && _moves is null ? AttentionMaskedBFloat16Kernel(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale) : AttentionMaskedBFloat16Registered(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private bool AttentionMaskedBFloat16Registered(Storage q, Storage keys, Storage values, Storage? mask, Storage y, int heads, int rowsPerHead, int maskRows, int capacity, int dim, float scale)
+    {
+        using var operation = EnterOperation();
+        return Kernel(OperationIndex.AttentionMaskedBFloat16) is OperationKernels.AttentionMaskedBFloat16 kernel ? kernel(this, q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale) : AttentionMaskedBFloat16Kernel(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale);
+    }
+
     /// <summary>The gradient of <see cref="AttentionSegmented"/> (as <see cref="AttentionTiledBackward"/>); false when unsupported.</summary>
     /// <remarks>Runs <see cref="Ops.AttentionSegmentedBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionSegmentedBackwardKernel</c>.</remarks>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -7492,6 +7514,7 @@ public abstract partial class Backend
         own[OperationIndex.AttentionSegmented] = b._segmented is not null;
         own[OperationIndex.AttentionRows] = b._rows is not null;
         own[OperationIndex.AttentionRowsBFloat16] = b._rows is not null;
+        own[OperationIndex.AttentionMaskedBFloat16] = b._maskedCache is not null;
         own[OperationIndex.AttentionSegmentedBackward] = b._segmented is not null;
         own[OperationIndex.AttentionTiled] = Overrides(b.AttentionTiledKernel);
         own[OperationIndex.AttentionSpans] = Overrides(b.AttentionSpansKernel);

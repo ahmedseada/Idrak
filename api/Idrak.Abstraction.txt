@@ -1449,6 +1449,8 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   public abstract void Return(Idrak.Abstraction.Devices.Storage storage)
   public abstract void Synchronize()
   public abstract void Upload(System.ReadOnlySpan<float> source, Idrak.Abstraction.Devices.Storage destination)
+  public bool AttentionMaskedBFloat16(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage? mask, Idrak.Abstraction.Devices.Storage y, int heads, int rowsPerHead, int maskRows, int capacity, int dim, float scale)
+  public bool AttentionMaskedBFloat16Kernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage? mask, Idrak.Abstraction.Devices.Storage y, int heads, int rowsPerHead, int maskRows, int capacity, int dim, float scale)
   public bool AttentionRows(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public bool AttentionRowsBFloat16(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public bool AttentionRowsBFloat16Kernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
@@ -1944,6 +1946,9 @@ public interface Idrak.Abstraction.Devices.IKernelProfiler
 
 public interface Idrak.Abstraction.Devices.ILongLivedAllocations
   public System.IDisposable LongLivedAllocations()
+
+public interface Idrak.Abstraction.Devices.IMaskedCacheAttentionBackend
+  public bool AttentionMaskedBFloat16(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage? mask, Idrak.Abstraction.Devices.Storage y, int heads, int rowsPerHead, int maskRows, int capacity, int dim, float scale)
 
 public interface Idrak.Abstraction.Devices.IMatrixUnitBackend
   public bool AttentionHeadDim(int dim)
@@ -4649,6 +4654,7 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionContextInt8 (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionDecode (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionInt8 (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.AttentionMaskedBFloat16 (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionRows (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionRowsBFloat16 (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionScoresInt8 (below)
@@ -4818,6 +4824,8 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.AttentionCont
 public delegate void Idrak.Abstraction.Operations.OperationKernels.AttentionDecode(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.AttentionInt8(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage keyScales, Idrak.Abstraction.Devices.Storage valueScales, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, Idrak.Abstraction.Devices.AttentionVariant variant)
+
+public delegate bool Idrak.Abstraction.Operations.OperationKernels.AttentionMaskedBFloat16(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage? mask, Idrak.Abstraction.Devices.Storage y, int heads, int rowsPerHead, int maskRows, int capacity, int dim, float scale)
 
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.AttentionRows(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant)
 
@@ -5114,6 +5122,7 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.AttentionContextInt8> AttentionContextInt8
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.AttentionDecode> AttentionDecode
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.AttentionInt8> AttentionInt8
+  public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.AttentionMaskedBFloat16> AttentionMaskedBFloat16
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.AttentionRows> AttentionRows
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.AttentionRowsBFloat16> AttentionRowsBFloat16
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.AttentionScoresInt8> AttentionScoresInt8

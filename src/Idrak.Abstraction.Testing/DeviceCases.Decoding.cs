@@ -270,6 +270,15 @@ public static partial class DeviceCases
                 b.AttentionBFloat16(q, keys16, values16, position, c.Zeros(heads * rows * dim), heads, rows, steps, capacity, dim, scale, tiled, variant);
             }
 
+            if (variant.IsPlain)
+            {
+                // The multi-head attention layer's products over every slot of the bfloat16 cache (read in place), with the
+                // step's causal mask (its rows repeat for the grouped rows) and without one.
+                var mask = c.Storage([.. Enumerable.Range(0, steps * capacity).Select(i => i % capacity <= start + i / capacity ? 0f : -1e9f)]);
+                b.AttentionMaskedBFloat16(q, keys16, values16, mask, c.Zeros(heads * rows * dim), heads, rows, steps, capacity, dim, scale);
+                b.AttentionMaskedBFloat16(q, keys16, values16, null, c.Zeros(heads * rows * dim), heads, rows, 1, capacity, dim, scale);
+            }
+
             // Training: the whole sequence from position 0, its log-sum-exp and the gradients.
             Storage tk = Random(c, heads * steps * dim), tv = Random(c, heads * steps * dim), y = c.Zeros(heads * rows * dim), lse = c.Zeros(heads * rows);
             b.AttentionTiled(q, tk, tv, zero, y, lse, heads, rows, steps, steps, dim, scale, variant);

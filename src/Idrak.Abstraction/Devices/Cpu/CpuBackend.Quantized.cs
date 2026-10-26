@@ -3,6 +3,7 @@
 
 using System.Buffers;
 using System.Numerics;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace Idrak.Abstraction.Devices.Cpu;
@@ -558,51 +559,6 @@ internal sealed partial class CpuBackend
         return true;
     }
 
-    public override void AttentionInt8Kernel(Storage q, Storage keys, Storage values, Storage keyScales, Storage valueScales, Storage position,
-        Storage y, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, bool tiled, AttentionVariant variant = default)
-    {
-        float[] qv = D(q), ks = D(keyScales), vs = D(valueScales), yv = D(y);
-        int position0 = (int)D(position)[0], stride = (dim + 3) / 4 * 4;
-        For(heads * rowsPerHead, (long)heads * rowsPerHead * dim * Math.Max(1, position0), (first, last) =>
-        {
-            var kb = MemoryMarshal.Cast<float, sbyte>(D(keys).AsSpan());
-            var vb = MemoryMarshal.Cast<float, sbyte>(D(values).AsSpan());
-            var scores = ArrayPool<float>.Shared.Rent(capacity);
-            try
-            {
-                for (int row = first; row < last; row++)
-                {
-                    int h = row / rowsPerHead, end = Math.Min(position0 + row % rowsPerHead % steps, capacity - 1) + 1;
-                    int begin = variant.Start(end), count = end - begin;
-                    var query = qv.AsSpan(row * dim, dim);
-                    float max = float.NegativeInfinity;
-                    for (int c = 0; c < count; c++)
-                    {
-                        float dot = Dot(query, kb.Slice((h * capacity + begin + c) * stride, dim));
-
-                        scores[c] = variant.Cap(dot * ks[h * capacity + begin + c] * scale);
-                        max = MathF.Max(max, scores[c]);
-                    }
-
-                    float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
-
-                    var output = yv.AsSpan(row * dim, dim);
-                    output.Clear();
-                    for (int c = 0; c < count; c++)
-                    {
-                        float weight = scores[c] / sum * vs[h * capacity + begin + c];
-                        AddScaled(output, vb.Slice((h * capacity + begin + c) * stride, dim), weight);
-                    }
-
-                }
-            }
-            finally
-            {
-                ArrayPool<float>.Shared.Return(scores);
-            }
-        });
-    }
-
     public override void AttentionScoresInt8Kernel(Storage q, Storage cache, Storage scales, Storage y, int rows, int steps, int capacity, int dim)
     {
         float[] qv = D(q), sv = D(scales), yv = D(y);
@@ -913,6 +869,7 @@ internal sealed partial class CpuBackend
     }
 
     // Σ a[j] · (float)q[j], bytes widened as in AddScaled.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<sbyte> q)
     {
         int j = 0;

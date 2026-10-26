@@ -18,6 +18,7 @@ internal static partial class Tests
     [
         ("decoder: RMSNorm and rotary embedding gradients (finite differences)", DecoderGradients),
         ("decoder: tiled and decoding attention match a direct computation (offsets, groups, odd head sizes)", AttentionKernels),
+        ("decoder: attention over int8 and bfloat16 caches read in place gives its reference's bits whether the CPU splits the work by query rows or by positions and output elements: bfloat16 decoding and rows of different lengths as the float32 kernels over the widened cache, the multi-head attention layer's masked pass as the products over the expanded cache, int8 decoding as its one-row-at-a-time kernel (head sizes off the vector width, grouped rows, windows, soft caps, caches past 2048)", CacheAttentionBits),
         ("decoder: tiled attention gradients (finite differences through queries, keys and values)", AttentionGradients),
         ("decoder: DecoderSpec variants match a plain reference implementation (GQA, q/k norm, biases, rope, tied, post-norms, parallel)", DecoderMatchesReference),
         ("decoder: cached decoding (float32 and int8 KV) and int8 weights match the full pass; generation", DecoderCachedAndInt8),
@@ -355,6 +356,184 @@ internal static partial class Tests
             Tensor.WriteKeyValuesBFloat16(tv, cache16.Values, zero, dim);
             AssertClose(rounded, Tensor.AttentionBFloat16(tq, cache16, position, steps, scale, tiled: false).ToArray(), 2e-4f, "bf16 decoding: " + name);
             AssertClose(rounded, Tensor.AttentionBFloat16(tq, cache16, position, steps, scale, tiled: true).ToArray(), 2e-4f, "bf16 tiled: " + name);
+        }
+    }
+
+    // The CPU's attention over int8 and bfloat16 caches read in place, bit for bit against references whose arithmetic
+    // it keeps: the float32 kernels over the widened bfloat16 cache, the composed products over the expanded cache (the
+    // multi-head attention layer's masked pass), and the int8 kernel as it ran one query row at a time. Each split of the
+    // work (by query rows; by positions, then output elements; the CPU's own choice) gives the same bits.
+    private static void CacheAttentionBits(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                          // the CPU's kernels against the CPU's references
+        }
+
+        var r = new Random(73);
+        var split = CpuBackend.CacheAttentionSplit;
+        var bf16 = KeyValueLayouts.For(KeyValueFormat.BFloat16);
+        AttentionVariant[] variants = [default, new(3, 0f), new(0, 30f), new(50, 20f)];
+        try
+        {
+            foreach (var (heads, group, steps, filled, extra, dim) in new[] { (8, 1, 1, 2100, 52, 128), (2, 4, 1, 700, 9, 100), (3, 2, 3, 40, 5, 17),
+                (1, 1, 1, 0, 0, 5), (4, 1, 2, 2300, 0, 64), (2, 3, 5, 300, 20, 129), (5, 1, 1, 513, 3, 33), (1, 1, 16, 90, 4, 256), (2, 1, 17, 60, 2, 24),
+                (12, 1, 1, 64, 8, 7) })
+            {
+                int rowsPerHead = group * steps, capacity = filled + steps + extra;
+                float scale = 1f / MathF.Sqrt(dim);
+                float[] Random(int n) => [.. Enumerable.Range(0, n).Select(_ => r.NextSingle() * 4 - 2)];
+                using var tk = Tensor.From(Random(heads * capacity * dim), [heads, capacity, dim], device);
+                using var tv = Tensor.From(Random(heads * capacity * dim), [heads, capacity, dim], device);
+                using var tq = Tensor.From(Random(heads * rowsPerHead * dim), [heads, rowsPerHead, dim], device);
+                using var position = Tensor.From([(float)filled], [1], device);
+                using var zero = Tensor.From([0f], [1], device);
+                using var cache16 = new KeyValueCache(heads, capacity, dim, device, KeyValueFormat.BFloat16);
+                using var cache8 = new KeyValueCache(heads, capacity, dim, device, KeyValueFormat.Int8);
+                Tensor.WriteKeyValuesBFloat16(tk, cache16.Keys, zero, dim);                // every slot written, also those past the step
+                Tensor.WriteKeyValuesBFloat16(tv, cache16.Values, zero, dim);
+                Tensor.WriteKeyValuesInt8(tk, cache8.Keys, cache8.KeyScales!, zero);
+                Tensor.WriteKeyValuesInt8(tv, cache8.Values, cache8.ValueScales!, zero);
+                using var ek = bf16.Expand(cache16, keys: true);
+                using var ev = bf16.Expand(cache16, keys: false);
+                using var starts = Tensor.From([.. Enumerable.Range(0, heads * steps).Select(i => (float)r.Next(0, filled + i % steps + 2))], [heads * steps], device);
+                string name = $"{heads}×{rowsPerHead} rows, steps {steps}, {filled} filled of {capacity}, dim {dim}";
+                var int8 = Int8Reference(tq.ToArray(), cache8, heads, rowsPerHead, steps, filled, capacity, dim, scale, variants);
+                using var mask = Tensor.DecoderMask(position, steps, capacity);
+                var composed = tq.MatMul(ek, transposeB: true).ScaleMaskSoftmax(scale, mask).MatMul(ev).ToArray();
+                var unmasked = tq.MatMul(ek, transposeB: true).ScaleMaskSoftmax(scale, null).MatMul(ev).ToArray();
+                foreach (bool? mode in new bool?[] { null, false, true })
+                {
+                    CpuBackend.CacheAttentionSplit = mode;
+                    string how = $"{name}, split {mode?.ToString() ?? "auto"}";
+                    for (int v = 0; v < variants.Length; v++)
+                    {
+                        var variant = variants[v];
+                        var decoded = Tensor.AttentionTiled(tq, ek, ev, position, steps, scale, variant).ToArray();
+                        foreach (bool tiled in new[] { false, true })
+                        {
+                            ExpectBits(decoded, Tensor.AttentionBFloat16(tq, cache16, position, steps, scale, tiled, variant).ToArray(), $"bf16 decoding (tiled {tiled}, {variant}): {how}");
+                            ExpectBits(int8[v], Tensor.AttentionInt8(tq, cache8, position, steps, scale, tiled, variant).ToArray(), $"int8 decoding (tiled {tiled}, {variant}): {how}");
+                        }
+
+                        ExpectBits(Tensor.AttentionRows(tq, ek, ev, position, steps, scale, starts, 1, variant)!.ToArray(),
+                            Tensor.AttentionRowsBFloat16(tq, cache16, position, steps, scale, starts, 1, variant)!.ToArray(), $"bf16 rows ({variant}): {how}");
+                    }
+
+                    var masked = Tensor.AttentionMaskedBFloat16(tq, cache16, mask, scale);
+                    var open = Tensor.AttentionMaskedBFloat16(tq, cache16, null, scale);
+                    if (rowsPerHead > CpuTuning.TransposedInPlace)
+                    {
+                        Check(masked is null && open is null, $"bf16 masked: more than {CpuTuning.TransposedInPlace} query rows are left to the products (tiled there): {how}");
+                        continue;
+                    }
+
+                    ExpectBits(composed, masked!.ToArray(), $"bf16 masked, the step's mask: {how}");
+                    ExpectBits(unmasked, open!.ToArray(), $"bf16 masked, no mask: {how}");
+                }
+            }
+        }
+        finally
+        {
+            CpuBackend.CacheAttentionSplit = split;
+        }
+
+        // Through the layout, as the multi-head attention layer attends: the composed products' bits, in one pass.
+        using var context = new DecodingContext(device, 1, 40, bf16);
+        var owner = new object();
+        using var step = context.OpenStep(3);
+        var cache = context.CacheFor(owner, 2, 24);
+        using var k = Tensor.From([.. Enumerable.Range(0, 2 * 3 * 24).Select(_ => r.NextSingle() - 0.5f)], [2, 3, 24], device);
+        bf16.Write(k, k, cache, context.Position);
+        using var q = Tensor.From([.. Enumerable.Range(0, 2 * 3 * 24).Select(_ => r.NextSingle() - 0.5f)], [2, 3, 24], device);
+        var expected = q.MatMul(bf16.Expand(cache, true), transposeB: true).ScaleMaskSoftmax(0.2f, context.MaskOf(cache)).MatMul(bf16.Expand(cache, false)).ToArray();
+        ExpectBits(expected, bf16.Attend(q, cache, context, 3, 0.2f, decoderKernels: false).ToArray(), "bf16 layout, the multi-head attention layer's pass");
+        step.Complete();
+    }
+
+    // Fails at the first element whose bits differ.
+    private static void ExpectBits(float[] expected, float[] actual, string what)
+    {
+        if (SameBits(expected, actual, what) is { } problem)
+        {
+            Check(false, problem + " (bit for bit)");
+        }
+    }
+
+    // The int8 decoding kernel as it ran one query row at a time, for each variant: each score the bytes' dot product times
+    // the key's scale and the scale, the softmax terms, each value's bytes added with its weight times its scale.
+    private static float[][] Int8Reference(float[] q, KeyValueCache cache, int heads, int rowsPerHead, int steps, int position, int capacity, int dim, float scale,
+        AttentionVariant[] variants)
+    {
+        int stride = (dim + 3) / 4 * 4;
+        var kb = System.Runtime.InteropServices.MemoryMarshal.Cast<float, sbyte>(cache.Keys.ToArray()).ToArray();
+        var vb = System.Runtime.InteropServices.MemoryMarshal.Cast<float, sbyte>(cache.Values.ToArray()).ToArray();
+        float[] ks = cache.KeyScales!.ToArray(), vs = cache.ValueScales!.ToArray();
+        var results = new float[variants.Length][];
+        for (int v = 0; v < variants.Length; v++)
+        {
+            var variant = variants[v];
+            var y = results[v] = new float[heads * rowsPerHead * dim];
+            var scores = new float[capacity];
+            for (int row = 0; row < heads * rowsPerHead; row++)
+            {
+                int h = row / rowsPerHead, end = Math.Min(position + row % rowsPerHead % steps, capacity - 1) + 1, begin = variant.Start(end), count = end - begin;
+                var query = q.AsSpan(row * dim, dim);
+                float max = float.NegativeInfinity;
+                for (int c = 0; c < count; c++)
+                {
+                    scores[c] = variant.Cap(DotBytes(query, kb.AsSpan((h * capacity + begin + c) * stride, dim)) * ks[h * capacity + begin + c] * scale);
+                    max = MathF.Max(max, scores[c]);
+                }
+
+                float sum = CpuMath.ExpShifted(scores.AsSpan(0, count), max);
+                var output = y.AsSpan(row * dim, dim);
+                for (int c = 0; c < count; c++)
+                {
+                    AddBytes(output, vb.AsSpan((h * capacity + begin + c) * stride, dim), scores[c] / sum * vs[h * capacity + begin + c]);
+                }
+            }
+        }
+
+        return results;
+
+        // Σ a[j] · q[j]: per vector of bytes, four products of the widened quarters added, then into the sum.
+        static float DotBytes(ReadOnlySpan<float> a, ReadOnlySpan<sbyte> q)
+        {
+            int j = 0;
+            float total = 0f;
+            if (System.Numerics.Vector.IsHardwareAccelerated && q.Length >= System.Numerics.Vector<sbyte>.Count)
+            {
+                var sum = System.Numerics.Vector<float>.Zero;
+                int floats = System.Numerics.Vector<float>.Count;
+                for (; j <= q.Length - System.Numerics.Vector<sbyte>.Count; j += System.Numerics.Vector<sbyte>.Count)
+                {
+                    System.Numerics.Vector.Widen(new System.Numerics.Vector<sbyte>(q[j..]), out var lowShorts, out var highShorts);
+                    System.Numerics.Vector.Widen(lowShorts, out var i0, out var i1);
+                    System.Numerics.Vector.Widen(highShorts, out var i2, out var i3);
+                    var x = a[j..];
+                    sum += System.Numerics.Vector.ConvertToSingle(i0) * new System.Numerics.Vector<float>(x) + System.Numerics.Vector.ConvertToSingle(i1) * new System.Numerics.Vector<float>(x[floats..])
+                           + System.Numerics.Vector.ConvertToSingle(i2) * new System.Numerics.Vector<float>(x[(2 * floats)..]) + System.Numerics.Vector.ConvertToSingle(i3) * new System.Numerics.Vector<float>(x[(3 * floats)..]);
+                }
+
+                total = System.Numerics.Vector.Sum(sum);
+            }
+
+            for (; j < q.Length; j++)
+            {
+                total += a[j] * q[j];
+            }
+
+            return total;
+        }
+
+        // acc[j] += scale · q[j] (one product, one sum per element).
+        static void AddBytes(Span<float> acc, ReadOnlySpan<sbyte> q, float scale)
+        {
+            for (int j = 0; j < q.Length; j++)
+            {
+                acc[j] += scale * q[j];
+            }
         }
     }
 

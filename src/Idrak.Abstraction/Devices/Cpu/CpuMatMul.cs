@@ -203,6 +203,55 @@ internal static class CpuMatMul
         }
     }
 
+    /// <summary>
+    /// x · row over k as <see cref="DotColumns"/> sums each output (two vector lanes of FMAs, one more vector into the first,
+    /// the lanes added, then the scalar tail as FMAs onto that sum), with the row held as bfloat16 halves widened in
+    /// registers as they are read (exactly: the halves as a float's high bits). The same operations on the same values, so
+    /// the bits of the few-row transposed-B product over the widened row; attention over a bfloat16 cache read in place
+    /// needs them (keep the two in step: the tests compare it with the product bit for bit).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static float DotLanesBFloat16(ref float x, ref ushort row, int k)
+    {
+        int w = Vector<float>.Count;
+        var s0 = Vector<float>.Zero;
+        var s1 = Vector<float>.Zero;
+        int p = 0;
+        for (; p <= k - 2 * w; p += 2 * w)
+        {
+            Vector.Widen(Vector.LoadUnsafe(ref row, (nuint)p), out var low, out var high);
+            s0 = Vector.FusedMultiplyAdd(Vector.LoadUnsafe(ref x, (nuint)p), Vector.AsVectorSingle(low << 16), s0);
+            s1 = Vector.FusedMultiplyAdd(Vector.LoadUnsafe(ref x, (nuint)(p + w)), Vector.AsVectorSingle(high << 16), s1);
+        }
+
+        if (p <= k - w)                                                      // DotColumns' single-vector loop runs at most once here
+        {
+            s0 = Vector.FusedMultiplyAdd(Vector.LoadUnsafe(ref x, (nuint)p), WidenedVector(ref Unsafe.Add(ref row, p)), s0);
+            p += w;
+        }
+
+        float sum = Vector.Sum(s0 + s1);
+        for (; p < k; p++)
+        {
+            sum = MathF.FusedMultiplyAdd(Unsafe.Add(ref x, p), BitConverter.Int32BitsToSingle(Unsafe.Add(ref row, p) << 16), sum);
+        }
+
+        return sum;
+    }
+
+    // One vector of widened halves from the Vector<float>.Count halves at `row` (no read past them).
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private static Vector<float> WidenedVector(ref ushort row)
+    {
+        Span<float> values = stackalloc float[Vector<float>.Count];
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = BitConverter.Int32BitsToSingle(Unsafe.Add(ref row, i) << 16);
+        }
+
+        return new Vector<float>(values);
+    }
+
     private static void FewRows(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, nint rowStride, nint colStride, float beta,
         int columnBlock, ParallelOptions options)
     {

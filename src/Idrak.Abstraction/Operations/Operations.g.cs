@@ -156,19 +156,20 @@ internal static class OperationIndex
     public const int AttentionSegmented = 140;
     public const int AttentionRows = 141;
     public const int AttentionRowsBFloat16 = 142;
-    public const int AttentionSegmentedBackward = 143;
-    public const int AttentionTiled = 144;
-    public const int AttentionSpans = 145;
-    public const int AttentionSpansStrided = 146;
-    public const int AttentionSpansBackward = 147;
-    public const int DecoderMask = 148;
-    public const int KeyValueWrite = 149;
-    public const int SampleRows = 150;
-    public const int PenalizeRows = 151;
-    public const int HistoryPush = 152;
+    public const int AttentionMaskedBFloat16 = 143;
+    public const int AttentionSegmentedBackward = 144;
+    public const int AttentionTiled = 145;
+    public const int AttentionSpans = 146;
+    public const int AttentionSpansStrided = 147;
+    public const int AttentionSpansBackward = 148;
+    public const int DecoderMask = 149;
+    public const int KeyValueWrite = 150;
+    public const int SampleRows = 151;
+    public const int PenalizeRows = 152;
+    public const int HistoryPush = 153;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 153;
+    public const int Count = 154;
 }
 
 /// <summary>
@@ -1267,6 +1268,17 @@ public static class OperationKernels
     public delegate bool AttentionRowsBFloat16(Backend backend, Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant);
 
     /// <summary>
+    /// A kernel for <see cref="Ops.AttentionMaskedBFloat16"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// softmax(scale · q·Kᵀ + mask)·V over every slot of a bfloat16 cache, read in place: for q [heads, rowsPerHead, dim]
+    /// and keys and values [heads, capacity, ⌈dim / 2⌉ words] (as <see cref="Backend.AttentionBFloat16"/> reads them), y [heads,
+    /// rowsPerHead, dim] equals the composed operations bit for bit: <see cref="Backend.BatchedMatMul"/> of q and the widened keys
+    /// (transposed), <see cref="Backend.ScaleMaskSoftmax"/> with mask row r % maskRows ([maskRows, capacity]; null: none), and
+    /// <see cref="Backend.BatchedMatMul"/> of the weights and the widened values. Returns false when the device has no such pass
+    /// for this shape (the caller then runs those operations over the expanded cache).
+    /// </summary>
+    public delegate bool AttentionMaskedBFloat16(Backend backend, Storage q, Storage keys, Storage values, Storage? mask, Storage y, int heads, int rowsPerHead, int maskRows, int capacity, int dim, float scale);
+
+    /// <summary>
     /// A kernel for <see cref="Ops.AttentionSegmentedBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
     /// The gradient of <see cref="Backend.AttentionSegmented"/> (as <see cref="Backend.AttentionTiledBackward"/>); false when unsupported.
     /// </summary>
@@ -2319,6 +2331,16 @@ public static partial class Ops
     public static readonly Operation<OperationKernels.AttentionRowsBFloat16> AttentionRowsBFloat16 = new("AttentionRowsBFloat16", OperationIndex.AttentionRowsBFloat16, KernelSource.Host);
 
     /// <summary>
+    /// softmax(scale · q·Kᵀ + mask)·V over every slot of a bfloat16 cache, read in place: for q [heads, rowsPerHead, dim]
+    /// and keys and values [heads, capacity, ⌈dim / 2⌉ words] (as <see cref="Backend.AttentionBFloat16"/> reads them), y [heads,
+    /// rowsPerHead, dim] equals the composed operations bit for bit: <see cref="Backend.BatchedMatMul"/> of q and the widened keys
+    /// (transposed), <see cref="Backend.ScaleMaskSoftmax"/> with mask row r % maskRows ([maskRows, capacity]; null: none), and
+    /// <see cref="Backend.BatchedMatMul"/> of the weights and the widened values. Returns false when the device has no such pass
+    /// for this shape (the caller then runs those operations over the expanded cache).
+    /// </summary>
+    public static readonly Operation<OperationKernels.AttentionMaskedBFloat16> AttentionMaskedBFloat16 = new("AttentionMaskedBFloat16", OperationIndex.AttentionMaskedBFloat16, KernelSource.None);
+
+    /// <summary>
     /// The gradient of <see cref="Backend.AttentionSegmented"/> (as <see cref="Backend.AttentionTiledBackward"/>); false when unsupported.
     /// </summary>
     public static readonly Operation<OperationKernels.AttentionSegmentedBackward> AttentionSegmentedBackward = new("AttentionSegmentedBackward", OperationIndex.AttentionSegmentedBackward, KernelSource.Host);
@@ -2553,6 +2575,7 @@ public static partial class Ops
         AttentionSegmented,
         AttentionRows,
         AttentionRowsBFloat16,
+        AttentionMaskedBFloat16,
         AttentionSegmentedBackward,
         AttentionTiled,
         AttentionSpans,

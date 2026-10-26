@@ -323,6 +323,7 @@ public abstract partial class Backend : IDeviceBackend
     private readonly IGraphCaptureBackend? _graphs;
     private readonly IFloat8Backend? _float8;
     private readonly IRowAttentionBackend? _rows;
+    private readonly IMaskedCacheAttentionBackend? _maskedCache;
     private readonly ISegmentedAttentionBackend? _segmented;
     private readonly IFusedPackedKernels? _fused;
     private readonly IMatrixUnitBackend? _matrixUnits;
@@ -346,6 +347,7 @@ public abstract partial class Backend : IDeviceBackend
         _graphs = this as IGraphCaptureBackend;
         _float8 = this as IFloat8Backend;
         _rows = this as IRowAttentionBackend;
+        _maskedCache = this as IMaskedCacheAttentionBackend;
         _segmented = this as ISegmentedAttentionBackend;
         _fused = this as IFusedPackedKernels;
         _matrixUnits = this as IMatrixUnitBackend;
@@ -2382,6 +2384,18 @@ public abstract partial class Backend : IDeviceBackend
         return CpuBackend.Instance.AttentionRowsBFloat16(h[q], h[keys], h[values], h[position], h[y], h[starts], heads, headsPerRow, rowsPerHead, steps, capacity, dim,
             scale, variant);
     }
+
+    /// <summary>
+    /// softmax(scale · q·Kᵀ + mask)·V over every slot of a bfloat16 cache, read in place: for q [heads, rowsPerHead, dim]
+    /// and keys and values [heads, capacity, ⌈dim / 2⌉ words] (as <see cref="AttentionBFloat16"/> reads them), y [heads,
+    /// rowsPerHead, dim] equals the composed operations bit for bit: <see cref="BatchedMatMul"/> of q and the widened keys
+    /// (transposed), <see cref="ScaleMaskSoftmax"/> with mask row r % maskRows ([maskRows, capacity]; null: none), and
+    /// <see cref="BatchedMatMul"/> of the weights and the widened values. Returns false when the device has no such pass
+    /// for this shape (the caller then runs those operations over the expanded cache).
+    /// </summary>
+    public bool AttentionMaskedBFloat16Kernel(Storage q, Storage keys, Storage values, Storage? mask, Storage y, int heads, int rowsPerHead, int maskRows,
+        int capacity, int dim, float scale) =>
+        _maskedCache is { } own && own.AttentionMaskedBFloat16(q, keys, values, mask, y, heads, rowsPerHead, maskRows, capacity, dim, scale);
 
     /// <summary>
     /// Whether <see cref="AttentionSegmented"/> and its gradient run for this head size (with the current

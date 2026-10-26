@@ -452,11 +452,12 @@ public static class KeyValueLayouts
             return y;
         }
 
-        // Decoder models read the halves directly; the multi-head attention layer attends through the expanded values.
+        // Decoder models read the halves directly. The multi-head attention layer gets the products over every slot: in one
+        // pass over the halves where the device has one (no float32 copy of the cache per step), else over the expanded cache.
         public override Tensor Attend(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, bool decoderKernels) =>
             decoderKernels
                 ? Tensor.AttentionBFloat16(q, cache, context.PositionOf(cache), steps, scale, tiled: steps >= 8)   // only the filled positions
-                : base.Attend(q, cache, context, steps, scale, decoderKernels);
+                : Tensor.AttentionMaskedBFloat16(q, cache, context.MaskOf(cache), scale) ?? base.Attend(q, cache, context, steps, scale, decoderKernels);
 
         public Tensor? AttendVariant(Tensor q, KeyValueCache cache, DecodingContext context, int steps, float scale, AttentionVariant variant) =>
             Tensor.AttentionBFloat16(q, cache, context.PositionOf(cache), steps, scale, tiled: steps >= 8, variant);
