@@ -71,6 +71,14 @@ nothing that needs a shell.
 - `apps/Directory.Build.props` and `.targets` of its own: not packable, the library's projects from source through
   `build/IdrakFromSource.targets`.
 - Navigation by a flyout and navigation pages (no MAUI Shell); the flyout lists the registered features.
+- **A modern look in both themes.** Light and dark follow the phone's setting by default, with a choice in the
+  settings page (system, light, dark) kept between runs. Colours, type sizes and spacing are resources in one
+  dictionary per theme (`AppThemeBinding` and dynamic resources), never set on a page; cards, rounded corners,
+  the system's font, room for the phone's text size. Every page is checked in both themes.
+- **A settings page** over every option of `IdrakMauiOptions`: device, theme, the cache and models folder, memory
+  and thread limits (empty means measured), the Hugging Face token (kept in the phone's secure storage), the
+  progress interval, which labs show. Settings are kept between runs and applied at start-up, before the first
+  device or download; a change that needs a restart says so.
 - Registers the families it shows (each plug-in by its own call; EspeakNg is not registered), the settings page over
   `IdrakMauiOptions`, and the labs.
 
@@ -98,11 +106,11 @@ nothing that needs a shell.
 | M1 | **Library: sound out, and Android sound.** `IAudioPlayback` / `IAudioOutput` in `Idrak.Audio.Abstractions`, in **`AudioPlaybacks`** (a `SlotTable`), mirroring capture (available here and why not, devices, open, blocks written in order, drain). Built in: `winmm` (waveOut), `alsa` (PCM playback), and `aaudio` capture and playback for Android, from `libaaudio.so` loaded at run time (no Java binding, nothing shipped). `ForThisMachine` picks `aaudio` on Android; a refused microphone permission is named | none | B |
 | M2 | **The test groups as a library.** The groups and the runner's logic (filter, devices, progress, failures file, timeout) move to `tests/Idrak.Tests.Library`; `tests/Idrak.Tests` keeps its program and its commands unchanged. Tests find repository files through one root; where it is missing (on a phone), a test that needs the repository reports "not run here: needs the repository" instead of failing, and the summary counts them apart | M0 | A |
 | M3 | **Idrak.Maui core.** The project (`net10.0-android`), `UseIdrak`, the options, `IMobileFeature` and `MobileFeatures`, the services and the `maui` reporter | M0, M1 | B |
-| M4 | **Idrak.Mobile: the test harness.** The app, its navigation and settings; the Devices, Self-test and Models labs | M2, M3 | A |
+| M4 | **Idrak.Mobile: the test harness.** The app, its navigation, both themes and the settings page; the Devices, Self-test and Models labs | M2, M3 | A |
 | M5 | Chat lab; Transcribe lab | M4 | A; B |
 | M6 | Speak and Audio process labs; OCR and Image labs | M5 | A; B |
 | M7 | Search lab | M6 | A |
-| M8 | Bench lab: the bench rows callable from the app as the tests are (M2's pattern) | M7 | A |
+| M8 | Bench lab: the bench rows callable from the app as the tests are (M2's pattern). **Held: the owner decides when** | M7 | A |
 
 **Done when:**
 
@@ -156,7 +164,7 @@ under `test-output\phone\`.
 
 ## Out of this plan
 
-- iOS (later: AudioToolbox capture and playback through the same contracts, a full AOT build, the CPU until the Apple
+- iOS, held for the owner to decide (later: AudioToolbox capture and playback through the same contracts, a full AOT build, the CPU until the Apple
   plan brings Metal).
 - CI, versions, packaging and publishing.
 - Anything that needs a shell or a child process: Termux, the CLI, espeak-ng, the coding workspace and its sandbox, the
