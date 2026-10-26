@@ -14,6 +14,10 @@ public sealed record Idrak.Maui.Abstractions.DeviceReport : System.IEquatable<Id
   public System.TimeSpan Elapsed { get; init; }
   public string DefaultDevice { get; init; }
 
+public enum Idrak.Maui.Abstractions.FeatureState : int
+  Planned = 1
+  Ready = 0
+
 public sealed record Idrak.Maui.Abstractions.HostedModel : System.IEquatable<Idrak.Maui.Abstractions.HostedModel>
   public HostedModel(string Host, Idrak.Abstraction.Serving.LoadedModel Model)
   public Idrak.Abstraction.Serving.LoadedModel Model { get; init; }
@@ -26,11 +30,13 @@ public interface Idrak.Maui.Abstractions.IMemoryPressureSource
   public event System.EventHandler<Idrak.Maui.Abstractions.MemoryPressureSignal>? Pressure
 
 public interface Idrak.Maui.Abstractions.IMobileFeature : Idrak.Abstraction.IKind
+  public (default) Idrak.Maui.Abstractions.FeatureState State { get; }
+  public (default) int Order { get; }
+  public (default) string Coming { get; }
   public Idrak.Maui.Abstractions.PhoneNeeds Needs { get; }
   public Microsoft.Maui.Controls.Page CreatePage(System.IServiceProvider services, object viewModel)
   public System.Collections.Generic.IReadOnlyList<string> ModelFamilies { get; }
   public System.Collections.Generic.IReadOnlyList<string> Packages { get; }
-  public int Order { get; }
   public object CreateViewModel(System.IServiceProvider services)
   public string Glyph { get; }
   public string Title { get; }
@@ -83,8 +89,16 @@ public sealed record Idrak.Maui.Abstractions.MemoryRelease : System.IEquatable<I
   public bool CachedMemoryReleased { get; init; }
 
 public static class Idrak.Maui.Abstractions.MobileFeatures
+  public const int Unordered = 2147483647
+  public const string AudioProcess = "audio-process"
+  public const string Chat = "chat"
   public const string Devices = "devices"
+  public const string Image = "image"
   public const string Models = "models"
+  public const string Ocr = "ocr"
+  public const string Search = "search"
+  public const string Speak = "speak"
+  public const string Transcribe = "transcribe"
   public static Idrak.Maui.Abstractions.IMobileFeature Get(string name)
   public static Idrak.Maui.Abstractions.IMobileFeature? Default(string name)
   public static Idrak.Maui.Abstractions.IMobileFeature? Find(string name)
@@ -93,6 +107,7 @@ public static class Idrak.Maui.Abstractions.MobileFeatures
   public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.Abstractions.IMobileFeature> All { get; }
   public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.Abstractions.IMobileFeature> Enabled(Idrak.Maui.IdrakMauiOptions options)
   public static bool Unregister(string name)
+  public static int Place(Idrak.Maui.Abstractions.IMobileFeature feature)
   public static string? Origin(string name)
   public static void Register(Idrak.Maui.Abstractions.IMobileFeature feature)
 
@@ -412,6 +427,24 @@ public sealed class Idrak.Maui.ViewModels.ModelsViewModel : Idrak.Maui.ViewModel
   public string TokenText { get; }
   public void Cancel()
 
+public sealed class Idrak.Maui.ViewModels.PlaceholderViewModel : Idrak.Maui.ViewModels.ViewModel
+  public Idrak.Maui.Abstractions.IMobileFeature Feature { get; }
+  public PlaceholderViewModel(Idrak.Maui.Abstractions.IMobileFeature feature)
+  public System.Collections.Generic.IReadOnlyList<string> NeedLines { get; }
+  public bool HasComing { get; }
+  public bool HasModelFamilies { get; }
+  public bool HasPackages { get; }
+  public bool IsPlanned { get; }
+  public bool NeedsNothing { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> Describe(Idrak.Maui.Abstractions.PhoneNeeds needs)
+  public string Coming { get; }
+  public string Glyph { get; }
+  public string ModelFamilies { get; }
+  public string Packages { get; }
+  public string StateText { get; }
+  public string Summary { get; }
+  public string Title { get; }
+
 public sealed class Idrak.Maui.ViewModels.SettingEntry : Idrak.Maui.ViewModels.ViewModel
   public Idrak.Maui.IdrakSetting Setting { get; }
   public Microsoft.Maui.Keyboard Keyboard { get; }
@@ -485,6 +518,24 @@ public sealed class Idrak.Maui.Views.ModelsFeature : Idrak.Abstraction.IKind, Id
 public class Idrak.Maui.Views.ModelsPage : Microsoft.Maui.Controls.ContentPage
   protected override void OnAppearing()
   public ModelsPage(Idrak.Maui.ViewModels.ModelsViewModel viewModel)
+
+public class Idrak.Maui.Views.PlaceholderPage : Microsoft.Maui.Controls.ContentPage
+  public PlaceholderPage(Idrak.Maui.ViewModels.PlaceholderViewModel viewModel)
+
+public sealed class Idrak.Maui.Views.PlannedFeature : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IMobileFeature
+  public Idrak.Maui.Abstractions.FeatureState State { get; }
+  public Idrak.Maui.Abstractions.PhoneNeeds Needs { get; }
+  public Microsoft.Maui.Controls.Page CreatePage(System.IServiceProvider services, object viewModel)
+  public PlannedFeature(string name, string title, string glyph, int order, string summary, string coming, Idrak.Maui.Abstractions.PhoneNeeds needs = (Idrak.Maui.Abstractions.PhoneNeeds)0, System.Collections.Generic.IReadOnlyList<string>? packages = null, System.Collections.Generic.IReadOnlyList<string>? modelFamilies = null)
+  public System.Collections.Generic.IReadOnlyList<string> ModelFamilies { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Packages { get; }
+  public int Order { get; }
+  public object CreateViewModel(System.IServiceProvider services)
+  public string Coming { get; }
+  public string Glyph { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public string Title { get; }
 
 public class Idrak.Maui.Views.SettingsPage : Microsoft.Maui.Controls.ContentPage
   public SettingsPage(Idrak.Maui.ViewModels.SettingsViewModel viewModel)

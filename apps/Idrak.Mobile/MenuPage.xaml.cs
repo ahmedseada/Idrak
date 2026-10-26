@@ -12,7 +12,8 @@ namespace Idrak.Mobile;
 /// <param name="Title">Its title.</param>
 /// <param name="Summary">What it does.</param>
 /// <param name="Glyph">Its mark.</param>
-public sealed record MenuEntry(string? Feature, string Title, string Summary, string Glyph);
+/// <param name="IsPlanned">Whether the feature is not built yet (<see cref="FeatureState.Planned"/>): shown with a "planned" mark.</param>
+public sealed record MenuEntry(string? Feature, string Title, string Summary, string Glyph, bool IsPlanned = false);
 
 /// <summary>The flyout's menu, listed again when the settings are saved (features turned on or off).</summary>
 public partial class MenuPage : ContentPage
@@ -40,7 +41,7 @@ public partial class MenuPage : ContentPage
         Entries.Clear();
         foreach (var feature in MobileFeatures.Enabled(_options))
         {
-            Entries.Add(new MenuEntry(feature.Name, feature.Title, feature.Summary, feature.Glyph));
+            Entries.Add(new MenuEntry(feature.Name, feature.Title, feature.Summary, feature.Glyph, feature.State == FeatureState.Planned));
         }
 
         Entries.Add(new MenuEntry(null, "Settings", "Device, theme, storage, limits, token, features", "⚙"));

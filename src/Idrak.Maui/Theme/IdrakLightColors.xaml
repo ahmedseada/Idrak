@@ -25,4 +25,7 @@
     <Color x:Key="IdrakSeparator">#E2E8F0</Color>
     <Color x:Key="IdrakBarBackground">#0B1020</Color>
     <Color x:Key="IdrakBarText">#FFFFFF</Color>
+    <Color x:Key="IdrakBadgeBackground">#FEF3C7</Color>
+    <Color x:Key="IdrakBadgeForeground">#92400E</Color>
+    <Color x:Key="IdrakBadgeStroke">#F59E0B</Color>
 </ResourceDictionary>

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<!-- The flyout's menu: every registered feature the settings show, then the settings. -->
+<!-- The flyout's menu: every registered feature the settings show (a planned one marked "planned"), then the settings. -->
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              xmlns:local="clr-namespace:Idrak.Mobile"
@@ -9,17 +9,22 @@
              BackgroundColor="{DynamicResource IdrakFlyoutBackground}">
     <CollectionView x:Name="MenuList" ItemsSource="{Binding Entries}" SelectionMode="Single" SelectionChanged="OnSelectionChanged">
         <CollectionView.Header>
-            <VerticalStackLayout Padding="20,28,20,16" Spacing="4">
+            <VerticalStackLayout Padding="{DynamicResource IdrakMenuHeaderPadding}" Spacing="{DynamicResource IdrakSpacingSmall}">
                 <Label Text="Idrak" Style="{DynamicResource IdrakTitle}" />
                 <Label Text="The library on this phone" Style="{DynamicResource IdrakCaption}" />
             </VerticalStackLayout>
         </CollectionView.Header>
         <CollectionView.ItemTemplate>
             <DataTemplate x:DataType="local:MenuEntry">
-                <Grid ColumnDefinitions="36,*" Padding="20,12" ColumnSpacing="12">
+                <Grid ColumnDefinitions="36,*" Padding="{DynamicResource IdrakMenuItemPadding}" ColumnSpacing="{DynamicResource IdrakSpacing}">
                     <Label Text="{Binding Glyph}" FontSize="{DynamicResource IdrakFontSizeHeading}" TextColor="{DynamicResource IdrakAccent}" VerticalOptions="Center" />
                     <VerticalStackLayout Grid.Column="1" VerticalOptions="Center">
-                        <Label Text="{Binding Title}" FontAttributes="Bold" />
+                        <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                            <Label Text="{Binding Title}" FontAttributes="Bold" VerticalOptions="Center" />
+                            <Border Style="{DynamicResource IdrakBadge}" IsVisible="{Binding IsPlanned}">
+                                <Label Text="planned" Style="{DynamicResource IdrakBadgeLabel}" />
+                            </Border>
+                        </HorizontalStackLayout>
                         <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" MaxLines="2" LineBreakMode="TailTruncation" />
                     </VerticalStackLayout>
                 </Grid>

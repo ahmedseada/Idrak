@@ -29,6 +29,9 @@ public static class MauiProgram
 
         builder.Services.AddSingleton<AppFlyoutPage>();
         builder.Services.AddSingleton<MenuPage>();
+
+        // The app's own features, after the library's (UseIdrak registered those).
+        AppFeatures.Register();
         return builder.Build();
     }
 }

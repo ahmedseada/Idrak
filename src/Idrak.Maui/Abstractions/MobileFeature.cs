@@ -25,6 +25,20 @@ public enum PhoneNeeds
     Model = 8,
 }
 
+/// <summary>Where a feature stands: built, or placed in the menu ahead of the phase that builds it.</summary>
+public enum FeatureState
+{
+    /// <summary>Built: its page does what <see cref="IKind.Summary"/> says.</summary>
+    Ready = 0,
+
+    /// <summary>
+    /// Not built yet: it keeps its name, title and place in the menu, and its page (the library's placeholder) says what
+    /// it will do (<see cref="IMobileFeature.Coming"/>) and need. Its phase replaces the registration's page and view model
+    /// under the same name, so the menu does not change.
+    /// </summary>
+    Planned = 1,
+}
+
 /// <summary>
 /// One feature of the app: a page and its view model, listed in the app's menu. Registered by its
 /// <see cref="IKind.Name"/> in <see cref="MobileFeatures"/>; the library registers its own as defaults and an app adds its
@@ -39,8 +53,18 @@ public interface IMobileFeature : IKind
     /// <summary>A character or two drawn in the system font beside the title in the menu.</summary>
     string Glyph { get; }
 
-    /// <summary>Where it stands in the menu: lower first, then by title.</summary>
-    int Order { get; }
+    /// <summary>
+    /// Where it stands in the menu: lower first, then by title. A feature that sets none (<see cref="MobileFeatures.Unordered"/>)
+    /// takes the place of the library's feature of its name when there is one (so a feature registered over a planned one
+    /// keeps its place), and otherwise comes after every ordered one.
+    /// </summary>
+    int Order => MobileFeatures.Unordered;
+
+    /// <summary>Whether it is built (<see cref="FeatureState.Ready"/>, the default) or planned (a placeholder page).</summary>
+    FeatureState State => FeatureState.Ready;
+
+    /// <summary>What it will do once built, one line for its placeholder page; "" for a ready feature (the default).</summary>
+    string Coming => "";
 
     /// <summary>What it needs from the phone.</summary>
     PhoneNeeds Needs { get; }
@@ -76,10 +100,35 @@ public static class MobileFeatures
 
     private static readonly SlotTable<string, IMobileFeature> Table = BuiltIn();
 
+    /// <summary>The <see cref="IMobileFeature.Order"/> of a feature that sets none: after every ordered one.</summary>
+    public const int Unordered = int.MaxValue;
+
+    /// <summary>The library's chat page (planned: a small model streams its answer).</summary>
+    public const string Chat = "chat";
+
+    /// <summary>The library's live transcription page (planned).</summary>
+    public const string Transcribe = "transcribe";
+
+    /// <summary>The library's speech synthesis page (planned).</summary>
+    public const string Speak = "speak";
+
+    /// <summary>The library's audio processing page (planned).</summary>
+    public const string AudioProcess = "audio-process";
+
+    /// <summary>The library's text reading page (planned).</summary>
+    public const string Ocr = "ocr";
+
+    /// <summary>The library's image transforms page (planned).</summary>
+    public const string Image = "image";
+
+    /// <summary>The library's retrieval page (planned).</summary>
+    public const string Search = "search";
+
     private static SlotTable<string, IMobileFeature> BuiltIn()
     {
         var table = new SlotTable<string, IMobileFeature>(nameof(MobileFeatures), comparer: StringComparer.OrdinalIgnoreCase,
             unguarded: "a feature is a page the user has open, with no call to fall back at");
+        Idrak.Maui.Views.PlannedFeatures.RegisterDefaults(table);
         table.RegisterDefault(Devices, new Idrak.Maui.Views.DevicesFeature());
         table.RegisterDefault(Models, new Idrak.Maui.Views.ModelsFeature());
         return table;
@@ -100,9 +149,24 @@ public static class MobileFeatures
     /// <summary>The registered names, in registration order.</summary>
     public static IReadOnlyCollection<string> Names => Table.Keys;
 
-    /// <summary>Every registered feature in menu order (<see cref="IMobileFeature.Order"/>, then the title).</summary>
+    /// <summary>
+    /// Every registered feature in menu order (<see cref="Place"/>, then the title): the ready and the planned
+    /// (<see cref="IMobileFeature.State"/>) alike.
+    /// </summary>
     public static IReadOnlyList<IMobileFeature> All =>
-        [.. Table.Values.OrderBy(f => f.Order).ThenBy(f => f.Title, StringComparer.CurrentCultureIgnoreCase)];
+        [.. Table.Values.OrderBy(Place).ThenBy(f => f.Title, StringComparer.CurrentCultureIgnoreCase)];
+
+    /// <summary>
+    /// Where <paramref name="feature"/> stands in the menu: its <see cref="IMobileFeature.Order"/>, or, when it sets none,
+    /// the library's feature of its name's (a ready feature registered over a planned one keeps its place), else
+    /// <see cref="Unordered"/>.
+    /// </summary>
+    public static int Place(IMobileFeature feature)
+    {
+        ArgumentNullException.ThrowIfNull(feature);
+        int order = feature.Order;
+        return order == Unordered && Table.Default(feature.Name) is { } library ? library.Order : order;
+    }
 
     /// <summary>The feature of that name, or null.</summary>
     public static IMobileFeature? Find(string name) => Table.Find(name);
