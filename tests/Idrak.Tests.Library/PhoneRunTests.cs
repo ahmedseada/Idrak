@@ -162,6 +162,12 @@ internal abstract partial class Tests
         var (x86Groups, x86Model) = CpuInfo.ParseCores(x86, _ => null);
         Check(x86Model == "Example CPU @ 2.80GHz" && x86Groups is [(2, "model 85", null)], $"x86: {x86Model}, {string.Join(", ", x86Groups)}");
 
+        // The name read from the start of the file alone (the tuning key's, without the rest of the file or cpufreq) is the
+        // full parse's: the first "model name" line; none on ARM or where that line is cut off (the full parse decides).
+        Check(CpuInfo.FirstModelName(x86, whole: true) == x86Model && CpuInfo.FirstModelName(x86[..40], whole: false) is null
+            && CpuInfo.FirstModelName(x86[..62], whole: false) is null && CpuInfo.FirstModelName(System.Text.Encoding.UTF8.GetBytes(noName), whole: true) is null,
+            "the name from the start of /proc/cpuinfo: its first model name line, else none");
+
         // This machine: where /proc/cpuinfo has a model name, the name is the one read before (rule 71: the tuning key).
         if (OperatingSystem.IsLinux() && File.Exists("/proc/cpuinfo"))
         {
@@ -169,6 +175,8 @@ internal abstract partial class Tests
             if (before is not null)
             {
                 Check(CpuInfo.Current.Model == before[(before.IndexOf(':') + 1)..].Trim(), $"the model name as before: {CpuInfo.Current.Model}");
+                Check(CpuInfo.ParseCores(File.ReadAllBytes("/proc/cpuinfo"), _ => null).Model.Trim() == CpuInfo.Current.Model,
+                    $"the name from the start of /proc/cpuinfo is the full parse's: {CpuInfo.Current.Model}");
             }
 
             Console.WriteLine($"    this CPU: {CpuInfo.Current.Model}; {CpuInfo.DescribeGroups(CpuInfo.Current.CoreGroups)}");

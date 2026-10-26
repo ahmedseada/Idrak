@@ -15,7 +15,9 @@ namespace Idrak.Abstraction.Devices.Cpu;
 /// accelerates, and the cache sizes. Read once, from the operating system (Linux and Android: /sys/devices/system/cpu; Windows:
 /// GetLogicalProcessorInformationEx; macOS: sysctl), with a fallback per value when it cannot be read. Every CPU tiling,
 /// blocking and threading choice is derived from these (see <see cref="CpuTuning"/>); no processor name or vendor is
-/// read for a decision.
+/// read for a decision. What only describes the processor (<see cref="PhysicalCores"/>, <see cref="Model"/>,
+/// <see cref="CoreGroups"/>: on Linux every core's topology, /proc/cpuinfo and cpufreq) is read once, when first asked (a
+/// device listing, the tuning cache's key), never on the way to the first operation, which needs only the caches.
 /// </summary>
 internal sealed record CpuInfo
 {
@@ -36,8 +38,8 @@ internal sealed record CpuInfo
     /// <summary>Logical processors (hardware threads) the process may use.</summary>
     public required int LogicalProcessors { get; init; }
 
-    /// <summary>Physical cores (logical processors when the system does not say).</summary>
-    public required int PhysicalCores { get; init; }
+    /// <summary>Physical cores (logical processors when the system does not say); read when first asked.</summary>
+    public int PhysicalCores => Description.Physical;
 
     /// <summary>Floats in a <see cref="Vector{T}"/> (the portable kernels' width).</summary>
     public required int VectorFloats { get; init; }
@@ -71,16 +73,114 @@ internal sealed record CpuInfo
 
     /// <summary>
     /// The processor's name as the system reports it (its "model name"; where there is none, as on ARM: the system's
-    /// "Hardware" name or the core groups); only a key of the tuning cache, never a reason for a choice.
+    /// "Hardware" name or the core groups); only a key of the tuning cache, never a reason for a choice. Read when first asked.
     /// </summary>
-    public required string Model { get; init; }
+    public string Model => Description.Name;
 
     /// <summary>
     /// The cores by kind, in the order the system numbers them (Linux and Android: each processor's part number in
     /// /proc/cpuinfo and its highest frequency in cpufreq; several groups on processors that mix core types). Raw numbers
-    /// only: no table names a part. Empty where the system does not say.
+    /// only: no table names a part. Empty where the system does not say. Read when first asked.
     /// </summary>
-    public CoreGroup[] CoreGroups { get; init; } = [];
+    public CoreGroup[] CoreGroups => Description.Groups;
+
+    // What only describes the processor (Read: the system's files on Linux and Android, each part read once when first
+    // asked; the values Windows and macOS report with the caches).
+    private Described Description { get; init; } = new(Environment.ProcessorCount, "");
+
+    // The physical cores, the name and the core groups. On Linux and Android each is read once, when first asked, under
+    // one lock (plain fields: no Lazy<T> instantiations compiled for one cold read).
+    private sealed class Described
+    {
+        private readonly object _gate = new();
+        private readonly int _logical;
+        private int _physical;
+        private volatile bool _physicalRead;
+        private volatile string? _name;
+        private volatile CoreGroup[]? _groups;
+        private string _groupsName = "";
+
+        // What the system reported with the caches (Windows, macOS; elsewhere nothing).
+        public Described(int physical, string model)
+        {
+            _physical = physical;
+            _physicalRead = true;
+            _name = _groupsName = model;
+            _groups = [];
+        }
+
+        // Linux and Android: read from the system's files when first asked.
+        public Described(int logical) => _logical = logical;
+
+        public int Physical
+        {
+            get
+            {
+                if (!_physicalRead)
+                {
+                    lock (_gate)
+                    {
+                        if (!_physicalRead)
+                        {
+                            _physical = Cores(CountCoresLinux(), _logical);
+                            _physicalRead = true;
+                        }
+                    }
+                }
+
+                return _physical;
+            }
+        }
+
+        public string Name
+        {
+            get
+            {
+                if (_name is { } name)
+                {
+                    return name;
+                }
+
+                lock (_gate)
+                {
+                    return _name ??= ModelLinux(this);
+                }
+            }
+        }
+
+        public CoreGroup[] Groups => ReadGroups();
+
+        // The name the whole of /proc/cpuinfo gives (ModelLinux's answer where the start of the file names none).
+        public string GroupsName
+        {
+            get
+            {
+                ReadGroups();
+                return _groupsName;
+            }
+        }
+
+        private CoreGroup[] ReadGroups()
+        {
+            if (_groups is { } known)
+            {
+                return known;
+            }
+
+            lock (_gate)
+            {
+                if (_groups is { } read)
+                {
+                    return read;
+                }
+
+                var (groups, name) = ReadCpuinfo();
+                _groupsName = name;
+                _groups = groups;                                            // last: a reader that sees the groups sees the name
+                return groups;
+            }
+        }
+    }
 
     /// <summary>The vector paths the runtime reports: platform intrinsics, portable vectors only (the runtime reports none), or none.</summary>
     public VectorSupport Vectors { get; init; }
@@ -102,14 +202,16 @@ internal sealed record CpuInfo
     private static CpuInfo Read()
     {
         var caches = new Caches();
+        int logical = Environment.ProcessorCount;
+        Described? description = null;
         int physical = 0;
         string model = "";
-        CoreGroup[] groups = [];
         try
         {
             if (OperatingSystem.IsLinux() || OperatingSystem.IsAndroid())
             {
-                (physical, model, groups) = ReadLinux(caches);
+                ReadLinuxCaches(caches);
+                description = new Described(logical);
             }
             else if (OperatingSystem.IsWindows())
             {
@@ -127,7 +229,7 @@ internal sealed record CpuInfo
             // Whatever was read stays; the rest falls back.
         }
 
-        int logical = Environment.ProcessorCount;
+        description ??= new Described(Cores(physical, logical), model.Trim());
         int widest = Vector512.IsHardwareAccelerated ? 16 : Vector256.IsHardwareAccelerated ? 8 : Vector128.IsHardwareAccelerated ? 4 : 1;
         bool x86 = Sse.IsSupported;
         var vectors = VectorsReported(x86 || AdvSimd.IsSupported, Vector128.IsHardwareAccelerated);
@@ -161,7 +263,6 @@ internal sealed record CpuInfo
         return new CpuInfo
         {
             LogicalProcessors = logical,
-            PhysicalCores = physical is > 0 and var p && p <= logical ? p : logical,
             VectorFloats = Vector<float>.Count,
             WidestFloats = widest,
             VectorRegisters = registers,
@@ -169,15 +270,17 @@ internal sealed record CpuInfo
             FusedMultiplyAdd = Fma.IsSupported || AdvSimd.IsSupported || arm64 && vectors == VectorSupport.Portable,
             InstructionSets = DescribeSets(sets, vectors, RuntimeInformation.ProcessArchitecture),
             Vectors = vectors,
-            CoreGroups = groups,
             L1 = caches.L1 > 0 ? caches.L1 : FallbackL1,
             L2 = caches.L2 > 0 ? caches.L2 : FallbackL2,
             L3 = caches.L3,
             CacheLine = caches.Line > 0 ? caches.Line : FallbackLine,
             CachesReported = caches.L1 > 0 && caches.L2 > 0,
-            Model = model.Trim(),
+            Description = description,
         };
     }
+
+    // The physical cores the system reported, or the logical processors where it reported none (or more than those).
+    private static int Cores(int physical, int logical) => physical is > 0 and var p && p <= logical ? p : logical;
 
     /// <summary>What the runtime reports: platform intrinsics, only accelerated portable vectors, or neither.</summary>
     internal static VectorSupport VectorsReported(bool intrinsics, bool vector128Accelerated) =>
@@ -222,36 +325,17 @@ internal sealed record CpuInfo
         }
     }
 
-    // /sys/devices/system/cpu/cpu0/cache/index*/{level,type,size,shared_cpu_list,coherency_line_size} and the cores in
-    // /sys/devices/system/cpu/cpu*/topology/{core_id,physical_package_id} (or cluster_cpus_list on some ARM boards).
-    private static (int Physical, string Model, CoreGroup[] Groups) ReadLinux(Caches caches)
+    private const string LinuxRoot = "/sys/devices/system/cpu";
+
+    // /sys/devices/system/cpu/cpu0/cache/index*/{level,type,size,shared_cpu_list,coherency_line_size}, each shared cache
+    // divided by the cores sharing it (cpu0's thread_siblings_list: the threads of one core).
+    private static void ReadLinuxCaches(Caches caches)
     {
-        const string Root = "/sys/devices/system/cpu";
-        var cores = new HashSet<(string Package, string Core)>();
-        var siblings = new Dictionary<int, int>();                            // logical CPU → logical CPUs on its core
-        if (Directory.Exists(Root))
-        {
-            foreach (var dir in Directory.EnumerateDirectories(Root, "cpu*"))
-            {
-                string name = Path.GetFileName(dir);
-                if (!int.TryParse(name.AsSpan(3), NumberStyles.Integer, CultureInfo.InvariantCulture, out int cpu))
-                {
-                    continue;
-                }
-
-                string topology = Path.Combine(dir, "topology");
-                if (File.Exists(Path.Combine(topology, "core_id")))
-                {
-                    string package = File.Exists(Path.Combine(topology, "physical_package_id")) ? File.ReadAllText(Path.Combine(topology, "physical_package_id")).Trim() : "0";
-                    cores.Add((package, File.ReadAllText(Path.Combine(topology, "core_id")).Trim()));
-                    string threads = Path.Combine(topology, "thread_siblings_list");
-                    siblings[cpu] = File.Exists(threads) ? CountList(File.ReadAllText(threads)) : 1;
-                }
-            }
-        }
-
-        int smt = siblings.TryGetValue(0, out int s) ? Math.Max(1, s) : 1;
-        string cache = Path.Combine(Root, "cpu0", "cache");
+        string topology = Path.Combine(LinuxRoot, "cpu0", "topology");
+        string threads = Path.Combine(topology, "thread_siblings_list");
+        int smt = Directory.Exists(LinuxRoot) && File.Exists(Path.Combine(topology, "core_id")) && File.Exists(threads)
+            ? Math.Max(1, CountList(File.ReadAllText(threads))) : 1;
+        string cache = Path.Combine(LinuxRoot, "cpu0", "cache");
         if (Directory.Exists(cache))
         {
             foreach (var index in Directory.EnumerateDirectories(cache, "index*"))
@@ -276,17 +360,153 @@ internal sealed record CpuInfo
                 }
             }
         }
+    }
 
-        string model = "";
-        CoreGroup[] groups = [];
-        if (File.Exists("/proc/cpuinfo"))
+    // The physical cores (read when first asked): the distinct packages and cores of
+    // /sys/devices/system/cpu/cpu*/topology/{core_id,physical_package_id}; 0 where none can be read.
+    private static int CountCoresLinux()
+    {
+        var cores = new HashSet<(string Package, string Core)>();
+        try
         {
-            var (found, name) = ParseCores(File.ReadAllBytes("/proc/cpuinfo"), cpu => MaxKilohertz(Root, cpu));
-            groups = found;
-            model = name;
+            if (Directory.Exists(LinuxRoot))
+            {
+                foreach (var dir in Directory.EnumerateDirectories(LinuxRoot, "cpu*"))
+                {
+                    if (!int.TryParse(Path.GetFileName(dir).AsSpan(3), NumberStyles.Integer, CultureInfo.InvariantCulture, out _))
+                    {
+                        continue;
+                    }
+
+                    string topology = Path.Combine(dir, "topology");
+                    if (File.Exists(Path.Combine(topology, "core_id")))
+                    {
+                        string package = File.Exists(Path.Combine(topology, "physical_package_id")) ? File.ReadAllText(Path.Combine(topology, "physical_package_id")).Trim() : "0";
+                        cores.Add((package, File.ReadAllText(Path.Combine(topology, "core_id")).Trim()));
+                    }
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return 0;
         }
 
-        return (cores.Count, model, groups);
+        return cores.Count;
+    }
+
+    // The core groups and the name from the whole of /proc/cpuinfo with each core's cpufreq (read when first asked: a
+    // listing, or the name where the start of the file gives none); none where it cannot be read.
+    private static (CoreGroup[] Groups, string Model) ReadCpuinfo()
+    {
+        try
+        {
+            return File.Exists("/proc/cpuinfo") ? ParseCores(File.ReadAllBytes("/proc/cpuinfo"), cpu => MaxKilohertz(LinuxRoot, cpu)) : ([], "");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return ([], "");
+        }
+    }
+
+    // The name (read when first asked: the tuning cache's key, a listing). Where the first "model name" line of
+    // /proc/cpuinfo is in its first 4 KiB (x86: the first processor's block) and names the processor, that line: the full
+    // parse's name too, since it takes the first, without the rest of the file, which the kernel writes processor by
+    // processor, or cpufreq. Elsewhere (ARM, which has none) the full parse's name.
+    private static string ModelLinux(Described description)
+    {
+        // A pooled buffer, not stackalloc: a method with stackalloc is compiled fully optimized at once (no on-stack
+        // replacement), which costs this one cold call more than the read.
+        const int Start = 4096;
+        byte[] start = System.Buffers.ArrayPool<byte>.Shared.Rent(Start);
+        try
+        {
+            int read = 0;
+            try
+            {
+                using var stream = new FileStream("/proc/cpuinfo", FileMode.Open, FileAccess.Read, FileShare.ReadWrite, bufferSize: 0);
+                while (read < Start && stream.Read(start, read, Start - read) is var n and > 0)
+                {
+                    read += n;
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException)
+            {
+                read = 0;
+            }
+
+            return FirstModelName(start.AsSpan(0, read), whole: read < Start) is { Length: > 0 } name ? name.Trim() : description.GroupsName.Trim();
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(start);
+        }
+    }
+
+    /// <summary>
+    /// The value of the first "model name" line among the whole lines of <paramref name="cpuinfo"/> (the last line counts
+    /// only when <paramref name="whole"/>: the file ended there), or null when there is none.
+    /// </summary>
+    internal static string? FirstModelName(ReadOnlySpan<byte> cpuinfo, bool whole)
+    {
+        // Plain loops: the span helpers over bytes would be compiled for this one cold read (the full parse has them).
+        ReadOnlySpan<byte> key = "model name"u8;
+        for (int at = 0; at < cpuinfo.Length;)
+        {
+            int end = at;
+            while (end < cpuinfo.Length && cpuinfo[end] != (byte)'\n')
+            {
+                end++;
+            }
+
+            if (end == cpuinfo.Length && !whole)
+            {
+                return null;                                                 // a line the read cut off
+            }
+
+            int colon = at;
+            while (colon < end && cpuinfo[colon] != (byte)':')
+            {
+                colon++;
+            }
+
+            int first = at, last = colon;                                    // the key without tabs and spaces around it
+            while (first < last && cpuinfo[first] is (byte)'\t' or (byte)' ')
+            {
+                first++;
+            }
+
+            while (last > first && cpuinfo[last - 1] is (byte)'\t' or (byte)' ')
+            {
+                last--;
+            }
+
+            bool named = colon < end && last - first == key.Length;
+            for (int i = 0; named && i < key.Length; i++)
+            {
+                named = cpuinfo[first + i] == key[i];
+            }
+
+            if (named)
+            {
+                int from = colon + 1, to = end;                              // the value without tabs, spaces and \r around it
+                while (from < to && cpuinfo[from] is (byte)'\t' or (byte)' ' or (byte)'\r')
+                {
+                    from++;
+                }
+
+                while (to > from && cpuinfo[to - 1] is (byte)'\t' or (byte)' ' or (byte)'\r')
+                {
+                    to--;
+                }
+
+                return System.Text.Encoding.UTF8.GetString(cpuinfo[from..to]);
+            }
+
+            at = end + 1;
+        }
+
+        return null;
     }
 
     // cpuN/cpufreq/cpuinfo_max_freq (kHz), or null.
@@ -311,6 +531,8 @@ internal sealed record CpuInfo
     /// </summary>
     internal static (CoreGroup[] Groups, string Model) ParseCores(ReadOnlySpan<byte> cpuinfo, Func<int, long?> maxKilohertz)
     {
+        static string Text(ReadOnlySpan<byte> utf8) => System.Text.Encoding.UTF8.GetString(utf8);
+
         var groups = new List<CoreGroup>();
         string? modelName = null, system = null;
         int processor = -1;
@@ -346,8 +568,9 @@ internal sealed record CpuInfo
                 continue;
             }
 
+            // Only the values kept are decoded (the flags lines, most of the file, never are).
             var key = line[..colon].Trim("\t "u8);
-            string value = System.Text.Encoding.UTF8.GetString(line[(colon + 1)..].Trim("\t \r"u8));
+            var value = line[(colon + 1)..].Trim("\t \r"u8);
             if (key.SequenceEqual("processor"u8))
             {
                 Flush();
@@ -355,32 +578,32 @@ internal sealed record CpuInfo
             }
             else if (key.SequenceEqual("CPU part"u8))
             {
-                part = value;
+                part = Text(value);
             }
             else if (key.SequenceEqual("CPU implementer"u8))
             {
-                implementer = value;
+                implementer = Text(value);
             }
             else if (key.SequenceEqual("model"u8) && part is null)
             {
-                part = "model " + value;
+                part = "model " + Text(value);
             }
             else if (key.SequenceEqual("model name"u8))
             {
-                modelName ??= value;
+                modelName ??= Text(value);
             }
             else if ((key.SequenceEqual("Hardware"u8) || key.SequenceEqual("Model"u8)) && value.Length > 0)
             {
-                system ??= value;
+                system ??= Text(value);
             }
         }
 
         Flush();
         CoreGroup[] found = [.. groups];
-        string described = found.Length > 0 ? DescribeGroups(found) : "";
+        string Described() => found.Length > 0 ? DescribeGroups(found) : "";
         string model = modelName is { Length: > 0 } ? modelName
-            : system is not null ? (described.Length > 0 ? $"{system} ({described})" : system)
-            : described;
+            : system is not null ? (Described() is { Length: > 0 } described ? $"{system} ({described})" : system)
+            : Described();
         return (found, model);
     }
 

@@ -26,9 +26,15 @@ internal sealed partial class CpuBackend
     /// <summary>
     /// Whether the runtime is Mono (.NET for Android's and iOS's default), whose <see cref="GCMemoryInfo.TotalAvailableMemoryBytes"/>
     /// is its heap's current budget (a few hundred MiB at start, growing as the heap does), not the machine's memory or a
-    /// limit; CoreCLR reports the machine's memory, or its heap limit where one is set or implied by a container's.
+    /// limit; CoreCLR reports the machine's memory, or its heap limit where one is set or implied by a container's. Asked
+    /// once, when the memory is first read (a fit check, a listing), not when the CPU's backend starts.
     /// </summary>
-    internal static readonly bool RuntimeIsMono = Type.GetType("Mono.RuntimeStructs") is not null;
+    internal static bool RuntimeIsMono => MonoRuntime.Is;
+
+    private static class MonoRuntime
+    {
+        internal static readonly bool Is = Type.GetType("Mono.RuntimeStructs") is not null;
+    }
 
     /// <summary>
     /// How long a reading of the system's memory is kept before it is read again (IDRAK_MEMORY_REFRESH_MS, default 250

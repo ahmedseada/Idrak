@@ -42,7 +42,7 @@ internal static class LaunchBench
         ];
         foreach (var (name, call) in cases)
         {
-            double bestQueued = double.MaxValue, bestSynced = double.MaxValue;
+            double bestQueued = double.MaxValue, bestSynced = double.MaxValue, firstCall = 0, coldRound = 0;
             for (int round = 0; round <= settings.Repeats; round++)                  // the first round warms (kernels loaded, the pool filled)
             {
                 using var scope = new TensorScope();
@@ -51,9 +51,17 @@ internal static class LaunchBench
                 for (int i = 0; i < calls; i++)
                 {
                     call();
+                    if (round == 0 && i == 0)
+                    {
+                        firstCall = clock.Elapsed.TotalMilliseconds * 1000;
+                    }
                 }
 
                 double queued = clock.Elapsed.TotalMilliseconds * 1000 / calls;
+                if (round == 0)
+                {
+                    coldRound = queued;
+                }
                 backend.Synchronize();
                 double synced = clock.Elapsed.TotalMilliseconds * 1000 / calls;
                 if (round > 0)
@@ -63,9 +71,12 @@ internal static class LaunchBench
                 }
             }
 
-            Console.WriteLine(Bench.Line(name, ("µs a call queued", Bench.F(bestQueued, "0.00")), ("µs with the sync", Bench.F(bestSynced, "0.00"))));
+            Console.WriteLine(Bench.Line(name, ("µs a call queued", Bench.F(bestQueued, "0.00")), ("µs with the sync", Bench.F(bestSynced, "0.00")),
+                ("first call µs (cold)", Bench.F(firstCall, "0.0")), ("first round µs a call", Bench.F(coldRound, "0.00"))));
             report.Add(Section, name, device, "queued", bestQueued, "µs");
             report.Add(Section, name, device, "synced", bestSynced, "µs");
+            report.Add(Section, name, device, "first call (cold)", firstCall, "µs");      // rule 76: cold apart from warm
+            report.Add(Section, name, device, "first round", coldRound, "µs");
         }
     }
 }
