@@ -330,7 +330,7 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport
     public override void ReleaseCachedMemory()
     {
         MakeCurrent();
-        Check(hipStreamSynchronize(_stream), nameof(hipStreamSynchronize));
+        WaitStream();
         lock (_pool)
         {
             foreach (var (length, bucket) in _pool)
@@ -357,7 +357,7 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport
         fixed (float* p = source)
         {
             Check(hipMemcpyAsync((void*)P(destination), p, (nuint)source.Length * sizeof(float), MemcpyHostToDevice, _stream), nameof(hipMemcpyAsync));
-            Check(hipStreamSynchronize(_stream), nameof(hipStreamSynchronize));          // the span is not ours after return
+            WaitStream();                                                               // the span is not ours after return
         }
     }
 
@@ -375,7 +375,7 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport
         {
             Check(hipMemcpyAsync(p, (void*)(P(source) + (ulong)offset * sizeof(float)), (nuint)destination.Length * sizeof(float), MemcpyDeviceToHost, _stream),
                 nameof(hipMemcpyAsync));
-            Check(hipStreamSynchronize(_stream), nameof(hipStreamSynchronize));
+            WaitStream();
         }
     }
 
@@ -432,6 +432,33 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport
     public override void Synchronize()
     {
         MakeCurrent();
+        WaitStream();
+    }
+
+    /// <summary>
+    /// Whether waits for the stream poll it (hipStreamQuery in a spin that yields, never sleeps) instead of the runtime's
+    /// blocking hipStreamSynchronize, which may sleep in steps of the operating system's timer (about a millisecond on
+    /// Windows) and so charge every upload, download and drain that much however little work was queued. Polling keeps a
+    /// core busy while it waits. IDRAK_HIP_WAIT=block or poll; poll by default where the runtime has hipStreamQuery.
+    /// </summary>
+    internal static bool PollWaits { get; set; } = Environment.GetEnvironmentVariable("IDRAK_HIP_WAIT") is not "block";
+
+    // Waits until the stream's work is done (PollWaits says how).
+    private void WaitStream()
+    {
+        if (PollWaits && hipStreamQuery != null)
+        {
+            var spin = new SpinWait();
+            int result;
+            while ((result = hipStreamQuery(_stream)) == ErrorNotReady)
+            {
+                spin.SpinOnce(sleep1Threshold: -1);                              // yields, never Sleep(1)
+            }
+
+            Check(result, nameof(hipStreamQuery));
+            return;
+        }
+
         Check(hipStreamSynchronize(_stream), nameof(hipStreamSynchronize));
     }
 

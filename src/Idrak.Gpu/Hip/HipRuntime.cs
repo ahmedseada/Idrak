@@ -145,6 +145,7 @@ internal static unsafe class HipRuntime
         hipEventSynchronize = (delegate* unmanaged<IntPtr, int>)Optional(nameof(hipEventSynchronize));
         hipEventElapsedTime = (delegate* unmanaged<float*, IntPtr, IntPtr, int>)Optional(nameof(hipEventElapsedTime));
         hipGetErrorName = (delegate* unmanaged<int, byte*>)Optional(nameof(hipGetErrorName));
+        hipStreamQuery = (delegate* unmanaged<IntPtr, int>)Optional(nameof(hipStreamQuery));   // polled waits (HipBackend.WaitStream)
 
         if (missing.Count > 0)
         {
@@ -179,7 +180,7 @@ internal static unsafe class HipRuntime
     }
 
     // Error codes (hipError_t).
-    public const int Success = 0, ErrorOutOfMemory = 2, ErrorNoDevice = 100;
+    public const int Success = 0, ErrorOutOfMemory = 2, ErrorNoDevice = 100, ErrorNotReady = 600;
 
     // hipMemcpyKind.
     public const int MemcpyHostToDevice = 1, MemcpyDeviceToHost = 2, MemcpyDeviceToDevice = 3;
@@ -210,6 +211,7 @@ internal static unsafe class HipRuntime
     public static delegate* unmanaged<ulong, int, nuint, IntPtr, int> hipMemsetD32Async;
     public static delegate* unmanaged<IntPtr*, int> hipStreamCreate;
     public static delegate* unmanaged<IntPtr, int> hipStreamSynchronize;
+    public static delegate* unmanaged<IntPtr, int> hipStreamQuery;
     public static delegate* unmanaged<IntPtr*, void*, int> hipModuleLoadData;
     public static delegate* unmanaged<IntPtr*, IntPtr, byte*, int> hipModuleGetFunction;
     public static delegate* unmanaged<IntPtr, uint, uint, uint, uint, uint, uint, uint, IntPtr, void**, void**, int> hipModuleLaunchKernel;
