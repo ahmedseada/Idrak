@@ -25,6 +25,7 @@ internal static partial class Tests
         ("bf16: rounding, direct and expanded products, gradient, model conversion, save/load, decoder build", BFloat16Weights),
         ("int4: group scales, direct and expanded products, gradient, model conversion, save/load", Int4Weights),
         ("int8 / int4 / bf16 few-row products on CUDA: the kernels compiled for 1, 2 and 4 rows equal the eight-row kernel bit for bit (1 to 8 rows; 1, 2 and 4 splits; eight-word passes, shorter passes and single rows; a partial last word, column block and int4 scale group)", FewRowKernelsMatch),
+        ("int8 / int4 / bf16 few-row products allocate nothing once warm: the device product into a kept output (1, 2 and 4 rows) none, the tensor product of one row only its output tensor; GPU pools reuse a size that empties and fills again without allocating", FewRowProductsAllocateNothing),
         ("packed projections sharing an input (int8, int4, bf16; biases; splits) and gated down projections match separate layers", PackedMany),
         ("packed epilogues: the bias, gelu and the residual in a bf16 or 4-bit product's epilogue (MatMulPackedEpilogue, the Linear helpers) equal the separate passes bit for bit, float32 and bfloat16 (1, 70 and 300 rows), with no pass after the product on CUDA's tensor cores; a transformer encoder layer's fused inference pass equals its layers run one by one", PackedEpilogues),
         ("weights: Float16 and BFloat16 files are half the size and round as expected", HalfPrecisionFiles),
@@ -503,6 +504,113 @@ internal static partial class Tests
     // predicated-off rows, eight words a pass) against the eight-row kernel they stand in for, which keeps each output's
     // operations and their order: equal bit for bit at each split count. Depths with eight-word passes, four-row (int4:
     // one-block) passes and single rows in every split's chunk; widths with a partial last word and column block.
+    // A decoding step's packed products allocate nothing once warm (rules 88-90): the device product into a kept output
+    // (what `idrak bench --kernels gemv` times) none at all; the tensor product only its output (the tensor, its shape and
+    // its storage). Before, a CPU call allocated about 2.4 KB: Parallel.For's tasks and replicas, the kernels' closures and
+    // the products' backward closures made on every call though nothing was recorded. A failure names the types allocated.
+    private static void FewRowProductsAllocateNothing(Device device)
+    {
+        const int K = 1024, N = 3072;                                     // large enough for the CPU to split the product across threads
+        const double OutputTensorBytes = 320;                             // a Tensor, its shape array and its storage: about 220 bytes on the CPU
+        var random = new Random(31);
+        var values = new float[K * N];
+        for (int i = 0; i < values.Length; i++)
+        {
+            values[i] = random.NextSingle() - 0.5f;
+        }
+
+        // Bytes allocated by this thread per call of `call`, after a warm-up (tier-up, tuning, the loop's helpers made once).
+        static double BytesPerCall(Action call)
+        {
+            for (int i = 0; i < 64; i++)
+            {
+                call();
+            }
+
+            const int Calls = 128;
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < Calls; i++)
+            {
+                call();
+            }
+
+            return (GC.GetAllocatedBytesForCurrentThread() - before) / (double)Calls;
+        }
+
+        using var noGrad = Autograd.NoGrad();
+        foreach (var format in new[] { PackedFormat.Int8, PackedFormat.Int4, PackedFormat.BFloat16 })
+        {
+            using var weight = PackedWeightFormats.Pack(format, values, K, N, device);
+            var (packed, scales) = (weight.PackedValues.Storage, weight.ScaleValues?.Storage);
+            foreach (int m in new[] { 1, 2, 4 })
+            {
+                using var x = Tensor.From(Enumerable.Range(0, m * K).Select(i => (float)Math.Sin(i)).ToArray(), [m, K], device);
+                using var y = Tensor.Empty([m, N], device, track: false);
+                void Product()
+                {
+                    switch (format)
+                    {
+                        case PackedFormat.Int8:
+                            x.Backend.Int8MatMul(x.Storage, packed, scales!, y.Storage, m, N, K);
+                            break;
+                        case PackedFormat.Int4:
+                            x.Backend.Int4MatMul(x.Storage, packed, scales!, y.Storage, m, N, K);
+                            break;
+                        default:
+                            x.Backend.BFloat16MatMul(x.Storage, packed, y.Storage, m, N, K);
+                            break;
+                    }
+                }
+
+                double into = BytesPerCall(Product);
+                if (into > 1)
+                {
+                    Check(false, $"{device}: the {format} product of {m} rows into a kept output allocated {into:F1} bytes a call, none expected: {AllocatedTypes(Product)}");
+                }
+
+                device.Synchronize();
+                if (m == 1)
+                {
+                    void TensorProduct() => weight.MatMul(x).Dispose();
+                    double tensor = BytesPerCall(TensorProduct);
+                    if (tensor > OutputTensorBytes)
+                    {
+                        Check(false, $"{device}: the {format} tensor product of one row (IPackedWeight.MatMul) allocated {tensor:F1} bytes a call, at most "
+                            + $"{OutputTensorBytes} expected (its output tensor): {AllocatedTypes(TensorProduct)}");
+                    }
+
+                    device.Synchronize();
+                }
+            }
+        }
+
+        // The GPU pools' cached sizes (PoolSizes): best fit within a range, and a size that empties and fills again
+        // (an output freed and taken back on every step) allocates nothing once the list has grown.
+        if (device == Device.Cpu)
+        {
+            var sizes = new Idrak.Gpu.PoolSizes();
+            foreach (int size in new[] { 4096, 1024, 2048, 1300, 2048 })
+            {
+                sizes.Add(size);
+            }
+
+            Check(sizes.Count == 4 && sizes.Smallest(1025, 1280) == 0 && sizes.Smallest(1025, 1300) == 1300 && sizes.Smallest(1301, 4096) == 2048
+                  && sizes.Smallest(4097, 5000) == 0 && sizes.Smallest(1, 1024) == 1024, "pool sizes: the smallest held size within a range, 0 when none");
+            Check(sizes.Remove(1300) && !sizes.Remove(1300) && sizes.Smallest(1025, 1300) == 0 && sizes.Count == 3, "pool sizes: a removed size is gone");
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            for (int i = 0; i < 1000; i++)
+            {
+                sizes.Remove(2048);
+                sizes.Add(2048);
+            }
+
+            long churn = GC.GetAllocatedBytesForCurrentThread() - before;
+            Check(churn == 0, $"pool sizes: a size removed and added again 1000 times allocated {churn} bytes (a SortedSet allocates a node on every add)");
+            sizes.Clear();
+            Check(sizes.Count == 0 && sizes.Smallest(1, int.MaxValue) == 0, "pool sizes: cleared");
+        }
+    }
+
     private static void FewRowKernelsMatch(Device device)
     {
         if (device.Type != DeviceType.Cuda)

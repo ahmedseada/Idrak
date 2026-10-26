@@ -84,7 +84,7 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
     private readonly Dictionary<int, Stack<ulong>> _pool = [];
 
     // Sizes with cached blocks, for best-fit reuse when no block of the exact size is cached.
-    private readonly SortedSet<int> _poolSizes = [];
+    private readonly PoolSizes _poolSizes = new();
 
     // A cached block up to this fraction larger than a request (of at least BestFitMinimum floats) may serve it.
     private const int BestFitSlack = 4;                                          // 1 / 4: at most 25% larger
@@ -631,8 +631,8 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
                 return 0;
             }
 
-            // The smallest size in range (Min of an empty view is 0; its Count would walk the range).
-            int fitting = _poolSizes.GetViewBetween(length + 1, length + length / BestFitSlack).Min;
+            // The smallest size in range (0 when none).
+            int fitting = _poolSizes.Smallest(length + 1, length + length / BestFitSlack);
             if (fitting == 0)
             {
                 return 0;

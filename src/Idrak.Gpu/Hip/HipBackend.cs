@@ -42,7 +42,7 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
     private readonly Dictionary<int, Stack<ulong>> _pool = [];
 
     // Lengths with cached blocks, for best-fit reuse when no block of the exact length is cached (as the CUDA pool).
-    private readonly SortedSet<int> _poolSizes = [];
+    private readonly PoolSizes _poolSizes = new();
 
     // A cached block up to this fraction longer than a request (of at least BestFitMinimum floats) may serve it.
     private const int BestFitSlack = 4;                                          // 1 / 4: at most 25% longer
@@ -239,13 +239,13 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
                 return 0;
             }
 
-            var fitting = _poolSizes.GetViewBetween(length + 1, (int)Math.Min(int.MaxValue, (long)length + length / BestFitSlack));
-            if (fitting.Count == 0)
+            int fitting = _poolSizes.Smallest(length + 1, (int)Math.Min(int.MaxValue, (long)length + length / BestFitSlack));
+            if (fitting == 0)
             {
                 return 0;
             }
 
-            capacity = fitting.Min;
+            capacity = fitting;
             bucket = _pool[capacity];
         }
 

@@ -143,7 +143,7 @@ internal sealed partial class VulkanBackend
     // them unless m is large), one dispatch per window writes its splits' partial sums, and gemv_reduce finishes the
     // tree. False when no chunk fits.
     private bool RunPackedWindows(VulkanKernels.PackedFormat format, int block, int choice, string kernel, uint columnBlocks, int window,
-        Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
+        Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k, bool measured)
     {
         const int Leaf = VulkanKernels.GemvChunkAlign;
         int width = WidthOf(choice), blockRows = VulkanKernels.GemvRowBlocks[block], slices = width / VulkanKernels.GemvWordCounts[choice & 7];
@@ -173,7 +173,7 @@ internal sealed partial class VulkanBackend
         int rowsPerGroup = (int)group;
         long rowBytes = ((long)n + VulkanKernels.ColumnsPerWord(format) - 1) / VulkanKernels.ColumnsPerWord(format) * 4;
         var dispatched = width == Width ? Kernel(kernel) : KernelAt(kernel, width, Limits.SubgroupReductions);
-        var output = splits == 1 ? null : Allocate(splits * rowsPerGroup * n, zeroed: false);
+        var output = splits == 1 ? null : measured ? Allocate(splits * rowsPerGroup * n, zeroed: false) : _gemvPartials.Get(this, splits * rowsPerGroup * n);
         try
         {
             Span<byte> b = stackalloc byte[32];
@@ -228,7 +228,10 @@ internal sealed partial class VulkanBackend
         }
         finally
         {
-            output?.Release();                                                 // reused in queue order
+            if (measured)
+            {
+                output?.Release();                                             // reused in queue order
+            }
         }
 
         return true;

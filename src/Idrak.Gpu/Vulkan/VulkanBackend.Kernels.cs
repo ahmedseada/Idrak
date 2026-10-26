@@ -1044,7 +1044,7 @@ internal sealed partial class VulkanBackend : IKernelAvailability
         Storage[] storages = scales is null ? [x, weights, y] : [x, weights, scales, y];
         return TuneWithScratch(key, DistinctGemv(GemvCandidates(perWord, n, maxSplits), fallback, format, block, k, (long)m * n), fallback, storages,
             1UL << (storages.Length - 1),
-            (c, s) => RunPacked(format, block, c, s[0], s[1], scales is null ? null : s[2], s[^1], m, n, k));
+            (c, s) => RunPacked(format, block, c, s[0], s[1], scales is null ? null : s[2], s[^1], m, n, k, measured: true));
     }
 
     // At each candidate width, each valid word variant with 1, 2, 4, … splits up to maxSplits.
@@ -1105,7 +1105,10 @@ internal sealed partial class VulkanBackend : IKernelAvailability
 
     // Runs a packed product with `choice` = its width (WithWidth) and splits · 8 + word variant (the splits as GemvPlan
     // fits them to the leaves of k); false when no plan fits the device.
-    private bool RunPacked(VulkanKernels.PackedFormat format, int block, int choice, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
+    // `measured`: a run of the measurement, whose partial sums take a pooled block (the candidates' larger splits are not
+    // kept); every other run's go to the kept block (no storage allocated a call).
+    private bool RunPacked(VulkanKernels.PackedFormat format, int block, int choice, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k,
+        bool measured = false)
     {
         int width = WidthOf(choice), variant = choice & 7, rows = VulkanKernels.GemvRowBlocks[block], words = VulkanKernels.GemvWordCounts[variant];
         int perWord = VulkanKernels.ColumnsPerWord(format);
@@ -1114,7 +1117,7 @@ internal sealed partial class VulkanBackend : IKernelAvailability
         if (PackedWindowRows(format, weights, scales, m, n, k) is var window and > 0)
         {
             // Weights larger than a binding: one dispatch per window of rows, the choice's splits fitted to the windows.
-            return RunPackedWindows(format, block, choice, kernel, columnBlocks, (int)window, x, weights, scales, y, m, n, k);
+            return RunPackedWindows(format, block, choice, kernel, columnBlocks, (int)window, x, weights, scales, y, m, n, k, measured);
         }
 
         var (splits, chunk) = GemvPlan(choice, format, block, k, (long)m * n);
@@ -1125,7 +1128,7 @@ internal sealed partial class VulkanBackend : IKernelAvailability
 
         Span<byte> b = stackalloc byte[32];
         var push = new Push(b).I(m).I(n).I(k).I(chunk).I(0).I(splits).I(VulkanKernels.GemvChunkAlign).I(0).Bytes;
-        var output = splits == 1 ? y : Allocate(splits * m * n, zeroed: false);
+        var output = splits == 1 ? y : measured ? Allocate(splits * m * n, zeroed: false) : _gemvPartials.Get(this, splits * m * n);
         try
         {
             if (scales is null)
@@ -1153,7 +1156,7 @@ internal sealed partial class VulkanBackend : IKernelAvailability
         }
         finally
         {
-            if (splits > 1)
+            if (splits > 1 && measured)
             {
                 output.Release();                                              // reused in queue order
             }
@@ -1161,6 +1164,9 @@ internal sealed partial class VulkanBackend : IKernelAvailability
 
         return true;
     }
+
+    // The partial sums of split packed products (RunPacked, RunPackedWindows), kept between calls and reused in queue order.
+    private readonly KeptScratch _gemvPartials = new();
 
     public override void Int8DequantizeKernel(Storage q, Storage scales, Storage w, int k, int n)
     {

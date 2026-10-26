@@ -266,12 +266,14 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
     // The arguments of a few-row product: twelve, then `up` or the add-and-normalize kernels' six (nine with the norm of y).
     private const int FewRowsArguments = 21;
 
-    private void RunFewRows(in FewRows rows, ulong output, ReadOnlySpan<ulong> extra, int wanted)
+    // `measured`: a run of the split count's measurement, whose partial sums take a pooled block (the candidates' larger
+    // splits are not kept); every other run's go to the kept block (no storage allocated a call).
+    private void RunFewRows(in FewRows rows, ulong output, ReadOnlySpan<ulong> extra, int wanted, bool measured = false)
     {
         int k = rows.K, align = rows.Align;
         int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
         int count = (k + chunk - 1) / chunk;
-        var part = count > 1 ? Allocate(count * rows.M * rows.N, zeroed: false) : null;
+        var part = count <= 1 ? null : measured ? Allocate(count * rows.M * rows.N, zeroed: false) : _splitPartials.Get(this, count * rows.M * rows.N);
         try
         {
             Span<ulong> args = stackalloc ulong[FewRowsArguments];
@@ -298,7 +300,10 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
         }
         finally
         {
-            part?.Release();
+            if (measured)
+            {
+                part?.Release();
+            }
         }
     }
 
@@ -308,13 +313,13 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
     {
         if (tail is null)
         {
-            return Tune(key, candidates, formula, c => RunFewRows(rows, output, [], c), cold: true);
+            return Tune(key, candidates, formula, c => RunFewRows(rows, output, [], c, measured: true), cold: true);
         }
 
         int splits = formula;
         long size = (long)rows.M * rows.N * sizeof(float);
         WithScratch(3L * rows.M * rows.N, scratch => splits = Tune(key, candidates, formula,
-            c => RunFewRows(rows, scratch, [tail[0], scratch + (ulong)size, tail[2], scratch + 2 * (ulong)size, .. tail.AsSpan(4)], c), cold: true));
+            c => RunFewRows(rows, scratch, [tail[0], scratch + (ulong)size, tail[2], scratch + 2 * (ulong)size, .. tail.AsSpan(4)], c, measured: true), cold: true));
         return splits;
     }
 
@@ -786,15 +791,18 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
 
     private int MeasureMany(ManyRows rows, TuneKey name, int[] candidates, int formula,
         (Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)[] products) =>
-        Tune(name, candidates, formula, c => RunMany(rows, products, c), cold: true);
+        Tune(name, candidates, formula, c => RunMany(rows, products, c, measured: true), cold: true);
 
-    private void RunMany(in ManyRows rows, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, int wanted)
+    // `measured`: as RunFewRows's.
+    private void RunMany(in ManyRows rows, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products, int wanted,
+        bool measured = false)
     {
         int m = rows.M, k = rows.K, nmax = rows.Nmax, align = rows.Align, columnBlocks = rows.ColumnBlocks;
         var hidden = rows.Hidden;
         int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
         int splits = (k + chunk - 1) / chunk;
-        var part = splits > 1 ? Allocate(products.Length * splits * m * nmax, zeroed: false) : null;
+        int partLength = products.Length * splits * m * nmax;
+        var part = splits <= 1 ? null : measured ? Allocate(partLength, zeroed: false) : _splitPartials.Get(this, partLength);
         try
         {
             Span<ulong> args = stackalloc ulong[9 + 3 * 5 + 2];
@@ -823,9 +831,15 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
         }
         finally
         {
-            part?.Release();
+            if (measured)
+            {
+                part?.Release();
+            }
         }
     }
+
+    // The partial sums of split few-row products (RunFewRows, RunMany), kept between calls.
+    private readonly KeptScratch _splitPartials = new();
 
     private Storage? _splitCounters;
 

@@ -57,11 +57,7 @@ public sealed partial class Tensor
 
         if (Tensor.WillRecord(flat))
         {
-            y.Record("matmul_int8", g =>
-            {
-                using var w = Dequantized(weight);
-                flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
-            }, flat);
+            RecordInt8(y, flat, weight, m, k, n);
         }
 
         var result = this.Rank == 2 ? y : y.Reshape([.. this._shape[..^1], n]);
@@ -97,12 +93,7 @@ public sealed partial class Tensor
         this.Backend.Float16MatMul(flat.Storage, weight.Packed.Storage, y.Storage, m, n, k);
         if (Tensor.WillRecord(flat))
         {
-            y.Record("matmul_f16", g =>
-            {
-                using var w = Tensor.Empty([k, n], weight.Packed.Device, track: false);
-                weight.Packed.Backend.Float16Dequantize(weight.Packed.Storage, w.Storage, k, n);
-                flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
-            }, flat);
+            RecordFloat16(y, flat, weight, m, k, n);
         }
 
         var result = this.Rank == 2 ? y : y.Reshape([.. this._shape[..^1], n]);
@@ -130,17 +121,7 @@ public sealed partial class Tensor
         this.Backend.BFloat16MatMul(flat.Storage, weight.Packed.Storage, y.Storage, m, n, k);
         if (Tensor.WillRecord(flat))
         {
-            y.Record("matmul_bf16", g =>
-            {
-                if (flat.Backend.BFloat16TransposedMatMul(g.Storage, weight.Packed.Storage, flat.GradStorage(), m, k, n, 1f, null, null, 0))
-                {
-                    return;                                                                        // dx += dy · wᵀ, w as stored
-                }
-
-                using var w = Tensor.Empty([k, n], weight.Packed.Device, track: false);
-                weight.Packed.Backend.BFloat16Dequantize(weight.Packed.Storage, w.Storage, k, n);
-                flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
-            }, flat);
+            RecordBFloat16(y, flat, weight, m, k, n);
         }
 
         var result = this.Rank == 2 ? y : y.Reshape([.. this._shape[..^1], n]);
@@ -221,12 +202,7 @@ public sealed partial class Tensor
         this.Backend.Int4MatMul(flat.Storage, weight.Packed.Storage, weight.Scales.Storage, y.Storage, m, n, k);
         if (Tensor.WillRecord(flat))
         {
-            y.Record("matmul_int4", g =>
-            {
-                using var w = Tensor.Empty([k, n], weight.Packed.Device, track: false);
-                weight.Packed.Backend.Int4Dequantize(weight.Packed.Storage, weight.Scales.Storage, w.Storage, k, n);
-                flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
-            }, flat);
+            RecordInt4(y, flat, weight, m, k, n);
         }
 
         var result = this.Rank == 2 ? y : y.Reshape([.. this._shape[..^1], n]);
@@ -266,11 +242,7 @@ public sealed partial class Tensor
 
         if (Tensor.WillRecord(flat))
         {
-            y.Record("matmul_packed", g =>
-            {
-                using var w = Expanded(weight, flat.Device);
-                flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
-            }, flat);
+            RecordExpanded(y, flat, weight, m, k, n);
         }
 
         var result = this.Rank == 2 ? y : y.Reshape([.. this._shape[..^1], n]);
@@ -417,6 +389,56 @@ public sealed partial class Tensor
         weights.Backend.AttentionContextInt8(weights.Storage, cache.Values.Storage, cache.ValueScales!.Storage, y.Storage, rows, steps, capacity, cache.HeadDim);
         return y;
     }
+
+
+
+    // The input's gradient of MatMulInt8, recorded apart so a call that records none makes no closure.
+    private static void RecordInt8(Tensor y, Tensor flat, Int8Weight weight, int m, int k, int n) =>
+        y.Record("matmul_int8", g =>
+        {
+            using var w = Dequantized(weight);
+            flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
+        }, flat);
+
+    // The input's gradient of MatMulFloat16, recorded apart so a call that records none makes no closure.
+    private static void RecordFloat16(Tensor y, Tensor flat, Float16Weight weight, int m, int k, int n) =>
+        y.Record("matmul_f16", g =>
+        {
+            using var w = Tensor.Empty([k, n], weight.Packed.Device, track: false);
+            weight.Packed.Backend.Float16Dequantize(weight.Packed.Storage, w.Storage, k, n);
+            flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
+        }, flat);
+
+    // The input's gradient of MatMulBFloat16, recorded apart so a call that records none makes no closure.
+    private static void RecordBFloat16(Tensor y, Tensor flat, BFloat16Weight weight, int m, int k, int n) =>
+        y.Record("matmul_bf16", g =>
+        {
+            if (flat.Backend.BFloat16TransposedMatMul(g.Storage, weight.Packed.Storage, flat.GradStorage(), m, k, n, 1f, null, null, 0))
+            {
+                return;                                                                        // dx += dy · wᵀ, w as stored
+            }
+
+            using var w = Tensor.Empty([k, n], weight.Packed.Device, track: false);
+            weight.Packed.Backend.BFloat16Dequantize(weight.Packed.Storage, w.Storage, k, n);
+            flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
+        }, flat);
+
+    // The input's gradient of MatMulInt4, recorded apart so a call that records none makes no closure.
+    private static void RecordInt4(Tensor y, Tensor flat, Int4Weight weight, int m, int k, int n) =>
+        y.Record("matmul_int4", g =>
+        {
+            using var w = Tensor.Empty([k, n], weight.Packed.Device, track: false);
+            weight.Packed.Backend.Int4Dequantize(weight.Packed.Storage, weight.Scales.Storage, w.Storage, k, n);
+            flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
+        }, flat);
+
+    // The input's gradient of MatMulExpanded, recorded apart so a call that records none makes no closure.
+    private static void RecordExpanded(Tensor y, Tensor flat, IPackedWeight weight, int m, int k, int n) =>
+        y.Record("matmul_packed", g =>
+        {
+            using var w = Expanded(weight, flat.Device);
+            flat.Backend.BatchedMatMul(g.Storage, w.Storage, flat.GradStorage(), 1, m, k, n, false, true, 1f);   // dx += dy · wᵀ
+        }, flat);
 
 
 

@@ -46,7 +46,9 @@ internal sealed record BenchSettle(double Tolerance, int Rounds, TimeSpan Round,
 /// <param name="ColdJitMilliseconds">The time the JIT spent compiling during the first call, on every thread, in ms: the
 /// part of <paramref name="ColdMicros"/> that is .NET compiling the call's path rather than the device's work.</param>
 /// <param name="ColdJitMethods">The methods the JIT compiled during the first call, on every thread.</param>
-internal readonly record struct BenchTime(double ColdMicros, double Micros, int WarmupCalls, bool Settled, double ColdJitMilliseconds = 0, long ColdJitMethods = 0);
+/// <param name="AllocatedBytes">The managed bytes allocated per timed call, on every thread (a warm call of a decoding step's work should allocate none).</param>
+internal readonly record struct BenchTime(double ColdMicros, double Micros, int WarmupCalls, bool Settled, double ColdJitMilliseconds = 0, long ColdJitMethods = 0,
+    double AllocatedBytes = 0);
 
 /// <summary>The kernel benchmarks' timing: the first call apart (cold), a warm-up until the timing settles, then the median.</summary>
 internal static class BenchTiming
@@ -119,12 +121,16 @@ internal static class BenchTiming
         }
 
         times.Clear();
-        for (int i = 0; i < Math.Max(1, repeats); i++)
+        int timed = Math.Max(1, repeats);
+        times.EnsureCapacity(timed);                                         // no growth inside the measured calls
+        long allocated = GC.GetTotalAllocatedBytes(precise: true);
+        for (int i = 0; i < timed; i++)
         {
             times.Add(Call());
         }
 
-        return new BenchTime(cold, Median(times), calls, settled, coldJitMs, coldMethods);
+        allocated = GC.GetTotalAllocatedBytes(precise: true) - allocated;
+        return new BenchTime(cold, Median(times), calls, settled, coldJitMs, coldMethods, (double)allocated / timed);
     }
 
     /// <summary>Whether the last <paramref name="rounds"/> values lie within <paramref name="tolerance"/> of the smallest of them.</summary>

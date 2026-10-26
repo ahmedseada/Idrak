@@ -28,6 +28,12 @@ internal sealed partial class CpuBackend
             return;
         }
 
+        Int8Streaming(q, xv, sv, yv, m, n, k, stride, blockSize, blocks);
+    }
+
+    // The streaming int8 loop (CpuTuning.StreamingFewRows, no SIMD, or more rows), apart so the tiled path's calls make no closure.
+    private void Int8Streaming(Storage q, float[] xv, float[] sv, float[] yv, int m, int n, int k, int stride, int blockSize, int blocks)
+    {
         For(blocks, (long)m * n * k, (first, last) =>
         {
             var weights = Bytes(q, k * stride);                          // spans cannot be captured; re-derive per worker
@@ -95,6 +101,12 @@ internal sealed partial class CpuBackend
             return;
         }
 
+        Int4Streaming(q, scales, xv, yv, m, n, k, blockSize, blocks);
+    }
+
+    // The streaming 4-bit loop, apart so the tiled path's calls make no closure.
+    private void Int4Streaming(Storage q, Storage scales, float[] xv, float[] yv, int m, int n, int k, int blockSize, int blocks)
+    {
         For(blocks, (long)m * n * k, (first, last) =>
         {
             var acc = ArrayPool<float>.Shared.Rent(m * blockSize);
@@ -208,6 +220,12 @@ internal sealed partial class CpuBackend
             return;
         }
 
+        BFloat16Streaming(packed, xv, yv, m, n, k, stride, blockSize, blocks);
+    }
+
+    // The streaming bfloat16 loop, apart so the tiled path's calls make no closure.
+    private void BFloat16Streaming(Storage packed, float[] xv, float[] yv, int m, int n, int k, int stride, int blockSize, int blocks)
+    {
         For(blocks, (long)m * n * k, (first, last) =>
         {
             var halves = MemoryMarshal.Cast<float, ushort>(D(packed).AsSpan());

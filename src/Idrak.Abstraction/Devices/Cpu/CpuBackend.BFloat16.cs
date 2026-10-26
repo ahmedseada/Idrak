@@ -18,80 +18,87 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // columns past the last whole pair of Vector<float> are computed one at a time as there, so the results are identical.
 internal sealed partial class CpuBackend
 {
-    private static void BFloat16FewRowsTiled(float[] packed, float[] xv, float[] yv, int m, int n, int k, int stride, int blockSize, int blocks)
+    private static void BFloat16FewRowsTiled(float[] packed, float[] xv, float[] yv, int m, int n, int k, int stride, int blockSize, int blocks) =>
+        For(blocks, (long)m * n * k, new BFloat16Blocks(packed, xv, yv, m, n, k, stride, blockSize, CpuTuning.RegisterRows, CpuTuning.KChunk,
+            CpuTuning.WidePanels && Vector512.IsHardwareAccelerated));
+
+    // A range of column blocks of the bfloat16 product (a struct: no closure a call).
+    private readonly struct BFloat16Blocks(float[] packed, float[] xv, float[] yv, int m, int n, int k, int stride, int blockSize, int rowsPerPass, int chunk,
+        bool wide) : IRangeBody
+    {
+        public void Run(int first, int last) => BFloat16BlockRange(packed, xv, yv, m, n, k, stride, blockSize, rowsPerPass, chunk, wide, first, last);
+    }
+
+    // Column blocks [first, last) of the bfloat16 product.
+    private static void BFloat16BlockRange(float[] packed, float[] xv, float[] yv, int m, int n, int k, int stride, int blockSize, int rowsPerPass, int chunk,
+        bool wide, int first, int last)
     {
         int w = Vector<float>.Count;
-        int rowsPerPass = CpuTuning.RegisterRows;
-        int chunk = CpuTuning.KChunk;
-        bool wide = CpuTuning.WidePanels && Vector512.IsHardwareAccelerated;
-        For(blocks, (long)m * n * k, (first, last) =>
+        ref ushort halves = ref Unsafe.As<float, ushort>(ref MemoryMarshal.GetArrayDataReference(packed));
+        var sums = ArrayPool<float>.Shared.Rent(m * blockSize);
+        try
         {
-            ref ushort halves = ref Unsafe.As<float, ushort>(ref MemoryMarshal.GetArrayDataReference(packed));
-            var sums = ArrayPool<float>.Shared.Rent(m * blockSize);
-            try
+            ref float acc = ref MemoryMarshal.GetArrayDataReference(sums);
+            for (int block = first; block < last; block++)
             {
-                ref float acc = ref MemoryMarshal.GetArrayDataReference(sums);
-                for (int block = first; block < last; block++)
+                int j0 = block * blockSize, width = Math.Min(blockSize, n - j0), whole = width / (2 * w) * (2 * w);
+                int wideWhole = wide ? whole / (2 * Vector512<float>.Count) * (2 * Vector512<float>.Count) : 0;
+                sums.AsSpan(0, m * blockSize).Clear();
+                for (int k0 = 0; k0 < k; k0 += chunk)
                 {
-                    int j0 = block * blockSize, width = Math.Min(blockSize, n - j0), whole = width / (2 * w) * (2 * w);
-                    int wideWhole = wide ? whole / (2 * Vector512<float>.Count) * (2 * Vector512<float>.Count) : 0;
-                    sums.AsSpan(0, m * blockSize).Clear();
-                    for (int k0 = 0; k0 < k; k0 += chunk)
+                    int k1 = Math.Min(k, k0 + chunk);
+                    int j = 0;
+                    for (; j < wideWhole; j += 2 * Vector512<float>.Count)
                     {
-                        int k1 = Math.Min(k, k0 + chunk);
-                        int j = 0;
-                        for (; j < wideWhole; j += 2 * Vector512<float>.Count)
+                        for (int r0 = 0; r0 < m; r0 += 8)
                         {
-                            for (int r0 = 0; r0 < m; r0 += 8)
-                            {
-                                Panel512(ref halves, stride, xv, ref Unsafe.Add(ref acc, r0 * blockSize + j), blockSize, k, r0, Math.Min(8, m - r0), j0 + j, k0, k1);
-                            }
-                        }
-
-                        for (; j < whole; j += 2 * w)
-                        {
-                            for (int r0 = 0; r0 < m; r0 += rowsPerPass)
-                            {
-                                ref float target = ref Unsafe.Add(ref acc, r0 * blockSize + j);
-                                if (rowsPerPass == 8)
-                                {
-                                    Panel8(ref halves, stride, xv, ref target, blockSize, k, r0, Math.Min(8, m - r0), j0 + j, k0, k1);
-                                }
-                                else
-                                {
-                                    Panel4(ref halves, stride, xv, ref target, blockSize, k, r0, Math.Min(4, m - r0), j0 + j, k0, k1);
-                                }
-                            }
+                            Panel512(ref halves, stride, xv, ref Unsafe.Add(ref acc, r0 * blockSize + j), blockSize, k, r0, Math.Min(8, m - r0), j0 + j, k0, k1);
                         }
                     }
 
-                    for (int j = whole; j < width; j++)
+                    for (; j < whole; j += 2 * w)
                     {
-                        int col = j0 + j;
-                        for (int r = 0; r < m; r++)
+                        for (int r0 = 0; r0 < m; r0 += rowsPerPass)
                         {
-                            float sum = 0f;
-                            for (int kk = 0; kk < k; kk++)
+                            ref float target = ref Unsafe.Add(ref acc, r0 * blockSize + j);
+                            if (rowsPerPass == 8)
                             {
-                                float weight = BitConverter.Int32BitsToSingle(Unsafe.Add(ref halves, (nint)kk * stride + col) << 16);
-                                sum = MathF.FusedMultiplyAdd(weight, xv[r * k + kk], sum);
+                                Panel8(ref halves, stride, xv, ref target, blockSize, k, r0, Math.Min(8, m - r0), j0 + j, k0, k1);
                             }
-
-                            sums[r * blockSize + j] = sum;
+                            else
+                            {
+                                Panel4(ref halves, stride, xv, ref target, blockSize, k, r0, Math.Min(4, m - r0), j0 + j, k0, k1);
+                            }
                         }
-                    }
-
-                    for (int r = 0; r < m; r++)
-                    {
-                        sums.AsSpan(r * blockSize, width).CopyTo(yv.AsSpan(r * n + j0, width));
                     }
                 }
+
+                for (int j = whole; j < width; j++)
+                {
+                    int col = j0 + j;
+                    for (int r = 0; r < m; r++)
+                    {
+                        float sum = 0f;
+                        for (int kk = 0; kk < k; kk++)
+                        {
+                            float weight = BitConverter.Int32BitsToSingle(Unsafe.Add(ref halves, (nint)kk * stride + col) << 16);
+                            sum = MathF.FusedMultiplyAdd(weight, xv[r * k + kk], sum);
+                        }
+
+                        sums[r * blockSize + j] = sum;
+                    }
+                }
+
+                for (int r = 0; r < m; r++)
+                {
+                    sums.AsSpan(r * blockSize, width).CopyTo(yv.AsSpan(r * n + j0, width));
+                }
             }
-            finally
-            {
-                ArrayPool<float>.Shared.Return(sums);
-            }
-        });
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(sums);
+        }
     }
 
     // Up to 8 rows × 32 columns in 16 AVX-512 registers.

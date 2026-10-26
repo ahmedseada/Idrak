@@ -61,9 +61,13 @@ internal sealed partial class CpuBackend
     // Whether the int4 panels can place their lanes: one word per four, eight or sixteen float lanes.
     private static bool Int4PanelsFit => Vector<int>.Count is 4 or 8 or 16;
 
-    private static void Int8FewRowsTiled(float[] q, float[] xv, float[] sv, float[] yv, int m, int n, int k, int stride, int blockSize, int blocks)
+    private static void Int8FewRowsTiled(float[] q, float[] xv, float[] sv, float[] yv, int m, int n, int k, int stride, int blockSize, int blocks) =>
+        For(blocks, (long)m * n * k, new Int8Blocks(q, xv, sv, yv, m, n, k, stride, blockSize));
+
+    // A range of column blocks of the int8 product (a struct: no closure a call).
+    private readonly struct Int8Blocks(float[] q, float[] xv, float[] sv, float[] yv, int m, int n, int k, int stride, int blockSize) : IRangeBody
     {
-        For(blocks, (long)m * n * k, (first, last) =>
+        public void Run(int first, int last)
         {
             var sums = ArrayPool<float>.Shared.Rent(m * blockSize);
             try
@@ -77,7 +81,7 @@ internal sealed partial class CpuBackend
             {
                 ArrayPool<float>.Shared.Return(sums);
             }
-        });
+        }
     }
 
     // One column block of the int8 product: panels one byte vector wide (four float vectors), up to half the register rows
@@ -331,9 +335,13 @@ internal sealed partial class CpuBackend
         if (rows > 1) { a1.StoreUnsafe(ref t1); b1.StoreUnsafe(ref t1, w); c1.StoreUnsafe(ref t1, 2 * w); d1.StoreUnsafe(ref t1, 3 * w); }
     }
 
-    private static void Int4FewRowsTiled(float[] q, float[] scales, float[] xv, float[] yv, int m, int n, int k, int blockSize, int blocks)
+    private static void Int4FewRowsTiled(float[] q, float[] scales, float[] xv, float[] yv, int m, int n, int k, int blockSize, int blocks) =>
+        For(blocks, (long)m * n * k, new Int4Blocks(q, scales, xv, yv, m, n, k, blockSize));
+
+    // A range of column blocks of the 4-bit product (a struct: no closure a call).
+    private readonly struct Int4Blocks(float[] q, float[] scales, float[] xv, float[] yv, int m, int n, int k, int blockSize) : IRangeBody
     {
-        For(blocks, (long)m * n * k, (first, last) =>
+        public void Run(int first, int last)
         {
             var sums = ArrayPool<float>.Shared.Rent(m * blockSize);
             try
@@ -347,7 +355,7 @@ internal sealed partial class CpuBackend
             {
                 ArrayPool<float>.Shared.Return(sums);
             }
-        });
+        }
     }
 
     // One column block of the 4-bit product: panels two float vectors wide, up to the register rows a pass, and k chunks

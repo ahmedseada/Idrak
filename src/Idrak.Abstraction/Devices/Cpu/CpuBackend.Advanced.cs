@@ -45,6 +45,21 @@ internal sealed partial class CpuBackend
         });
     }
 
+    // For with a struct body, through CpuRanges: the same split and the same chunks, allocating nothing once warm (the
+    // decoding products run it on every call; Parallel.For and a closure cost about 2 KB a call).
+    private static void For<TBody>(int count, long work, TBody body) where TBody : struct, IRangeBody
+    {
+        if (count <= 1 || !CpuTuning.SplitElements(work))
+        {
+            body.Run(0, count);
+            return;
+        }
+
+        int chunks = Math.Min(count, ComputeResources.MaxCpuThreads * 4);
+        int size = (count + chunks - 1) / chunks;
+        CpuRanges.Run(chunks, size, count, ComputeResources.MaxCpuThreads, ref body);   // `body` is this frame's copy, on the stack
+    }
+
     public override void BatchedMatMulKernel(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
         float[] av = D(a), bv = D(b), cv = D(c);

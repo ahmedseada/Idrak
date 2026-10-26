@@ -23,7 +23,8 @@ internal sealed record BenchResult(string Name, double Value, string Unit, bool 
 /// <summary>
 /// The kernel benchmarks of <c>idrak bench</c> without a model, through the library's public tensor API on any device:
 /// matrix products (float32 and with mixed-precision bfloat16), decoding-sized products of one row with packed weights
-/// (int8, int4, bfloat16 or any registered packed format), and one decoding step of an attention layer over a cache of
+/// (int8, int4, bfloat16 or any registered packed format; the built-in ones through the device product the tensor's runs,
+/// into one output kept across calls, so a call allocates nothing), and one decoding step of an attention layer over a cache of
 /// several lengths in each key/value format. The shapes follow the test runner's --bench-vulkan and --bench-gemv
 /// sections, which time the same work through each backend's internals. Each measurement's first call is reported
 /// apart (cold) and its value is the median of the timed calls after a warm-up that settles (<see cref="BenchTiming"/>).
@@ -78,22 +79,33 @@ internal static class KernelBench
 
         if (kernels.Contains("gemv"))
         {
-            foreach (var (k, n) in small ? new[] { (256, 768), (768, 256) } : [(1024, 3072), (3072, 1024), (1024, 32_000)])
+            var shapes = small ? new[] { (256, 768), (768, 256) } : [(1024, 3072), (3072, 1024), (1024, 32_000)];
+            // One weights buffer for every shape (refilled for each), not a new array of the largest size a shape.
+            var buffer = new float[shapes.Max(s => (long)s.Item1 * s.Item2)];
+            foreach (var (k, n) in shapes)
             {
-                var weights = Values((long)k * n);
+                var weights = buffer.AsSpan(0, k * n);
+                for (int i = 0; i < weights.Length; i++)
+                {
+                    weights[i] = random.NextSingle() - 0.5f;
+                }
+
                 using var x = Tensor.From(Values(k), [1, k], device);
+                using var y = Tensor.Empty([1, n], device, track: false);
                 foreach (string format in packedFormats)
                 {
                     progress?.Invoke($"gemv {format} {k}x{n}");
                     using var packed = PackedWeightFormats.Pack(format, weights, k, n, device);
-                    var time = Time(device, () =>
-                    {
-                        using var scope = new TensorScope();
-                        packed.MatMul(x);
-                    }, repeats, settle);
+                    var time = packed is IKernelPackedWeight kernel
+                        ? Time(device, () => PackedProduct(kernel, x, y), repeats, settle)
+                        : Time(device, () =>
+                        {
+                            using var scope = new TensorScope();
+                            packed.MatMul(x);
+                        }, repeats, settle);
                     Add(new BenchResult($"gemv {format} 1x{k} -> {n}", time.Micros, "µs", false,
-                        string.Create(CultureInfo.InvariantCulture, $"{packed.Bytes / (time.Micros * 1e3):F1} GB/s of weights"), time.ColdMicros, time.WarmupCalls, time.Settled,
-                        time.ColdJitMilliseconds, time.ColdJitMethods));
+                        string.Create(CultureInfo.InvariantCulture, $"{packed.Bytes / (time.Micros * 1e3):F1} GB/s of weights, {time.AllocatedBytes:F0} B allocated a call"),
+                        time.ColdMicros, time.WarmupCalls, time.Settled, time.ColdJitMilliseconds, time.ColdJitMethods));
                 }
             }
         }
@@ -129,6 +141,36 @@ internal static class KernelBench
         {
             results.Add(result);
             measured?.Invoke(result);
+        }
+    }
+
+    // One row through weights in a built-in packed format into `y` (kept across calls): the device product the tensor's
+    // few-row product runs (Tensor.MatMul through IPackedWeight.MatMul: the int8 one checks first whether the device
+    // prefers its packed product for the shape), writing the output the bench keeps instead of a new tensor a call, so it
+    // times the kernel and what the device does to queue it, not the output tensor a call would make.
+    private static void PackedProduct(IKernelPackedWeight weight, Tensor x, Tensor y)
+    {
+        var backend = x.Backend;
+        var (packed, scales) = (weight.PackedValues.Storage, weight.ScaleValues?.Storage);
+        int k = weight.Rows, n = weight.Columns;
+        switch (weight.Format)
+        {
+            case PackedFormat.Int8:
+                if (!(backend.PrefersPackedMatMul(PackedFormat.Int8, x.Storage, packed, scales, y.Storage, 1, n, k)
+                      && backend.PackedMatMulLarge(PackedFormat.Int8, x.Storage, packed, scales, y.Storage, 1, n, k)))
+                {
+                    backend.Int8MatMul(x.Storage, packed, scales!, y.Storage, 1, n, k);
+                }
+
+                break;
+            case PackedFormat.Int4:
+                backend.Int4MatMul(x.Storage, packed, scales!, y.Storage, 1, n, k);
+                break;
+            case PackedFormat.BFloat16:
+                backend.BFloat16MatMul(x.Storage, packed, y.Storage, 1, n, k);
+                break;
+            default:
+                throw new NotSupportedException($"gemv: no device product for the built-in format {weight.Format}.");
         }
     }
 
