@@ -245,6 +245,25 @@ public static class ComputeResources
     };
 
     /// <summary>
+    /// Which vector paths the CPU's kernels take (<see cref="CpuVectorPaths"/>): <see cref="CpuVectorPaths.Automatic"/> by
+    /// default (the platform's intrinsics where the runtime reports them, else portable 128-bit vectors where it
+    /// accelerates them). IDRAK_CPU_VECTORS sets it at start: auto, native, portable or scalar. Every path gives the same
+    /// results; the products read it on every call, the int4 kernels' lane shifts when the CPU's int4 kernels first run.
+    /// </summary>
+    public static CpuVectorPaths CpuVectors { get; set; } = ParseCpuVectors(Environment.GetEnvironmentVariable("IDRAK_CPU_VECTORS"));
+
+    /// <summary>A vector path setting by name: "auto" (or empty), "native", "portable" or "scalar", any case.</summary>
+    /// <exception cref="ArgumentException">Another name.</exception>
+    public static CpuVectorPaths ParseCpuVectors(string? name) => name?.Trim().ToLowerInvariant() switch
+    {
+        null or "" or "auto" or "automatic" => CpuVectorPaths.Automatic,
+        "native" or "intrinsics" => CpuVectorPaths.Native,
+        "portable" => CpuVectorPaths.Portable,
+        "scalar" or "none" => CpuVectorPaths.Scalar,
+        _ => throw new ArgumentException($"CPU vector paths '{name}': use auto, native, portable or scalar.", nameof(name)),
+    };
+
+    /// <summary>
     /// With <see cref="OffloadToHostMemory"/>: when the GPU fills up, first move the storages that are used least to
     /// system memory (optimizer state, then frozen weights such as a LoRA base model, largest first) to make room, and
     /// only then place new tensors there. On by default; off restores the older behaviour (whatever is allocated after

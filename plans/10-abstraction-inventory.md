@@ -588,17 +588,17 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 133 virtual methods, 4 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `DeferredBackend`, `HipBackend`, `VulkanBackend`. Each
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 134 virtual methods, 5 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `DeferredBackend`, `HipBackend`, `VulkanBackend`. Each
 operation (154, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 128 of 143 |
-| `CudaBackend` | 136 of 143 |
-| `DeferredBackend` | 11 of 143 |
-| `HipBackend` | 48 of 143 |
-| `VulkanBackend` | 123 of 143 |
+| `CpuBackend` | 128 of 144 |
+| `CudaBackend` | 136 of 144 |
+| `DeferredBackend` | 11 of 144 |
+| `HipBackend` | 48 of 144 |
+| `VulkanBackend` | 124 of 144 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
 |---|---|---|---|---|---|---|
@@ -681,6 +681,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `Interpolate2dBackwardKernel(11)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `Interpolate2dKernel(11)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `InvSqrtKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `KernelFellBack(3)` | virtual |  |  |  |  | ✓ |
 | `KeyValueWriteBFloat16Kernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `KeyValueWriteInt8Kernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `KeyValueWriteKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |

@@ -283,6 +283,19 @@ public readonly record struct HostFallback(string Device, string Operation, stri
 public readonly record struct TuningCompleted(string Device, string Operation, int Candidates, TimeSpan Duration, bool Nested);
 
 /// <summary>
+/// A device described for a listing (<c>Diagnostics.DeviceListing</c>, <c>TelemetryLevel.Devices</c>): its backend
+/// started in this call (the first listing of the device in the process: the driver loaded, the device created, its
+/// kernels' width measured: the cold time) or was running already (warm), and how long starting and reading what it
+/// reports took, so a slow device list shows where its time went, cold apart from warm (rule 76).
+/// </summary>
+/// <param name="Device">The device's name ("cpu", "vulkan:0").</param>
+/// <param name="Start">Starting its backend (or reaching it, once started).</param>
+/// <param name="Describe">Reading what it reports (its name, memory and facts).</param>
+/// <param name="Cold">The first listing of the device in this process.</param>
+/// <param name="Error">Why it could not start, or null.</param>
+public readonly record struct DeviceListed(string Device, TimeSpan Start, TimeSpan Describe, bool Cold, string? Error);
+
+/// <summary>
 /// A device that records graphs could not record a piece of work (<c>TelemetryLevel.Devices</c>): the work runs as
 /// ordinary steps instead, which costs launches on every step and runs again whatever the recording did before it failed
 /// (a training step's image features are taken from the cache once more). The reason is the error that stopped the

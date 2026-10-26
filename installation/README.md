@@ -53,5 +53,9 @@ runs `idrak doctor --android`, which also checks the GPU device node.
 | `IDRAK_HIP_DEFAULT=1` | Prefer a HIP device as `Device.Default` (after CUDA, before Vulkan); see [hip.md](hip.md) for the other HIP settings. |
 | `IDRAK_VULKAN_WIDTH` | Force the Vulkan kernels' workgroup width instead of the measured one (diagnostics only). |
 | `IDRAK_AUTOTUNE=0` | Use the formulas only, no on-device measuring (diagnostics only). |
+| `IDRAK_CPU_VECTORS` | The CPU's vector paths: `auto` (default: the platform's intrinsics, else portable 128-bit vectors where the runtime reports none), `native`, `portable` or `scalar`; the same results, for comparing speed. |
+| `IDRAK_MEMORY_REFRESH_MS` | How long a reading of the system's memory (/proc/meminfo, the cgroup limit) is kept before it is read again (default 250). |
+| `IDRAK_VULKAN_REFUSE_KERNELS` | Treat these Vulkan kernels as refused by the driver (`int8_gemv_8,softmax_rows:sized`; `:sized` only with their subgroup-size request), to test the fallbacks (diagnostics only). |
+| `IDRAK_REFUSED_KERNELS=throw` | A kernel the driver refuses reaches the caller as an error instead of running another variant or its fallback (diagnostics only). |
 | `VK_ICD_FILENAMES` | Which Vulkan driver the loader uses (needed on the phone for Turnip). |
 | `DOTNET_GCHeapHardLimit` | Caps the .NET heap reservation; needed on Android, whose address space is too small for the default. |

@@ -69,8 +69,21 @@ internal sealed record CpuInfo
     /// <summary>Whether the cache sizes came from the system (false: the fallbacks).</summary>
     public required bool CachesReported { get; init; }
 
-    /// <summary>The processor's name as the system reports it; only a key of the tuning cache, never a reason for a choice.</summary>
+    /// <summary>
+    /// The processor's name as the system reports it (its "model name"; where there is none, as on ARM: the system's
+    /// "Hardware" name or the core groups); only a key of the tuning cache, never a reason for a choice.
+    /// </summary>
     public required string Model { get; init; }
+
+    /// <summary>
+    /// The cores by kind, in the order the system numbers them (Linux and Android: each processor's part number in
+    /// /proc/cpuinfo and its highest frequency in cpufreq; several groups on processors that mix core types). Raw numbers
+    /// only: no table names a part. Empty where the system does not say.
+    /// </summary>
+    public CoreGroup[] CoreGroups { get; init; } = [];
+
+    /// <summary>The vector paths the runtime reports: platform intrinsics, portable vectors only (the runtime reports none), or none.</summary>
+    public VectorSupport Vectors { get; init; }
 
     public override string ToString() =>
         $"{LogicalProcessors} threads / {PhysicalCores} cores, {InstructionSets}, {VectorRegisters} vector registers, "
@@ -91,11 +104,12 @@ internal sealed record CpuInfo
         var caches = new Caches();
         int physical = 0;
         string model = "";
+        CoreGroup[] groups = [];
         try
         {
             if (OperatingSystem.IsLinux() || OperatingSystem.IsAndroid())
             {
-                (physical, model) = ReadLinux(caches);
+                (physical, model, groups) = ReadLinux(caches);
             }
             else if (OperatingSystem.IsWindows())
             {
@@ -116,7 +130,10 @@ internal sealed record CpuInfo
         int logical = Environment.ProcessorCount;
         int widest = Vector512.IsHardwareAccelerated ? 16 : Vector256.IsHardwareAccelerated ? 8 : Vector128.IsHardwareAccelerated ? 4 : 1;
         bool x86 = Sse.IsSupported;
-        int registers = x86 ? (Avx512F.IsSupported ? 32 : 16) : AdvSimd.Arm64.IsSupported ? 32 : 16;
+        var vectors = VectorsReported(x86 || AdvSimd.IsSupported, Vector128.IsHardwareAccelerated);
+        // ARM64 has 32 vector registers whether or not the runtime reports its intrinsics (Mono reports none).
+        bool arm64 = AdvSimd.Arm64.IsSupported || RuntimeInformation.ProcessArchitecture == Architecture.Arm64;
+        int registers = x86 ? (Avx512F.IsSupported ? 32 : 16) : arm64 ? 32 : 16;
         var sets = new List<string>();
         void Add(bool supported, string name)
         {
@@ -148,8 +165,11 @@ internal sealed record CpuInfo
             VectorFloats = Vector<float>.Count,
             WidestFloats = widest,
             VectorRegisters = registers,
-            FusedMultiplyAdd = Fma.IsSupported || AdvSimd.IsSupported,
-            InstructionSets = sets.Count > 0 ? string.Join(" ", sets) : "no SIMD",
+            // Every ARMv8-A core multiplies and adds fused in its vector unit (reported or not by the runtime).
+            FusedMultiplyAdd = Fma.IsSupported || AdvSimd.IsSupported || arm64 && vectors == VectorSupport.Portable,
+            InstructionSets = DescribeSets(sets, vectors, RuntimeInformation.ProcessArchitecture),
+            Vectors = vectors,
+            CoreGroups = groups,
             L1 = caches.L1 > 0 ? caches.L1 : FallbackL1,
             L2 = caches.L2 > 0 ? caches.L2 : FallbackL2,
             L3 = caches.L3,
@@ -157,6 +177,31 @@ internal sealed record CpuInfo
             CachesReported = caches.L1 > 0 && caches.L2 > 0,
             Model = model.Trim(),
         };
+    }
+
+    /// <summary>What the runtime reports: platform intrinsics, only accelerated portable vectors, or neither.</summary>
+    internal static VectorSupport VectorsReported(bool intrinsics, bool vector128Accelerated) =>
+        intrinsics ? VectorSupport.Intrinsics : vector128Accelerated ? VectorSupport.Portable : VectorSupport.None;
+
+    /// <summary>
+    /// The instruction sets for listings: the platform sets the runtime reports, or, where it reports none but accelerates
+    /// 128-bit vectors (Mono on ARM64), the architecture's vector unit run through portable vectors; "no SIMD" only where
+    /// neither is accelerated.
+    /// </summary>
+    internal static string DescribeSets(IReadOnlyList<string> sets, VectorSupport vectors, Architecture architecture)
+    {
+        if (sets.Count > 0)
+        {
+            return string.Join(" ", sets);
+        }
+
+        string unit = architecture switch
+        {
+            Architecture.Arm64 or Architecture.Arm => "NEON",
+            Architecture.X64 or Architecture.X86 => "SSE",
+            _ => "128-bit vectors",
+        };
+        return vectors == VectorSupport.Portable ? $"{unit} (portable vectors: the runtime reports no {unit} intrinsics)" : "no SIMD";
     }
 
     // The largest per-core size of each level (on hybrid processors: the performance cores').
@@ -179,7 +224,7 @@ internal sealed record CpuInfo
 
     // /sys/devices/system/cpu/cpu0/cache/index*/{level,type,size,shared_cpu_list,coherency_line_size} and the cores in
     // /sys/devices/system/cpu/cpu*/topology/{core_id,physical_package_id} (or cluster_cpus_list on some ARM boards).
-    private static (int Physical, string Model) ReadLinux(Caches caches)
+    private static (int Physical, string Model, CoreGroup[] Groups) ReadLinux(Caches caches)
     {
         const string Root = "/sys/devices/system/cpu";
         var cores = new HashSet<(string Package, string Core)>();
@@ -233,20 +278,124 @@ internal sealed record CpuInfo
         }
 
         string model = "";
+        CoreGroup[] groups = [];
         if (File.Exists("/proc/cpuinfo"))
         {
-            foreach (var line in File.ReadLines("/proc/cpuinfo"))
+            var (found, name) = ParseCores(File.ReadAllBytes("/proc/cpuinfo"), cpu => MaxKilohertz(Root, cpu));
+            groups = found;
+            model = name;
+        }
+
+        return (cores.Count, model, groups);
+    }
+
+    // cpuN/cpufreq/cpuinfo_max_freq (kHz), or null.
+    private static long? MaxKilohertz(string root, int cpu)
+    {
+        string file = Path.Combine(root, string.Create(CultureInfo.InvariantCulture, $"cpu{cpu}"), "cpufreq", "cpuinfo_max_freq");
+        try
+        {
+            return File.Exists(file) && SystemMemory.ParseBytes(File.ReadAllBytes(file)) is { } khz && khz > 0 ? khz : null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The core groups and the processor's name from /proc/cpuinfo's bytes: each "processor" block's part (ARM: "CPU
+    /// part", with "CPU implementer"; x86: "model"), its highest frequency (<paramref name="maxKilohertz"/> of its number),
+    /// consecutive processors of one part and frequency in one group. The name is the "model name" where the system gives
+    /// one (x86: as before), else the system's "Hardware" or "Model" line with the groups, else the groups.
+    /// </summary>
+    internal static (CoreGroup[] Groups, string Model) ParseCores(ReadOnlySpan<byte> cpuinfo, Func<int, long?> maxKilohertz)
+    {
+        var groups = new List<CoreGroup>();
+        string? modelName = null, system = null;
+        int processor = -1;
+        string? part = null, implementer = null;
+        void Flush()
+        {
+            if (processor < 0)
             {
-                if (line.StartsWith("model name", StringComparison.Ordinal) || line.StartsWith("Model", StringComparison.Ordinal)
-                    || line.StartsWith("CPU part", StringComparison.Ordinal))
-                {
-                    model = line[(line.IndexOf(':') + 1)..];
-                    break;
-                }
+                return;
+            }
+
+            string label = part is null ? "" : implementer is null ? part : $"{implementer}:{part}";
+            long? khz = maxKilohertz(processor);
+            if (groups.Count > 0 && groups[^1].Part == label && groups[^1].MaxKilohertz == khz)
+            {
+                groups[^1] = groups[^1] with { Count = groups[^1].Count + 1 };
+            }
+            else
+            {
+                groups.Add(new CoreGroup(1, label, khz));
+            }
+
+            processor = -1;
+            part = implementer = null;
+        }
+
+        foreach (var range in cpuinfo.Split((byte)'\n'))
+        {
+            var line = cpuinfo[range];
+            int colon = line.IndexOf((byte)':');
+            if (colon < 0)
+            {
+                continue;
+            }
+
+            var key = line[..colon].Trim("\t "u8);
+            string value = System.Text.Encoding.UTF8.GetString(line[(colon + 1)..].Trim("\t \r"u8));
+            if (key.SequenceEqual("processor"u8))
+            {
+                Flush();
+                processor = int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) ? n : groups.Sum(g => g.Count);
+            }
+            else if (key.SequenceEqual("CPU part"u8))
+            {
+                part = value;
+            }
+            else if (key.SequenceEqual("CPU implementer"u8))
+            {
+                implementer = value;
+            }
+            else if (key.SequenceEqual("model"u8) && part is null)
+            {
+                part = "model " + value;
+            }
+            else if (key.SequenceEqual("model name"u8))
+            {
+                modelName ??= value;
+            }
+            else if ((key.SequenceEqual("Hardware"u8) || key.SequenceEqual("Model"u8)) && value.Length > 0)
+            {
+                system ??= value;
             }
         }
 
-        return (cores.Count, model);
+        Flush();
+        CoreGroup[] found = [.. groups];
+        string described = found.Length > 0 ? DescribeGroups(found) : "";
+        string model = modelName is { Length: > 0 } ? modelName
+            : system is not null ? (described.Length > 0 ? $"{system} ({described})" : system)
+            : described;
+        return (found, model);
+    }
+
+    /// <summary>"8 cores: 4 × part 0x41:0xd05 up to 1.80 GHz, 4 × part 0x41:0xd0d up to 2.40 GHz" (a frequency where reported).</summary>
+    internal static string DescribeGroups(IReadOnlyList<CoreGroup> groups)
+    {
+        int cores = groups.Sum(g => g.Count);
+        var parts = groups.Select(g =>
+        {
+            string part = g.Part.Length == 0 ? "unknown part" : g.Part.StartsWith("model ", StringComparison.Ordinal) ? g.Part : "part " + g.Part;
+            return g.MaxKilohertz is { } khz
+                ? string.Create(CultureInfo.InvariantCulture, $"{g.Count} × {part} up to {khz / 1e6:F2} GHz")
+                : string.Create(CultureInfo.InvariantCulture, $"{g.Count} × {part}");
+        });
+        return string.Create(CultureInfo.InvariantCulture, $"{cores} core{(cores == 1 ? "" : "s")}: {string.Join(", ", parts)}");
     }
 
     // "0-3,8,10-11" → 7.
@@ -375,4 +524,23 @@ internal sealed record CpuInfo
 
     [DllImport("libc", CharSet = CharSet.Ansi)]
     private static extern unsafe int sysctlbyname([MarshalAs(UnmanagedType.LPStr)] string name, void* value, ref nint size, void* newValue, nint newSize);
+}
+
+/// <summary>Consecutive cores of one kind (<see cref="CpuInfo.CoreGroups"/>).</summary>
+/// <param name="Count">How many.</param>
+/// <param name="Part">The raw part as the system reports it ("0x41:0xd05" on ARM, "model 85" on x86; "" when not reported).</param>
+/// <param name="MaxKilohertz">The highest frequency the system reports for them, in kHz (null when not reported).</param>
+internal readonly record struct CoreGroup(int Count, string Part, long? MaxKilohertz);
+
+/// <summary>Which vector paths the runtime reports (<see cref="CpuInfo.Vectors"/>).</summary>
+internal enum VectorSupport : byte
+{
+    /// <summary>No accelerated vectors.</summary>
+    None,
+
+    /// <summary>Accelerated 128-bit portable vectors without the platform's intrinsics (Mono on ARM64 reports no AdvSimd).</summary>
+    Portable,
+
+    /// <summary>The platform's intrinsics (SSE and up, AdvSimd).</summary>
+    Intrinsics,
 }

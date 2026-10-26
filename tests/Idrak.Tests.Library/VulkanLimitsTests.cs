@@ -21,6 +21,7 @@ internal abstract partial class Tests
         ("vulkan limits: with a 1 MiB binding range, large weights' products (int8, int4, bfloat16), gathers (by rows and by columns), dequantizations, uploads and downloads run on the device and match the CPU", VulkanLargeStorages),
         ("vulkan limits: with a small binding range, decoding steps whose embedding and head exceed it (int8, int4, bfloat16, a tied bfloat16 head read by columns) match the CPU with no host fallbacks", VulkanLargeDecoder),
         ("vulkan limits: subgroup size control only where reported; the size measured per kernel and stored; results as without it", VulkanSubgroupSizes),
+        ("vulkan limits: a kernel the driver refuses (IDRAK_VULKAN_REFUSE_KERNELS) never takes the device down: it starts (the width probe too), the packed products run their next variant with the same bits, a kernel without variants runs on the host with the CPU's bits, one without its subgroup-size request where it only refused that; asked once per process; listed in the facts", VulkanRefusedKernels),
     ];
 
     internal static void VulkanLoaderNames(Device device)

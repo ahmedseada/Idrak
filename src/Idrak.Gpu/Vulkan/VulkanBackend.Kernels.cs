@@ -984,14 +984,114 @@ internal sealed partial class VulkanBackend : IKernelAvailability
             return false;                                                      // (or weights larger than a binding that cannot be windowed)
         }
 
-        int chosen = GemvChoice(format, block, x, weights, scales, y, m, n, k);
-        if (chosen < 0)
+        int chosen;
+        try
         {
-            return false;
+            chosen = GemvChoice(format, block, x, weights, scales, y, m, n, k);
+        }
+        catch (KernelUnavailableException)
+        {
+            chosen = -1;                                                       // every candidate refused: the variants below
         }
 
-        return RunPacked(format, block, chosen, x, weights, scales, y, m, n, k);
+        if (chosen >= 0 && !_anyRefused)
+        {
+            try
+            {
+                return RunPacked(format, block, chosen, x, weights, scales, y, m, n, k);
+            }
+            catch (KernelUnavailableException)
+            {
+                // The first refusal: the next variant (below).
+            }
+        }
+
+        return RunPackedVariant(format, block, chosen, x, weights, scales, y, m, n, k);
     }
+
+    // A packed product whose chosen kernel may be refused here (VulkanBackend.Refusals.cs): the choice where its kernel
+    // builds, else the next variant that does (the other words per row of k, the other widths, then the smaller row
+    // blocks: each sums in the packed products' one order, so the result is the same), kept per shape so the search runs
+    // once; false when none builds (the caller's host fallback). `chosen` -1: no measured choice (all refused).
+    private bool RunPackedVariant(VulkanKernels.PackedFormat format, int block, int chosen, Storage x, Storage weights, Storage? scales, Storage y, int m, int n, int k)
+    {
+        var key = (format, block, chosen, m, n, k);
+        if (_gemvInstead.TryGetValue(key, out var known))
+        {
+            return known.Block >= 0 && RunPacked(format, known.Block, known.Choice, x, weights, scales, y, m, n, k);
+        }
+
+        string first = chosen >= 0 ? GemvKernel(format, block, chosen) : GemvKernel(format, block, WithWidth(Width, 8));
+        foreach (var (b, choice) in GemvVariants(format, block, chosen, m, n, k))
+        {
+            if (IsRefused(GemvKernel(format, b, choice), WidthOf(choice)))
+            {
+                continue;
+            }
+
+            try
+            {
+                if (RunPacked(format, b, choice, x, weights, scales, y, m, n, k))
+                {
+                    _gemvInstead[key] = (b, choice);
+                    string used = GemvKernel(format, b, choice);
+                    if (used != first || WidthOf(choice) != WidthOf(chosen))
+                    {
+                        NoteInstead(first, string.Create(System.Globalization.CultureInfo.InvariantCulture, $"the packed products: {used} at width {WidthOf(choice)}"));
+                    }
+
+                    return true;
+                }
+            }
+            catch (KernelUnavailableException)
+            {
+                // refused too: the next one
+            }
+        }
+
+        _gemvInstead[key] = (-1, 0);
+        NoteInstead(first, $"{format} products: the host");
+        return false;
+    }
+
+    // The packed-product kernel of a format, row block and choice (its word variant).
+    private static string GemvKernel(VulkanKernels.PackedFormat format, int block, int choice) =>
+        GemvKernelNames[((int)format * VulkanKernels.GemvRowBlocks.Length + block) * VulkanKernels.GemvWordCounts.Length + (choice & 7)];
+
+    // The variants a refused packed product tries, in order: the choice itself, then at its row block the other word
+    // variants and widths (its splits kept), then each smaller row block the device's workgroup counts take.
+    private IEnumerable<(int Block, int Choice)> GemvVariants(VulkanKernels.PackedFormat format, int block, int chosen, int m, int n, int k)
+    {
+        int perWord = VulkanKernels.ColumnsPerWord(format);
+        int rest = chosen >= 0 ? chosen & Rest : 8;
+        int splits = Math.Max(1, rest >> 3), variant = rest & 7;
+        int width = chosen >= 0 ? WidthOf(chosen) : Width;
+        int[] widths = [width, .. CandidateWidths.Where(w => w != width)];
+        for (int b = block; b >= 0; b--)
+        {
+            int rows = VulkanKernels.GemvRowBlocks[b];
+            if (((long)m + rows - 1) / rows > Limits.MaxGroupsZ)
+            {
+                break;
+            }
+
+            foreach (int w in widths)
+            {
+                for (int v = 0; v < VulkanKernels.GemvWordCounts.Length; v++)
+                {
+                    int word = v == 0 ? variant : v == variant ? 0 : v;
+                    int choice = WithWidth(w, splits * 8 + word);
+                    if (GemvValid(choice, perWord, n))
+                    {
+                        yield return (b, choice);
+                    }
+                }
+            }
+        }
+    }
+
+    // The variant each refused packed product runs instead, by format, row block, choice and shape (Block -1: none: the host).
+    private readonly ConcurrentDictionary<(VulkanKernels.PackedFormat, int, int, int, int, int), (int Block, int Choice)> _gemvInstead = new();
 
     // The row block variant (index into GemvRowBlocks) for m rows: the smallest that holds them, else 8.
     private static int GemvBlock(int m) => m switch { 1 => 0, 2 => 1, <= 4 => 2, _ => 3 };

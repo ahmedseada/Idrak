@@ -25,7 +25,7 @@ public sealed class DeviceInformation : IDeviceInformation
 
         using var process = Process.GetCurrentProcess();
         var facts = new ProcessFacts(RuntimeInformation.OSDescription, RuntimeInformation.ProcessArchitecture.ToString(), RuntimeInformation.FrameworkDescription,
-            Environment.ProcessorCount, GC.GetGCMemoryInfo().TotalAvailableMemoryBytes, process.WorkingSet64, GC.GetTotalMemory(forceFullCollection: false),
+            Environment.ProcessorCount, Device.Cpu.Backend.Hardware.MemoryBytes ?? GC.GetGCMemoryInfo().TotalAvailableMemoryBytes, process.WorkingSet64, GC.GetTotalMemory(forceFullCollection: false),
             ComputeResources.CacheFolder, ComputeResources.MaxCpuThreads);
         return new DeviceReport(details, DeviceListing.Backends, facts, Device.Default.ToString(), Stopwatch.GetElapsedTime(start));
     }

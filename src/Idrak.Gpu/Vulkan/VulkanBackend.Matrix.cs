@@ -271,15 +271,16 @@ internal sealed unsafe partial class VulkanBackend
             {
                 DefaultSubgroupSize = true,
                 RequiredSubgroupSize = required,
+                SubgroupSizeFixed = required > 0,
             };
             try
             {
                 using var quiet = DeviceException.Handled();
                 _ = PipelineOf(kernel);
             }
-            catch (VulkanException)
+            catch (DeviceException)
             {
-                return null;                                                   // the driver rejects it: never a candidate
+                return null;                                                   // the driver rejects it (a VulkanException or a refusal): never a candidate
             }
 
             _coopKernels[index] = kernel;

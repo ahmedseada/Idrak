@@ -128,6 +128,8 @@ internal sealed unsafe partial class VulkanBackend
                 ? string.Create(culture, $"on{(FullSubgroups ? ", full subgroups" : "")}; at width {Width}: {(candidates.Length == 0 ? "none" : string.Join(", ", candidates))}")
                 : "off (the device's default size)"),
             new("subgroup sizes measured", DescribeSubgroupChoices()),
+            new("refused kernels", DescribeRefusals()),
+            new("subgroup-size requests dropped", DescribeUnsized()),
             new("memory budget", budget is { } b
                 ? string.Create(culture, $"read (VK_EXT_memory_budget): budget {b.Budget >> 20:N0} MiB, this process uses {b.Usage >> 20:N0} MiB")
                 : MemoryBudget ? "enabled, but the driver reports none for the storage heap" : "not read (the heap less the reserve)"),

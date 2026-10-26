@@ -62,26 +62,40 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
 
     public override string Name => _name ?? $"CPU ({Environment.ProcessorCount} threads, {System.Numerics.Vector<float>.Count}-wide SIMD)";
 
-    public override BackendHardware Hardware => new()
+    public override BackendHardware Hardware
     {
-        MemoryBytes = GC.GetGCMemoryInfo().TotalAvailableMemoryBytes,
-        HardwareKind = "cpu",
-        ComputeUnits = Environment.ProcessorCount,
-        SubgroupSize = Vector<float>.Count,
-        Facts = HardwareFacts(CpuInfo.Current),
-    };
+        get
+        {
+            var memory = Memory;
+            return new()
+            {
+                MemoryBytes = memory.Total,
+                HardwareKind = "cpu",
+                ComputeUnits = Environment.ProcessorCount,
+                SubgroupSize = Vector<float>.Count,
+                Facts = [.. HardwareFacts(CpuInfo.Current), .. MemoryFacts(memory)],
+            };
+        }
+    }
 
     // What the processor reports (CpuInfo), for device listings.
-    internal static KeyValuePair<string, string>[] HardwareFacts(CpuInfo cpu) =>
-    [
-        new("processor", cpu.Model.Length > 0 ? cpu.Model : "not reported"),
-        new("threads", string.Create(CultureInfo.InvariantCulture, $"{cpu.LogicalProcessors} threads, {cpu.PhysicalCores} cores")),
-        new("instruction sets", cpu.InstructionSets),
-        new("vectors", string.Create(CultureInfo.InvariantCulture,
-            $"{cpu.VectorFloats} floats ({cpu.WidestFloats} at the widest), {cpu.VectorRegisters} registers, fused multiply-add {(cpu.FusedMultiplyAdd ? "yes" : "no")}")),
-        new("caches", string.Create(CultureInfo.InvariantCulture,
-            $"L1d {cpu.L1 >> 10} KiB, L2 {cpu.L2 >> 10} KiB per core, L3 {(cpu.L3 > 0 ? $"{cpu.L3 >> 20} MiB" : "unknown")}, line {cpu.CacheLine} B{(cpu.CachesReported ? "" : " (not reported: fallbacks)")}")),
-    ];
+    internal static KeyValuePair<string, string>[] HardwareFacts(CpuInfo cpu)
+    {
+        var facts = new List<KeyValuePair<string, string>>(7) { new("processor", cpu.Model.Length > 0 ? cpu.Model : "not reported") };
+        if (cpu.CoreGroups.Length > 0)
+        {
+            facts.Add(new("core groups", CpuInfo.DescribeGroups(cpu.CoreGroups)));
+        }
+
+        facts.Add(new("threads", string.Create(CultureInfo.InvariantCulture, $"{cpu.LogicalProcessors} threads, {cpu.PhysicalCores} cores")));
+        facts.Add(new("instruction sets", cpu.InstructionSets));
+        facts.Add(new("vectors", string.Create(CultureInfo.InvariantCulture,
+            $"{cpu.VectorFloats} floats ({cpu.WidestFloats} at the widest), {cpu.VectorRegisters} registers, fused multiply-add {(cpu.FusedMultiplyAdd ? "yes" : "no")}")));
+        facts.Add(new("vector paths", CpuTuning.DescribeVectorPaths()));
+        facts.Add(new("caches", string.Create(CultureInfo.InvariantCulture,
+            $"L1d {cpu.L1 >> 10} KiB, L2 {cpu.L2 >> 10} KiB per core, L3 {(cpu.L3 > 0 ? $"{cpu.L3 >> 20} MiB" : "unknown")}, line {cpu.CacheLine} B{(cpu.CachesReported ? "" : " (not reported: fallbacks)")}")));
+        return [.. facts];
+    }
 
     public override string? TensorCoresUnavailable() => "the CPU computes matrix products in float32";
 
@@ -143,14 +157,11 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
 
     public override void ResetPeakMemoryUsage() => _memory.ResetPeak();
 
-    // System memory not in use, as the runtime reads it (the machine's or the container's limit less what is loaded).
-    long? IMemoryReport.AvailableMemory()
-    {
-        var info = GC.GetGCMemoryInfo();
-        return Math.Max(0, info.TotalAvailableMemoryBytes - info.MemoryLoadBytes);
-    }
+    // System memory not in use (CpuBackend.Memory: the system's MemAvailable and its group limit where reported, held to
+    // the runtime's heap limit where it has one; elsewhere the runtime's total less its load).
+    long? IMemoryReport.AvailableMemory() => Memory.Available;
 
-    // The driver's free memory: the CPU has no driver of its own (AvailableMemory is what the runtime reads).
+    // The driver's free memory: the CPU has no driver of its own (AvailableMemory is what the system reports).
     long? IMemoryReport.FreeMemory() => null;
 
     public override void ReleaseCachedMemory()

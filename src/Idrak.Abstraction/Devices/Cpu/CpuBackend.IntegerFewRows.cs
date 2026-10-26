@@ -29,7 +29,10 @@ internal sealed partial class CpuBackend
     // counts where the CPU shifts each lane by its own count (ShiftLanes), else 2^count to multiply by (the same bits).
     private static class Int4Lanes
     {
-        internal static readonly Vector<int> First = Operands(0, counts: LaneShifts), Second = Operands(1, counts: LaneShifts);
+        // Whether ShiftLanes takes the CPU's per-lane shift: fixed when the int4 kernels first run (ComputeResources.CpuVectors).
+        internal static readonly bool Shifts = LaneShifts;
+
+        internal static readonly Vector<int> First = Operands(0, counts: Shifts), Second = Operands(1, counts: Shifts);
 
         // Lanes 0-7 from the first of two words (16-lane vectors only).
         internal static readonly Vector<int> LowWord = Vector.LessThan(Lane(), new Vector<int>(8));
@@ -458,28 +461,35 @@ internal sealed partial class CpuBackend
         w1 = Vector.ConvertToSingle(Vector.ShiftRightArithmetic(ShiftLanes(l1, second), 28)) * s1;
     }
 
-    // Whether ShiftLanes shifts each lane by its own count (one instruction) instead of multiplying by 2^count.
-    private static bool LaneShifts =>
-        (Vector<int>.Count == 8 && Avx2.IsSupported) || (Vector<int>.Count == 16 && Avx512F.IsSupported) || (Vector<int>.Count == 4 && AdvSimd.IsSupported);
+    // Whether ShiftLanes shifts each lane by its own count (one instruction) instead of multiplying by 2^count: where the
+    // runtime reports the intrinsic and the vector paths allow it (ComputeResources.CpuVectors); the same bits either way.
+    private static bool LaneShifts => CpuTuning.IntrinsicsAllowed &&
+        ((Vector<int>.Count == 8 && Avx2.IsSupported) || (Vector<int>.Count == 16 && Avx512F.IsSupported) || (Vector<int>.Count == 4 && AdvSimd.IsSupported));
+
+    /// <summary>Whether the int4 kernels shift each lane by its own count (listings).</summary>
+    internal static bool Int4LaneShifts => Int4Lanes.Shifts;
 
     // lanes << each lane's count (operand: Int4Lanes.First or Second): the CPU's shift per lane where it has one, else
     // lanes · 2^count, the same bits.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static Vector<int> ShiftLanes(Vector<int> lanes, Vector<int> operand)
     {
-        if (Vector<int>.Count == 8 && Avx2.IsSupported)
+        if (Int4Lanes.Shifts)
         {
-            return Avx2.ShiftLeftLogicalVariable(lanes.AsVector256(), operand.AsVector256().AsUInt32()).AsVector();
-        }
+            if (Vector<int>.Count == 8 && Avx2.IsSupported)
+            {
+                return Avx2.ShiftLeftLogicalVariable(lanes.AsVector256(), operand.AsVector256().AsUInt32()).AsVector();
+            }
 
-        if (Vector<int>.Count == 16 && Avx512F.IsSupported)
-        {
-            return Avx512F.ShiftLeftLogicalVariable(lanes.AsVector512(), operand.AsVector512().AsUInt32()).AsVector();
-        }
+            if (Vector<int>.Count == 16 && Avx512F.IsSupported)
+            {
+                return Avx512F.ShiftLeftLogicalVariable(lanes.AsVector512(), operand.AsVector512().AsUInt32()).AsVector();
+            }
 
-        if (Vector<int>.Count == 4 && AdvSimd.IsSupported)
-        {
-            return AdvSimd.ShiftLogical(lanes.AsVector128(), operand.AsVector128()).AsVector();
+            if (Vector<int>.Count == 4 && AdvSimd.IsSupported)
+            {
+                return AdvSimd.ShiftLogical(lanes.AsVector128(), operand.AsVector128()).AsVector();
+            }
         }
 
         return lanes * operand;

@@ -253,9 +253,29 @@ internal sealed unsafe partial class VulkanBackend
             int formulaAt = Array.IndexOf(list, fallback);
             var once = new double[list.Length];
             Array.Fill(once, double.MaxValue);
+            KernelUnavailableException? refused = null;
+            // A candidate whose kernel the driver refuses is left out (VulkanBackend.Refusals.cs); all of them: the refusal.
+            bool Runs(int candidate)
+            {
+                try
+                {
+                    run(candidate);
+                    return true;
+                }
+                catch (KernelUnavailableException e)
+                {
+                    refused = e;
+                    return false;
+                }
+            }
+
+            if (formulaAt >= 0 && !Runs(fallback))
+            {
+                formulaAt = -1;
+            }
+
             if (formulaAt >= 0)
             {
-                run(fallback);
                 once[formulaAt] = TimeRuns(fallback, 1, run);
                 if (once[formulaAt] * 2 > budget)
                 {
@@ -268,14 +288,18 @@ internal sealed unsafe partial class VulkanBackend
             // fastest are dropped.
             for (int c = 0; c < list.Length && spent.Elapsed.TotalMilliseconds <= budget; c++)
             {
-                if (c != formulaAt)
+                if (c != formulaAt && list[c] != fallback && Runs(list[c]))
                 {
-                    run(list[c]);
                     once[c] = TimeRuns(list[c], 1, run);
                 }
             }
 
             double best = once.Min();
+            if (best == double.MaxValue && refused is not null)
+            {
+                throw refused;                                             // every candidate refused: the caller's fallback
+            }
+
             var kept = Enumerable.Range(0, list.Length).Where(c => once[c] <= 1.5 * best || c == formulaAt).ToArray();
 
             // Each remaining candidate is timed as it runs in practice, several dispatches back to back (as many as take
@@ -322,7 +346,7 @@ internal sealed unsafe partial class VulkanBackend
 
         int chosen = list[fastest];
         int formula = Array.IndexOf(list, fallback);
-        if (formula >= 0 && medians[fastest] >= medians[formula] * TuneMargin)
+        if (formula >= 0 && medians[formula] < double.MaxValue && medians[fastest] >= medians[formula] * TuneMargin)
         {
             chosen = fallback;                                             // within the noise of the formula's choice
         }

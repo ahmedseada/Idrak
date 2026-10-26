@@ -429,6 +429,62 @@ public abstract partial class Backend : IDeviceBackend
         }
     }
 
+    // RefusedKernelsFallBack: 1 on, 0 off, -1 not read yet (BuildsKernelsWhenUsed is virtual: read on first use).
+    private int _refusedFallBack = -1;
+
+    // IDRAK_REFUSED_KERNELS=throw: a kernel the driver refuses reaches the caller instead of falling back (to find the fault).
+    private static readonly bool s_refusedThrow = Environment.GetEnvironmentVariable("IDRAK_REFUSED_KERNELS") is { } refused
+        && refused.Trim().Equals("throw", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether this device builds its kernels when they are first used (a Vulkan driver compiles a pipeline on its first
+    /// dispatch), so its driver may refuse one (<see cref="KernelUnavailableException"/>). On such a device, unless
+    /// IDRAK_REFUSED_KERNELS=throw, an operation whose kernel is refused falls back instead of failing: the operation's host
+    /// fallback, its composed path, or "no kernel" (the caller's own path), whichever its default is; and its calls take
+    /// the dispatcher's out-of-line path (a few field reads a call), so the first refusal is caught too. Off by default.
+    /// </summary>
+    protected virtual bool BuildsKernelsWhenUsed => false;
+
+    /// <summary>
+    /// Called once per operation and refused kernel when the dispatcher ran <paramref name="operation"/> through its
+    /// <paramref name="fallback"/> ("the host", "its composed path", "the caller's path") because
+    /// <paramref name="refused"/>'s kernel is unavailable here (<see cref="BuildsKernelsWhenUsed"/>): for the device to list
+    /// what each refused kernel fell back to. Nothing by default.
+    /// </summary>
+    protected virtual void KernelFellBack(string operation, KernelUnavailableException refused, string fallback)
+    {
+    }
+
+    // Whether a refused kernel falls back (BuildsKernelsWhenUsed, unless IDRAK_REFUSED_KERNELS=throw).
+    private bool RefusedKernelsFallBack
+    {
+        get
+        {
+            int on = Volatile.Read(ref _refusedFallBack);
+            if (on < 0)
+            {
+                on = BuildsKernelsWhenUsed && !s_refusedThrow ? 1 : 0;
+                Volatile.Write(ref _refusedFallBack, on);
+            }
+
+            return on == 1;
+        }
+    }
+
+    // Whether the dispatcher runs the device's own kernel of an operation with a host fallback under a HostRetry.
+    private bool RetriesOnHost => RetryOnHost || RefusedKernelsFallBack;
+
+    // Reports a refused kernel's fallback once per operation and kernel (KernelFellBack).
+    private void FellBack(string operation, KernelUnavailableException refused, string fallback)
+    {
+        if (LazyInitializer.EnsureInitialized(ref _fellBack, static () => new(StringComparer.Ordinal)).TryAdd(operation + "\0" + refused.Kernel, true))
+        {
+            KernelFellBack(operation, refused, fallback);
+        }
+    }
+
+    private ConcurrentDictionary<string, bool>? _fellBack;
+
     // Whether this device has a kernel of its own for the operation: without one its NameKernel is the host fallback
     // already, which a retry would only run twice.
     private bool OwnsKernel(int operation) => (_ownKernels ??= Operations.Kernels.OwnKernels(this)).Has(operation);
@@ -477,24 +533,39 @@ public abstract partial class Backend : IDeviceBackend
     // while the device's kernel runs, a DeviceException does not report itself; Failed reports it once, with the
     // operation, before the call runs again on the host (NameOnHost), where errors report themselves again. A mutable
     // struct, so a plain local (not a `using` one, which would be read-only).
+    // With `all` (RetryOnHost) every DeviceException is retried; without, only a refused kernel (KernelUnavailableException,
+    // RefusedKernelsFallBack), and the other errors report themselves and reach the caller as before.
     private struct HostRetry
     {
         private readonly Operation _operation;
+        private readonly bool _all;
         private bool _ended;
 
-        public HostRetry(Operation operation)
+        public HostRetry(Operation operation, bool all)
         {
             _operation = operation;
-            DeviceException.EnterRetry();
+            _all = all;
+            if (all)
+            {
+                DeviceException.EnterRetry();
+            }
         }
 
-        // The device's kernel threw: ends the quiet part and reports the retry.
-        public void Failed(DeviceException failure)
+        // Whether the failure is retried on the host.
+        public readonly bool Takes(DeviceException failure) => _all || failure is KernelUnavailableException;
+
+        // The device's kernel threw: ends the quiet part and reports the retry (a refused kernel: to the device, once).
+        public void Failed(Backend backend, DeviceException failure)
         {
             End();
-            if (Telemetry.IsEnabled(TelemetryLevel.Devices))
+            if (_all && Telemetry.IsEnabled(TelemetryLevel.Devices))
             {
                 Telemetry.DeviceFailed(new DeviceFailed(failure.Device, _operation.Name, failure.Message, RetriedOnHost: true, Hint: null));
+            }
+
+            if (failure is KernelUnavailableException refused)
+            {
+                backend.FellBack(_operation.Name, refused, "the host");
             }
         }
 
@@ -503,7 +574,10 @@ public abstract partial class Backend : IDeviceBackend
             if (!_ended)
             {
                 _ended = true;
-                DeviceException.LeaveRetry();
+                if (_all)
+                {
+                    DeviceException.LeaveRetry();
+                }
             }
         }
     }
@@ -574,7 +648,7 @@ public abstract partial class Backend : IDeviceBackend
     private Delegate?[] ResolveKernels(Delegate?[] unresolved)
     {
         var slots = Operations.Kernels.Resolve(this);
-        bool direct = Array.TrueForAll(slots, k => k is null) && Volatile.Read(ref _trace) is null && !RetryOnHost;
+        bool direct = Array.TrueForAll(slots, k => k is null) && Volatile.Read(ref _trace) is null && !RetryOnHost && !RefusedKernelsFallBack;
         Interlocked.CompareExchange(ref _kernels, direct ? null : slots, unresolved);
         return slots;
     }

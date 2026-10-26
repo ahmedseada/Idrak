@@ -833,6 +833,8 @@ public sealed class Idrak.Abstraction.ComputeGraph : System.IDisposable
   public void Replay()
 
 public static class Idrak.Abstraction.ComputeResources
+  public static Idrak.Abstraction.Devices.CpuVectorPaths CpuVectors { get; set; }
+  public static Idrak.Abstraction.Devices.CpuVectorPaths ParseCpuVectors(string? name)
   public static Idrak.Abstraction.Devices.LookupTablePlacement LookupTables { get; set; }
   public static Idrak.Abstraction.Devices.LookupTablePlacement ParseLookupTables(string? name)
   public static Idrak.Abstraction.MemoryUsage GetMemoryUsage(Idrak.Abstraction.Device device)
@@ -1428,6 +1430,8 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   protected bool BeginMove(bool wait, bool lookupTablesOnly = false)
   protected bool HoldsAddresses { get; }
   protected static long TuningBegan()
+  protected virtual bool BuildsKernelsWhenUsed { get; }
+  protected virtual void KernelFellBack(string operation, Idrak.Abstraction.Devices.KernelUnavailableException refused, string fallback)
   protected void ComposedAttention(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage? mask, Idrak.Abstraction.Devices.Storage scores, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage y, int heads, int rows, int keyRows, int dim, float scale)
   protected void ComposedAttentionTraining(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage? mask, Idrak.Abstraction.Devices.Storage scores, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage gradients, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, int heads, int rows, int keyRows, int dim, float scale)
   protected void ComposedConvolution(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage weight, Idrak.Abstraction.Devices.Storage? bias, Idrak.Abstraction.Devices.Storage y, in Idrak.Abstraction.Devices.ConvGeometry g, int filters, int groups, Idrak.Abstraction.Devices.ConvActivation activation)
@@ -1840,6 +1844,12 @@ public readonly record struct Idrak.Abstraction.Devices.ConvGeometry : System.IE
   public int SW { get; init; }
   public int W { get; init; }
 
+public enum Idrak.Abstraction.Devices.CpuVectorPaths : byte
+  Automatic = 0
+  Native = 1
+  Portable = 2
+  Scalar = 3
+
 public static class Idrak.Abstraction.Devices.DeferredTensors
   public const string Kind = "deferred"
   public static Idrak.Abstraction.Device Device { get; }
@@ -2034,6 +2044,10 @@ public enum Idrak.Abstraction.Devices.InterpolationMode : int
   Bilinear = 1
   Nearest = 0
 
+public sealed class Idrak.Abstraction.Devices.KernelUnavailableException : Idrak.Abstraction.Devices.DeviceException
+  public KernelUnavailableException(string device, string kernel, string message)
+  public string Kernel { get; }
+
 public readonly record struct Idrak.Abstraction.Devices.LiveStorage : System.IEquatable<Idrak.Abstraction.Devices.LiveStorage>
   public Idrak.Abstraction.Devices.Storage Storage { get; init; }
   public LiveStorage(long Bytes, string Owner, Idrak.Abstraction.Devices.Storage Storage)
@@ -2186,6 +2200,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void OnChoicesShared(in Idrak.Abstraction.Diagnostics.MeasuredChoicesShared e)
   public void OnCollective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
+  public void OnDeviceListed(in Idrak.Abstraction.Diagnostics.DeviceListed e)
   public void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public void OnFault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
@@ -2230,6 +2245,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstract
   public void OnChoicesShared(in Idrak.Abstraction.Diagnostics.MeasuredChoicesShared e)
   public void OnCollective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
+  public void OnDeviceListed(in Idrak.Abstraction.Diagnostics.DeviceListed e)
   public void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public void OnFault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
@@ -2259,6 +2275,14 @@ public readonly record struct Idrak.Abstraction.Diagnostics.DeviceFailed : Syste
   public string Message { get; init; }
   public string? Hint { get; init; }
   public string? Operation { get; init; }
+
+public readonly record struct Idrak.Abstraction.Diagnostics.DeviceListed : System.IEquatable<Idrak.Abstraction.Diagnostics.DeviceListed>
+  public DeviceListed(string Device, System.TimeSpan Start, System.TimeSpan Describe, bool Cold, string? Error)
+  public System.TimeSpan Describe { get; init; }
+  public System.TimeSpan Start { get; init; }
+  public bool Cold { get; init; }
+  public string Device { get; init; }
+  public string? Error { get; init; }
 
 public readonly record struct Idrak.Abstraction.Diagnostics.EngineEvent : System.IEquatable<Idrak.Abstraction.Diagnostics.EngineEvent>
   public EngineEvent(Idrak.Abstraction.Diagnostics.EngineEventKind Kind, string Model, System.TimeSpan Duration, System.TimeSpan QueueWait, int BatchSize, string? Reason)
@@ -2369,6 +2393,7 @@ public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnChoicesShared(in Idrak.Abstraction.Diagnostics.MeasuredChoicesShared e)
   public (default) void OnCollective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public (default) void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
+  public (default) void OnDeviceListed(in Idrak.Abstraction.Diagnostics.DeviceListed e)
   public (default) void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public (default) void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public (default) void OnFault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
@@ -2435,6 +2460,7 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public void OnChoicesShared(in Idrak.Abstraction.Diagnostics.MeasuredChoicesShared e)
   public void OnCollective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public void OnDeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
+  public void OnDeviceListed(in Idrak.Abstraction.Diagnostics.DeviceListed e)
   public void OnEngine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public void OnEpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public void OnFault(in Idrak.Abstraction.Diagnostics.FaultInjected e)
@@ -2754,6 +2780,7 @@ public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static void ChoicesShared(in Idrak.Abstraction.Diagnostics.MeasuredChoicesShared e)
   public static void Collective(in Idrak.Abstraction.Diagnostics.CollectiveCompleted e)
   public static void DeviceFailed(in Idrak.Abstraction.Diagnostics.DeviceFailed e)
+  public static void DeviceListed(in Idrak.Abstraction.Diagnostics.DeviceListed e)
   public static void Engine(in Idrak.Abstraction.Diagnostics.EngineEvent e)
   public static void EpochCompleted(in Idrak.Abstraction.Diagnostics.EpochCompleted e)
   public static void Fault(in Idrak.Abstraction.Diagnostics.FaultInjected e)

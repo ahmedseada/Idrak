@@ -13,8 +13,11 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] CpuTuningGroup =
     [
         ("cpu tuning: the formulas give the former constants on a 32 KiB L1 / 1 MiB L2 / 8-wide machine and scale with the reported caches and width", CpuTuningFormulas),
-        ("cpu tuning: measured cut-overs, every tiled kernel, register rows, k chunks and the streaming loop give the results of the fallback formulas, bit for bit", CpuTunedChoicesMatch),
+        ("cpu tuning: measured cut-overs, every tiled kernel, every vector path setting, register rows, k chunks and the streaming loop give the results of the fallback formulas, bit for bit", CpuTunedChoicesMatch),
         ("cpu tuning: measured cut-overs are kept per machine, runtime and thread count and read back; the machine's report parses", CpuTuningCache),
+        ("cpu tuning: the CPU's memory is the system's (/proc/meminfo, the lowest cgroup v1 or v2 limit above the process with its usage less inactive file cache) where the runtime's figure is its heap budget (Mono), held to the runtime's heap limit where it has one (CoreCLR: unchanged), the runtime's where the system reports none; both listed, labelled", CpuSystemMemory),
+        ("cpu tuning: the cores are named by their groups from /proc/cpuinfo and cpufreq (part numbers and highest frequencies, raw; the system's name where given; x86's model name as before)", CpuCoreGroups),
+        ("cpu tuning: the vector paths (IDRAK_CPU_VECTORS auto, native, portable, scalar) choose the kernels the runtime's report allows; portable 128-bit vectors where it reports no NEON; lane shifts equal their multiplies; the description says what runs", CpuVectorPathsChosen),
     ];
 
     internal static void CpuTuningFormulas(Device device)
@@ -195,6 +198,20 @@ internal abstract partial class Tests
                     CpuTuning.KChunkOverride = chunk;
                     Same(fallback, Run(), $"{registerRows} register rows, k chunk {chunk}");
                 }
+            }
+
+            var vectors = ComputeResources.CpuVectors;
+            try
+            {
+                foreach (var paths in Enum.GetValues<CpuVectorPaths>())
+                {
+                    ComputeResources.CpuVectors = paths;
+                    Same(fallback, Run(), $"vector paths {paths} (tiled kernel {CpuTuning.Kernel})");
+                }
+            }
+            finally
+            {
+                ComputeResources.CpuVectors = vectors;
             }
 
             CpuTuning.WidePanelsOverride = !CpuTuning.WidePanels;

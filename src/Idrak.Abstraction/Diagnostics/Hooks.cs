@@ -133,6 +133,11 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
         _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Device {e.Device} tuned {e.Operation}: {e.Candidates} candidates in {e.Duration.TotalMilliseconds:F0} ms (once per shape class{(e.Nested ? ", inside another tuning" : "")})"));
 
     /// <inheritdoc />
+    public void OnDeviceListed(in DeviceListed e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"Device {e.Device} listed {(e.Cold ? "cold" : "warm")}: started in {e.Start.TotalMilliseconds:F1} ms, described in {e.Describe.TotalMilliseconds:F1} ms{(e.Error is { } error ? $" (could not start: {error})" : "")}"));
+
+    /// <inheritdoc />
     public void OnGraphRecordingFailed(in GraphRecordingFailed e) =>
         _out.WriteLine($"Device {e.Device} could not record {e.Work} as a graph: {e.Reason}; it runs as ordinary steps");
 
@@ -434,6 +439,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnTuning(in TuningCompleted e) => Write(e);
 
     /// <inheritdoc />
+    public void OnDeviceListed(in DeviceListed e) => Write(e);
+
+    /// <inheritdoc />
     public void OnGraphRecordingFailed(in GraphRecordingFailed e) => Write(e);
 
     /// <inheritdoc />
@@ -535,6 +543,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnTuning(in TuningCompleted e) => _channel.OnTuning(in e);
+
+    /// <inheritdoc />
+    public void OnDeviceListed(in DeviceListed e) => _channel.OnDeviceListed(in e);
 
     /// <inheritdoc />
     public void OnGraphRecordingFailed(in GraphRecordingFailed e) => _channel.OnGraphRecordingFailed(in e);
@@ -744,6 +755,14 @@ public static class TelemetryJson
                 w.WriteNumber("candidates", e.Candidates);
                 w.WriteNumber("duration_ms", e.Duration.TotalMilliseconds);
                 w.WriteBoolean("nested", e.Nested);
+                break;
+            case DeviceListed e:
+                w.WriteString("event", "device_listed");
+                w.WriteString("device", e.Device);
+                w.WriteNumber("start_ms", e.Start.TotalMilliseconds);
+                w.WriteNumber("describe_ms", e.Describe.TotalMilliseconds);
+                w.WriteBoolean("cold", e.Cold);
+                if (e.Error is { } listedError) w.WriteString("error", listedError);
                 break;
             case GraphRecordingFailed e:
                 w.WriteString("event", "graph_recording_failed");

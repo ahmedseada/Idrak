@@ -99,10 +99,33 @@ public static class DeviceListing
         return devices;
     }
 
-    /// <summary>What <paramref name="device"/> reports (starting its backend).</summary>
+    // The devices listed so far in this process (the first listing of each is its cold start).
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> s_listed = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// What <paramref name="device"/> reports (starting its backend). Reported to telemetry (<see cref="DeviceListed"/>,
+    /// <see cref="TelemetryLevel.Devices"/>): the time to start the backend and to read what it reports, the first listing
+    /// of each device in the process (cold) apart from the later ones (warm).
+    /// </summary>
     public static DeviceInfo Describe(Device device)
     {
         ArgumentNullException.ThrowIfNull(device);
+        if (!Telemetry.IsEnabled(TelemetryLevel.Devices))
+        {
+            s_listed.TryAdd(device.ToString(), true);
+            return DescribeTimed(device, out _, out _);
+        }
+
+        bool cold = s_listed.TryAdd(device.ToString(), true);
+        var info = DescribeTimed(device, out var start, out var describe);
+        Telemetry.DeviceListed(new DeviceListed(info.Device, start, describe, cold, info.Error));
+        return info;
+    }
+
+    private static DeviceInfo DescribeTimed(Device device, out TimeSpan start, out TimeSpan describe)
+    {
+        long began = System.Diagnostics.Stopwatch.GetTimestamp();
+        describe = TimeSpan.Zero;
         var provider = device.Type == DeviceType.Cpu ? null : DeviceProviders.Find(device.Kind);
         bool isDefault = device == Device.Default;
         var info = new DeviceInfo
@@ -123,11 +146,14 @@ public static class DeviceListing
         }
         catch (Exception e)
         {
+            start = System.Diagnostics.Stopwatch.GetElapsedTime(began);
             return info with { Error = e.Message };
         }
 
+        start = System.Diagnostics.Stopwatch.GetElapsedTime(began);
+        long described = System.Diagnostics.Stopwatch.GetTimestamp();
         var hardware = backend.Hardware;
-        return info with
+        var result = info with
         {
             Name = backend.Name,
             MatrixUnits = backend.MatrixUnits,
@@ -140,5 +166,7 @@ public static class DeviceListing
             Facts = hardware.Facts,
             KernelsUnavailable = (backend as Idrak.Abstraction.Devices.IKernelAvailability)?.KernelsUnavailable(),
         };
+        describe = System.Diagnostics.Stopwatch.GetElapsedTime(described);
+        return result;
     }
 }

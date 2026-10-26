@@ -65,7 +65,17 @@ internal sealed partial class VulkanBackend
             return;
         }
 
-        int chosen = MeasureWidth(candidates, formula);
+        long began = TuningBegan();
+        int chosen;
+        try
+        {
+            chosen = MeasureWidth(candidates, formula);
+        }
+        finally
+        {
+            TuningMeasured("kernel width", candidates.Count, began);       // the start's largest part, cold (telemetry)
+        }
+
         CacheChoices(new Dictionary<string, string> { [key] = chosen.ToString(CultureInfo.InvariantCulture) });
         SetWidth(chosen);
         WidthChoice = "measured";
@@ -131,6 +141,7 @@ internal sealed partial class VulkanBackend
             parts.Add(() => Eight(() => Softmax(logits, logits, 1, Classes, false)));
 
             var times = new double[candidates.Count, parts.Count];
+            var refusedAt = new bool[candidates.Count];
             for (int i = 0; i < candidates.Count; i++)
             {
                 SetWidth(candidates[i]);
@@ -146,6 +157,24 @@ internal sealed partial class VulkanBackend
 
                     Array.Sort(runs);
                     times[i, p] = Math.Max(runs[1], 1e-6);
+                }
+
+                // A width at which the driver refused a kernel (its work ran another variant or on the host) is not a
+                // candidate: what it timed is not that width (VulkanBackend.Refusals.cs).
+                refusedAt[i] = _anyRefused && _refused.Values.Any(r => r.Width == candidates[i]);
+            }
+
+            if (refusedAt.Any(r => r) && !refusedAt.All(r => r))           // refused at every width: it tells the widths nothing apart
+            {
+                for (int i = 0; i < candidates.Count; i++)
+                {
+                    if (refusedAt[i])
+                    {
+                        for (int p = 0; p < parts.Count; p++)
+                        {
+                            times[i, p] = double.PositiveInfinity;
+                        }
+                    }
                 }
             }
 
@@ -174,7 +203,7 @@ internal sealed partial class VulkanBackend
             }
 
             int formulaAt = candidates.IndexOf(formula);
-            return formulaAt >= 0 && Math.Exp(scores[chosen]) >= Math.Exp(scores[formulaAt]) * WidthMargin ? formula : candidates[chosen];
+            return formulaAt >= 0 && !double.IsPositiveInfinity(scores[formulaAt]) && Math.Exp(scores[chosen]) >= Math.Exp(scores[formulaAt]) * WidthMargin ? formula : candidates[chosen];
         }
         finally
         {

@@ -693,6 +693,7 @@ internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
             return pipeline;
         }
 
+        ThrowIfRefused(kernel);                                                // asked once per process (VulkanBackend.Refusals.cs)
         ref readonly var p = ref _physical.Properties;
         if (kernel.Bindings > p.MaxPerStageDescriptorStorageBuffers)
         {
@@ -729,41 +730,13 @@ internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
             int result = vkCreateShaderModule(_device, &info, null, out module);
             if (result != Success)
             {
-                throw new VulkanException($"{Name} rejected Vulkan kernel '{kernel.Name}' (vkCreateShaderModule: {VulkanDriver.Describe(result)}).");
+                throw Refuse(kernel, $"vkCreateShaderModule: {VulkanDriver.Describe(result)}");
             }
         }
 
         try
         {
-            byte* entry = stackalloc byte[] { (byte)'m', (byte)'a', (byte)'i', (byte)'n', 0 };
-            var required = new VkPipelineShaderStageRequiredSubgroupSizeCreateInfo
-            {
-                SType = StructurePipelineShaderStageRequiredSubgroupSizeCreateInfo,
-                RequiredSubgroupSize = (uint)kernel.RequiredSubgroupSize,
-            };
-            bool sized = kernel.RequiredSubgroupSize > 0 && _sizeControl.Enabled;  // VulkanBackend.SubgroupSize.cs
-            var info = new VkComputePipelineCreateInfo
-            {
-                SType = StructureComputePipelineCreateInfo,
-                Stage = new VkPipelineShaderStageCreateInfo
-                {
-                    SType = StructurePipelineShaderStageCreateInfo,
-                    PNext = sized ? &required : null,
-                    Flags = sized && _sizeControl.FullSubgroups ? PipelineStageRequireFullSubgroups : 0,
-                    Stage = ShaderStageCompute,
-                    Module = module,
-                    Name = entry,
-                },
-                Layout = layout,
-                BasePipelineIndex = -1,
-            };
-            ulong handle;
-            int result = vkCreateComputePipelines(_device, _pipelineCache, 1, &info, null, &handle);
-            if (result != Success)
-            {
-                throw new VulkanException($"{Name} could not build Vulkan kernel '{kernel.Name}' (vkCreateComputePipelines: {VulkanDriver.Describe(result)}).");
-            }
-
+            ulong handle = BuildPipeline(kernel, module, layout);                // the ladder: VulkanBackend.Refusals.cs
             pipeline = new Pipeline(handle, layout, this);
             _pipelines[kernel] = pipeline;
             kernel.LastPipeline = pipeline;

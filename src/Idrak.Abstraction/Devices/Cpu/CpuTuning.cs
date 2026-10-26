@@ -313,14 +313,57 @@ internal static class CpuTuning
     /// <summary>Forces the 512-bit few-row panels on or off (tests; on only where AVX-512 is accelerated).</summary>
     internal static bool? WidePanelsOverride;
 
-    /// <summary>The tiled product kernel the instruction sets allow (best first), or the override.</summary>
-    internal static TiledKernel Kernel => TiledKernelOverride ?? s_kernel;
+    /// <summary>
+    /// The tiled product kernel the vector paths allow (<see cref="ComputeResources.CpuVectors"/>, best first), or the
+    /// override. Every kernel gives the same results (one FMA chain over k per element).
+    /// </summary>
+    internal static TiledKernel Kernel => TiledKernelOverride ?? KernelFor(ComputeResources.CpuVectors);
 
-    private static readonly TiledKernel s_kernel =
+    /// <summary>The tiled kernel for a vector path setting on this machine.</summary>
+    internal static TiledKernel KernelFor(CpuVectorPaths paths) => paths switch
+    {
+        CpuVectorPaths.Native => s_nativeKernel,
+        CpuVectorPaths.Portable => s_portableKernel,
+        CpuVectorPaths.Scalar => TiledKernel.None,
+        _ => s_automaticKernel,
+    };
+
+    // What the runtime reports as intrinsics (Native, as before portable paths): AVX-512 or AVX2 with FMA, ARM64's AdvSimd.
+    private static readonly TiledKernel s_nativeKernel =
         Vector512.IsHardwareAccelerated && Avx512F.IsSupported && Fma.IsSupported ? TiledKernel.Avx512
         : Vector256.IsHardwareAccelerated && Avx2.IsSupported && Fma.IsSupported ? TiledKernel.Avx2
         : AdvSimd.Arm64.IsSupported && Vector128.IsHardwareAccelerated ? TiledKernel.Neon
         : TiledKernel.None;
+
+    // The 8 × 8 kernel is written in portable 128-bit vectors (Vector128.FusedMultiplyAdd): Portable takes it wherever they
+    // are accelerated; Automatic also where the runtime reports no AdvSimd on an ARM64 machine (Mono), whose vector unit
+    // has fused multiply-add, instead of falling back to the row-block loops.
+    private static readonly TiledKernel s_portableKernel = Vector128.IsHardwareAccelerated ? TiledKernel.Neon : TiledKernel.None;
+
+    private static readonly TiledKernel s_automaticKernel = s_nativeKernel != TiledKernel.None ? s_nativeKernel
+        : Vector128.IsHardwareAccelerated && System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture == System.Runtime.InteropServices.Architecture.Arm64
+            ? TiledKernel.Neon : TiledKernel.None;
+
+    /// <summary>Whether the setting allows the platform's intrinsics (Automatic and Native).</summary>
+    internal static bool IntrinsicsAllowed => ComputeResources.CpuVectors is CpuVectorPaths.Automatic or CpuVectorPaths.Native;
+
+    /// <summary>One line for device listings: the setting, the tiled kernel and how its vectors run, and the int4 lane shifts.</summary>
+    internal static string DescribeVectorPaths()
+    {
+        var setting = ComputeResources.CpuVectors;
+        var kernel = Kernel;
+        var (rows, columns) = KernelShape(kernel);
+        string how = kernel switch
+        {
+            TiledKernel.None => "none (the row-block loops)",
+            TiledKernel.Neon => string.Create(CultureInfo.InvariantCulture, $"{rows}×{columns} in 128-bit vectors")
+                + (AdvSimd.Arm64.IsSupported ? " (NEON)" : " (portable vectors: the runtime reports no NEON intrinsics)"),
+            _ => string.Create(CultureInfo.InvariantCulture, $"{kernel} {rows}×{columns}"),
+        };
+        return $"{setting.ToString().ToLowerInvariant()} (IDRAK_CPU_VECTORS); tiled products: {how}; few-row products: "
+            + (StreamingFewRows ? "streaming loops" : "register-tiled") + "; int4 lane shifts: "
+            + (CpuBackend.Int4LaneShifts ? "the CPU's per-lane shift" : "multiplies by powers of two (the same bits)");
+    }
 
     /// <summary>Rows and columns of C a tiled kernel keeps in registers.</summary>
     internal static (int Rows, int Columns) KernelShape(TiledKernel kernel) => kernel switch
@@ -333,9 +376,15 @@ internal static class CpuTuning
 
     /// <summary>
     /// Runs the few-row bfloat16, int8 and int4 products with the streaming loops instead of the register-tiled kernels
-    /// (tests: the same results; also the path where SIMD is not accelerated).
+    /// (tests: the same results; also the path where SIMD is not accelerated, and <see cref="CpuVectorPaths.Scalar"/>).
     /// </summary>
-    internal static bool StreamingFewRows;
+    internal static bool StreamingFewRows
+    {
+        get => s_streamingFewRows || ComputeResources.CpuVectors == CpuVectorPaths.Scalar;
+        set => s_streamingFewRows = value;
+    }
+
+    private static bool s_streamingFewRows;
 
     /// <summary>One line for benchmarks and diagnostics: the machine and every choice made from it.</summary>
     internal static string Describe()

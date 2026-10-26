@@ -22,6 +22,7 @@ internal abstract partial class Tests
         ("operations: with RetryOnHost the dispatcher runs a failing kernel again on the host: the CPU's result, one host call, one retried event; a registered kernel is not retried", DeviceFailureRetriedOnHost),
         ("operations: IDRAK_RETRY_ON_HOST is off when unset or 0, on for every device but the CPU with 1 or all, and for the kinds listed", RetryOnHostSetting),
         ("operations: a device with nothing registered, no trace and retry off keeps the inlined fast path; RetryOnHost leaves it and turning it off returns", RetryOnHostLeavesFastPath),
+        ("operations: on a device that builds its kernels when first used, a refused kernel (KernelUnavailableException) falls back from the first call with retry off: the host (the CPU's bits) or the caller's path, told to the device once; other device errors still reach the caller", RefusedKernelFallsBack),
         ("operations: NormStats keeps its precision for one-element groups and large values with a small spread (variance from two passes), also over a group of many chunks (merged by count, mean and sum of squares)", NormStatsPrecision),
     ];
 

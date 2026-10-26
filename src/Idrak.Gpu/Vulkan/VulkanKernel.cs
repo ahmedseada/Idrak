@@ -163,6 +163,10 @@ public sealed class VulkanKernel : IDeviceKernel
     /// <summary>The subgroup size its pipeline requires (VK_EXT_subgroup_size_control), or 0 for the device's default.</summary>
     internal int RequiredSubgroupSize { get; init; }
 
+    /// <summary>Whether it is correct only at <see cref="RequiredSubgroupSize"/> (an emulation built for that size): a
+    /// pipeline the driver refuses with that request is not retried without it (rule 87).</summary>
+    internal bool SubgroupSizeFixed { get; init; }
+
     /// <summary>Whether its pipeline keeps the device's default subgroup size (no size is measured for it): a kernel whose
     /// result and speed do not depend on choosing one (the cooperative-matrix products).</summary>
     internal bool DefaultSubgroupSize { get; init; }

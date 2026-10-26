@@ -311,6 +311,10 @@ def generate():
     d.append("// matches it or whether its error came from the device at all; its errors reach the caller. An operation the device")
     d.append("// has no kernel of its own for already runs its host fallback: it is not retried (it would only run twice).")
     d.append("// On a device that guards its moves (an IOffloadingBackend) every call takes the second path, inside an operation scope.")
+    d.append("// On a device that builds its kernels when first used (BuildsKernelsWhenUsed: a driver may refuse one, throwing a")
+    d.append("// KernelUnavailableException) every call takes the second path too, and a refused kernel falls back whatever RetryOnHost")
+    d.append("// says: an operation with a host fallback runs NameOnHost, a composed one NameComposed (a copy of its default body), one")
+    d.append("// with no kernel otherwise returns its \"none\" value so the caller takes its own path; other errors reach the caller.")
     d.append("public abstract partial class Backend")
     d.append("{")
     for i, (method, op, returns, parameters, docs, default) in enumerate(named):
@@ -362,38 +366,59 @@ def generate():
                 d.append("            return;")
             d.append("        }")
             d.append("")
-            d.append(f"        if (!RetryOnHost || !OwnsKernel(OperationIndex.{op}))")
+            d.append(f"        if (!RetriesOnHost || !OwnsKernel(OperationIndex.{op}))")
             d.append("        {")
             d.append(f"            {ret}{own};")
             if returns == "void":
                 d.append("            return;")
             d.append("        }")
             d.append("")
-            d.append(f"        var retry = new HostRetry(Ops.{op});")
+            d.append(f"        var retry = new HostRetry(Ops.{op}, RetryOnHost);")
             d.append("        try")
             d.append("        {")
             d.append(f"            {ret}{own};")
             d.append("        }")
-            d.append("        catch (DeviceException failure)")
+            d.append("        catch (DeviceException failure) when (retry.Takes(failure))")
             d.append("        {")
-            d.append("            retry.Failed(failure);")
+            d.append("            retry.Failed(this, failure);")
             d.append(f"            {ret}{host};")
             d.append("        }")
             d.append("        finally")
             d.append("        {")
             d.append("            retry.End();")
             d.append("        }")
-        elif returns == "void":
+        else:
+            # A composed operation falls back to a copy of its default body, one with no kernel otherwise to its "none".
+            ret = "" if returns == "void" else "return "
+            composed = default == "Composed"
+            fallback_call = f"{op}Composed({arguments})" if composed else "default"
+            where = "its composed path" if composed else "the caller's path"
             d.append(f"        if (Kernel(OperationIndex.{op}) is OperationKernels.{op} kernel)")
             d.append("        {")
-            d.append(f"            {call};")
+            d.append(f"            {ret}{call};")
+            if returns == "void":
+                d.append("            return;")
             d.append("        }")
-            d.append("        else")
+            d.append("")
+            d.append(f"        if (!RefusedKernelsFallBack || !OwnsKernel(OperationIndex.{op}))")
             d.append("        {")
-            d.append(f"            {own};")
+            d.append(f"            {ret}{own};")
+            if returns == "void":
+                d.append("            return;")
             d.append("        }")
-        else:
-            d.append(f"        return Kernel(OperationIndex.{op}) is OperationKernels.{op} kernel ? {call} : {own};")
+            d.append("")
+            d.append("        try")
+            d.append("        {")
+            d.append(f"            {ret}{own};")
+            d.append("        }")
+            d.append("        catch (KernelUnavailableException refused)")
+            d.append("        {")
+            d.append(f"            FellBack(Ops.{op}.Name, refused, \"{where}\");")
+            if returns == "void":
+                d.append(f"            {fallback_call};")
+            else:
+                d.append(f"            return {fallback_call};")
+            d.append("        }")
         d.append("    }")
         if default == "Host":
             # The default body of NameKernel, not virtual: the host fallback whatever the device overrides (or whichever
@@ -412,6 +437,12 @@ def generate():
                 d.append(f"    /// </summary>")
                 d.append(f"    protected {returns} {op}OnHost({plain})")
             d.extend(f"    {line}" if j == 0 else line.rstrip() for j, line in enumerate(text.split("\n")))
+        elif default == "Composed":
+            # The default body of NameKernel: what a refused kernel of the device's own falls back to.
+            d.append("")
+            d.append(f"    // The composed path of {op} (the default body of {method}Kernel), for a refused kernel (BuildsKernelsWhenUsed).")
+            d.append(f"    private {returns} {op}Composed({plain})")
+            d.extend(f"    {line}" if j == 0 else line.rstrip() for j, line in enumerate(bodies[op].split("\n")))
 
     # Which operations a device has a kernel of its own for: its NameKernel overrides Backend's (a delegate bound to the
     # device's method says which type declares it: no method is looked up by name), or it implements the operation's

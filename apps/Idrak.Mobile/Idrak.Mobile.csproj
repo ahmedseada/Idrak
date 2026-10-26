@@ -8,7 +8,10 @@
     phone (USB debugging on). The command line: dotnet build -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -t:Install
     (with -p:AndroidSdkDirectory=FOLDER when the Android SDK is not where the tools look).
 
-    The runtime is .NET for Android's default (Mono); -p:UseMonoRuntime=false builds it on CoreCLR, to measure both.
+    The runtime: IdrakAndroidRuntime, mono (the default, .NET for Android's own) or coreclr, so both can be built and
+    measured against each other (the Devices lab's runtime line, the Chat lab's tokens per second):
+      dotnet build -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -t:Install -p:IdrakAndroidRuntime=coreclr
+    It sets UseMonoRuntime (true for mono, false for coreclr); any other value stops the build.
   -->
   <PropertyGroup>
     <TargetFramework>net10.0-android</TargetFramework>
@@ -22,7 +25,15 @@
     <ApplicationVersion>1</ApplicationVersion>
     <!-- AAudio (the library's sound on Android) is Android 8.0, API 26. -->
     <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <IdrakAndroidRuntime Condition="'$(IdrakAndroidRuntime)' == ''">mono</IdrakAndroidRuntime>
+    <UseMonoRuntime Condition="'$(IdrakAndroidRuntime)' == 'mono'">true</UseMonoRuntime>
+    <UseMonoRuntime Condition="'$(IdrakAndroidRuntime)' == 'coreclr'">false</UseMonoRuntime>
   </PropertyGroup>
+
+  <Target Name="IdrakAndroidRuntimeCheck" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(IdrakAndroidRuntime)' != 'mono' and '$(IdrakAndroidRuntime)' != 'coreclr'"
+           Text="IdrakAndroidRuntime is '$(IdrakAndroidRuntime)': use mono (the default) or coreclr." />
+  </Target>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />

@@ -163,6 +163,11 @@ public interface ITelemetryHook
     {
     }
 
+    /// <summary>A device was described for a listing, cold (its backend started) or warm (<see cref="TelemetryLevel.Devices"/>).</summary>
+    void OnDeviceListed(in DeviceListed e)
+    {
+    }
+
     /// <summary>An app's implementation of a slot threw: the error reached the caller, or the library default answered (<see cref="TelemetryLevel.Overrides"/>).</summary>
     void OnOverrideFailed(in OverrideFailed e)
     {
@@ -561,6 +566,18 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Devices) != 0)
             {
                 h.OnTuning(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports a device described for a listing (cold or warm), to the hooks listening at <see cref="TelemetryLevel.Devices"/>.</summary>
+    public static void DeviceListed(in DeviceListed e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Devices) != 0)
+            {
+                h.OnDeviceListed(in e);
             }
         }
     }
