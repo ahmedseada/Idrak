@@ -52,13 +52,16 @@ internal static partial class Tests
         }
 
         // The code object formats: the compiler's own, then older ones for an older runtime; the one that loaded first
-        // from then on; IDRAK_HIP_CODE_OBJECT chooses one.
+        // from then on; IDRAK_HIP_CODE_OBJECT chooses one. The process's own choice (a HIP device's kernels compiled earlier
+        // in the run) is set aside for the checks and put back after.
+        string? loadedBefore = HipRtc.LoadedFormat;
+        HipRtc.FormatLoaded(null);
         Check(HipRtc.CodeObjectFormats(null).SequenceEqual([null, "-mcode-object-version=5", "-mcode-object-version=4"]), "the compiler's own format, then 5 and 4");
         Check(HipRtc.CodeObjectFormats("default").SequenceEqual([null]) && HipRtc.CodeObjectFormats("4").SequenceEqual(["-mcode-object-version=4"]),
             "IDRAK_HIP_CODE_OBJECT: default, or one version");
         HipRtc.FormatLoaded("-mcode-object-version=5");
         var remembered = HipRtc.CodeObjectFormats("");
-        HipRtc.FormatLoaded(null);
+        HipRtc.FormatLoaded(loadedBefore);
         Check(remembered.SequenceEqual(["-mcode-object-version=5", null, "-mcode-object-version=4"]), $"the format that loaded first: {string.Join(", ", remembered)}");
         try
         {

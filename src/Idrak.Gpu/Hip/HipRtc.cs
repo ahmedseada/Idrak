@@ -75,6 +75,9 @@ internal static unsafe class HipRtc
     /// <summary>Records the code object format a runtime loaded (null: the compiler's own), tried first from then on.</summary>
     internal static void FormatLoaded(string? format) => s_loadedFormat = format;
 
+    /// <summary>The code object format a runtime loaded last (null: the compiler's own, or none yet).</summary>
+    internal static string? LoadedFormat => s_loadedFormat;
+
     /// <summary>The options of a compilation for the architecture <paramref name="architecture"/> (null: the current device's).</summary>
     internal static string[] Options(string? architecture, int blockSize)
     {
