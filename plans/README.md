@@ -13,6 +13,7 @@ Plans are kept by state: finished plans in [done/](done/), plans not started in 
 | Plan 30: live transcription, `idrak transcribe --live` (built, the owner's runs open) | [opened/30-live-transcription.md](opened/30-live-transcription.md) |
 | Plan 31: an audio processing pipeline (filters, dynamics, noise and repair, live, rnnoise; built, the owner's runs open) | [opened/31-audio-processing.md](opened/31-audio-processing.md) |
 | Plan 32: an Opus codec plug-in (`IAudioCodec`, speech only; draft, paused after O0) | [opened/32-opus.md](opened/32-opus.md) |
+| Plan 34: Idrak.Maui and Idrak.Mobile (the library on a phone as an app; Android first) | [opened/34-mobile.md](opened/34-mobile.md) |
 | Plug-in 1. Idrak.HarfBuzz: HarfBuzz as a second shaper | [opened/plugins/1-harfbuzz.md](opened/plugins/1-harfbuzz.md) |
 | Plug-in plans | [opened/plugins/README.md](opened/plugins/README.md) |
 
