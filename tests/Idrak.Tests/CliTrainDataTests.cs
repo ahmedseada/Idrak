@@ -280,10 +280,10 @@ internal static partial class Tests
             Check((string?)first["messages"]![0]!["role"] == "system" && (string?)first["messages"]![2]!["content"] == "0", $"chat rows: {first}");
 
             // dedupe: exact (20 repeats), near (one more: "say  1" is "Say 1"), in place only with -y.
-            var dry = TrainCliJson("data", "dedupe", rows, "--dry-run", "--columns", "instruction,output");
+            var dry = TrainCliJson("data", "dedupe", rows, "--dry-run", "--by", "instruction,output");
             Check((int?)dry["duplicates"] == 20 && dry["output"] is null, $"dedupe dry run: {dry}");
             Check(TrainCli("data", "dedupe", rows) is { Code: 2 } inPlace && inPlace.Err.Contains("--yes", StringComparison.Ordinal), "dedupe in place needs --yes (no terminal to ask on)");
-            var near = TrainCliJson("data", "dedupe", rows, "--near", "--columns", "instruction,output", "-o", Path.Combine(folder, "unique.jsonl"));
+            var near = TrainCliJson("data", "dedupe", rows, "--near", "--by", "instruction,output", "-o", Path.Combine(folder, "unique.jsonl"));
             Check((int?)near["duplicates"] == 21 && File.ReadAllLines(Path.Combine(folder, "unique.jsonl")).Length == 20, $"near dedupe: {near}");
 
             // split: stratified, with every part keeping the label balance; sample: stratified too.

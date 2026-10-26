@@ -71,6 +71,7 @@ Common options (every command):
 | `--cache DIR` | The cache folder: models, tuning, kernels, runs, saved benchmarks (default `IDRAK_CACHE` or `~/.cache/idrak`) |
 | `-O, --output FILE` | Write the command's main output to a file |
 | `--format text\|json\|csv\|md` | The output format of commands that print tables |
+| `--columns A,B,…` | Only these columns of a command's table, in this order: each a header (case, spaces and hyphens ignored), a start of one header only, or its number from 1 (`idrak devices --columns device,memory,note`); JSON keeps every field |
 | `--offline` | Use only what is cached; a download is an error naming the missing file |
 | `--timeout DURATION` | Give up after a time (`30s`, `5m`, `1h30m`): downloads, server calls, long runs |
 | `--seed N` | One seed for sampling, shuffling and initialization |

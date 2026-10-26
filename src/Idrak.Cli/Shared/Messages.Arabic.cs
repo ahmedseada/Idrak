@@ -48,6 +48,7 @@ internal static partial class Messages
             "      @FILE           قراءة الوسائط من FILE، وسيط في كل سطر (@@text: النص @text كما هو)\n" +
             "  -O, --output FILE   كتابة المخرجات الرئيسية للأمر إلى FILE\n" +
             "      --format F      الصيغة: text أو json أو csv أو md (للجداول)\n" +
+            "      --columns A,B   أعمدة الجدول هذه فقط وبهذا الترتيب (عنوان العمود أو بدايته أو رقمه)\n" +
             "      --color WHEN    الألوان: auto أو always أو never (و NO_COLOR يغلب)؛ --plain: بلا رموز Unicode ولا سطر تقدم\n" +
             "      --offline       استخدام المخزن فقط؛ وأي تنزيل خطأ\n" +
             "      --threads N     عدد خيوط المعالج؛ --seed N: بذرة واحدة لأخذ العينات والخلط والتهيئة\n" +

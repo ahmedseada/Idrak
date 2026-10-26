@@ -20,7 +20,7 @@ internal sealed class CommandContext : IDisposable
 {
     // Options every command accepts; the value-taking ones are listed for the parser.
     internal static readonly string[] CommonValueOptions =
-        ["--device", "--plugin", "--cache", "--config", "--log", "--threads", "--seed", "--format", "--output", "--color", "--timeout", "--lang", "--lang-render"];
+        ["--device", "--plugin", "--cache", "--config", "--log", "--threads", "--seed", "--format", "--columns", "--output", "--color", "--timeout", "--lang", "--lang-render"];
     internal static readonly string[] CommonFlags = ["--json", "--quiet", "--verbose", "--help", "--offline", "--plain", "--profile"];
 
     /// <summary>Short forms every command accepts (plans/done/idrak-cli.md, "Short forms").</summary>
@@ -241,6 +241,13 @@ internal sealed class CommandContext : IDisposable
         }
 
         var all = rows.ToList();
+        if (Option("--columns") is { } spec)
+        {
+            int[] kept = ChosenColumns(spec, headers);
+            headers = [.. kept.Select(i => headers[i])];
+            all = [.. all.Select(r => (IReadOnlyList<string>)[.. kept.Select(i => i < r.Count ? r[i] : "")])];
+        }
+
         if (Format is OutputFormat.Csv or OutputFormat.Markdown)
         {
             string Csv(string cell) => cell.AsSpan().ContainsAny(CsvQuoted) ? $"\"{cell.Replace("\"", "\"\"", StringComparison.Ordinal)}\"" : cell;
@@ -270,6 +277,47 @@ internal sealed class CommandContext : IDisposable
                 Output.WriteLine(line);
             }
         }
+    }
+
+    // --columns A,B,…: the indices of the table's columns kept, in the order named. A column is named by its header
+    // (case, spaces, hyphens and underscores ignored), by a start of one header only, or by its number from 1; a name
+    // that matches no column or several is a usage error listing the columns.
+    internal static int[] ChosenColumns(string spec, IReadOnlyList<string> headers)
+    {
+        static string Key(string text) => string.Concat(text.Where(c => c is not (' ' or '-' or '_'))).ToLowerInvariant();
+        string[] keys = [.. headers.Select(Key)];
+        string Choices() => string.Join(", ", headers.Select((h, i) => $"{i + 1} {h}"));
+        var kept = new List<int>();
+        foreach (string name in spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            string key = Key(name);
+            int found = int.TryParse(name, NumberStyles.None, CultureInfo.InvariantCulture, out int number) && number >= 1 && number <= headers.Count ? number - 1
+                : Array.IndexOf(keys, key);
+            if (found < 0 && key.Length > 0)
+            {
+                int[] starts = [.. Enumerable.Range(0, keys.Length).Where(i => keys[i].StartsWith(key, StringComparison.Ordinal))];
+                if (starts.Length > 1)
+                {
+                    throw new UsageException($"--columns: '{name}' starts several columns ({string.Join(", ", starts.Select(i => headers[i]))}); the columns are {Choices()}.");
+                }
+
+                found = starts.Length == 1 ? starts[0] : -1;
+            }
+
+            if (found < 0)
+            {
+                throw new UsageException($"--columns: no column '{name}'; the columns are {Choices()}.");
+            }
+
+            kept.Add(found);
+        }
+
+        if (kept.Count == 0)
+        {
+            throw new UsageException($"--columns names no column; the columns are {Choices()}.");
+        }
+
+        return [.. kept];
     }
 
     /// <summary>

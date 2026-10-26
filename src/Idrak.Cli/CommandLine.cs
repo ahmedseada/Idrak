@@ -422,6 +422,7 @@ internal static class Help
         "      @FILE           read arguments from FILE, one per line (@@text: a literal @text)\n" +
         "  -O, --output FILE   write the command's main output to FILE\n" +
         "      --format F      text, json, csv or md (tables)\n" +
+        "      --columns A,B   only these table columns, in this order (a header, its start or its number)\n" +
         "      --color WHEN    auto, always or never (NO_COLOR still wins); --plain: no Unicode or progress line\n" +
         "      --offline       use only what is cached; a download is an error\n" +
         "      --threads N     CPU threads; --seed N: one seed for sampling, shuffling and initialization\n" +

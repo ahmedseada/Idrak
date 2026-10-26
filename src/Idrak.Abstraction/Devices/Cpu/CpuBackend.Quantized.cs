@@ -21,6 +21,12 @@ internal sealed partial class CpuBackend
         int threads = Math.Max(1, ComputeResources.ParallelOptions.MaxDegreeOfParallelism);
         int blockSize = Math.Max(Int8MinBlock, (n / (2 * threads) + Int8MinBlock - 1) / Int8MinBlock * Int8MinBlock);
         int blocks = (n + blockSize - 1) / blockSize;
+        if (m <= CpuTuning.FewRows && Vector.IsHardwareAccelerated && !CpuTuning.StreamingFewRows)
+        {
+            Int8FewRowsTiled(D(q), xv, sv, yv, m, n, k, stride, blockSize, blocks);   // the same sums, in registers
+            return;
+        }
+
         For(blocks, (long)m * n * k, (first, last) =>
         {
             var weights = Bytes(q, k * stride);                          // spans cannot be captured; re-derive per worker
@@ -76,11 +82,18 @@ internal sealed partial class CpuBackend
             return;
         }
 
-        // Few rows: each worker expands one weight row of its column block at a time and adds it to every input row.
+        // Few rows: the register-tiled kernel (CpuBackend.IntegerFewRows.cs); the streaming loop below (each worker expands one
+        // weight row of its column block at a time and adds it to every input row) gives the same sums without SIMD.
         float[] xv = D(x), yv = D(y);
         int threads = Math.Max(1, ComputeResources.ParallelOptions.MaxDegreeOfParallelism);
         int blockSize = Math.Max(Int8MinBlock, (n / (2 * threads) + Int8MinBlock - 1) / Int8MinBlock * Int8MinBlock);
         int blocks = (n + blockSize - 1) / blockSize;
+        if (Vector.IsHardwareAccelerated && !CpuTuning.StreamingFewRows && Int4PanelsFit && blockSize % 8 == 0)
+        {
+            Int4FewRowsTiled(D(q), D(scales), xv, yv, m, n, k, blockSize, blocks);   // the same sums, in registers
+            return;
+        }
+
         For(blocks, (long)m * n * k, (first, last) =>
         {
             var acc = ArrayPool<float>.Shared.Rent(m * blockSize);

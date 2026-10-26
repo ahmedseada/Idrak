@@ -125,7 +125,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Devices.IMatrixUnitBackend` | interface | public | Storage | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IMeasuredChoicesProvider` | interface | public | Backend | CudaMeasuredChoices, VulkanMeasuredChoices |  | Abstraction, Cluster, Gpu | Abstraction |
 | `Idrak.Abstraction.Devices.IMemoryOffload` | interface | public | Storage | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Devices.IMemoryReport` | interface | public | — | CpuBackend, CudaBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IMemoryReport` | interface | public | — | CpuBackend, CudaBackend, HipBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IOffloadingBackend` | interface | public | — | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IPeerCopyBackend` | interface | public | Backend, Storage | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IRecurrentKernels` | interface | public | Storage | CpuBackend, CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
@@ -591,7 +591,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `CpuBackend` | 128 of 143 |
 | `CudaBackend` | 136 of 143 |
 | `DeferredBackend` | 11 of 143 |
-| `HipBackend` | 23 of 143 |
+| `HipBackend` | 48 of 143 |
 | `VulkanBackend` | 123 of 143 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
@@ -612,22 +612,22 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `Attach(2)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `AttentionBFloat16Kernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AttentionContextInt8Kernel(8)` | virtual | ✓ | ✓ |  |  |  |
-| `AttentionDecodeKernel(12)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `AttentionDecodeKernel(12)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AttentionInt8Kernel(15)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AttentionScoresInt8Kernel(8)` | virtual | ✓ | ✓ |  |  |  |
 | `AttentionSpansBackwardKernel(19)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AttentionSpansKernel(15)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `AttentionSpansKernel(15)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AttentionSpansStridedKernel(18)` | virtual |  | ✓ |  |  |  |
 | `AttentionTiledBackwardKernel(16)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AttentionTiledKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `AttentionTiledKernel(13)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AvgPoolBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AvgPoolKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AxpyAtKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AxpyKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `BFloat16DequantizeKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `BFloat16MatMulKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `BatchedMatMulKernel(10)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `BiasGeluKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `BFloat16DequantizeKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `BFloat16MatMulKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `BatchedMatMulKernel(10)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `BiasGeluKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `BinaryKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `BoxIouLossBackwardKernel(7)` | virtual | ✓ |  |  |  |  |
 | `BoxIouLossKernel(6)` | virtual | ✓ |  |  |  |  |
@@ -645,7 +645,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `CreateHostStaging(2)` | virtual |  | ✓ |  |  |  |
 | `CtcLossBackwardKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `CtcLossKernel(12)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `DecoderMaskKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `DecoderMaskKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Detach(1)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `Download(2)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `DownloadRange(3)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -653,39 +653,39 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `DropoutKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `ExtremumBackwardKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `FillKernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `Float16DequantizeKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `Float16DequantizeKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Float16MatMulKernel(6)` | virtual |  |  |  |  |  |
 | `FusedAdamWKernel(9)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `GatedActivationBackwardKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `GatedActivationBackwardPackedKernel(8)` | virtual | ✓ | ✓ |  |  |  |
 | `GatedActivationKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `GatedActivationPackedKernel(9)` | virtual | ✓ | ✓ |  |  |  |
-| `GatherBFloat16ColumnsKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `GatherBFloat16Kernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `GatherKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `GatherBFloat16ColumnsKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `GatherBFloat16Kernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `GatherKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `GetMemoryUsage(0)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `GroupReduceKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `GroupScaleShiftKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `HistoryPushKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `Im2ColKernel(3)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `Int4DequantizeKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `Int4MatMulKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `Int8DequantizeKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `Int4DequantizeKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `Int4MatMulKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `Int8DequantizeKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Int8MatMulKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Interpolate2dBackwardKernel(11)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `Interpolate2dKernel(11)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `InvSqrtKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `KeyValueWriteBFloat16Kernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `KeyValueWriteInt8Kernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `KeyValueWriteKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `LayerNormBackwardKernel(9)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `LayerNormFusedKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `LayerNormTrainKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `KeyValueWriteKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `LayerNormBackwardKernel(9)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `LayerNormFusedKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `LayerNormTrainKernel(8)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `LeakyReluBackwardKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `LeakyReluKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `LiveStorages(1)` | virtual |  |  |  |  |  |
-| `LogSoftmaxTopKKernel(6)` | virtual | ✓ | ✓ |  |  |  |
-| `MatMulBiasKernel(7)` | virtual |  | ✓ |  |  | ✓ |
+| `LogSoftmaxTopKKernel(6)` | virtual | ✓ | ✓ |  | ✓ |  |
+| `MatMulBiasKernel(7)` | virtual |  | ✓ |  | ✓ | ✓ |
 | `MatMulManyKernel(4)` | virtual |  | ✓ |  |  |  |
 | `MaxPoolBackwardKernel(4)` | virtual | ✓ | ✓ |  |  |  |
 | `MaxPoolBackwardKernel(4)` | virtual |  | ✓ |  |  | ✓ |
@@ -696,11 +696,11 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `NormRopeHeadsKernel(26)` | virtual |  | ✓ |  |  | ✓ |
 | `NormStatsKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `OneHotKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `PackBFloat16Kernel(3)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `PackBFloat16Kernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `PackedMatMulEpilogueKernel(11)` | virtual |  | ✓ |  |  |  |
 | `PackedMatMulNormAddRmsNormKernel(17)` | virtual |  | ✓ |  |  |  |
 | `PenalizeRowsKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `PermuteKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `PermuteKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `PowBackwardKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `PowKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `PrefersComposedAttention(12)` | virtual |  | ✓ |  |  | ✓ |
@@ -716,14 +716,14 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `RmsNormRopePairKernel(21)` | virtual |  | ✓ |  |  | ✓ |
 | `RopeKernel(12)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SampleRowsKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `ScaleMaskSoftmaxKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `ScaleMaskSoftmaxKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ScatterAddKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SgdStepKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SigmoidFocalLossBackwardKernel(7)` | virtual | ✓ |  |  |  |  |
 | `SigmoidFocalLossKernel(6)` | virtual | ✓ |  |  |  |  |
 | `SoftmaxBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SoftmaxCrossEntropyRowsKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `SoftmaxKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `SoftmaxKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `SumAxisKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SumColumnsKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SumKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |

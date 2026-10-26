@@ -15,13 +15,15 @@ internal sealed class HipStorage(HipBackend backend, ulong pointer, int length, 
 
 /// <summary>
 /// A GPU driven through the HIP runtime (ROCm on Linux, the HIP SDK on Windows): the third backend family after CUDA
-/// and Vulkan, started from the minimum backend. Memory, uploads, downloads, copies and fills run on the device; a
-/// first set of kernels compiled at run time by hipRTC (<see cref="HipKernels"/>) runs element-wise arithmetic, a few
-/// activations, row RMS norms and int8 products; every other operation takes the host fallback (<see cref="HostCall"/>),
-/// so every model runs from the start. All work goes on one stream; uploads and downloads wait for it, so their host
-/// memory is never read or written after they return.
+/// and Vulkan, started from the minimum backend. Memory, uploads, downloads, copies and fills run on the device; kernels
+/// compiled at run time by hipRTC (<see cref="HipKernels"/>) run element-wise arithmetic and activations, row norms and
+/// softmaxes, the float32 and packed products, attention over key ranges and over a key/value cache, gathers, permutes
+/// and cache writes; every other operation takes the host fallback (<see cref="HostCall"/>), so every model runs from
+/// the start. All work goes on one stream; uploads and downloads wait for it, so their host memory is never read or
+/// written after they return. The device reports its memory (<see cref="IMemoryReport"/>), so paths that need much at
+/// once (the composed attention's scores, a prompt's pieces) are sized by it.
 /// </summary>
-internal sealed unsafe partial class HipBackend : Backend
+internal sealed unsafe partial class HipBackend : Backend, IMemoryReport
 {
     private static readonly Lazy<(HipDevice[] Devices, string Reason)> Probe = new(ProbeDevices);
     private static readonly Lazy<Lazy<HipBackend>[]> Instances = new(() =>
@@ -106,8 +108,12 @@ internal sealed unsafe partial class HipBackend : Backend
     private int Ordinal => Array.IndexOf(Probe.Value.Devices, _device);
 
     // Every operation without a kernel of its own takes the host fallback, which runs the CPU's code: the layers follow
-    // the CPU's limits so the two agree.
-    public override BackendCapabilities Capabilities => Device.Cpu.Backend.Capabilities;
+    // the CPU's limits so the two agree (few rows and decoding heads: the HIP kernels take as many), except the heads the
+    // attention kernels over key ranges take, above which attention is composed on the device where its scores fit.
+    public override BackendCapabilities Capabilities =>
+        _capabilities ??= Device.Cpu.Backend.Capabilities with { SpanAttentionHeadDim = HipKernels.AttentionMaxDim };
+
+    private BackendCapabilities? _capabilities;
 
     /// <summary>"6.2.41134" for a runtime version 60241134 (major · 10⁷ + minor · 10⁵ + patch).</summary>
     internal static string FormatVersion(int version) => $"{version / 10_000_000}.{version / 100_000 % 100}.{version % 100_000}";
@@ -393,9 +399,22 @@ internal sealed unsafe partial class HipBackend : Backend
 
     public override void Copy2D(Storage src, int srcOffset, int srcStride, Storage dst, int dstOffset, int dstStride, int rows, int cols, bool accumulate)
     {
-        // A strided copy is one 2-D copy on the device; adding, overlapping rows (one storage) and pitches narrower
-        // than a row take the host fallback.
-        if (accumulate || ReferenceEquals(src, dst) || srcStride < cols || dstStride < cols)
+        // A strided copy is one 2-D copy on the device, an adding one a kernel (narrow's and concatenation's gradients);
+        // overlapping rows (one storage, or a destination pitch narrower than a row) and other narrow pitches take the
+        // host fallback.
+        if (accumulate)
+        {
+            if (ReferenceEquals(src, dst) || rows > 1 && dstStride < cols
+                || !Elements("copy2d_add_f32", (long)Math.Max(rows, 0) * Math.Max(cols, 0), P(src), P(dst), U(srcOffset), U(srcStride), U(dstOffset), U(dstStride),
+                    U(rows), U(cols)))
+            {
+                base.Copy2D(src, srcOffset, srcStride, dst, dstOffset, dstStride, rows, cols, accumulate);
+            }
+
+            return;
+        }
+
+        if (ReferenceEquals(src, dst) || srcStride < cols || dstStride < cols)
         {
             base.Copy2D(src, srcOffset, srcStride, dst, dstOffset, dstStride, rows, cols, accumulate);
             return;
@@ -414,6 +433,26 @@ internal sealed unsafe partial class HipBackend : Backend
     {
         MakeCurrent();
         Check(hipStreamSynchronize(_stream), nameof(hipStreamSynchronize));
+    }
+
+    long? IMemoryReport.FreeMemory()
+    {
+        MakeCurrent();
+        nuint free, total;
+        return hipMemGetInfo(&free, &total) == Success ? (long)free : null;
+    }
+
+    // What the driver reports free plus the blocks the pool keeps, less the reserve this backend keeps free (as on CUDA).
+    long? IMemoryReport.AvailableMemory()
+    {
+        MakeCurrent();
+        nuint free, total;
+        if (hipMemGetInfo(&free, &total) != Success)
+        {
+            return null;
+        }
+
+        return Math.Max(0, (long)free + _memory.Usage.Cached - MemoryReserve);
     }
 
     private static ulong P(Storage s)

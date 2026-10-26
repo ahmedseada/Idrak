@@ -6,10 +6,12 @@ using static Idrak.Gpu.Hip.HipRuntime;
 
 namespace Idrak.Gpu.Hip;
 
-// The operations with a kernel of their own (HipKernels). The kernels are compiled the first time one is needed, for
-// this device's architecture, block size and runtime, or read from the kernel cache (HipKernelCache); when they cannot
-// be (no hipRTC, a compiler error, limits the runtime reports implausibly, IDRAK_HIP_KERNELS=0) every operation here
-// takes the host fallback instead, and KernelsUnavailableReason says why.
+// The kernels' loading and launching, and the element-wise operations, RMS norms and int8 products (HipKernels); the
+// products, rows, attention and shapes are in HipBackend.Products.cs, .Rows.cs, .Attention.cs and .Shapes.cs. The
+// kernels are compiled the first time one is needed, for this device's architecture, block size and runtime, or read
+// from the kernel cache (HipKernelCache); when they cannot be (no hipRTC, a compiler error, limits the runtime reports
+// implausibly or too small for the kernels' shared memory, IDRAK_HIP_KERNELS=0) every operation takes the host fallback
+// instead, and KernelsUnavailableReason says why.
 internal sealed unsafe partial class HipBackend
 {
     private readonly object _kernelGate = new();
@@ -70,6 +72,13 @@ internal sealed unsafe partial class HipBackend
         }
 
         int block = HipKernels.BlockSizeFor(limits);
+        if (HipKernels.SharedBytes(block) > limits.SharedMemoryPerBlock)
+        {
+            KernelsUnavailableReason = $"the kernels need {HipKernels.SharedBytes(block)} bytes of shared memory per block of {block} threads; "
+                                       + $"the device reports {limits.SharedMemoryPerBlock}";
+            return null;
+        }
+
         string architecture = limits.Architecture;
         string[] options = HipRtc.Options(architecture, block);
         string versions = $"runtime {_device.RuntimeVersion}, driver {_device.DriverVersion}, compiler {HipRtc.Version}";
@@ -201,6 +210,22 @@ internal sealed unsafe partial class HipBackend
         return true;
     }
 
+    // A kernel over a gridX × gridY grid of blocks. False: no kernels, or a grid beyond the reported limits.
+    private bool Grid(string name, long gridX, long gridY, params ReadOnlySpan<ulong> args)
+    {
+        if (gridX > _device.Limits.MaxGridDimX || gridY > _device.Limits.MaxGridDimY || Kernel(name) is not { } function)
+        {
+            return false;
+        }
+
+        if (gridX > 0 && gridY > 0)
+        {
+            Launch(name, function, (uint)gridX, (uint)gridY, args);
+        }
+
+        return true;
+    }
+
     private static ulong F(float value) => BitConverter.SingleToUInt32Bits(value);
 
     private static ulong U(int value) => (uint)value;
@@ -233,7 +258,14 @@ internal sealed unsafe partial class HipBackend
             UnaryOp.Abs => "abs_f32",
             UnaryOp.Exp => "exp_f32",
             UnaryOp.Log => "log_f32",
-            _ => null,                                                    // GELU: the host fallback for now
+            UnaryOp.Gelu => "gelu_f32",
+            UnaryOp.GeluErf => "gelu_erf_f32",
+            UnaryOp.Silu => "silu_f32",
+            UnaryOp.Sqrt => "sqrt_f32",
+            UnaryOp.Sin => "sin_f32",
+            UnaryOp.Cos => "cos_f32",
+            UnaryOp.Sign => "sign_f32",
+            _ => null,
         };
         if (name is null || !Elements(name, n, P(x), P(y), U(n)))
         {

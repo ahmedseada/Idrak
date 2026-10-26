@@ -193,13 +193,16 @@ internal sealed unsafe partial class VulkanBackend : Backend
         _storageCandidates = [.. StorageCandidates(memory, typeBits, physical.Facts.DeviceType)];
         if (physical.SystemMemory)
         {
-            // The second listing of an integrated GPU: its storages only in the system memory larger than its carve-out
-            // (still measured between host-cached and write-combined).
-            _storageCandidates = [.. SystemMemoryCandidates(_storageCandidates, memory)];
-            if (_storageCandidates.Length == 0)
+            // The second listing of an integrated GPU: its storages only in the system memory larger than its carve-out,
+            // mapped (host-cached or write-combined) or reached through staging copies like any device memory (still
+            // measured; IDRAK_VULKAN_STAGING and a test's staging backend take the last).
+            var system = SystemMemoryCandidates(_storageCandidates, memory);
+            if (system.Count == 0)
             {
                 throw new VulkanException($"{Name}: no memory type storage buffers may use lies on a heap larger than the device's own.");
             }
+
+            _storageCandidates = [new StorageCandidate(StorageMemory.Staging, system[0].Type), .. system];
         }
 
         var (decided, how, timings) = DecideStorage(_storageCandidates, preferMapped ? null : StorageMemory.Staging,

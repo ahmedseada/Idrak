@@ -88,6 +88,12 @@ internal static partial class Tests
         using var bf16 = BFloat16Weight.Convert(weightTensor);
         using var int8 = Int8Weight.Quantize(weightTensor);
         using var int4 = Int4Weight.Quantize(weightTensor);
+        // A ragged shape for the packed few-row kernels: k past a 32-row scale group, columns past whole panels and words.
+        var raggedWeights = Values(77 * 333);
+        var raggedRows = Values(9 * 77, zeros: true);
+        using var raggedTensor = Tensor.From(raggedWeights, [77, 333], device);
+        using var raggedInt8 = Int8Weight.Quantize(raggedTensor);
+        using var raggedInt4 = Int4Weight.Quantize(raggedTensor);
 
         float[][] Run()
         {
@@ -121,6 +127,11 @@ internal static partial class Tests
                     results.Add(y16.ToArray());
                     results.Add(y8.ToArray());
                     results.Add(y4.ToArray());
+                    using var ragged = Tensor.From(raggedRows.AsSpan(0, m * 77), [m, 77], device);
+                    using var ragged8 = ragged.MatMulInt8(raggedInt8);
+                    using var ragged4 = ragged.MatMulInt4(raggedInt4);
+                    results.Add(ragged8.ToArray());
+                    results.Add(ragged4.ToArray());
                 }
             }
 

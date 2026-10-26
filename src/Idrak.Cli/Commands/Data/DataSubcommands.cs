@@ -555,7 +555,7 @@ internal sealed class DataDedupeCommand : Command
 
         Options:
           -o, --out FILE     where to write the rows kept (default: FILE itself, which needs -y, --yes)
-              --columns A,B  compare only these columns (default: every column)
+              --by A,B       compare only these columns (default: every column)
               --near         text values are compared lower-cased, with letters and digits only, spaces collapsed
               --dry-run      count the duplicates without writing
           -y, --yes          overwrite FILE without asking
@@ -565,7 +565,7 @@ internal sealed class DataDedupeCommand : Command
           idrak data dedupe houses.csv --dry-run
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--out", "--columns"];
+    public override IReadOnlyCollection<string> ValueOptions { get; } = ["--out", "--by"];
 
     public override IReadOnlyCollection<string> Flags { get; } = ["--near", "--dry-run", "--yes"];
 
@@ -582,7 +582,7 @@ internal sealed class DataDedupeCommand : Command
             return ExitCodes.Failed;
         }
 
-        var columns = context.Option("--columns")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var columns = context.Option("--by")?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         // Streamed: only the rows kept are held (all of them are read before FILE is written over).
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var key = new StringBuilder();

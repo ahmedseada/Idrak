@@ -33,6 +33,7 @@ internal static partial class Tests
         ("cli health: help topics and pages, group words, setup android", CliHelpTopics),
         ("cli health: @file, --log, --output, --format csv/md, --color, --timeout, --threads, progress", CliFoundation),
         ("cli health: --profile on any command (and IDRAK_PROFILE=1) leaves its output as it is and writes one watched profile to the error stream or IDRAK_PROFILE_OUT, secrets hidden", CliProfileFlag),
+        ("cli health: --columns keeps a table's columns by header, a start of one or a number, in the order named; an unknown or ambiguous name is a usage error listing the columns", CliColumns),
         ("cli health: --verbose prints the library's work as it happens on the error stream (a prompt pass with its rows and pieces, decoding summed before the next pass and at the end, a kernel choice measured, a host fallback, a graph recording that failed with its reason), nothing on the output; IDRAK_VERBOSE=1 makes a command verbose, another value is a usage error", CliVerboseLines),
     ];
 
@@ -79,6 +80,38 @@ internal static partial class Tests
         Check(!shown.Contains("secret", StringComparison.Ordinal) && shown.Contains("--tokenizer tok.json", StringComparison.Ordinal) && shown.Contains("tokens.github ***", StringComparison.Ordinal)
               && shown.Contains("--api-key=***", StringComparison.Ordinal) && shown.Contains("https://user:***@example.org/m", StringComparison.Ordinal) && shown.EndsWith("\"my prompt\"", StringComparison.Ordinal),
             $"secrets hidden in the report's command line: {shown}");
+    }
+
+    // --columns, common to every command that prints a table: the columns named, in that order; JSON keeps every field.
+    private static void CliColumns(Device device)
+    {
+        string[] headers = ["Device", "Backend", "Name", "Memory", "CUs", "In a plain run", "Note"];
+        int[] kept = CommandContext.ChosenColumns("note, DEVICE,mem,3,in-a-plain-run", headers);
+        Check(kept.SequenceEqual([6, 0, 3, 2, 5]), $"by header (case, spaces, hyphens ignored), start and number: {string.Join(",", kept)}");
+        foreach (string bad in new[] { "speed", "n", "0", "9", " , " })
+        {
+            bool refused = false;
+            try
+            {
+                CommandContext.ChosenColumns(bad, headers);
+            }
+            catch (UsageException e)
+            {
+                refused = e.Message.Contains("4 Memory", StringComparison.Ordinal);
+            }
+
+            Check(refused, $"--columns '{bad}': a usage error listing the columns");
+        }
+
+        string config = Path.Combine(CliTemp(), "none.json");
+        var shown = Cli("devices", "-d", device.ToString(), "-C", config, "--columns", "memory,device");
+        string[] lines = shown.Out.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Check(shown.Exit == 0 && lines.Length >= 3 && Regex.IsMatch(lines[0], @"^Memory +Device\s*$") && lines[2].TrimEnd().EndsWith(device.ToString(), StringComparison.Ordinal),
+            $"idrak devices --columns memory,device: {shown.Exit}, {shown.Out}{shown.Err}");
+        var json = Cli("devices", "-d", device.ToString(), "-C", config, "--columns", "memory", "-j");
+        Check(json.Exit == 0 && JsonNode.Parse(json.Out)?["devices"]?[0]?["backend"] is not null, $"-j keeps every field: {json.Out}");
+        var unknown = Cli("devices", "-C", config, "--columns", "speed");
+        Check(unknown.Exit == ExitCodes.Usage && unknown.Err.Contains("no column 'speed'", StringComparison.Ordinal), $"an unknown column: {unknown.Exit}, {unknown.Err}");
     }
 
     // Runs the tool in-process: the exit code and what it wrote.

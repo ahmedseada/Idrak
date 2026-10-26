@@ -6,14 +6,15 @@ using System.Numerics;
 namespace Idrak.Gpu.Hip;
 
 /// <summary>
-/// The HIP backend's first kernels, as HIP C++ source compiled at run time by hipRTC for the device's own architecture
-/// (<see cref="HipRtc"/>). A small set where a kernel clearly beats the host fallback: element-wise arithmetic, a few
-/// activations, row RMS norms and the int8 product decoding runs on. Every other operation stays on the host fallback.
-/// The source does not depend on the device: the block size comes in as IDRAK_BLOCK at compilation, chosen from the
-/// device's reported limits (<see cref="BlockSizeFor"/>), and nothing in a kernel assumes a wavefront width (reductions
-/// go through shared memory).
+/// The HIP backend's kernels, as HIP C++ source compiled at run time by hipRTC for the device's own architecture
+/// (<see cref="HipRtc"/>): element-wise arithmetic and activations, row norms and softmaxes, the float32 products (a
+/// tiled product and a few-row one), the packed weight products decoding runs on, attention over key ranges and over a
+/// key/value cache, and the gathers, permutes and cache writes around them. Every other operation stays on the host
+/// fallback. The source does not depend on the device: the block size comes in as IDRAK_BLOCK at compilation, chosen
+/// from the device's reported limits (<see cref="BlockSizeFor"/>), every tile and shared array follows from it, and
+/// nothing in a kernel assumes a wavefront width (reductions go through shared memory in a tree of a fixed shape).
 /// </summary>
-internal static class HipKernels
+internal static partial class HipKernels
 {
     /// <summary>
     /// The kernels and their parameters in order ('p' a device pointer, 'i' a 32-bit integer, 'f' a float): a launch
@@ -40,12 +41,98 @@ internal static class HipKernels
         ["rms_norm_f32"] = "pppiif",
         ["rms_norm_affine_f32"] = "pppiiff",
         ["int8_matmul_f32"] = "ppppiiii",
+
+        // HipKernels.Pointwise.cs
+        ["gelu_f32"] = "ppi",
+        ["gelu_erf_f32"] = "ppi",
+        ["silu_f32"] = "ppi",
+        ["sqrt_f32"] = "ppi",
+        ["sin_f32"] = "ppi",
+        ["cos_f32"] = "ppi",
+        ["sign_f32"] = "ppi",
+        ["bias_gelu_f32"] = "pppii",
+        ["gather_f32"] = "pppiii",
+        ["gather_bf16_f32"] = "pppiiii",
+        ["gather_bf16_cols_f32"] = "pppiiii",
+        ["kv_write_f32"] = "pppiiii",
+        ["decoder_mask_f32"] = "ppii",
+        ["permute_f32"] = "ppiiiiiiiiiiiiii",
+        ["copy2d_add_f32"] = "ppiiiiii",
+        ["bf16_dequant_f32"] = "ppii",
+        ["f16_dequant_f32"] = "ppii",
+        ["int4_dequant_f32"] = "pppii",
+        ["int8_dequant_f32"] = "pppii",
+        ["bf16_pack_f32"] = "ppi",
+
+        // HipKernels.Rows.cs
+        ["softmax_f32"] = "ppiii",
+        ["scale_mask_softmax_f32"] = "pppiiif",
+        ["layer_norm_f32"] = "pppppiif",
+        ["layer_norm_backward_f32"] = "pppppii",
+        ["layer_norm_params_f32"] = "pppppii",
+        ["logsoftmax_topk_f32"] = "pppiii",
+
+        // HipKernels.Products.cs
+        ["gemm_f32"] = "ppppiiiiifi",
+        ["gemv_f32"] = "ppppiiiif",
+        ["packed_gemv_f32"] = "ppppiiii",
+
+        // HipKernels.Attention.cs
+        ["attention_row_f32"] = "pppppppiiiiiffiii",
+        ["attention_rows_f32"] = "pppppppiiiiiffiii",
     };
+
+    /// <summary>Rows of k the tiled product stages per step (IDRAK_DEPTH).</summary>
+    public const int GemmDepth = 16;
+
+    /// <summary>The most rows of x the few-row products take (IDRAK_ROWS; more go through the tiled product).</summary>
+    public const int GemvRows = 8;
+
+    /// <summary>The largest head size the attention kernels take (IDRAK_ATT_DIM); larger heads take the host fallback.</summary>
+    public const int AttentionMaxDim = 256;
+
+    /// <summary>
+    /// Side of the square of threads of the tiled product for a block (IDRAK_SIDE): the largest power of two whose square
+    /// is at most the block, at most 32. Each of those threads keeps 4 × 4 outputs, so a block's tile is 4 · side.
+    /// </summary>
+    public static int Side(int block)
+    {
+        int side = 1;
+        while (side < 32 && (side * 2) * (side * 2) <= block)
+        {
+            side *= 2;
+        }
+
+        return side;
+    }
+
+    /// <summary>Outputs along each side of a tiled product's block (IDRAK_TILE).</summary>
+    public static int Tile(int block) => 4 * Side(block);
+
+    /// <summary>Consecutive columns (or k) a few-row product's slice reads (IDRAK_LANES): 32, or the whole block below that.</summary>
+    public static int Lanes(int block) => Math.Min(32, block);
+
+    /// <summary>Query rows per block of the tiled attention kernel (IDRAK_ATT_ROWS): a thirty-second of the block, 1 to 8.</summary>
+    public static int AttentionRows(int block) => block >= 256 ? 8 : block >= 128 ? 4 : block >= 64 ? 2 : 1;
+
+    /// <summary>
+    /// The largest static shared memory of any kernel at a block size, in bytes: the reductions' scratch (a float per
+    /// thread), the tiled product's two staged tiles, the few-row product's partial sums and the attention kernels'
+    /// queries, weights and scratch, the best-k pass's sums (doubles) and pairs.
+    /// </summary>
+    public static int SharedBytes(int block)
+    {
+        int gemm = 2 * GemmDepth * (Tile(block) + 1);
+        int gemv = Math.Max(GemvRows * block, 4 * block);                      // the partial sums; the best-k pass's sums and pairs
+        int rows = AttentionRows(block);
+        int attention = rows * AttentionMaxDim + 2 * block + 5 * rows;          // queries, weights, scratch, row stats and ranges
+        return Math.Max(Math.Max(gemm, gemv), Math.Max(attention, block)) * sizeof(float);
+    }
 
     /// <summary>
     /// Threads per block for device limits <paramref name="limits"/>: a quarter of the largest block (several blocks
     /// resident per compute unit, the CUDA backend's rule), a power of two, at least one wavefront, within the block's
-    /// x limit, with the reductions' scratch (one float per thread) within the block's shared memory.
+    /// x limit, halved while the kernels' static shared memory (<see cref="SharedBytes"/>) passes the block's shared memory.
     /// </summary>
     public static int BlockSizeFor(HipDeviceLimits limits)
     {
@@ -56,7 +143,7 @@ internal static class HipKernels
             block /= 2;                                                          // round down, not up
         }
 
-        while (block > limits.WarpSize && block * sizeof(float) > limits.SharedMemoryPerBlock)
+        while (block > limits.WarpSize && SharedBytes(block) > limits.SharedMemoryPerBlock)
         {
             block /= 2;
         }
@@ -65,7 +152,10 @@ internal static class HipKernels
     }
 
     /// <summary>The kernels' source (one program; IDRAK_BLOCK is defined by the compilation's options).</summary>
-    public const string Source = """
+    public const string Source = Core + Pointwise + Rows + Products + Attention;
+
+    // The common definitions and the first kernels: element-wise arithmetic, a few activations, RMS norms, int8 products.
+    private const string Core = """
         // Idrak's HIP kernels, compiled at run time by hipRTC for the device's own architecture.
         // IDRAK_BLOCK (threads per block) is defined by the compilation from the device's reported limits.
         #ifndef IDRAK_BLOCK
@@ -73,6 +163,24 @@ internal static class HipKernels
         #endif
 
         #define IDRAK_EACH(i, n) for (long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x; i < (long long)(n); i += (long long)blockDim.x * gridDim.x)
+        #define IDRAK_NEG_INF (-__builtin_huge_valf())
+
+        __device__ inline int idrak_min(int a, int b)
+        {
+            return a < b ? a : b;
+        }
+
+        __device__ inline int idrak_max(int a, int b)
+        {
+            return a > b ? a : b;
+        }
+
+        // An index stored as a float, read as the other GPUs read it: truncated toward zero and held within [0, last], NaN as 0.
+        __device__ inline long long idrak_index(float v, int last)
+        {
+            long long i = (long long)fminf(fmaxf(v, 0.0f), (float)last);
+            return i > last ? (long long)last : i;
+        }
 
         // The sum of v over the block, through shared memory (no assumption about the wavefront's width).
         __device__ float idrak_block_sum(float v, float* scratch)
@@ -84,6 +192,26 @@ internal static class HipKernels
                 if ((int)threadIdx.x < s)
                 {
                     scratch[threadIdx.x] += scratch[threadIdx.x + s];
+                }
+
+                __syncthreads();
+            }
+
+            float total = scratch[0];
+            __syncthreads();
+            return total;
+        }
+
+        // The largest v over the block (NaN ignored: a row holding one gives NaN softmaxes either way), as idrak_block_sum.
+        __device__ float idrak_block_max(float v, float* scratch)
+        {
+            scratch[threadIdx.x] = v;
+            __syncthreads();
+            for (int s = IDRAK_BLOCK / 2; s > 0; s >>= 1)
+            {
+                if ((int)threadIdx.x < s)
+                {
+                    scratch[threadIdx.x] = fmaxf(scratch[threadIdx.x], scratch[threadIdx.x + s]);
                 }
 
                 __syncthreads();
@@ -257,5 +385,6 @@ internal static class HipKernels
 
             y[(long long)r * n + j] = acc * scales[j];
         }
+
         """;
 }

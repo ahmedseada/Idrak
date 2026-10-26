@@ -319,8 +319,8 @@ internal static class CpuTuning
     };
 
     /// <summary>
-    /// Runs the few-row bfloat16 products with the streaming loop instead of the register-tiled kernels (tests: the same
-    /// results; also the path where SIMD is not accelerated).
+    /// Runs the few-row bfloat16, int8 and int4 products with the streaming loops instead of the register-tiled kernels
+    /// (tests: the same results; also the path where SIMD is not accelerated).
     /// </summary>
     internal static bool StreamingFewRows;
 

@@ -20,7 +20,7 @@ internal static partial class Tests
         ("hip kernels: the architecture string is read from the device properties by content; compiler options name it", HipArchitecture),
         ("hip kernel cache: the key changes with every input; a stored code object comes back; IDRAK_HIP_KERNEL_CACHE moves or disables it", HipKernelCacheKeys),
         ("hip: no vendor ids, card names or GPU targets in the code of src/Idrak.Gpu/Hip (comments may name them)", HipNoVendorNames),
-        ("hip device: memory, uploads, downloads, copies, fills and the first kernels match the CPU (on HIP devices)", HipDeviceMatchesCpu),
+        ("hip device: memory, uploads, downloads, copies, fills and the kernels (products, rows, attention, gathers, permutes) match the CPU (on HIP devices)", HipDeviceMatchesCpu),
     ];
 
     private static void HipMissingRuntime(Device device)
@@ -156,7 +156,10 @@ internal static partial class Tests
         Check(HipKernels.BlockSizeFor(HipLimits(32, 1024, 65536)) == 256, "32 lanes, 1024 threads: 256");
         Check(HipKernels.BlockSizeFor(HipLimits(64, 256, 65536)) == 64, "256 threads: one 64-lane wavefront");
         Check(HipKernels.BlockSizeFor(HipLimits(32, 200, 65536)) == 32, "200 threads: rounded down to a power of two");
-        Check(HipKernels.BlockSizeFor(HipLimits(32, 1024, 512)) == 128, "512 bytes of shared memory: 128 floats of scratch");
+        Check(HipKernels.BlockSizeFor(HipLimits(32, 1024, 512)) == 32, "512 bytes of shared memory: halved to one wavefront (the kernels' tiles do not fit)");
+        Check(HipKernels.SharedBytes(32) > 512 && HipKernels.SharedBytes(256) <= 16 * 1024, "the kernels' static shared memory follows the block");
+        Check(HipKernels.Tile(256) == 64 && HipKernels.Tile(128) == 32 && HipKernels.Tile(64) == 32 && HipKernels.Lanes(16) == 16 && HipKernels.AttentionRows(256) == 8,
+            "the products' and attention's shapes follow the block");
         foreach (int warp in new[] { 16, 32, 64 })
         {
             foreach (int threads in new[] { 64, 128, 256, 512, 1024, 2048 })
@@ -384,6 +387,102 @@ internal static partial class Tests
             hip.Int8MatMul(On(hip, x8), On(hip, packed), On(hip, scales), hy8, m, cols8, k8);
             cpu.Int8MatMul(On(cpu, x8), On(cpu, packed), On(cpu, scales), cy8, m, cols8, k8);
             AssertClose(Read(cpu, cy8, m * cols8), Read(hip, hy8, m * cols8), 1e-3f, "int8 product");
+
+            // Every other kernel against the CPU: the same inputs on both, the outputs starting from the same values (for the
+            // products' beta and the accumulating copies), every output compared.
+            void Both(string what, float[][] inputs, int[] outputs, Action<Backend, Storage[]> op, float tolerance = 1e-4f)
+            {
+                var hs = inputs.Select(v => On(hip, v)).Concat(outputs.Select(count => On(hip, Values(count)))).ToArray();
+                var cs = inputs.Select(v => On(cpu, v)).Concat(outputs.Select((count, i) => On(cpu, Read(hip, hs[inputs.Length + i], count)))).ToArray();
+                op(hip, hs);
+                op(cpu, cs);
+                for (int i = 0; i < outputs.Length; i++)
+                {
+                    AssertClose(Read(cpu, cs[inputs.Length + i], outputs[i]), Read(hip, hs[inputs.Length + i], outputs[i]), tolerance, $"{what} (output {i})");
+                }
+            }
+
+            // Float32 products: few rows (as stored and transposed, with a bias), the tiled product in every transposition
+            // with beta, batches.
+            foreach (var (pm, pn, pk) in new[] { (3, 300, 257), (70, 45, 33), (1, 513, 129) })
+            {
+                foreach (bool ta in new[] { false, true })
+                {
+                    foreach (bool tb in new[] { false, true })
+                    {
+                        float beta = ta ? 1f : 0f;
+                        Both($"product {pm}x{pn}x{pk} transA={ta} transB={tb}", [Values(pm * pk), Values(pk * pn)], [pm * pn],
+                            (k, s) => k.MatMul(s[0], s[1], s[2], pm, pn, pk, ta, tb, beta), 1e-3f);
+                    }
+                }
+            }
+
+            Both("batched product", [Values(3 * 17 * 5), Values(3 * 5 * 66)], [3 * 17 * 66], (k, s) => k.BatchedMatMul(s[0], s[1], s[2], 3, 17, 66, 5, false, true, 0f));
+            Both("product with a bias", [Values(4 * 300), Values(300 * 260), Values(260)], [4 * 260], (k, s) =>
+            {
+                if (!k.MatMulBias(s[0], s[1], s[2], s[3], 4, 260, 300))
+                {
+                    k.MatMul(s[0], s[1], s[3], 4, 260, 300, false, false, 0f);
+                    k.AddRowVector(s[3], s[2], s[3], 4, 260);
+                }
+            }, 1e-3f);
+
+            // Packed products of few rows and the expansions (bfloat16 packed on the CPU; 4-bit words of random nibbles).
+            int pr = 2, pcols = 300, pdepth = 70;
+            var packedRows = new float[pdepth * pcols / 2];                          // an even width: rows of whole words
+            var packedStorage = On(cpu, packedRows);
+            cpu.PackBFloat16(On(cpu, Values(pdepth * pcols)), packedStorage, pdepth * pcols);
+            cpu.Download(packedStorage, packedRows);
+            Both("bfloat16 product", [Values(pr * pdepth), packedRows], [pr * pcols], (k, s) => k.BFloat16MatMul(s[0], s[1], s[2], pr, pcols, pdepth), 1e-3f);
+            Both("bfloat16 expansion", [packedRows], [pdepth * pcols], (k, s) => k.BFloat16Dequantize(s[0], s[1], pdepth, pcols), 0f);
+            Both("bfloat16 packing", [Values(301)], [151], (k, s) => k.PackBFloat16(s[0], s[1], 301), 0f);
+            int int4Words = (pcols + 7) / 8;                                           // rows of ⌈n / 8⌉ words, scale rows of 8 · that
+            var nibbles = new byte[pdepth * int4Words * 4];
+            random.NextBytes(nibbles);
+            var int4 = new float[pdepth * int4Words];
+            Buffer.BlockCopy(nibbles, 0, int4, 0, nibbles.Length);
+            float[] int4Scales = Values((pdepth + 31) / 32 * int4Words * 8, 0.001f, 0.01f);
+            Both("4-bit product", [Values(pr * pdepth), int4, int4Scales], [pr * pcols], (k, s) => k.Int4MatMul(s[0], s[1], s[2], s[3], pr, pcols, pdepth), 1e-3f);
+            Both("4-bit expansion", [int4, int4Scales], [pdepth * pcols], (k, s) => k.Int4Dequantize(s[0], s[1], s[2], pdepth, pcols), 0f);
+
+            // Rows: softmax and log-softmax, the masked softmax, layer norm with its statistics, GELU after a bias.
+            int sr = 5, sc = 513;
+            float[] logits = Values(sr * sc, -6f, 6f), mask = [.. Enumerable.Range(0, 2 * sc).Select(i => i % 4 == 0 ? -1e9f : random.NextSingle())];
+            Both("softmax", [logits], [sr * sc], (k, s) => k.Softmax(s[0], s[1], sr, sc, false));
+            Both("log-softmax", [logits], [sr * sc], (k, s) => k.Softmax(s[0], s[1], sr, sc, true));
+            Both("masked softmax", [logits, mask], [sr * sc], (k, s) => k.ScaleMaskSoftmax(s[0], s[1], s[2], sr, sc, 2, 0.5f));
+            Both("layer norm", [logits, Values(sc), Values(sc)], [sr * sc, 2 * sr], (k, s) => k.LayerNormTrain(s[0], s[1], s[2], s[3], s[4], sr, sc, 1e-5f));
+            Both("GELU after a bias", [logits, Values(sc)], [sr * sc], (k, s) => k.BiasGelu(s[0], s[1], s[2], sr * sc, sc));
+            Both("best k log-probabilities", [logits], [sr * 8, sr * 8], (k, s) => k.LogSoftmaxTopK(s[0], s[1], s[2], sr, sc, 8));
+            foreach (var op in new[] { UnaryOp.Gelu, UnaryOp.GeluErf, UnaryOp.Silu, UnaryOp.Sqrt, UnaryOp.Sin, UnaryOp.Cos, UnaryOp.Sign })
+            {
+                Both($"{op}", [Values(1000, 0.01f, 4f)], [1000], (k, s) => k.Unary(op, s[0], s[1], 1000));
+            }
+
+            // Attention over key ranges (grouped heads, two tables; with the log-sum-exp, then with an empty range, whose
+            // log-sum-exp is -∞) and over a cache up to the device position.
+            int heads = 4, kvHeads = 2, rowsA = 9, keyRows = 37, dimA = 64;
+            float[] q = Values(heads * rowsA * dimA), keysA = Values(kvHeads * keyRows * dimA), valuesA = Values(kvHeads * keyRows * dimA);
+            float[] starts = [.. Enumerable.Range(0, 2 * rowsA).Select(i => (float)(i % 3))], ends = [.. Enumerable.Range(0, 2 * rowsA).Select(i => (float)(keyRows - i))];
+            Both("attention over key ranges", [q, keysA, valuesA, starts, ends], [heads * rowsA * dimA, heads * rowsA],
+                (k, s) => k.AttentionSpans(s[0], s[1], s[2], s[3], s[4], s[5], s[6], heads, kvHeads, heads / 2, rowsA, keyRows, dimA, 0.125f));
+            ends[4] = 1f;                                                                // row 4 of the first table: from key 1 to key 1
+            Both("attention over key ranges, an empty one", [q, keysA, valuesA, starts, ends], [heads * rowsA * dimA],
+                (k, s) => k.AttentionSpans(s[0], s[1], s[2], s[3], s[4], s[5], null, heads, kvHeads, heads / 2, rowsA, keyRows, dimA, 0.125f));
+            foreach (int rowsPerHead in new[] { 1, 12 })
+            {
+                Both($"attention over a cache, {rowsPerHead} rows", [Values(heads * rowsPerHead * dimA), Values(heads * 50 * dimA), Values(heads * 50 * dimA), [6f]],
+                    [heads * rowsPerHead * dimA], (k, s) => k.AttentionDecode(s[0], s[1], s[2], s[3], s[4], heads, rowsPerHead, Math.Min(rowsPerHead, 4), 50, dimA, 0.125f));
+            }
+
+            // Gathers, the cache write and mask, permutes and an accumulating strided copy.
+            float[] ids = [0f, 5f, 36f, 2f];
+            Both("gather", [Values(37 * 13), ids], [4 * 13], (k, s) => k.Gather(s[0], s[1], s[2], 4, 13, 37), 0f);
+            Both("cache write", [Values(heads * 2 * dimA), [6f]], [heads * 50 * dimA], (k, s) => k.KeyValueWrite(s[0], s[2], s[1], heads, 2, 50, dimA), 0f);
+            Both("decoder mask", [[6f]], [3 * 50], (k, s) => k.DecoderMask(s[0], s[1], 3, 50), 0f);
+            Both("permute", [Values(2 * 3 * 4 * 5)], [120], (k, s) => k.Permute(s[0], s[1], [2, 4, 5, 3], [60, 5, 1, 20], accumulate: false), 0f);
+            Both("permute, adding", [Values(2 * 3 * 4 * 5)], [120], (k, s) => k.Permute(s[0], s[1], [2, 4, 5, 3], [60, 5, 1, 20], accumulate: true));
+            Both("strided copy, adding", [Values(200)], [200], (k, s) => k.Copy2D(s[0], 5, 13, s[1], 3, 20, 6, 9, accumulate: true));
 
             Check(!kernels || Idrak.Abstraction.Operations.Kernels.HostCalls(hip) == before, $"with kernels, none of these took the host fallback ({Idrak.Abstraction.Operations.Kernels.HostCalls(hip) - before} did)");
             hip.Synchronize();
