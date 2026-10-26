@@ -22,7 +22,7 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliImageGroup =
     [
-        ("cli images: EXIF orientations 1 to 8 (JPEG APP1, PNG eXIf) turn images as Pillow's exif_transpose", CliImageExif),
+        ("cli images: EXIF orientations 1 to 8 (JPEG APP1, PNG eXIf) turn images as Pillow's exif_transpose; an 8-bit image stays 8-bit, turned to the same values as its float copy", CliImageExif),
         ("cli images: the Jinja chat template renders image parts; Gemma 3's image prompt format expands them to the processor's text and ids", CliImageTemplate),
         ("cli images: run --image with the tiny Gemma 3 gives transformers' 20 greedy tokens (real encoder and reference features), -j, --schema, --grayscale, an alias; chat --image and /image; a text-only model refuses", CliImageRun),
         ("cli images: vlm check reads tools/vlm/compare_real.py's folders (colour, grey from a JPEG, a tall page with pan and scan, image transforms) for the tiny Gemma 3 and reports exact agreement; a changed token is a near-tie or a real difference by --tie", CliImageCompare),
@@ -110,6 +110,7 @@ internal abstract partial class DesktopTests : Tests
             var image = ChatImage.FromFile(file);
             Check(ChatImageDecoder.Orientation(image.Data.Span) == n, $"{name}: orientation {ChatImageDecoder.Orientation(image.Data.Span)}, expected {n}");
             var upright = ImageInputs.Decode(image);
+            Check(upright.TryGetPlanes(out _, out _), $"{name}: the decoder's 8-bit planes were widened to floats by the orientation");
             var expected = ImageCodecs.Decode(TestData($"vlm/exif/upright-{n}{Path.GetExtension(file)}.png"));
             Check(upright.Width == expected.Width && upright.Height == expected.Height && upright.Channels == expected.Channels
                   && upright.Pixels.Select(v => (int)MathF.Round(v * 255)).SequenceEqual(expected.Pixels.Select(v => (int)MathF.Round(v * 255))), $"{name}: {upright.Width} x {upright.Height} differs from Pillow's exif_transpose ({expected.Width} x {expected.Height})");
@@ -117,6 +118,51 @@ internal abstract partial class DesktopTests : Tests
 
         Check(ChatImageDecoder.Orientation(File.ReadAllBytes(TestData("vlm/image.png"))) == 1 && ChatImageDecoder.Orientation(File.ReadAllBytes(TestData("vlm/image.jpg"))) == 1
               && ChatImageDecoder.Orientation(new byte[] { 0xFF, 0xD8, 0xFF, 0xE1, 0x00 }) == 1, "no EXIF (or a cut one): orientation 1");
+
+        // An image of 8-bit planes larger than a turn's tile on both sides (and not a multiple of it): every orientation
+        // turns its planes (still 8-bit, the same levels) and a float copy of it to the same values, those of exif_transpose
+        // written pixel by pixel.
+        const int H = 70, W = 131;
+        var random = new Random(5);
+        var planes = new byte[3][];
+        for (int k = 0; k < 3; k++)
+        {
+            planes[k] = new byte[H * W];
+            random.NextBytes(planes[k]);
+        }
+
+        var levels = Enumerable.Range(0, 256).Select(b => b / 255f).ToArray();
+        for (int orientation = 1; orientation <= 8; orientation++)
+        {
+            var bytes = new ImageData(planes, H, W, levels);
+            var floats = new ImageData(new ImageData(planes, H, W, levels).Pixels, 3, H, W);
+            var fromBytes = ChatImageDecoder.Orient(bytes, orientation);
+            var fromFloats = ChatImageDecoder.Orient(floats, orientation);
+            bool swap = orientation >= 5;
+            int oh = swap ? W : H, ow = swap ? H : W;
+            Check(fromBytes.TryGetPlanes(out var turned, out var kept) && kept.Span.SequenceEqual(levels), $"orientation {orientation}: the planes were not kept");
+            var reference = new float[3 * oh * ow];
+            for (int k = 0; k < 3; k++)
+            {
+                for (int y = 0; y < oh; y++)
+                {
+                    for (int x = 0; x < ow; x++)
+                    {
+                        var (sy, sx) = orientation switch
+                        {
+                            2 => (y, W - 1 - x), 3 => (H - 1 - y, W - 1 - x), 4 => (H - 1 - y, x), 5 => (x, y),
+                            6 => (H - 1 - x, y), 7 => (H - 1 - x, W - 1 - y), 8 => (x, W - 1 - y), _ => (y, x),
+                        };
+                        reference[(k * oh + y) * ow + x] = levels[planes[k][sy * W + sx]];
+                        Check(turned[k].Span[y * ow + x] == planes[k][sy * W + sx], $"orientation {orientation}: plane {k} at ({y}, {x})");
+                    }
+                }
+            }
+
+            Check(fromBytes.Height == oh && fromBytes.Width == ow && fromFloats.Height == oh && fromFloats.Width == ow
+                  && fromBytes.Pixels.AsSpan().SequenceEqual(reference) && fromFloats.Pixels.AsSpan().SequenceEqual(reference),
+                $"orientation {orientation}: {fromBytes.Width} x {fromBytes.Height}, the values differ from exif_transpose's");
+        }
     }
 
     private static void CliImageTemplate(Device device)

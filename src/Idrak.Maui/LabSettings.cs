@@ -92,18 +92,21 @@ public sealed class LabSetting<TOptions> : ILabSetting
 /// <summary>
 /// The labs' settings kept between runs: each definition's value under the lab's prefix and its key in the app's
 /// <see cref="ISettingsStore"/> (MAUI's Preferences); an empty value is removed (the library's own). The value parsers
-/// the labs share: a decimal point or comma, whole numbers in a range, on/off/default, a registered name.
+/// the labs share: a decimal point or comma, whole numbers in a range, on/off/default, a registered name, an image
+/// transform pipeline.
 /// </summary>
 public static class LabSettings
 {
     /// <summary>
-    /// Reads every definition's value kept under <paramref name="prefix"/> into <paramref name="options"/>; a saved value
-    /// that no longer reads is skipped and named in <paramref name="skipped"/>.
+    /// Reads every definition's value kept under <paramref name="prefix"/> into <paramref name="options"/> (the app's
+    /// defaults, or the library's), so a saved value goes over them; a saved value that no longer reads is skipped and
+    /// named in <paramref name="skipped"/>.
     /// </summary>
     public static TOptions Load<TOptions>(ISettingsStore store, string prefix, IReadOnlyList<LabSetting<TOptions>> definitions, TOptions options, out IReadOnlyList<string> skipped)
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(definitions);
+        ArgumentNullException.ThrowIfNull(options);
         var refused = new List<string>();
         foreach (var setting in definitions)
         {
@@ -131,6 +134,7 @@ public static class LabSettings
     {
         ArgumentNullException.ThrowIfNull(store);
         ArgumentNullException.ThrowIfNull(definitions);
+        ArgumentNullException.ThrowIfNull(options);
         foreach (var setting in definitions)
         {
             store.Set(prefix + setting.Key, Empty(setting.Get(options)));
@@ -204,17 +208,51 @@ public static class LabSettings
         _ => throw new FormatException($"'{text}' is not on, off or default."),
     };
 
-    // A name of a registry (`names`), or null for the default; `what` names the registry in the refusal.
-    internal static string? Registered(string text, IReadOnlyCollection<string> names, string what, StringComparer? comparer = null) =>
-        IsDefault(text) ? null
-        : names.Contains(text, comparer ?? StringComparer.OrdinalIgnoreCase) ? text
-        : throw new FormatException($"'{text}' is not {what} (registered: {(names.Count == 0 ? "none" : string.Join(", ", names))}).");
+    // A name of a registry or a list (`names`) as it is spelled there (any case typed), or null for the default; `what`
+    // names them in the refusal.
+    internal static string? Registered(string text, IReadOnlyCollection<string> names, string what, StringComparer? comparer = null)
+    {
+        if (IsDefault(text))
+        {
+            return null;
+        }
+
+        comparer ??= StringComparer.OrdinalIgnoreCase;
+        foreach (string name in names)
+        {
+            if (comparer.Equals(name, text))
+            {
+                return name;
+            }
+        }
+
+        throw new FormatException($"'{text}' is not {what} (registered: {(names.Count == 0 ? "none" : string.Join(", ", names))}).");
+    }
 
     // One of `choices` (any case), or null for the default.
     internal static string? OneOf(string text, IReadOnlyList<string> choices) =>
         IsDefault(text) ? null
         : choices.FirstOrDefault(c => c.Equals(text, StringComparison.OrdinalIgnoreCase))
           ?? throw new FormatException($"'{text}' is not one of {string.Join(", ", choices)}.");
+
+    // An image transform pipeline's text, checked against the registered transforms and written as the library writes
+    // it; empty or "none": none.
+    internal static string? Pipeline(string text)
+    {
+        if (text.Length == 0 || text.Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        try
+        {
+            return ImageTransformPipeline.Parse(text).ToString();
+        }
+        catch (ArgumentException e)
+        {
+            throw new FormatException(e.Message);
+        }
+    }
 
     // An AudioPerformance name, or null for the default.
     internal static AudioPerformance? Performance(string text) =>

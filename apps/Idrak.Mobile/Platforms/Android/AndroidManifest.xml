@@ -11,4 +11,15 @@
 	<uses-permission android:name="android.permission.CAMERA" />
 	<uses-feature android:name="android.hardware.microphone" android:required="false" />
 	<uses-feature android:name="android.hardware.camera" android:required="false" />
+	<!-- MediaPicker (the OCR and Image labs), as MAUI documents it: reading a picked photo and keeping a taken one on
+	     Android 12L and older (storage permissions end at API 32; newer phones use the system photo picker, which needs
+	     none). The file provider the camera writes through is MAUI Essentials' own, merged from its library manifest. -->
+	<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+	<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+	<!-- MediaPicker's camera on Android 11 (API 30) and newer: the camera app is found through package visibility. -->
+	<queries>
+		<intent>
+			<action android:name="android.media.action.IMAGE_CAPTURE" />
+		</intent>
+	</queries>
 </manifest>

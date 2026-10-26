@@ -813,23 +813,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
     /// </summary>
     public bool ApplySettings()
     {
-        var next = _options.Clone();
-        bool valid = true;
-        foreach (var entry in Settings)
-        {
-            try
-            {
-                ((LabSetting<SpeakLabOptions>)entry.Setting).Set(next, entry.Text);
-                entry.Error = "";
-            }
-            catch (FormatException e)
-            {
-                entry.Error = e.Message;
-                valid = false;
-            }
-        }
-
-        if (!valid)
+        if (LabSettingEntry.Apply(Settings, _options.Clone()) is not { } next)
         {
             SettingsMessage = "Nothing was kept: a value above is not one the setting takes.";
             return false;

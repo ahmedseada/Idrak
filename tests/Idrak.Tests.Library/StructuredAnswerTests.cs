@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using Idrak.Abstraction.Diagnostics;
 using Idrak.Data.Abstractions;
 using Idrak.Generation;
+using Idrak.Imaging;
 using Idrak.Models;
 using Idrak.Text.Abstractions;
 using Idrak.Text.Generation;
@@ -20,7 +21,7 @@ internal abstract partial class Tests
         ("json repair: the registry has the library's lenient repair; an app's repair shadows it and is removed again; an unknown name is not registered", JsonRepairRegistry),
         ("answer texts: raw keeps the answer, values takes its JSON's values in document order (repaired JSON too; an answer without JSON as it is); Normalize composes and folds whitespace", AnswerTextModes),
         ("model host: MaxLoaded unloads the longest unused idle model before loading another, and never one in use", ModelHostMaxLoaded),
-        ("image reader: a vision checkpoint reads a page greedily (the same answer twice), streams it as Read returns it, prepares the page with its transforms or the read's own; no attention cache held between reads unless KeepCache; a sampled read with a seed repeats; pages with one instruction read as one batch, each answer its own read's", ImageReaderReads),
+        ("image reader: a vision checkpoint reads a page greedily (the same answer twice), streams it as Read returns it, prepares the page with its transforms or the read's own, or takes the caller's (Keep); no attention cache held between reads unless KeepCache; a sampled read with a seed repeats; pages with one instruction read as one batch, each answer its own read's", ImageReaderReads),
         ("image reader: pages without room together (a memory limit between one page's peak and four's) are read in halves until they fit, each reading saying how many it was read with, the answers the pages' own; later batches start where they fit; BatchFit.Fail raises; MaxBatch caps the batch", ImageReaderBatchFits),
         ("image reader: suggested settings (SettingAdvisors, TelemetryLevel.Suggestions): loading suggests bfloat16 weights for a bfloat16 checkpoint read as float32; the library's image reader advisor suggests bfloat16 encoder and prompt exactly where the device has matrix units, and after a measured read (the first warm one) the pages that fit together; each published once, printed and written as JSON; an app's advisor adds its own and is removed; no read measured when Suggest is false", ImageReaderSuggestions),
         ("generation: the repetition stop finds an answer ending in one run of tokens repeated N times (runs from the minimum to 64 tokens; shorter runs such as a row of dots are text); a read says why it ended", RepetitionStop),
@@ -259,6 +260,16 @@ internal abstract partial class Tests
         var second = reader.Read(request);
         Check(first.Text == second.Text, $"greedy: \"{first.Text}\" then \"{second.Text}\"");
         Check(!reader.Chat.Generator.HoldsCache, "no attention cache held between reads");
+
+        // A page the caller decoded and transformed itself (to show it before reading) is handed over: the read takes it
+        // (nothing decoded again) and answers as from the bytes; kept for other transforms, it is not taken.
+        var shown = ImageTransformPipeline.Parse("grayscale,max_width=8").Apply(ChatImageDecoder.Decode(page));
+        reader.Keep(request, shown);
+        Check(ReferenceEquals(reader.Prepared(request), shown), "Keep: Prepared gives the caller's pixels back");
+        reader.Keep(request, shown);
+        Check(reader.Read(request).Text == first.Text, "Keep: the read of the caller's pixels answers as the read of the bytes");
+        reader.Keep(request with { Transforms = ImageTransformPipeline.Empty }, shown);
+        Check(!ReferenceEquals(reader.Prepared(request), shown), "Keep: pixels kept for other transforms were taken");
 
         // The tokenizer's special tokens added (a transformers pipeline calling the processor on the rendered template):
         // Gemma's second <bos>, one prompt token more.

@@ -82,6 +82,25 @@ public sealed class ChatImages(IVisionEncoder encoder, IImagePromptFormat format
         return pixels;
     }
 
+    /// <summary>
+    /// Keeps <paramref name="pixels"/> as <paramref name="image"/>'s for the next <see cref="Read"/> of it with
+    /// <paramref name="request"/>'s transforms (else <see cref="Transforms"/>), in place of the image kept before: a caller
+    /// that decoded and transformed the image already (to show it before a model was loaded, say) hands it over, so the
+    /// read decodes and transforms nothing. The pixels must be what <see cref="Read"/> would make: the image decoded as
+    /// <see cref="Decode"/> does (the codecs, then the EXIF orientation), then those transforms; they are shared with the
+    /// read and must not be changed.
+    /// </summary>
+    public void Keep(ChatImage image, ImageData pixels, ChatRequest? request = null)
+    {
+        ArgumentNullException.ThrowIfNull(image);
+        ArgumentNullException.ThrowIfNull(pixels);
+        string transforms = (request?.ImageTransforms ?? Transforms).ToString();
+        lock (_lastLock)
+        {
+            _last = (image.Hash, transforms, pixels);
+        }
+    }
+
     private readonly Lock _lastLock = new();
     private (string Hash, string Transforms, ImageData Pixels)? _last;
 

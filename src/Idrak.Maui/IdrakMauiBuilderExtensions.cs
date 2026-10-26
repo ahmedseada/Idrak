@@ -19,7 +19,10 @@ public static class IdrakMauiBuilderExtensions
     /// (<see cref="IdrakMauiStartup.Apply"/>); the "maui" progress reporter; the services (<see cref="IModelService"/>,
     /// <see cref="IModelStore"/>, <see cref="IDeviceInformation"/>, <see cref="IPermissionService"/>,
     /// <see cref="IShareService"/>, <see cref="ISoundPlayer"/>, the settings and the memory-pressure signal); the library's features
-    /// (<see cref="MobileFeatures"/>: Devices, Models, Chat with <see cref="IChatModelService"/>, Transcribe, Speak and Audio process) and the settings page. The app registers its own features and model families after.
+    /// (<see cref="MobileFeatures"/>: Devices, Models, Chat with <see cref="IChatModelService"/>, Transcribe, Speak, Audio
+    /// process, OCR with <see cref="IVisionReaderService"/>, and Image) and the settings page. The app registers its own
+    /// features and model families after; it gives its own defaults for the OCR and Image labs' settings by registering an
+    /// <see cref="OcrLabOptions"/> or <see cref="ImageLabOptions"/> (what the user saves is applied over them).
     /// </summary>
     public static MauiAppBuilder UseIdrak(this MauiAppBuilder builder, Action<IdrakMauiOptions>? configure = null)
     {
@@ -62,6 +65,7 @@ public static class IdrakMauiBuilderExtensions
         services.TryAddSingleton<IModelService>(sp => new ModelService(sp.GetRequiredService<IMemoryPressureSource>(), options));
         services.TryAddSingleton<IModelStore>(_ => new ModelStore(options));
         services.TryAddSingleton<IChatModelService>(sp => new ChatModelService(sp.GetRequiredService<IModelService>()));
+        services.TryAddSingleton<IVisionReaderService>(sp => new VisionReaderService(sp.GetRequiredService<IModelService>()));
         services.TryAddSingleton<IDeviceInformation, DeviceInformation>();
         services.TryAddSingleton<IPermissionService, MauiPermissionService>();
         services.TryAddSingleton<IShareService, MauiShareService>();
@@ -69,6 +73,8 @@ public static class IdrakMauiBuilderExtensions
         services.AddTransient<DevicesViewModel>();
         services.TryAddSingleton<ModelsViewModel>();                                // one for the app: a pull outlives its page
         services.TryAddSingleton(sp => new ChatViewModel(sp.GetRequiredService<IModelStore>(), sp.GetRequiredService<IChatModelService>(), options));   // a chat outlives its page
+        services.TryAddSingleton(sp => new OcrViewModel(sp.GetRequiredService<IModelStore>(), sp.GetRequiredService<IVisionReaderService>(),   // a read outlives its page
+            sp.GetRequiredService<IPermissionService>(), sp.GetRequiredService<IShareService>(), options, store, sp.GetService<OcrLabOptions>()));
         services.AddTransient(sp => new SettingsViewModel(options, settings, startup, progress));
         services.AddTransient<SettingsPage>();
         services.TryAddEnumerable(ServiceDescriptor.Transient<IMauiInitializeService, IdrakInitializer>());

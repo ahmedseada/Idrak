@@ -15,8 +15,8 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   (empty means measured), the Hugging Face token and the progress interval. Settings are kept between runs (MAUI
   Preferences; the token in SecureStorage) and a change that needs a restart says so.
 - **Features** (`IMobileFeature` in `MobileFeatures`): a page and its view model, with what it needs from the phone. The
-  library registers its own (Devices, Models, Chat, Transcribe, Speak, Audio process); an app adds its own or replaces one
-  by name.
+  library registers its own (Devices, Models, Chat, Transcribe, Speak, Audio process, OCR, Image); an app adds its own
+  or replaces one by name.
 - **Models** page: pull a Hugging Face id (and a revision) into the cache folder with its progress (bytes, rate, time
   left), cancellable and resumed by pulling again; the token from the settings when set; the space checked before the
   first byte (`StorageHeadroomMiB` keeps some free); the models stored with sizes and folders, removing one after a
@@ -62,12 +62,31 @@ builder.UseMauiApp<App>().UseIdrak(options =>
 - **Sound out**: `ISoundPlayer` (`SoundPlayer`, registered by `UseIdrak`) plays a recording or blocks as they come
   through the library's `AudioPlaybacks` (aaudio on Android), held to the sound's pace by the output's back-pressure,
   drained at the end; one sound at a time.
+- **OCR** page: a photo taken with the camera (the permission asked first) or picked from the gallery through MAUI's
+  media picker, its bytes as they came, decoded once by the library's own codecs and turned upright by its EXIF
+  orientation (HEIC is refused, naming the formats the library reads); an optional preprocessing pipeline
+  (`ImageTransformPipeline` text, such as `grayscale,max_width=1024,contrast=1.5`) run on it once, and the page shown as
+  the model will see it (shrunk for the screen, PNG made once). A vision-language model is picked from the store's
+  complete models whose architecture a registered vision family reads, loaded once through `IVisionReaderService`
+  (host `vision`) after the same measured check as Chat (the decoder's weights by format, the vision part's, the
+  attention cache for the context; refused with the limit named), and reads through the library's `ImageReader`: the
+  page is handed over as prepared (`ImageReader.Keep`), so a read decodes and transforms nothing; the answer streams
+  with its tokens per second, shown at most once a progress interval; Stop keeps what came; cold and warm apart; copy and
+  share. The instruction (the library's reading pages' own by default), the system text, the pipeline, the answer's
+  length, the repetition stop, the formats and the context are settings under `idrak.ocr.` (an app gives its own
+  defaults by registering an `OcrLabOptions`). The library registers no family: the app does (Idrak.Mobile: Gemma 3
+  vision, Qwen-VL, LLaVA).
+- **Image** page: a photo as above; the registered image transforms as chips (name, summary, inputs) that add a step to
+  the pipeline's box, the scan profiles to draw steps from (a seed setting repeats a draw); the pipeline run on the
+  decoded photo step by step with each step's time, the first run of a transform in the process (cold) apart from the
+  warm runs; the original and the result shown; the result saved (in the cache folder's `images`) and shared as PNG or
+  JPEG (its quality a setting), or another registered encoder. Settings under `idrak.image.`.
 - **Services**: models kept loaded through `ModelHost` and released on the phone's memory pressure, the model store
   (pull with progress, list, sizes, remove), device information (the Vulkan driver in the app's process, its measured
   width and subgroup sizes, the memory budget, CPU features), permissions and sharing a file out.
 - **Planned features**: a feature not built yet is registered with its real name, title and place in the menu
   (`Order`) as `FeatureState.Planned`, with a line on what is coming (`Coming`); the library's placeholder page shows
-  that and what it will need, and the menu marks it "planned". The library's: OCR, Image and Search (`PlannedFeature`); its phase registers the built feature under the same name, so the menu does
+  that and what it will need, and the menu marks it "planned". The library's still planned one is Search (`PlannedFeature`); its phase registers the built feature under the same name, so the menu does
   not change. A feature that sets no order or state is ready and takes the library's place of its name, else comes last.
 - **`maui`** progress reporter: the library's progress (downloads, loads, runs) as a bindable model, updated on the UI
   thread at most once a progress interval.

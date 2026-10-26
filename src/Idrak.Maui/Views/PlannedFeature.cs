@@ -84,20 +84,12 @@ public sealed class PlannedFeature : IMobileFeature
 
 /// <summary>
 /// The library's planned features (plan 34's labs, in its menu order), registered as defaults in <see cref="MobileFeatures"/>.
-/// Orders leave room: Devices is 0, the Models lab 10, Chat 20, Transcribe 30, Speak 40 and Audio process 50 (built, so no longer here); the Bench (held) and an app's own come after.
+/// Orders leave room: Devices is 0, the Models lab 10, Chat 20, Transcribe 30, Speak 40, Audio process 50, OCR 60 and Image 70 (built, so no longer here); the Bench (held) and an app's own come after.
 /// </summary>
 internal static class PlannedFeatures
 {
     public static readonly PlannedFeature[] Library =
     [
-        new(MobileFeatures.Ocr, "OCR", "Aa", 60,
-            "Text read from a photo or the camera",
-            "A photo or the camera, decoded by the library's own codecs and read by a small reader; a vision-language reader only where the measured memory allows",
-            PhoneNeeds.Camera | PhoneNeeds.Model | PhoneNeeds.Network, ["Idrak.Imaging", "Idrak.Vision", "Idrak.Vision.Plugins"]),
-        new(MobileFeatures.Image, "Image", "◐", 70,
-            "Transforms and scan profiles on a photo",
-            "Named transforms and scan profiles on a photo, with their cold and warm times",
-            PhoneNeeds.Camera, ["Idrak.Imaging"]),
         new(MobileFeatures.Search, "Search", "⌕", 80,
             "Retrieval over your own notes",
             "Embeddings of your own notes and retrieval over them, on the phone",

@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Idrak.Imaging;
@@ -9,7 +10,7 @@ namespace Idrak.Imaging;
 /// <summary>
 /// A chat message's image (<see cref="ChatImage"/>: the encoded bytes as a client sent them) read the way transformers'
 /// <c>load_image</c> reads a file: decoded by the registered codecs (<see cref="ImageCodecs"/>) and turned upright by its
-/// EXIF orientation (<c>ImageOps.exif_transpose</c>). The codecs and <see cref="ImagePreprocessor"/> apply no orientation
+/// EXIF orientation (<c>ImageOps.exif_transpose</c>; an 8-bit image stays 8-bit). The codecs and <see cref="ImagePreprocessor"/> apply no orientation
 /// themselves; the command line's images and the server's uploads and data URLs come through here.
 /// </summary>
 public static class ChatImageDecoder
@@ -198,7 +199,10 @@ public static class ChatImageDecoder
     /// <summary>
     /// The image turned upright for EXIF orientation <paramref name="orientation"/>, as Pillow's <c>exif_transpose</c>:
     /// 2 mirrored, 3 turned half a turn, 4 flipped, 5 transposed, 6 turned a quarter clockwise, 7 transversed, 8 turned a
-    /// quarter anticlockwise; 1 and anything else unchanged.
+    /// quarter anticlockwise; 1 and anything else unchanged. An image held as 8-bit planes (what the JPEG and 8-bit PNG
+    /// decoders give) stays 8-bit: its planes are turned, so a phone's rotated photo is not widened to floats here (a
+    /// quarter of the memory); a float image's values are moved the same way. The turns walk the image in tiles, so the
+    /// side read across its rows is read a cache line at a time (rule 72), the tiles' rows spread over the cores.
     /// </summary>
     public static ImageData Orient(ImageData image, int orientation)
     {
@@ -208,33 +212,93 @@ public static class ChatImageDecoder
             return image;
         }
 
-        int c = image.Channels, h = image.Height, w = image.Width;
+        int c = image.Channels, h = image.Height, w = image.Width, size = h * w;
         bool swap = orientation >= 5;
         int oh = swap ? w : h, ow = swap ? h : w;
-        var source = image.Pixels;
-        var pixels = new float[source.Length];
-        for (int y = 0; y < oh; y++)
+        if (image.TryGetPlanes(out var planes, out var levels))
         {
-            for (int x = 0; x < ow; x++)
+            var turned = new byte[c][];
+            for (int k = 0; k < c; k++)
             {
-                // The source pixel (row, column) shown at (y, x).
-                var (sy, sx) = orientation switch
-                {
-                    2 => (y, w - 1 - x),
-                    3 => (h - 1 - y, w - 1 - x),
-                    4 => (h - 1 - y, x),
-                    5 => (x, y),
-                    6 => (h - 1 - x, y),
-                    7 => (h - 1 - x, w - 1 - y),
-                    _ => (x, w - 1 - y),
-                };
-                for (int k = 0; k < c; k++)
-                {
-                    pixels[(k * oh + y) * ow + x] = source[(k * h + sy) * w + sx];
-                }
+                turned[k] = GC.AllocateUninitializedArray<byte>(size);          // every byte written by the turn
+                Turn(planes[k], turned[k], h, w, orientation);
             }
+
+            float[] table = MemoryMarshal.TryGetArray(levels, out var held) && held.Offset == 0 && held.Count == held.Array!.Length ? held.Array : levels.ToArray();
+            return new ImageData(turned, oh, ow, table);
+        }
+
+        var source = image.Pixels;
+        var pixels = GC.AllocateUninitializedArray<float>(source.Length);     // every value written by the turn
+        for (int k = 0; k < c; k++)
+        {
+            Turn(source.AsMemory(k * size, size), pixels.AsMemory(k * size, size), h, w, orientation);
         }
 
         return new ImageData(pixels, c, oh, ow);
+    }
+
+    // The side of a tile of the quarter turns (5 to 8): 64 values a row of it, 64 rows read across.
+    private const int TurnTile = 64;
+
+    // One plane (h x w) turned into `to` (w x h for 5 to 8): each output pixel (y, x) takes the source pixel exif_transpose
+    // puts there. Mirrors and flips (2 to 4) copy whole rows; the quarter turns go tile by tile.
+    private static void Turn<T>(ReadOnlyMemory<T> from, Memory<T> to, int h, int w, int orientation)
+    {
+        if (orientation <= 4)
+        {
+            HostParallel.For(h, 64, (first, last) =>
+            {
+                var source = from.Span;
+                var target = to.Span;
+                for (int y = first; y < last; y++)
+                {
+                    int sy = orientation == 2 ? y : h - 1 - y;
+                    var row = target.Slice(y * w, w);
+                    source.Slice(sy * w, w).CopyTo(row);
+                    if (orientation != 4)
+                    {
+                        row.Reverse();                                          // 2 and 3: the columns reversed
+                    }
+                }
+            });
+            return;
+        }
+
+        int oh = w, ow = h;
+        int tiles = (oh + TurnTile - 1) / TurnTile;
+        HostParallel.For(tiles, 1, (firstTile, lastTile) =>
+        {
+            var source = from.Span;
+            var target = to.Span;
+            for (int ty = firstTile * TurnTile; ty < Math.Min(oh, lastTile * TurnTile); ty += TurnTile)
+            {
+                int yEnd = Math.Min(oh, ty + TurnTile);
+                for (int tx = 0; tx < ow; tx += TurnTile)
+                {
+                    int xEnd = Math.Min(ow, tx + TurnTile);
+                    for (int y = ty; y < yEnd; y++)
+                    {
+                        // Output (y, x) reads source column sx = y (5, 6) or w - 1 - y (7, 8), and row x (5, 8) or h - 1 - x (6, 7).
+                        int sx = orientation is 5 or 6 ? y : w - 1 - y;
+                        var row = target.Slice(y * ow, ow);
+                        if (orientation is 5 or 8)
+                        {
+                            for (int x = tx; x < xEnd; x++)
+                            {
+                                row[x] = source[x * w + sx];
+                            }
+                        }
+                        else
+                        {
+                            for (int x = tx; x < xEnd; x++)
+                            {
+                                row[x] = source[(h - 1 - x) * w + sx];
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 }

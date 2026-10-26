@@ -18,8 +18,6 @@ internal static partial class MauiTests
     // The library's planned labs in the plan's menu order (after Devices and Models).
     private static readonly (string Name, string Title, int Order, PhoneNeeds Needs)[] PlannedLabs =
     [
-        (MobileFeatures.Ocr, "OCR", 60, PhoneNeeds.Camera | PhoneNeeds.Model | PhoneNeeds.Network),
-        (MobileFeatures.Image, "Image", 70, PhoneNeeds.Camera),
         (MobileFeatures.Search, "Search", 80, PhoneNeeds.Model | PhoneNeeds.Network),
     ];
 
@@ -104,10 +102,10 @@ internal static partial class MauiTests
             Check(vm.NeedLines.Count == BitOperations.PopCount((uint)needs) && vm.NeedsNothing == (needs == PhoneNeeds.None), $"{name}: needs {string.Join(" | ", vm.NeedLines)}");
         }
 
-        var ocr = (PlaceholderViewModel)MobileFeatures.Open(MobileFeatures.Ocr, services).BindingContext;
-        Check(ocr.NeedLines.SequenceEqual(PlaceholderViewModel.Describe(PhoneNeeds.Camera | PhoneNeeds.Network | PhoneNeeds.Model))
-              && ocr.NeedLines[0].Contains("camera", StringComparison.Ordinal) && ocr.NeedLines[^1].Contains("model", StringComparison.Ordinal),
-            $"ocr: {string.Join(" | ", ocr.NeedLines)}");
+        var search = (PlaceholderViewModel)MobileFeatures.Open(MobileFeatures.Search, services).BindingContext;
+        Check(search.NeedLines.SequenceEqual(PlaceholderViewModel.Describe(PhoneNeeds.Network | PhoneNeeds.Model))
+              && search.NeedLines[0].Contains("network", StringComparison.OrdinalIgnoreCase) && search.NeedLines[^1].Contains("model", StringComparison.Ordinal),
+            $"search: {string.Join(" | ", search.NeedLines)}");
         Check(PlaceholderViewModel.Describe(PhoneNeeds.Camera).Single().Contains("camera", StringComparison.Ordinal) && PlaceholderViewModel.Describe(PhoneNeeds.None).Count == 0,
             "the camera's line, and none for nothing");
 

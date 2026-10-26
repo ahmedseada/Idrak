@@ -299,6 +299,20 @@ public sealed class ImageReader : IDisposable
         return _reading.Read(request.Image, new ChatRequest([]) { ImageTransforms = request.Transforms ?? Options.Transforms });
     }
 
+    /// <summary>
+    /// Keeps <paramref name="prepared"/> as <paramref name="request"/>'s page for the read that follows
+    /// (<see cref="ChatImages.Keep"/>): the caller decoded the page (the codecs, then its EXIF orientation:
+    /// <c>ChatImageDecoder.Decode</c>) and ran the read's transforms (or the reader's) on it already, to show it before
+    /// reading, so the read decodes and transforms nothing. <see cref="Prepared"/> gives it back too. The pixels are
+    /// shared with the read and must not be changed.
+    /// </summary>
+    public void Keep(ImageReadRequest request, ImageData prepared)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(prepared);
+        _reading.Keep(request.Image, prepared, new ChatRequest([]) { ImageTransforms = request.Transforms ?? Options.Transforms });
+    }
+
     /// <summary>The answer to <paramref name="request"/> as it is generated (the last chunk is done, with the figures).</summary>
     public IEnumerable<ChatChunk> Stream(ImageReadRequest request, CancellationToken cancellationToken = default) =>
         _chat.Stream(ChatRequestFor(request), cancellationToken);

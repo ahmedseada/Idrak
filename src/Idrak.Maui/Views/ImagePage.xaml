@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  The Image feature (plan 34, M6): a photo from the camera or the gallery (decoded by the library's own codecs), the
+  registered transforms as chips that build the pipeline, the scan profiles, Apply with each step's time (cold and warm
+  apart), the original and the result as pictures made once for the screen, save and share, and the lab's settings.
+  Colours, sizes and spacing are the theme's keys only.
+-->
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+             x:Class="Idrak.Maui.Views.ImagePage"
+             x:DataType="vm:ImageViewModel"
+             Title="{Binding Title}">
+
+    <ContentPage.Resources>
+        <!-- A picture on the page: the whole of it in the card's width, on the card's ground. -->
+        <Style x:Key="ImagePicture" TargetType="Image">
+            <Setter Property="Aspect" Value="AspectFit" />
+            <Setter Property="BackgroundColor" Value="{DynamicResource IdrakPageBackground}" />
+            <Setter Property="MaximumHeightRequest" Value="420" />
+            <Setter Property="HorizontalOptions" Value="Fill" />
+        </Style>
+    </ContentPage.Resources>
+
+    <ScrollView>
+        <VerticalStackLayout Padding="{DynamicResource IdrakPagePadding}" Spacing="{DynamicResource IdrakSpacingSmall}">
+            <Label Text="Image" Style="{DynamicResource IdrakTitle}" />
+            <Label Text="{Binding Formats}" Style="{DynamicResource IdrakCaption}" />
+
+            <!-- The photo. -->
+            <Border Style="{DynamicResource IdrakCard}">
+                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                    <Label Text="Photo" Style="{DynamicResource IdrakHeading}" />
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                        <Button Text="Take a photo" Command="{Binding TakePhotoCommand}" IsEnabled="{Binding IsIdle}" />
+                        <Button Grid.Column="1" Text="From the gallery" Command="{Binding PickPhotoCommand}" IsEnabled="{Binding IsIdle}" Style="{DynamicResource IdrakSecondaryButton}" />
+                    </Grid>
+                    <Button Text="Allow the camera" Command="{Binding OpenPermissionSettingsCommand}" IsVisible="{Binding IsPermissionRefused}" Style="{DynamicResource IdrakSecondaryButton}" />
+                    <Label Text="Nothing yet: take a photo, or pick one." IsVisible="{Binding HasNoPhoto}" Style="{DynamicResource IdrakCaption}" />
+                    <Image Source="{Binding OriginalSource}" IsVisible="{Binding HasPhoto}" Style="{StaticResource ImagePicture}" SemanticProperties.Description="The photo" />
+                    <Label Text="{Binding PhotoText}" Style="{DynamicResource IdrakCaption}" />
+                </VerticalStackLayout>
+            </Border>
+
+            <!-- The pipeline: chips add steps; profiles draw them. -->
+            <Border Style="{DynamicResource IdrakCard}">
+                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                    <Label Text="Pipeline" Style="{DynamicResource IdrakHeading}" />
+                    <Label Text="Steps run in order, comma-separated; an option follows its step (max_width=1024,resample=bicubic). Tap a transform to add it."
+                           Style="{DynamicResource IdrakCaption}" />
+                    <Editor Text="{Binding Pipeline}" Placeholder="grayscale,max_width=1024,contrast=1.5" AutoSize="TextChanges"
+                            TextColor="{DynamicResource IdrakText}" PlaceholderColor="{DynamicResource IdrakTextMuted}" FontSize="{DynamicResource IdrakFontSizeBody}"
+                            IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                        <Button Text="Apply" Command="{Binding ApplyCommand}" IsEnabled="{Binding IsIdle}" />
+                        <Button Grid.Column="1" Text="Clear" Command="{Binding ClearPipelineCommand}" Style="{DynamicResource IdrakSecondaryButton}" />
+                    </Grid>
+                    <ActivityIndicator IsRunning="{Binding IsBusy}" IsVisible="{Binding IsBusy}" HorizontalOptions="Start" />
+                    <Label Text="{Binding Status}" IsVisible="{Binding HasStatus}" Style="{DynamicResource IdrakHighlightText}" />
+                    <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+
+                    <Label Text="Transforms" Style="{DynamicResource IdrakValue}" />
+                    <FlexLayout BindableLayout.ItemsSource="{Binding Transforms}" Wrap="Wrap" Direction="Row">
+                        <BindableLayout.ItemTemplate>
+                            <DataTemplate x:DataType="vm:TransformChip">
+                                <Button Text="{Binding Label}" Command="{Binding AddCommand}" Style="{DynamicResource IdrakChip}"
+                                        ToolTipProperties.Text="{Binding Summary}" SemanticProperties.Hint="{Binding Summary}" />
+                            </DataTemplate>
+                        </BindableLayout.ItemTemplate>
+                    </FlexLayout>
+                    <Label Text="Each chip adds its step with a value from the middle of its range; edit it in the box." Style="{DynamicResource IdrakCaption}" />
+
+                    <Label Text="Scan profile" Style="{DynamicResource IdrakValue}" />
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                        <Picker Title="Scan profile" ItemsSource="{Binding Profiles}" SelectedItem="{Binding SelectedProfile}" />
+                        <Button Grid.Column="1" Text="Draw steps" Command="{Binding DrawProfileCommand}" Style="{DynamicResource IdrakSecondaryButton}" VerticalOptions="Center" />
+                    </Grid>
+                    <Label Text="{Binding ProfileText}" Style="{DynamicResource IdrakCaption}" />
+                </VerticalStackLayout>
+            </Border>
+
+            <!-- The result: its picture, each step's time, cold and warm, save and share. -->
+            <Border Style="{DynamicResource IdrakCard}">
+                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                    <Label Text="Result" Style="{DynamicResource IdrakHeading}" />
+                    <Label Text="Apply the pipeline to see it here." IsVisible="{Binding HasPhoto}" Style="{DynamicResource IdrakCaption}">
+                        <Label.Triggers>
+                            <DataTrigger TargetType="Label" Binding="{Binding HasResult}" Value="True">
+                                <Setter Property="IsVisible" Value="False" />
+                            </DataTrigger>
+                        </Label.Triggers>
+                    </Label>
+                    <Image Source="{Binding ResultSource}" IsVisible="{Binding HasResult}" Style="{StaticResource ImagePicture}" SemanticProperties.Description="The result" />
+                    <Label Text="{Binding ResultText}" Style="{DynamicResource IdrakCaption}" />
+                    <Label Text="{Binding StepsText}" Style="{DynamicResource IdrakCaption}" />
+                    <Label Text="{Binding ColdText}" IsVisible="{Binding HasCold}" Style="{DynamicResource IdrakCaption}" />
+                    <Label Text="{Binding WarmText}" IsVisible="{Binding HasWarm}" Style="{DynamicResource IdrakCaption}" />
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="{DynamicResource IdrakSpacing}">
+                        <Button Text="Save" Command="{Binding SaveCommand}" IsEnabled="{Binding HasPhoto}" Style="{DynamicResource IdrakSecondaryButton}" />
+                        <Button Grid.Column="1" Text="Share" Command="{Binding ShareCommand}" IsEnabled="{Binding HasPhoto}" Style="{DynamicResource IdrakSecondaryButton}" />
+                    </Grid>
+                </VerticalStackLayout>
+            </Border>
+
+            <!-- The lab's settings. -->
+            <Button Text="{Binding SettingsButtonText}" Command="{Binding ToggleSettingsCommand}" Style="{DynamicResource IdrakSecondaryButton}" />
+            <Label Text="{Binding SettingsMessage}" IsVisible="{Binding HasSettingsMessage}" Style="{DynamicResource IdrakHighlightText}" />
+            <VerticalStackLayout IsVisible="{Binding ShowSettings}" Spacing="{DynamicResource IdrakSpacingSmall}">
+                <Label Text="Kept between runs. An empty field is the default, shown in it." Style="{DynamicResource IdrakCaption}" />
+                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Settings}">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="vm:LabSettingEntry">
+                            <Border Style="{DynamicResource IdrakCard}">
+                                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                                    <Label Text="{Binding Title}" Style="{DynamicResource IdrakHeading}" />
+                                    <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" />
+                                    <Entry Text="{Binding Text}" Placeholder="{Binding Placeholder}" Keyboard="{Binding Keyboard}" IsVisible="{Binding IsEntry}"
+                                           IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" ClearButtonVisibility="WhileEditing" />
+                                    <Picker ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}" IsVisible="{Binding IsChoice}" Title="{Binding Title}" />
+                                    <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+                                </VerticalStackLayout>
+                            </Border>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
+                <Button Text="Keep these settings" Command="{Binding ApplySettingsCommand}" Margin="0,0,0,24" />
+            </VerticalStackLayout>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

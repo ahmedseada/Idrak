@@ -124,6 +124,14 @@ public interface Idrak.Maui.Abstractions.ISoundPlayer
   public bool Stop()
   public string? Playing { get; }
 
+public interface Idrak.Maui.Abstractions.IVisionReader
+  public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.ChatChunk> Stream(Idrak.Text.Generation.ImageReadRequest request, System.Threading.CancellationToken cancellationToken = default)
+  public void Keep(Idrak.Text.Generation.ImageReadRequest request, Idrak.Abstraction.Data.ImageData prepared)
+
+public interface Idrak.Maui.Abstractions.IVisionReaderService
+  public Idrak.Maui.Abstractions.ChatMemoryEstimate Estimate(Idrak.Maui.Abstractions.VisionLoadRequest request)
+  public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.VisionReaderLease> AcquireAsync(Idrak.Maui.Abstractions.VisionLoadRequest request, System.Threading.CancellationToken cancellationToken = default)
+
 public enum Idrak.Maui.Abstractions.MemoryPressureLevel : int
   Background = 0
   Critical = 3
@@ -234,6 +242,35 @@ public sealed record Idrak.Maui.Abstractions.StoredModel : System.IEquatable<Idr
   public string Folder { get; init; }
   public string Id { get; init; }
   public string Revision { get; init; }
+
+public sealed record Idrak.Maui.Abstractions.VisionLoadRequest : System.IEquatable<Idrak.Maui.Abstractions.VisionLoadRequest>
+  public Idrak.Abstraction.Generation.KeyValueFormat CacheFormat { get; init; }
+  public VisionLoadRequest(string Model, string Path, string Device, string? Weights, Idrak.Abstraction.Generation.KeyValueFormat CacheFormat, int Context)
+  public int Context { get; init; }
+  public string Device { get; init; }
+  public string Key { get; }
+  public string Model { get; init; }
+  public string Path { get; init; }
+  public string? Weights { get; init; }
+
+public sealed record Idrak.Maui.Abstractions.VisionReaderInfo : System.IEquatable<Idrak.Maui.Abstractions.VisionReaderInfo>
+  public Idrak.Abstraction.Generation.KeyValueFormat CacheFormat { get; init; }
+  public Idrak.Maui.Abstractions.ChatMemoryEstimate? Estimate { get; init; }
+  public System.TimeSpan LoadTime { get; init; }
+  public VisionReaderInfo(string Model, string Architecture, string Device, string Weights, Idrak.Abstraction.Generation.KeyValueFormat CacheFormat, int Context, System.TimeSpan LoadTime, Idrak.Maui.Abstractions.ChatMemoryEstimate? Estimate)
+  public int Context { get; init; }
+  public string Architecture { get; init; }
+  public string Device { get; init; }
+  public string Model { get; init; }
+  public string Weights { get; init; }
+
+public sealed class Idrak.Maui.Abstractions.VisionReaderLease : System.IDisposable
+  public Idrak.Maui.Abstractions.IVisionReader Reader { get; }
+  public Idrak.Maui.Abstractions.VisionReaderInfo Info { get; }
+  public System.TimeSpan LoadDuration { get; }
+  public VisionReaderLease(Idrak.Maui.Abstractions.IVisionReader reader, Idrak.Maui.Abstractions.VisionReaderInfo info, System.TimeSpan loadDuration, System.IDisposable? release = null)
+  public bool Loaded { get; }
+  public void Dispose()
 
 public sealed class Idrak.Maui.AudioProcessLabOptions
   public AudioProcessLabOptions()
@@ -381,6 +418,32 @@ public enum Idrak.Maui.IdrakThemeChoice : int
   Light = 1
   System = 0
 
+public sealed class Idrak.Maui.ImageLabOptions
+  public Idrak.Abstraction.Data.ImageTransformPipeline ToPipeline()
+  public Idrak.Imaging.ImageResampling? Resampling { get; }
+  public Idrak.Maui.ImageLabOptions Clone()
+  public ImageLabOptions()
+  public byte[] Encode(Idrak.Abstraction.Data.ImageData image)
+  public int? JpegQuality { get; set; }
+  public int? PreviewPixels { get; set; }
+  public int? Seed { get; set; }
+  public string Extension { get; }
+  public string Format { get; }
+  public string MediaType { get; }
+  public string? Pipeline { get; set; }
+  public string? PreviewResampling { get; set; }
+  public string? Profile { get; set; }
+  public string? SaveFormat { get; set; }
+
+public static class Idrak.Maui.ImageSettings
+  public const string Jpeg = "jpeg"
+  public const string Png = "png"
+  public const string Prefix = "idrak.image."
+  public static Idrak.Maui.ImageLabOptions Load(Idrak.Maui.Abstractions.ISettingsStore store, out System.Collections.Generic.IReadOnlyList<string> skipped, Idrak.Maui.ImageLabOptions? defaults = null)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.LabSetting<Idrak.Maui.ImageLabOptions>> Definitions { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> Formats { get; }
+  public static void Save(Idrak.Maui.Abstractions.ISettingsStore store, Idrak.Maui.ImageLabOptions options)
+
 public enum Idrak.Maui.LabSettingKind : int
   Choice = 2
   Number = 1
@@ -464,6 +527,62 @@ public sealed class Idrak.Maui.ModelStore : Idrak.Maui.Abstractions.IModelStore
   public const string PullMarker = ".idrak-pull"
   public static Idrak.Maui.Abstractions.StorageSpace? Measure(string folder)
   public string Folder { get; }
+
+public sealed class Idrak.Maui.OcrLabOptions
+  public Idrak.Abstraction.Data.ImageTransformPipeline ToPipeline()
+  public Idrak.Abstraction.Generation.KeyValueFormat? CacheFormat { get; set; }
+  public Idrak.Maui.Abstractions.VisionLoadRequest ToLoad(string model, string path, string device)
+  public Idrak.Maui.OcrLabOptions Clone()
+  public Idrak.Text.Generation.ImageReadRequest ToRequest(Idrak.Abstraction.Generation.ChatImage page)
+  public OcrLabOptions()
+  public int? Context { get; set; }
+  public int? MaxTokens { get; set; }
+  public int? PreviewPixels { get; set; }
+  public int? RepeatStop { get; set; }
+  public string? Model { get; set; }
+  public string? Pipeline { get; set; }
+  public string? Prompt { get; set; }
+  public string? System { get; set; }
+  public string? Weights { get; set; }
+
+public static class Idrak.Maui.OcrSettings
+  public const string Prefix = "idrak.ocr."
+  public static Idrak.Maui.OcrLabOptions Load(Idrak.Maui.Abstractions.ISettingsStore store, out System.Collections.Generic.IReadOnlyList<string> skipped, Idrak.Maui.OcrLabOptions? defaults = null)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.LabSetting<Idrak.Maui.OcrLabOptions>> Definitions { get; }
+  public static string LibraryPrompt { get; }
+  public static void Save(Idrak.Maui.Abstractions.ISettingsStore store, Idrak.Maui.OcrLabOptions options)
+
+public sealed record Idrak.Maui.Photo : System.IEquatable<Idrak.Maui.Photo>
+  public Idrak.Abstraction.Data.ImageData Pixels { get; init; }
+  public Idrak.Abstraction.Generation.ChatImage File { get; init; }
+  public Photo(string Name, Idrak.Abstraction.Generation.ChatImage File, Idrak.Abstraction.Data.ImageData Pixels, string Format, int Orientation, System.TimeSpan DecodeTime)
+  public System.TimeSpan DecodeTime { get; init; }
+  public int Orientation { get; init; }
+  public string Describe()
+  public string Format { get; init; }
+  public string Name { get; init; }
+
+public sealed record Idrak.Maui.PhotoPreview : System.IEquatable<Idrak.Maui.PhotoPreview>
+  public Microsoft.Maui.Controls.ImageSource Source()
+  public PhotoPreview(byte[] Png, int Width, int Height, System.TimeSpan Time)
+  public System.TimeSpan Time { get; init; }
+  public byte[] Png { get; init; }
+  public int Height { get; init; }
+  public int Width { get; init; }
+
+public sealed class Idrak.Maui.PhotoRefusedException : System.Exception
+  public PhotoRefusedException(string message, bool permission)
+  public bool PermissionRefused { get; }
+
+public static class Idrak.Maui.Photos
+  public static Idrak.Maui.Photo Decode(Idrak.Abstraction.Generation.ChatImage file, string name)
+  public static Idrak.Maui.PhotoPreview Preview(Idrak.Abstraction.Data.ImageData image, int? pixels, Idrak.Imaging.ImageResampling? resampling = null)
+  public static System.Threading.Tasks.Task<(Idrak.Abstraction.Generation.ChatImage, string)?> TakeAsync(Microsoft.Maui.Media.IMediaPicker picker, Idrak.Maui.Abstractions.IPermissionService permissions, bool camera, System.Threading.CancellationToken cancellationToken = default)
+  public static System.Threading.Tasks.Task<Idrak.Abstraction.Generation.ChatImage> ReadAsync(System.IO.Stream stream, System.Threading.CancellationToken cancellationToken = default)
+  public static int? ScreenPixels()
+  public static string Milliseconds(System.TimeSpan time)
+  public static string Readable()
+  public static string? HeifBrand(System.ReadOnlySpan<byte> file)
 
 public sealed class Idrak.Maui.ProgressCenter
   public Idrak.Abstraction.Diagnostics.IProgressReporter Start(string label, long? total = null, Idrak.Abstraction.Diagnostics.ProgressUnit unit = (Idrak.Abstraction.Diagnostics.ProgressUnit)0, System.TimeSpan? interval = null)
@@ -778,6 +897,64 @@ public sealed class Idrak.Maui.ViewModels.FeatureToggle : Idrak.Maui.ViewModels.
   public string Summary { get; }
   public string Title { get; }
 
+public sealed class Idrak.Maui.ViewModels.ImageViewModel : Idrak.Maui.ViewModels.ViewModel
+  public Idrak.Abstraction.Data.ImageData? Result { get; }
+  public Idrak.Maui.ImageLabOptions Options { get; }
+  public Idrak.Maui.Photo? Photo { get; }
+  public Idrak.Maui.PhotoPreview? OriginalPreview { get; }
+  public Idrak.Maui.PhotoPreview? ResultPreview { get; }
+  public ImageViewModel(Idrak.Maui.Abstractions.IPermissionService permissions, Idrak.Maui.Abstractions.IShareService share, Idrak.Maui.Abstractions.ISettingsStore settings, Idrak.Maui.ImageLabOptions? defaults = null, Microsoft.Maui.Media.IMediaPicker? picker = null, System.TimeProvider? time = null)
+  public Microsoft.Maui.Controls.ImageSource? OriginalSource { get; }
+  public Microsoft.Maui.Controls.ImageSource? ResultSource { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Maui.ViewModels.StepTime> Steps { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.LabSettingEntry> Settings { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.TransformChip> Transforms { get; }
+  public System.Collections.ObjectModel.ObservableCollection<string> Profiles { get; }
+  public System.Threading.Tasks.Task<bool> ApplyAsync()
+  public System.Threading.Tasks.Task<bool> OpenAsync(Idrak.Abstraction.Generation.ChatImage file, string name)
+  public System.Threading.Tasks.Task<bool> ShareAsync()
+  public System.Threading.Tasks.Task<bool> TakePhotoAsync(bool camera)
+  public System.Threading.Tasks.Task<string?> SaveAsync()
+  public System.Windows.Input.ICommand ApplyCommand { get; }
+  public System.Windows.Input.ICommand ApplySettingsCommand { get; }
+  public System.Windows.Input.ICommand ClearPipelineCommand { get; }
+  public System.Windows.Input.ICommand DrawProfileCommand { get; }
+  public System.Windows.Input.ICommand OpenPermissionSettingsCommand { get; }
+  public System.Windows.Input.ICommand PickPhotoCommand { get; }
+  public System.Windows.Input.ICommand SaveCommand { get; }
+  public System.Windows.Input.ICommand ShareCommand { get; }
+  public System.Windows.Input.ICommand TakePhotoCommand { get; }
+  public System.Windows.Input.ICommand ToggleSettingsCommand { get; }
+  public bool ApplySettings()
+  public bool DrawProfile()
+  public bool HasCold { get; }
+  public bool HasError { get; }
+  public bool HasNoPhoto { get; }
+  public bool HasPhoto { get; }
+  public bool HasResult { get; }
+  public bool HasSettingsMessage { get; }
+  public bool HasStatus { get; }
+  public bool HasWarm { get; }
+  public bool IsBusy { get; }
+  public bool IsIdle { get; }
+  public bool IsPermissionRefused { get; }
+  public bool ShowSettings { get; set; }
+  public string ColdText { get; }
+  public string Error { get; }
+  public string Formats { get; }
+  public string PhotoText { get; }
+  public string Pipeline { get; set; }
+  public string ProfileText { get; }
+  public string ResultText { get; }
+  public string SettingsButtonText { get; }
+  public string SettingsMessage { get; }
+  public string Status { get; }
+  public string StepsText { get; }
+  public string Title { get; }
+  public string WarmText { get; }
+  public string? SelectedProfile { get; set; }
+  public void AddStep(string step)
+
 public sealed record Idrak.Maui.ViewModels.InfoCard : System.IEquatable<Idrak.Maui.ViewModels.InfoCard>
   public InfoCard(string Title, string Subtitle, System.Collections.Generic.IReadOnlyList<Idrak.Maui.ViewModels.InfoRow> Rows, string Problem = "")
   public System.Collections.Generic.IReadOnlyList<Idrak.Maui.ViewModels.InfoRow> Rows { get; init; }
@@ -800,6 +977,7 @@ public sealed class Idrak.Maui.ViewModels.LabSettingEntry : Idrak.Maui.ViewModel
   public bool IsChoice { get; }
   public bool IsEntry { get; }
   public string Error { get; set; }
+  public string Key { get; }
   public string Placeholder { get; }
   public string Summary { get; }
   public string Text { get; set; }
@@ -850,6 +1028,74 @@ public sealed class Idrak.Maui.ViewModels.ModelsViewModel : Idrak.Maui.ViewModel
   public string Title { get; }
   public string TokenText { get; }
   public void Cancel()
+
+public sealed class Idrak.Maui.ViewModels.OcrViewModel : Idrak.Maui.ViewModels.ViewModel
+  public Idrak.Abstraction.Data.ImageData? Prepared { get; }
+  public Idrak.Maui.Abstractions.VisionReaderInfo? Model { get; }
+  public Idrak.Maui.OcrLabOptions Options { get; }
+  public Idrak.Maui.Photo? Photo { get; }
+  public Idrak.Maui.ViewModels.VisionModelEntry? SelectedModel { get; set; }
+  public Microsoft.Maui.Controls.ImageSource? PageSource { get; }
+  public OcrViewModel(Idrak.Maui.Abstractions.IModelStore store, Idrak.Maui.Abstractions.IVisionReaderService readers, Idrak.Maui.Abstractions.IPermissionService permissions, Idrak.Maui.Abstractions.IShareService share, Idrak.Maui.IdrakMauiOptions options, Idrak.Maui.Abstractions.ISettingsStore settings, Idrak.Maui.OcrLabOptions? defaults = null, Microsoft.Maui.Dispatching.IDispatcher? dispatcher = null, Microsoft.Maui.ApplicationModel.DataTransfer.IClipboard? clipboard = null, Microsoft.Maui.Media.IMediaPicker? picker = null, System.TimeProvider? time = null)
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.LabSettingEntry> Settings { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.VisionModelEntry> VisionModels { get; }
+  public System.Func<System.Threading.Tasks.Task>? OpenModels { get; set; }
+  public System.Threading.Tasks.Task RefreshAsync()
+  public System.Threading.Tasks.Task<bool> CopyAsync()
+  public System.Threading.Tasks.Task<bool> LoadModelAsync()
+  public System.Threading.Tasks.Task<bool> OpenAsync(Idrak.Abstraction.Generation.ChatImage file, string name)
+  public System.Threading.Tasks.Task<bool> PrepareAsync()
+  public System.Threading.Tasks.Task<bool> ReadAsync()
+  public System.Threading.Tasks.Task<bool> ShareAsync()
+  public System.Threading.Tasks.Task<bool> TakePhotoAsync(bool camera)
+  public System.Windows.Input.ICommand ApplySettingsCommand { get; }
+  public System.Windows.Input.ICommand CopyCommand { get; }
+  public System.Windows.Input.ICommand GoToModelsCommand { get; }
+  public System.Windows.Input.ICommand OpenPermissionSettingsCommand { get; }
+  public System.Windows.Input.ICommand PickPhotoCommand { get; }
+  public System.Windows.Input.ICommand PrepareCommand { get; }
+  public System.Windows.Input.ICommand ReadCommand { get; }
+  public System.Windows.Input.ICommand RefreshCommand { get; }
+  public System.Windows.Input.ICommand ShareCommand { get; }
+  public System.Windows.Input.ICommand StopCommand { get; }
+  public System.Windows.Input.ICommand TakePhotoCommand { get; }
+  public System.Windows.Input.ICommand ToggleSettingsCommand { get; }
+  public bool ApplySettings()
+  public bool HasCold { get; }
+  public bool HasError { get; }
+  public bool HasNoPage { get; }
+  public bool HasNoText { get; }
+  public bool HasNoVisionModels { get; }
+  public bool HasPage { get; }
+  public bool HasSettingsMessage { get; }
+  public bool HasStatus { get; }
+  public bool HasText { get; }
+  public bool HasVisionModels { get; }
+  public bool HasWarm { get; }
+  public bool IsBusy { get; }
+  public bool IsIdle { get; }
+  public bool IsNotReading { get; }
+  public bool IsPermissionRefused { get; }
+  public bool IsReading { get; }
+  public bool ShowSettings { get; set; }
+  public int UiUpdates { get; }
+  public string ColdText { get; }
+  public string Error { get; }
+  public string Formats { get; }
+  public string LiveText { get; }
+  public string ModelStatus { get; }
+  public string ModelsText { get; }
+  public string PageText { get; }
+  public string PhotoText { get; }
+  public string Pipeline { get; set; }
+  public string Prompt { get; }
+  public string SettingsButtonText { get; }
+  public string SettingsMessage { get; }
+  public string Status { get; }
+  public string Text { get; }
+  public string Title { get; }
+  public string WarmText { get; }
+  public void Stop()
 
 public sealed class Idrak.Maui.ViewModels.PlaceholderViewModel : Idrak.Maui.ViewModels.ViewModel
   public Idrak.Maui.Abstractions.IMobileFeature Feature { get; }
@@ -992,6 +1238,13 @@ public sealed class Idrak.Maui.ViewModels.SpeechModelEntry
   public string Key { get; }
   public string Title { get; }
 
+public sealed record Idrak.Maui.ViewModels.StepTime : System.IEquatable<Idrak.Maui.ViewModels.StepTime>
+  public StepTime(string Step, System.TimeSpan Time, bool Cold)
+  public System.TimeSpan Time { get; init; }
+  public bool Cold { get; init; }
+  public string Step { get; init; }
+  public string Text { get; }
+
 public sealed record Idrak.Maui.ViewModels.SuggestionChip : System.IEquatable<Idrak.Maui.ViewModels.SuggestionChip>
   public SuggestionChip(string Model, System.Windows.Input.ICommand Command)
   public System.Windows.Input.ICommand Command { get; init; }
@@ -1096,11 +1349,29 @@ public sealed class Idrak.Maui.ViewModels.TranscribeViewModel : Idrak.Maui.ViewM
   public void Dispose()
   public void Stop()
 
+public sealed class Idrak.Maui.ViewModels.TransformChip
+  public System.Windows.Input.ICommand AddCommand { get; }
+  public bool HasParameters { get; }
+  public override string ToString()
+  public string Label { get; }
+  public string Name { get; }
+  public string Parameters { get; }
+  public string Step { get; }
+  public string Summary { get; }
+
 public abstract class Idrak.Maui.ViewModels.ViewModel : System.ComponentModel.INotifyPropertyChanged
   protected ViewModel()
   protected bool SetProperty<T>(ref T field, T value, string name = "")
   protected void OnPropertyChanged(string name = "")
   public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged
+
+public sealed class Idrak.Maui.ViewModels.VisionModelEntry
+  public Idrak.Maui.Abstractions.StoredModel Model { get; }
+  public override string ToString()
+  public string Architecture { get; }
+  public string Details { get; }
+  public string Key { get; }
+  public string Title { get; }
 
 public sealed class Idrak.Maui.ViewModels.VoiceEntry
   public bool CanSpeak { get; }
@@ -1163,6 +1434,22 @@ public class Idrak.Maui.Views.DevicesPage : Microsoft.Maui.Controls.ContentPage
   protected override void OnAppearing()
   public DevicesPage(Idrak.Maui.ViewModels.DevicesViewModel viewModel)
 
+public sealed class Idrak.Maui.Views.ImageFeature : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IMobileFeature
+  public Idrak.Maui.Abstractions.PhoneNeeds Needs { get; }
+  public ImageFeature()
+  public Microsoft.Maui.Controls.Page CreatePage(System.IServiceProvider services, object viewModel)
+  public System.Collections.Generic.IReadOnlyList<string> ModelFamilies { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Packages { get; }
+  public int Order { get; }
+  public object CreateViewModel(System.IServiceProvider services)
+  public string Glyph { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public string Title { get; }
+
+public class Idrak.Maui.Views.ImagePage : Microsoft.Maui.Controls.ContentPage
+  public ImagePage(Idrak.Maui.ViewModels.ImageViewModel viewModel)
+
 public sealed class Idrak.Maui.Views.ModelsFeature : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IMobileFeature
   public Idrak.Maui.Abstractions.PhoneNeeds Needs { get; }
   public Microsoft.Maui.Controls.Page CreatePage(System.IServiceProvider services, object viewModel)
@@ -1179,6 +1466,23 @@ public sealed class Idrak.Maui.Views.ModelsFeature : Idrak.Abstraction.IKind, Id
 public class Idrak.Maui.Views.ModelsPage : Microsoft.Maui.Controls.ContentPage
   protected override void OnAppearing()
   public ModelsPage(Idrak.Maui.ViewModels.ModelsViewModel viewModel)
+
+public sealed class Idrak.Maui.Views.OcrFeature : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IMobileFeature
+  public Idrak.Maui.Abstractions.PhoneNeeds Needs { get; }
+  public Microsoft.Maui.Controls.Page CreatePage(System.IServiceProvider services, object viewModel)
+  public OcrFeature()
+  public System.Collections.Generic.IReadOnlyList<string> ModelFamilies { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Packages { get; }
+  public int Order { get; }
+  public object CreateViewModel(System.IServiceProvider services)
+  public string Glyph { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public string Title { get; }
+
+public class Idrak.Maui.Views.OcrPage : Microsoft.Maui.Controls.ContentPage
+  protected override void OnAppearing()
+  public OcrPage(Idrak.Maui.ViewModels.OcrViewModel viewModel, System.IServiceProvider services)
 
 public class Idrak.Maui.Views.PlaceholderPage : Microsoft.Maui.Controls.ContentPage
   public PlaceholderPage(Idrak.Maui.ViewModels.PlaceholderViewModel viewModel)
@@ -1236,3 +1540,10 @@ public class Idrak.Maui.Views.TranscribePage : Microsoft.Maui.Controls.ContentPa
   protected override void OnAppearing()
   protected override void OnDisappearing()
   public TranscribePage(Idrak.Maui.ViewModels.TranscribeViewModel viewModel, System.IServiceProvider services)
+
+public sealed class Idrak.Maui.VisionReaderService : Idrak.Maui.Abstractions.IVisionReaderService
+  public Idrak.Maui.Abstractions.ChatMemoryEstimate Estimate(Idrak.Maui.Abstractions.VisionLoadRequest request)
+  public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.VisionReaderLease> AcquireAsync(Idrak.Maui.Abstractions.VisionLoadRequest request, System.Threading.CancellationToken cancellationToken = default)
+  public VisionReaderService(Idrak.Maui.Abstractions.IModelService models)
+  public const string HostName = "vision"
+  public static string? VisionArchitecture(string folder)

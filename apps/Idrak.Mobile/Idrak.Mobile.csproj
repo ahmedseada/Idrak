@@ -31,6 +31,8 @@
     <PackageReference Include="Idrak.Text.Plugins" Version="$(IdrakVersion)" />
     <!-- The speech families the Transcribe and Speak labs read, registered one by one in MauiProgram (never espeak-ng). -->
     <PackageReference Include="Idrak.Audio.Plugins" Version="$(IdrakVersion)" />
+    <!-- The vision-language families the OCR lab reads with, registered one by one in MauiProgram. -->
+    <PackageReference Include="Idrak.Vision.Plugins" Version="$(IdrakVersion)" />
   </ItemGroup>
 
   <!--

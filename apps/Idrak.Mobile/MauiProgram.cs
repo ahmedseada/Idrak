@@ -10,6 +10,9 @@ using Idrak.Text.Plugins.Gemma;
 using Idrak.Text.Plugins.Llama;
 using Idrak.Text.Plugins.Mistral;
 using Idrak.Text.Plugins.Qwen;
+using Idrak.Vision.Plugins.Gemma;
+using Idrak.Vision.Plugins.Llava;
+using Idrak.Vision.Plugins.Qwen;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Idrak.Mobile;
@@ -27,8 +30,10 @@ public static class MauiProgram
                 // The app's defaults; what the user saves in the settings page is applied over them.
                 options.Theme = IdrakThemeChoice.System;
 
-                // The small models the Models page offers to tap: the app's own list (the library suggests none).
-                options.SuggestedModels = ["Qwen/Qwen3-0.6B", "unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf"];
+                // The small models the Models page offers to tap: the app's own list (the library suggests none). The last
+                // is the smallest Qwen-VL, a vision-language model the OCR lab reads with (the lab measures whether it fits
+                // this phone before loading it, and refuses it with the limit named when it does not).
+                options.SuggestedModels = ["Qwen/Qwen3-0.6B", "unsloth/Qwen3-0.6B-GGUF/Qwen3-0.6B-Q4_K_M.gguf", "Qwen/Qwen2-VL-2B-Instruct"];
 
                 // The chat's weights as int8 by default (a quarter of float32's memory); the settings page changes it.
                 options.ChatWeights = "int8";
@@ -51,6 +56,15 @@ public static class MauiProgram
         // checkpoint that reads phonemes is listed with that reason); IdrakAudio (the library's own speech models).
         VitsPlugin.RegisterFamily();
         IdrakAudioPlugin.Register();
+        // The OCR lab's vision-language families (Idrak.Vision.Plugins), each with its text decoder: Gemma 3 vision,
+        // Qwen2-VL and Qwen2.5-VL, and LLaVA.
+        Gemma3VisionPlugin.Register();
+        QwenVisionPlugin.Register();
+        LlavaPlugin.Register();
+
+        // The OCR lab reads with int8 weights by default (a quarter of float32's memory), as the chat does; the lab's
+        // settings change it, and what the user keeps there is applied over this.
+        builder.Services.AddSingleton(new OcrLabOptions { Weights = "int8" });
 
         builder.Services.AddSingleton<AppFlyoutPage>();
         builder.Services.AddSingleton<MenuPage>();

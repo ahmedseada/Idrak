@@ -49,16 +49,22 @@ public sealed class ChatModelService : IChatModelService
         var device = DeviceOf(request.Device);
         var (folder, spec) = Read(request.Path);
         int context = Math.Min(request.Context, spec.MaxPositions);
-        long embedding = (long)spec.Vocabulary * spec.Dim;
-        long table = embedding * (spec.TieEmbeddings ? 1 : 2) + (spec.LearnedPositions ? (long)spec.MaxPositions * spec.Dim : 0);
-        long projections = Math.Max(0, spec.ParameterCount - table);
-        long head = spec.TieEmbeddings ? 0 : embedding;
-        // The projections (and a separate head) in the format asked for; the token table and the norms in float32.
-        long weights = (long)((projections + head) * Bytes(request.Weights)) + (table - head) * sizeof(float);
+        long weights = WeightBytes(spec, request.Weights);
         var layout = request.KeyValueFormat is { } name ? KeyValueLayouts.Get(name) : KeyValueLayouts.For(KeyValueFormat.Float32);
         long cache = ModelMemory.KeyValueCacheBytes(spec, context, layout);
         var (available, limit) = Available(device);
         return (new ChatMemoryEstimate(request.Model, device.ToString(), weights, cache, available, limit), folder);
+    }
+
+    // The decoder's weights in the format asked for: the projections (and a separate head) packed, the token table and the
+    // norms in float32.
+    internal static long WeightBytes(DecoderSpec spec, string? format)
+    {
+        long embedding = (long)spec.Vocabulary * spec.Dim;
+        long table = embedding * (spec.TieEmbeddings ? 1 : 2) + (spec.LearnedPositions ? (long)spec.MaxPositions * spec.Dim : 0);
+        long projections = Math.Max(0, spec.ParameterCount - table);
+        long head = spec.TieEmbeddings ? 0 : embedding;
+        return (long)((projections + head) * Bytes(format)) + (table - head) * sizeof(float);
     }
 
     /// <inheritdoc />
@@ -162,8 +168,8 @@ public sealed class ChatModelService : IChatModelService
     }
 
     // The folder the library reads (a .gguf file prepared once into the cache, as loading it does) and its spec through the
-    // family the app registered (NotRegisteredException when none is).
-    private static (string Folder, DecoderSpec Spec) Read(string path)
+    // family the app registered (NotRegisteredException when none is). The vision readers' service measures with it too.
+    internal static (string Folder, DecoderSpec Spec) Read(string path)
     {
         string folder = Prepared(path);
         string configPath = Path.Combine(folder, "config.json");
@@ -174,10 +180,10 @@ public sealed class ChatModelService : IChatModelService
 
     private static string Prepared(string path) => CheckpointFormats.For(path).Prepare(path);
 
-    private static Device DeviceOf(string device) => IdrakMauiSettings.IsAuto(device) ? Device.Default : Device.Parse(device);
+    internal static Device DeviceOf(string device) => IdrakMauiSettings.IsAuto(device) ? Device.Default : Device.Parse(device);
 
     // Bytes a weight value takes in the format: 4 in float32, else measured once by packing a sample on the CPU.
-    private static double Bytes(string? format) => format is null ? sizeof(float) : BytesPerValue.GetOrAdd(format is "bf16" ? "bfloat16" : format, static name =>
+    internal static double Bytes(string? format) => format is null ? sizeof(float) : BytesPerValue.GetOrAdd(format is "bf16" ? "bfloat16" : format, static name =>
     {
         const int Side = 256;
         var values = new float[Side * Side];
@@ -193,7 +199,7 @@ public sealed class ChatModelService : IChatModelService
 
     // What the device can take now (its own report: free memory and the pool's reusable blocks), within the limit the
     // settings set for its kind; and which of the two bounds it.
-    private static (long? Bytes, string Limit) Available(Device device)
+    internal static (long? Bytes, string Limit) Available(Device device)
     {
         long? measured = device.Backend.AvailableMemory();
         long? limit = device.IsGpu ? ComputeResources.GpuMemoryLimit : ComputeResources.CpuMemoryLimit;

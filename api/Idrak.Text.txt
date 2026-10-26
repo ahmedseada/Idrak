@@ -700,6 +700,7 @@ public sealed class Idrak.Text.Generation.ChatImages
   public Idrak.Abstraction.MatMulPrecision? EncoderPrecision { get; init; }
   public System.Func<Idrak.Abstraction.Generation.ChatImage, Idrak.Abstraction.Data.ImageData> Decode { get; init; }
   public System.IDisposable? Owner { get; init; }
+  public void Keep(Idrak.Abstraction.Generation.ChatImage image, Idrak.Abstraction.Data.ImageData pixels, Idrak.Abstraction.Generation.ChatRequest? request = null)
 
 public static class Idrak.Text.Generation.ChatJson
   public static System.Text.Json.Nodes.JsonArray Messages(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages)
@@ -856,6 +857,7 @@ public sealed class Idrak.Text.Generation.ImageReader : System.IDisposable
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Diagnostics.SettingSuggestion> Suggestions()
   public System.Collections.Generic.IReadOnlyList<Idrak.Text.Generation.ImageReading> ReadBatch(System.Collections.Generic.IReadOnlyList<Idrak.Text.Generation.ImageReadRequest> requests, System.Action<int, string>? onText = null, System.Threading.CancellationToken cancellationToken = default)
   public void Dispose()
+  public void Keep(Idrak.Text.Generation.ImageReadRequest request, Idrak.Abstraction.Data.ImageData prepared)
 
 public sealed record Idrak.Text.Generation.ImageReaderOptions : System.IEquatable<Idrak.Text.Generation.ImageReaderOptions>
   public Idrak.Abstraction.Data.ImageTransformPipeline Transforms { get; init; }

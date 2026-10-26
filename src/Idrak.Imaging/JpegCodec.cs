@@ -19,7 +19,7 @@ namespace Idrak.Imaging;
 /// convention), any whole sampling ratio (4:4:4, 4:2:2, 4:2:0, 4:4:0, 4:1:1, ...), restart intervals, interleaved or
 /// not. APPn and comment segments are skipped: neither the ICC profile nor the EXIF orientation is applied, as Pillow's
 /// decoding and transformers' image processors do not (transformers' <c>load_image</c>, given a path or URL, does
-/// rotate by the EXIF orientation with <c>exif_transpose</c>; Idrak does not yet). Not read (a
+/// rotate by the EXIF orientation with <c>exif_transpose</c>, as <see cref="ChatImageDecoder"/> does). Not read (a
 /// <see cref="NotSupportedException"/> naming the variant): 12- and 16-bit samples, arithmetic coding, lossless and
 /// hierarchical frames.
 /// <para>

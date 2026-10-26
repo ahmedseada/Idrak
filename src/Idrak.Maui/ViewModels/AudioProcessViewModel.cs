@@ -1077,23 +1077,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
     /// <summary>Checks every setting on the page and the options they give, then keeps them; false, and nothing kept, when one is refused (each says why).</summary>
     public bool ApplySettings()
     {
-        var next = _options.Clone();
-        bool valid = true;
-        foreach (var entry in Settings)
-        {
-            try
-            {
-                ((LabSetting<AudioProcessLabOptions>)entry.Setting).Set(next, entry.Text);
-                entry.Error = "";
-            }
-            catch (FormatException e)
-            {
-                entry.Error = e.Message;
-                valid = false;
-            }
-        }
-
-        if (!valid)
+        if (LabSettingEntry.Apply(Settings, _options.Clone()) is not { } next)
         {
             SettingsMessage = "Nothing was kept: a value above is not one the setting takes.";
             return false;

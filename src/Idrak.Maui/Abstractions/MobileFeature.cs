@@ -88,8 +88,9 @@ public interface IMobileFeature : IKind
 /// "models" (pull a Hugging Face model into the app's storage with its progress, list the models with their sizes,
 /// remove one, the storage's free space), "chat" (a model of the store chats, its answer streamed with its tokens per
 /// second; the families are the app's to register), "transcribe" (speech into text, live), "speak" (text read aloud on the
-/// speaker, played as each sentence is made) and "audio-process" (a recording through a pipeline of the library's
-/// processors, heard before and after). Register
+/// speaker, played as each sentence is made), "audio-process" (a recording through a pipeline of the library's
+/// processors, heard before and after), "ocr" (a photo read by a vision-language model of the store, streamed; the vision
+/// families are the app's) and "image" (transforms and scan profiles on a photo, cold and warm). Register
 /// another with <see cref="Register"/>; one under a library name shadows the library's, which <see cref="Unregister"/>
 /// brings back. <see cref="Enabled"/> lists them in menu order without those the settings turn off.
 /// </summary>
@@ -118,10 +119,10 @@ public static class MobileFeatures
     /// <summary>The library's audio processing page: a sound through a pipeline, heard before and after.</summary>
     public const string AudioProcess = "audio-process";
 
-    /// <summary>The library's text reading page (planned).</summary>
+    /// <summary>The library's text reading page: a photo read by a vision-language model.</summary>
     public const string Ocr = "ocr";
 
-    /// <summary>The library's image transforms page (planned).</summary>
+    /// <summary>The library's image transforms page: transforms and scan profiles on a photo.</summary>
     public const string Image = "image";
 
     /// <summary>The library's retrieval page (planned).</summary>
@@ -138,6 +139,8 @@ public static class MobileFeatures
         table.RegisterDefault(Transcribe, new Idrak.Maui.Views.TranscribeFeature());
         table.RegisterDefault(Speak, new Idrak.Maui.Views.SpeakFeature());
         table.RegisterDefault(AudioProcess, new Idrak.Maui.Views.AudioProcessFeature());
+        table.RegisterDefault(Ocr, new Idrak.Maui.Views.OcrFeature());
+        table.RegisterDefault(Image, new Idrak.Maui.Views.ImageFeature());
         return table;
     }
 

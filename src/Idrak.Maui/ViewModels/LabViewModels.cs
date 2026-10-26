@@ -22,6 +22,9 @@ public sealed class LabSettingEntry : ViewModel
     /// <summary>The setting.</summary>
     public ILabSetting Setting { get; }
 
+    /// <summary>Its key.</summary>
+    public string Key => Setting.Key;
+
     /// <summary>Its title.</summary>
     public string Title => Setting.Title;
 
@@ -78,6 +81,30 @@ public sealed class LabSettingEntry : ViewModel
 
     /// <summary>Whether <see cref="Error"/> has something to show.</summary>
     public bool HasError => Error.Length > 0;
+
+    /// <summary>
+    /// Sets each of <paramref name="entries"/> (settings of <typeparamref name="TOptions"/>) into <paramref name="options"/>
+    /// (a copy of the lab's); the copy, or null when one is refused (each refused entry says why).
+    /// </summary>
+    internal static TOptions? Apply<TOptions>(IEnumerable<LabSettingEntry> entries, TOptions options) where TOptions : class
+    {
+        bool valid = true;
+        foreach (var entry in entries)
+        {
+            try
+            {
+                ((LabSetting<TOptions>)entry.Setting).Set(options, entry.Text);
+                entry.Error = "";
+            }
+            catch (FormatException e)
+            {
+                entry.Error = e.Message;
+                valid = false;
+            }
+        }
+
+        return valid ? options : null;
+    }
 }
 
 /// <summary>
