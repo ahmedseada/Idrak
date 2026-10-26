@@ -1,6 +1,6 @@
 # What is left
 
-Every plan's status and what is left in it, grouped by plan (2026-10-22). A finished plan is in [done/](done/) (its
+Every plan's status and what is left in it, grouped by plan (2026-10-22; Plans 1, 2, 7 and 8 updated 2026-10-26 after the device round). A finished plan is in [done/](done/) (its
 unfinished parts are listed here, so the plan itself is closed); a plan not started is in [opened/](opened/). Each item
 names its kind (bug, speed, memory, feature, check, question, docs) and the section of the plan it came from. The owner's
 test runs stay in the plans (each section below says where); they are not listed as items. The text that was moved out of
@@ -8,14 +8,14 @@ the plans is kept, as it was written, at the end ("The moved text").
 
 | Plan | Status | Where it stands | Left |
 |---|---|---|---|
-| [Plan 1: NVIDIA](done/1-nvidia.md) | Done | In progress | 31 |
+| [Plan 1: NVIDIA](done/1-nvidia.md) | Done | In progress | 32 |
 | [Plan 2: CPU](done/2-cpu.md) | Done | In progress | 17 |
 | [Plan 3: AMD](done/3-amd.md) | Done | Partly built | 2 |
 | [Plan 4: Intel](done/4-intel.md) | Done | Partly built | 7 |
 | [Plan 5: Apple](opened/5-apple.md) | Not started | Planned, nothing built | 6 |
 | [Plan 6: Idrak.Network](done/6-network.md) | Done | Superseded by Plan 23 | 0 |
-| [Plan 7: Backends](done/7-backends.md) | Done | Done, with leftovers | 11 |
-| [Plan 8: HIP](done/8-hip.md) | Done | Partly built | 9 |
+| [Plan 7: Backends](done/7-backends.md) | Done | Done, with leftovers | 17 |
+| [Plan 8: HIP](done/8-hip.md) | Done | Partly built, run on AMD hardware | 12 |
 | [Plan 9: Operations as data](done/9-operations.md) | Done | Done, with leftovers | 4 |
 | [Plan 10: Idrak.Abstraction](done/10-abstraction.md) | Done | Done, with leftovers | 6 |
 | [Plan 11: Images into language models](done/11-vision-language.md) | Done | Done, with leftovers | 8 |
@@ -45,7 +45,7 @@ the plans is kept, as it was written, at the end ("The moved text").
 
 ## Plan 1: NVIDIA ([1-nvidia.md](done/1-nvidia.md))
 
-**Status:** Done. **Where it stands:** In progress — supported on every GPU from compute 5.0; the few-row rule and every card-dependent choice are measured per shape since 0.1.6 (step 1 done); the performance table of section 2 and the coverage gaps are open.
+**Status:** Done. **Where it stands:** In progress — supported on every GPU from compute 5.0; the few-row rule and every card-dependent choice are measured per shape since 0.1.6 (step 1 done); few-row kernels for 1, 2 and 4 rows since the device round of 2026-10-26 (the plan's last section); the performance table of section 2 and the coverage gaps are open.
 **Owner's runs:** pending: section 1's 3060 and Ada `--bench-gemv` runs (also README, "Open"); the regression check below.
 
 | # | Leftover | Kind | From |
@@ -55,7 +55,7 @@ the plans is kept, as it was written, at the end ("The moved text").
 | 1.3 | FP8 quantization fused into its producers (layer norm, GELU, product epilogues): up to ~100 ms per 1.25B step; needs 1.2. | speed | Section 2, item 2 |
 | 1.4 | Persistent decoding kernel (several layers' GEMVs in one launch); decoding is at ~31% of the bandwidth ceiling. | speed | Section 2, item 3 |
 | 1.5 | Int8 prompt products on int8 tensor cores; needs a second, k-major copy of the int8 weights. | speed | Section 2, item 4 |
-| 1.6 | Cached compiled kernels (a cubin per driver and GPU through `cuModuleLoadData`): ~70 ms off the first prompt pass. Today every module is JIT-compiled from PTX (`CudaBackend.cs:461`). | speed | Section 2, item 5 |
+| 1.6 | Cached compiled kernels (a cubin per driver and GPU through `cuModuleLoadData`): ~70 ms off the first prompt pass. Today every module is JIT-compiled from PTX (`CudaBackend.cs:461`), at device open. (2026-10-26: a gemv bench's first call is 14-19 ms, 10-13 ms of it compiling C#, see 7.17.) | speed | Section 2, item 5 |
 | 1.7 | Memory pool size classes and partial trimming (fewer full flushes near a limit); the pool keeps exact-size blocks with a 25% best fit. Same suspect as 13.23 (the OCR first epoch). | memory | Section 2, item 6; Plan 14 backlog 12c |
 | 1.8 | Fine-tuning loss read once per optimizer step: `FineTuning.cs:1939` reads every micro-batch's loss (a host wait each). | speed | Section 2, item 7 |
 | 1.9 | QLoRA backward without expanding int4/int8 weights (4-8x less weight traffic per step); needs packed transposed kernels. | speed | Section 2, item 8 |
@@ -79,13 +79,15 @@ the plans is kept, as it was written, at the end ("The moved text").
 | 1.27 | `sum_rows_f32`: one thread per column walks every row; chunks of rows along grid y with partials in chunk order (rule 81). | speed | Plan 14 backlog 11h |
 | 1.28 | Rule 80 left in epilogues: `gemm128/64_*` beta reads, the dK/dV write-back of `attn_bwd_kv_f32` and `attn_spans_bwd_kv_f32`, the span kernels' range prologue (fix when the file is next touched). | speed | Plan 14 backlog 11i |
 | 1.29 | `PtxKernels.Advanced.cs`, `.Convolution.cs`, `.Recurrent.cs` still interpolate numbers with the current culture (rule 49). | bug | Plan 14 backlog 11j |
-| 1.30 | R1 leftovers: `CtcMeta` allocates `new float[3·batch]` per CTC call (`CudaBackend.Ctc.cs:123`, Vulkan's too); prompt-sized packed products make a closure, delegate and small copy per call; tensor-core callers' `Run` delegates allocate twice per large product. | memory | Plan 14 backlog (CUDA order 7; section 2, CUDA) |
+| 1.30 | R1 leftovers (the few-row packed path allocates nothing since 7264ad1): `CtcMeta` allocates `new float[3·batch]` per CTC call (`CudaBackend.Ctc.cs:123`, Vulkan's too); prompt-sized packed products make a closure, delegate and small copy per call; tensor-core callers' `Run` delegates allocate twice per large product. | memory | Plan 14 backlog (CUDA order 7; section 2, CUDA) |
+| 1.32 | The tuning file's identity carries the library's commit and the power source (`CudaBackend.Tuning.cs:126`, `TuningCache.LibraryBuild`): every pull, and every switch between battery and mains, measures the split choices again (six gemv shapes: 0.4-1.3 s, Cold rows of 70-310 ms). Key it on what changes a choice (the kernels' hash is already there) rather than the commit? Not decided. | question | Device round 2026-10-26 |
+| 1.33 | RTX 5050: the 1×1024→32000 rows read 62 or 88 µs from one run to the next (int8 and int4 alike), stored choices unchanged; find whether it is the clocks or the L2 (int8 at 32000 reads 450-529 GB/s against a measured 257 GB/s: the bench repeats the same weights). | check | Device round 2026-10-26 |
 
-**Dropped as done:** 1.31 (card names reworded as what was measured in the CUDA and Vulkan code comments, MixedPrecision's docs and the tuning and mixed-precision tests, 2026-10-23; the device-name guards in the Vulkan and HIP tests keep their lists); plan 14's 11e (`sum_f32` adds per-block partials in block order, `PtxKernels.cs:665-669`), 11f (`sumsq`, `multi_sumsq`, `sum_cols_strided`, `layernorm_bwd_params` store partials folded in a fixed order, `PtxKernels.Rows.cs:599-600`, `PtxKernels.Decoding.cs:110-112`), 11g (deterministic tensor-core split k, plan 17), 10a, 10c, 10d-10i (marked done and passing on CUDA in plan 14), 1.5 and CUDA order 1 (the fused recurrent kernels ran on CUDA, plan 14 10g).
+**Dropped as done:** 1.31 (card names reworded as what was measured in the CUDA and Vulkan code comments, MixedPrecision's docs and the tuning and mixed-precision tests, 2026-10-23; the device-name guards in the Vulkan and HIP tests keep their lists); plan 14's 11e (`sum_f32` adds per-block partials in block order, `PtxKernels.cs:665-669`), 11f (`sumsq`, `multi_sumsq`, `sum_cols_strided`, `layernorm_bwd_params` store partials folded in a fixed order, `PtxKernels.Rows.cs:599-600`, `PtxKernels.Decoding.cs:110-112`), 11g (deterministic tensor-core split k, plan 17), 10a, 10c, 10d-10i (marked done and passing on CUDA in plan 14), 1.5 and CUDA order 1 (the fused recurrent kernels ran on CUDA, plan 14 10g); the few-row products' speed (c95321a, 1/2/4-row kernels: int8 3×, int4 2× on the vocabulary head) and the int4 grid tail suspected after it (int4 measured at int8's speed in the later runs).
 
 ## Plan 2: CPU ([2-cpu.md](done/2-cpu.md))
 
-**Status:** Done. **Where it stands:** In progress — supported everywhere .NET 10 runs; the machine-agnostic audit (section 4) is done; step 1 (decided: option a) is not built and most of section 2 is open.
+**Status:** Done. **Where it stands:** In progress — supported everywhere .NET 10 runs; the machine-agnostic audit (section 4) is done; tiled int8/int4 decoding, in-place cache attention and allocation-free products since the device round of 2026-10-26 (the plan's last section); step 1 (decided: option a) is not built and most of section 2 is open.
 **Owner's runs:** none.
 
 | # | Leftover | Kind | From |
@@ -98,7 +100,7 @@ the plans is kept, as it was written, at the end ("The moved text").
 | 2.6 | `--bench-cpu` on an ARM64 machine for the NEON 8×8 kernel's speed (the tests passed on an Apple M4 Max and an Adreno phone's CPU). | check | Section 3; section 4 "Open"; README, rule table |
 | 2.7 | A run on a desktop or Xeon where the runtime accelerates AVX-512 (the 16-wide paths and 512-bit panels; only the test container's second host ran them). | check | Section 3; section 4 "Open" |
 | 2.8 | The bfloat16 k chunk is a formula (8 fastest of 2-16 here): measure it at first use if other machines disagree. | speed | Section 4 "Open"; README, rule table |
-| 2.9 | Register-tile the int8, int4 and float few-row products as the bfloat16 one (identical results). | speed | Section 4, "ISA paths not added" |
+| 2.9 | Register-tile the float few-row products as the bfloat16 one (identical results); int8 and int4 done (a36a2f7). | speed | Section 4, "ISA paths not added" |
 | 2.10 | Opt-in ISA paths (each changes a summation order or rounding): 512-bit transposed-B dots, AVX-512 BF16 / ARM BF16 dots, VNNI / SDOT int8 dots, SVE, AMX, 512-bit element-wise kernels where `Vector<T>` is 256. | speed | Section 4, "ISA paths not added" |
 | 2.11 | Lifting the CPU's attention head-size limits (256 / 128): changes results for larger heads, so opt-in only. | feature | README, rule table |
 | 2.12 | `LayerNormTrainKernel` computes mean and variance twice (it calls `LayerNormFused`); a fused training layer norm needs an override-aware operation. | speed | Plan 14 backlog (R3) |
@@ -106,9 +108,9 @@ the plans is kept, as it was written, at the end ("The moved text").
 | 2.14 | Vector loops without an `IsHardwareAccelerated` check (rule 34): `Moments`, `MultiplyAddInPlace`, `GroupAffineCore`, `AddInPlace` and loops in `CpuBackend.cs` (a scalar fallback changes bits). | bug | Plan 14 backlog (R3) |
 | 2.15 | Depthwise convolution is scalar with its activation as a separate pass; the composed convolution's bias and activation passes are not fused (bits change). | speed | Plan 14 backlog (R3) |
 | 2.16 | `Pow` and the gated-activation backward are scalar `MathF` loops (sin, cos, sqrt, SiLU are vector loops since plan 22 step 8); the bfloat16 tiled kernel reads leftover columns one by one. | speed | Plan 14 backlog (R3) |
-| 2.17 | Small per-call arrays: norm scale/shift copies, `Enumerable.Repeat` in `GroupScaleShift`, CTC per-sequence tables, `Permute`'s shape copies. | memory | Plan 14 backlog (R3) |
+| 2.17 | Small per-call arrays (the tiled products' `Parallel.For` and closures are gone since 7264ad1): norm scale/shift copies, `Enumerable.Repeat` in `GroupScaleShift`, CTC per-sequence tables, `Permute`'s shape copies. | memory | Plan 14 backlog (R3) |
 
-**Dropped as done:** section 2 item 3 (`FusedAdamW` runs SIMD on all cores, `CpuBackend.cs:312-333`); section 3's macOS row (an Apple M4 Max passed the whole CPU list, README "Not tested yet").
+**Dropped as done:** section 2 item 3 (`FusedAdamW` runs SIMD on all cores, `CpuBackend.cs:312-333`); int8 and int4 register-tiled one-row products (a36a2f7, 2.9's first part); decoding attention over int8 and bfloat16 caches read in place on all cores (ac0ab38); per-call allocation in the tiled products (7264ad1, 0 B a call); section 3's macOS row (an Apple M4 Max passed the whole CPU list, README "Not tested yet").
 
 ## Plan 3: AMD ([3-amd.md](done/3-amd.md))
 
@@ -162,7 +164,7 @@ No leftovers.
 
 ## Plan 7: Backends ([7-backends.md](done/7-backends.md))
 
-**Status:** Done. **Where it stands:** Done, with leftovers — all six phases built: the minimum backend and providers, public KV formats, the Vulkan runtime and kernels (fused decoding kernels and subgroup size control included), the public backend API (plan 10). The file's status line ("in progress on `architecture`") is stale.
+**Status:** Done. **Where it stands:** Done, with leftovers — all six phases built: the minimum backend and providers, public KV formats, the Vulkan runtime and kernels (fused decoding kernels and subgroup size control included), the public backend API (plan 10); the device round of 2026-10-25/26 (the plan's last section) added the system-memory device, kernel availability, the settled bench and the profiler's jit probe. The file's status line ("in progress on `architecture`") is stale.
 **Owner's runs:** none in this file.
 
 | # | Leftover | Kind | From |
@@ -181,18 +183,21 @@ No leftovers.
 | 7.12 | Packed-sequence adapter gradients wrong (relative error 0.438, "fine-tuning: packed sequences … rotary positions") on an NVIDIA card when kernel choices are measured fresh in a warm process: `IDRAK_VULKAN_TUNING_CACHE=0`, filter `sampler:\|packed projections\|packed epilogues\|pretrained: packed\|fine-tuning: packed sequences` fails; the test alone, with stored choices, or with the run's captured choices and `IDRAK_AUTOTUNE=0` passes, so no stored choice is wrong: measuring during the rotary loop (the learned loop reuses its keys and passes) corrupts its gradients. Every operation measured alone (`IDRAK_VULKAN_TUNE_OPS=<op>`) passes, so it takes two or more; next: all but one (`IDRAK_VULKAN_TUNE_OPS` with one left out; the 2026-10-23 script skipped this step because PowerShell's `-match 'FAIL'` matched "0 failed"), then read the pair's measurement (scratch bindings, what it writes outside the scratch, queue order around `Synchronize`). Lavapipe never reproduces it, even with `IDRAK_TUNE_BUDGET_MS` large enough to measure everything. | bug | Plan 7 Vulkan, 2026-10-23 |
 | 7.13 | Fresh choices per process differ across a cluster: with no tuning file shared yet, the one-process reference and each rank measure separately and can settle differently on the order-different choices (reduced-precision products, attention widths), so "cli reinforce: cluster sim … against one process" misses 1e-4 on a fresh card run (stored choices pass). Option offered, not decided: ranks take only same-bits choices of their own, or rank 0's choices before the first step. | question | Plan 7 Vulkan, 2026-10-23 |
 | 7.14 | Depthwise convolution in the one-order convolution (TuningVersion 4) runs 1.1-1.3× slower than before; proposed: its own FMA-chain order for depthwise shapes, the composed path dropped there. Not decided. | speed | Plan 7 Vulkan, 2026-10-23 |
+| 7.15 | Adreno 725 (Turnip, phone): whisper-small on vulkan:0 fails with `VK_ERROR_DEVICE_LOST` (one dispatch runs past the driver's time limit); split long dispatches into pieces sized from a measured time per piece. The phone's CPU transcribes live. | bug | Device round 2026-10-25 |
+| 7.16 | Vulkan's floor on NVIDIA: 60-75 µs a call whatever the shape (bfloat16 1×1024→3072: 71 µs on vulkan:0, 14.6 on cuda:0, same card); measure what the submit and the wait cost and cut it (recorded steps hide it in decoding, the bench and single operations do not). | speed | Device round 2026-10-26 |
+| 7.17 | The first call in a process compiles C#: 10-19 ms on CUDA and the CPU, 53-73 ms on Vulkan (650-680 methods, its kernel generator included), measured by the jit probe; a warm-up off the first call's path, or ReadyToRun for apps that publish. | speed | Device round 2026-10-26 |
 
-**Dropped as done:** phase 4's "fewer dispatches per layer" (fused decoding kernels, `VulkanBackend.Fused.cs`, `FusedKernels = true`; the README's "No fused decoder kernels" row is stale); phase 5's required subgroup sizes (`VulkanBackend.SubgroupSize.cs`) and cooperative matrices; the sampler's subgroup reductions (taken out on purpose: workgroup memory on every device, plan 22).
+**Dropped as done (device round, 2026-10-25/26):** packed attention on the host (ec09ecd, ac48952); failed graph recordings seen only by the fine-tuner (760b9b1); an integrated GPU limited to its carve-out (the system-memory device, 34e11ad, a36a2f7); row kernels whose bits changed with the driver's fusing per width (34e11ad); devices silent about kernels being off (8b09867); unsteady bench rows (076ce7d); `IDRAK_PROFILE_PROBES=all` ignored by `--profile` (1ad9de8); per-call allocation in the few-row products (7264ad1). Earlier: phase 4's "fewer dispatches per layer" (fused decoding kernels, `VulkanBackend.Fused.cs`, `FusedKernels = true`; the README's "No fused decoder kernels" row is stale); phase 5's required subgroup sizes (`VulkanBackend.SubgroupSize.cs`) and cooperative matrices; the sampler's subgroup reductions (taken out on purpose: workgroup memory on every device, plan 22).
 
 ## Plan 8: HIP ([8-hip.md](done/8-hip.md))
 
-**Status:** Done. **Where it stands:** Partly built — the first slice (runtime, devices, minimum backend, hipRTC kernels for element-wise ops, RMS norm and the int8 product, a code-object cache) is in `Idrak.Gpu/Hip`; never run on an AMD GPU.
-**Owner's runs:** pending: "What remains" item 1 (needs an AMD GPU).
+**Status:** Done. **Where it stands:** Partly built, run on AMD hardware — the first slice and the decoding and training kernels (a36a2f7) are in `Idrak.Gpu/Hip`; first run on a Radeon gfx90c under Windows 2026-10-26 (the plan's "First run on AMD hardware"): 65 of 65 HIP tests, slower than Vulkan on the same GPU.
+**Owner's runs:** pending: 8.1 (ROCm on Linux, a discrete RDNA or CDNA GPU).
 
 | # | Leftover | Kind | From |
 |---|---|---|---|
-| 8.1 | A run on real hardware (ROCm on Linux, the HIP SDK on Windows; an RDNA and a CDNA GPU if possible): `--list-devices`, the HIP tests, the whole list on `hip:0`; fix what it finds first. | check | What remains 1; open-questions, hardware check 4; README, "Not supported yet" |
-| 8.2 | More kernels, most used first: softmax and log-softmax, float32 products, the sampler and penalties, rotary positions, gathers, decoding attention, cache writes, int4 and bfloat16 products, the fused decoding kernels. | speed | What remains 2 |
+| 8.1 | A run on ROCm under Linux and on a discrete RDNA and a CDNA GPU (the integrated gfx90c on Windows passed all 65 HIP-filtered tests, 2026-10-26); the whole list on `hip:0`. | check | What remains 1; open-questions, hardware check 4; README, "Not supported yet" |
+| 8.2 | More kernels: the sampler and penalties, rotary positions, the fused decoding kernels (softmax, float32, int4 and bfloat16 products, gathers, attention and cache writes done in a36a2f7). | speed | What remains 2 |
 | 8.3 | Tuning by measurement (block sizes, k splits, attention splits, kept per device, driver and build); wavefront reductions measured against shared memory. | speed | What remains 3 |
 | 8.4 | Graphs through hipGraph (stream capture) for `GenerationOptions.UseGraph`. | speed | What remains 4 |
 | 8.5 | Matrix cores: WMMA on RDNA 3/4, MFMA on CDNA, chosen by a test compile, never by target name. | speed | What remains 5 |
@@ -200,8 +205,11 @@ No leftovers.
 | 8.7 | Memory: asynchronous uploads from pinned staging (`hipHostMalloc`), offloading to system memory, `IMemoryOffload`. | memory | What remains 7 |
 | 8.8 | Backend API points a third family found, still open: `TensorCoresUnavailable()` and the capture members (`BeginCapture`/`EndCapture` returning `IntPtr`s) are CUDA-shaped; no per-thread device-context hook; `Upload` must finish reading its span (no asynchronous upload from backend-owned memory beyond the optional `IHostStaging`); no shared-memory figure in the capabilities; host fallbacks download operands whole; integers in float storages unnamed; no shutdown hook; `Return` on the finalizer thread undocumented. | feature | Input for the public backend API |
 | 8.9 | `HipBackend` launch: a lock and two dictionary lookups per launch. | speed | Plan 14 backlog (R2) |
+| 8.10 | HIP gemv 1.2-6× slower than Vulkan on the same GPU (gfx90c: int8 1×3072→1024 861 µs against 136, int4 1×1024→32000 1,841 against 548): few-row kernels per row count and k splits as CUDA's (c95321a), measured per device. | speed | Device round 2026-10-26 |
+| 8.11 | HIP without the SDK: AMD's runtime loads finished machine code only, so the kernels need hipRTC (HIP SDK, ROCm). Options: SPIR-V finished by the runtime (check that the Windows driver carries the finalizer), or Idrak's own AMDGPU code (per-generation encodings, register allocation, the code object format). Worth it only if HIP beats Vulkan on the same card (8.10 first). | question | Device round 2026-10-26 |
+| 8.12 | A runtime newer than the graphics driver (an SDK's, through `IDRAK_HIP_RUNTIME`) crashes the process inside the device probe (0xC0000005, no handler catches it); a probe in a child process, or the driver's version checked first, would keep the process up. | bug | Device round 2026-10-26 |
 
-**Dropped as done:** `Detach`/`Attach` (now `protected abstract`, `Backend.cs:748-754`); compute units and lanes (`BackendHardware.ComputeUnits` and its lanes field).
+**Dropped as done:** the Windows run on AMD hardware (gfx90c, 8.1's first part, 2026-10-26: the driver's runtime first, older code object formats tried, c02dbe1); most of 8.2's kernels (a36a2f7); polling against blocking waits (2c08305, measured: polling kept); `Detach`/`Attach` (now `protected abstract`, `Backend.cs:748-754`); compute units and lanes (`BackendHardware.ComputeUnits` and its lanes field).
 
 ## Plan 9: Operations as data ([9-operations.md](done/9-operations.md))
 

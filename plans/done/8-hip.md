@@ -57,3 +57,21 @@ through the host fallback, correct and slow: each call copies its operands to th
   installs the runtime but not the compiler: memory and copies on the GPU, every kernel operation on the host).
 - **Supported GPUs**: ROCm supports a list of GPUs per release; others report no devices or fail at `hipInit`, which
   shows as "no devices" with the runtime's reason.
+
+## First run on AMD hardware, 2026-10-26 (closed)
+
+A Radeon gfx90c (8 compute units, integrated) on Windows, the graphics driver's runtime (HIP 5.7) with the HIP SDK 7.2's
+hipRTC. What it built; what is left is in [leftovers.md](../leftovers.md#plan-8-hip-8-hipmd).
+
+| Commit | What |
+|---|---|
+| 34e11ad | Maximum and minimum kernels (Binary threw for them) |
+| a36a2f7 | Decoding and training kernels: float32 products (tiled, few-row), bfloat16 and int4 few-row products, expansions, softmax, log-softmax, scaled masked softmax, layer norm (fused, training, gradients), log-softmax top-k, GELU variants, attention over ranges, decoding and tiled attention (heads up to 256), key/value writes, masks, gathers, permutes; `IMemoryReport` |
+| 2c08305 | Waits poll `hipStreamQuery` (`IDRAK_HIP_WAIT=block` for the runtime's wait); measured equal or slightly better than blocking on the gfx90c, so polling stays |
+| 8b09867 | Kernels unavailable said with the reason (no hipRTC: the HIP SDK or ROCm is needed; the driver has the runtime only) |
+| 117f94e, c02dbe1, 953aa53 | The driver's runtime first (an SDK's newer runtime beside an older driver crashed the process in the probe), `IDRAK_HIP_RUNTIME` to choose another; kernels compiled in the compiler's code object format, then 5 and 4, until the runtime loads one (`IDRAK_HIP_CODE_OBJECT`); a refusal names each format and both releases |
+| 7264ad1 | Pool size index without nodes; 0 B a call once warm |
+
+Result: 65 of 65 HIP-filtered tests on all five devices, the device-against-CPU test included; the gemv bench on hip:0
+went from the host fallback (1-25 ms) to 0.24-3.8 ms, still 1.2-6× slower than Vulkan on the same GPU (int8 1×3072→1024:
+861 µs against 136).

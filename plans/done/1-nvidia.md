@@ -59,3 +59,19 @@ splits), and the decoding-attention split rule.
 - **A rule tuned on two GPUs can still be wrong on a third**; the timed choice (step 1.3) avoids guessing, at the cost
   of a short warm-up.
 - **Laptop GPUs change clocks with power and temperature**; benchmark on mains power, after a warm-up run.
+
+## Device round, 2026-10-26 (closed)
+
+The owner's runs on an RTX 5050 Laptop GPU (20 SMs, 12.0) and an RTX 3060 Laptop GPU (30 SMs, 8.6). What it built;
+what is left is in [leftovers.md](../leftovers.md#plan-1-nvidia-1-nvidiamd).
+
+| Commit | What | Measured |
+|---|---|---|
+| c95321a | int8, int4 and bfloat16 few-row products compiled for 1, 2 and 4 rows (`{int8,int4,bf16}_gemv_r{1,2,4}_f32`); m ≤ 4 plain products take the smallest; the 217 existing PTX kernels byte-identical; bit-for-bit test against the eight-row kernel | RTX 5050, 1×1024→32000: int8 186 → 62 µs, int4 166 → 61-66 µs, bfloat16 315 → 251-259 µs; small shapes 26-54 → 14-19 µs; CUDA now ahead of Vulkan on the same card on every shape (1.6-4×). RTX 3060: 17-19 µs small shapes, int4 at 32000 99.9 µs |
+| 7264ad1 | Split partial sums in one kept block (`KeptScratch`), the pool's size index without nodes (`PoolSizes`): a warm few-row product allocates nothing | 0 B a call on cuda:0 (bench Detail column) |
+| 076ce7d, 42aedca | The bench's settled warm-up and median, Cold apart, and the compile time inside each Cold | Cold first call 14-19 ms, 10-13 ms of it compiling C#; later rows 0.04-0.9 ms once the split choices are stored |
+
+Cold rows of 70-310 ms are the split choices measured again: the tuning file's identity carries the library's commit and
+the power source, so every pull (and a switch between battery and mains) measures them once more. On the RTX 5050 the
+32000-column rows read 62 or 88 µs from one run to the next, either format; the weights stay partly in L2 between the
+bench's repeats (int8 at 32000 reads 450-529 GB/s against a measured 257 GB/s).

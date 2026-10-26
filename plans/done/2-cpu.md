@@ -121,3 +121,17 @@ accelerates AVX-512 (the 512-bit panels).
 - **Bit-exact statistics:** callers that compared sampling statistics across versions see entropy change in the last
   bits (tokens unchanged).
 - **Benchmark noise:** laptops and shared machines vary by 20–60% between runs; compare medians of three runs.
+
+## Device round, 2026-10-26 (closed)
+
+The owner's runs on a 16-thread Ryzen laptop, a 16-thread Intel laptop, the 24-thread desktop and a phone (Termux). What
+it built; what is left is in [leftovers.md](../leftovers.md#plan-2-cpu-2-cpumd).
+
+| Commit | What | Measured |
+|---|---|---|
+| a36a2f7 | int8 and int4 one-row products on register-tiled kernels like the bfloat16 one (`CpuBackend.IntegerFewRows.cs`), bit for bit the same | int8 2-13×, int4 8-20× faster on the bench's shapes |
+| ac0ab38 | Decoding attention over int8 and bfloat16 caches read in place, on all cores (`CpuBackend.CacheAttention.cs`, `AttentionMaskedBFloat16`), bit for bit the same | int8 and bfloat16 caches now faster than float32 (Ryzen: 591 / 841 µs against 1,084 at 512 positions) |
+| 7264ad1 | A pooled parallel loop (`CpuRanges`) for the tiled products instead of `Parallel.For`, struct bodies, closures moved off the path | 2.4 KB → 0 B a call; small shapes up to 2× faster (int4 256→768: 24.7 → 12.3 µs) |
+| 076ce7d | The bench settles before it times (rounds that agree within 5%), medians, Cold apart | CPU rows steady run to run |
+
+The phone transcribed live with whisper-small on its CPU (the Adreno GPU's run is a Plan 7 leftover).

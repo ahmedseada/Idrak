@@ -69,3 +69,23 @@ lavapipe (Mesa's software Vulkan driver) here, and on CUDA plus `--bench-gemv` o
 - Kernels are built per device: `VulkanKernels.Get(name, width, subgroups)` with the device's width and its subgroup
   arithmetic (or narrower widths and plain reductions, which tuned operations also try); every kernel declares at most
   `SharedBytesBound(width)` bytes of workgroup memory (checked by the test list at every width).
+
+## Device round, 2026-10-25/26 (closed)
+
+The owner's runs on four machines (phone: Adreno 725 under Turnip; laptop: RTX 3060 + Radeon gfx90c; laptop: RTX 5050 +
+Intel UHD; desktop: RTX 5070 Ti). What it built; what is left is in
+[leftovers.md](../leftovers.md#plan-7-backends-7-backendsmd).
+
+| Commit | What |
+|---|---|
+| 760b9b1 | A failed graph recording published as `GraphRecordingFailed` (verbose, the "graphs" profile probe, loggers); the test runner takes `--verbose` and `--profile` |
+| ec09ecd, ac48952 | Vulkan packed attention on the span kernels (nothing on the host), each sequence's keys tiled on its own grid (bit-identical across packings) |
+| 34e11ad, a36a2f7 | An integrated GPU listed a second time on system memory (`vulkan:N, system memory`: 10.7 GB against 1.75 GB on the gfx90c, within 0-25% of the first's speed), with a staging candidate; `IDRAK_VULKAN_SYSTEM_MEMORY_DEVICE=0` off. Vulkan row kernels round each product on its own (one result at every width) |
+| 8b09867 | `IKernelAvailability`: a device says why its kernels are off (devices, doctor, verbose, JSON, the profile's fallbacks) |
+| 076ce7d | `bench`: settled warm-up, median, Cold apart (`--settle`, `--warmup`, `IDRAK_BENCH_*`); `--columns` on every table (a36a2f7) |
+| 1ad9de8, 42aedca | `IDRAK_PROFILE_PROBES=all` takes the intrusive probes in `--profile`; a "jit" probe; each Cold's compile time in `bench -v` |
+| 7264ad1 | Few-row packed products allocate nothing once warm on CPU, CUDA, Vulkan and HIP (kept partials, `PoolSizes`); the gemv bench times the device product into a kept output |
+
+Measured: Vulkan on NVIDIA never goes below 60-75 µs a call whatever the shape (bfloat16 1×1024→3072: 71 µs against
+CUDA's 14.6 on the same card); the first call in a process compiles C# for 10-73 ms (Vulkan's 650-680 methods include
+its kernel generator).
