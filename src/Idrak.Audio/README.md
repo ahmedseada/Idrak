@@ -17,9 +17,13 @@ Built so far (phase S1):
   checked (a damaged frame refused by number). `FlacOptions`: `KeepCutEnd` (a file cut inside its last frame keeps its
   whole frames, as a WAV cut short does), `CheckCrc`, `FramesPerTask`. MP3 and MP2 decoding (`Mp3Codec`, a port of minimp3) and MP3 encoding (`Mp3Encoder`, written from the ISO specifications; `Mp3EncodeOptions`, the IDRAK_MP3_* variables) are built in too. Ogg and AAC would be plug-ins (`AudioCodecs.Register`).
 
-Live sound (plan 30): `AudioCaptures`, a registry of `IAudioCapture`s that record from the system's input devices,
-"winmm" (Windows' waveIn) and "alsa" (Linux's libasound) built in, each loading the system's own audio library at run
-time (`ForThisMachine` picks the first that can run, `Devices` lists the inputs); `PcmStreamInput` reads a stream as it
+Live sound (plans 30 and 34): `AudioCaptures`, a registry of `IAudioCapture`s that record from the system's input devices,
+"winmm" (Windows' waveIn), "alsa" (Linux's libasound) and "aaudio" (Android's libaaudio, API 26 and later) built in,
+each loading the system's own audio library at run time (`ForThisMachine` picks the first that can run, `Devices` lists
+the inputs); `AudioPlaybacks`, its mirror for sound out: `IAudioPlayback`s ("winmm" through waveOut, "alsa", "aaudio")
+open an `IAudioOutput` whose `WriteAsync` queues blocks in order (waiting while `AudioPlaybackOptions.BufferSeconds` is
+queued) and whose `DrainAsync` waits until everything written has played, sound at another rate or channel count
+converted once per block (the library's `Resampler`, as one stream across blocks); `PcmStreamInput` reads a stream as it
 arrives (a WAV header, or raw `s16le`/`f32le`); and `LiveTranscriber`, which transcribes any `IAudioInput` with any
 recognizer as the sound comes: the open segment read again every `StepSeconds`, its words made final by a commit policy
 (`LiveCommitPolicies`, "agreement" built in), a segment ended by a pause, by `WindowSeconds` or by the end, quiet never

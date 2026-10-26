@@ -18,7 +18,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Text` | 23 | 0 | 11 | 34 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 13 | 0 | 6 | 19 | 0 |
-| `Idrak.Audio` | 49 | 2 | 20 | 71 | 0 |
+| `Idrak.Audio` | 51 | 2 | 21 | 74 | 0 |
 | `Idrak.Cluster` | 2 | 0 | 0 | 2 | 0 |
 | `Idrak.Network` | 2 | 4 | 1 | 7 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
@@ -470,18 +470,19 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
 | `Idrak.Audio.Abstractions.AudioAugmentations` | registry | public | — |  | noise, spec-mask, speed | Audio | Audio |
-| `Idrak.Audio.Abstractions.AudioCaptures` | registry | public | — |  | alsa, winmm | — | Audio |
+| `Idrak.Audio.Abstractions.AudioCaptures` | registry | public | — |  | aaudio, alsa, winmm | — | Audio |
 | `Idrak.Audio.Abstractions.AudioCleaners` | registry | public | — |  | denoise, highpass, normalize, trim | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioCodecs` | registry | public | — |  | flac, mp3, wav | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioEncoders` | registry | public | — |  | mp3, wav | Audio | Audio |
 | `Idrak.Audio.Abstractions.AudioFamilies` | registry | public | — |  | — | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.AudioFeatureExtractors` | registry | public | — |  | log-mel | Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.AudioPlaybacks` | registry | public | — |  | aaudio, alsa, winmm | — | Audio |
 | `Idrak.Audio.Abstractions.AudioProcessors` | registry | public | — |  | agc, bandpass, compress, dc, declick, declip, deess, dehum, +22 | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.AudioSplitters` | registry | public | — |  | seconds, silence | — | Audio |
 | `Idrak.Audio.Abstractions.IAdversarialSpeechSynthesizer` | interface | public | Module | VitsSynthesizer |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IAdversarialSynthesisStep` | interface | public | — | VitsTraining.Step |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IAudioAugmentation` | interface | public | — | NoiseAugmentation, SpecMaskAugmentation, SpeedAugmentation |  | Audio | Audio |
-| `Idrak.Audio.Abstractions.IAudioCapture` | interface | public | — | AlsaCapture, WinmmCapture |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IAudioCapture` | interface | public | — | AAudioCapture, AlsaCapture, WinmmCapture |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioCleaner` | interface | public | — | DenoiseCleaner, HighPassCleaner, NormalizeCleaner, TrimCleaner |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioCodec` | interface | public | — | AudioCodecs.GuardedCodec, FlacCodec, Mp3Codec, WavCodec |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioEncoder` | interface | public | — | AudioEncoders.GuardedEncoder, Mp3Encoder, WavEncoder |  | Audio | Audio |
@@ -490,6 +491,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.IAudioFeatureKind` | interface | public | — | AudioFeatureExtractors.Kind |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioInput` | interface | public | — | AudioPipeline.ProcessedInput, CaptureQueue, PcmStreamInput |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioLanguageEncoder` | interface | public | Device | IdrakAudioLanguageEncoder |  | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.IAudioOutput` | interface | public | — | PlaybackQueue |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.IAudioPlayback` | interface | public | — | AAudioPlayback, AlsaPlayback, WinmmPlayback |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioProcessor` | interface | public | — | AgcProcessor, BandPassProcessor, CompressProcessor, DcProcessor, DeclickProcessor, DeclipProcessor, +24 |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.IAudioSplitter` | interface | public | — | SecondsSplitter, SilenceSplitter |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.IAudioStage` | interface | public | — | AgcProcessor.Stage, AudioPipeline.PipelineStage, BiquadStage, BufferedStage, CompressProcessor.Stage, DeclickProcessor.Stage, +13 |  | Audio, Audio.Plugins | Audio |

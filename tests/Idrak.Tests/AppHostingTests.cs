@@ -80,6 +80,8 @@ internal static partial class Tests
             Check(ClusterCache.Folder == Path.Combine(set, "cluster"), $"the cluster's measurements under the setting: {ClusterCache.Folder}");
             Check(FeatureCaches.DefaultFolder == Path.Combine(set, "features"), $"the feature cache under the setting: {FeatureCaches.DefaultFolder}");
             Check(RnNoisePlugin.DefaultModelPath == Path.Combine(set, "rnnoise", "rnnoise.rnnn"), $"the noise model under the setting: {RnNoisePlugin.DefaultModelPath}");
+            Check(Environment.GetEnvironmentVariable("IDRAK_VOICES") is { Length: > 0 } || Idrak.Audio.FolderVoiceStore.DefaultRoot == Path.Combine(set, "voices"),
+                $"the voice store under the setting: {Idrak.Audio.FolderVoiceStore.DefaultRoot}");
             string prepared = GgufModel.Prepare(TestData(Path.Combine("gguf", "tiny-llama.gguf")));
             Check(prepared.StartsWith(Path.Combine(set, "gguf") + Path.DirectorySeparatorChar, StringComparison.Ordinal) && Directory.Exists(prepared),
                 $"a .gguf prepared with no cache root goes under the setting: {prepared}");

@@ -63,6 +63,34 @@ internal sealed class CaptureQueue : IAudioInput
         }
     }
 
+    /// <summary>Queues one block of float samples interleaved by frame, as planar floats (one pass over the frames, in order).</summary>
+    public void DeliverFloat(ReadOnlySpan<float> interleaved)
+    {
+        int frames = interleaved.Length / Channels;
+        if (frames == 0)
+        {
+            return;
+        }
+
+        var planar = GC.AllocateUninitializedArray<float>(frames * Channels);   // every value written below
+        if (Channels == 1)
+        {
+            interleaved[..frames].CopyTo(planar);
+        }
+        else
+        {
+            for (int f = 0, at = 0; f < frames; f++)
+            {
+                for (int c = 0; c < Channels; c++, at++)
+                {
+                    planar[c * frames + f] = interleaved[at];
+                }
+            }
+        }
+
+        _blocks.Writer.TryWrite(new AudioData(planar, Channels, SampleRate));
+    }
+
     /// <inheritdoc />
     /// <exception cref="InvalidOperationException">Read a second time, or the device failed while recording (the system's message given).</exception>
     public async IAsyncEnumerable<AudioData> ReadAsync([EnumeratorCancellation] CancellationToken cancellationToken = default)

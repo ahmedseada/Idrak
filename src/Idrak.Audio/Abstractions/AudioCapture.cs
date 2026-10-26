@@ -20,6 +20,12 @@ public sealed record AudioCaptureOptions
     /// <summary>The seconds of sound each block holds: the delay a block adds before it is read.</summary>
     public double BlockSeconds { get; init; } = 0.05;
 
+    /// <summary>What the stream is tuned for where the system lets it choose (AAudio).</summary>
+    public AudioPerformance Performance { get; init; } = AudioPerformance.Default;
+
+    /// <summary>Asks for the device alone (AAudio's exclusive sharing mode, a shorter path); the system may still share it.</summary>
+    public bool Exclusive { get; init; }
+
     /// <summary>Throws when an option is out of range.</summary>
     /// <exception cref="ArgumentException">The rate, the channels or the block is not positive.</exception>
     public void Check()
@@ -66,7 +72,7 @@ public interface IAudioInput : IDisposable
 /// </summary>
 public interface IAudioCapture
 {
-    /// <summary>The name it is registered under ("winmm", "alsa").</summary>
+    /// <summary>The name it is registered under ("winmm", "alsa", "aaudio").</summary>
     string Name { get; }
 
     /// <summary>Whether it can record on this machine; <paramref name="reason"/> says why not (another operating system, the audio library missing).</summary>
@@ -83,7 +89,7 @@ public interface IAudioCapture
 
 /// <summary>
 /// The audio captures, by name (ignoring case). Built in (Idrak.Audio), each loading the operating system's audio library
-/// when first used: "winmm" (Windows' waveIn) and "alsa" (Linux's libasound). Register another (macOS, a sound server, a
+/// when first used: "winmm" (Windows' waveIn), "alsa" (Linux's libasound) and "aaudio" (Android's libaaudio). Register another (macOS, a sound server, a
 /// network stream) with <see cref="Register"/>; <see cref="ForThisMachine"/> picks the first that can run, an app's before
 /// the library's.
 /// </summary>
@@ -95,6 +101,9 @@ public static class AudioCaptures
     /// <summary>Linux's ALSA (libasound.so.2).</summary>
     public const string Alsa = "alsa";
 
+    /// <summary>Android's AAudio (libaaudio.so, Android 8.0, API 26, and later).</summary>
+    public const string Aaudio = "aaudio";
+
     private static readonly SlotTable<string, IAudioCapture> Table = BuiltIn();
 
     private static SlotTable<string, IAudioCapture> BuiltIn()
@@ -103,6 +112,7 @@ public static class AudioCaptures
             unguarded: "a capture records from its own system's devices, so another cannot stand in for it");
         table.RegisterDefault(Winmm, new Idrak.Audio.WinmmCapture());
         table.RegisterDefault(Alsa, new Idrak.Audio.AlsaCapture());
+        table.RegisterDefault(Aaudio, new Idrak.Audio.AAudioCapture());
         return table;
     }
 

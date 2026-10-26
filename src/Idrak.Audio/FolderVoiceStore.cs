@@ -41,14 +41,11 @@ public sealed class FolderVoiceStore : ICheckpointVoiceStore
 
     /// <summary>
     /// Where the built-in store keeps voices: <c>IDRAK_VOICES</c> when set, else voices/ under the library's cache
-    /// folder (<c>IDRAK_CACHE</c>, or <c>~/.cache/idrak</c>).
+    /// folder (<see cref="ComputeResources.CacheFolder"/>).
     /// </summary>
     public static string DefaultRoot => Environment.GetEnvironmentVariable("IDRAK_VOICES") is { Length: > 0 } voices
-        ? voices
-        : Path.Combine(Environment.GetEnvironmentVariable("IDRAK_CACHE") is { Length: > 0 } cache
-            ? cache
-            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile, Environment.SpecialFolderOption.DoNotVerify), ".cache", "idrak"),
-            "voices");
+        ? Path.GetFullPath(voices)
+        : Path.Combine(ComputeResources.CacheFolder, "voices");
 
     /// <inheritdoc />
     public string Name { get; }
