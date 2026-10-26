@@ -47,7 +47,10 @@ Speech text (plan 22): the front end a synthesizer's tokenizer runs before it lo
 Idrak.Audio.Plugins' VITS family registers "uroman-arabic"; `For` picks the one covering a text's script),
 `ITextPhonemizer` and `TextPhonemizers` (text to the phonemes a checkpoint reads; none built in, as the library starts no
 outside program: Idrak.Audio.Plugins' "espeak-ng" runs the espeak-ng program the user installs; `KeepingPunctuation`
-phonemizes between the marks). `Subtitles` writes a transcription's segments as
+phonemizes between the marks). What a checkpoint's text front end needs is read before it is loaded:
+`SpeechSynthesisModels.TextNeeds` (from a family that implements `ITextFrontEndSynthesisFamily`, VITS's tokenizer_config.json)
+gives `SpeechTextNeeds` (phonemes and their language, romanised text), and `SpeechTextNeeds.Missing` says, family-neutrally,
+what of it is not registered here, so an app lists such a model with its reason. `Subtitles` writes a transcription's segments as
 SubRip or WebVTT.
 
 Layers (`Idrak.Audio.Layers`, plan 22): the generative speech layers the VITS and OpenVoice plug-ins used to carry,

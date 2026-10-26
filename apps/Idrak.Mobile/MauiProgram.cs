@@ -1,7 +1,9 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Audio.Plugins.IdrakAudio;
 using Idrak.Audio.Plugins.RnNoise;
+using Idrak.Audio.Plugins.Vits;
 using Idrak.Audio.Plugins.Whisper;
 using Idrak.Maui;
 using Idrak.Text.Plugins.Gemma;
@@ -44,6 +46,11 @@ public static class MauiProgram
         // setting (rnnoise model=PATH, its model file kept on the phone).
         WhisperPlugin.Register();
         RnNoisePlugin.Register();
+        // The Speak lab's synthesis families: VITS (the MMS-TTS checkpoints, with uroman's Arabic romanizer) by its family
+        // alone, without the espeak-ng phonemizer VitsPlugin.Register would bring (a program the app cannot run: a
+        // checkpoint that reads phonemes is listed with that reason); IdrakAudio (the library's own speech models).
+        VitsPlugin.RegisterFamily();
+        IdrakAudioPlugin.Register();
 
         builder.Services.AddSingleton<AppFlyoutPage>();
         builder.Services.AddSingleton<MenuPage>();

@@ -84,20 +84,12 @@ public sealed class PlannedFeature : IMobileFeature
 
 /// <summary>
 /// The library's planned features (plan 34's labs, in its menu order), registered as defaults in <see cref="MobileFeatures"/>.
-/// Orders leave room: Devices is 0, the Models lab 10, Chat 20 and Transcribe 30 (built, so no longer here); the Bench (held) and an app's own come after.
+/// Orders leave room: Devices is 0, the Models lab 10, Chat 20, Transcribe 30, Speak 40 and Audio process 50 (built, so no longer here); the Bench (held) and an app's own come after.
 /// </summary>
 internal static class PlannedFeatures
 {
     public static readonly PlannedFeature[] Library =
     [
-        new(MobileFeatures.Speak, "Speak", "▷", 40,
-            "Text read aloud on the speaker",
-            "Synthesis played on the speaker; the voices that need espeak-ng are listed with that reason",
-            PhoneNeeds.Model | PhoneNeeds.Network, ["Idrak.Audio", "Idrak.Audio.Plugins"]),
-        new(MobileFeatures.AudioProcess, "Audio process", "≈", 50,
-            "A recording through a named pipeline",
-            "Record, apply a named pipeline, play before and after, with its latency and delay",
-            PhoneNeeds.Microphone, ["Idrak.Audio"]),
         new(MobileFeatures.Ocr, "OCR", "Aa", 60,
             "Text read from a photo or the camera",
             "A photo or the camera, decoded by the library's own codecs and read by a small reader; a vision-language reader only where the measured memory allows",

@@ -17,6 +17,7 @@ internal abstract partial class Tests
         ("audio tts: Griffin-Lim on a tone's magnitudes gives a tone of the same frequency, finite and of the frames' length; the same spectrogram and seed twice give the same samples; the vocoder registry has griffin-lim as the library default and makes it from a log-mel whose peak band is the tone's", AudioTtsGriffinLim),
         ("audio tts: the VITS plug-in loads tiny-vits and speaks the fixture's ids with noise 0 within 1e-3 of reference/waveform.npy's largest sample (not silent) at the config's rate (the durations' frames times the hop), the same twice, Rate 2 no longer, text through the tokenizer equal to the ids, SpeakStream joined equal to Speak, the WAV saved and read back; without the plug-in the family is refused", AudioTtsVitsFixture),
         ("audio tts: the VITS decoder in pieces (DecoderChunkSeconds) with its context frames on both sides gives one pass's samples within 1e-6 (pieces of 3, 7 and 50 frames, through Synthesize and the vocoder), where 50 frames decoded without context differ near the cut 100 times more; on the CPU its peak memory grows only by the latents' own copy while they grow fivefold", AudioTtsDecoderPieces),
+        ("audio tts: what a checkpoint's text needs is read before loading (SpeechSynthesisModels.TextNeeds): tiny-vits reads its text as it is, a phonemize tokenizer_config.json needs phonemes in its language (missing, naming TextPhonemizers, while no phonemizer is registered; a named one not registered named), an is_uroman one a romanizer for another script only; a family that says nothing reads text as it is; VitsPlugin.RegisterFamily registers the family and its romanizer without espeak-ng, Register adds espeak-ng and Unregister takes back only what it added", AudioTtsTextNeeds),
         ("audio tts: the VITS tokenizer maps the fixture's symbols to ids, lower-cases and drops symbols outside the vocabulary, intersperses blanks when asked, phonemizes for a phonemize checkpoint through TextPhonemizers (the language from tokenizer_config.json, punctuation kept in place; an unregistered phonemizer and espeak-ng not found refused naming the remedy), romanises Arabic for a uroman checkpoint (uroman's output exactly on the tool's cases) and refuses a script no romanizer covers, and SplitText bounds the pieces at sentence ends", AudioTtsVitsTokenizer),
     ];
 
@@ -194,6 +195,114 @@ internal abstract partial class Tests
         finally
         {
             VitsPlugin.Unregister();
+        }
+    }
+
+    // A family that reads checkpoints and says nothing of their text.
+    private sealed class SilentSynthesisFamily(string name) : ISpeechSynthesisFamily
+    {
+        public string Name => name;
+
+        public ISpeechSynthesizer Read(SpeechSynthesisCheckpoint checkpoint, SpeechSynthesisLoadOptions options) => throw new NotSupportedException("not read in this test");
+    }
+
+    internal static void AudioTtsTextNeeds(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                              // host only: once
+        }
+
+        // As found (the tool may have registered the package): put back at the end.
+        bool vits = VitsPlugin.Plugin.IsRegistered, family = VitsPlugin.Family.IsRegistered, espeak = EspeakNgPlugin.IsRegistered;
+        VitsPlugin.Unregister();
+        VitsPlugin.UnregisterFamily();
+        EspeakNgPlugin.Unregister();
+        string temp = TempFolder("audio-tts-text-needs");
+        var phonemes = new TestPhonemizer();
+        try
+        {
+            Check(ThrowsSaying<NotSupportedException>(() => SpeechSynthesisModels.TextNeeds(TinyVits), "is not registered"), "without the family its checkpoints' needs are refused naming the registry");
+            VitsPlugin.RegisterFamily();
+            Check(VitsPlugin.IsRegistered && VitsPlugin.Family.IsRegistered && !VitsPlugin.Plugin.IsRegistered && !EspeakNgPlugin.IsRegistered
+                  && SpeechSynthesisFamilies.Find(VitsSpeechFamily.Architecture) is VitsSpeechFamily && TextRomanizers.Names.Contains(VitsPlugin.UromanArabic)
+                  && !TextPhonemizers.Names.Contains(EspeakNgPlugin.Phonemizer),
+                $"RegisterFamily: the family and its romanizer, no espeak-ng (phonemizers: {string.Join(", ", TextPhonemizers.Names)})");
+            var plain = SpeechSynthesisModels.TextNeeds(TinyVits);
+            Check(plain == SpeechTextNeeds.None && plain.Missing() is null && plain.Missing("مرحبا 你好") is null, $"tiny-vits reads its text as it is: {plain}");
+
+            string Copy(string name, string tokenizerConfig)
+            {
+                string folder = Path.Combine(temp, name);
+                Directory.CreateDirectory(folder);
+                foreach (string file in (string[])["config.json", "vocab.json"])
+                {
+                    File.Copy(Path.Combine(TinyVits, file), Path.Combine(folder, file));
+                }
+
+                File.WriteAllText(Path.Combine(folder, "tokenizer_config.json"), tokenizerConfig);
+                return folder;
+            }
+
+            var needs = SpeechSynthesisModels.TextNeeds(Copy("phonemes", """{"phonemize": true, "language": "en-gb"}"""));
+            Check(needs.Phonemes && needs.PhonemeLanguage == "en-gb" && needs.Phonemizer is null && !needs.Romanized, $"a phonemize checkpoint: {needs}");
+            Check(TextPhonemizers.Names.Count == 0, $"no phonemizer should be registered here: {string.Join(", ", TextPhonemizers.Names)}");
+            string? missing = needs.Missing();
+            Check(missing is not null && missing.Contains("phonemes (en-gb)", StringComparison.Ordinal) && missing.Contains("TextPhonemizers.Register", StringComparison.Ordinal)
+                  && missing.Contains("espeak-ng", StringComparison.Ordinal), $"no phonemizer: {missing}");
+            TextPhonemizers.Register(phonemes);
+            Check(needs.Missing() is null, $"with a phonemizer registered: {needs.Missing()}");
+            string? named = (needs with { Phonemizer = "no-such-phonemizer" }).Missing();
+            Check(named is not null && named.Contains("'no-such-phonemizer'", StringComparison.Ordinal) && named.Contains(phonemes.Name, StringComparison.Ordinal),
+                $"a named phonemizer not registered: {named}");
+
+            var romanized = SpeechSynthesisModels.TextNeeds(Copy("uroman", """{"is_uroman": true}"""));
+            Check(romanized.Romanized && !romanized.Phonemes && romanized.Missing() is null && romanized.Missing("hello") is null && romanized.Missing("مرحبا") is null,
+                $"a uroman checkpoint with Latin and Arabic text: {romanized}");
+            Check(romanized.Missing("你好") is { } script && script.Contains("TextRomanizers.Register", StringComparison.Ordinal), $"a script no romanizer covers: {romanized.Missing("你好")}");
+
+            const string Silent = "TextNeedsSilentFamily";
+            string silent = Path.Combine(temp, "silent");
+            Directory.CreateDirectory(silent);
+            File.WriteAllText(Path.Combine(silent, "config.json"), $$"""{"architectures": ["{{Silent}}"]}""");
+            SpeechSynthesisFamilies.Register(new SilentSynthesisFamily(Silent));
+            try
+            {
+                Check(SpeechSynthesisModels.TextNeeds(silent) == SpeechTextNeeds.None, "a family that says nothing reads text as it is");
+            }
+            finally
+            {
+                SpeechSynthesisFamilies.Unregister(Silent);
+            }
+
+            VitsPlugin.Register();
+            Check(VitsPlugin.Plugin.IsRegistered && EspeakNgPlugin.IsRegistered && TextPhonemizers.Names.Contains(EspeakNgPlugin.Phonemizer), "Register adds espeak-ng");
+            VitsPlugin.Unregister();
+            Check(!EspeakNgPlugin.IsRegistered && VitsPlugin.Family.IsRegistered && SpeechSynthesisFamilies.Find(VitsSpeechFamily.Architecture) is not null,
+                "Unregister takes back espeak-ng and keeps the family RegisterFamily registered");
+            VitsPlugin.UnregisterFamily();
+            Check(!VitsPlugin.IsRegistered && SpeechSynthesisFamilies.Find(VitsSpeechFamily.Architecture) is null && !TextRomanizers.Names.Contains(VitsPlugin.UromanArabic),
+                "UnregisterFamily takes the family and its romanizer back");
+        }
+        finally
+        {
+            TextPhonemizers.Unregister(phonemes.Name);
+            VitsPlugin.Unregister();
+            VitsPlugin.UnregisterFamily();
+            Directory.Delete(temp, recursive: true);
+            if (espeak)
+            {
+                EspeakNgPlugin.Register();
+            }
+
+            if (vits)
+            {
+                VitsPlugin.Register();
+            }
+            else if (family)
+            {
+                VitsPlugin.RegisterFamily();
+            }
         }
     }
 

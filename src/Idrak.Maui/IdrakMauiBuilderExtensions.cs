@@ -18,8 +18,8 @@ public static class IdrakMauiBuilderExtensions
     /// app's own storage by default), every <see cref="ComputeResources"/> limit, the device and the token
     /// (<see cref="IdrakMauiStartup.Apply"/>); the "maui" progress reporter; the services (<see cref="IModelService"/>,
     /// <see cref="IModelStore"/>, <see cref="IDeviceInformation"/>, <see cref="IPermissionService"/>,
-    /// <see cref="IShareService"/>, the settings and the memory-pressure signal); the library's features
-    /// (<see cref="MobileFeatures"/>: Devices, Models and Chat, with <see cref="IChatModelService"/>) and the settings page. The app registers its own features and model families after.
+    /// <see cref="IShareService"/>, <see cref="ISoundPlayer"/>, the settings and the memory-pressure signal); the library's features
+    /// (<see cref="MobileFeatures"/>: Devices, Models, Chat with <see cref="IChatModelService"/>, Transcribe, Speak and Audio process) and the settings page. The app registers its own features and model families after.
     /// </summary>
     public static MauiAppBuilder UseIdrak(this MauiAppBuilder builder, Action<IdrakMauiOptions>? configure = null)
     {
@@ -65,6 +65,7 @@ public static class IdrakMauiBuilderExtensions
         services.TryAddSingleton<IDeviceInformation, DeviceInformation>();
         services.TryAddSingleton<IPermissionService, MauiPermissionService>();
         services.TryAddSingleton<IShareService, MauiShareService>();
+        services.TryAddSingleton<ISoundPlayer, SoundPlayer>();                    // one speaker for the app: one sound at a time
         services.AddTransient<DevicesViewModel>();
         services.TryAddSingleton<ModelsViewModel>();                                // one for the app: a pull outlives its page
         services.TryAddSingleton(sp => new ChatViewModel(sp.GetRequiredService<IModelStore>(), sp.GetRequiredService<IChatModelService>(), options));   // a chat outlives its page

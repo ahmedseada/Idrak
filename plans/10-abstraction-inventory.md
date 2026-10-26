@@ -18,7 +18,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Text` | 23 | 0 | 11 | 34 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 13 | 0 | 6 | 19 | 0 |
-| `Idrak.Audio` | 51 | 2 | 21 | 74 | 0 |
+| `Idrak.Audio` | 52 | 2 | 21 | 75 | 0 |
 | `Idrak.Cluster` | 2 | 0 | 0 | 2 | 0 |
 | `Idrak.Network` | 2 | 4 | 1 | 7 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
@@ -257,9 +257,9 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Operations.PluginOperations` | registry | public | — |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.OptionSpec` | abstract class | public | — | OptionSpec<T> |  | Abstraction, Audio, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
-| `Idrak.Abstraction.Plugins.IIdrakPlugin` | interface | public | — | BertPlugin.BertRegistration, CSharpCodingPlugin.CSharpCodingRegistration, CSharpLanguagePlugin.CSharpLanguageRegistration, ClassicControlPlugin.ClassicRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, +19 |  | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Plugins.IIdrakPlugin` | interface | public | — | BertPlugin.BertRegistration, CSharpCodingPlugin.CSharpCodingRegistration, CSharpLanguagePlugin.CSharpLanguageRegistration, ClassicControlPlugin.ClassicRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, +20 |  | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Plugins.IIdrakPluginPackage` | interface | public | — | AudioPluginsPackage, ReinforcementPluginsPackage, TextPluginsPackage, VisionPluginsPackage |  | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Plugins.IdrakPlugin` | abstract class | public | — | BertPlugin.BertRegistration, CSharpCodingPlugin.CSharpCodingRegistration, CSharpLanguagePlugin.CSharpLanguageRegistration, ClassicControlPlugin.ClassicRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, +19 |  | Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Plugins.IdrakPlugin` | abstract class | public | — | BertPlugin.BertRegistration, CSharpCodingPlugin.CSharpCodingRegistration, CSharpLanguagePlugin.CSharpLanguageRegistration, ClassicControlPlugin.ClassicRegistration, CodingPlugin.CodingRegistration, CrnnPlugin.CrnnRegistration, +20 |  | Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Plugins.IdrakPlugins` | registry | public | — |  | — | Abstraction, Audio.Plugins, Reinforcement.Plugins, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Reinforcement.AdvantageEstimators` | registry | public | — |  | gae, group, leave-one-out, returns | Reinforcement | Abstraction |
 | `Idrak.Abstraction.Reinforcement.EnvironmentKinds` | registry | public | — |  | prompts | Reinforcement, Reinforcement.Plugins, Text | Abstraction |
@@ -519,6 +519,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.ISpeechSynthesisObjective` | interface | public | Tensor | DurationSynthesisObjective |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.ISpeechSynthesizer` | interface | public | Device | IdrakAudioTtsModel, VitsSynthesizer, VoicedSynthesizer |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ISpeechTrainingObjective` | interface | public | Tensor | CtcObjective, Seq2SeqObjective |  | Audio | Audio |
+| `Idrak.Audio.Abstractions.ITextFrontEndSynthesisFamily` | interface | public | — | VitsSpeechFamily |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ITextPhonemizer` | interface | public | — | EspeakNgPhonemizer |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ITextRomanizer` | interface | public | — | UromanArabicRomanizer |  | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.ITrainableAudioEncoder` | interface | public | Tensor | IdrakAudioLanguageEncoder |  | Audio, Audio.Plugins | Audio |
@@ -538,8 +539,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Audio.Abstractions.SpeechSynthesisObjectives` | registry | public | — |  | durations | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechTrainee` | abstract class | internal | Device, Module, Tensor | AdversarialSynthesisTrainer.AdversarialTrainee, SpeechSynthesisTrainer.SynthesisTrainee, SpeechTrainer.RecognizerTrainee |  | Audio | Audio |
 | `Idrak.Audio.Abstractions.SpeechTrainingObjectives` | registry | public | — |  | ctc, seq2seq | Audio | Audio |
-| `Idrak.Audio.Abstractions.TextPhonemizers` | registry | public | — |  | — | Audio.Plugins | Audio |
-| `Idrak.Audio.Abstractions.TextRomanizers` | registry | public | — |  | — | Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.TextPhonemizers` | registry | public | — |  | — | Audio, Audio.Plugins | Audio |
+| `Idrak.Audio.Abstractions.TextRomanizers` | registry | public | — |  | — | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.Vocoders` | registry | public | — |  | griffin-lim | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.VoiceConverters` | registry | public | — |  | — | Audio, Audio.Plugins | Audio |
 | `Idrak.Audio.Abstractions.VoiceStores` | registry | public | — |  | folder | Audio | Audio |

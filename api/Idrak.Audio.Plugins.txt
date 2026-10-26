@@ -334,14 +334,18 @@ public sealed record Idrak.Audio.Plugins.Vits.VitsConfig : System.IEquatable<Idr
 
 public static class Idrak.Audio.Plugins.Vits.VitsPlugin
   public const string UromanArabic = "uroman-arabic"
+  public static Idrak.Abstraction.Plugins.IIdrakPlugin Family { get; }
   public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
   public static bool IsRegistered { get; }
   public static void Register()
+  public static void RegisterFamily()
   public static void Unregister()
+  public static void UnregisterFamily()
 
-public sealed class Idrak.Audio.Plugins.Vits.VitsSpeechFamily : Idrak.Audio.Abstractions.ISpeechSynthesisFamily, Idrak.Audio.Abstractions.ITrainableSpeechSynthesisFamily
+public sealed class Idrak.Audio.Plugins.Vits.VitsSpeechFamily : Idrak.Audio.Abstractions.ISpeechSynthesisFamily, Idrak.Audio.Abstractions.ITextFrontEndSynthesisFamily, Idrak.Audio.Abstractions.ITrainableSpeechSynthesisFamily
   public Idrak.Audio.Abstractions.IAdversarialSpeechSynthesizer ReadForTraining(Idrak.Audio.Abstractions.SpeechSynthesisCheckpoint checkpoint, Idrak.Audio.Abstractions.SpeechSynthesisLoadOptions options)
   public Idrak.Audio.Abstractions.ISpeechSynthesizer Read(Idrak.Audio.Abstractions.SpeechSynthesisCheckpoint checkpoint, Idrak.Audio.Abstractions.SpeechSynthesisLoadOptions options)
+  public Idrak.Audio.Abstractions.SpeechTextNeeds TextNeeds(System.Text.Json.Nodes.JsonObject config, string folder)
   public VitsSpeechFamily()
   public const string Architecture = "VitsModel"
   public string Name { get; }

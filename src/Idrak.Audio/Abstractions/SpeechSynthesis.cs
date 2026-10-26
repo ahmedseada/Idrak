@@ -156,6 +156,90 @@ public interface ITrainableSpeechSynthesisFamily : ISpeechSynthesisFamily
 }
 
 /// <summary>
+/// What a synthesis checkpoint's text front end needs before its model can read text (<see cref="SpeechSynthesisModels.TextNeeds"/>):
+/// phonemes from a <see cref="TextPhonemizers"/> entry (a VITS checkpoint that sets <c>phonemize</c>), romanised text from a
+/// <see cref="TextRomanizers"/> entry (one that sets <c>is_uroman</c>), or neither. Read from the checkpoint's files
+/// without loading its weights; <see cref="Missing"/> says, family-neutrally, what of it is not registered here.
+/// </summary>
+public sealed record SpeechTextNeeds
+{
+    /// <summary>A checkpoint that reads text as it is.</summary>
+    public static SpeechTextNeeds None { get; } = new();
+
+    /// <summary>The checkpoint reads phonemes: its text goes through a phonemizer first.</summary>
+    public bool Phonemes { get; init; }
+
+    /// <summary>The language the phonemizer is asked for ("en-us"), or null when the checkpoint reads no phonemes.</summary>
+    public string? PhonemeLanguage { get; init; }
+
+    /// <summary>The phonemizer the checkpoint names (a <see cref="TextPhonemizers"/> name), or null for the most recently registered.</summary>
+    public string? Phonemizer { get; init; }
+
+    /// <summary>The checkpoint reads romanised text: text of another script is romanised first (by the <see cref="TextRomanizers"/> entry that covers it).</summary>
+    public bool Romanized { get; init; }
+
+    /// <summary>
+    /// What is missing for the checkpoint to read <paramref name="text"/> here, or null when nothing is: for a phonemes
+    /// checkpoint, a phonemizer registered in <see cref="TextPhonemizers"/> (the one it names, or any); for a romanised one
+    /// and a <paramref name="text"/> holding letters of another script, a romanizer that covers them. Without a text, a
+    /// romanizer is not asked for (Latin text needs none).
+    /// </summary>
+    public string? Missing(string? text = null)
+    {
+        if (Phonemes)
+        {
+            var registered = TextPhonemizers.Names;
+            if (Phonemizer is { } name && !registered.Contains(name, StringComparer.Ordinal))
+            {
+                return $"it reads phonemes{Language()} from the phonemizer '{name}', which is not registered here "
+                    + $"(registered: {(registered.Count == 0 ? "none" : string.Join(", ", registered))}; TextPhonemizers.Register adds one)";
+            }
+
+            if (registered.Count == 0)
+            {
+                return $"it reads phonemes{Language()} from a phonemizer, and none is registered here (TextPhonemizers.Register adds one; "
+                    + "Idrak.Audio.Plugins' espeak-ng phonemizer runs the espeak-ng program)";
+            }
+        }
+
+        if (Romanized && text is not null && HasOtherScript(text) && TextRomanizers.For(text) is null)
+        {
+            return "it reads romanised text, and no registered romanizer covers this text's script "
+                + $"(registered: {(TextRomanizers.Names.Count == 0 ? "none" : string.Join(", ", TextRomanizers.Names))}; TextRomanizers.Register adds one)";
+        }
+
+        return null;
+    }
+
+    private string Language() => PhonemeLanguage is { Length: > 0 } language ? $" ({language})" : "";
+
+    private static bool HasOtherScript(string text)
+    {
+        foreach (var rune in text.EnumerateRunes())
+        {
+            if (TextRomanizers.IsNonLatinLetter(rune))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+}
+
+/// <summary>
+/// A text-to-speech family that tells what a checkpoint's text front end needs (<see cref="SpeechTextNeeds"/>: a
+/// phonemizer, a romanizer) from its files alone, before its weights are loaded; read through
+/// <see cref="SpeechSynthesisModels.TextNeeds"/>. A family that does not implement it reads text as it is.
+/// </summary>
+public interface ITextFrontEndSynthesisFamily : ISpeechSynthesisFamily
+{
+    /// <summary>What the checkpoint in <paramref name="folder"/> (its <paramref name="config"/>, config.json) needs to read text.</summary>
+    /// <exception cref="InvalidDataException">A file the family reads (its tokenizer's) is missing or not what it should be.</exception>
+    SpeechTextNeeds TextNeeds(JsonObject config, string folder);
+}
+
+/// <summary>
 /// The text-to-speech families, by architecture name (config.json's "architectures"). The library registers none: a
 /// family (its configuration, tokenizer, layers and decoder) is an application of these contracts, registered by the
 /// app or plug-in that brings it (Idrak.Audio.Plugins' VITS family is one). A checkpoint whose name has no family is refused
@@ -241,12 +325,38 @@ public static class SpeechSynthesisModels
                 + "its models speak but are not trained here."));
     }
 
+    /// <summary>
+    /// What the model at <paramref name="path"/> needs to read text (a phonemizer, a romanizer), from its files alone: its
+    /// weights are not loaded. The family config.json names answers when it is an <see cref="ITextFrontEndSynthesisFamily"/>;
+    /// another reads text as it is (<see cref="SpeechTextNeeds.None"/>). <see cref="SpeechTextNeeds.Missing"/> then says
+    /// what of it is not registered here, so a model that cannot speak is listed with its reason before it is loaded.
+    /// </summary>
+    /// <exception cref="FileNotFoundException">There is no config.json.</exception>
+    /// <exception cref="InvalidDataException">config.json names no architecture, or a file the family reads is not what it should be.</exception>
+    /// <exception cref="NotSupportedException">The architecture has no registered family.</exception>
+    public static SpeechTextNeeds TextNeeds(string path)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        string folder = Directory.Exists(path) ? path : CheckpointFormats.For(path).Prepare(path);
+        var (config, architecture) = Config(folder);
+        return SpeechSynthesisFamilies.For(architecture) is ITextFrontEndSynthesisFamily family ? family.TextNeeds(config, folder) : SpeechTextNeeds.None;
+    }
+
     // The checkpoint at `path` read by the family its config.json names.
     private static T Read<T>(string path, Func<ISpeechSynthesisFamily, SpeechSynthesisCheckpoint, T> read)
     {
         ArgumentException.ThrowIfNullOrEmpty(path);
         var format = CheckpointFormats.For(path);
         string folder = format.Prepare(path);
+        var (config, architecture) = Config(folder);
+        var family = SpeechSynthesisFamilies.For(architecture);
+        using var tensors = format.Open(folder);
+        return read(family, new SpeechSynthesisCheckpoint(architecture, config, tensors, folder, () => format.Open(folder), []));
+    }
+
+    // config.json of `folder` and the architecture it names ("architectures", else "model_type").
+    private static (JsonObject Config, string Architecture) Config(string folder)
+    {
         string configPath = Path.Combine(folder, "config.json");
         if (!File.Exists(configPath))
         {
@@ -257,9 +367,7 @@ public static class SpeechSynthesisModels
             ?? throw new InvalidDataException($"{configPath} is not a JSON object.");
         string architecture = config["architectures"] is JsonArray { Count: > 0 } a && a[0] is JsonValue v && v.TryGetValue(out string? name) && name.Length > 0 ? name
             : config["model_type"]?.GetValue<string>() ?? throw new InvalidDataException($"{configPath} names no architecture (\"architectures\" or \"model_type\").");
-        var family = SpeechSynthesisFamilies.For(architecture);
-        using var tensors = format.Open(folder);
-        return read(family, new SpeechSynthesisCheckpoint(architecture, config, tensors, folder, () => format.Open(folder), []));
+        return (config, architecture);
     }
 
     /// <summary>

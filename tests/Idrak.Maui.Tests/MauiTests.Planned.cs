@@ -18,8 +18,6 @@ internal static partial class MauiTests
     // The library's planned labs in the plan's menu order (after Devices and Models).
     private static readonly (string Name, string Title, int Order, PhoneNeeds Needs)[] PlannedLabs =
     [
-        (MobileFeatures.Speak, "Speak", 40, PhoneNeeds.Model | PhoneNeeds.Network),
-        (MobileFeatures.AudioProcess, "Audio process", 50, PhoneNeeds.Microphone),
         (MobileFeatures.Ocr, "OCR", 60, PhoneNeeds.Camera | PhoneNeeds.Model | PhoneNeeds.Network),
         (MobileFeatures.Image, "Image", 70, PhoneNeeds.Camera),
         (MobileFeatures.Search, "Search", 80, PhoneNeeds.Model | PhoneNeeds.Network),
@@ -59,8 +57,8 @@ internal static partial class MauiTests
             Check(MobileFeatures.All[^1] == selfTest && MobileFeatures.Origin("self-test") == typeof(MauiTests).Assembly.GetName().Name && MobileFeatures.Default("self-test") is null,
                 $"the app's self-test: {Menu()}");
             var options = new IdrakMauiOptions();
-            options.DisabledFeatures.Add("SPEAK");
-            Check(!MobileFeatures.Enabled(options).Any(f => f.Name == MobileFeatures.Speak) && MobileFeatures.Enabled(options).Any(f => f.Name == MobileFeatures.Search),
+            options.DisabledFeatures.Add("SEARCH");
+            Check(!MobileFeatures.Enabled(options).Any(f => f.Name == MobileFeatures.Search) && MobileFeatures.Enabled(options).Any(f => f.Name == MobileFeatures.Devices),
                 "a planned feature is turned off like any other");
         }
         finally
@@ -156,21 +154,21 @@ internal static partial class MauiTests
     private static void PlannedReplaced()
     {
         var before = MobileFeatures.All.Select(f => f.Name).ToList();
-        int at = before.IndexOf(MobileFeatures.Speak);
-        Check(at > 0, $"speak is not in the menu: {Menu()}");
-        IMobileFeature ready = new PlainFeature(MobileFeatures.Speak, "Speak");
-        IMobileFeature ordered = new LabFeature(MobileFeatures.Speak, "Speak", order: 40);
+        int at = before.IndexOf(MobileFeatures.Search);
+        Check(at > 0, $"search is not in the menu: {Menu()}");
+        IMobileFeature ready = new PlainFeature(MobileFeatures.Search, "Search");
+        IMobileFeature ordered = new LabFeature(MobileFeatures.Search, "Search", order: 80);
         IMobileFeature zeta = new PlainFeature("zeta-lab", "Zeta"), alpha = new PlainFeature("alpha-lab", "Alpha");
         try
         {
             MobileFeatures.Register(ready);
-            Check(MobileFeatures.Get(MobileFeatures.Speak) == ready && ready.State == FeatureState.Ready && ready.Coming.Length == 0 && ready.Order == MobileFeatures.Unordered,
-                $"the ready speak: state {ready.State}, order {ready.Order}");
-            Check(MobileFeatures.Place(ready) == 40 && MobileFeatures.All.Select(f => f.Name).SequenceEqual(before), $"a ready speak without an order moved: {Menu()}");
+            Check(MobileFeatures.Get(MobileFeatures.Search) == ready && ready.State == FeatureState.Ready && ready.Coming.Length == 0 && ready.Order == MobileFeatures.Unordered,
+                $"the ready search: state {ready.State}, order {ready.Order}");
+            Check(MobileFeatures.Place(ready) == 80 && MobileFeatures.All.Select(f => f.Name).SequenceEqual(before), $"a ready search without an order moved: {Menu()}");
             Check(MobileFeatures.Enabled(new IdrakMauiOptions()).Select(f => f.Name).SequenceEqual(before), "the enabled menu changed");
 
             MobileFeatures.Register(ordered);
-            Check(MobileFeatures.Get(MobileFeatures.Speak) == ordered && MobileFeatures.All.Select(f => f.Name).SequenceEqual(before), $"a ready speak at its order moved: {Menu()}");
+            Check(MobileFeatures.Get(MobileFeatures.Search) == ordered && MobileFeatures.All.Select(f => f.Name).SequenceEqual(before), $"a ready search at its order moved: {Menu()}");
 
             MobileFeatures.Register(zeta);
             MobileFeatures.Register(alpha);
@@ -181,12 +179,12 @@ internal static partial class MauiTests
         }
         finally
         {
-            MobileFeatures.Unregister(MobileFeatures.Speak);
+            MobileFeatures.Unregister(MobileFeatures.Search);
             MobileFeatures.Unregister("zeta-lab");
             MobileFeatures.Unregister("alpha-lab");
         }
 
-        Check(MobileFeatures.Get(MobileFeatures.Speak) is PlannedFeature && MobileFeatures.All.Select(f => f.Name).SequenceEqual(before), $"the planned speak came back elsewhere: {Menu()}");
+        Check(MobileFeatures.Get(MobileFeatures.Search) is PlannedFeature && MobileFeatures.All.Select(f => f.Name).SequenceEqual(before), $"the planned search came back elsewhere: {Menu()}");
     }
 
     // The contrast of two colours (WCAG 2: relative luminances, 1 to 21).

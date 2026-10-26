@@ -665,6 +665,9 @@ public interface Idrak.Audio.Abstractions.ISpeechTrainingObjective
   public string Name { get; }
   public string Refused { get; }
 
+public interface Idrak.Audio.Abstractions.ITextFrontEndSynthesisFamily : Idrak.Audio.Abstractions.ISpeechSynthesisFamily
+  public Idrak.Audio.Abstractions.SpeechTextNeeds TextNeeds(System.Text.Json.Nodes.JsonObject config, string folder)
+
 public interface Idrak.Audio.Abstractions.ITextPhonemizer
   public string Name { get; }
   public string Phonemize(string text, string language)
@@ -868,6 +871,7 @@ public static class Idrak.Audio.Abstractions.SpeechSynthesisModels
   public static Idrak.Audio.Abstractions.IAdversarialSpeechSynthesizer LoadForTraining(string path, Idrak.Audio.Abstractions.SpeechSynthesisLoadOptions? options = null)
   public static Idrak.Audio.Abstractions.ISpeechSynthesizer Create(string folder, System.Text.Json.Nodes.JsonObject spec, Idrak.Abstraction.Generation.ITokenizer tokenizer, Idrak.Audio.SpeechCreateOptions? options = null)
   public static Idrak.Audio.Abstractions.ISpeechSynthesizer Load(string path, Idrak.Audio.Abstractions.SpeechSynthesisLoadOptions? options = null)
+  public static Idrak.Audio.Abstractions.SpeechTextNeeds TextNeeds(string path)
 
 public static class Idrak.Audio.Abstractions.SpeechSynthesisObjectives
   public const string Durations = "durations"
@@ -892,6 +896,15 @@ public sealed record Idrak.Audio.Abstractions.SpeechSynthesisOptions : System.IE
   public string? Vocoder { get; init; }
   public string? Voice { get; init; }
   public string? VoiceStore { get; init; }
+
+public sealed record Idrak.Audio.Abstractions.SpeechTextNeeds : System.IEquatable<Idrak.Audio.Abstractions.SpeechTextNeeds>
+  public SpeechTextNeeds()
+  public bool Phonemes { get; init; }
+  public bool Romanized { get; init; }
+  public static Idrak.Audio.Abstractions.SpeechTextNeeds None { get; }
+  public string? Missing(string? text = null)
+  public string? PhonemeLanguage { get; init; }
+  public string? Phonemizer { get; init; }
 
 public static class Idrak.Audio.Abstractions.SpeechTrainingObjectives
   public const string Ctc = "ctc"

@@ -117,6 +117,13 @@ public interface Idrak.Maui.Abstractions.ISettingsStore
 public interface Idrak.Maui.Abstractions.IShareService
   public System.Threading.Tasks.Task ShareFileAsync(string path, string? title = null, string? contentType = null)
 
+public interface Idrak.Maui.Abstractions.ISoundPlayer
+  public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.SoundPlayback> PlayAsync(Idrak.Audio.Abstractions.AudioData audio, Idrak.Maui.Abstractions.SoundPlayRequest? request = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.SoundPlayback> PlayAsync(System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.AudioData> blocks, Idrak.Maui.Abstractions.SoundPlayRequest? request = null, System.Threading.CancellationToken cancellationToken = default)
+  public bool IsPlaying { get; }
+  public bool Stop()
+  public string? Playing { get; }
+
 public enum Idrak.Maui.Abstractions.MemoryPressureLevel : int
   Background = 0
   Critical = 3
@@ -194,6 +201,24 @@ public sealed record Idrak.Maui.Abstractions.ProcessFacts : System.IEquatable<Id
   public string OperatingSystem { get; init; }
   public string Runtime { get; init; }
 
+public sealed record Idrak.Maui.Abstractions.SoundPlayRequest : System.IEquatable<Idrak.Maui.Abstractions.SoundPlayRequest>
+  public Idrak.Audio.Abstractions.AudioPlaybackOptions Output { get; init; }
+  public SoundPlayRequest()
+  public string Label { get; init; }
+  public string? Playback { get; init; }
+
+public sealed record Idrak.Maui.Abstractions.SoundPlayback : System.IEquatable<Idrak.Maui.Abstractions.SoundPlayback>
+  public SoundPlayback(string Label, string Output, int SampleRate, int Channels, int Blocks, double Seconds, System.TimeSpan? FirstSound, System.TimeSpan Elapsed, bool Completed)
+  public System.TimeSpan Elapsed { get; init; }
+  public System.TimeSpan? FirstSound { get; init; }
+  public bool Completed { get; init; }
+  public double Seconds { get; init; }
+  public int Blocks { get; init; }
+  public int Channels { get; init; }
+  public int SampleRate { get; init; }
+  public string Label { get; init; }
+  public string Output { get; init; }
+
 public sealed record Idrak.Maui.Abstractions.StorageSpace : System.IEquatable<Idrak.Maui.Abstractions.StorageSpace>
   public StorageSpace(string Folder, long FreeBytes, long TotalBytes)
   public long FreeBytes { get; init; }
@@ -210,6 +235,42 @@ public sealed record Idrak.Maui.Abstractions.StoredModel : System.IEquatable<Idr
   public string Id { get; init; }
   public string Revision { get; init; }
 
+public sealed class Idrak.Maui.AudioProcessLabOptions
+  public AudioProcessLabOptions()
+  public Idrak.Audio.Abstractions.AudioCaptureOptions ToCapture()
+  public Idrak.Audio.Abstractions.AudioCaptureOptions ToMonitorCapture()
+  public Idrak.Audio.Abstractions.AudioEncodeOptions ToEncode()
+  public Idrak.Audio.Abstractions.AudioPerformance? MonitorPerformance { get; set; }
+  public Idrak.Audio.Abstractions.AudioPipeline ToPipeline()
+  public Idrak.Maui.Abstractions.SoundPlayRequest ToMonitorPlayback()
+  public Idrak.Maui.Abstractions.SoundPlayRequest ToPlayback(string label)
+  public Idrak.Maui.AudioProcessLabOptions Clone()
+  public bool? WarmRun { get; set; }
+  public double? BufferSeconds { get; set; }
+  public double? CaptureBlockSeconds { get; set; }
+  public double? MaxRecordSeconds { get; set; }
+  public double? MonitorBlockSeconds { get; set; }
+  public double? MonitorBufferSeconds { get; set; }
+  public double? ProcessBlockSeconds { get; set; }
+  public int? Channels { get; set; }
+  public int? SampleRate { get; set; }
+  public string? Bits { get; set; }
+  public string? Capture { get; set; }
+  public string? InputDevice { get; set; }
+  public string? OutputDevice { get; set; }
+  public string? Pipeline { get; set; }
+  public string? Playback { get; set; }
+  public string? SaveFormat { get; set; }
+
+public static class Idrak.Maui.AudioProcessSettings
+  public const double DefaultMaxRecordSeconds = 300
+  public const double DefaultMonitorBlockSeconds = 0.01
+  public const double DefaultMonitorBufferSeconds = 0.08
+  public const string Prefix = "idrak.audio_process."
+  public static Idrak.Maui.AudioProcessLabOptions Load(Idrak.Maui.Abstractions.ISettingsStore store, out System.Collections.Generic.IReadOnlyList<string> skipped)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.LabSetting<Idrak.Maui.AudioProcessLabOptions>> Definitions { get; }
+  public static void Save(Idrak.Maui.Abstractions.ISettingsStore store, Idrak.Maui.AudioProcessLabOptions options)
+
 public sealed class Idrak.Maui.ChatModelService : Idrak.Maui.Abstractions.IChatModelService
   public ChatModelService(Idrak.Maui.Abstractions.IModelService models)
   public Idrak.Maui.Abstractions.ChatMemoryEstimate Estimate(Idrak.Maui.Abstractions.ChatLoadRequest request)
@@ -220,6 +281,14 @@ public sealed class Idrak.Maui.ChatModelService : Idrak.Maui.Abstractions.IChatM
 public sealed class Idrak.Maui.DeviceInformation : Idrak.Maui.Abstractions.IDeviceInformation
   public DeviceInformation()
   public Idrak.Maui.Abstractions.DeviceReport Read(System.Collections.Generic.IReadOnlyList<string>? devices = null)
+
+public interface Idrak.Maui.ILabSetting
+  public Idrak.Maui.LabSettingKind Kind { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Choices { get; }
+  public string Key { get; }
+  public string Placeholder { get; }
+  public string Summary { get; }
+  public string Title { get; }
 
 public static class Idrak.Maui.IdrakMauiBuilderExtensions
   public static Microsoft.Maui.Hosting.MauiAppBuilder UseIdrak(this Microsoft.Maui.Hosting.MauiAppBuilder builder, System.Action<Idrak.Maui.IdrakMauiOptions>? configure = null)
@@ -311,6 +380,26 @@ public enum Idrak.Maui.IdrakThemeChoice : int
   Dark = 2
   Light = 1
   System = 0
+
+public enum Idrak.Maui.LabSettingKind : int
+  Choice = 2
+  Number = 1
+  Text = 0
+
+public sealed class Idrak.Maui.LabSetting<TOptions> : Idrak.Maui.ILabSetting
+  public Idrak.Maui.LabSettingKind Kind { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Choices { get; }
+  public string Get(TOptions options)
+  public string Key { get; }
+  public string Placeholder { get; }
+  public string Summary { get; }
+  public string Title { get; }
+  public void Set(TOptions options, string? text)
+
+public static class Idrak.Maui.LabSettings
+  public static System.Collections.Generic.IReadOnlyList<string> SampleFormats { get; }
+  public static TOptions Load<TOptions>(Idrak.Maui.Abstractions.ISettingsStore store, string prefix, System.Collections.Generic.IReadOnlyList<Idrak.Maui.LabSetting<TOptions>> definitions, TOptions options, out System.Collections.Generic.IReadOnlyList<string> skipped)
+  public static void Save<TOptions>(Idrak.Maui.Abstractions.ISettingsStore store, string prefix, System.Collections.Generic.IReadOnlyList<Idrak.Maui.LabSetting<TOptions>> definitions, TOptions options)
 
 public sealed class Idrak.Maui.ManualMemoryPressure : Idrak.Maui.Abstractions.IMemoryPressureSource
   public ManualMemoryPressure()
@@ -407,6 +496,49 @@ public sealed class Idrak.Maui.ProgressItem : System.ComponentModel.INotifyPrope
   public string Text { get; }
   public string TimeLeftText { get; }
 
+public sealed class Idrak.Maui.SoundPlayer : Idrak.Maui.Abstractions.ISoundPlayer, System.IDisposable
+  public SoundPlayer(System.TimeProvider? time = null)
+  public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.SoundPlayback> PlayAsync(Idrak.Audio.Abstractions.AudioData audio, Idrak.Maui.Abstractions.SoundPlayRequest? request = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.SoundPlayback> PlayAsync(System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.AudioData> blocks, Idrak.Maui.Abstractions.SoundPlayRequest? request = null, System.Threading.CancellationToken cancellationToken = default)
+  public bool IsPlaying { get; }
+  public bool Stop()
+  public string? Playing { get; }
+  public void Dispose()
+
+public sealed class Idrak.Maui.SpeakLabOptions
+  public Idrak.Audio.Abstractions.AudioEncodeOptions ToEncode()
+  public Idrak.Audio.Abstractions.AudioPerformance? Performance { get; set; }
+  public Idrak.Audio.Abstractions.SpeechSynthesisOptions ToSynthesis()
+  public Idrak.Maui.Abstractions.SoundPlayRequest ToPlayback(string label = "speech")
+  public Idrak.Maui.SpeakLabOptions Clone()
+  public SpeakLabOptions()
+  public double? BlockSeconds { get; set; }
+  public double? BufferSeconds { get; set; }
+  public double? DecoderSeconds { get; set; }
+  public double? DurationNoiseScale { get; set; }
+  public double? NoiseScale { get; set; }
+  public double? Rate { get; set; }
+  public double? Tau { get; set; }
+  public int? MaxCharacters { get; set; }
+  public int? SampleRate { get; set; }
+  public int? Seed { get; set; }
+  public string? Bits { get; set; }
+  public string? Model { get; set; }
+  public string? OutputDevice { get; set; }
+  public string? Playback { get; set; }
+  public string? SaveFormat { get; set; }
+  public string? Vocoder { get; set; }
+  public string? Voice { get; set; }
+  public string? VoiceConversion { get; set; }
+  public string? VoiceStore { get; set; }
+
+public static class Idrak.Maui.SpeakSettings
+  public const int DefaultMaxCharacters = 160
+  public const string Prefix = "idrak.speak."
+  public static Idrak.Maui.SpeakLabOptions Load(Idrak.Maui.Abstractions.ISettingsStore store, out System.Collections.Generic.IReadOnlyList<string> skipped)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.LabSetting<Idrak.Maui.SpeakLabOptions>> Definitions { get; }
+  public static void Save(Idrak.Maui.Abstractions.ISettingsStore store, Idrak.Maui.SpeakLabOptions options)
+
 public class Idrak.Maui.Theme.IdrakDarkColors : Microsoft.Maui.Controls.ResourceDictionary
   public IdrakDarkColors()
 
@@ -478,6 +610,87 @@ public static class Idrak.Maui.TranscribeSettings
   public static Idrak.Maui.TranscribeLabOptions Load(Idrak.Maui.Abstractions.ISettingsStore store, out System.Collections.Generic.IReadOnlyList<string> skipped)
   public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.TranscribeSetting> Definitions { get; }
   public static void Save(Idrak.Maui.Abstractions.ISettingsStore store, Idrak.Maui.TranscribeLabOptions options)
+
+public sealed class Idrak.Maui.ViewModels.AudioProcessViewModel : Idrak.Maui.ViewModels.ViewModel, System.IDisposable
+  public AudioProcessViewModel(Idrak.Maui.Abstractions.ISoundPlayer player, Idrak.Maui.Abstractions.IPermissionService permissions, Idrak.Maui.Abstractions.IShareService share, Idrak.Maui.IdrakMauiOptions options, Idrak.Maui.Abstractions.ISettingsStore settings, Idrak.Maui.ProgressCenter? progress = null, Microsoft.Maui.Storage.IFilePicker? picker = null)
+  public Idrak.Audio.Abstractions.AudioData? Original { get; }
+  public Idrak.Audio.Abstractions.AudioData? Processed { get; }
+  public Idrak.Maui.AudioProcessLabOptions Options { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.LabSettingEntry> Settings { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.ProcessorChip> Processors { get; }
+  public System.Threading.Tasks.Task<bool> ApplyAsync()
+  public System.Threading.Tasks.Task<bool> MonitorAsync()
+  public System.Threading.Tasks.Task<bool> OpenFileAsync(string path, string? name = null)
+  public System.Threading.Tasks.Task<bool> PickFileAsync()
+  public System.Threading.Tasks.Task<bool> PlayAsync(bool original)
+  public System.Threading.Tasks.Task<bool> RecordAsync()
+  public System.Threading.Tasks.Task<bool> ShareAsync()
+  public System.Threading.Tasks.Task<string?> SaveAsync(string? format = null)
+  public System.TimeSpan? ColdTime { get; }
+  public System.TimeSpan? WarmTime { get; }
+  public System.Windows.Input.ICommand AddStepCommand { get; }
+  public System.Windows.Input.ICommand ApplyCommand { get; }
+  public System.Windows.Input.ICommand ApplySettingsCommand { get; }
+  public System.Windows.Input.ICommand ClearPipelineCommand { get; }
+  public System.Windows.Input.ICommand MonitorCommand { get; }
+  public System.Windows.Input.ICommand OpenPermissionSettingsCommand { get; }
+  public System.Windows.Input.ICommand PickFileCommand { get; }
+  public System.Windows.Input.ICommand PlayOriginalCommand { get; }
+  public System.Windows.Input.ICommand PlayProcessedCommand { get; }
+  public System.Windows.Input.ICommand RecordCommand { get; }
+  public System.Windows.Input.ICommand SaveCommand { get; }
+  public System.Windows.Input.ICommand ShareCommand { get; }
+  public System.Windows.Input.ICommand StopCommand { get; }
+  public System.Windows.Input.ICommand ToggleSettingsCommand { get; }
+  public bool ApplySettings()
+  public bool HasError { get; }
+  public bool HasOriginal { get; }
+  public bool HasPipelineError { get; }
+  public bool HasProcessed { get; }
+  public bool HasSettingsMessage { get; }
+  public bool HasStatus { get; }
+  public bool IsApplying { get; }
+  public bool IsIdle { get; }
+  public bool IsMonitoring { get; }
+  public bool IsPermissionRefused { get; }
+  public bool IsPlaying { get; }
+  public bool IsRecording { get; }
+  public bool ShowSettings { get; set; }
+  public double Level { get; }
+  public double MonitorDelaySeconds { get; }
+  public int Delay { get; }
+  public int Latency { get; }
+  public int Showings { get; }
+  public string AfterText { get; }
+  public string BeforeText { get; }
+  public string ColdText { get; }
+  public string ElapsedText { get; }
+  public string Error { get; }
+  public string LatencyText { get; }
+  public string LevelText { get; }
+  public string MonitorButtonText { get; }
+  public string MonitorText { get; }
+  public string MonitorWarning { get; }
+  public string OriginalText { get; }
+  public string PipelineCheck { get; }
+  public string PipelineError { get; }
+  public string PipelineText { get; set; }
+  public string PlayingText { get; }
+  public string ProcessedText { get; }
+  public string RecordGlyph { get; }
+  public string RecordText { get; }
+  public string SavedText { get; }
+  public string SettingsButtonText { get; }
+  public string SettingsMessage { get; }
+  public string Status { get; }
+  public string Title { get; }
+  public string WarmText { get; }
+  public string? SavedPath { get; }
+  public void AddStep(Idrak.Maui.ViewModels.ProcessorChip? chip)
+  public void Dispose()
+  public void RefreshProcessors()
+  public void Stop()
+  public void Use(Idrak.Audio.Abstractions.AudioData audio, string from)
 
 public sealed class Idrak.Maui.ViewModels.ChatBubble : Idrak.Maui.ViewModels.ViewModel
   public System.Windows.Input.ICommand CopyCommand { get; }
@@ -578,8 +791,24 @@ public sealed record Idrak.Maui.ViewModels.InfoRow : System.IEquatable<Idrak.Mau
   public string Name { get; init; }
   public string Value { get; init; }
 
+public sealed class Idrak.Maui.ViewModels.LabSettingEntry : Idrak.Maui.ViewModels.ViewModel
+  public Idrak.Maui.ILabSetting Setting { get; }
+  public LabSettingEntry(Idrak.Maui.ILabSetting setting, string text)
+  public Microsoft.Maui.Keyboard Keyboard { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Choices { get; }
+  public bool HasError { get; }
+  public bool IsChoice { get; }
+  public bool IsEntry { get; }
+  public string Error { get; set; }
+  public string Placeholder { get; }
+  public string Summary { get; }
+  public string Text { get; set; }
+  public string Title { get; }
+  public string? SelectedChoice { get; set; }
+
 public static class Idrak.Maui.ViewModels.LevelMeter
   public static double Decibels(System.ReadOnlySpan<float> samples)
+  public static double PeakDecibels(System.ReadOnlySpan<float> samples)
 
 public sealed class Idrak.Maui.ViewModels.ModelEntry
   public Idrak.Maui.Abstractions.StoredModel Model { get; }
@@ -640,6 +869,19 @@ public sealed class Idrak.Maui.ViewModels.PlaceholderViewModel : Idrak.Maui.View
   public string Summary { get; }
   public string Title { get; }
 
+public sealed class Idrak.Maui.ViewModels.ProcessorChip
+  public System.Collections.Generic.IReadOnlyList<string> Parameters { get; }
+  public System.Windows.Input.ICommand AddCommand { get; }
+  public bool Live { get; }
+  public override string ToString()
+  public string Label { get; }
+  public string LiveText { get; }
+  public string Name { get; }
+  public string ParametersText { get; }
+  public string Step { get; }
+  public string Summary { get; }
+  public string? LiveAlternative { get; }
+
 public sealed class Idrak.Maui.ViewModels.SettingEntry : Idrak.Maui.ViewModels.ViewModel
   public Idrak.Maui.IdrakSetting Setting { get; }
   public Microsoft.Maui.Keyboard Keyboard { get; }
@@ -669,6 +911,79 @@ public sealed class Idrak.Maui.ViewModels.SettingsViewModel : Idrak.Maui.ViewMod
   public string Message { get; }
   public string Title { get; }
 
+public sealed class Idrak.Maui.ViewModels.SpeakViewModel : Idrak.Maui.ViewModels.ViewModel, System.IDisposable
+  public Idrak.Audio.Abstractions.AudioData? Speech { get; }
+  public Idrak.Maui.ProgressItem? Work { get; }
+  public Idrak.Maui.SpeakLabOptions Options { get; }
+  public Idrak.Maui.ViewModels.SynthesisModelEntry? SelectedModel { get; set; }
+  public Idrak.Maui.ViewModels.VoiceEntry? SelectedVoice { get; set; }
+  public SpeakViewModel(Idrak.Maui.Abstractions.IModelStore store, Idrak.Maui.Abstractions.IModelService models, Idrak.Maui.Abstractions.ISoundPlayer player, Idrak.Maui.Abstractions.IShareService share, Idrak.Maui.IdrakMauiOptions options, Idrak.Maui.Abstractions.ISettingsStore settings, Idrak.Maui.ProgressCenter? progress = null)
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.LabSettingEntry> Settings { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.SynthesisModelEntry> SynthesisModels { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.VoiceEntry> Voices { get; }
+  public System.Func<System.Threading.Tasks.Task>? OpenModels { get; set; }
+  public System.Threading.Tasks.Task RefreshAsync()
+  public System.Threading.Tasks.Task<bool> LoadModelAsync()
+  public System.Threading.Tasks.Task<bool> PlayAgainAsync()
+  public System.Threading.Tasks.Task<bool> ShareAsync()
+  public System.Threading.Tasks.Task<bool> SpeakAsync()
+  public System.Threading.Tasks.Task<string?> SaveAsync(string? format = null)
+  public System.TimeSpan? FirstSound { get; }
+  public System.Windows.Input.ICommand ApplySettingsCommand { get; }
+  public System.Windows.Input.ICommand GoToModelsCommand { get; }
+  public System.Windows.Input.ICommand PlayAgainCommand { get; }
+  public System.Windows.Input.ICommand RefreshCommand { get; }
+  public System.Windows.Input.ICommand SaveMp3Command { get; }
+  public System.Windows.Input.ICommand SaveWavCommand { get; }
+  public System.Windows.Input.ICommand ShareCommand { get; }
+  public System.Windows.Input.ICommand SpeakCommand { get; }
+  public System.Windows.Input.ICommand StopCommand { get; }
+  public System.Windows.Input.ICommand ToggleSettingsCommand { get; }
+  public bool ApplySettings()
+  public bool CanSaveMp3 { get; }
+  public bool HasCold { get; }
+  public bool HasError { get; }
+  public bool HasModelReason { get; }
+  public bool HasModels { get; }
+  public bool HasNoModels { get; }
+  public bool HasSettingsMessage { get; }
+  public bool HasSpeech { get; }
+  public bool HasStatus { get; }
+  public bool HasVoiceReason { get; }
+  public bool HasVoices { get; }
+  public bool HasWarm { get; }
+  public bool HasWork { get; }
+  public bool IsIdle { get; }
+  public bool IsListing { get; }
+  public bool IsPlaying { get; }
+  public bool IsSpeaking { get; }
+  public bool ShowSettings { get; set; }
+  public const string ModelHostName = "synthesis"
+  public double RealTimeFactor { get; }
+  public int Showings { get; }
+  public static (System.Collections.Generic.IReadOnlyList<Idrak.Maui.ViewModels.SynthesisModelEntry>, int) ListSynthesisModels(Idrak.Maui.Abstractions.IModelStore store)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.ViewModels.VoiceEntry> ListVoices(Idrak.Audio.Abstractions.ISpeechSynthesizer model, Idrak.Audio.Abstractions.SpeechSynthesisOptions speech)
+  public string ColdText { get; }
+  public string Error { get; }
+  public string ModelReason { get; }
+  public string ModelStatus { get; }
+  public string ModelsText { get; }
+  public string ProgressLine { get; }
+  public string SavedText { get; }
+  public string SettingsButtonText { get; }
+  public string SettingsMessage { get; }
+  public string SpeakGlyph { get; }
+  public string SpeakText { get; }
+  public string SpeechText { get; }
+  public string Status { get; }
+  public string Text { get; set; }
+  public string Title { get; }
+  public string VoiceReason { get; }
+  public string WarmText { get; }
+  public string? SavedPath { get; }
+  public void Dispose()
+  public void Stop()
+
 public sealed class Idrak.Maui.ViewModels.SpeechModelEntry
   public Idrak.Maui.Abstractions.StoredModel Model { get; }
   public override string ToString()
@@ -681,6 +996,17 @@ public sealed record Idrak.Maui.ViewModels.SuggestionChip : System.IEquatable<Id
   public SuggestionChip(string Model, System.Windows.Input.ICommand Command)
   public System.Windows.Input.ICommand Command { get; init; }
   public string Model { get; init; }
+
+public sealed class Idrak.Maui.ViewModels.SynthesisModelEntry
+  public Idrak.Audio.Abstractions.SpeechTextNeeds? TextNeeds { get; }
+  public Idrak.Maui.Abstractions.StoredModel Model { get; }
+  public bool CanSpeak { get; }
+  public override string ToString()
+  public string Architecture { get; }
+  public string Details { get; }
+  public string Key { get; }
+  public string Title { get; }
+  public string? Reason { get; }
 
 public sealed class Idrak.Maui.ViewModels.TranscribeSettingEntry : Idrak.Maui.ViewModels.ViewModel
   public Idrak.Maui.TranscribeSetting Setting { get; }
@@ -776,6 +1102,32 @@ public abstract class Idrak.Maui.ViewModels.ViewModel : System.ComponentModel.IN
   protected void OnPropertyChanged(string name = "")
   public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged
 
+public sealed class Idrak.Maui.ViewModels.VoiceEntry
+  public bool CanSpeak { get; }
+  public override string ToString()
+  public string Details { get; }
+  public string Name { get; }
+  public string Title { get; }
+  public string? Reason { get; }
+
+public sealed class Idrak.Maui.Views.AudioProcessFeature : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IMobileFeature
+  public AudioProcessFeature()
+  public Idrak.Maui.Abstractions.PhoneNeeds Needs { get; }
+  public Microsoft.Maui.Controls.Page CreatePage(System.IServiceProvider services, object viewModel)
+  public System.Collections.Generic.IReadOnlyList<string> ModelFamilies { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Packages { get; }
+  public int Order { get; }
+  public object CreateViewModel(System.IServiceProvider services)
+  public string Glyph { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public string Title { get; }
+
+public class Idrak.Maui.Views.AudioProcessPage : Microsoft.Maui.Controls.ContentPage
+  protected override void OnAppearing()
+  protected override void OnDisappearing()
+  public AudioProcessPage(Idrak.Maui.ViewModels.AudioProcessViewModel viewModel)
+
 public sealed class Idrak.Maui.Views.ChatFeature : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IMobileFeature
   public ChatFeature()
   public Idrak.Maui.Abstractions.PhoneNeeds Needs { get; }
@@ -848,6 +1200,24 @@ public sealed class Idrak.Maui.Views.PlannedFeature : Idrak.Abstraction.IKind, I
 
 public class Idrak.Maui.Views.SettingsPage : Microsoft.Maui.Controls.ContentPage
   public SettingsPage(Idrak.Maui.ViewModels.SettingsViewModel viewModel)
+
+public sealed class Idrak.Maui.Views.SpeakFeature : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IMobileFeature
+  public Idrak.Maui.Abstractions.PhoneNeeds Needs { get; }
+  public Microsoft.Maui.Controls.Page CreatePage(System.IServiceProvider services, object viewModel)
+  public SpeakFeature()
+  public System.Collections.Generic.IReadOnlyList<string> ModelFamilies { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Packages { get; }
+  public int Order { get; }
+  public object CreateViewModel(System.IServiceProvider services)
+  public string Glyph { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public string Title { get; }
+
+public class Idrak.Maui.Views.SpeakPage : Microsoft.Maui.Controls.ContentPage
+  protected override void OnAppearing()
+  protected override void OnDisappearing()
+  public SpeakPage(Idrak.Maui.ViewModels.SpeakViewModel viewModel, System.IServiceProvider services)
 
 public sealed class Idrak.Maui.Views.TranscribeFeature : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IMobileFeature
   public Idrak.Maui.Abstractions.PhoneNeeds Needs { get; }

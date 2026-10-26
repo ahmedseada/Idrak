@@ -86,8 +86,10 @@ public interface IMobileFeature : IKind
 /// The app's features, by name (ignoring case). The library's: "devices" (the devices found, the Vulkan driver loaded in
 /// the app's own process with its measured width, subgroup sizes and memory budget, CPU features, memory in use) and
 /// "models" (pull a Hugging Face model into the app's storage with its progress, list the models with their sizes,
-/// remove one, the storage's free space) and "chat" (a model of the store chats, its answer streamed with its tokens per
-/// second; the families are the app's to register). Register
+/// remove one, the storage's free space), "chat" (a model of the store chats, its answer streamed with its tokens per
+/// second; the families are the app's to register), "transcribe" (speech into text, live), "speak" (text read aloud on the
+/// speaker, played as each sentence is made) and "audio-process" (a recording through a pipeline of the library's
+/// processors, heard before and after). Register
 /// another with <see cref="Register"/>; one under a library name shadows the library's, which <see cref="Unregister"/>
 /// brings back. <see cref="Enabled"/> lists them in menu order without those the settings turn off.
 /// </summary>
@@ -110,10 +112,10 @@ public static class MobileFeatures
     /// <summary>The library's live transcription page (planned).</summary>
     public const string Transcribe = "transcribe";
 
-    /// <summary>The library's speech synthesis page (planned).</summary>
+    /// <summary>The library's speech synthesis page: text read aloud on the speaker.</summary>
     public const string Speak = "speak";
 
-    /// <summary>The library's audio processing page (planned).</summary>
+    /// <summary>The library's audio processing page: a sound through a pipeline, heard before and after.</summary>
     public const string AudioProcess = "audio-process";
 
     /// <summary>The library's text reading page (planned).</summary>
@@ -134,6 +136,8 @@ public static class MobileFeatures
         table.RegisterDefault(Models, new Idrak.Maui.Views.ModelsFeature());
         table.RegisterDefault(Chat, new Idrak.Maui.Views.ChatFeature());
         table.RegisterDefault(Transcribe, new Idrak.Maui.Views.TranscribeFeature());
+        table.RegisterDefault(Speak, new Idrak.Maui.Views.SpeakFeature());
+        table.RegisterDefault(AudioProcess, new Idrak.Maui.Views.AudioProcessFeature());
         return table;
     }
 

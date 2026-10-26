@@ -1550,7 +1550,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
     }
 }
 
-/// <summary>The level of a block of samples (the Transcribe page's meter), in one pass over them where they are.</summary>
+/// <summary>The level of a block of samples (the audio pages' meters), in one pass over them where they are.</summary>
 public static class LevelMeter
 {
     /// <summary>The root mean square of <paramref name="samples"/> in decibels of full scale (-120 for silence; negative infinity when there are none).</summary>
@@ -1581,5 +1581,37 @@ public static class LevelMeter
         }
 
         return 10 * Math.Log10(Math.Max(sum / samples.Length, 1e-12));
+    }
+
+    /// <summary>The largest magnitude of <paramref name="samples"/> in decibels of full scale (-120 for silence; negative infinity when there are none).</summary>
+    public static double PeakDecibels(ReadOnlySpan<float> samples)
+    {
+        if (samples.IsEmpty)
+        {
+            return double.NegativeInfinity;
+        }
+
+        float peak = 0;
+        int i = 0;
+        if (System.Numerics.Vector.IsHardwareAccelerated && samples.Length >= System.Numerics.Vector<float>.Count)
+        {
+            var max = System.Numerics.Vector<float>.Zero;
+            for (; i <= samples.Length - System.Numerics.Vector<float>.Count; i += System.Numerics.Vector<float>.Count)
+            {
+                max = System.Numerics.Vector.Max(max, System.Numerics.Vector.Abs(new System.Numerics.Vector<float>(samples[i..])));
+            }
+
+            for (int lane = 0; lane < System.Numerics.Vector<float>.Count; lane++)
+            {
+                peak = Math.Max(peak, max[lane]);
+            }
+        }
+
+        for (; i < samples.Length; i++)
+        {
+            peak = Math.Max(peak, Math.Abs(samples[i]));                          // scalar tail
+        }
+
+        return 20 * Math.Log10(Math.Max(peak, 1e-6));
     }
 }
