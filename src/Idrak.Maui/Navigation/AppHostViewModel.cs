@@ -51,6 +51,7 @@ public sealed class AppHostViewModel : ViewModel
 {
     private readonly IdrakMauiOptions _options;
     private bool _sheetOpen;
+    private bool _keyboard;
     private string _selected = AppSections.Home;
 
     /// <summary>The navigation over the sections <paramref name="options"/> show, laid out by <paramref name="layout"/>.</summary>
@@ -64,6 +65,7 @@ public sealed class AppHostViewModel : ViewModel
             {
                 OnPropertyChanged(nameof(IsWide));
                 OnPropertyChanged(nameof(IsNarrow));
+                OnPropertyChanged(nameof(ShowsBottomBar));
                 if (IsWide)
                 {
                     IsSheetOpen = false;                                       // the sheet is the narrow window's All labs
@@ -82,6 +84,25 @@ public sealed class AppHostViewModel : ViewModel
 
     /// <summary>Whether the narrow layout shows (the bottom bar).</summary>
     public bool IsNarrow => Layout.IsNarrow;
+
+    /// <summary>
+    /// Whether the soft keyboard is up (the host's <see cref="ISoftKeyboard"/>): the bottom bar steps aside meanwhile, as
+    /// Android's own bars do, so what is typed into sits right above the keyboard.
+    /// </summary>
+    public bool IsKeyboardOpen
+    {
+        get => _keyboard;
+        set
+        {
+            if (SetProperty(ref _keyboard, value))
+            {
+                OnPropertyChanged(nameof(ShowsBottomBar));
+            }
+        }
+    }
+
+    /// <summary>Whether the bottom bar shows: a narrow window with no keyboard up.</summary>
+    public bool ShowsBottomBar => IsNarrow && !IsKeyboardOpen;
 
     /// <summary>The tabs: the bottom bar's, and the top of the rail.</summary>
     public ObservableCollection<NavItem> Tabs { get; } = [];

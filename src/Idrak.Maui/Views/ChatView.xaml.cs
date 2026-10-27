@@ -4,21 +4,20 @@
 using Idrak.Maui.Abstractions;
 using Idrak.Maui.Controls;
 using Idrak.Maui.ViewModels;
-using AndroidPlatform = Microsoft.Maui.Controls.PlatformConfiguration.Android;   // "Android" alone is the platform's namespace in the Android build
-using Microsoft.Maui.Controls.PlatformConfiguration.AndroidSpecific;
 
 namespace Idrak.Maui.Views;
 
 /// <summary>
 /// Chat's view: reads the store's models and the kept chats each time it is shown, keeps the composer above the keyboard
-/// (the window resizes while it is shown), follows the streaming answer to its end, copies with the clipboard, opens Models
+/// (the host's bottom edge follows it: <c>AppHostPage.KeyboardAware</c>) with the conversation still at its end as the
+/// keyboard takes its room, follows the streaming answer to its end, copies with the clipboard, opens Models
 /// (+); the microphone dictates into the message (<see cref="ChatViewModel.DictateCommand"/>). Wide: the conversations on the
 /// left and the inspector on the right.
 /// </summary>
 public partial class ChatView : AdaptiveView
 {
     private readonly IAppNavigator _navigator;
-    private WindowSoftInputModeAdjust? _keyboard;
+    private double _listHeight;
 
     /// <summary>A view bound to <paramref name="viewModel"/>; <paramref name="services"/> open Models.</summary>
     public ChatView(ChatViewModel viewModel, IServiceProvider services)
@@ -31,6 +30,7 @@ public partial class ChatView : AdaptiveView
         viewModel.Copy = text => Clipboard.Default.SetTextAsync(text);
         viewModel.OpenModels = () => _navigator.OpenFeatureAsync(MobileFeatures.Models);
         InitializeComponent();
+        MessageList.SizeChanged += OnListSize;
     }
 
     /// <summary>The view model.</summary>
@@ -40,13 +40,6 @@ public partial class ChatView : AdaptiveView
     public override async void Shown()
     {
         base.Shown();
-        if (Microsoft.Maui.Controls.Application.Current is { } app)
-        {
-            var android = app.On<AndroidPlatform>();
-            _keyboard ??= android.GetWindowSoftInputModeAdjust();
-            android.UseWindowSoftInputModeAdjust(WindowSoftInputModeAdjust.Resize);
-        }
-
         ViewModel.ScrollToEndRequested -= OnScrollToEnd;
         ViewModel.ScrollToEndRequested += OnScrollToEnd;
         var conversations = ViewModel.ReloadConversationsAsync();               // read on a worker thread, listed when read
@@ -58,11 +51,6 @@ public partial class ChatView : AdaptiveView
     public override void Hidden()
     {
         ViewModel.ScrollToEndRequested -= OnScrollToEnd;
-        if (Microsoft.Maui.Controls.Application.Current is { } app && _keyboard is { } keyboard)
-        {
-            app.On<AndroidPlatform>().UseWindowSoftInputModeAdjust(keyboard);
-        }
-
         base.Hidden();
     }
 
@@ -79,6 +67,18 @@ public partial class ChatView : AdaptiveView
         Grid.SetColumn(Inspector, wide ? 2 : 0);
         MessageList.SetDynamicResource(MarginProperty, wide ? "IdrakWideFeedPadding" : "IdrakFeedPadding");
         Top.SetDynamicResource(PaddingProperty, wide ? "IdrakWideChatTopPadding" : "IdrakChatTopPadding");
+    }
+
+    // The conversation keeps its end in view when its room shrinks (the keyboard comes up, the composer grows).
+    private void OnListSize(object? sender, EventArgs e)
+    {
+        double height = MessageList.Height;
+        if (height > 0 && height < _listHeight)
+        {
+            OnScrollToEnd(sender, e);
+        }
+
+        _listHeight = height;
     }
 
     private void OnScrollToEnd(object? sender, EventArgs e)

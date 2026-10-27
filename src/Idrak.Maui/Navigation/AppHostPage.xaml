@@ -3,7 +3,8 @@
   The app's host (plan 34, phase R; no Shell, no Blazor): the section shown, with the bottom bar under it on a narrow
   window and the side rail beside it on a wide one, chosen by the window's measured width (AppLayout); All labs as a sheet
   over the page on a narrow window. Pages a section opens are pushed over it (the window's navigation page). Every section
-  made is kept in Body, the one shown visible and the others hidden, so a tab tapped again only shows its view.
+  made is kept in Body, the one shown visible and the others hidden, so a tab tapped again only shows its view. The bottom
+  edge follows the soft keyboard (SafeAreaEdges, set in code), and the bottom bar steps aside while the keyboard is up.
 -->
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
@@ -18,7 +19,7 @@
         <Grid Grid.Column="1">
             <Grid x:Name="Body" Margin="{DynamicResource IdrakNoInset}">
                 <Grid.Triggers>
-                    <DataTrigger TargetType="Grid" Binding="{Binding IsNarrow}" Value="True">
+                    <DataTrigger TargetType="Grid" Binding="{Binding ShowsBottomBar}" Value="True">
                         <Setter Property="Margin" Value="{DynamicResource IdrakBottomBarInset}" />
                     </DataTrigger>
                 </Grid.Triggers>
@@ -46,7 +47,7 @@
                 </Grid>
             </Grid>
 
-            <nav:BottomNavigationBar x:Name="Bar" VerticalOptions="End" IsVisible="{Binding IsNarrow}" />
+            <nav:BottomNavigationBar x:Name="Bar" VerticalOptions="End" IsVisible="{Binding ShowsBottomBar}" />
         </Grid>
     </Grid>
 </ContentPage>

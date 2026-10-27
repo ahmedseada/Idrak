@@ -62,8 +62,10 @@ public static class IdrakMauiBuilderExtensions
         services.AddSingleton(progress);
 #if ANDROID
         services.TryAddSingleton<IMemoryPressureSource, Idrak.Maui.Platforms.Android.AndroidMemoryPressure>();
+        services.TryAddSingleton<ISoftKeyboard, Idrak.Maui.Platforms.Android.AndroidSoftKeyboard>();
 #else
         services.TryAddSingleton<IMemoryPressureSource, ManualMemoryPressure>();
+        services.TryAddSingleton<ISoftKeyboard, NoSoftKeyboard>();
 #endif
         services.TryAddSingleton<IModelService>(sp => new ModelService(sp.GetRequiredService<IMemoryPressureSource>(), options));
         services.TryAddSingleton<IModelStore>(_ => new ModelStore(options));

@@ -245,6 +245,11 @@ public interface Idrak.Maui.Abstractions.ISettingsStore
 public interface Idrak.Maui.Abstractions.IShareService
   public System.Threading.Tasks.Task ShareFileAsync(string path, string? title = null, string? contentType = null)
 
+public interface Idrak.Maui.Abstractions.ISoftKeyboard
+  public bool IsVisible { get; }
+  public event System.EventHandler<bool>? VisibilityChanged
+  public void Watch()
+
 public interface Idrak.Maui.Abstractions.ISoundPlayer
   public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.SoundPlayback> PlayAsync(Idrak.Audio.Abstractions.AudioData audio, Idrak.Maui.Abstractions.SoundPlayRequest? request = null, System.Threading.CancellationToken cancellationToken = default)
   public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.SoundPlayback> PlayAsync(System.Collections.Generic.IAsyncEnumerable<Idrak.Audio.Abstractions.AudioData> blocks, Idrak.Maui.Abstractions.SoundPlayRequest? request = null, System.Threading.CancellationToken cancellationToken = default)
@@ -1034,6 +1039,7 @@ public class Idrak.Maui.Navigation.AppHostPage : Microsoft.Maui.Controls.Content
   public System.Threading.Tasks.Task OpenSettingsAsync()
   public System.Threading.Tasks.Task<bool> OpenSectionAsync(string name, string? feature = null)
   public static Microsoft.Maui.Controls.Window CreateWindow(System.IServiceProvider services)
+  public static void KeyboardAware(Microsoft.Maui.Controls.ContentPage page)
   public void ApplySize(double width, double height)
   public void Prebuild()
 
@@ -1044,10 +1050,12 @@ public sealed class Idrak.Maui.Navigation.AppHostViewModel : Idrak.Maui.ViewMode
   public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.Navigation.NavItem> Foot { get; }
   public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.Navigation.NavItem> Tabs { get; }
   public System.Windows.Input.ICommand CloseSheetCommand { get; }
+  public bool IsKeyboardOpen { get; set; }
   public bool IsNarrow { get; }
   public bool IsSheetOpen { get; set; }
   public bool IsWide { get; }
   public bool Select(string name)
+  public bool ShowsBottomBar { get; }
   public bool ShowsSame()
   public event System.EventHandler<string>? SelectRequested
   public string Selected { get; }
@@ -1146,6 +1154,11 @@ public sealed class Idrak.Maui.Navigation.SettingsSection : Idrak.Abstraction.IK
   public string Name { get; }
   public string Summary { get; }
   public string Title { get; }
+public sealed class Idrak.Maui.NoSoftKeyboard : Idrak.Maui.Abstractions.ISoftKeyboard
+  public NoSoftKeyboard()
+  public bool IsVisible { get; }
+  public event System.EventHandler<bool>? VisibilityChanged
+  public void Watch()
 
 public sealed class Idrak.Maui.OcrLabOptions
   public Idrak.Abstraction.Data.ImageTransformPipeline ToPipeline()

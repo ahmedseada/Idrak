@@ -22,6 +22,7 @@ public class LabPage : ContentPage
         BindingContext = viewModel ?? throw new ArgumentNullException(nameof(viewModel));
         Title = title;
         Content = view;
+        AppHostPage.KeyboardAware(this);                                       // a field typed into sits above the keyboard
     }
 
     /// <summary>The feature's view.</summary>

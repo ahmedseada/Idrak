@@ -5,6 +5,7 @@ using Idrak.Maui.Abstractions;
 using Idrak.Maui.Controls;
 using Idrak.Maui.Views;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Maui.Controls.PlatformConfiguration.AndroidSpecific;
 
 namespace Idrak.Maui.Navigation;
 
@@ -29,6 +30,8 @@ public partial class AppHostPage : ContentPage
     private View? _current;
     private bool _onScreen;
     private bool _prebuilt;
+    private bool _resizes;
+    private readonly ISoftKeyboard? _keyboard;
 
     /// <summary>The host over the app's services, showing Home.</summary>
     public AppHostPage(IServiceProvider services)
@@ -65,7 +68,27 @@ public partial class AppHostPage : ContentPage
         }
 
         SizeChanged += (_, _) => ApplySize(Width, Height);
+        KeyboardAware(this);
+        _keyboard = services.GetService<ISoftKeyboard>();
+        if (_keyboard is not null)
+        {
+            _keyboard.VisibilityChanged += (_, visible) => Dispatcher.Dispatch(() => ViewModel.IsKeyboardOpen = visible);
+        }
+
         Show(AppSections.Get(AppSections.Home), null);
+    }
+
+    /// <summary>
+    /// Makes <paramref name="page"/>'s bottom edge follow the soft keyboard and the system's bars (<c>SafeAreaEdges</c>: the
+    /// keyboard's region with the bars', where Android draws edge to edge, as from API 35 it always does), the other edges
+    /// as the page has them; with the window resized for the keyboard where Android still resizes it (adjustResize, set once
+    /// for the app). The host and every pushed page (<see cref="LabPage"/>) take it, so a field being typed into, and a
+    /// composer under a list, sit right above the keyboard.
+    /// </summary>
+    public static void KeyboardAware(ContentPage page)
+    {
+        ArgumentNullException.ThrowIfNull(page);
+        page.SafeAreaEdges = new SafeAreaEdges(SafeAreaRegions.Default, SafeAreaRegions.Default, SafeAreaRegions.Default, SafeAreaRegions.All);
     }
 
     /// <summary>The host's navigation state.</summary>
@@ -175,6 +198,16 @@ public partial class AppHostPage : ContentPage
     {
         base.OnAppearing();
         _onScreen = true;
+        if (!_resizes && Microsoft.Maui.Controls.Application.Current is { } app)
+        {
+            // Once for the app (it was set and restored by the chat page alone): where Android still resizes the window for
+            // the keyboard (before edge to edge), it resizes it for every page; where it draws edge to edge, SafeAreaEdges pads.
+            app.On<Microsoft.Maui.Controls.PlatformConfiguration.Android>().UseWindowSoftInputModeAdjust(
+                Microsoft.Maui.Controls.PlatformConfiguration.AndroidSpecific.WindowSoftInputModeAdjust.Resize);
+            _resizes = true;
+        }
+
+        _keyboard?.Watch();
         (_current as IHostedView)?.Shown();
         if (ViewModel.IsSheetOpen)
         {

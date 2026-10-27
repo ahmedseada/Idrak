@@ -53,6 +53,7 @@ internal static partial class MauiTests
         ("maui chat: a tiny generated Qwen3 decoder loads from a folder through the model service and streams its answers on the CPU, cold then warm, and cold again after memory pressure took it", ChatEndToEnd),
         ("maui chat: the chat feature is the library's (order 20, needs a model) and opens its page bound to its view model", ChatPageOpens),
         ("maui chat: the composer's microphone dictates into the message after what was typed, live, and stops on the next tap; no speech model says so and offers Models; no dictation says so", ChatDictates),
+        ("maui host: the bottom bar steps aside while the soft keyboard is up, and a pushed page's bottom edge follows the keyboard", HostKeyboard),
         ("maui transcribe settings: empty, every value is the library's (live, transcription and capture options); each setting maps to its option, is kept and read back; a bad value is refused saying what is taken", TranscribeSettingsMapped),
         ("maui transcribe: live from a registered capture (a loud tone, a pause, a soft one) through a scripted recognizer: tentative and committed words reach the view model as they come, each finished segment committed on its own line; level, time and lag shown", TranscribeLive),
         ("maui transcribe: hundreds of audio blocks and several readings inside one progress interval make at most one UI dispatch; the last values are shown at the end and an older showing never replaces them", TranscribeBatched),
