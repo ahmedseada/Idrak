@@ -3,6 +3,7 @@
 
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 using Idrak.Abstraction.Devices;
 
 namespace Idrak.Abstraction.Generation;
@@ -677,75 +678,55 @@ public sealed class Int4Weight : PackedWeight, IKernelPackedWeight
             rows, columns);
     }
 
+    // Whether the quantizer takes its 128-bit vector path (four columns at once): where the runtime accelerates 128-bit
+    // vectors and the setting allows vectors (ComputeResources.CpuVectors). The same bits either way.
+    internal static bool VectorQuantize => Vector128.IsHardwareAccelerated && ComputeResources.CpuVectors != CpuVectorPaths.Scalar;
+
+    // The candidate divisors around -8 the scale search tries (the group's extreme maps near -8), as the scalar rule
+    // writes them: -8 + 0.1 · step for step -10..10.
+    private const int SearchSteps = 10;
+
+    private static float Divisor(int step) => -8f + 0.1f * step;
+
+    // The smallest group extreme the vector path takes: below it a divisor over the extreme could leave float's range, and
+    // the scalar rule (the reference) answers.
+    private const float VectorSmallest = 1e-30f;
+
     private static unsafe Int4Weight Quantize(float* source, int rows, int columns, Device device)
     {
         int words = (columns + 7) / 8, groups = (rows + GroupSize - 1) / GroupSize;
         var packed = new uint[rows * words];
         var scales = new float[groups * words * 8];
+        bool vectors = VectorQuantize;
         HostParallel.For(groups, Math.Max(1, 2 * Abstraction.Devices.Cpu.CpuTuning.ParallelElements / GroupSize / Math.Max(1, columns)), (first, last) =>
         {
             Span<float> w = stackalloc float[GroupSize];
             Span<sbyte> q = stackalloc sbyte[GroupSize];
             Span<sbyte> best = stackalloc sbyte[GroupSize];
+            Span<Vector128<float>> wv = stackalloc Vector128<float>[GroupSize];
+            Span<Vector128<float>> qv = stackalloc Vector128<float>[GroupSize];
             for (int g = first; g < last; g++)
             {
                 int r0 = g * GroupSize, count = Math.Min(rows, r0 + GroupSize) - r0;
-                for (int j = 0; j < columns; j++)
+                int j = 0;
+                if (vectors)
                 {
-                    float extreme = 0f;
-                    for (int i = 0; i < count; i++)
+                    // Four adjacent columns at once, read row by row (each row's four values are contiguous).
+                    for (; j + 4 <= columns; j += 4)
                     {
-                        w[i] = source[(r0 + i) * columns + j];
-                        extreme = MathF.Abs(w[i]) > MathF.Abs(extreme) ? w[i] : extreme;
-                    }
-
-                    float scale = 0f;
-                    if (extreme != 0f)
-                    {
-                        // Divisors t around -8 (the group's extreme maps near -8); for each, the least-squares scale of
-                        // the rounded values; keep the smallest squared error (t = -8 is the plain rule, never worse).
-                        double bestError = double.MaxValue;
-                        for (int step = -10; step <= 10; step++)
+                        if (!Columns4(source, columns, r0, count, j, words, g, packed, scales, wv, qv))
                         {
-                            float t = -8f + 0.1f * step, inverse = t / extreme;
-                            double wq = 0, qq = 0;
-                            for (int i = 0; i < count; i++)
+                            for (int c = j; c < j + 4; c++)
                             {
-                                q[i] = (sbyte)Math.Clamp((int)MathF.Round(w[i] * inverse), -8, 7);
-                                wq += w[i] * q[i];
-                                qq += q[i] * q[i];
-                            }
-
-                            if (qq == 0)
-                            {
-                                continue;
-                            }
-
-                            float d = (float)(wq / qq);
-                            double error = 0;
-                            for (int i = 0; i < count; i++)
-                            {
-                                double e = w[i] - d * q[i];
-                                error += e * e;
-                            }
-
-                            if (error < bestError)
-                            {
-                                (bestError, scale) = (error, d);
-                                q[..count].CopyTo(best);
+                                Column(source, columns, r0, count, c, words, g, packed, scales, w, q, best);
                             }
                         }
                     }
-                    else
-                    {
-                        best.Clear();
-                    }
+                }
 
-                    scales[g * words * 8 + j] = scale;
-                    for (int i = 0; i < count; i++)
-                    {
-                        packed[(r0 + i) * words + (j >> 3)] |= (uint)(best[i] & 15) << (4 * (j & 7));
-                    }
+                for (; j < columns; j++)
+                {
+                    Column(source, columns, r0, count, j, words, g, packed, scales, w, q, best);
                 }
             }
         });
@@ -754,6 +735,157 @@ public sealed class Int4Weight : PackedWeight, IKernelPackedWeight
             Tensor.Persistent(MemoryMarshal.Cast<uint, float>(packed), [packed.Length], device, requiresGrad: false),
             Tensor.Persistent(scales, [scales.Length], device, requiresGrad: false),
             rows, columns);
+    }
+
+    // One column of a group (the reference rule): the scale with the least squared error among the divisors, and its
+    // nibbles.
+    private static unsafe void Column(float* source, int columns, int r0, int count, int j, int words, int g, uint[] packed, float[] scales,
+        Span<float> w, Span<sbyte> q, Span<sbyte> best)
+    {
+        float extreme = 0f;
+        for (int i = 0; i < count; i++)
+        {
+            w[i] = source[(r0 + i) * columns + j];
+            extreme = MathF.Abs(w[i]) > MathF.Abs(extreme) ? w[i] : extreme;
+        }
+
+        // Zero nibbles unless a scale is taken: a group no candidate fits (a weight that is not finite) has scale 0 and
+        // zero nibbles, whatever the previous column held.
+        float scale = 0f;
+        best.Clear();
+        if (extreme != 0f)
+        {
+            // Divisors t around -8 (the group's extreme maps near -8); for each, the least-squares scale of
+            // the rounded values; keep the smallest squared error (t = -8 is the plain rule, never worse).
+            double bestError = double.MaxValue;
+            for (int step = -SearchSteps; step <= SearchSteps; step++)
+            {
+                float t = Divisor(step), inverse = t / extreme;
+                double wq = 0, qq = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    q[i] = (sbyte)Math.Clamp((int)MathF.Round(w[i] * inverse), -8, 7);
+                    wq += w[i] * q[i];
+                    qq += q[i] * q[i];
+                }
+
+                if (qq == 0)
+                {
+                    continue;
+                }
+
+                float d = (float)(wq / qq);
+                double error = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    double e = w[i] - d * q[i];
+                    error += e * e;
+                }
+
+                if (error < bestError)
+                {
+                    (bestError, scale) = (error, d);
+                    q[..count].CopyTo(best);
+                }
+            }
+        }
+
+        scales[g * words * 8 + j] = scale;
+        for (int i = 0; i < count; i++)
+        {
+            packed[(r0 + i) * words + (j >> 3)] |= (uint)(best[i] & 15) << (4 * (j & 7));
+        }
+    }
+
+    // Columns j..j+3 of a group in 128-bit vectors: every lane computes what Column computes for its column, in the same
+    // order (float products, double sums over the rows in turn, round half to even, the same comparisons), so the nibbles
+    // and scales are the same bits. False (nothing written) for a block the reference must answer: a value that is not
+    // finite, or a group extreme so small that a divisor over it could leave float's range.
+    private static unsafe bool Columns4(float* source, int columns, int r0, int count, int j, int words, int g, uint[] packed, float[] scales,
+        Span<Vector128<float>> wv, Span<Vector128<float>> qv)
+    {
+        var extreme = Vector128<float>.Zero;
+        var finite = Vector128<float>.Zero;
+        for (int i = 0; i < count; i++)
+        {
+            var w = Vector128.Load(source + (r0 + i) * columns + j);
+            wv[i] = w;
+            finite |= w - w;                                                        // 0 for finite values, NaN otherwise
+            extreme = Vector128.ConditionalSelect(Vector128.GreaterThan(Vector128.Abs(w), Vector128.Abs(extreme)), w, extreme);
+        }
+
+        var zero = Vector128.Equals(extreme, Vector128<float>.Zero);
+        if (!Vector128.EqualsAll(finite.AsInt32(), Vector128<int>.Zero)
+            || !Vector128.EqualsAll((zero | Vector128.GreaterThanOrEqual(Vector128.Abs(extreme), Vector128.Create(VectorSmallest))).AsInt32(), Vector128<int>.AllBitsSet))
+        {
+            return false;
+        }
+
+        // A zero extreme divides by one here (its lane ends with scale 0 and zero nibbles, as the reference's).
+        var divisor = Vector128.ConditionalSelect(zero, Vector128<float>.One, extreme);
+        var bestLow = Vector128.Create(double.MaxValue);
+        var bestHigh = Vector128.Create(double.MaxValue);
+        var bestScale = Vector128<float>.Zero;
+        var bestStep = Vector128.Create(int.MinValue);
+        var low8 = Vector128.Create(-8);
+        var high7 = Vector128.Create(7);
+        for (int step = -SearchSteps; step <= SearchSteps; step++)
+        {
+            var inverse = Vector128.Create(Divisor(step)) / divisor;
+            Vector128<double> wqLow = Vector128<double>.Zero, wqHigh = Vector128<double>.Zero;
+            var qq = Vector128<int>.Zero;
+            for (int i = 0; i < count; i++)
+            {
+                var qi = Vector128.Min(Vector128.Max(Vector128.ConvertToInt32(Vector128.Round(wv[i] * inverse)), low8), high7);
+                var qf = Vector128.ConvertToSingle(qi);
+                qv[i] = qf;
+                var product = wv[i] * qf;
+                wqLow += Vector128.WidenLower(product);
+                wqHigh += Vector128.WidenUpper(product);
+                qq += qi * qi;
+            }
+
+            var (qqLow, qqHigh) = (Vector128.ConvertToDouble(Vector128.WidenLower(qq)), Vector128.ConvertToDouble(Vector128.WidenUpper(qq)));
+            var d = Vector128.Narrow(wqLow / qqLow, wqHigh / qqHigh);
+            Vector128<double> errorLow = Vector128<double>.Zero, errorHigh = Vector128<double>.Zero;
+            for (int i = 0; i < count; i++)
+            {
+                var e = wv[i] - d * qv[i];
+                var (eLow, eHigh) = (Vector128.WidenLower(e), Vector128.WidenUpper(e));
+                errorLow += eLow * eLow;
+                errorHigh += eHigh * eHigh;
+            }
+
+            // A lane whose nibbles are all zero (qq 0) takes nothing, as the reference skips it.
+            var takenLow = Vector128.LessThan(errorLow, bestLow) & ~Vector128.Equals(qqLow, Vector128<double>.Zero);
+            var takenHigh = Vector128.LessThan(errorHigh, bestHigh) & ~Vector128.Equals(qqHigh, Vector128<double>.Zero);
+            bestLow = Vector128.ConditionalSelect(takenLow, errorLow, bestLow);
+            bestHigh = Vector128.ConditionalSelect(takenHigh, errorHigh, bestHigh);
+            var taken = Vector128.Narrow(takenLow.AsInt64(), takenHigh.AsInt64());
+            bestScale = Vector128.ConditionalSelect(taken.AsSingle(), d, bestScale);
+            bestStep = Vector128.ConditionalSelect(taken, Vector128.Create(step), bestStep);
+        }
+
+        for (int lane = 0; lane < 4; lane++)
+        {
+            int column = j + lane, chosen = bestStep.GetElement(lane);
+            bool none = zero.AsInt32().GetElement(lane) != 0 || chosen == int.MinValue;
+            scales[g * words * 8 + column] = none ? 0f : bestScale.GetElement(lane);
+            if (none)
+            {
+                continue;                                                           // zero nibbles
+            }
+
+            // The chosen divisor's nibbles, made again as the search made them.
+            float inverse = Divisor(chosen) / extreme.GetElement(lane);
+            for (int i = 0; i < count; i++)
+            {
+                int nibble = Math.Clamp((int)MathF.Round(wv[i].GetElement(lane) * inverse), -8, 7);
+                packed[(r0 + i) * words + (column >> 3)] |= (uint)(nibble & 15) << (4 * (column & 7));
+            }
+        }
+
+        return true;
     }
 
     /// <summary>The float weights these nibbles stand for, [rows, columns], on the same device.</summary>

@@ -24,6 +24,7 @@ internal abstract partial class Tests
         ("int8: QLoRA — adapters train on top of frozen int8 weights", Int8Lora),
         ("bf16: rounding, direct and expanded products, gradient, model conversion, save/load, decoder build", BFloat16Weights),
         ("int4: group scales, direct and expanded products, gradient, model conversion, save/load", Int4Weights),
+        ("int4: the quantizer's vector path gives the scalar rule's nibbles and scales bit for bit (shapes with partial groups and column blocks; zero, tied, tiny, subnormal, huge, infinite and NaN values)", Int4QuantizerPathsAgree),
         ("int8 / int4 / bf16 few-row products on CUDA: the kernels compiled for 1, 2 and 4 rows equal the eight-row kernel bit for bit (1 to 8 rows; 1, 2 and 4 splits; eight-word passes, shorter passes and single rows; a partial last word, column block and int4 scale group)", FewRowKernelsMatch),
         ("int8 / int4 / bf16 few-row products allocate nothing once warm: the device product into a kept output (1, 2 and 4 rows) none, the tensor product of one row only its output tensor; GPU pools reuse a size that empties and fills again without allocating", FewRowProductsAllocateNothing),
         ("packed projections sharing an input (int8, int4, bf16; biases; splits) and gated down projections match separate layers", PackedMany),
@@ -91,6 +92,68 @@ internal abstract partial class Tests
         // (Not bit-identical on CUDA: few-row bf16 and float products add in different orders.)
         Check(model.ToFloat32() > 0 && model.Descendants().OfType<Linear>().All(l => !l.Packed), "back to float32");
         AssertClose(half, model.Predict(ids).ToArray(), 1e-4f, "float32 keeps the rounded weights");
+    }
+
+    // The int4 quantizer's 128-bit vector path (four columns at once) against its scalar rule (IDRAK_CPU_VECTORS=scalar),
+    // on the CPU: the same nibbles and scales, bit for bit (rule 71), whatever the values.
+    internal static void Int4QuantizerPathsAgree(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            return;                                                             // the quantizer runs on the host
+        }
+
+        var random = new Random(31);
+        var before = ComputeResources.CpuVectors;
+        try
+        {
+            foreach (var (rows, columns) in new[] { (32, 4), (40, 9), (64, 37), (97, 130), (5, 3), (640, 64) })
+            {
+                var values = new float[rows * columns];
+                for (int i = 0; i < values.Length; i++)
+                {
+                    values[i] = (float)(random.NextDouble() * 2 - 1) * (i % 7 == 0 ? 30f : 1f);
+                }
+
+                // Columns that test the edges: all zero, a tie for the extreme, tiny, subnormal, huge, and non-finite values.
+                for (int r = 0; r < rows; r++)
+                {
+                    values[r * columns] = 0f;
+                    if (columns > 1)
+                    {
+                        values[r * columns + 1] = r % 2 == 0 ? 0.5f : -0.5f;
+                    }
+
+                    if (columns > 2)
+                    {
+                        values[r * columns + 2] = (float)random.NextDouble() * 1e-31f;
+                    }
+                }
+
+                if (columns > 8)
+                {
+                    values[3 * columns + 5] = 1e-40f;
+                    values[1 * columns + 6] = 3e38f;
+                    values[2 * columns + 7] = float.PositiveInfinity;
+                    values[(rows - 1) * columns + 8] = float.NaN;
+                }
+
+                ComputeResources.CpuVectors = CpuVectorPaths.Scalar;
+                using var scalar = Int4Weight.Quantize(values, rows, columns, device);
+                ComputeResources.CpuVectors = CpuVectorPaths.Automatic;
+                using var vector = Int4Weight.Quantize(values, rows, columns, device);
+                var (a, b) = (scalar.Packed.ToArray(), vector.Packed.ToArray());
+                var (sa, sb) = (scalar.Scales.ToArray(), vector.Scales.ToArray());
+                int nibbles = Enumerable.Range(0, a.Length).FirstOrDefault(i => BitConverter.SingleToInt32Bits(a[i]) != BitConverter.SingleToInt32Bits(b[i]), -1);
+                int scales = Enumerable.Range(0, sa.Length).FirstOrDefault(i => BitConverter.SingleToInt32Bits(sa[i]) != BitConverter.SingleToInt32Bits(sb[i]), -1);
+                Check(nibbles < 0 && scales < 0, $"[{rows}, {columns}] (vector path {(Int4Weight.VectorQuantize ? "on" : "off")}): first differing word {nibbles}, scale {scales}"
+                    + (scales >= 0 ? $" ({sa[scales]} vs {sb[scales]})" : ""));
+            }
+        }
+        finally
+        {
+            ComputeResources.CpuVectors = before;
+        }
     }
 
     internal static void Int4Weights(Device device)
