@@ -3,6 +3,7 @@
 
 using System.Buffers.Binary;
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -193,6 +194,19 @@ public sealed class SafeTensorsReader : IDisposable, IBFloat16TensorStore
         }
 
         return true;
+    }
+
+    /// <inheritdoc cref="ITensorStore.IdentityOf"/>
+    /// <remarks>The file's full path, its size and time of last change (UTC ticks), and the tensor's byte range and type in it.</remarks>
+    public string? IdentityOf(string name)
+    {
+        if (!_tensors.TryGetValue(name, out var info))
+        {
+            return null;
+        }
+
+        var file = new FileInfo(info.File);
+        return string.Create(CultureInfo.InvariantCulture, $"safetensors|{file.FullName}|{file.Length}|{file.LastWriteTimeUtc.Ticks}|{info.Offset}|{info.Length}|{info.Type}");
     }
 
     // Widens stored values into float32 (a span: the rows' destination).

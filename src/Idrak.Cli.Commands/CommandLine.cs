@@ -531,6 +531,8 @@ internal static class Help
         "      --color WHEN    auto, always or never (NO_COLOR still wins); --plain: no Unicode or progress line\n" +
         "      --offline       use only what is cached; a download is an error\n" +
         "      --threads N     CPU threads; --seed N: one seed for sampling, shuffling and initialization\n" +
+        "      --packed-cache X  on, off or a folder: int8 and int4 weights kept between loads and read back instead of\n" +
+        "                      quantized again (default on, in the cache folder; IDRAK_PACKED_CACHE, IDRAK_PACKED_CACHE_DIR)\n" +
         "      --timeout D     give up after a duration (30s, 5m, 1h30m)\n" +
         "      --profile       report where the command's time and memory went, at its end (stderr; IDRAK_PROFILE_OUT: a file)\n" +
         "      --lang L        messages in en or ar (config \"lang\", IDRAK_LANG); --lang-render auto, visual or logical\n" +

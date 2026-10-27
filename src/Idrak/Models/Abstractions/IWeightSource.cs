@@ -28,6 +28,16 @@ public interface IWeightSource
     bool ReadRows(string name, IReadOnlyList<int> shape, int first, int count, Span<float> destination) => false;
 
     /// <summary>
+    /// A text that changes whenever the values <see cref="Read"/> gives for <paramref name="name"/> [<paramref name="shape"/>]
+    /// may change (where the stored tensor is, its file's size and time of change), for a cache of what is made from them
+    /// (packed weights): the tensor counts as used, as a read would make it. Null when the source cannot say (the default,
+    /// or a source that has not the tensor), and nothing made from it is cached.
+    /// </summary>
+    /// <param name="name">The tensor's name.</param>
+    /// <param name="shape">Its shape.</param>
+    string? IdentityOf(string name, IReadOnlyList<int> shape) => null;
+
+    /// <summary>
     /// The matrix <paramref name="name"/> [rows, columns] (<paramref name="shape"/>, as <see cref="Read"/> takes it), or its
     /// transpose [columns, rows] when <paramref name="transposed"/>, as bfloat16 weights on <paramref name="device"/>; null
     /// when the source does not have it. Always the weights <see cref="BFloat16Weight.FromValues(ReadOnlySpan{float}, int, int, Device)"/>

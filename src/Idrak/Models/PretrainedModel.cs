@@ -147,6 +147,23 @@ public sealed record PretrainedOptions
     /// </summary>
     public LookupTablePlacement? LookupTables { get; init; }
 
+    /// <summary>
+    /// Keep the int8 or int4 weights this load packs on disk and, on the next load of the same checkpoint in the same
+    /// format, read them back instead of reading the checkpoint's values and quantizing again (the same bits): true or false
+    /// here, or null for <see cref="ComputeResources.PackedWeightCache"/> (IDRAK_PACKED_CACHE; on). An entry is made again
+    /// when its tensor's file changes (path, size, time of change), the format's packing version changes or the library's
+    /// cache layout does; a tensor with a merged adapter is not kept. <see cref="PretrainedModel.PackedCache"/> says what
+    /// this load read and made.
+    /// </summary>
+    public bool? PackedCache { get; init; }
+
+    /// <summary>
+    /// The folder of the packed-weight cache (<see cref="PackedCache"/>): null for
+    /// <see cref="ComputeResources.PackedWeightCacheFolder"/> (IDRAK_PACKED_CACHE_DIR; "packed" in
+    /// <see cref="ComputeResources.CacheFolder"/>).
+    /// </summary>
+    public string? PackedCacheFolder { get; init; }
+
     /// <summary>Longest sequence to support (sizes the rotary tables); the model's maximum when null.</summary>
     public int? MaxPositions { get; init; }
 
@@ -267,6 +284,13 @@ public sealed class PretrainedModel : IDisposable
     /// <summary>Anything approximated while reading the model (see <see cref="PretrainedFamilies.CommonSpec"/>).</summary>
     public IReadOnlyList<string> Notes { get; }
 
+    /// <summary>
+    /// What the packed-weight cache did for this load (<see cref="PretrainedOptions.PackedCache"/>): the int8 or int4 weights
+    /// read back from it (a warm load) and those packed and kept (a cold one); null when the load kept none (the cache off,
+    /// a deferred load, or no format that is kept).
+    /// </summary>
+    public PackedWeightCacheUse? PackedCache { get; private init; }
+
     /// <summary>The longest sequence the loaded model supports.</summary>
     public int MaxPositions { get; }
 
@@ -328,7 +352,8 @@ public sealed class PretrainedModel : IDisposable
         using var adapter = options.MergeAdapter is { } adapterFolder ? new AdapterMerge(adapterFolder) : null;
         var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter, Deferred = options.Deferred };
         var buildDevice = options.Deferred ? DeferredTensors.Device : options.Device;
-        var buildOptions = new DecoderBuildOptions { Device = buildDevice, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions };
+        var packedCache = PackedWeightCache.For(options, folder);
+        var buildOptions = new DecoderBuildOptions { Device = buildDevice, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions, PackedCache = packedCache };
         long building = Stopwatch.GetTimestamp();
         var fileTime = reader.ReadTime;
         Sequential network;
@@ -348,6 +373,14 @@ public sealed class PretrainedModel : IDisposable
 
         long buildEnded = Stopwatch.GetTimestamp();
         fileTime = reader.ReadTime - fileTime;
+        PackedWeightCacheUse? cacheUse = null;
+        if (packedCache?.Use is { } use && (use.Read > 0 || use.Written > 0 || use.Problem is not null))
+        {
+            packedCache.Prune();                                    // the entries of this model's formats the load did not use
+            notes.Add(packedCache.Describe());
+            cacheUse = use;
+        }
+
         var vision = visionFamily?.Read(new VisionCheckpoint(name, config, reader, folder, () => format.Open(folder), notes));
         long visionRead = Stopwatch.GetTimestamp();
         if (vision is not null)
@@ -395,7 +428,7 @@ public sealed class PretrainedModel : IDisposable
         var template = ChatTemplates.Load(folder, tokenizer);
         long tokenized = Stopwatch.GetTimestamp();
         var model = new PretrainedModel(folder, config, spec, network, tokenizer, template, notes, maxPositions, architecture,
-            options.Device ?? Idrak.Abstraction.Device.Default, vision);
+            options.Device ?? Idrak.Abstraction.Device.Default, vision) { PackedCache = cacheUse };
         foreach (var (stored, value) in visionTensors ?? [])
         {
             model._vision[stored] = value;

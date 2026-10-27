@@ -200,6 +200,9 @@ public sealed record DecoderBuildOptions
     /// </summary>
     public LookupTablePlacement? LookupTables { get; init; }
 
+    // The packed weights a load keeps between loads (PretrainedOptions.PackedCache), or null: set by PretrainedModel.Load.
+    internal PackedWeightCache? PackedCache { get; init; }
+
     /// <summary>
     /// Standard deviation of a normal initialization of every weight matrix and embedding table (biases zero, norm gains
     /// one), as GPT-2 and nanoGPT use (0.02). Null keeps the default (uniform Xavier weights, ±0.02 embeddings).

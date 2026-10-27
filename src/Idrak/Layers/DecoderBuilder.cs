@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Layers.Abstractions;
 using Idrak.Models.Abstractions;
 
 namespace Idrak.Layers;
@@ -106,18 +107,58 @@ public static class DecoderBuilder
                     return Linear.FromPacked(bits ?? throw new InvalidDataException($"The weights have no '{(tiedTable is not null ? "embed" : name)}.weight'."), b);
                 }
 
-                if (tiedTable is not null && headFactory is null && factory is null && packed is PackedFormat.Int8 or PackedFormat.Int4)
+                if (packed is null && factory is null)
                 {
-                    // A tied head's column j is the table's row j: packed from blocks of the table's rows, read a block at a time
-                    // where the weights can (TableRows), so neither the table nor its transpose is held as float32.
-                    return Linear.FromPacked(packed == PackedFormat.Int4 ? Int4Weight.QuantizeColumns(inputs, outputs, device, TableRows)
-                        : Int8Weight.QuantizeColumns(inputs, outputs, device, TableRows), b);
+                    return Linear.FromWeights(Idrak.Abstraction.Tensor.Persistent(Values(), shape, device, requiresGrad: true), b);
                 }
 
-                return isHead && headFactory is not null ? Linear.FromPacked(PackedWeightFormats.Pack(headFactory, Values(), inputs, outputs, device), b)
-                    : factory is not null ? Linear.FromPacked(PackedWeightFormats.Pack(factory, Values(), inputs, outputs, device), b)
-                    : packed is { } format ? Linear.FromPacked(PackedWeightFormats.Pack(format, Values(), inputs, outputs, device), b)
-                    : Linear.FromWeights(Idrak.Abstraction.Tensor.Persistent(Values(), shape, device, requiresGrad: true), b);
+                // Packed weights a load keeps (PretrainedOptions.PackedCache): read back when kept for the same stored tensor,
+                // shape, format and packing version; otherwise packed, then kept. Only a format whose layout comes from where
+                // the format itself does (the library's for the built-in ones), so kept bits are always that format's.
+                bool named = isHead && headFactory is not null || factory is not null;
+                string format = isHead && headFactory is not null ? headName! : factory is not null ? packedName! : packed!.Value switch
+                {
+                    PackedFormat.Int8 => "int8",
+                    PackedFormat.Int4 => "int4",
+                    _ => "bfloat16",
+                };
+                var cache = weights is not null ? options.PackedCache : null;
+                string tensor = tiedTable is not null ? "embed.weight" : $"{name}.weight", role = tiedTable is not null ? "tied head" : "weight";
+                IPackedWeightLayout? layout = null;
+                string? identity = null;
+                if (cache is not null && PackedWeightLayouts.Find(format) is { } found
+                    && PackedWeightLayouts.Origin(format) == (named ? PackedWeightFormats.Origin(format) : Overrides.Library)
+                    && weights!.IdentityOf(tensor, tiedTable is not null ? [outputs, inputs] : shape) is { } stored)
+                {
+                    (layout, identity) = (found, stored);
+                    if (cache.TryRead(tensor, role, identity, layout, inputs, outputs, device) is { } kept)
+                    {
+                        return Linear.FromPacked(kept, b);
+                    }
+                }
+
+                var weight = Pack();
+                if (layout is not null && weight is IKernelPackedWeight made && layout.Keeps(made))
+                {
+                    cache!.Write(tensor, role, identity!, layout, made);
+                }
+
+                return Linear.FromPacked(weight, b);
+
+                IPackedWeight Pack()
+                {
+                    if (tiedTable is not null && !named && packed is PackedFormat.Int8 or PackedFormat.Int4)
+                    {
+                        // A tied head's column j is the table's row j: packed from blocks of the table's rows, read a block at a
+                        // time where the weights can (TableRows), so neither the table nor its transpose is held as float32.
+                        return packed == PackedFormat.Int4 ? Int4Weight.QuantizeColumns(inputs, outputs, device, TableRows)
+                            : Int8Weight.QuantizeColumns(inputs, outputs, device, TableRows);
+                    }
+
+                    return isHead && headFactory is not null ? PackedWeightFormats.Pack(headFactory, Values(), inputs, outputs, device)
+                        : factory is not null ? PackedWeightFormats.Pack(factory, Values(), inputs, outputs, device)
+                        : PackedWeightFormats.Pack(packed!.Value, Values(), inputs, outputs, device);
+                }
             }
 
             Module Normalization(string name, int features)

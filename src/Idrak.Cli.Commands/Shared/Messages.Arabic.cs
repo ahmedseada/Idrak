@@ -53,6 +53,8 @@ internal static partial class Messages
             "      --color WHEN    الألوان: auto أو always أو never (و NO_COLOR يغلب)؛ --plain: بلا رموز Unicode ولا سطر تقدم\n" +
             "      --offline       استخدام المخزن فقط؛ وأي تنزيل خطأ\n" +
             "      --threads N     عدد خيوط المعالج؛ --seed N: بذرة واحدة لأخذ العينات والخلط والتهيئة\n" +
+            "      --packed-cache X  on أو off أو مجلد: أوزان int8 و int4 تحفظ بين مرات التحميل وتقرأ بدل تكميمها من جديد\n" +
+            "                      (الافتراضي on في مجلد التخزين المؤقت؛ IDRAK_PACKED_CACHE و IDRAK_PACKED_CACHE_DIR)\n" +
             "      --timeout D     التوقف بعد مدة (30s أو 5m أو 1h30m)\n" +
             "      --profile       تقرير بما استغرقه الأمر من وقت وذاكرة عند انتهائه (إلى مخرج الأخطاء؛ IDRAK_PROFILE_OUT: ملف)\n" +
             "      --lang L        لغة الرسائل: en أو ar (و \"lang\" في الإعدادات، IDRAK_LANG)؛ --lang-render auto أو visual أو logical\n" +

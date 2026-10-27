@@ -84,7 +84,7 @@ public sealed class IdrakSetting
     {
         _ when key.StartsWith("chat_", StringComparison.Ordinal) => "Chat",
         _ when key.StartsWith("terminal.", StringComparison.Ordinal) => "Terminal",
-        "cache_folder" or "hf_token" or "storage_headroom_mb" => "Storage",
+        "cache_folder" or "hf_token" or "storage_headroom_mb" or "packed_cache" or "packed_cache_folder" => "Storage",
         "model_keep_alive_s" or "max_loaded_models" or "unload_models_at" => "Models in memory",
         "wide_layout_dp" or "carousel_s" or "progress_interval_ms" or "prebuild_sections" or "section_fade_ms" or "frame_clock" or "live_fps" or "live_level_ms" => "Layout and motion",
         "device" or "cpu_vectors" or "theme" => "General",
@@ -248,6 +248,12 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
             IdrakSettingKind.Number, o => Text(o.TuningNeighbourOctaves), (o, t) => o.TuningNeighbourOctaves = Real(t, minimum: 0), placeholder: "the library's"),
         new("lookup_tables", "Lookup tables", "Where frozen lookup tables live (ComputeResources.LookupTables, IDRAK_LOOKUP_TABLES).", IdrakSettingKind.Choice,
             o => o.LookupTables ?? "", (o, t) => o.LookupTables = Placement(t), placeholder: "default", choices: ["default", "auto", "host", "device"]),
+        new("packed_cache", "Keep packed weights", "Whether int8 and int4 weights are kept between loads, so the next load of a model reads them instead of quantizing again "
+            + "(ComputeResources.PackedWeightCache, IDRAK_PACKED_CACHE). A kept entry is made again when its model's file changes.",
+            IdrakSettingKind.Choice, o => Text(o.PackedWeightCache), (o, t) => o.PackedWeightCache = Switch(t), placeholder: "default", choices: ["default", "on", "off"]),
+        new("packed_cache_folder", "Packed weights folder", "Where kept int8 and int4 weights live (ComputeResources.PackedWeightCacheFolder, IDRAK_PACKED_CACHE_DIR). Empty: \"packed\" in the cache folder.",
+            IdrakSettingKind.Text, o => o.PackedWeightCacheFolder ?? "", (o, t) => o.PackedWeightCacheFolder = t.Length == 0 ? null : Path.IsPathFullyQualified(t) ? t
+                : throw new FormatException($"'{t}' is not a full path."), placeholder: "packed, in the cache folder"),
         new("hf_token", "Hugging Face token", "For gated and private models, kept in the phone's secure storage (HF_TOKEN).", IdrakSettingKind.Secret,
             o => o.HuggingFaceToken ?? "", (o, t) => o.HuggingFaceToken = t.Length == 0 ? null : t, placeholder: "none"),
         new("storage_headroom_mb", "Storage kept free (MiB)", "The free space a model pull leaves; a pull that would leave less is refused before it starts.",

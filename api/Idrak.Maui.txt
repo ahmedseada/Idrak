@@ -816,6 +816,7 @@ public sealed class Idrak.Maui.IdrakMauiOptions
   public bool UseMauiProgress { get; set; }
   public bool? ChatThinking { get; set; }
   public bool? OffloadToHostMemory { get; set; }
+  public bool? PackedWeightCache { get; set; }
   public double WideLayoutWidth { get; set; }
   public double? ChatTemperature { get; set; }
   public double? ChatTopP { get; set; }
@@ -848,6 +849,7 @@ public sealed class Idrak.Maui.IdrakMauiOptions
   public string? FrameClock { get; set; }
   public string? HuggingFaceToken { get; set; }
   public string? LookupTables { get; set; }
+  public string? PackedWeightCacheFolder { get; set; }
   public string? TerminalFolder { get; set; }
   public void CopyFrom(Idrak.Maui.IdrakMauiOptions other)
 

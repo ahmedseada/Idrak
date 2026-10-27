@@ -532,6 +532,31 @@ public sealed class Int8Weight : PackedWeight, IKernelPackedWeight
     }
 
     /// <summary>
+    /// The version of the bytes and scales <see cref="Quantize(ReadOnlySpan{float}, int, int, Device)"/> makes: raised
+    /// whenever the same values would pack to other bits, so int8 weights kept between loads (a load's packed-weight cache)
+    /// are made again.
+    /// </summary>
+    public const int PackingVersion = 1;
+
+    /// <summary>The words (four bytes each) [rows, columns] packs into.</summary>
+    public static long PackedLength(int rows, int columns) => (long)rows * ((columns + 3) / 4);
+
+    /// <summary>
+    /// Weights from bytes and scales a quantization made (<see cref="PackedValues"/>, <see cref="ScaleValues"/>, read back
+    /// from where they were kept), copied once to <paramref name="device"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">Their lengths are not those of [rows, columns].</exception>
+    public static Int8Weight FromStored(ReadOnlySpan<float> packed, ReadOnlySpan<float> scales, int rows, int columns, Device device)
+    {
+        if (packed.Length != PackedLength(rows, columns) || scales.Length != columns)
+        {
+            throw new ArgumentException($"{packed.Length} words and {scales.Length} scales are not int8 [{rows}, {columns}]'s {PackedLength(rows, columns)} and {columns}.");
+        }
+
+        return new Int8Weight(Tensor.Persistent(packed, [packed.Length], device, requiresGrad: false), Tensor.Persistent(scales, [columns], device, requiresGrad: false), rows, columns);
+    }
+
+    /// <summary>
     /// Packed bytes and scales for [rows, columns] allocated on <paramref name="device"/> without computing anything, for
     /// loading stored values into (<c>Idrak.ModuleFiles.Load</c>).
     /// </summary>
@@ -799,6 +824,34 @@ public sealed class Int4Weight : PackedWeight, IKernelPackedWeight
             Tensor.Persistent(MemoryMarshal.Cast<uint, float>(packed), [packed.Length], device, requiresGrad: false),
             Tensor.Persistent(scales, [scales.Length], device, requiresGrad: false),
             rows, columns);
+    }
+
+    /// <summary>
+    /// The version of the nibbles and scales <see cref="Quantize(ReadOnlySpan{float}, int, int, Device)"/> makes: raised
+    /// whenever the same values would pack to other bits, so int4 weights kept between loads (a load's packed-weight cache)
+    /// are made again.
+    /// </summary>
+    public const int PackingVersion = 1;
+
+    /// <summary>The words of nibbles [rows, columns] packs into.</summary>
+    public static long PackedLength(int rows, int columns) => (long)rows * ((columns + 7) / 8);
+
+    /// <summary>The scales [rows, columns] has.</summary>
+    public static long ScalesLength(int rows, int columns) => (long)((rows + GroupSize - 1) / GroupSize) * ((columns + 7) / 8) * 8;
+
+    /// <summary>
+    /// Weights from nibbles and scales a quantization made (<see cref="PackedValues"/>, <see cref="ScaleValues"/>, read back
+    /// from where they were kept), copied once to <paramref name="device"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">Their lengths are not those of [rows, columns].</exception>
+    public static Int4Weight FromStored(ReadOnlySpan<float> packed, ReadOnlySpan<float> scales, int rows, int columns, Device device)
+    {
+        if (packed.Length != PackedLength(rows, columns) || scales.Length != ScalesLength(rows, columns))
+        {
+            throw new ArgumentException($"{packed.Length} words and {scales.Length} scales are not int4 [{rows}, {columns}]'s {PackedLength(rows, columns)} and {ScalesLength(rows, columns)}.");
+        }
+
+        return new Int4Weight(Tensor.Persistent(packed, [packed.Length], device, requiresGrad: false), Tensor.Persistent(scales, [scales.Length], device, requiresGrad: false), rows, columns);
     }
 
     /// <summary>

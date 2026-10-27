@@ -658,6 +658,11 @@ internal static partial class MauiTests
             Check(temperature.Text.Length == 0, "reset to the library's");
             Check(page.Entries.Single(e => e.Setting.Key == "hf_token") is { IsField: true, IsPassword: true } && page.Entries.Single(e => e.Setting.Key == "cpu_threads").IsField,
                 "the token and a number without a range as fields");
+            page.Query = "packed weights";
+            var packedFound = page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key).ToList();
+            Check(packedFound.Contains("packed_cache") && packedFound.Contains("packed_cache_folder") && page.Entries.Single(e => e.Setting.Key == "packed_cache") is { IsSegmented: true, Group: "Storage" },
+                $"the packed-weight cache's settings found by the search, in Storage: {string.Join(", ", packedFound)}");
+            page.Query = "";
         }
         finally
         {

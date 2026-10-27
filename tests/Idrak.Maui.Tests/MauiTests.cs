@@ -166,13 +166,17 @@ internal static partial class MauiTests
         TuningNeighbourOctaves = 2,
         LookupTables = "host",
         CpuVectors = CpuVectorPaths.Portable,
+        PackedWeightCache = !ComputeResources.PackedWeightCache,
+        PackedWeightCacheFolder = PackedFolder,
         HuggingFaceToken = "hf_test_token",
     };
+
+    private static readonly string PackedFolder = Path.Combine(Path.GetTempPath(), "idrak-maui-packed");
 
     private static void OptionsApplied()
     {
         string storage = Temp("apply");
-        bool offload = ComputeResources.OffloadToHostMemory;
+        bool offload = ComputeResources.OffloadToHostMemory, packed = ComputeResources.PackedWeightCache;
         try
         {
             var options = Limits();
@@ -188,6 +192,8 @@ internal static partial class MauiTests
                 "workspace and tuning");
             Check(ComputeResources.LookupTables == LookupTablePlacement.HostMemory, $"lookup tables {ComputeResources.LookupTables}");
             Check(ComputeResources.CpuVectors == CpuVectorPaths.Portable, $"vector paths {ComputeResources.CpuVectors}");
+            Check(ComputeResources.PackedWeightCache == !packed && ComputeResources.PackedWeightCacheFolder == PackedFolder,
+                $"packed-weight cache {ComputeResources.PackedWeightCache} in {ComputeResources.PackedWeightCacheFolder}");
             Check(Environment.GetEnvironmentVariable("HF_TOKEN") == "hf_test_token", "HF_TOKEN set in the process");
             Check(Device.Default == Device.Cpu && report.Problems.Count == 0, $"device {Device.Default}; problems: {string.Join("; ", report.Problems)}");
 
@@ -209,6 +215,7 @@ internal static partial class MauiTests
         double share = ComputeResources.WorkspaceShare;
         var lookup = ComputeResources.LookupTables;
         var vectors = ComputeResources.CpuVectors;
+        bool packed = ComputeResources.PackedWeightCache;
         try
         {
             var first = Limits();
@@ -217,7 +224,8 @@ internal static partial class MauiTests
             var empty = new IdrakMauiOptions { CacheFolder = Path.Combine(storage, "next-start") };
             var report = IdrakMauiStartup.Apply(empty, storage, previous: first);
             Check(ComputeResources.MaxCpuThreads == threads && ComputeResources.CpuMemoryLimit == cpuLimit && ComputeResources.WorkspaceShare == share
-                  && ComputeResources.LookupTables == lookup && ComputeResources.CpuVectors == vectors,
+                  && ComputeResources.LookupTables == lookup && ComputeResources.CpuVectors == vectors
+                  && ComputeResources.PackedWeightCache == packed && ComputeResources.PackedWeightCacheFolder != PackedFolder,
                 $"the library's values back: threads {ComputeResources.MaxCpuThreads} (was {threads}), vector paths {ComputeResources.CpuVectors} (was {vectors})");
             Check(ComputeResources.CacheFolder == folder && report.CacheFolder == folder, "the cache folder changed before a restart");
             Check(Environment.GetEnvironmentVariable("HF_TOKEN") is null, "the app's token is gone from the process");
@@ -284,7 +292,8 @@ internal static partial class MauiTests
         IdrakSetting Find(string key) => IdrakMauiSettings.Definitions.Single(s => s.Key == key);
         var options = new IdrakMauiOptions();
         foreach (var (key, text) in new[] { ("cpu_threads", "0"), ("cpu_threads", "two"), ("workspace_share", "1.5"), ("cache_folder", "relative/folder"), ("device", "vulkan:x"),
-                     ("theme", "blue"), ("offload", "maybe"), ("lookup_tables", "disk"), ("cpu_vectors", "fast"), ("tuning_budget_ms", "0"), ("unload_models_at", "never"), ("storage_headroom_mb", "-1") })
+                     ("theme", "blue"), ("offload", "maybe"), ("lookup_tables", "disk"), ("cpu_vectors", "fast"), ("tuning_budget_ms", "0"), ("unload_models_at", "never"), ("storage_headroom_mb", "-1"),
+                     ("packed_cache", "maybe"), ("packed_cache_folder", "relative/folder") })
         {
             bool refused = false;
             try

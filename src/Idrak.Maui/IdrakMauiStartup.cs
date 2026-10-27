@@ -60,6 +60,8 @@ public static class IdrakMauiStartup
         ComputeResources.TuningNeighbourOctaves = options.TuningNeighbourOctaves ?? library.TuningNeighbourOctaves;
         ComputeResources.LookupTables = options.LookupTables is { } placement ? ComputeResources.ParseLookupTables(placement) : library.LookupTables;
         ComputeResources.CpuVectors = options.CpuVectors ?? library.CpuVectors;
+        ComputeResources.PackedWeightCache = options.PackedWeightCache ?? library.PackedWeightCache;
+        ComputeResources.PackedWeightCacheFolder = options.PackedWeightCacheFolder;          // null: IDRAK_PACKED_CACHE_DIR, else in the cache folder
         ApplyToken(options.HuggingFaceToken);
         ApplyDevice(options.Device, problems);
         ApplyFrameClock(options, problems);
@@ -127,11 +129,11 @@ public static class IdrakMauiStartup
 
     private sealed record Snapshot(int MaxCpuThreads, long? CpuMemoryLimit, long? GpuMemoryLimit, long? GpuMemoryReserve, bool OffloadToHostMemory, long? OffloadReturnHeadroom,
         long? GpuChunkBytes, long? GpuStackBytes, double WorkspaceShare, TimeSpan TuningBudget, double TuningNeighbourOctaves, LookupTablePlacement LookupTables,
-        CpuVectorPaths CpuVectors)
+        CpuVectorPaths CpuVectors, bool PackedWeightCache)
     {
         public static Snapshot Read() => new(ComputeResources.MaxCpuThreads, ComputeResources.CpuMemoryLimit, ComputeResources.GpuMemoryLimit, ComputeResources.GpuMemoryReserve,
             ComputeResources.OffloadToHostMemory, ComputeResources.OffloadReturnHeadroom, ComputeResources.GpuChunkBytes, ComputeResources.GpuStackBytes,
             ComputeResources.WorkspaceShare, ComputeResources.TuningBudget, ComputeResources.TuningNeighbourOctaves, ComputeResources.LookupTables,
-            ComputeResources.CpuVectors);
+            ComputeResources.CpuVectors, ComputeResources.PackedWeightCache);
     }
 }

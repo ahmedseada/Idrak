@@ -124,6 +124,8 @@ internal static class EnvironmentVariables
         new("IDRAK_POWER_SOURCE", Devices, "as the system reports", "ac or battery: the power source tuning choices are measured and kept under", OnDevice),
 
         new("IDRAK_CACHE", Tuning, "~/.cache/idrak", "The cache folder: downloaded models, tuning choices, compiled kernels (--cache wins for the tool; an app sets ComputeResources.CacheFolder)", [Every]),
+        new("IDRAK_PACKED_CACHE", Tuning, "on", "0, off, false or no: int8 and int4 weights are not kept between loads (--packed-cache off)", Caches),
+        new("IDRAK_PACKED_CACHE_DIR", Tuning, "<cache>/packed", "The folder kept int8 and int4 weights live in (--packed-cache DIR)", Caches),
         new("IDRAK_AUTOTUNE", Tuning, "1 (measure)", "0 or false: the formulas only, no measuring of kernel choices on the device", OnDevice),
         new("IDRAK_TUNING_CACHE", Tuning, "on, under the cache folder", "0, false or off: measured choices are not kept; a path: the CUDA tuning folder", Caches),
         new("IDRAK_TUNE_NEIGHBOUR_OCTAVES", Tuning, "1", "How far a measured kernel choice reaches, in octaves of the work that follows the data (a convolution's, product's or attention's batch and lengths): a size class none measured takes the nearest measured class's choice within it instead of measuring (ComputeResources.TuningNeighbourOctaves); 0: every class measured", OnDevice),

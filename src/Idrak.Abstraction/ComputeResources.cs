@@ -163,6 +163,43 @@ public static class ComputeResources
     private static string? s_cacheFolder;
 
     /// <summary>
+    /// Whether a pretrained model's weights packed while it loads (int8, int4: quantized from the checkpoint's values) are
+    /// kept on disk (in <see cref="PackedWeightCacheFolder"/>), so the next load of the same checkpoint with the same
+    /// format reads them instead of reading and quantizing again: the same bits. On by default; IDRAK_PACKED_CACHE=0 (or off,
+    /// false) turns it off at start; a load's own option wins (<c>PretrainedOptions.PackedCache</c>).
+    /// </summary>
+    public static bool PackedWeightCache { get; set; } = !SwitchedOff(Environment.GetEnvironmentVariable("IDRAK_PACKED_CACHE"));
+
+    /// <summary>
+    /// Where <see cref="PackedWeightCache"/> keeps packed weights: IDRAK_PACKED_CACHE_DIR when set, else "packed" in
+    /// <see cref="CacheFolder"/>; setting it overrides both (null goes back to them). A load's own option wins
+    /// (<c>PretrainedOptions.PackedCacheFolder</c>).
+    /// </summary>
+    /// <exception cref="ArgumentException">Set to an empty or blank folder.</exception>
+    [System.Diagnostics.CodeAnalysis.AllowNull]
+    public static string PackedWeightCacheFolder
+    {
+        get => Volatile.Read(ref s_packedCacheFolder) is { } set ? Path.GetFullPath(set)
+            : Environment.GetEnvironmentVariable("IDRAK_PACKED_CACHE_DIR") is { Length: > 0 } variable ? Path.GetFullPath(variable)
+            : Path.Combine(CacheFolder, "packed");
+        set
+        {
+            if (value is not null)
+            {
+                ArgumentException.ThrowIfNullOrWhiteSpace(value);
+            }
+
+            Volatile.Write(ref s_packedCacheFolder, value);
+        }
+    }
+
+    private static string? s_packedCacheFolder;
+
+    // Whether a switch variable's value turns its setting off: 0, off, false or no (any case, spaces around).
+    internal static bool SwitchedOff(string? value) => value.AsSpan().Trim() is var v
+        && (v is "0" || v.Equals("off", StringComparison.OrdinalIgnoreCase) || v.Equals("false", StringComparison.OrdinalIgnoreCase) || v.Equals("no", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
     /// The cache folder when <see cref="CacheFolder"/> is not set: <paramref name="variable"/> (IDRAK_CACHE's value) made
     /// absolute when given, else under the first absolute folder of <paramref name="profile"/> (the user's profile),
     /// <paramref name="localData"/> (the local application data) and <paramref name="temporary"/> (the temporary folder),

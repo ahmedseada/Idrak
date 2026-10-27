@@ -76,6 +76,7 @@ Common options (every command):
 | `--timeout DURATION` | Give up after a time (`30s`, `5m`, `1h30m`): downloads, server calls, long runs |
 | `--seed N` | One seed for sampling, shuffling and initialization |
 | `--threads N` | CPU threads |
+| `--packed-cache on\|off\|DIR` | Whether a load keeps its int8 and int4 weights between loads and reads them back instead of quantizing again, and where (default on, `packed` in the cache folder; `IDRAK_PACKED_CACHE`, `IDRAK_PACKED_CACHE_DIR`); an entry is made again when its checkpoint file changes |
 | `--color auto\|always\|never`, `--plain` | Colour control (`NO_COLOR` still wins); no Unicode or progress characters |
 | `--log FILE` | Also write every line, verbose ones included, to a file |
 | `--profile` | Profile the command as it runs (also `IDRAK_PROFILE=1`): it runs as it would without the flag, and when it ends (normally, by an error or by Ctrl+C) one report says where its time and memory went: wall and processor time, the managed heap and its collections, device memory, the kernel choices the device measured (by operation), host fallbacks (by operation), and the prompt passes (their pieces), decoding chunks and other stages of reading answers. Written to the error stream, so the output and `--json` stay as they are; `IDRAK_PROFILE_OUT` appends it to a file (`test-output\profile.txt`), `IDRAK_PROFILE_FORMAT` picks table, markdown, csv or json, `IDRAK_PROFILE_PROBES` the probes (the intrusive ones, `operations,kernels,stages,timings`, only when named: their cost is then in the times) |
@@ -716,6 +717,7 @@ stored by `idrak login`, not here. The most used:
 | Variable | Meaning |
 |---|---|
 | `IDRAK_CACHE` | The cache folder (`--cache` wins) |
+| `IDRAK_PACKED_CACHE`, `IDRAK_PACKED_CACHE_DIR` | Whether int8 and int4 weights are kept between loads (default on; `0` or `off`: quantized on every load) and their folder (default `packed` in the cache folder); `--packed-cache` wins |
 | `IDRAK_CONFIG`, `IDRAK_CONFIG_PROFILE` | The config file and the profile in use |
 | `IDRAK_DISABLE_CUDA`, `IDRAK_DISABLE_VULKAN`, `IDRAK_DISABLE_HIP` | Backends not looked for |
 | `IDRAK_VULKAN_DEFAULT` | A Vulkan GPU may be the default device |

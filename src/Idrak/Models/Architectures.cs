@@ -441,6 +441,13 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
         return read;
     }
 
+    public string? IdentityOf(string name, IReadOnlyList<int> shape) =>
+        !Deferred && Stored(name, shape) is { } stored
+        && (Adapter is null || !stored.EndsWith(".weight", StringComparison.Ordinal) || !Adapter.Updates(stored[..^".weight".Length]))
+        && reader.IdentityOf(stored) is { } identity
+            ? $"{identity}|{(architecture.Transposed(name) ? "transposed" : "as stored")}"
+            : null;
+
     public BFloat16Weight? ReadBFloat16(string name, IReadOnlyList<int> shape, Device device, bool transposed = false)
     {
         if (Stored(name, shape) is not { } stored)

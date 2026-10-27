@@ -65,6 +65,13 @@ public interface ITensorStore : IDisposable
     bool ReadRows(string name, int first, int count, Span<float> destination) => false;
 
     /// <summary>
+    /// A text that changes whenever the stored values of the tensor <paramref name="name"/> may change (the file holding it,
+    /// its size and time of change, the tensor's place and type in it), for caches of what is made from it (packed weights);
+    /// null when the store cannot say (the default), and nothing made from the tensor is cached.
+    /// </summary>
+    string? IdentityOf(string name) => null;
+
+    /// <summary>
     /// The time spent reading tensor bytes from storage so far, apart from converting them, or null when the store does
     /// not measure it (the default): <c>PretrainedModel.LoadTimes</c> then counts reading and converting as one.
     /// </summary>

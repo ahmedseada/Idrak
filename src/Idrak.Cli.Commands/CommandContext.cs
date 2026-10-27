@@ -20,7 +20,7 @@ internal sealed class CommandContext : IDisposable
 {
     // Options every command accepts; the value-taking ones are listed for the parser.
     internal static readonly string[] CommonValueOptions =
-        ["--device", "--plugin", "--cache", "--config", "--log", "--threads", "--seed", "--format", "--columns", "--output", "--color", "--timeout", "--lang", "--lang-render"];
+        ["--device", "--plugin", "--cache", "--config", "--log", "--threads", "--seed", "--format", "--columns", "--output", "--color", "--timeout", "--lang", "--lang-render", "--packed-cache"];
     internal static readonly string[] CommonFlags = ["--json", "--quiet", "--verbose", "--help", "--offline", "--plain", "--profile"];
 
     /// <summary>Short forms every command accepts (plans/done/idrak-cli.md, "Short forms").</summary>
@@ -78,6 +78,20 @@ internal sealed class CommandContext : IDisposable
         {
             int threads = IntOption("--threads", 0);
             ComputeResources.MaxCpuThreads = threads > 0 ? threads : throw new UsageException("--threads needs a number above 0.");
+        }
+
+        // --packed-cache on|off|DIR: whether a load keeps its int8 and int4 weights between loads, and where (the library's settings).
+        if (Option("--packed-cache") is { } packedCache)
+        {
+            if (packedCache.Equals("on", StringComparison.OrdinalIgnoreCase) || packedCache.Equals("off", StringComparison.OrdinalIgnoreCase))
+            {
+                ComputeResources.PackedWeightCache = packedCache.Equals("on", StringComparison.OrdinalIgnoreCase);
+            }
+            else
+            {
+                ComputeResources.PackedWeightCache = true;
+                ComputeResources.PackedWeightCacheFolder = System.IO.Path.GetFullPath(packedCache);
+            }
         }
 
         if (Option("--output") is { } file)

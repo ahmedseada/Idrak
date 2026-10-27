@@ -843,6 +843,7 @@ public static class Idrak.Abstraction.ComputeResources
   public static bool AllowParallel { get; }
   public static bool OffloadColdFirst { get; set; }
   public static bool OffloadToHostMemory { get; set; }
+  public static bool PackedWeightCache { get; set; }
   public static bool PrefetchOffloadedWeights { get; set; }
   public static bool ReturnOffloadedTensors { get; set; }
   public static double TuningNeighbourOctaves { get; set; }
@@ -856,6 +857,7 @@ public static class Idrak.Abstraction.ComputeResources
   public static long? GpuStackBytes { get; set; }
   public static long? OffloadReturnHeadroom { get; set; }
   public static string CacheFolder { get; set; }
+  public static string PackedWeightCacheFolder { get; set; }
   public static void ReleaseCachedMemory(Idrak.Abstraction.Device? device = null)
   public static void ResetPeakMemoryUsage(Idrak.Abstraction.Device device)
 
@@ -2960,6 +2962,7 @@ public interface Idrak.Abstraction.Formats.ITensorStore : System.IDisposable
   public (default) bool SameValues(string first, string second)
   public (default) float[] ReadTransposed(string name)
   public (default) long? BytesRead { get; }
+  public (default) string? IdentityOf(string name)
   public System.Collections.Generic.IEnumerable<string> Names { get; }
   public bool Contains(string name)
   public float[] Read(string name)
@@ -3878,6 +3881,7 @@ public sealed class Idrak.Abstraction.Generation.Int4Weight : Idrak.Abstraction.
   public bool LowRankProducts { get; }
   public bool TransposedProduct(Idrak.Abstraction.Tensor g, Idrak.Abstraction.Devices.Storage dx, int m, int k, int n, float beta, Idrak.Abstraction.Devices.Storage? dt, Idrak.Abstraction.Devices.Storage? a, int rank)
   public const int GroupSize = 32
+  public const int PackingVersion = 1
   public override Idrak.Abstraction.Device Device { get; }
   public override Idrak.Abstraction.Tensor Dequantize()
   public override Idrak.Abstraction.Tensor MatMul(Idrak.Abstraction.Tensor input)
@@ -3891,9 +3895,12 @@ public sealed class Idrak.Abstraction.Generation.Int4Weight : Idrak.Abstraction.
   public override void DequantizeInto(Idrak.Abstraction.Devices.Storage destination)
   public override void Dispose()
   public static Idrak.Abstraction.Generation.Int4Weight Empty(int rows, int columns, Idrak.Abstraction.Device device)
+  public static Idrak.Abstraction.Generation.Int4Weight FromStored(System.ReadOnlySpan<float> packed, System.ReadOnlySpan<float> scales, int rows, int columns, Idrak.Abstraction.Device device)
   public static Idrak.Abstraction.Generation.Int4Weight Quantize(Idrak.Abstraction.Tensor weight)
   public static Idrak.Abstraction.Generation.Int4Weight Quantize(System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
   public static Idrak.Abstraction.Generation.Int4Weight QuantizeColumns(int rows, int columns, Idrak.Abstraction.Device device, Idrak.Abstraction.Generation.ColumnBlockReader read)
+  public static long PackedLength(int rows, int columns)
+  public static long ScalesLength(int rows, int columns)
 
 public sealed class Idrak.Abstraction.Generation.Int8Weight : Idrak.Abstraction.Generation.PackedWeight, Idrak.Abstraction.Generation.IKernelPackedWeight, Idrak.Abstraction.IRecordable
   public Idrak.Abstraction.PackedFormat Format { get; }
@@ -3905,6 +3912,7 @@ public sealed class Idrak.Abstraction.Generation.Int8Weight : Idrak.Abstraction.
   public bool Float8Copy { get; }
   public bool LowRankProducts { get; }
   public bool TransposedProduct(Idrak.Abstraction.Tensor g, Idrak.Abstraction.Devices.Storage dx, int m, int k, int n, float beta, Idrak.Abstraction.Devices.Storage? dt, Idrak.Abstraction.Devices.Storage? a, int rank)
+  public const int PackingVersion = 1
   public override Idrak.Abstraction.Device Device { get; }
   public override Idrak.Abstraction.Tensor Dequantize()
   public override Idrak.Abstraction.Tensor MatMul(Idrak.Abstraction.Tensor input)
@@ -3919,9 +3927,11 @@ public sealed class Idrak.Abstraction.Generation.Int8Weight : Idrak.Abstraction.
   public override void DequantizeInto(Idrak.Abstraction.Devices.Storage destination)
   public override void Dispose()
   public static Idrak.Abstraction.Generation.Int8Weight Empty(int rows, int columns, Idrak.Abstraction.Device device)
+  public static Idrak.Abstraction.Generation.Int8Weight FromStored(System.ReadOnlySpan<float> packed, System.ReadOnlySpan<float> scales, int rows, int columns, Idrak.Abstraction.Device device)
   public static Idrak.Abstraction.Generation.Int8Weight Quantize(Idrak.Abstraction.Tensor weight)
   public static Idrak.Abstraction.Generation.Int8Weight Quantize(System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
   public static Idrak.Abstraction.Generation.Int8Weight QuantizeColumns(int rows, int columns, Idrak.Abstraction.Device device, Idrak.Abstraction.Generation.ColumnBlockReader read)
+  public static long PackedLength(int rows, int columns)
 
 public sealed class Idrak.Abstraction.Generation.KeyValueCache : System.IDisposable
   public Idrak.Abstraction.Generation.IFusedWriteLayout? FusedWriteLayout { get; }

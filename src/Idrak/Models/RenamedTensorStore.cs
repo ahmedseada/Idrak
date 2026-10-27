@@ -120,6 +120,9 @@ public sealed class RenamedTensorStore : IBFloat16TensorStore
         Resolve(name) is (var stored, null) && _inner.ReadRows(stored, first, count, destination);   // a folded weight is computed whole
 
     /// <inheritdoc />
+    public string? IdentityOf(string name) => Resolve(name) is (var stored, null) ? _inner.IdentityOf(stored) : null;
+
+    /// <inheritdoc />
     public TimeSpan? ReadTime => _inner.ReadTime;
 
     /// <inheritdoc />

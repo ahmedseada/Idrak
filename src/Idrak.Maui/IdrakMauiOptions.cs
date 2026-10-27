@@ -78,6 +78,18 @@ public sealed class IdrakMauiOptions
     public string? LookupTables { get; set; }
 
     /// <summary>
+    /// Whether int8 and int4 weights are kept between loads, so the next load of a model reads them instead of quantizing
+    /// again (<see cref="ComputeResources.PackedWeightCache"/>); null: the library's (IDRAK_PACKED_CACHE, else on).
+    /// </summary>
+    public bool? PackedWeightCache { get; set; }
+
+    /// <summary>
+    /// Where kept int8 and int4 weights live (<see cref="ComputeResources.PackedWeightCacheFolder"/>); null:
+    /// IDRAK_PACKED_CACHE_DIR, else "packed" in the cache folder.
+    /// </summary>
+    public string? PackedWeightCacheFolder { get; set; }
+
+    /// <summary>
     /// Which vector paths the CPU's kernels take (<see cref="ComputeResources.CpuVectors"/>): automatic, the platform's
     /// intrinsics only (native), the portable vectors only, or the plain loops (scalar). Every path gives the same results;
     /// they differ in speed. Null: the library's (IDRAK_CPU_VECTORS, else automatic).

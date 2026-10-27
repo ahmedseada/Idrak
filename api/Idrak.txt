@@ -610,6 +610,11 @@ public interface Idrak.Layers.Abstractions.IOffloadableLayer
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> StagedBuffers()
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> StagedParameters()
 
+public interface Idrak.Layers.Abstractions.IPackedWeightLayout : Idrak.Abstraction.IKind
+  public Idrak.Abstraction.Generation.IKernelPackedWeight? FromStored(System.ReadOnlySpan<float> packed, System.ReadOnlySpan<float> scales, int rows, int columns, Idrak.Abstraction.Device device)
+  public bool Keeps(Idrak.Abstraction.Generation.IKernelPackedWeight weight)
+  public int Version { get; }
+
 public interface Idrak.Layers.Abstractions.IPositionAware
 
 public interface Idrak.Layers.Abstractions.IRecurrentCell
@@ -693,6 +698,15 @@ public static class Idrak.Layers.Abstractions.NetworkRecipes
   public static string? Origin(string name)
   public static void Register(Idrak.Layers.Abstractions.INetworkRecipe recipe)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public static class Idrak.Layers.Abstractions.PackedWeightLayouts
+  public static Idrak.Layers.Abstractions.IPackedWeightLayout? Default(string name)
+  public static Idrak.Layers.Abstractions.IPackedWeightLayout? Find(System.ReadOnlySpan<char> name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Layers.Abstractions.IPackedWeightLayout layout)
 
 public abstract class Idrak.Layers.Abstractions.RecurrentModule : Idrak.Abstraction.Module
   protected RecurrentModule(Idrak.Layers.Abstractions.IRecurrentCell cell, int inputSize, int hiddenSize, bool returnSequences, Idrak.Abstraction.Device? device, System.Random? random)
@@ -1738,6 +1752,7 @@ public interface Idrak.Models.Abstractions.IVisionFamily
 public interface Idrak.Models.Abstractions.IWeightSource
   public (default) Idrak.Abstraction.Generation.BFloat16Weight? ReadBFloat16(string name, System.Collections.Generic.IReadOnlyList<int> shape, Idrak.Abstraction.Device device, bool transposed = false)
   public (default) bool ReadRows(string name, System.Collections.Generic.IReadOnlyList<int> shape, int first, int count, System.Span<float> destination)
+  public (default) string? IdentityOf(string name, System.Collections.Generic.IReadOnlyList<int> shape)
   public float[]? Read(string name, System.Collections.Generic.IReadOnlyList<int> shape)
 
 public sealed class Idrak.Models.Abstractions.NormalizedText : System.IDisposable
@@ -2121,6 +2136,13 @@ public static class Idrak.Models.ModelSource
   public static string LocalStoreModel(string name)
   public static string Resolve(string model, string revision = "main", string? token = null, Idrak.Abstraction.Data.IDownloader? downloader = null, bool download = true)
 
+public sealed record Idrak.Models.PackedWeightCacheUse : System.IEquatable<Idrak.Models.PackedWeightCacheUse>
+  public PackedWeightCacheUse(string Folder, int Read, int Written, string? Problem)
+  public int Read { get; init; }
+  public int Written { get; init; }
+  public string Folder { get; init; }
+  public string? Problem { get; init; }
+
 public sealed class Idrak.Models.ParameterSet : Idrak.Abstraction.Module
   public ParameterSet(string name, System.Collections.Generic.IReadOnlyList<Idrak.Models.StoredParameter> parameters)
   public System.Collections.Generic.IReadOnlyList<Idrak.Models.StoredParameter> Named { get; }
@@ -2191,6 +2213,7 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public Idrak.Abstraction.Generation.IVisionEncoder CreateVisionEncoder(Idrak.Abstraction.Generation.VisionEncoderOptions? options = null)
   public Idrak.Layers.Sequential Network { get; }
   public Idrak.Models.Abstractions.IPretrainedArchitecture Architecture { get; }
+  public Idrak.Models.PackedWeightCacheUse? PackedCache { get; }
   public Idrak.Models.PretrainedLoadTimes LoadTimes { get; }
   public System.Collections.Generic.IEnumerable<(string, Idrak.Abstraction.Module)> NamedModules()
   public System.Collections.Generic.IReadOnlyCollection<string> Parts { get; }
@@ -2225,11 +2248,13 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public bool Deferred { get; init; }
   public bool Int4 { get; init; }
   public bool Int8 { get; init; }
+  public bool? PackedCache { get; init; }
   public double SuggestionHeadroom { get; init; }
   public int? MaxPositions { get; init; }
   public string? Architecture { get; init; }
   public string? HeadFormatName { get; init; }
   public string? MergeAdapter { get; init; }
+  public string? PackedCacheFolder { get; init; }
   public string? PackedFormatName { get; init; }
 
 public sealed class Idrak.Models.PretrainedSeq2SeqModel : System.IDisposable
@@ -2281,6 +2306,7 @@ public sealed class Idrak.Models.RenamedTensorStore : Idrak.Abstraction.Formats.
   public float[] ReadTransposed(string name)
   public int[] ShapeOf(string name)
   public long? BytesRead { get; }
+  public string? IdentityOf(string name)
   public void Dispose()
 
 public sealed record Idrak.Models.SafeTensorInfo : System.IEquatable<Idrak.Models.SafeTensorInfo>
@@ -2311,6 +2337,7 @@ public sealed class Idrak.Models.SafeTensorsReader : Idrak.Abstraction.Formats.I
   public float[] ReadTransposed(string name)
   public long BytesRead { get; }
   public static Idrak.Models.SafeTensorsReader Open(string path)
+  public string? IdentityOf(string name)
   public void Dispose()
 
 public static class Idrak.Models.SafeTensorsWriter
