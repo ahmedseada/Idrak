@@ -256,12 +256,12 @@ internal static partial class MauiTests
         Check(labs.Groups[0].Select(l => l.Name).SequenceEqual([MobileFeatures.Chat, MobileFeatures.Search])
               && labs.Groups[1].Select(l => l.Name).SequenceEqual([MobileFeatures.Transcribe, MobileFeatures.Speak, MobileFeatures.AudioProcess])
               && labs.Groups[2].Select(l => l.Name).SequenceEqual([MobileFeatures.Ocr, MobileFeatures.Image, MobileFeatures.Generate])
-              && labs.Groups[3].Select(l => l.Name).SequenceEqual([MobileFeatures.Devices, MobileFeatures.Models, AppSections.Settings]), Groups());
+              && labs.Groups[3].Select(l => l.Name).SequenceEqual([MobileFeatures.Devices, MobileFeatures.Models, MobileFeatures.Terminal, AppSections.Settings]), Groups());
         var search = labs.All.Single(l => l.Name == MobileFeatures.Search);
         var chat = labs.All.Single(l => l.Name == MobileFeatures.Chat);
         Check(search is { IsPlanned: true, StateText: "● Planned", Icon: "search", Tone: "Sky" } && chat is { IsReady: true, Tagline: "Stream a model", Icon: "chat", Tone: "Indigo" },
             $"search {search.StateText} {search.Icon}; chat {chat.Tagline} {chat.Icon}");
-        Check(labs.CountsText == "10 ready · 1 planned" && labs.All.Single(l => l.Name == MobileFeatures.AudioProcess).Title == "Studio"
+        Check(labs.CountsText == "11 ready · 1 planned" && labs.All.Single(l => l.Name == MobileFeatures.AudioProcess).Title == "Studio"
               && labs.All.Single(l => l.Name == MobileFeatures.Ocr).Title == "Read text", labs.CountsText);
         Check(labs.All.Single(l => l.Name == MobileFeatures.Devices).Detail == "CPU · GPU ready" && labs.All.Single(l => l.Name == MobileFeatures.Models).Detail == $"2 pulled · {ProgressText.Bytes(885_000_000)}",
             $"{labs.All.Single(l => l.Name == MobileFeatures.Devices).Detail}; {labs.All.Single(l => l.Name == MobileFeatures.Models).Detail}");
@@ -294,7 +294,7 @@ internal static partial class MauiTests
         {
             MobileFeatures.Register(selfTest);
             labs.Refresh();
-            Check(!labs.All.Any(l => l.Name == MobileFeatures.Speak) && labs.Groups[3].Select(l => l.Name).SequenceEqual([MobileFeatures.Devices, MobileFeatures.Models, "self-test", AppSections.Settings])
+            Check(!labs.All.Any(l => l.Name == MobileFeatures.Speak) && labs.Groups[3].Select(l => l.Name).SequenceEqual([MobileFeatures.Devices, MobileFeatures.Models, MobileFeatures.Terminal, "self-test", AppSections.Settings])
                   && labs.All.Single(l => l.Name == "self-test") is { IsPlanned: true, Icon: "shield", Tone: "Neutral" }, Groups());
         }
         finally

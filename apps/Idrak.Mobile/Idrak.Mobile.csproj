@@ -70,6 +70,12 @@
     <PackageReference Include="Idrak.Vision.Plugins" Version="$(IdrakVersion)" />
   </ItemGroup>
 
+  <!-- The Terminal page's commands: the idrak tool's commands as a library, run in the app's process (IdrakCommandRunner).
+       Part of the tool, not a package, so taken from this clone's source. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Idrak.Cli.Commands\Idrak.Cli.Commands.csproj" />
+  </ItemGroup>
+
   <!--
     The library's icon is the app's icon (assets/icon.svg). The launcher's adaptive icon takes the icon's dark ground as
     its background and the graph mark as its foreground: the icon without its rounded square, which the launcher's own

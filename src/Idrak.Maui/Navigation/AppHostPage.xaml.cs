@@ -23,6 +23,7 @@ public partial class AppHostPage : ContentPage
     private readonly IServiceProvider _services;
     private readonly IdrakMauiOptions _options;
     private readonly Dictionary<string, View> _views = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, Page> _pages = new(StringComparer.OrdinalIgnoreCase);
     private LabsView? _sheet;
     private Page? _settingsPage;
     private View? _current;
@@ -145,8 +146,23 @@ public partial class AppHostPage : ContentPage
             return;
         }
 
-        await Navigation.PushAsync(MobileFeatures.Open(feature, _services));
+        // A feature's page (no section shows it: Devices, Models, Terminal) made once and kept, its views too when it closes,
+        // so opening it again makes nothing; one already shown is not pushed twice.
+        if (!_pages.TryGetValue(feature, out var page))
+        {
+            page = MobileFeatures.Open(feature, _services);
+            page.SetValue(HandlerProperties.DisconnectPolicyProperty, HandlerDisconnectPolicy.Manual);
+            _pages[feature] = page;
+        }
+
+        if (!Navigation.NavigationStack.Contains(page))
+        {
+            await Navigation.PushAsync(page);
+        }
     }
+
+    /// <summary>The features' pages made so far (kept), by feature name.</summary>
+    public IReadOnlyDictionary<string, Page> Pages => _pages;
 
     /// <summary>Shows All labs: the sheet on a narrow window, the section on a wide one.</summary>
     public Task OpenLabsAsync() => OpenSectionAsync(AppSections.Labs);

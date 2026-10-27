@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Terminal (the owner's request, October 2026): the app's command runner (the idrak commands in the app's own process).
+  The output as a virtualised list of lines in the mono font (the commands typed in the accent, errors in the error colour,
+  the terminal's own words muted), drawn once a display frame from what the command wrote; the suggestions as chips (the
+  runner's own commands and options; one the app does not allow greyed); the line, recalled from the history, run or
+  stopped. A narrow window: the commands pane in place of the output when asked; a wide one: beside it. Theme keys only.
+-->
+<ctl:AdaptiveView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                  xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+                  xmlns:ctl="clr-namespace:Idrak.Maui.Controls"
+                  x:Class="Idrak.Maui.Views.TerminalView"
+                  x:DataType="vm:TerminalViewModel">
+    <Grid x:Name="Root" ColumnDefinitions="*" RowDefinitions="Auto,*,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingColumns}" RowSpacing="{DynamicResource IdrakSpacingSmall}"
+          Padding="{DynamicResource IdrakLabPadding}">
+        <!-- The folder and the tools. -->
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+            <VerticalStackLayout VerticalOptions="Center">
+                <Label Text="{Binding Status}" Style="{DynamicResource IdrakCaption}" LineBreakMode="TailTruncation" />
+                <Label Text="{Binding WorkingFolder}" Style="{DynamicResource IdrakMicro}" LineBreakMode="HeadTruncation" />
+            </VerticalStackLayout>
+            <HorizontalStackLayout Grid.Column="1" Spacing="{DynamicResource IdrakSpacingSmall}">
+                <Button Text="help" Command="{Binding HelpCommand}" IsEnabled="{Binding IsIdle}" Style="{DynamicResource IdrakChip}" />
+                <Button Text="Copy" Command="{Binding CopyCommand}" Style="{DynamicResource IdrakChip}" />
+                <Button Text="Clear" Command="{Binding ClearCommand}" Style="{DynamicResource IdrakChip}" />
+                <Button x:Name="CommandsButton" Text="Commands" Command="{Binding ToggleCommandsCommand}" Style="{DynamicResource IdrakChip}" />
+            </HorizontalStackLayout>
+        </Grid>
+
+        <!-- The output: only the lines on screen are made. -->
+        <Border x:Name="OutputCard" Grid.Row="1" Style="{DynamicResource IdrakCodeBlock}">
+            <Grid>
+                <CollectionView x:Name="Output" ItemsSource="{Binding Lines}" SelectionMode="None" ItemSizingStrategy="MeasureAllItems"
+                                Margin="{DynamicResource IdrakCardPadding}">
+                    <CollectionView.EmptyView>
+                        <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                            <Label Text="Type a command, or tap one below; help lists them all." Style="{DynamicResource IdrakCaption}" />
+                            <Label Text="{Binding NoRunnerText}" Style="{DynamicResource IdrakErrorText}" />
+                        </VerticalStackLayout>
+                    </CollectionView.EmptyView>
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="vm:TerminalLine">
+                            <Label Text="{Binding Text}" Style="{DynamicResource IdrakMono}" LineBreakMode="CharacterWrap">
+                                <Label.Triggers>
+                                    <DataTrigger TargetType="Label" Binding="{Binding IsCommand}" Value="True">
+                                        <Setter Property="TextColor" Value="{DynamicResource IdrakAccentText}" />
+                                    </DataTrigger>
+                                    <DataTrigger TargetType="Label" Binding="{Binding IsError}" Value="True">
+                                        <Setter Property="TextColor" Value="{DynamicResource IdrakError}" />
+                                    </DataTrigger>
+                                    <DataTrigger TargetType="Label" Binding="{Binding IsInfo}" Value="True">
+                                        <Setter Property="TextColor" Value="{DynamicResource IdrakTextMuted}" />
+                                    </DataTrigger>
+                                </Label.Triggers>
+                            </Label>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+            </Grid>
+        </Border>
+
+        <!-- The commands: by group, with their help; the history's latest lines. -->
+        <Border x:Name="CommandsPane" Grid.Row="1" Style="{DynamicResource IdrakPanel}" IsVisible="False">
+            <Grid RowDefinitions="Auto,Auto,*" RowSpacing="{DynamicResource IdrakSpacingSmall}">
+                <Label Text="History" Style="{DynamicResource IdrakSectionLabel}" />
+                <FlexLayout Grid.Row="1" BindableLayout.ItemsSource="{Binding History}" Wrap="Wrap" Direction="Row">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="x:String">
+                            <Button Text="{Binding .}" Clicked="OnHistory" Style="{DynamicResource IdrakChip}" Margin="{DynamicResource IdrakChipMargin}" />
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </FlexLayout>
+                <CollectionView Grid.Row="2" ItemsSource="{Binding Groups}" IsGrouped="True" SelectionMode="None">
+                    <CollectionView.GroupHeaderTemplate>
+                        <DataTemplate x:DataType="vm:TerminalCommandGroup">
+                            <Label Text="{Binding Title}" Style="{DynamicResource IdrakSectionLabel}" Margin="{DynamicResource IdrakTopGap}" />
+                        </DataTemplate>
+                    </CollectionView.GroupHeaderTemplate>
+                    <CollectionView.ItemTemplate>
+                        <DataTemplate x:DataType="vm:TerminalSuggestion">
+                            <VerticalStackLayout Padding="{DynamicResource IdrakSettingRowPadding}">
+                                <VerticalStackLayout.Triggers>
+                                    <DataTrigger TargetType="VerticalStackLayout" Binding="{Binding IsUnavailable}" Value="True">
+                                        <Setter Property="Opacity" Value="0.55" />
+                                    </DataTrigger>
+                                </VerticalStackLayout.Triggers>
+                                <VerticalStackLayout.GestureRecognizers>
+                                    <TapGestureRecognizer Command="{Binding TapCommand}" />
+                                </VerticalStackLayout.GestureRecognizers>
+                                <Label Text="{Binding Text}" Style="{DynamicResource IdrakMono}" />
+                                <Label Text="{Binding Detail}" Style="{DynamicResource IdrakMicro}" />
+                                <Label Text="{Binding Reason}" IsVisible="{Binding IsUnavailable}" Style="{DynamicResource IdrakMicro}" TextColor="{DynamicResource IdrakHighlight}" />
+                            </VerticalStackLayout>
+                        </DataTemplate>
+                    </CollectionView.ItemTemplate>
+                </CollectionView>
+            </Grid>
+        </Border>
+
+        <!-- What to type next: the runner's commands, then a command's options; one the app does not allow greyed. -->
+        <ScrollView Grid.Row="2" Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
+            <HorizontalStackLayout BindableLayout.ItemsSource="{Binding Suggestions}" Spacing="{DynamicResource IdrakSpacingSmall}">
+                <BindableLayout.ItemTemplate>
+                    <DataTemplate x:DataType="vm:TerminalSuggestion">
+                        <Button Text="{Binding Text}" Command="{Binding TapCommand}" Style="{DynamicResource IdrakChip}" FontFamily="{DynamicResource IdrakFontMono}"
+                                SemanticProperties.Hint="{Binding Detail}">
+                            <Button.Triggers>
+                                <DataTrigger TargetType="Button" Binding="{Binding IsUnavailable}" Value="True">
+                                    <Setter Property="Opacity" Value="0.45" />
+                                </DataTrigger>
+                            </Button.Triggers>
+                        </Button>
+                    </DataTemplate>
+                </BindableLayout.ItemTemplate>
+            </HorizontalStackLayout>
+        </ScrollView>
+
+        <!-- The line: recalled, run or stopped. -->
+        <Border Grid.Row="3" Style="{DynamicResource IdrakComposer}">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                <Label Text="{Binding ToolName}" Style="{DynamicResource IdrakMono}" TextColor="{DynamicResource IdrakAccentText}" VerticalOptions="Center" />
+                <Entry x:Name="Line" Grid.Column="1" Text="{Binding Input}" Placeholder="models list" FontFamily="{DynamicResource IdrakFontMono}" ReturnType="Go"
+                       IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" Keyboard="Plain" Completed="OnCompleted" VerticalOptions="Center" />
+                <Button Grid.Column="2" Text="↑" Command="{Binding PreviousCommand}" Style="{DynamicResource IdrakChip}" SemanticProperties.Description="The line before" />
+                <Button Grid.Column="3" Text="↓" Command="{Binding NextCommand}" Style="{DynamicResource IdrakChip}" SemanticProperties.Description="The line after" />
+                <Grid Grid.Column="4">
+                    <Button Text="Run" Command="{Binding RunCommand}" IsVisible="{Binding IsIdle}" Style="{DynamicResource IdrakGradientButton}" />
+                    <Button Text="Stop" Command="{Binding CancelCommand}" IsVisible="{Binding IsRunning}" Style="{DynamicResource IdrakSecondaryButton}" />
+                </Grid>
+            </Grid>
+        </Border>
+    </Grid>
+</ctl:AdaptiveView>

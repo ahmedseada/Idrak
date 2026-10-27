@@ -110,6 +110,10 @@ internal static partial class MauiTests
         ("maui generate: text drawn as pages by the library's synthetic pages (the library's own page for the same options, the same seed the same pages), in fonts picked for its characters; effects stack into one look, a random one, every look, clean; before and after; saved to Pictures, shared, written as a data set", GenerateMakesPages),
         ("maui generate: Stop ends the pages being made, those made kept; no text makes nothing", GenerateCancels),
         ("maui generate: fonts added from files (checked as fonts, copied, chosen), searched, none chosen; every setting the CLI takes checked, kept and read back; the feature in Vision after Read text and Image, its views bind in light and dark", GenerateFontsAndSettings),
+        ("maui terminal: a command's output streams into lines one batch a frame (a thousand lines, one change), a carriage return rewrites the line in place, the console's escapes left out, errors apart; the most lines kept; copy, clear, a quote not closed, no runner", TerminalStreams),
+        ("maui terminal: Stop cancels the command running as Ctrl+C would, its last line kept", TerminalStops),
+        ("maui terminal: the history recalls earlier lines back and forth and is kept between runs; the suggestions are the runner's commands (one not allowed greyed with why), then a command's options, help's topics", TerminalHistoryAndSuggestions),
+        ("maui terminal: the app's own runner runs the idrak commands in this process (help), refuses serve with its reason, one command at a time; the feature in this device's group, its view binds in light and dark", TerminalRunsIdrak),
         ("public API: api/Idrak.Maui.txt matches the public surface of Idrak.Maui (IDRAK_UPDATE_API=1 rewrites it)", ApiSurfaceCurrent),
     ];
 

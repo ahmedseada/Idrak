@@ -72,6 +72,9 @@ public sealed class GeneratePage(GenerateViewModel viewModel, IServiceProvider s
 /// <summary>The fonts of the Generate lab: every font found, searchable, chosen by a switch (<see cref="FontsView"/>).</summary>
 public sealed class FontsPage(GenerateViewModel viewModel) : LabPage(new FontsView(viewModel), viewModel, "Fonts");
 
+/// <summary>The Terminal feature's page (<see cref="TerminalView"/>).</summary>
+public sealed class TerminalPage(TerminalViewModel viewModel, IServiceProvider services) : LabPage(new TerminalView(viewModel, services), viewModel, viewModel.Title);
+
 /// <summary>A planned feature's page (<see cref="PlaceholderView"/>).</summary>
 public sealed class PlaceholderPage(PlaceholderViewModel viewModel) : LabPage(new PlaceholderView(viewModel), viewModel, viewModel.Title);
 

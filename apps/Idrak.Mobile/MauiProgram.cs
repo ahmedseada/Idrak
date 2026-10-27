@@ -6,6 +6,7 @@ using Idrak.Audio.Plugins.RnNoise;
 using Idrak.Audio.Plugins.Vits;
 using Idrak.Audio.Plugins.Whisper;
 using Idrak.Maui;
+using Idrak.Maui.Abstractions;
 using Idrak.Text.Plugins.Gemma;
 using Idrak.Text.Plugins.Llama;
 using Idrak.Text.Plugins.Mistral;
@@ -80,6 +81,10 @@ public static class MauiProgram
         // The OCR lab reads with int8 weights by default (a quarter of float32's memory), as the chat does; the lab's
         // settings change it, and what the user keeps there is applied over this.
         builder.Services.AddSingleton(new OcrLabOptions { Weights = "int8" });
+
+        // The Terminal page runs the idrak commands in the app's own process (Idrak.Cli.Commands): one runner for the app (one
+        // command at a time), allowing nothing an app cannot do (no child process, no network listener, no console input).
+        builder.Services.AddSingleton<ICommandRunner>(new IdrakCommandRunner());
 
         // The app's own features, after the library's (UseIdrak registered those).
         AppFeatures.Register();

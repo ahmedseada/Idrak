@@ -19,6 +19,10 @@
     <ProjectReference Include="..\..\src\Idrak.Audio.Plugins\Idrak.Audio.Plugins.csproj" />
     <!-- The OCR lab's end-to-end test reads the repository's tiny Gemma 3 through the Gemma 3 vision plug-in. -->
     <ProjectReference Include="..\..\src\Idrak.Vision.Plugins\Idrak.Vision.Plugins.csproj" />
+    <!-- The Terminal page's end-to-end test runs the idrak commands through the app's own runner (compiled here from the
+         app's source, so it is built and run without building the app). -->
+    <ProjectReference Include="..\..\src\Idrak.Cli.Commands\Idrak.Cli.Commands.csproj" />
+    <Compile Include="..\..\apps\Idrak.Mobile\IdrakCommandRunner.cs" Link="App\IdrakCommandRunner.cs" />
   </ItemGroup>
 
 </Project>

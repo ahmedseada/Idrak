@@ -160,6 +160,9 @@ public static class MobileFeatures
     /// <summary>Text drawn as scanned pages (the Generate lab).</summary>
     public const string Generate = "generate";
 
+    /// <summary>The app's command runner (the Terminal page).</summary>
+    public const string Terminal = "terminal";
+
     /// <summary>The library's retrieval page (planned).</summary>
     public const string Search = "search";
 
@@ -177,6 +180,7 @@ public static class MobileFeatures
         table.RegisterDefault(Ocr, new Idrak.Maui.Views.OcrFeature());
         table.RegisterDefault(Image, new Idrak.Maui.Views.ImageFeature());
         table.RegisterDefault(Generate, new Idrak.Maui.Views.GenerateFeature());
+        table.RegisterDefault(Terminal, new Idrak.Maui.Views.TerminalFeature());
         return table;
     }
 

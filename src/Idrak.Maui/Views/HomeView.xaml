@@ -105,9 +105,14 @@
 
                         <!-- This device, measured (a narrow window: three tiles). -->
                         <VerticalStackLayout x:Name="MeasuredTiles">
-                            <Grid ColumnDefinitions="*,Auto" Padding="{DynamicResource IdrakSectionHeaderPadding}">
+                            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}" Padding="{DynamicResource IdrakSectionHeaderPadding}">
                                 <Label Text="{Binding MeasuredTitle}" Style="{DynamicResource IdrakSectionLabel}" />
-                                <Label Grid.Column="1" Text="Devices" Style="{DynamicResource IdrakLink}">
+                                <Label Grid.Column="1" Text="Terminal" Style="{DynamicResource IdrakLink}">
+                                    <Label.GestureRecognizers>
+                                        <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="terminal" />
+                                    </Label.GestureRecognizers>
+                                </Label>
+                                <Label Grid.Column="2" Text="Devices" Style="{DynamicResource IdrakLink}">
                                     <Label.GestureRecognizers>
                                         <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="devices" />
                                     </Label.GestureRecognizers>
@@ -227,9 +232,14 @@
                     <VerticalStackLayout x:Name="Right" Grid.Column="1" Spacing="{DynamicResource IdrakSpacingSection}" IsVisible="False">
                         <Border Style="{DynamicResource IdrakPanel}">
                             <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSection}">
-                                <Grid ColumnDefinitions="*,Auto">
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}">
                                     <Label Text="{Binding MeasuredTitle}" Style="{DynamicResource IdrakHeading}" />
-                                    <Label Grid.Column="1" Text="Devices" Style="{DynamicResource IdrakLink}">
+                                    <Label Grid.Column="1" Text="Terminal" Style="{DynamicResource IdrakLink}">
+                                        <Label.GestureRecognizers>
+                                            <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="terminal" />
+                                        </Label.GestureRecognizers>
+                                    </Label>
+                                    <Label Grid.Column="2" Text="Devices" Style="{DynamicResource IdrakLink}">
                                         <Label.GestureRecognizers>
                                             <TapGestureRecognizer Command="{Binding OpenCommand}" CommandParameter="devices" />
                                         </Label.GestureRecognizers>

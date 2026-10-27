@@ -68,6 +68,13 @@ public sealed record Idrak.Maui.Abstractions.ChatModelInfo : System.IEquatable<I
   public string Model { get; init; }
   public string Weights { get; init; }
 
+public sealed record Idrak.Maui.Abstractions.CommandRunResult : System.IEquatable<Idrak.Maui.Abstractions.CommandRunResult>
+  public CommandRunResult(int ExitCode, bool Stopped, bool Refused, System.TimeSpan Elapsed)
+  public System.TimeSpan Elapsed { get; init; }
+  public bool Refused { get; init; }
+  public bool Stopped { get; init; }
+  public int ExitCode { get; init; }
+
 public sealed record Idrak.Maui.Abstractions.ConversationSummary : System.IEquatable<Idrak.Maui.Abstractions.ConversationSummary>
   public ConversationSummary(string Id, string Title, System.DateTimeOffset Updated, string Preview, string? Model)
   public System.DateTimeOffset Updated { get; init; }
@@ -150,6 +157,14 @@ public interface Idrak.Maui.Abstractions.IAppSection : Idrak.Abstraction.IKind
 public interface Idrak.Maui.Abstractions.IChatModelService
   public Idrak.Maui.Abstractions.ChatMemoryEstimate Estimate(Idrak.Maui.Abstractions.ChatLoadRequest request)
   public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.ChatLease> AcquireAsync(Idrak.Maui.Abstractions.ChatLoadRequest request, System.Threading.CancellationToken cancellationToken = default)
+
+public interface Idrak.Maui.Abstractions.ICommandRunner
+  public System.Collections.Generic.IReadOnlyList<Idrak.Maui.Abstractions.TerminalCommand> Commands { get; }
+  public System.Collections.Generic.IReadOnlyList<string> CommonOptions { get; }
+  public System.Collections.Generic.IReadOnlyList<string> HelpTopics { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Split(string line)
+  public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.CommandRunResult> RunAsync(System.Collections.Generic.IReadOnlyList<string> args, System.IO.TextWriter output, System.IO.TextWriter error, string workingFolder, System.Threading.CancellationToken cancellationToken = default)
+  public string Name { get; }
 
 public interface Idrak.Maui.Abstractions.IConversationStore
   public Idrak.Maui.Abstractions.ChatConversation? Load(string id)
@@ -273,6 +288,7 @@ public static class Idrak.Maui.Abstractions.MobileFeatures
   public const string Ocr = "ocr"
   public const string Search = "search"
   public const string Speak = "speak"
+  public const string Terminal = "terminal"
   public const string Transcribe = "transcribe"
   public static Idrak.Maui.Abstractions.IMobileFeature Get(string name)
   public static Idrak.Maui.Abstractions.IMobileFeature? Default(string name)
@@ -360,6 +376,16 @@ public sealed record Idrak.Maui.Abstractions.StoredModel : System.IEquatable<Idr
   public string Folder { get; init; }
   public string Id { get; init; }
   public string Revision { get; init; }
+
+public sealed record Idrak.Maui.Abstractions.TerminalCommand : System.IEquatable<Idrak.Maui.Abstractions.TerminalCommand>
+  public System.Collections.Generic.IReadOnlyList<string> Aliases { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Options { get; init; }
+  public TerminalCommand(string Name, System.Collections.Generic.IReadOnlyList<string> Aliases, string Summary, string Group, bool IsAvailable, string Unavailable, System.Collections.Generic.IReadOnlyList<string> Options)
+  public bool IsAvailable { get; init; }
+  public string Group { get; init; }
+  public string Name { get; init; }
+  public string Summary { get; init; }
+  public string Unavailable { get; init; }
 
 public sealed record Idrak.Maui.Abstractions.VisionLoadRequest : System.IEquatable<Idrak.Maui.Abstractions.VisionLoadRequest>
   public Idrak.Abstraction.Generation.KeyValueFormat CacheFormat { get; init; }
@@ -1001,6 +1027,7 @@ public class Idrak.Maui.Navigation.AppHostPage : Microsoft.Maui.Controls.Content
   public AppHostPage(System.IServiceProvider services)
   public Idrak.Maui.Navigation.AppHostViewModel ViewModel { get; }
   public Microsoft.Maui.Controls.View? Current { get; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, Microsoft.Maui.Controls.Page> Pages { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, Microsoft.Maui.Controls.View> Views { get; }
   public System.Threading.Tasks.Task OpenFeatureAsync(string feature)
   public System.Threading.Tasks.Task OpenLabsAsync()
@@ -2373,6 +2400,81 @@ public sealed class Idrak.Maui.ViewModels.SynthesisModelEntry
   public string Title { get; }
   public string? Reason { get; }
 
+public sealed class Idrak.Maui.ViewModels.TerminalCommandGroup : System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.TerminalSuggestion>
+  public TerminalCommandGroup(string title, System.Collections.Generic.IEnumerable<Idrak.Maui.ViewModels.TerminalSuggestion> commands)
+  public string Title { get; }
+
+public sealed class Idrak.Maui.ViewModels.TerminalLabOptions
+  public TerminalLabOptions()
+  public int HistoryLimit { get; set; }
+  public int HistoryShown { get; set; }
+  public int Lines { get; set; }
+  public int Suggestions { get; set; }
+  public string? WorkingFolder { get; set; }
+
+public sealed class Idrak.Maui.ViewModels.TerminalLine : Idrak.Maui.ViewModels.ViewModel
+  public Idrak.Maui.ViewModels.TerminalLineKind Kind { get; }
+  public bool IsCommand { get; }
+  public bool IsError { get; }
+  public bool IsInfo { get; }
+  public string Text { get; }
+
+public enum Idrak.Maui.ViewModels.TerminalLineKind : int
+  Command = 0
+  Error = 2
+  Info = 3
+  Output = 1
+
+public sealed class Idrak.Maui.ViewModels.TerminalLines : System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.TerminalLine>
+  public TerminalLines()
+  public void AddRange(System.Collections.Generic.IReadOnlyList<Idrak.Maui.ViewModels.TerminalLine> lines)
+  public void RemoveFirst(int count)
+
+public sealed class Idrak.Maui.ViewModels.TerminalSuggestion
+  public System.Windows.Input.ICommand TapCommand { get; }
+  public TerminalSuggestion(string text, string detail, bool available, string reason, System.Windows.Input.ICommand tap)
+  public bool IsAvailable { get; }
+  public bool IsUnavailable { get; }
+  public string Detail { get; }
+  public string Reason { get; }
+  public string Text { get; }
+
+public sealed class Idrak.Maui.ViewModels.TerminalViewModel : Idrak.Maui.ViewModels.ViewModel, System.IDisposable
+  public Idrak.Maui.ViewModels.TerminalLines Lines { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.TerminalCommandGroup> Groups { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.TerminalSuggestion> Suggestions { get; }
+  public System.Collections.ObjectModel.ObservableCollection<string> History { get; }
+  public System.Func<string, System.Threading.Tasks.Task>? Copy { get; set; }
+  public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.CommandRunResult?> RunAsync(string? line = null)
+  public System.Windows.Input.ICommand CancelCommand { get; }
+  public System.Windows.Input.ICommand ClearCommand { get; }
+  public System.Windows.Input.ICommand CopyCommand { get; }
+  public System.Windows.Input.ICommand HelpCommand { get; }
+  public System.Windows.Input.ICommand NextCommand { get; }
+  public System.Windows.Input.ICommand PreviousCommand { get; }
+  public System.Windows.Input.ICommand RunCommand { get; }
+  public System.Windows.Input.ICommand ToggleCommandsCommand { get; }
+  public TerminalViewModel(Idrak.Maui.Abstractions.ICommandRunner? runner, Idrak.Maui.Abstractions.ISettingsStore settings, string workingFolder, Idrak.Maui.ViewModels.TerminalLabOptions? options = null)
+  public bool Cancel()
+  public bool Drain()
+  public bool HasPending { get; }
+  public bool HasRunner { get; }
+  public bool IsIdle { get; }
+  public bool IsRunning { get; }
+  public bool Recall(bool older)
+  public bool ShowCommands { get; set; }
+  public const string HistoryKey = "idrak.terminal.history"
+  public event System.EventHandler? LinesAdded
+  public string Input { get; set; }
+  public string NoRunnerText { get; }
+  public string OutputText()
+  public string Status { get; }
+  public string Title { get; }
+  public string ToolName { get; }
+  public string WorkingFolder { get; }
+  public void Clear()
+  public void Dispose()
+
 public sealed class Idrak.Maui.ViewModels.TranscribeSettingEntry : Idrak.Maui.ViewModels.ViewModel
   public Idrak.Maui.TranscribeSetting Setting { get; }
   public Microsoft.Maui.Keyboard Keyboard { get; }
@@ -2828,6 +2930,34 @@ public class Idrak.Maui.Views.StudioView : Idrak.Maui.Controls.AdaptiveView
   public override void Hidden()
   public override void Shown()
   public void Tune()
+
+public sealed class Idrak.Maui.Views.TerminalFeature : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IMobileFeature
+  public Idrak.Maui.Abstractions.FeatureGroup Group { get; }
+  public Idrak.Maui.Abstractions.PhoneNeeds Needs { get; }
+  public Microsoft.Maui.Controls.Page CreatePage(System.IServiceProvider services, object viewModel)
+  public Microsoft.Maui.Controls.View? CreateView(System.IServiceProvider services, object viewModel)
+  public System.Collections.Generic.IReadOnlyList<string> ModelFamilies { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Packages { get; }
+  public TerminalFeature()
+  public int Order { get; }
+  public object CreateViewModel(System.IServiceProvider services)
+  public string Glyph { get; }
+  public string Icon { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public string Tagline { get; }
+  public string Title { get; }
+
+public sealed class Idrak.Maui.Views.TerminalPage : Idrak.Maui.Views.LabPage
+  public TerminalPage(Idrak.Maui.ViewModels.TerminalViewModel viewModel, System.IServiceProvider services)
+
+public class Idrak.Maui.Views.TerminalView : Idrak.Maui.Controls.AdaptiveView
+  protected override void Arrange(bool wide)
+  public Idrak.Maui.ViewModels.TerminalViewModel ViewModel { get; }
+  public TerminalView(Idrak.Maui.ViewModels.TerminalViewModel viewModel, System.IServiceProvider? services = null)
+  public bool IsTicking { get; }
+  public override void Hidden()
+  public override void Shown()
 
 public sealed class Idrak.Maui.Views.TranscribeFeature : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IMobileFeature
   public Idrak.Maui.Abstractions.FeatureGroup Group { get; }
