@@ -117,6 +117,7 @@ nothing that needs a shell.
 | F | **Fixes from the owner's first runs** (a phone and a tablet): the memory measured from the system where the runtime's own figure is its heap budget (Mono reported 143-172 MB); portable 128-bit vector paths where NEON is not reported but vectors are accelerated (Mono); CoreCLR as an app build option, measured against Mono; a Vulkan kernel the driver refuses retried without the subgroup-size request, then its smaller variants, then that operation on the host, never the whole device; the device list measured cold and warm; the CPU named by its core groups | M6 | A |
 | R | **The redesign the owner approved** (2026-10-27): a landing with a carousel on the library and the app, bottom navigation with Home, Chat, Voice and Vision on phones and a side rail with multi-pane pages on tablets (chosen by the window's measured width), an All labs sheet or page grouped by Language, Voice, Vision and the device, every lab laid out for its own feature, light and dark, the source commit shown instead of the version | M6 | B |
 | M8 | Bench lab: the bench rows callable from the app as the tests are (M2's pattern). **Held: the owner decides when** | M7 | A |
+| W | **Windows desktop** (the owner, 2026-10-27: "the same laptop layout for Windows"): the same app and plug-in on `net10.0-windows`, the wide layout on a laptop's window, the platform services Android has given their Windows forms, desktop input. Planned below (**Windows desktop**); not started | R | A |
 
 **Done when:**
 
@@ -129,6 +130,76 @@ nothing that needs a shell.
   microphone is written live.
 - **M6, M7:** each lab's output matches the CLI's on the same input (rule 71).
 - **M8:** the bench rows run on the phone and their results are shared out.
+
+## Windows desktop (phase W, planned 2026-10-27)
+
+The same app on a Windows laptop or desktop, looking as it does on the tablet. Most of it carries over unchanged:
+
+- **The layout is already chosen by the window's width, not the device.** `AppHostPage` measures the width against
+  `WideLayoutWidth` (840 by default, the `wide_layout_dp` setting) on every `SizeChanged`, so a laptop's window gets the
+  side rail and the multi-pane pages, a window made narrow gets the bottom bar, and resizing switches live.
+- **The library runs on Windows already.** Its sound is `winmm` (capture and playback); its devices are the CPU, Vulkan
+  and CUDA, measured as everywhere; the Generate lab's fonts come from `PlatformSystemFonts`, which already gives
+  Windows' Fonts folder.
+- **Pages, view models, settings and tests are plain MAUI** and stay as they are; `tests/Idrak.Maui.Tests` keeps
+  testing them on `net10.0`.
+
+What W adds:
+
+1. **The target.** `net10.0-windows10.0.19041.0` in `src/Idrak.Maui` and `apps/Idrak.Mobile`, added only when the build
+   runs on Windows (`$([MSBuild]::IsOSPlatform('windows'))`, MAUI's own template pattern), so Linux and the Android
+   builds are unchanged. The app's `Platforms/Windows`: the WinUI `App.xaml`/`App.xaml.cs`, `app.manifest` (per-monitor
+   DPI), the icon from the library's, and unpackaged by default (`WindowsPackageType=None`: an `.exe` run from the
+   build folder or Visual Studio), with MSIX as the build option `IdrakWindowsPackage=msix|none`.
+2. **The platform services, each behind the contract Android's already implements** (`Platforms/Windows` in
+   `Idrak.Maui`, registered in `UseIdrak` beside the Android ones):
+
+   | Contract | Android today | Windows |
+   |---|---|---|
+   | `IFrameClock` (`FrameClocks.Display`) | Choreographer | WinUI's `CompositionTarget.Rendering` (paced by the display); `timer` stays the fallback |
+   | `IAppRestarter` | relaunch the activity, end the process | start the app's own `.exe` (or the package's restart for MSIX), then exit |
+   | `IPictureSaver` | the media store | the Pictures known folder, the album as its subfolder |
+   | `IMemoryPressureSource` | `onTrimMemory` | the system's low-memory notification (`CreateMemoryResourceNotification`); the manual source where it is unavailable |
+   | `ISoftKeyboard` | window insets | none: the desktop has no soft keyboard (a touch keyboard on a 2-in-1 is the system's) |
+   | `ISystemFonts` | `/system/fonts` through Android's API | `PlatformSystemFonts` (Windows' Fonts folder), as now |
+   | Microphone permission | Android's runtime permission | Windows' privacy setting; a refusal names where to allow it |
+
+3. **Desktop input.** Enter sends in Chat and runs in the Terminal, Shift+Enter is a new line; ↑/↓ recall the
+   Terminal's history from the keyboard; Esc closes a sheet; the mouse wheel zooms Generate's preview; hover states on
+   the rail, cards and buttons; the window's size and place kept between runs, and a minimum size (settings, like the
+   rest).
+4. **The build's speed.** Full AOT is Android's (`IdrakAndroidAot`); on Windows the default is ReadyToRun (pre-compiled
+   start-up, no JIT on first touch), set by `IdrakWindowsAot=readytorun|none`, measured on the owner's laptop against
+   none.
+
+**Open for the owner before W starts:**
+
+- **The Terminal on the desktop.** The app's host allows nothing beyond the library today (no child process, no network
+  listener, no console input), so `serve`, `cluster start`, `test` and `shell` say they are unavailable. A desktop can
+  run them. Recommended: on Windows the host allows child processes and a network listener (a setting, on by default
+  there), so the Terminal is the whole `idrak` tool; the phone stays as it is.
+- **Packaging.** Recommended: unpackaged by default (no certificate, run from the build folder), MSIX as the option.
+
+**How it is built and checked.** A Windows MAUI target builds only on Windows (its WinUI tools do not run in the Linux
+container), so the agent writes W without compiling the Windows files; the shared code still builds and its tests run
+here. The owner builds on a Windows machine and sends the whole error list back; every error is fixed in one pass, as
+for every build. Owner's build and run:
+
+```powershell
+cd D:\Projects\Idrak; git checkout main; git pull origin main
+dotnet build -c Release apps\Idrak.Mobile\Idrak.Mobile.csproj -f net10.0-windows10.0.19041.0 -flp:"logfile=test-output\build-windows.log;verbosity=minimal"
+.\apps\Idrak.Mobile\bin\Release\net10.0-windows10.0.19041.0\win-x64\Idrak.Mobile.exe
+```
+
+(Visual Studio with the .NET MAUI workload has the Windows tools; the CLI needs `dotnet workload install maui-windows`
+once.)
+
+**Done when:** the app opens on the owner's Windows laptop in the wide layout and switches to the bottom bar when the
+window is made narrow; every lab works there as on the tablet (Chat on `cpu` and the laptop's GPU, Transcribe from the
+microphone, Speak on the speaker, Generate saving to Pictures, the Terminal); Restart relaunches it; the MAUI tests and
+the Android build stay as they are.
+
+**Effort:** one agent, about half a day of writing, then a round or two of the owner's Windows build output.
 
 ## Choices measured, not fixed
 
