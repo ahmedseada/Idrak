@@ -178,6 +178,21 @@ public sealed class IdrakMauiOptions
     /// <summary>The sound one bar of the live waveform (and one step of a level meter) stands for; 50 ms by default.</summary>
     public TimeSpan LiveLevelWindow { get; set; } = TimeSpan.FromMilliseconds(50);
 
+    /// <summary>The most lines the Terminal keeps (the oldest dropped); null: the app's (<see cref="ViewModels.TerminalLabOptions.Lines"/>).</summary>
+    public int? TerminalLines { get; set; }
+
+    /// <summary>The most lines the Terminal's history keeps; null: the app's.</summary>
+    public int? TerminalHistory { get; set; }
+
+    /// <summary>The Terminal history's latest lines shown as chips; null: the app's.</summary>
+    public int? TerminalHistoryShown { get; set; }
+
+    /// <summary>The most suggestions the Terminal shows at once; null: the app's.</summary>
+    public int? TerminalSuggestions { get; set; }
+
+    /// <summary>The folder the Terminal's commands run in; null: the app's storage.</summary>
+    public string? TerminalFolder { get; set; }
+
     /// <summary>What Home says: its slides and its tiles' samples (the app's own words; the library's by default).</summary>
     public HomeOptions Home { get; set; } = new();
 

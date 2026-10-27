@@ -58,7 +58,7 @@ public sealed class TerminalFeature : IMobileFeature
 
         string storage = services.GetService<IdrakStartupReport>()?.AppStorage ?? ComputeResources.CacheFolder;
         return new TerminalViewModel(services.GetService<ICommandRunner>(), services.GetService<ISettingsStore>() ?? new MemorySettingsStore(), storage,
-            services.GetService<TerminalLabOptions>());
+            services.GetService<TerminalLabOptions>(), services.GetService<IdrakMauiOptions>());
     }
 
     /// <inheritdoc />

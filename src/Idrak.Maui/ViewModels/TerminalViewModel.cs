@@ -224,6 +224,8 @@ public sealed class TerminalViewModel : ViewModel, IDisposable
     private readonly List<string> _history = [];
     private readonly List<TerminalLine> _added = [];
     private readonly TerminalLabOptions _options;
+    private readonly IdrakMauiOptions? _app;
+    private readonly string _defaultFolder;
     private CancellationTokenSource? _stop;
     private TerminalLine? _open;
     private bool _carriage, _running, _showCommands;
@@ -231,13 +233,19 @@ public sealed class TerminalViewModel : ViewModel, IDisposable
     private string _input = "", _status = "";
 
     /// <summary>A terminal over <paramref name="runner"/> (none: the page says the app registers none), working in <paramref name="workingFolder"/>.</summary>
-    public TerminalViewModel(ICommandRunner? runner, ISettingsStore settings, string workingFolder, TerminalLabOptions? options = null)
+    /// <remarks>
+    /// The limits (lines kept, history kept and shown, suggestions shown) and the working folder are the settings page's
+    /// (<paramref name="app"/>'s Terminal part, read each time they are used and applied again by <see cref="Refresh"/>), over
+    /// <paramref name="options"/> (the app's own defaults), over the library's.
+    /// </remarks>
+    public TerminalViewModel(ICommandRunner? runner, ISettingsStore settings, string workingFolder, TerminalLabOptions? options = null, IdrakMauiOptions? app = null)
     {
         _runner = runner;
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         ArgumentException.ThrowIfNullOrWhiteSpace(workingFolder);
         _options = options ?? new TerminalLabOptions();
-        WorkingFolder = _options.WorkingFolder ?? workingFolder;
+        _app = app;
+        _defaultFolder = workingFolder;
         foreach (string line in (settings.Get(HistoryKey) ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries))
         {
             _history.Add(line);
@@ -266,8 +274,43 @@ public sealed class TerminalViewModel : ViewModel, IDisposable
     /// <summary>The page's title.</summary>
     public string Title => "Terminal";
 
-    /// <summary>The folder commands run in (relative paths read from it).</summary>
-    public string WorkingFolder { get; }
+    /// <summary>The folder commands run in (relative paths read from it): the setting's, else the app's own default, else the app's storage.</summary>
+    public string WorkingFolder => _app?.TerminalFolder ?? _options.WorkingFolder ?? _defaultFolder;
+
+    /// <summary>The most lines kept in effect.</summary>
+    public int LineLimit => Math.Max(1, _app?.TerminalLines ?? _options.Lines);
+
+    /// <summary>The most lines the history keeps, in effect.</summary>
+    public int HistoryLimit => Math.Max(1, _app?.TerminalHistory ?? _options.HistoryLimit);
+
+    /// <summary>The history's latest lines shown as chips, in effect.</summary>
+    public int HistoryShown => Math.Max(0, _app?.TerminalHistoryShown ?? _options.HistoryShown);
+
+    /// <summary>The most suggestions shown, in effect.</summary>
+    public int SuggestionLimit => Math.Max(1, _app?.TerminalSuggestions ?? _options.Suggestions);
+
+    /// <summary>
+    /// Takes the settings again (the page calls it when shown, so a change in Settings applies without a restart): the
+    /// lines beyond the most kept dropped, the history held to its size, the chips and suggestions shown again.
+    /// </summary>
+    public void Refresh()
+    {
+        int over = Lines.Count - LineLimit;
+        if (over > 0)
+        {
+            Lines.RemoveFirst(over);
+        }
+
+        if (_history.Count > HistoryLimit)
+        {
+            _history.RemoveRange(0, _history.Count - HistoryLimit);
+            _settings.Set(HistoryKey, string.Join('\n', _history));
+        }
+
+        OnPropertyChanged(nameof(WorkingFolder));
+        UpdateHistory();
+        Suggest();
+    }
 
     /// <summary>The tool's name ("idrak"), or "" when no runner is registered.</summary>
     public string ToolName => _runner?.Name ?? "";
@@ -643,7 +686,7 @@ public sealed class TerminalViewModel : ViewModel, IDisposable
         {
             Lines.AddRange(_added);
             _added.Clear();
-            int over = Lines.Count - _options.Lines;
+            int over = Lines.Count - LineLimit;
             if (over > 0)
             {
                 Lines.RemoveFirst(over);
@@ -673,9 +716,9 @@ public sealed class TerminalViewModel : ViewModel, IDisposable
         if (_history.Count == 0 || _history[^1] != line)
         {
             _history.Add(line);
-            if (_history.Count > _options.HistoryLimit)
+            if (_history.Count > HistoryLimit)
             {
-                _history.RemoveRange(0, _history.Count - _options.HistoryLimit);
+                _history.RemoveRange(0, _history.Count - HistoryLimit);
             }
 
             _settings.Set(HistoryKey, string.Join('\n', _history));
@@ -683,7 +726,7 @@ public sealed class TerminalViewModel : ViewModel, IDisposable
         }
     }
 
-    private void UpdateHistory() => Lists.Replace(History, [.. Enumerable.Reverse(_history).Take(_options.HistoryShown)], static (a, b) => a == b);
+    private void UpdateHistory() => Lists.Replace(History, [.. Enumerable.Reverse(_history).Take(HistoryShown)], static (a, b) => a == b);
 
     // The words offered for the line: the commands that start with what is typed (all of them when nothing is), then, once a
     // command is typed, its options and the common ones not typed yet (the help topics and commands after "help").
@@ -732,7 +775,7 @@ public sealed class TerminalViewModel : ViewModel, IDisposable
             }
         }
 
-        Lists.Replace(Suggestions, [.. found.Take(_options.Suggestions)], static (a, b) => a.Text == b.Text && a.IsAvailable == b.IsAvailable);
+        Lists.Replace(Suggestions, [.. found.Take(SuggestionLimit)], static (a, b) => a.Text == b.Text && a.IsAvailable == b.IsAvailable);
     }
 
     private TerminalSuggestion Suggest(TerminalCommand command) =>

@@ -239,6 +239,62 @@ internal static partial class MauiTests
         }
     }
 
+    private static void TerminalSettings()
+    {
+        var app = new IdrakMauiOptions();
+        var store = new MemorySettingsStore();
+        var runner = new ScriptedRunner((_, o, _, _) =>
+        {
+            for (int i = 0; i < 25; i++)
+            {
+                o.WriteLine(i.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+
+            return 0;
+        });
+        string folder = Temp("terminal-settings");
+        var vm = new TerminalViewModel(runner, store, folder, app: app);
+        Check(vm.LineLimit == new TerminalLabOptions().Lines && vm.WorkingFolder == folder, "the app's own limits when nothing is set");
+        app.TerminalLines = 5;
+        vm.RunAsync("models list").GetAwaiter().GetResult();
+        Check(vm.Lines.Count == 5, $"{vm.Lines.Count} lines kept at 5");
+        foreach (string line in (string[])["models pull a", "models pull b", "help"])
+        {
+            vm.RunAsync(line).GetAwaiter().GetResult();
+        }
+
+        // A change in Settings is taken when the page is next shown, no restart.
+        app.TerminalLines = 3;
+        app.TerminalHistory = 2;
+        app.TerminalHistoryShown = 1;
+        app.TerminalSuggestions = 2;
+        string other = Temp("terminal-settings-other");
+        app.TerminalFolder = other;
+        vm.Refresh();
+        vm.Input = "";
+        Check(vm.Lines.Count == 3 && vm.History.SequenceEqual(["help"]) && store.Get(TerminalViewModel.HistoryKey)!.Split('\n').Length == 2 && vm.Suggestions.Count == 2
+              && vm.WorkingFolder == other, $"{vm.Lines.Count} lines, history {string.Join(", ", vm.History)}, {vm.Suggestions.Count} suggestions, {vm.WorkingFolder}");
+        vm.RunAsync("models list").GetAwaiter().GetResult();
+        Check(runner.Folder == other, "the commands run in the folder set");
+
+        // The settings page's Terminal part: found by the search, kept as idrak.terminal.*, applied at once.
+        var page = new SettingsViewModel(app, new IdrakMauiSettings(store, new MemorySecretStore()), new IdrakStartupReport(ComputeResources.CacheFolder, "auto", [], folder));
+        var part = page.Groups.Single(g => g.Title == "Terminal");
+        Check(part.Select(e => e.Setting.Key).SequenceEqual(["terminal.lines", "terminal.history", "terminal.history_shown", "terminal.suggestions", "terminal.folder"])
+              && part.All(e => !e.Setting.NeedsRestart), string.Join(", ", part.Select(e => e.Setting.Key)));
+        page.Query = "terminal working folder";
+        Check(page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key).SequenceEqual(["terminal.folder"]), "found by the search");
+        page.Query = "terminal";
+        Check(part.All(e => e.IsShown) && part.IsShown, "the whole part by its heading");
+        page.Query = "";
+        part.Single(e => e.Setting.Key == "terminal.lines").Text = "7";
+        part.Single(e => e.Setting.Key == "terminal.folder").Text = "relative";
+        Check(!page.SaveAsync().GetAwaiter().GetResult(), "a folder that is not a full path refused");
+        part.Single(e => e.Setting.Key == "terminal.folder").Text = "";
+        Check(page.SaveAsync().GetAwaiter().GetResult() && app.TerminalLines == 7 && vm.LineLimit == 7 && vm.WorkingFolder == folder && store.Get("idrak.terminal.lines") == "7"
+              && !page.IsRestartPending, page.Message);
+    }
+
     // A writer that holds the command until let go (to keep a run going).
     private sealed class BlockingWriter(ManualResetEventSlim gate) : TextWriter
     {

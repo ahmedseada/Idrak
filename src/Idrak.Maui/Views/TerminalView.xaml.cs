@@ -42,6 +42,7 @@ public partial class TerminalView : AdaptiveView
     {
         base.Shown();
         _onScreen = true;
+        ViewModel.Refresh();                                                     // the settings as they are now
         ViewModel.Drain();                                                       // what came while it was hidden
         UpdateTicking();
     }

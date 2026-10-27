@@ -83,6 +83,7 @@ public sealed class IdrakSetting
     private static string GroupOf(string key) => key switch
     {
         _ when key.StartsWith("chat_", StringComparison.Ordinal) => "Chat",
+        _ when key.StartsWith("terminal.", StringComparison.Ordinal) => "Terminal",
         "cache_folder" or "hf_token" or "storage_headroom_mb" => "Storage",
         "model_keep_alive_s" or "max_loaded_models" or "unload_models_at" => "Models in memory",
         "wide_layout_dp" or "carousel_s" or "progress_interval_ms" or "prebuild_sections" or "section_fade_ms" or "frame_clock" or "live_fps" or "live_level_ms" => "Layout and motion",
@@ -301,7 +302,25 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
         new("chat_kv", "Chat: key/value cache format", "How the chat's key/value cache is kept (KeyValueLayouts): int8 or bfloat16 take less memory than float32. Default: float32. Taken at the next load.",
             IdrakSettingKind.Choice, o => o.ChatKeyValueFormat ?? "", (o, t) => o.ChatKeyValueFormat = CacheFormat(t), placeholder: "default",
             choices: ["default", .. KeyValueLayouts.Names.Order(StringComparer.Ordinal)]),
+        .. TerminalSettings(),
     ];
+
+    // The Terminal's limits (kept as idrak.terminal.*): an empty one is the app's own (TerminalLabOptions), shown in it.
+    private static IEnumerable<IdrakSetting> TerminalSettings()
+    {
+        var own = new ViewModels.TerminalLabOptions();
+        yield return new("terminal.lines", "Terminal: lines kept", "The most output lines the Terminal keeps; the oldest are dropped. Applied when the Terminal is next shown.",
+            IdrakSettingKind.Number, o => Text(o.TerminalLines), (o, t) => o.TerminalLines = (int?)Whole(t, 1, 10_000_000), placeholder: Text(own.Lines));
+        yield return new("terminal.history", "Terminal: history kept", "The most command lines the Terminal's history keeps between runs.",
+            IdrakSettingKind.Number, o => Text(o.TerminalHistory), (o, t) => o.TerminalHistory = (int?)Whole(t, 1, 1_000_000), placeholder: Text(own.HistoryLimit));
+        yield return new("terminal.history_shown", "Terminal: history shown", "The history's latest lines shown as chips in the commands pane (0: none).",
+            IdrakSettingKind.Number, o => Text(o.TerminalHistoryShown), (o, t) => o.TerminalHistoryShown = (int?)Whole(t, 0, 10_000), placeholder: Text(own.HistoryShown));
+        yield return new("terminal.suggestions", "Terminal: suggestions shown", "The most commands or options offered at once above the line.",
+            IdrakSettingKind.Number, o => Text(o.TerminalSuggestions), (o, t) => o.TerminalSuggestions = (int?)Whole(t, 1, 10_000), placeholder: Text(own.Suggestions));
+        yield return new("terminal.folder", "Terminal: working folder", "The folder the commands run in (relative paths read from it). Empty: the app's storage.",
+            IdrakSettingKind.Text, o => o.TerminalFolder ?? "", (o, t) => o.TerminalFolder = t.Length == 0 ? null : Path.IsPathFullyQualified(t) ? t
+                : throw new FormatException($"'{t}' is not a full path."), placeholder: "the app's storage");
+    }
 
     // The library's generation defaults, which an empty chat setting keeps (shown as the placeholders).
     private static GenerationOptions Library => field ??= new GenerationOptions();

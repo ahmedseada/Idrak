@@ -118,6 +118,7 @@ internal static partial class MauiTests
         ("maui terminal: Stop cancels the command running as Ctrl+C would, its last line kept", TerminalStops),
         ("maui terminal: the history recalls earlier lines back and forth and is kept between runs; the suggestions are the runner's commands (one not allowed greyed with why), then a command's options, help's topics", TerminalHistoryAndSuggestions),
         ("maui terminal: the app's own runner runs the idrak commands in this process (help), refuses serve with its reason, one command at a time; the feature in this device's group, its view binds in light and dark", TerminalRunsIdrak),
+        ("maui terminal: the lines kept, the history kept and shown, the suggestions and the working folder are settings (the Terminal part of Settings, idrak.terminal.*, found by the search), taken when the page is next shown, without a restart", TerminalSettings),
         ("public API: api/Idrak.Maui.txt matches the public surface of Idrak.Maui (IDRAK_UPDATE_API=1 rewrites it)", ApiSurfaceCurrent),
     ];
 

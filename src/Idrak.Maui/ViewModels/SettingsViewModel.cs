@@ -454,7 +454,7 @@ public sealed class SettingsViewModel : ViewModel
     /// <summary>The order of the groups on the page.</summary>
     public static IReadOnlyList<string> GroupOrder => Order;
 
-    private static readonly string[] Order = ["General", "Layout and motion", "Chat", "Models in memory", "Storage", "Limits"];
+    private static readonly string[] Order = ["General", "Layout and motion", "Chat", "Terminal", "Models in memory", "Storage", "Limits"];
 
     /// <summary>The app's storage, where the default cache folder is.</summary>
     public string AppStorage => _startup.AppStorage;

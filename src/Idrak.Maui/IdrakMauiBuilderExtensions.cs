@@ -92,7 +92,7 @@ public static class IdrakMauiBuilderExtensions
             conversations: sp.GetService<IConversationStore>(), dictation: sp.GetService<IDictation>(), settings: store));                       // a chat outlives its page
         services.TryAddSingleton(sp => new OcrViewModel(sp.GetRequiredService<IModelStore>(), sp.GetRequiredService<IVisionReaderService>(),   // a read outlives its page
             sp.GetRequiredService<IPermissionService>(), sp.GetRequiredService<IShareService>(), options, store, sp.GetService<OcrLabOptions>()));
-        services.TryAddSingleton(sp => new TerminalViewModel(sp.GetService<ICommandRunner>(), store, startup.AppStorage, sp.GetService<TerminalLabOptions>()));   // a command outlives its page
+        services.TryAddSingleton(sp => new TerminalViewModel(sp.GetService<ICommandRunner>(), store, startup.AppStorage, sp.GetService<TerminalLabOptions>(), options));   // a command outlives its page
         services.AddTransient(sp => new SettingsViewModel(options, settings, startup, progress, sp.GetService<IAppRestarter>()));
         services.AddTransient<SettingsPage>();
 

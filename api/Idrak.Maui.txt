@@ -826,6 +826,10 @@ public sealed class Idrak.Maui.IdrakMauiOptions
   public int? ChatTopK { get; set; }
   public int? MaxCpuThreads { get; set; }
   public int? MaxLoadedModels { get; set; }
+  public int? TerminalHistory { get; set; }
+  public int? TerminalHistoryShown { get; set; }
+  public int? TerminalLines { get; set; }
+  public int? TerminalSuggestions { get; set; }
   public long? CpuMemoryLimitMiB { get; set; }
   public long? GpuChunkMiB { get; set; }
   public long? GpuMemoryLimitMiB { get; set; }
@@ -841,6 +845,7 @@ public sealed class Idrak.Maui.IdrakMauiOptions
   public string? FrameClock { get; set; }
   public string? HuggingFaceToken { get; set; }
   public string? LookupTables { get; set; }
+  public string? TerminalFolder { get; set; }
   public void CopyFrom(Idrak.Maui.IdrakMauiOptions other)
 
 public sealed class Idrak.Maui.IdrakMauiSettings
@@ -2551,7 +2556,7 @@ public sealed class Idrak.Maui.ViewModels.TerminalViewModel : Idrak.Maui.ViewMod
   public System.Windows.Input.ICommand PreviousCommand { get; }
   public System.Windows.Input.ICommand RunCommand { get; }
   public System.Windows.Input.ICommand ToggleCommandsCommand { get; }
-  public TerminalViewModel(Idrak.Maui.Abstractions.ICommandRunner? runner, Idrak.Maui.Abstractions.ISettingsStore settings, string workingFolder, Idrak.Maui.ViewModels.TerminalLabOptions? options = null)
+  public TerminalViewModel(Idrak.Maui.Abstractions.ICommandRunner? runner, Idrak.Maui.Abstractions.ISettingsStore settings, string workingFolder, Idrak.Maui.ViewModels.TerminalLabOptions? options = null, Idrak.Maui.IdrakMauiOptions? app = null)
   public bool Cancel()
   public bool Drain()
   public bool HasPending { get; }
@@ -2562,6 +2567,10 @@ public sealed class Idrak.Maui.ViewModels.TerminalViewModel : Idrak.Maui.ViewMod
   public bool ShowCommands { get; set; }
   public const string HistoryKey = "idrak.terminal.history"
   public event System.EventHandler? LinesAdded
+  public int HistoryLimit { get; }
+  public int HistoryShown { get; }
+  public int LineLimit { get; }
+  public int SuggestionLimit { get; }
   public string Input { get; set; }
   public string NoRunnerText { get; }
   public string OutputText()
@@ -2571,6 +2580,7 @@ public sealed class Idrak.Maui.ViewModels.TerminalViewModel : Idrak.Maui.ViewMod
   public string WorkingFolder { get; }
   public void Clear()
   public void Dispose()
+  public void Refresh()
 
 public sealed class Idrak.Maui.ViewModels.TranscribeSettingEntry : Idrak.Maui.ViewModels.ViewModel
   public Idrak.Maui.TranscribeSetting Setting { get; }
