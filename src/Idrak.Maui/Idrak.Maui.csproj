@@ -8,13 +8,21 @@
     Two targets, as MAUI's library template has them: net10.0-android is the phone's (it needs the maui-android workload
     and the Android SDK); net10.0 is the same code without a platform, built and tested on any machine
     (tests/Idrak.Maui.Tests), where MAUI's platform services (Preferences, SecureStorage, FileSystem, Permissions,
-    Share) throw if called, so the tests give in-memory stores. Platform code lives under Platforms/Android only (MAUI
-    compiles a Platforms/<platform> folder for that platform alone), kept small and behind this package's contracts.
+    Share) throw if called, so the tests give in-memory stores. Platform code lives under Platforms/Android and
+    Platforms/Windows (MAUI compiles a Platforms/<platform> folder for that platform alone), kept small and behind this
+    package's contracts.
+
+    Windows (plan 34, phase W): net10.0-windows10.0.19041.0 is added only when the build runs on Windows (MSBuild's
+    IsOSPlatform, MAUI's own template pattern), since its WinUI tools run only there; Linux and the Android builds keep
+    their two targets. It runs on Windows 10 1809 (10.0.17763.0) and later, as MAUI's Windows apps do. Its platform code
+    calls kernel32 and user32 through source-generated LibraryImport (the memory notifications, the window's screen),
+    which needs unsafe code allowed for that target only.
   -->
   <PropertyGroup>
     <!-- The root Directory.Build.props sets TargetFramework (one target); a project with several clears it. -->
     <TargetFramework></TargetFramework>
     <TargetFrameworks>net10.0;net10.0-android</TargetFrameworks>
+    <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">$(TargetFrameworks);net10.0-windows10.0.19041.0</TargetFrameworks>
     <UseMaui>true</UseMaui>
     <SingleProject>true</SingleProject>
     <RootNamespace>Idrak.Maui</RootNamespace>
@@ -26,6 +34,10 @@
     <Description>Idrak inside a .NET MAUI app (Android first): UseIdrak on MauiAppBuilder, the library's options and limits as saved settings with a settings page, features (pages with their view models) in a registry an app adds to, models kept loaded and released on the phone's memory pressure, a model store with pull progress, live transcription from the microphone or a file (any registered speech family), text read aloud on the speaker (any registered synthesis family) and a recording through a pipeline of the library's audio processors, a photo read by a vision-language model (any registered vision family) and image transforms and scan profiles on a photo (the library's own codecs), device information (the Vulkan driver loaded in the app's own process, CPU features, memory), permissions, sharing, a progress reporter bound to the UI, and light and dark themes from the library's icon.</Description>
     <!-- AAudio is Android 8.0 (API 26), the library's sound on Android (Idrak.Audio). -->
     <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">26.0</SupportedOSPlatformVersion>
+    <!-- Windows 10 1809 and later, as MAUI's Windows apps. -->
+    <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</SupportedOSPlatformVersion>
+    <TargetPlatformMinVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">10.0.17763.0</TargetPlatformMinVersion>
+    <AllowUnsafeBlocks Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>

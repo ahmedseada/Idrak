@@ -5,8 +5,9 @@ namespace Idrak.Maui.Abstractions;
 
 /// <summary>
 /// Saves a picture to the phone's own Pictures (where the gallery shows it), in an album of the app's. Android's (from
-/// Android 10, through the media store, no permission needed) is registered by <c>UseIdrak</c>; where the platform has no
-/// way, <see cref="CanSave"/> is false and a page shares the picture instead.
+/// Android 10, through the media store, no permission needed) and Windows' (the user's Pictures folder, the album its
+/// subfolder) are registered by <c>UseIdrak</c>; where the platform has no way, <see cref="CanSave"/> is false and a page
+/// shares the picture instead.
 /// </summary>
 public interface IPictureSaver
 {

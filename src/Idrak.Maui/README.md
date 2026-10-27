@@ -1,6 +1,6 @@
 # Idrak.Maui
 
-Idrak inside a .NET MAUI app (plain MAUI with XAML and MVVM; Android first).
+Idrak inside a .NET MAUI app (plain MAUI with XAML and MVVM; Android, and Windows when built on Windows).
 
 ```csharp
 var builder = MauiApp.CreateBuilder();
@@ -141,3 +141,12 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   app bundles them). No page sets a colour or a size but through a key; every key may be overridden by the app. Motion
   is light and only on screen: a cross-fade between sections, the record button's pulse, the streaming caret, the
   carousel.
+- **Windows** (plan 34, phase W): `net10.0-windows10.0.19041.0`, added only when the build runs on Windows. The same
+  contracts as Android's, each implemented under `Platforms/Windows` and registered by `UseIdrak`: the "display" frame
+  clock on WinUI's `CompositionTarget.Rendering` (joined only while a view draws live), `IAppRestarter` (the app's own
+  `.exe` started again, or the package's restart for MSIX), `IPictureSaver` (the user's Pictures folder, the album its
+  subfolder), `IMemoryPressureSource` (the system's low-memory notification; the manual source where there is none), no
+  soft keyboard, `PlatformSystemFonts` (Windows' Fonts folder), and a microphone refusal that names where Windows allows
+  it (Settings, Privacy & security, Microphone). `IWindowPlacement` (`KeptWindowPlacement`) gives the main window its
+  least size (`WindowMinimumWidth`, `WindowMinimumHeight`) and keeps its size and place between runs (`KeepWindowPlace`),
+  written off the UI thread; a phone's window is the system's (`SystemWindowPlacement`).

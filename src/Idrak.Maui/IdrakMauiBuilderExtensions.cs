@@ -63,22 +63,36 @@ public static class IdrakMauiBuilderExtensions
 #if ANDROID
         services.TryAddSingleton<IMemoryPressureSource, Idrak.Maui.Platforms.Android.AndroidMemoryPressure>();
         services.TryAddSingleton<ISoftKeyboard, Idrak.Maui.Platforms.Android.AndroidSoftKeyboard>();
+        services.TryAddSingleton<IWindowPlacement, SystemWindowPlacement>();
+#elif WINDOWS
+        services.TryAddSingleton(_ => Idrak.Maui.Platforms.Windows.WindowsMemoryPressure.Create());     // the manual source where Windows makes no notification
+        services.TryAddSingleton<ISoftKeyboard, NoSoftKeyboard>();                                    // a 2-in-1's touch keyboard is the system's
+        services.TryAddSingleton<IWindowPlacement>(_ => new KeptWindowPlacement(store, options, settings, Idrak.Maui.Platforms.Windows.WindowsScreens.IsShown));
 #else
         services.TryAddSingleton<IMemoryPressureSource, ManualMemoryPressure>();
         services.TryAddSingleton<ISoftKeyboard, NoSoftKeyboard>();
+        services.TryAddSingleton<IWindowPlacement, SystemWindowPlacement>();
 #endif
         services.TryAddSingleton<IModelService>(sp => new ModelService(sp.GetRequiredService<IMemoryPressureSource>(), options));
         services.TryAddSingleton<IModelStore>(_ => new ModelStore(options));
         services.TryAddSingleton<IChatModelService>(sp => new ChatModelService(sp.GetRequiredService<IModelService>()));
         services.TryAddSingleton<IVisionReaderService>(sp => new VisionReaderService(sp.GetRequiredService<IModelService>()));
         services.TryAddSingleton<IDeviceInformation, DeviceInformation>();
+#if WINDOWS
+        services.TryAddSingleton<IPermissionService, Idrak.Maui.Platforms.Windows.WindowsPermissionService>();
+#else
         services.TryAddSingleton<IPermissionService, MauiPermissionService>();
+#endif
         services.TryAddSingleton<IShareService, MauiShareService>();
         services.TryAddSingleton<ISoundPlayer>(_ => new SoundPlayer(options: options));   // one speaker for the app: one sound at a time
 #if ANDROID
         services.TryAddSingleton<IAppRestarter>(sp => new Idrak.Maui.Platforms.Android.AndroidAppRestarter(sp));
         services.TryAddSingleton<IPictureSaver, Idrak.Maui.Platforms.Android.AndroidPictureSaver>();
         services.TryAddSingleton<ISystemFonts, Idrak.Maui.Platforms.Android.AndroidSystemFonts>();
+#elif WINDOWS
+        services.TryAddSingleton<IAppRestarter>(sp => new Idrak.Maui.Platforms.Windows.WindowsAppRestarter(sp));
+        services.TryAddSingleton<IPictureSaver, Idrak.Maui.Platforms.Windows.WindowsPictureSaver>();
+        services.TryAddSingleton<ISystemFonts, PlatformSystemFonts>();                                // Windows' Fonts folder
 #else
         services.TryAddSingleton<IAppRestarter, UnavailableAppRestarter>();
         services.TryAddSingleton<IPictureSaver, UnavailablePictureSaver>();

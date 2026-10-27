@@ -180,12 +180,30 @@ public sealed class IdrakMauiOptions
 
     /// <summary>
     /// The frame clock live views (the waveform, the level meters) draw on, a <see cref="Abstractions.FrameClocks"/> name:
-    /// "display" (Android's Choreographer) or "timer"; null or "auto": the first that can tick here.
+    /// "display" (Android's Choreographer, WinUI's CompositionTarget.Rendering) or "timer"; null or "auto": the first that can tick here.
     /// </summary>
     public string? FrameClock { get; set; }
 
     /// <summary>The most frames a second live views draw; null: every frame the display shows.</summary>
     public double? LiveFrameRate { get; set; }
+
+    /// <summary>
+    /// Whether the main window's size and place are kept between runs on a desktop (<see cref="Abstractions.IWindowPlacement"/>;
+    /// a phone's window is the system's). True by default.
+    /// </summary>
+    public bool KeepWindowPlace { get; set; } = true;
+
+    /// <summary>
+    /// The least width, in device-independent units, the main window may be made on a desktop; 360 by default (a phone's
+    /// narrow layout), never below <see cref="KeptWindowPlacement.LeastWidth"/>.
+    /// </summary>
+    public double WindowMinimumWidth { get; set; } = 360;
+
+    /// <summary>
+    /// The least height, in device-independent units, the main window may be made on a desktop; 480 by default, never below
+    /// <see cref="KeptWindowPlacement.LeastHeight"/>.
+    /// </summary>
+    public double WindowMinimumHeight { get; set; } = 480;
 
     /// <summary>The sound one bar of the live waveform (and one step of a level meter) stands for; 50 ms by default.</summary>
     public TimeSpan LiveLevelWindow { get; set; } = TimeSpan.FromMilliseconds(50);

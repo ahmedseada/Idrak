@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The MSIX package's manifest, used only with IdrakWindowsPackage=msix (the default build is unpackaged and reads none).
+     MAUI's build fills the placeholders: the identity's name from ApplicationId, the version from ApplicationDisplayVersion
+     and ApplicationVersion, the display name from ApplicationTitle, the logos from the MauiIcon. The publisher is the
+     certificate's subject the package is signed with. Full trust (runFullTrust), as every MAUI app on Windows; the
+     microphone is declared, as a packaged app's capture needs (Transcribe, Studio, dictation), and the webcam for a photo
+     taken in the OCR and Image labs. -->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap mp rescap">
+
+  <Identity Name="maui-package-name-placeholder" Publisher="CN=Idrak" Version="0.0.0.0" />
+
+  <mp:PhoneIdentity PhoneProductId="8d57fc59-2dcc-49ca-8dc6-116ee603187e" PhonePublisherId="00000000-0000-0000-0000-000000000000" />
+
+  <Properties>
+    <DisplayName>$placeholder$</DisplayName>
+    <PublisherDisplayName>Idrak</PublisherDisplayName>
+    <Logo>$placeholder$.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate" />
+  </Resources>
+
+  <Applications>
+    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
+      <uap:VisualElements
+        DisplayName="$placeholder$"
+        Description="Idrak: models run on this machine's CPU and GPU"
+        Square150x150Logo="$placeholder$.png"
+        Square44x44Logo="$placeholder$.png"
+        BackgroundColor="transparent">
+        <uap:DefaultTile Square71x71Logo="$placeholder$.png" Wide310x150Logo="$placeholder$.png" Square310x310Logo="$placeholder$.png" />
+        <uap:SplashScreen Image="$placeholder$.png" />
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <DeviceCapability Name="microphone" />
+    <DeviceCapability Name="webcam" />
+  </Capabilities>
+
+</Package>

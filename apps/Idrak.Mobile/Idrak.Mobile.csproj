@@ -1,12 +1,24 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    Idrak.Mobile (plan 34): the library on a phone, as an app. Android only (an app needs a platform; iOS is held). It
-    references the library as packages, which apps/Directory.Build.targets turns into this clone's projects.
+    Idrak.Mobile (plan 34): the library on a phone or a tablet, as an app, and on a Windows laptop or desktop (phase W);
+    iOS is held. It references the library as packages, which apps/Directory.Build.targets turns into this clone's
+    projects.
+
+    The targets: net10.0-android everywhere; net10.0-windows10.0.19041.0 too when the build runs on Windows (MSBuild's
+    IsOSPlatform, MAUI's own template pattern: the WinUI tools run only there), so a Linux build is the Android one alone.
+    On Windows the project has both targets, so a command names the one it builds with -f.
 
     Visual Studio: open apps/Idrak.Mobile.slnx, make Idrak.Mobile the startup project, pick the Android target and the
-    phone (USB debugging on). The command line: dotnet build -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -t:Install
-    (with -p:AndroidSdkDirectory=FOLDER when the Android SDK is not where the tools look).
+    phone (USB debugging on), or the Windows target and Windows Machine. The command line, Android:
+      dotnet build -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -f net10.0-android -t:Install
+    (with -p:AndroidSdkDirectory=FOLDER when the Android SDK is not where the tools look; -f may be left out off Windows).
+    Windows (Visual Studio's .NET MAUI workload has the Windows tools; the command line needs
+    dotnet workload install maui-windows once), built and then run from the build folder:
+      dotnet build -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -f net10.0-windows10.0.19041.0
+      apps/Idrak.Mobile/bin/Release/net10.0-windows10.0.19041.0/win-x64/Idrak.Mobile.exe
+    or published with the start-up pre-compiled (IdrakWindowsAot below) into a folder to run from:
+      dotnet publish -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -f net10.0-windows10.0.19041.0 -r win-x64 -o test-output/windows/publish
 
     The runtime: IdrakAndroidRuntime, mono (the default, .NET for Android's own) or coreclr, so both can be built and
     measured against each other (the Devices lab's runtime line, the Chat lab's tokens per second):
@@ -21,11 +33,31 @@
       profiled  .NET for Android's own default: only the start-up methods its profile names, the rest compiled by the JIT
                 when first run (the smallest APK; a first tap on each page waits for its code to compile);
       none      no ahead-of-time code at all (the JIT only).
-      dotnet build -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -t:Install -p:IdrakAndroidAot=profiled
+      dotnet build -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -f net10.0-android -t:Install -p:IdrakAndroidAot=profiled
+    Any other value stops the build. The two Android settings apply to the Android target only.
+
+    The Windows package, IdrakWindowsPackage (the Windows target only):
+      none      (the default) unpackaged: WindowsPackageType None, a plain .exe run from the build folder or Visual Studio,
+                no certificate; the Windows App SDK's runtime goes with it (WindowsAppSDKSelfContained, unless set), so
+                the folder runs on a machine without that runtime installed;
+      msix      an MSIX package (Platforms/Windows/Package.appxmanifest, the microphone declared as its device
+                capability), installed and signed as Windows' packages are:
+      dotnet build -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -f net10.0-windows10.0.19041.0 -p:IdrakWindowsPackage=msix
+    Any other value stops the build.
+
+    The ahead-of-time compilation on Windows, IdrakWindowsAot (the Windows target only; full AOT is Android's):
+      readytorun  (the default) the app's and the library's code pre-compiled for the machine (PublishReadyToRun), so
+                  the start-up and a first tap need no JIT; taken by dotnet publish (a dotnet build runs on the JIT, as
+                  a debug run does);
+      none        no pre-compiled code (the JIT only), to measure against.
+      dotnet publish -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -f net10.0-windows10.0.19041.0 -r win-x64 -p:IdrakWindowsAot=none -o test-output/windows/publish-jit
     Any other value stops the build.
   -->
   <PropertyGroup>
-    <TargetFramework>net10.0-android</TargetFramework>
+    <TargetFramework Condition="!$([MSBuild]::IsOSPlatform('windows'))">net10.0-android</TargetFramework>
+    <!-- On Windows both targets: the root Directory.Build.props sets TargetFramework (one target), cleared here. -->
+    <TargetFramework Condition="$([MSBuild]::IsOSPlatform('windows'))"></TargetFramework>
+    <TargetFrameworks Condition="$([MSBuild]::IsOSPlatform('windows'))">net10.0-android;net10.0-windows10.0.19041.0</TargetFrameworks>
     <OutputType>Exe</OutputType>
     <UseMaui>true</UseMaui>
     <SingleProject>true</SingleProject>
@@ -34,17 +66,19 @@
     <ApplicationId>io.github.ahmedseada.idrak</ApplicationId>
     <ApplicationDisplayVersion>$(VersionPrefix)</ApplicationDisplayVersion>
     <ApplicationVersion>1</ApplicationVersion>
+    <IdrakAndroidRuntime Condition="'$(IdrakAndroidRuntime)' == ''">mono</IdrakAndroidRuntime>
+    <IdrakAndroidAot Condition="'$(IdrakAndroidAot)' == ''">full</IdrakAndroidAot>
+    <IdrakWindowsPackage Condition="'$(IdrakWindowsPackage)' == ''">none</IdrakWindowsPackage>
+    <IdrakWindowsAot Condition="'$(IdrakWindowsAot)' == ''">readytorun</IdrakWindowsAot>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
     <!-- AAudio (the library's sound on Android) is Android 8.0, API 26. -->
     <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
-    <IdrakAndroidRuntime Condition="'$(IdrakAndroidRuntime)' == ''">mono</IdrakAndroidRuntime>
     <UseMonoRuntime Condition="'$(IdrakAndroidRuntime)' == 'mono'">true</UseMonoRuntime>
     <UseMonoRuntime Condition="'$(IdrakAndroidRuntime)' == 'coreclr'">false</UseMonoRuntime>
   </PropertyGroup>
-
-  <PropertyGroup>
-    <IdrakAndroidAot Condition="'$(IdrakAndroidAot)' == ''">full</IdrakAndroidAot>
-  </PropertyGroup>
-  <PropertyGroup Condition="'$(UseMonoRuntime)' == 'true' and '$(Configuration)' == 'Release'">
+  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android' and '$(UseMonoRuntime)' == 'true' and '$(Configuration)' == 'Release'">
     <RunAOTCompilation Condition="'$(IdrakAndroidAot)' != 'none'">true</RunAOTCompilation>
     <RunAOTCompilation Condition="'$(IdrakAndroidAot)' == 'none'">false</RunAOTCompilation>
     <AndroidEnableProfiledAot Condition="'$(IdrakAndroidAot)' == 'profiled'">true</AndroidEnableProfiledAot>
@@ -52,11 +86,32 @@
     <EnableLLVM Condition="'$(IdrakAndroidAot)' == 'llvm'">true</EnableLLVM>
   </PropertyGroup>
 
+  <!--
+    Windows: 10 1809 (10.0.17763.0) and later, as MAUI's Windows apps. The WinUI side of the app is Platforms/Windows:
+    App.xaml and App.xaml.cs (the WinUI application, MauiWinUIApplication, which builds the MAUI app), app.manifest
+    (per-monitor DPI, version 2, so the window is sharp on every display as it moves between them) and
+    Package.appxmanifest (the MSIX package's, used with IdrakWindowsPackage=msix). The icon is the MauiIcon below, which
+    MAUI's resizer makes into the Windows icon and the package's logos.
+  -->
+  <PropertyGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
+    <SupportedOSPlatformVersion>10.0.17763.0</SupportedOSPlatformVersion>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <WindowsPackageType Condition="'$(IdrakWindowsPackage)' == 'none'">None</WindowsPackageType>
+    <WindowsPackageType Condition="'$(IdrakWindowsPackage)' == 'msix'">MSIX</WindowsPackageType>
+    <WindowsAppSDKSelfContained Condition="'$(IdrakWindowsPackage)' == 'none' and '$(WindowsAppSDKSelfContained)' == ''">true</WindowsAppSDKSelfContained>
+    <PublishReadyToRun Condition="'$(IdrakWindowsAot)' == 'readytorun'">true</PublishReadyToRun>
+    <PublishReadyToRun Condition="'$(IdrakWindowsAot)' == 'none'">false</PublishReadyToRun>
+  </PropertyGroup>
+
   <Target Name="IdrakAndroidRuntimeCheck" BeforeTargets="PrepareForBuild">
     <Error Condition="'$(IdrakAndroidRuntime)' != 'mono' and '$(IdrakAndroidRuntime)' != 'coreclr'"
            Text="IdrakAndroidRuntime is '$(IdrakAndroidRuntime)': use mono (the default) or coreclr." />
     <Error Condition="'$(IdrakAndroidAot)' != 'full' and '$(IdrakAndroidAot)' != 'llvm' and '$(IdrakAndroidAot)' != 'profiled' and '$(IdrakAndroidAot)' != 'none'"
            Text="IdrakAndroidAot is '$(IdrakAndroidAot)': use full (the default), llvm, profiled or none." />
+    <Error Condition="'$(IdrakWindowsPackage)' != 'none' and '$(IdrakWindowsPackage)' != 'msix'"
+           Text="IdrakWindowsPackage is '$(IdrakWindowsPackage)': use none (the default, unpackaged) or msix." />
+    <Error Condition="'$(IdrakWindowsAot)' != 'readytorun' and '$(IdrakWindowsAot)' != 'none'"
+           Text="IdrakWindowsAot is '$(IdrakWindowsAot)': use readytorun (the default) or none." />
   </Target>
 
   <ItemGroup>

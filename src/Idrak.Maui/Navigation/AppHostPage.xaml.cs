@@ -100,12 +100,17 @@ public partial class AppHostPage : ContentPage
     /// <summary>The sections' views made so far (shown or kept hidden), by section name.</summary>
     public IReadOnlyDictionary<string, View> Views => _views;
 
-    /// <summary>The app's window: this host (from the app's services) in a navigation page, its own bar hidden.</summary>
+    /// <summary>
+    /// The app's window: this host (from the app's services) in a navigation page, its own bar hidden; on a desktop its
+    /// least size and its kept size and place (the app's <see cref="IWindowPlacement"/>).
+    /// </summary>
     public static Window CreateWindow(IServiceProvider services)
     {
         ArgumentNullException.ThrowIfNull(services);
         var host = services.GetService<AppHostPage>() ?? new AppHostPage(services);
-        return new Window(new NavigationPage(host)) { Title = "Idrak" };
+        var window = new Window(new NavigationPage(host)) { Title = "Idrak" };
+        services.GetService<IWindowPlacement>()?.Attach(window);
+        return window;
     }
 
     /// <summary>Takes the window's measured size: its width chooses the layout (<see cref="AppLayout"/>), its height the sheet's.</summary>

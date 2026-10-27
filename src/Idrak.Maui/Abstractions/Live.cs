@@ -8,8 +8,9 @@ namespace Idrak.Maui.Abstractions;
 /// <summary>
 /// A clock that ticks once a display frame on the UI thread, for live drawing (the waveform, the level meters): a view
 /// subscribes while it draws live and leaves when it stops, so nothing ticks while no view is live. The library registers
-/// "display" (Android's Choreographer: the display's own frames) and "timer" (a dispatcher timer at the display's refresh
-/// rate) in <see cref="FrameClocks"/>; an app adds its own or replaces one by name.
+/// "display" (the display's own frames: Android's Choreographer, WinUI's CompositionTarget.Rendering on Windows) and
+/// "timer" (a dispatcher timer at the display's refresh rate) in <see cref="FrameClocks"/>; an app adds its own or replaces
+/// one by name.
 /// </summary>
 public interface IFrameClock
 {
@@ -30,12 +31,12 @@ public interface IFrameClock
 }
 
 /// <summary>
-/// The frame clocks (a <see cref="SlotTable{TKey, TValue}"/>): "display" on Android, "timer" everywhere. <see cref="Current"/>
+/// The frame clocks (a <see cref="SlotTable{TKey, TValue}"/>): "display" on Android and Windows, "timer" everywhere. <see cref="Current"/>
 /// is the one live views tick on: the one <see cref="IdrakMauiOptions.FrameClock"/> names, else the first that can tick here.
 /// </summary>
 public static class FrameClocks
 {
-    /// <summary>The display's own frames (Android's Choreographer).</summary>
+    /// <summary>The display's own frames (Android's Choreographer, WinUI's CompositionTarget.Rendering).</summary>
     public const string Display = "display";
 
     /// <summary>A dispatcher timer at the display's refresh rate.</summary>
@@ -50,6 +51,8 @@ public static class FrameClocks
             unguarded: "a frame clock drives a view's drawing across frames, with no call to fall back at");
 #if ANDROID
         table.RegisterDefault(Display, new Idrak.Maui.Platforms.Android.ChoreographerFrameClock());
+#elif WINDOWS
+        table.RegisterDefault(Display, new Idrak.Maui.Platforms.Windows.CompositionFrameClock());
 #endif
         table.RegisterDefault(Timer, new Idrak.Maui.Controls.TimerFrameClock());
         return table;
@@ -119,7 +122,8 @@ public static class FrameClocks
 /// <summary>
 /// Restarts the app: what it holds released (the models unloaded, the sound stopped), its launcher activity started again
 /// and this process ended, so the library, its devices and the models load afresh with the saved settings. Android's is
-/// registered by <c>UseIdrak</c>; where the platform has no way to start the app again, <see cref="CanRestart"/> is false.
+/// registered by <c>UseIdrak</c>, and Windows' (the app's own program started again, or the package's restart); where the
+/// platform has no way to start the app again, <see cref="CanRestart"/> is false.
 /// </summary>
 public interface IAppRestarter
 {

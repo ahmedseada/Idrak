@@ -268,6 +268,9 @@ public interface Idrak.Maui.Abstractions.IVisionReaderService
   public Idrak.Maui.Abstractions.ChatMemoryEstimate Estimate(Idrak.Maui.Abstractions.VisionLoadRequest request)
   public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.VisionReaderLease> AcquireAsync(Idrak.Maui.Abstractions.VisionLoadRequest request, System.Threading.CancellationToken cancellationToken = default)
 
+public interface Idrak.Maui.Abstractions.IWindowPlacement
+  public void Attach(Microsoft.Maui.Controls.Window window)
+
 public enum Idrak.Maui.Abstractions.MemoryPressureLevel : int
   Background = 0
   Critical = 3
@@ -812,12 +815,15 @@ public sealed class Idrak.Maui.IdrakMauiOptions
   public System.TimeSpan? ModelKeepAlive { get; set; }
   public bool IsFeatureEnabled(string name)
   public bool KeepSettings { get; set; }
+  public bool KeepWindowPlace { get; set; }
   public bool PrebuildSections { get; set; }
   public bool UseMauiProgress { get; set; }
   public bool? ChatThinking { get; set; }
   public bool? OffloadToHostMemory { get; set; }
   public bool? PackedWeightCache { get; set; }
   public double WideLayoutWidth { get; set; }
+  public double WindowMinimumHeight { get; set; }
+  public double WindowMinimumWidth { get; set; }
   public double? ChatTemperature { get; set; }
   public double? ChatTopP { get; set; }
   public double? LiveFrameRate { get; set; }
@@ -925,6 +931,16 @@ public static class Idrak.Maui.ImageSettings
   public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.LabSetting<Idrak.Maui.ImageLabOptions>> Definitions { get; }
   public static System.Collections.Generic.IReadOnlyList<string> Formats { get; }
   public static void Save(Idrak.Maui.Abstractions.ISettingsStore store, Idrak.Maui.ImageLabOptions options)
+
+public sealed class Idrak.Maui.KeptWindowPlacement : Idrak.Maui.Abstractions.IWindowPlacement
+  public Idrak.Maui.WindowPlace? Kept { get; }
+  public KeptWindowPlacement(Idrak.Maui.Abstractions.ISettingsStore store, Idrak.Maui.IdrakMauiOptions options, Idrak.Maui.IdrakMauiSettings? settings = null, System.Func<Microsoft.Maui.Controls.Window, bool>? onScreen = null)
+  public System.Threading.Tasks.Task Writing { get; }
+  public const double LeastHeight = 320
+  public const double LeastWidth = 320
+  public const string Key = "idrak.window.place"
+  public void Attach(Microsoft.Maui.Controls.Window window)
+  public void Remember(Microsoft.Maui.Controls.Window window)
 
 public enum Idrak.Maui.LabSettingKind : int
   Choice = 2
@@ -1363,6 +1379,10 @@ public static class Idrak.Maui.SpeakSettings
   public static Idrak.Maui.SpeakLabOptions Load(Idrak.Maui.Abstractions.ISettingsStore store, out System.Collections.Generic.IReadOnlyList<string> skipped)
   public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.LabSetting<Idrak.Maui.SpeakLabOptions>> Definitions { get; }
   public static void Save(Idrak.Maui.Abstractions.ISettingsStore store, Idrak.Maui.SpeakLabOptions options)
+
+public sealed class Idrak.Maui.SystemWindowPlacement : Idrak.Maui.Abstractions.IWindowPlacement
+  public SystemWindowPlacement()
+  public void Attach(Microsoft.Maui.Controls.Window window)
 
 public class Idrak.Maui.Theme.IdrakDarkColors : Microsoft.Maui.Controls.ResourceDictionary
   public IdrakDarkColors()
@@ -3116,3 +3136,13 @@ public sealed class Idrak.Maui.VisionReaderService : Idrak.Maui.Abstractions.IVi
   public VisionReaderService(Idrak.Maui.Abstractions.IModelService models)
   public const string HostName = "vision"
   public static string? VisionArchitecture(string folder)
+
+public sealed record Idrak.Maui.WindowPlace : System.IEquatable<Idrak.Maui.WindowPlace>
+  public WindowPlace(double X, double Y, double Width, double Height)
+  public bool IsReal { get; }
+  public double Height { get; init; }
+  public double Width { get; init; }
+  public double X { get; init; }
+  public double Y { get; init; }
+  public override string ToString()
+  public static Idrak.Maui.WindowPlace? Parse(string? text)

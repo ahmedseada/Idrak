@@ -26,7 +26,8 @@ public sealed record MemoryPressureSignal(MemoryPressureLevel Level, string Sour
 
 /// <summary>
 /// The phone's signal to give memory back. On Android it is <c>IComponentCallbacks2.OnTrimMemory</c> and
-/// <c>OnLowMemory</c>, registered on the application context; where a platform has no signal,
+/// <c>OnLowMemory</c>, registered on the application context; on Windows the system's memory resource notifications
+/// (<c>CreateMemoryResourceNotification</c>: low memory is <see cref="MemoryPressureLevel.Low"/>); where a platform has no signal,
 /// <c>Idrak.Maui.ManualMemoryPressure</c> raises it when asked (tests, a button).
 /// </summary>
 public interface IMemoryPressureSource

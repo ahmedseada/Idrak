@@ -26,6 +26,8 @@ internal static partial class MauiTests
         ("maui settings: saved and read back, the token in the secret store only; an empty value is the library's own; a bad saved value is skipped and named; clear forgets them", SettingsSavedAndRead),
         ("maui settings: values are checked (a comma reads as the decimal point), and a change to the cache folder or the GPU chunk needs a restart", SettingsChecked),
         ("maui settings page: a refused value saves nothing and says why; a saved restart-only change says so and stays as it runs", SettingsPage),
+        ("maui settings: the desktop window's least size and whether its size and place are kept are settings (Layout and motion, found by the search), kept and read back; a least size below the floor or not a number is refused, an empty one the default", WindowSettings),
+        ("maui window: on a desktop the main window takes its least size, opens at the size and place kept from the last run (raised to the least size), and keeps each resize and move off the UI thread, changes during a write making one write; a minimised place and keeping turned off write nothing; a phone's window is left as it is", WindowPlaceKept),
         ("maui features: the library's devices feature is the default; an app adds, replaces and removes by name; turned-off ones are not enabled; an unknown name is not registered", FeaturesRegistry),
         ("maui features: the devices feature opens its page bound to its view model", FeaturesOpen),
         ("maui features: every planned feature is registered by its name with its title, order, needs and state (planned, with what is coming); the menu lists them after devices in the plan's order; each can be turned off", PlannedRegistered),

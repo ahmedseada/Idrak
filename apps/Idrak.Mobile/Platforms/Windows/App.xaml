@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- The WinUI application (Windows only): MAUI's MauiWinUIApplication, which builds the MAUI app (App.xaml.cs). The app's
+     own styles and pages are the MAUI App's (the project's App.xaml), as on Android. -->
+<maui:MauiWinUIApplication
+    x:Class="Idrak.Mobile.WinUI.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:maui="using:Microsoft.Maui"
+    xmlns:local="using:Idrak.Mobile.WinUI">
+</maui:MauiWinUIApplication>
