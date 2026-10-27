@@ -76,6 +76,30 @@ public partial class AppHostPage : ContentPage
         }
 
         Show(AppSections.Get(AppSections.Home), null);
+#if WINDOWS
+        Platforms.Windows.WindowsKeyInput.WatchEscape(this);                    // Esc closes the sheet on top
+#endif
+    }
+
+    /// <summary>
+    /// Closes the sheet on top, as Esc does on a desktop: the sheet of a page pushed over the host (a lab's page: the
+    /// Terminal's commands pane), else All labs' sheet, else the shown section's (the chat's tune sheet); false when none is
+    /// open (nothing else changes).
+    /// </summary>
+    public bool CloseTopSheet()
+    {
+        if (Navigation.NavigationStack.LastOrDefault() is { } top && !ReferenceEquals(top, this))
+        {
+            return top is LabPage { View: IHostedView pushed } && pushed.CloseSheet();
+        }
+
+        if (ViewModel.IsSheetOpen)
+        {
+            ViewModel.IsSheetOpen = false;
+            return true;
+        }
+
+        return _current is IHostedView shown && shown.CloseSheet();
     }
 
     /// <summary>

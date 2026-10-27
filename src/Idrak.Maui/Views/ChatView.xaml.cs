@@ -58,6 +58,19 @@ public partial class ChatView : AdaptiveView
     }
 
     /// <inheritdoc />
+    /// <remarks>The tune sheet (narrow) or the inspector's settings (wide).</remarks>
+    public override bool CloseSheet()
+    {
+        if (!ViewModel.IsTuning)
+        {
+            return false;
+        }
+
+        ViewModel.IsTuning = false;
+        return true;
+    }
+
+    /// <inheritdoc />
     protected override void Arrange(bool wide)
     {
         Root.ColumnDefinitions = wide

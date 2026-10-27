@@ -56,6 +56,19 @@ public partial class TerminalView : AdaptiveView
     }
 
     /// <inheritdoc />
+    /// <remarks>The commands pane shown in place of the output (a narrow window; a wide one shows it beside, always).</remarks>
+    public override bool CloseSheet()
+    {
+        if (IsWide || !ViewModel.ShowCommands)
+        {
+            return false;
+        }
+
+        ViewModel.ShowCommands = false;
+        return true;
+    }
+
+    /// <inheritdoc />
     protected override void Arrange(bool wide)
     {
         Root.ColumnDefinitions = wide ? [new ColumnDefinition(GridLength.Star), new ColumnDefinition(new GridLength(0.55, GridUnitType.Star))] : [new ColumnDefinition(GridLength.Star)];

@@ -75,6 +75,8 @@
     <!-- Marks and states. -->
     <Color x:Key="IdrakSelectedStroke">#800369A1</Color>
     <Color x:Key="IdrakComposerStroke">#660369A1</Color>
+    <!-- What a desktop's pointer hovers: a stronger line than IdrakLine2 (not the selection's accent). -->
+    <Color x:Key="IdrakHoverStroke">#730F172A</Color>
     <Color x:Key="IdrakPlannedStroke">#80B45309</Color>
     <Color x:Key="IdrakPlannedText">#92400E</Color>
     <Color x:Key="IdrakThinkBackground">#148B5CF6</Color>
@@ -98,6 +100,11 @@
     <LinearGradientBrush x:Key="IdrakBrushAccent" StartPoint="0,0" EndPoint="1,1">
         <GradientStop Color="#0277B6" Offset="0" />
         <GradientStop Color="#5B5BD6" Offset="1" />
+    </LinearGradientBrush>
+    <!-- The accent's gradient under a desktop's pointer: a shade deeper, white on it still reads (5.8:1 and more). -->
+    <LinearGradientBrush x:Key="IdrakBrushAccentHover" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#026AA3" Offset="0" />
+        <GradientStop Color="#5050C8" Offset="1" />
     </LinearGradientBrush>
     <LinearGradientBrush x:Key="IdrakBrushGlow" StartPoint="0,0" EndPoint="1,1">
         <GradientStop Color="#0EA5E9" Offset="0" />

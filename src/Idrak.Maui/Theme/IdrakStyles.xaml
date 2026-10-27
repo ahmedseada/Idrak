@@ -396,6 +396,15 @@
         <Setter Property="HeightRequest" Value="32" />
         <Setter Property="HorizontalOptions" Value="Center" />
     </Style>
+    <!-- The rail's pill of the section shown (its tab's trigger swaps the style, so the hover of IdrakRailPill never hides it). -->
+    <Style x:Key="IdrakRailPillOn" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource IdrakBrushPill}" />
+        <Setter Property="StrokeThickness" Value="0" />
+        <Setter Property="StrokeShape" Value="RoundRectangle 16" />
+        <Setter Property="WidthRequest" Value="56" />
+        <Setter Property="HeightRequest" Value="32" />
+        <Setter Property="HorizontalOptions" Value="Center" />
+    </Style>
     <Style x:Key="IdrakNavLabel" TargetType="Label">
         <Setter Property="TextColor" Value="{DynamicResource IdrakTextFaint}" />
         <Setter Property="FontFamily" Value="{DynamicResource IdrakFontSemiBold}" />
@@ -793,6 +802,80 @@
         <Setter Property="FontSize" Value="{DynamicResource IdrakFontSizeBadge}" />
         <Setter Property="LineBreakMode" Value="NoWrap" />
     </Style>
+
+    <!--
+      What a desktop's pointer hovers (the PointerOver state): the visual states the styles that are tapped take on a
+      desktop (IdrakStyles adds them there, IdrakStyles.Hovered names which; a phone has no pointer that hovers and takes
+      none). Each changes a property no trigger of a page sets on it: a border's line, the accent's shade, a round button's
+      size as it draws (no layout), the rail pill's ground (its selected look is another style). Disabled leaves the hover.
+    -->
+    <VisualStateGroupList x:Key="IdrakHoverButton">
+        <VisualStateGroup Name="CommonStates">
+            <VisualState Name="Normal" />
+            <VisualState Name="PointerOver">
+                <VisualState.Setters>
+                    <Setter Property="Button.BorderColor" Value="{DynamicResource IdrakHoverStroke}" />
+                </VisualState.Setters>
+            </VisualState>
+            <VisualState Name="Disabled" />
+        </VisualStateGroup>
+    </VisualStateGroupList>
+    <VisualStateGroupList x:Key="IdrakHoverAccentButton">
+        <VisualStateGroup Name="CommonStates">
+            <VisualState Name="Normal" />
+            <VisualState Name="PointerOver">
+                <VisualState.Setters>
+                    <Setter Property="VisualElement.Background" Value="{DynamicResource IdrakBrushAccentHover}" />
+                </VisualState.Setters>
+            </VisualState>
+            <VisualState Name="Disabled" />
+        </VisualStateGroup>
+    </VisualStateGroupList>
+    <VisualStateGroupList x:Key="IdrakHoverCard">
+        <VisualStateGroup Name="CommonStates">
+            <VisualState Name="Normal" />
+            <VisualState Name="PointerOver">
+                <VisualState.Setters>
+                    <Setter Property="VisualElement.Background" Value="{DynamicResource IdrakSurface2}" />
+                    <Setter Property="Border.Stroke" Value="{DynamicResource IdrakHoverStroke}" />
+                </VisualState.Setters>
+            </VisualState>
+            <VisualState Name="Disabled" />
+        </VisualStateGroup>
+    </VisualStateGroupList>
+    <VisualStateGroupList x:Key="IdrakHoverOutline">
+        <VisualStateGroup Name="CommonStates">
+            <VisualState Name="Normal" />
+            <VisualState Name="PointerOver">
+                <VisualState.Setters>
+                    <Setter Property="Border.Stroke" Value="{DynamicResource IdrakHoverStroke}" />
+                </VisualState.Setters>
+            </VisualState>
+            <VisualState Name="Disabled" />
+        </VisualStateGroup>
+    </VisualStateGroupList>
+    <VisualStateGroupList x:Key="IdrakHoverRound">
+        <VisualStateGroup Name="CommonStates">
+            <VisualState Name="Normal" />
+            <VisualState Name="PointerOver">
+                <VisualState.Setters>
+                    <Setter Property="VisualElement.Scale" Value="1.06" />
+                </VisualState.Setters>
+            </VisualState>
+            <VisualState Name="Disabled" />
+        </VisualStateGroup>
+    </VisualStateGroupList>
+    <VisualStateGroupList x:Key="IdrakHoverRail">
+        <VisualStateGroup Name="CommonStates">
+            <VisualState Name="Normal" />
+            <VisualState Name="PointerOver">
+                <VisualState.Setters>
+                    <Setter Property="VisualElement.Background" Value="{DynamicResource IdrakSurface2}" />
+                </VisualState.Setters>
+            </VisualState>
+            <VisualState Name="Disabled" />
+        </VisualStateGroup>
+    </VisualStateGroupList>
 
     <!-- Controls. -->
     <Style TargetType="Button">

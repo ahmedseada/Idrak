@@ -352,6 +352,13 @@ public sealed class ChatViewModel : ViewModel
         _dispatcher = dispatcher;
         _time = time ?? TimeProvider.System;
         _send = new Command(async () => await SendAsync(), () => CanSend);
+        EnterCommand = new Command(() =>
+        {
+            if (CanSend)
+            {
+                _send.Execute(null);
+            }
+        }, () => EnterSends);
         _stop = new Command(Stop, () => IsStreaming);
         _newChat = new Command(NewChat, () => !IsStreaming);
         RefreshCommand = new Command(async () => await RefreshAsync());
@@ -1085,6 +1092,19 @@ public sealed class ChatViewModel : ViewModel
 
     /// <summary>Sends <see cref="Draft"/>.</summary>
     public ICommand SendCommand => _send;
+
+    /// <summary>
+    /// Whether Enter sends from a desktop keyboard (Shift+Enter a new line): the setting's (<see cref="IdrakMauiOptions.ChatEnterSends"/>),
+    /// on by default, read at each key.
+    /// </summary>
+    public bool EnterSends => _options.ChatEnterSends ?? true;
+
+    /// <summary>
+    /// Enter in the composer on a desktop keyboard (<c>DesktopKeys.EnterCommand</c>): sends the message when it can (a
+    /// model chosen, a message typed, no answer streaming), else does nothing; it runs only while <see cref="EnterSends"/>,
+    /// so with the setting off Enter makes a new line.
+    /// </summary>
+    public ICommand EnterCommand { get; }
 
     /// <summary>Stops the answer streaming.</summary>
     public ICommand StopCommand => _stop;

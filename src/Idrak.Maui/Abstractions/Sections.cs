@@ -59,6 +59,12 @@ public interface IHostedView
 
     /// <summary>Shows the feature <paramref name="feature"/> among its own (a segment of Voice); false when it hosts none of that name.</summary>
     bool ShowFeature(string feature) => false;
+
+    /// <summary>
+    /// Closes the sheet it shows over its content (the chat's tune sheet, the Terminal's commands pane in a narrow window),
+    /// as Esc does on a desktop; false when none is open.
+    /// </summary>
+    bool CloseSheet() => false;
 }
 
 /// <summary>

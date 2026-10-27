@@ -82,6 +82,9 @@ public abstract class AdaptiveView : ContentView, IHostedView
     /// <inheritdoc />
     public virtual bool ShowFeature(string feature) => false;
 
+    /// <inheritdoc />
+    public virtual bool CloseSheet() => false;
+
     /// <summary>Moves the view's parts for the wide or the narrow layout.</summary>
     protected abstract void Arrange(bool wide);
 

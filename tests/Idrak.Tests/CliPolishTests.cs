@@ -25,7 +25,7 @@ internal abstract partial class DesktopTests : Tests
         ("cli polish: --format csv and md on the commands that print tables", CliPolishFormats),
         ("cli polish: --seed reaches the data commands and suggest; progress lines draw, erase and clear", CliPolishSeedProgress),
         ("cli host: a host refuses a command by what it needs, before it runs (serve, ui, serve --mcp, mcp serve, shell, test, cluster ui, report --tests), "
-         + "with exit 3 naming the host and the need, its help still shown; the host's stop ends a running command with 130; its working folder holds the run; IdrakCommands lists the table and splits a typed line", CliHostRefusals),
+         + "with exit 3 naming the host and the need, its help still shown; the host's stop ends a running command (a server too) with 130; its working folder holds the run; IdrakCommands lists the table and splits a typed line", CliHostRefusals),
     ];
 
     private static (int Code, string Out, string Err) PolishCli(params string[] args)
@@ -378,6 +378,17 @@ internal abstract partial class DesktopTests : Tests
         listener.Stop();
         accepting.Wait(TimeSpan.FromSeconds(5));
         held.ForEach(h => h.Dispose());
+
+        // A host that allows a listener but no console (a desktop app's Terminal) lists serve as available and refuses only
+        // serve --mcp; a server it starts runs until the host's stop, which ends it as Ctrl+C would (130, the server closed).
+        var desktop = app with { Allows = CommandNeeds.ChildProcesses | CommandNeeds.NetworkListener };
+        Check(IdrakCommands.Refusal("serve", desktop) is null && Run(desktop, default, "serve", "qwen", "--mcp") is { Code: IdrakCommands.UnavailableExitCode, Err: var mcp }
+              && mcp.Contains("standard input", StringComparison.Ordinal), "serve on a host with a listener and no console: listed, --mcp refused");
+        using var stopServe = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var serveWatch = Stopwatch.StartNew();
+        var (served, serveOut, serveErr) = Run(desktop, stopServe.Token, "serve", TestData("gguf/tiny-qwen3-q8.gguf"), "-H", "127.0.0.1", "-p", "0");
+        Check(served == IdrakCommands.StoppedExitCode && serveOut.Contains("Serving 1 model", StringComparison.Ordinal) && serveOut.Contains("server stopped", StringComparison.Ordinal)
+              && serveWatch.Elapsed < TimeSpan.FromSeconds(30), $"serve ended by the host's stop: {served} ({serveWatch.Elapsed}) {serveOut} {serveErr}");
 
         // The host's working folder: a relative path is read from it during the run, and the process's folder comes back after.
         string working = Path.Combine(Path.GetTempPath(), $"idrak-cli-host-{Guid.NewGuid():N}");

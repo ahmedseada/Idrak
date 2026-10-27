@@ -320,8 +320,9 @@
                             </Border.GestureRecognizers>
                             <ctl:IconView Glyph="plus" Size="20" />
                         </Border>
+                        <!-- On a desktop keyboard Enter sends and Shift+Enter makes a new line (the setting chat_enter_sends). -->
                         <Editor Grid.Column="1" Text="{Binding Draft}" Placeholder="{Binding ModelName, StringFormat='Message {0}…'}" AutoSize="TextChanges" MaximumHeightRequest="160"
-                                VerticalOptions="Center" />
+                                VerticalOptions="Center" ctl:DesktopKeys.EnterCommand="{Binding EnterCommand}" />
                         <!-- The microphone dictates into the message (the Transcribe lab's model, live); a tap again stops it. -->
                         <Border Grid.Column="2" Style="{DynamicResource IdrakRoundButtonPlain}" VerticalOptions="End" SemanticProperties.Description="{Binding MicrophoneDescription}">
                             <Border.Triggers>

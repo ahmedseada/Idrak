@@ -4,14 +4,21 @@
 namespace Idrak.Maui.Controls;
 
 /// <summary>
-/// Its content zoomed by a pinch (about the pinch's point, from 1 to <see cref="MaximumScale"/>), moved by a drag while
-/// zoomed (held inside its bounds), and back to the whole on a double tap. The content is scaled and moved as it draws
-/// (Scale and Translation): nothing is laid out again while it zooms.
+/// Its content zoomed by a pinch (about the pinch's point, from 1 to <see cref="MaximumScale"/>) or, with a mouse, by its
+/// wheel over it (about the pointer, <see cref="ZoomByWheel"/>; a touchpad's pinch arrives as that wheel), moved by a drag
+/// while zoomed (held inside its bounds), and back to the whole on a double tap. The content is scaled and moved as it
+/// draws (Scale and Translation): nothing is laid out again while it zooms.
 /// </summary>
 public sealed class ZoomView : ContentView
 {
     /// <summary>The most it zooms.</summary>
     public static readonly BindableProperty MaximumScaleProperty = BindableProperty.Create(nameof(MaximumScale), typeof(double), typeof(ZoomView), 6d);
+
+    /// <summary>How much one notch of a mouse wheel zooms: the scale multiplied (toward you) or divided by it.</summary>
+    public static readonly BindableProperty WheelStepProperty = BindableProperty.Create(nameof(WheelStep), typeof(double), typeof(ZoomView), 1.2d);
+
+    /// <summary>A wheel's notch, in the wheel's own units (Windows' <c>WHEEL_DELTA</c>): a finer wheel or a touchpad moves by parts of it.</summary>
+    public const double WheelNotch = 120;
 
     private double _startX, _startY;
 
@@ -28,6 +35,16 @@ public sealed class ZoomView : ContentView
         GestureRecognizers.Add(pinch);
         GestureRecognizers.Add(pan);
         GestureRecognizers.Add(twice);
+#if WINDOWS
+        Platforms.Windows.WindowsPointerInput.Watch(this);                      // the mouse wheel over it zooms
+#endif
+    }
+
+    /// <summary>How much one notch of a mouse wheel zooms (1.2 by default).</summary>
+    public double WheelStep
+    {
+        get => (double)GetValue(WheelStepProperty);
+        set => SetValue(WheelStepProperty, value);
     }
 
     /// <summary>The most it zooms.</summary>
@@ -66,6 +83,19 @@ public sealed class ZoomView : ContentView
         double y = content.TranslationY - (originY - 0.5) * Height * (next - before);
         content.Scale = next;
         (content.TranslationX, content.TranslationY) = Hold(x, y, next);
+    }
+
+    /// <summary>
+    /// Zooms by <paramref name="notches"/> of a mouse wheel (positive: in, negative: out; parts of a notch from a fine wheel
+    /// or a touchpad), each one <see cref="WheelStep"/>, about the pointer at shares <paramref name="originX"/>,
+    /// <paramref name="originY"/> of the view (0 to 1); held from the whole to <see cref="MaximumScale"/>.
+    /// </summary>
+    public void ZoomByWheel(double notches, double originX = 0.5, double originY = 0.5)
+    {
+        if (double.IsFinite(notches) && notches != 0)
+        {
+            ZoomTo(Zoom * Math.Pow(Math.Max(1.01, WheelStep), notches), Math.Clamp(originX, 0, 1), Math.Clamp(originY, 0, 1));
+        }
     }
 
     private void OnPinch(object? sender, PinchGestureUpdatedEventArgs e)

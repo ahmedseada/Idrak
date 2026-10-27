@@ -156,6 +156,12 @@ public sealed class IdrakMauiOptions
     /// </summary>
     public string? ChatWeights { get; set; }
 
+    /// <summary>
+    /// Whether Enter sends the chat's message from a desktop keyboard, Shift+Enter making a new line; null or true: it does,
+    /// false: Enter is a new line and the send button sends. A phone's soft keyboard is not changed.
+    /// </summary>
+    public bool? ChatEnterSends { get; set; }
+
     /// <summary>The chat's key/value cache format (a registered one, <see cref="KeyValueLayouts.Names"/>: "int8" halves it); null: the library's (float32). Taken at the next load.</summary>
     public string? ChatKeyValueFormat { get; set; }
 
@@ -222,6 +228,16 @@ public sealed class IdrakMauiOptions
 
     /// <summary>The folder the Terminal's commands run in; null: the app's storage.</summary>
     public string? TerminalFolder { get; set; }
+
+    /// <summary>
+    /// What the Terminal's commands may do beyond the library (<see cref="TerminalAllowance"/>: start other programs, open a
+    /// network listener); null: all the platform can (<see cref="TerminalAllowances.Default"/>: both on a desktop, none on
+    /// a phone). Held to what the platform can (<see cref="TerminalAllowInEffect"/>).
+    /// </summary>
+    public TerminalAllowance? TerminalAllow { get; set; }
+
+    /// <summary>What the Terminal's commands may do in effect: <see cref="TerminalAllow"/> held to what this platform can.</summary>
+    public TerminalAllowance TerminalAllowInEffect => TerminalAllowances.For(TerminalAllow, IdrakPlatform.IsDesktop);
 
     /// <summary>What Home says: its slides and its tiles' samples (the app's own words; the library's by default).</summary>
     public HomeOptions Home { get; set; } = new();

@@ -315,6 +315,8 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
         new("chat_kv", "Chat: key/value cache format", "How the chat's key/value cache is kept (KeyValueLayouts): int8 or bfloat16 take less memory than float32. Default: float32. Taken at the next load.",
             IdrakSettingKind.Choice, o => o.ChatKeyValueFormat ?? "", (o, t) => o.ChatKeyValueFormat = CacheFormat(t), placeholder: "default",
             choices: ["default", .. KeyValueLayouts.Names.Order(StringComparer.Ordinal)]),
+        new("chat_enter_sends", "Chat: Enter sends", "On a desktop keyboard, Enter sends the message and Shift+Enter makes a new line; off, Enter makes a new line and the send button sends. A phone's soft keyboard is not changed.",
+            IdrakSettingKind.Choice, o => Text(o.ChatEnterSends), (o, t) => o.ChatEnterSends = Switch(t), placeholder: "on", choices: ["on", "off"]),
         .. TerminalSettings(),
     ];
 
@@ -333,6 +335,23 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
         yield return new("terminal.folder", "Terminal: working folder", "The folder the commands run in (relative paths read from it). Empty: the app's storage.",
             IdrakSettingKind.Text, o => o.TerminalFolder ?? "", (o, t) => o.TerminalFolder = t.Length == 0 ? null : Path.IsPathFullyQualified(t) ? t
                 : throw new FormatException($"'{t}' is not a full path."), placeholder: "the app's storage");
+        yield return new("terminal.allow", "Terminal: programs and servers", IdrakPlatform.IsDesktop
+                ? "What the commands may do beyond the library: start other programs (idrak test, a cluster's ranks, a browser) and open a network listener (idrak serve, a dashboard). "
+                  + "Both by default here; none refuses those commands with their reason. Console input is never allowed: the Terminal is the shell itself, and serve --mcp and mcp serve "
+                  + "speak to a client program on standard input. Applied when the Terminal is next shown."
+                : "What the commands may do beyond the library. A phone keeps none: Android starts no other program for an app, and keeps no server of an app running behind the "
+                  + "screen, so idrak serve, cluster start, test and shell say why they are unavailable.",
+            IdrakSettingKind.Choice, o => o.TerminalAllow is { } allow ? TerminalAllowances.Name(allow) : "", (o, t) => o.TerminalAllow = TerminalAllow(t),
+            placeholder: TerminalAllowances.Name(TerminalAllowances.Default),
+            choices: IdrakPlatform.IsDesktop ? ["default", "programs+listener", "programs", "listener", "none"] : ["none"]);
+    }
+
+    // What the Terminal allows: a desktop takes any of them; a phone none (it can start no program and keep no server).
+    private static TerminalAllowance? TerminalAllow(string text)
+    {
+        var allow = TerminalAllowances.Parse(text);
+        return allow is null or TerminalAllowance.None || IdrakPlatform.IsDesktop ? allow
+            : throw new FormatException("A phone's Terminal allows nothing beyond the library: Android starts no other program for an app and keeps no server of it running.");
     }
 
     // The library's generation defaults, which an empty chat setting keeps (shown as the placeholders).

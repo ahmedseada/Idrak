@@ -227,6 +227,7 @@ public sealed class TerminalViewModel : ViewModel, IDisposable
     private readonly IdrakMauiOptions? _app;
     private readonly string _defaultFolder;
     private CancellationTokenSource? _stop;
+    private IReadOnlyList<TerminalCommand>? _commands;
     private TerminalLine? _open;
     private bool _carriage, _running, _showCommands;
     private int _recall = -1;
@@ -259,14 +260,7 @@ public sealed class TerminalViewModel : ViewModel, IDisposable
         PreviousCommand = new Command(() => Recall(older: true));
         NextCommand = new Command(() => Recall(older: false));
         ToggleCommandsCommand = new Command(() => ShowCommands = !ShowCommands);
-        if (runner is not null)
-        {
-            foreach (var group in runner.Commands.GroupBy(c => c.Group))
-            {
-                Groups.Add(new TerminalCommandGroup(group.Key, group.Select(Suggest)));
-            }
-        }
-
+        ListCommands();
         UpdateHistory();
         Suggest();
     }
@@ -291,7 +285,8 @@ public sealed class TerminalViewModel : ViewModel, IDisposable
 
     /// <summary>
     /// Takes the settings again (the page calls it when shown, so a change in Settings applies without a restart): the
-    /// lines beyond the most kept dropped, the history held to its size, the chips and suggestions shown again.
+    /// lines beyond the most kept dropped, the history held to its size, the chips and suggestions shown again, and the
+    /// commands pane listed again when what the app allows changed (<see cref="IdrakMauiOptions.TerminalAllow"/>).
     /// </summary>
     public void Refresh()
     {
@@ -308,8 +303,29 @@ public sealed class TerminalViewModel : ViewModel, IDisposable
         }
 
         OnPropertyChanged(nameof(WorkingFolder));
+        if (_runner is { } runner && !ReferenceEquals(runner.Commands, _commands))
+        {
+            ListCommands();                                                      // what the app allows changed: the pane greys what it now refuses
+        }
+
         UpdateHistory();
         Suggest();
+    }
+
+    // The commands pane: every command by its group, greyed where the app does not allow it (as the runner lists them now).
+    private void ListCommands()
+    {
+        if (_runner is not { } runner)
+        {
+            return;
+        }
+
+        _commands = runner.Commands;
+        Groups.Clear();
+        foreach (var group in _commands.GroupBy(c => c.Group))
+        {
+            Groups.Add(new TerminalCommandGroup(group.Key, group.Select(Suggest)));
+        }
     }
 
     /// <summary>The tool's name ("idrak"), or "" when no runner is registered.</summary>

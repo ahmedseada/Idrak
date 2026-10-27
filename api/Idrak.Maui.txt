@@ -187,6 +187,7 @@ public interface Idrak.Maui.Abstractions.IFrameClock
   public string Summary { get; }
 
 public interface Idrak.Maui.Abstractions.IHostedView
+  public (default) bool CloseSheet()
   public (default) bool ShowFeature(string feature)
   public void Hidden()
   public void Shown()
@@ -388,6 +389,19 @@ public sealed record Idrak.Maui.Abstractions.StoredModel : System.IEquatable<Idr
   public string Id { get; init; }
   public string Revision { get; init; }
 
+[Flags] public enum Idrak.Maui.Abstractions.TerminalAllowance : int
+  ChildProcesses = 1
+  NetworkListener = 2
+  None = 0
+
+public static class Idrak.Maui.Abstractions.TerminalAllowances
+  public const Idrak.Maui.Abstractions.TerminalAllowance Desktop = 3
+  public static Idrak.Maui.Abstractions.TerminalAllowance Default { get; }
+  public static Idrak.Maui.Abstractions.TerminalAllowance For(Idrak.Maui.Abstractions.TerminalAllowance? chosen, bool desktop)
+  public static Idrak.Maui.Abstractions.TerminalAllowance Possible { get; }
+  public static Idrak.Maui.Abstractions.TerminalAllowance? Parse(string text)
+  public static string Name(Idrak.Maui.Abstractions.TerminalAllowance allowance)
+
 public sealed record Idrak.Maui.Abstractions.TerminalCommand : System.IEquatable<Idrak.Maui.Abstractions.TerminalCommand>
   public System.Collections.Generic.IReadOnlyList<string> Aliases { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> Options { get; init; }
@@ -522,6 +536,7 @@ public abstract class Idrak.Maui.Controls.AdaptiveView : Microsoft.Maui.Controls
   protected abstract void Arrange(bool wide)
   protected static void Place(Microsoft.Maui.Controls.View view, int row, int column, int columnSpan = 1, int rowSpan = 1)
   public bool IsWide { get; }
+  public virtual bool CloseSheet()
   public virtual bool ShowFeature(string feature)
   public virtual void Hidden()
   public virtual void Shown()
@@ -531,6 +546,23 @@ public sealed class Idrak.Maui.Controls.CaretView : Microsoft.Maui.Controls.BoxV
   public CaretView()
   public bool IsBlinking { get; set; }
   public static readonly Microsoft.Maui.Controls.BindableProperty IsBlinkingProperty
+
+public enum Idrak.Maui.Controls.DesktopKey : int
+  Down = 2
+  Enter = 0
+  Up = 1
+
+public static class Idrak.Maui.Controls.DesktopKeys
+  public static System.Windows.Input.ICommand? GetDownCommand(Microsoft.Maui.Controls.BindableObject view)
+  public static System.Windows.Input.ICommand? GetEnterCommand(Microsoft.Maui.Controls.BindableObject view)
+  public static System.Windows.Input.ICommand? GetUpCommand(Microsoft.Maui.Controls.BindableObject view)
+  public static bool Press(Microsoft.Maui.Controls.BindableObject view, Idrak.Maui.Controls.DesktopKey key, bool shift = false)
+  public static readonly Microsoft.Maui.Controls.BindableProperty DownCommandProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty EnterCommandProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty UpCommandProperty
+  public static void SetDownCommand(Microsoft.Maui.Controls.BindableObject view, System.Windows.Input.ICommand? value)
+  public static void SetEnterCommand(Microsoft.Maui.Controls.BindableObject view, System.Windows.Input.ICommand? value)
+  public static void SetUpCommand(Microsoft.Maui.Controls.BindableObject view, System.Windows.Input.ICommand? value)
 
 public abstract class Idrak.Maui.Controls.DrawnView : Microsoft.Maui.Controls.GraphicsView, Microsoft.Maui.Graphics.IDrawable
   protected DrawnView()
@@ -703,10 +735,14 @@ public sealed class Idrak.Maui.Controls.WaveformView : Idrak.Maui.Controls.Drawn
 
 public sealed class Idrak.Maui.Controls.ZoomView : Microsoft.Maui.Controls.ContentView
   public ZoomView()
+  public const double WheelNotch = 120
   public double MaximumScale { get; set; }
+  public double WheelStep { get; set; }
   public double Zoom { get; }
   public static readonly Microsoft.Maui.Controls.BindableProperty MaximumScaleProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty WheelStepProperty
   public void Reset()
+  public void ZoomByWheel(double notches, double originX = 0.5, double originY = 0.5)
   public void ZoomTo(double scale, double originX = 0.5, double originY = 0.5)
 
 public static class Idrak.Maui.ConversationText
@@ -801,6 +837,8 @@ public sealed class Idrak.Maui.IdrakMauiOptions
   public Idrak.Maui.Abstractions.ISecretStore? SecretStore { get; set; }
   public Idrak.Maui.Abstractions.ISettingsStore? SettingsStore { get; set; }
   public Idrak.Maui.Abstractions.MemoryPressureLevel UnloadModelsAt { get; set; }
+  public Idrak.Maui.Abstractions.TerminalAllowance TerminalAllowInEffect { get; }
+  public Idrak.Maui.Abstractions.TerminalAllowance? TerminalAllow { get; set; }
   public Idrak.Maui.HomeOptions Home { get; set; }
   public Idrak.Maui.IdrakMauiOptions Clone()
   public Idrak.Maui.IdrakThemeChoice Theme { get; set; }
@@ -818,6 +856,7 @@ public sealed class Idrak.Maui.IdrakMauiOptions
   public bool KeepWindowPlace { get; set; }
   public bool PrebuildSections { get; set; }
   public bool UseMauiProgress { get; set; }
+  public bool? ChatEnterSends { get; set; }
   public bool? ChatThinking { get; set; }
   public bool? OffloadToHostMemory { get; set; }
   public bool? PackedWeightCache { get; set; }
@@ -873,6 +912,9 @@ public sealed class Idrak.Maui.IdrakMauiSettings
 public static class Idrak.Maui.IdrakMauiStartup
   public static Idrak.Maui.IdrakStartupReport Apply(Idrak.Maui.IdrakMauiOptions options, string appStorage, Idrak.Maui.IdrakMauiOptions? previous = null)
   public static string? CacheFolder(Idrak.Maui.IdrakMauiOptions options, string appStorage)
+
+public static class Idrak.Maui.IdrakPlatform
+  public static bool IsDesktop { get; }
 
 public sealed class Idrak.Maui.IdrakSetting
   public (double, double, double)? Range { get; }
@@ -1111,6 +1153,7 @@ public class Idrak.Maui.Navigation.AppHostPage : Microsoft.Maui.Controls.Content
   public System.Threading.Tasks.Task OpenLabsAsync()
   public System.Threading.Tasks.Task OpenSettingsAsync()
   public System.Threading.Tasks.Task<bool> OpenSectionAsync(string name, string? feature = null)
+  public bool CloseTopSheet()
   public static Microsoft.Maui.Controls.Window CreateWindow(System.IServiceProvider services)
   public static void KeyboardAware(Microsoft.Maui.Controls.ContentPage page)
   public void ApplySize(double width, double height)
@@ -1400,6 +1443,9 @@ public class Idrak.Maui.Theme.IdrakLightColors : Microsoft.Maui.Controls.Resourc
 
 public class Idrak.Maui.Theme.IdrakStyles : Microsoft.Maui.Controls.ResourceDictionary
   public IdrakStyles()
+  public IdrakStyles(bool pointerHover)
+  public bool PointerHover { get; }
+  public static System.Collections.Generic.IReadOnlyList<(string, string)> Hovered { get; }
 
 public static class Idrak.Maui.Theme.IdrakThemes
   public static Microsoft.Maui.ApplicationModel.AppTheme Effective(Idrak.Maui.IdrakThemeChoice choice, Microsoft.Maui.ApplicationModel.AppTheme system)
@@ -1660,6 +1706,7 @@ public sealed class Idrak.Maui.ViewModels.ChatViewModel : Idrak.Maui.ViewModels.
   public System.Windows.Input.ICommand CloseTuningCommand { get; }
   public System.Windows.Input.ICommand DeleteConversationCommand { get; }
   public System.Windows.Input.ICommand DictateCommand { get; }
+  public System.Windows.Input.ICommand EnterCommand { get; }
   public System.Windows.Input.ICommand GoToModelsCommand { get; }
   public System.Windows.Input.ICommand NewChatCommand { get; }
   public System.Windows.Input.ICommand OpenConversationCommand { get; }
@@ -1673,6 +1720,7 @@ public sealed class Idrak.Maui.ViewModels.ChatViewModel : Idrak.Maui.ViewModels.
   public bool CanSend { get; }
   public bool DeleteConversation(string id)
   public bool DictationNeedsModel { get; }
+  public bool EnterSends { get; }
   public bool HasCold { get; }
   public bool HasDictationNote { get; }
   public bool HasError { get; }
@@ -2807,6 +2855,7 @@ public class Idrak.Maui.Views.ChatView : Idrak.Maui.Controls.AdaptiveView
   protected override void Arrange(bool wide)
   public ChatView(Idrak.Maui.ViewModels.ChatViewModel viewModel, System.IServiceProvider services)
   public Idrak.Maui.ViewModels.ChatViewModel ViewModel { get; }
+  public override bool CloseSheet()
   public override void Hidden()
   public override void Shown()
 
@@ -3015,6 +3064,7 @@ public class Idrak.Maui.Views.SegmentedSectionView : Idrak.Maui.Controls.Adaptiv
   public Idrak.Maui.ViewModels.SegmentedSectionViewModel ViewModel { get; }
   public Microsoft.Maui.Controls.View? Current { get; }
   public SegmentedSectionView(System.IServiceProvider services, Idrak.Maui.Abstractions.IAppSection section)
+  public override bool CloseSheet()
   public override bool ShowFeature(string feature)
   public override void Hidden()
   public override void Shown()
@@ -3099,6 +3149,7 @@ public class Idrak.Maui.Views.TerminalView : Idrak.Maui.Controls.AdaptiveView
   public Idrak.Maui.ViewModels.TerminalViewModel ViewModel { get; }
   public TerminalView(Idrak.Maui.ViewModels.TerminalViewModel viewModel, System.IServiceProvider? services = null)
   public bool IsTicking { get; }
+  public override bool CloseSheet()
   public override void Hidden()
   public override void Shown()
 

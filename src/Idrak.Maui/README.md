@@ -88,12 +88,19 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   (`GenerateSettings`, under `idrak.generate.`).
 - **Terminal** page (this device's group; from All labs and Home): the app's command runner (`ICommandRunner`, which the
   app registers; Idrak.Mobile's `IdrakCommandRunner` runs the idrak commands of Idrak.Cli.Commands in the app's own process,
-  allowing no child process, network listener or console input, so those commands are refused with their reason). One
+  allowing what the setting `idrak.terminal.allow` allows: other programs and a network listener on a desktop by default
+  (`idrak serve` runs until Stop), nothing on a phone; never console input (the page is the shell), so what needs more is
+  refused with its reason). One
   command at a time, off the UI thread, in the app's storage (so `idrak models list` lists what Models pulled). What a
   command writes is taken from its thread without waiting and drawn once a display frame into a virtualised list of lines,
   one batch a frame; a carriage return rewrites the line in place (the console's progress lines). Suggestions are the
   runner's commands and options (one the app does not allow greyed with why); Stop, the history (kept), copy, clear,
   `help`; on a wide window the commands pane beside the output. The kept lines and history sizes are `TerminalLabOptions`.
+- **A desktop's keyboard and mouse** (Windows): Enter sends in Chat (`chat_enter_sends`, on by default) and runs in the
+  Terminal, Shift+Enter is a new line; the arrows recall the Terminal's history; Esc closes the sheet on top
+  (`AppHostPage.CloseTopSheet`); the mouse wheel zooms Generate's preview (`ZoomView.ZoomByWheel`); the buttons, chips, lab
+  cards and the rail's tabs hover (`IdrakStyles.Hovered`, PointerOver states on theme keys). The keys are the field's
+  `DesktopKeys` commands, read by the WinUI text box before it acts (Platforms/Windows); a phone is not changed.
 - **Answering at once** (the owner's lag notes): every section's view is made once and kept in the host (the one shown
   visible, the others hidden), and with `PrebuildSections` (on by default) the tabs, their labs and the All labs sheet are
   made ahead, one a turn of the UI thread after Home first shows; a tap switches first and tells the view it is shown after

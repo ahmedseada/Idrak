@@ -120,8 +120,10 @@
         <Border Grid.Row="3" Style="{DynamicResource IdrakComposer}">
             <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
                 <Label Text="{Binding ToolName}" Style="{DynamicResource IdrakMono}" TextColor="{DynamicResource IdrakAccentText}" VerticalOptions="Center" />
+                <!-- Enter runs (Completed); on a desktop keyboard the arrows recall the history. -->
                 <Entry x:Name="Line" Grid.Column="1" Text="{Binding Input}" Placeholder="models list" FontFamily="{DynamicResource IdrakFontMono}" ReturnType="Go"
-                       IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" Keyboard="Plain" Completed="OnCompleted" VerticalOptions="Center" />
+                       IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" Keyboard="Plain" Completed="OnCompleted" VerticalOptions="Center"
+                       ctl:DesktopKeys.UpCommand="{Binding PreviousCommand}" ctl:DesktopKeys.DownCommand="{Binding NextCommand}" />
                 <Button Grid.Column="2" Text="↑" Command="{Binding PreviousCommand}" Style="{DynamicResource IdrakChip}" SemanticProperties.Description="The line before" />
                 <Button Grid.Column="3" Text="↓" Command="{Binding NextCommand}" Style="{DynamicResource IdrakChip}" SemanticProperties.Description="The line after" />
                 <Grid Grid.Column="4">

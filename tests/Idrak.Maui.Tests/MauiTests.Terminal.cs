@@ -197,7 +197,7 @@ internal static partial class MauiTests
 
     private static void TerminalRunsIdrak()
     {
-        var runner = new IdrakCommandRunner();
+        var runner = new IdrakCommandRunner(allows: () => TerminalAllowance.None);              // a phone's: nothing beyond the library
         var serve = runner.Commands.FirstOrDefault(c => c.Name == "serve");
         Check(runner.Commands.Count > 20 && runner.Commands.Any(c => c.IsAvailable) && serve is { IsAvailable: false } && serve.Unavailable.Contains("the Idrak app", StringComparison.Ordinal),
             $"{runner.Commands.Count} commands; serve: {serve?.Unavailable}");
@@ -280,7 +280,7 @@ internal static partial class MauiTests
         // The settings page's Terminal part: found by the search, kept as idrak.terminal.*, applied at once.
         var page = new SettingsViewModel(app, new IdrakMauiSettings(store, new MemorySecretStore()), new IdrakStartupReport(ComputeResources.CacheFolder, "auto", [], folder));
         var part = page.Groups.Single(g => g.Title == "Terminal");
-        Check(part.Select(e => e.Setting.Key).SequenceEqual(["terminal.lines", "terminal.history", "terminal.history_shown", "terminal.suggestions", "terminal.folder"])
+        Check(part.Select(e => e.Setting.Key).SequenceEqual(["terminal.lines", "terminal.history", "terminal.history_shown", "terminal.suggestions", "terminal.folder", "terminal.allow"])
               && part.All(e => !e.Setting.NeedsRestart), string.Join(", ", part.Select(e => e.Setting.Key)));
         page.Query = "terminal working folder";
         Check(page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key).SequenceEqual(["terminal.folder"]), "found by the search");
@@ -293,6 +293,91 @@ internal static partial class MauiTests
         part.Single(e => e.Setting.Key == "terminal.folder").Text = "";
         Check(page.SaveAsync().GetAwaiter().GetResult() && app.TerminalLines == 7 && vm.LineLimit == 7 && vm.WorkingFolder == folder && store.Get("idrak.terminal.lines") == "7"
               && !page.IsRestartPending, page.Message);
+    }
+
+    private static void TerminalAllowed()
+    {
+        // The platform's default, decided at run time: both on a desktop, none on a phone, which holds any choice to none.
+        Check(TerminalAllowances.For(null, desktop: true) == TerminalAllowances.Desktop && TerminalAllowances.For(null, desktop: false) == TerminalAllowance.None
+              && TerminalAllowances.For(TerminalAllowance.NetworkListener, desktop: false) == TerminalAllowance.None
+              && TerminalAllowances.For(TerminalAllowance.ChildProcesses, desktop: true) == TerminalAllowance.ChildProcesses, "the allowance by platform");
+        Check(IdrakPlatform.IsDesktop && TerminalAllowances.Default == TerminalAllowances.Desktop && new IdrakMauiOptions().TerminalAllowInEffect == TerminalAllowances.Desktop,
+            "this machine is a desktop: both by default");
+
+        // The setting (the Terminal part, idrak.terminal.allow): each name read back, a bad one refused naming what is taken, kept between runs.
+        var setting = IdrakMauiSettings.Definitions.Single(d => d.Key == "terminal.allow");
+        var app = new IdrakMauiOptions();
+        Check(setting is { Group: "Terminal", Kind: IdrakSettingKind.Choice, NeedsRestart: false, Placeholder: "programs+listener" } && setting.Get(app).Length == 0
+              && setting.Choices.SequenceEqual(["default", "programs+listener", "programs", "listener", "none"]) && setting.Summary.Contains("Console input is never allowed", StringComparison.Ordinal),
+            $"{setting.Group} {setting.Placeholder} {string.Join(", ", setting.Choices)}");
+        foreach (var (text, allow) in new (string, TerminalAllowance?)[]
+                 {
+                     ("none", TerminalAllowance.None), ("programs", TerminalAllowance.ChildProcesses), ("listener", TerminalAllowance.NetworkListener),
+                     ("programs+listener", TerminalAllowances.Desktop), ("all", TerminalAllowances.Desktop), ("server, programs", TerminalAllowances.Desktop), ("default", null), ("", null),
+                 })
+        {
+            setting.Set(app, text);
+            Check(app.TerminalAllow == allow && (allow is { } a ? setting.Get(app) == TerminalAllowances.Name(a) : setting.Get(app).Length == 0), $"'{text}': {app.TerminalAllow}, read back '{setting.Get(app)}'");
+        }
+
+        Check(Throws<FormatException>(() => setting.Set(app, "console"), "programs+listener"), "console input is not a choice");
+        var store = new MemorySettingsStore();
+        var saved = new IdrakMauiOptions { TerminalAllow = TerminalAllowance.ChildProcesses };
+        new IdrakMauiSettings(store, new MemorySecretStore()).SaveAsync(saved).GetAwaiter().GetResult();
+        var read = new IdrakMauiOptions();
+        new IdrakMauiSettings(store, new MemorySecretStore()).LoadIntoAsync(read).GetAwaiter().GetResult();
+        Check(store.Get("idrak.terminal.allow") == "programs" && read.TerminalAllow == TerminalAllowance.ChildProcesses, $"kept: {store.Get("idrak.terminal.allow")}, read {read.TerminalAllow}");
+
+        // On: serve, cluster start and test are listed as available and run, not refused for what they need; shell and
+        // serve --mcp (console input) still refused with why. The same list while the setting stays.
+        app.TerminalAllow = null;
+        var runner = new IdrakCommandRunner(allows: () => app.TerminalAllowInEffect);
+        var on = runner.Commands;
+        TerminalCommand Listed(string name) => runner.Commands.Single(c => c.Name == name);
+        Check(Listed("serve").IsAvailable && Listed("cluster start").IsAvailable && Listed("test").IsAvailable && Listed("ui").IsAvailable
+              && Listed("shell") is { IsAvailable: false, Unavailable: var shell } && shell.Contains("keyboard", StringComparison.Ordinal) && ReferenceEquals(runner.Commands, on),
+            $"on: serve {Listed("serve").IsAvailable}, test {Listed("test").IsAvailable}, shell {Listed("shell").Unavailable}");
+        string folder = Temp("terminal-allow");
+        var vm = new TerminalViewModel(runner, new MemorySettingsStore(), folder, app: app);
+        var serve = vm.RunAsync("serve Qwen/Qwen3-0.6B -p 0").GetAwaiter().GetResult();
+        string said = string.Join("\n", vm.Lines.Select(l => l.Text));
+        Check(serve is not null && !said.Contains("network listener", StringComparison.Ordinal) && said.Contains("no server is registered here", StringComparison.Ordinal),
+            $"serve allowed (this process registers no server, as the app's does not yet): {serve}; {said}");
+        vm.Clear();
+        var mcp = vm.RunAsync("serve Qwen/Qwen3-0.6B --mcp").GetAwaiter().GetResult();
+        Check(mcp is { Refused: true } && vm.Lines.Any(l => l.Text.Contains("standard input", StringComparison.Ordinal)), $"serve --mcp: {mcp}");
+        bool inCheckout = false;
+        for (var up = new DirectoryInfo(folder); up is not null; up = up.Parent)
+        {
+            inCheckout |= File.Exists(Path.Combine(up.FullName, "Idrak.slnx"));
+        }
+
+        if (!inCheckout)                                                         // outside a source checkout, idrak test only says so (it runs no tests)
+        {
+            vm.Clear();
+            var test = vm.RunAsync("test").GetAwaiter().GetResult();
+            Check(test is { Refused: false, ExitCode: 1 } && vm.Lines.Any(l => l.Text.Contains("not inside an Idrak source checkout", StringComparison.Ordinal)),
+                $"test allowed: {test}; {string.Join(" | ", vm.Lines.Select(l => l.Text))}");
+        }
+
+        // Off: refused with the reason, and the commands pane and the suggestions grey them when the page is next shown.
+        var serveRow = vm.Groups.SelectMany(g => g).Single(s => s.Text == "serve");
+        Check(serveRow.IsAvailable, "the pane: serve available while on");
+        app.TerminalAllow = TerminalAllowance.None;
+        Check(!ReferenceEquals(runner.Commands, on) && !Listed("serve").IsAvailable && Listed("serve").Unavailable.Contains("network listener", StringComparison.Ordinal)
+              && Listed("test").Unavailable.Contains("other programs", StringComparison.Ordinal), $"off: {Listed("serve").Unavailable}; {Listed("test").Unavailable}");
+        vm.Refresh();
+        vm.Input = "ser";
+        Check(vm.Groups.SelectMany(g => g).Single(s => s.Text == "serve") is { IsUnavailable: true, Reason.Length: > 0 } && vm.Suggestions.Single(s => s.Text == "serve").IsUnavailable,
+            "the pane and the suggestions follow the setting");
+        vm.Clear();
+        var refused = vm.RunAsync("serve Qwen/Qwen3-0.6B").GetAwaiter().GetResult();
+        Check(refused is { Refused: true } && vm.Lines.Any(l => l.Text.Contains("is not available in the Idrak app: it opens a network listener", StringComparison.Ordinal)),
+            $"off: {refused}; {string.Join(" | ", vm.Lines.Select(l => l.Text))}");
+        app.TerminalAllow = TerminalAllowance.NetworkListener;
+        vm.Refresh();
+        Check(vm.Groups.SelectMany(g => g).Single(s => s.Text == "serve").IsAvailable && vm.Groups.SelectMany(g => g).Single(s => s.Text == "test").IsUnavailable,
+            "the listener alone: serve on, test off");
     }
 
     // A writer that holds the command until let go (to keep a run going).

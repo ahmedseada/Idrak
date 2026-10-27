@@ -78,6 +78,10 @@ public partial class SegmentedSectionView : AdaptiveView, IPrebuilt
     public override bool ShowFeature(string feature) => ViewModel.Select(feature);
 
     /// <inheritdoc />
+    /// <remarks>The shown lab's sheet.</remarks>
+    public override bool CloseSheet() => _current is IHostedView lab && lab.CloseSheet();
+
+    /// <inheritdoc />
     protected override void Arrange(bool wide)
     {
         // Wide: the heading, then the control beside it (360 wide), then the tune button; narrow: the control under them.

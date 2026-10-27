@@ -66,7 +66,7 @@ internal sealed class ServeHost
 
     public IReadOnlyList<ServedModel> Served { get; }
 
-    /// <summary>Starts the server, prints where it listens, waits for Ctrl+C or <c>idrak server stop</c>, then drains open requests.</summary>
+    /// <summary>Starts the server, prints where it listens, waits for Ctrl+C, the host's stop or <c>idrak server stop</c>, then drains open requests.</summary>
     public int Run(Action<string>? started = null)
     {
         if (Settings.RequestLog is { } log)
@@ -93,6 +93,8 @@ internal sealed class ServeHost
         int port = new Uri(url).Port;
         string local = Settings.Host is "0.0.0.0" or "*" or "+" or "::" or "[::]" ? $"http://127.0.0.1:{port}" : url;
         string state = ServerState.Write(_context, local, port, Served.Select(m => m.Name));
+        // The host's stop (an app's Stop button) ends the server as Ctrl+C does the console's: the requests answered, closed.
+        using var hostStop = _context.Cancellation.Register(() => app.Lifetime.StopApplication());
         try
         {
             Announce(local);

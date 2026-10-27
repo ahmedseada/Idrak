@@ -83,8 +83,13 @@ public static class MauiProgram
         builder.Services.AddSingleton(new OcrLabOptions { Weights = "int8" });
 
         // The Terminal page runs the idrak commands in the app's own process (Idrak.Cli.Commands): one runner for the app (one
-        // command at a time), allowing nothing an app cannot do (no child process, no network listener, no console input).
-        builder.Services.AddSingleton<ICommandRunner>(new IdrakCommandRunner());
+        // command at a time), allowing what the Terminal's setting allows (other programs and a network listener on a desktop
+        // by default, nothing on a phone), read at each command; never console input (the page is the shell).
+        builder.Services.AddSingleton<ICommandRunner>(sp =>
+        {
+            var options = sp.GetRequiredService<IdrakMauiOptions>();
+            return new IdrakCommandRunner(allows: () => options.TerminalAllowInEffect);
+        });
 
         // The app's own features, after the library's (UseIdrak registered those).
         AppFeatures.Register();

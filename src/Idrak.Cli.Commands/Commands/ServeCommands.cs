@@ -37,7 +37,11 @@ internal sealed class ServeCommand : Command
     public override string Summary => "Serve models over the chat API and the OpenAI-style API on one port";
 
     /// <inheritdoc />
-    public override CommandNeeds Needs => CommandNeeds.NetworkListener | CommandNeeds.ConsoleInput;
+    /// <remarks>
+    /// Its HTTP server's listener, as a host lists it: a host that allows a listener but no console input lists serve as
+    /// available, and refuses only <c>--mcp</c> (<see cref="NeedsFor"/>).
+    /// </remarks>
+    public override CommandNeeds Needs => CommandNeeds.NetworkListener;
 
     /// <inheritdoc />
     public override CommandNeeds NeedsFor(CommandContext context) => context.Flag("--mcp") ? CommandNeeds.ConsoleInput : CommandNeeds.NetworkListener;

@@ -15,7 +15,7 @@
                 <Border Style="{DynamicResource IdrakRailPill}">
                     <Border.Triggers>
                         <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
-                            <Setter Property="Background" Value="{DynamicResource IdrakBrushPill}" />
+                            <Setter Property="Style" Value="{DynamicResource IdrakRailPillOn}" />
                         </DataTrigger>
                     </Border.Triggers>
                     <ctl:IconView Glyph="{Binding Icon}" Size="22" Stroke="{DynamicResource IdrakTextFaint}">
