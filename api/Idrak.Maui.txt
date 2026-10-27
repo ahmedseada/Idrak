@@ -2642,7 +2642,7 @@ public sealed class Idrak.Maui.ViewModels.TerminalViewModel : Idrak.Maui.ViewMod
   public bool IsRunning { get; }
   public bool Recall(bool older)
   public bool ShowCommands { get; set; }
-  public const string HistoryKey = "idrak.terminal.history"
+  public const string HistoryKey = "idrak.terminal.history_lines"
   public event System.EventHandler? LinesAdded
   public int HistoryLimit { get; }
   public int HistoryShown { get; }

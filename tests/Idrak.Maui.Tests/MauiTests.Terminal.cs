@@ -282,6 +282,8 @@ internal static partial class MauiTests
         var part = page.Groups.Single(g => g.Title == "Terminal");
         Check(part.Select(e => e.Setting.Key).SequenceEqual(["terminal.lines", "terminal.history", "terminal.history_shown", "terminal.suggestions", "terminal.folder", "terminal.allow"])
               && part.All(e => !e.Setting.NeedsRestart), string.Join(", ", part.Select(e => e.Setting.Key)));
+        Check(IdrakMauiSettings.Definitions.All(d => IdrakMauiSettings.Prefix + d.Key != TerminalViewModel.HistoryKey),
+              "the saved history lines have a key of their own: no setting is stored under it (saving Settings would write over them)");
         page.Query = "terminal working folder";
         Check(page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key).SequenceEqual(["terminal.folder"]), "found by the search");
         page.Query = "terminal";

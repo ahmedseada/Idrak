@@ -216,7 +216,7 @@ internal sealed class TerminalWriter(TerminalBuffer buffer, bool error) : TextWr
 public sealed class TerminalViewModel : ViewModel, IDisposable
 {
     /// <summary>What the history's key in the settings store is.</summary>
-    public const string HistoryKey = IdrakMauiSettings.Prefix + "terminal.history";
+    public const string HistoryKey = IdrakMauiSettings.Prefix + "terminal.history_lines";   // the lines themselves: "terminal.history" is the setting of how many are kept
 
     private readonly ICommandRunner? _runner;
     private readonly ISettingsStore _settings;
