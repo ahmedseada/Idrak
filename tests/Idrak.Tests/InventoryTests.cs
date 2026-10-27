@@ -38,7 +38,7 @@ internal abstract partial class DesktopTests : Tests
     private static readonly (string Target, string[] Users)[] FriendAssemblies =
     [
         ("Idrak", ["Idrak.Text"]),
-        ("Idrak.Gpu", ["Idrak.Cli"]),
+        ("Idrak.Gpu", ["Idrak.Cli.Commands"]),
     ];
 
     private const string InventoryPath = "plans/10-abstraction-inventory.md", AllowListPath = "tests/Idrak.Tests/data/abstraction-allow-list.txt",

@@ -59,7 +59,7 @@ the profiles**. Same topology file, same launcher, same training code on every t
   within float rounding, exactly on whole numbers (found while writing C0's suite; the plan had claimed bit equality).
 - **Nothing fixed.** Every size, chunk, bucket, timeout, retry count, port, address, wire type, sync interval, placement
   and the transport choice is a library option (`ClusterOptions`, `SimulationOptions`) with an
-  environment variable, listed in `src/Idrak.Cli/Shared/EnvironmentVariables.cs` under a new group `"Cluster"` (the
+  environment variable, listed in `src/Idrak.Cli.Commands/Shared/EnvironmentVariables.cs` under a new group `"Cluster"` (the
   existing test that scans sources for names read and fails when one is unlisted covers them).
 - **Tests.** Only `IDRAK_DEVICES=cpu IDRAK_FILTER="cluster:"` (and the `"cluster: cli"` subset) here; multi-process tests
   start ranks as child processes over loopback; the owner runs CUDA, Vulkan, the three-machine LAN and the rental from
@@ -1576,7 +1576,7 @@ reduced sum it gathers. On the Spirals model the slice lost 1.47e-3 (batches of 
 each tensor a slice) lost 2.71e-3 at worst (`model.embed_tokens.weight`; 1.33e-3 of the whole model's largest gradient, the
 README's figure, a measure a slice cannot take), which as a default would have refused the last.
 
-Command line. `SuggestionLine` (`src/Idrak.Cli/Commands/Cluster/ClusterSuggestions.cs`) shows each suggestion once a
+Command line. `SuggestionLine` (`src/Idrak.Cli.Commands/Commands/Cluster/ClusterSuggestions.cs`) shows each suggestion once a
 command (per output, so a profile's cold and warm runs show it once) as `suggested: SETTING = VALUE (cluster on DEVICE):
 REASON`, taking the progress lines drawn on the error output off the screen first (`ProgressLine.EraseOn`, new); it is
 subscribed by `cluster sim`'s `RunRanks` (so `cluster sim`, `cluster replay` and the dashboard's runs always measure) and by

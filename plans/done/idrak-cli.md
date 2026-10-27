@@ -545,7 +545,7 @@ against its conformance data, and the result is plain characters (presentation f
 Presentation Forms-B draws joined, one cell each. What it cannot control is the font (a console font without Arabic
 shows boxes) and terminals that misreport themselves (`--lang-render` overrides).
 
-How it works (src/Idrak.Cli/Shared, on Idrak.Imaging's text classes since plan 22, row 6f):
+How it works (src/Idrak.Cli.Commands/Shared, on Idrak.Imaging's text classes since plan 22, row 6f):
 
 - Idrak.Imaging `Shaping/Bidi.cs`: the Unicode Bidirectional Algorithm (UAX #9) for one paragraph, complete: explicit
   embeddings, overrides and isolates (X1-X10), weak types (W1-W7), paired brackets (N0), neutrals (N1-N2), implicit
@@ -741,7 +741,7 @@ Wrote     tune.json → idrak tune --config tune.json
   text, its value options and flags with their short forms, and `Run(CommandContext)` returning the exit code.
   `CommandContext` holds the parsed options, the positional arguments, the config, the device, and output helpers
   (`Write`, `Detail`, `Table`, `WriteJson`, `Error`).
-- Shared helpers live in `src/Idrak.Cli/Shared/` (model resolution and loading with `--weights`/`--kv`, progress,
+- Shared helpers live in `src/Idrak.Cli.Commands/Shared/` (model resolution and loading with `--weights`/`--kv`, progress,
   terminal detection, confirmation questions); a group adds helpers in new files there rather than editing another
   group's.
 - `idrak-tune` and `idrak-data`: their code moves behind `idrak tune` and `idrak data`. Planned as thin forwarders

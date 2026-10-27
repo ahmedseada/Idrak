@@ -367,7 +367,7 @@ internal abstract partial class DesktopTests : Tests
         string folder = TempFolder(), cache = Path.Combine(folder, "cache"), config = Path.Combine(folder, "config.json");
         var serve = CommandTable.All.First(c => c.Name == "serve");
         var ps = CommandTable.All.First(c => c.Name == "server ps");
-        string? old = Environment.GetEnvironmentVariable(ServeHost.PortVariable);
+        string? old = Environment.GetEnvironmentVariable(ServeOptions.PortVariable);
 
         (int Port, string Url) Chosen(params string[] port)
         {
@@ -379,7 +379,7 @@ internal abstract partial class DesktopTests : Tests
 
             using var forServe = new CommandContext(serve, [], options, [], new StringWriter(), new StringWriter());
             using var forClient = new CommandContext(ps, [], options, [], new StringWriter(), new StringWriter());
-            return (ServeHost.ReadSettings(forServe).Port, ServerClient.BaseUrl(forClient));
+            return (ServeOptions.ReadSettings(forServe).Port, ServerClient.BaseUrl(forClient));
         }
 
         bool Refused(Action action)
@@ -397,10 +397,10 @@ internal abstract partial class DesktopTests : Tests
 
         try
         {
-            Environment.SetEnvironmentVariable(ServeHost.PortVariable, null);
-            Check(ServeHost.DefaultPort == 7317 && Chosen() == (7317, "http://127.0.0.1:7317"), $"the default port: {Chosen()}");
+            Environment.SetEnvironmentVariable(ServeOptions.PortVariable, null);
+            Check(ServeOptions.DefaultPort == 7317 && Chosen() == (7317, "http://127.0.0.1:7317"), $"the default port: {Chosen()}");
             Check(ServeCli("config", "set", "serve.port", "8123", "-C", config).Code == 0 && Chosen() == (8123, "http://127.0.0.1:8123"), $"config serve.port: {Chosen()}");
-            Environment.SetEnvironmentVariable(ServeHost.PortVariable, "8124");
+            Environment.SetEnvironmentVariable(ServeOptions.PortVariable, "8124");
             Check(Chosen() == (8124, "http://127.0.0.1:8124"), $"IDRAK_PORT before the config: {Chosen()}");
             Check(Chosen("8125") == (8125, "http://127.0.0.1:8125") && Chosen("0").Port == 0, $"--port before IDRAK_PORT: {Chosen("8125")}");
 
@@ -411,32 +411,32 @@ internal abstract partial class DesktopTests : Tests
                 ["url"] = "http://127.0.0.1:9301", ["pid"] = Environment.ProcessId, ["started"] = DateTimeOffset.UtcNow.ToString("O"), ["models"] = new JsonArray(),
             }.ToJsonString());
             Check(Chosen().Url == "http://127.0.0.1:8124", "IDRAK_PORT before the running server");
-            Environment.SetEnvironmentVariable(ServeHost.PortVariable, null);
+            Environment.SetEnvironmentVariable(ServeOptions.PortVariable, null);
             Check(Chosen() == (8123, "http://127.0.0.1:9301"), $"the running server before the config for clients, the config for serve: {Chosen()}");
 
-            Environment.SetEnvironmentVariable(ServeHost.PortVariable, "port");
+            Environment.SetEnvironmentVariable(ServeOptions.PortVariable, "port");
             Check(Refused(() => Chosen()), "IDRAK_PORT that is not a number is a usage error");
-            Environment.SetEnvironmentVariable(ServeHost.PortVariable, "70000");
+            Environment.SetEnvironmentVariable(ServeOptions.PortVariable, "70000");
             Check(Refused(() => Chosen()), "IDRAK_PORT out of range is a usage error");
-            Environment.SetEnvironmentVariable(ServeHost.PortVariable, null);
+            Environment.SetEnvironmentVariable(ServeOptions.PortVariable, null);
             Check(ServeCli("config", "set", "serve.port", "\"8126\"", "-C", config).Code == 0 && Chosen().Port == 8126, "serve.port as text");
             Check(ServeCli("config", "set", "serve.port", "70000", "-C", config).Code == 0 && Refused(() => Chosen()), "serve.port out of range is a usage error");
             Check(ServeCli("serve", TestData("gguf/tiny-qwen3-q8.gguf"), "-p", "65536").Code == 2, "--port out of range is a usage error");
         }
         finally
         {
-            Environment.SetEnvironmentVariable(ServeHost.PortVariable, old);
+            Environment.SetEnvironmentVariable(ServeOptions.PortVariable, old);
             Directory.Delete(folder, recursive: true);
         }
 
         string help = ServeCli("serve", "--help").Output;
-        Check(help.Contains("7317", StringComparison.Ordinal) && help.Contains("-p 11434", StringComparison.Ordinal) && help.Contains(ServeHost.PortVariable, StringComparison.Ordinal)
+        Check(help.Contains("7317", StringComparison.Ordinal) && help.Contains("-p 11434", StringComparison.Ordinal) && help.Contains(ServeOptions.PortVariable, StringComparison.Ordinal)
               && help.Contains("serve.port", StringComparison.Ordinal), $"serve's help names the default, the variable, the config key and -p 11434: {help}");
-        Check(Idrak.Cli.Shared.EnvironmentVariables.Find(ServeHost.PortVariable) is { Group: "The tool" } variable && variable.Default.Contains("7317", StringComparison.Ordinal)
+        Check(Idrak.Cli.Shared.EnvironmentVariables.Find(ServeOptions.PortVariable) is { Group: "The tool" } variable && variable.Default.Contains("7317", StringComparison.Ordinal)
               && variable.Commands.Contains("serve") && variable.Commands.Contains("ping"), "IDRAK_PORT in the environment table, with its default");
         foreach (string name in new[] { "ui", "api", "ping", "server ps", "server stop" })
         {
-            Check(Help.For(CommandTable.All.First(c => c.Name == name)).Contains(ServeHost.PortVariable, StringComparison.Ordinal), $"{name}'s help names {ServeHost.PortVariable}");
+            Check(Help.For(CommandTable.All.First(c => c.Name == name)).Contains(ServeOptions.PortVariable, StringComparison.Ordinal), $"{name}'s help names {ServeOptions.PortVariable}");
         }
     }
 

@@ -52,7 +52,7 @@ existing checkpoints in the diffusers layout (Stable Diffusion 1.x and 2.x first
   `Idrak.slnx`, no `tools/diffusion`, no `tests/Idrak.Tests/data/diffusion`.
 - A word-bounded, case-insensitive search of `src/`, `samples/`, `tests/`, `tools/`, `docs/` and `plans/` for diffus,
   unet, u-net, vae, ddpm, ddim, timestep, noise schedule, denois and latent finds no code: the only hits are the
-  `unet.json` example of `idrak train` (`src/Idrak.Cli/Commands/Train/TrainingCommands.cs:79`, a plain convolutional
+  `unet.json` example of `idrak train` (`src/Idrak.Cli.Commands/Commands/Train/TrainingCommands.cs:79`, a plain convolutional
   segmenter) and the README's segmentation example (`README.md:1036`), plan 10's package table, and the test that names
   a segmenter file `unet` (`tests/Idrak.Tests/CliVisionTests.cs:357`). There is no noise schedule, sampler, timestep
   embedding, VAE, cross-attention block, denoising loss or image generation command anywhere.
@@ -74,7 +74,7 @@ What exists and diffusion reuses (file: line at 82d84937):
 | Images | `ImageData` (`src/Idrak.Abstraction/Data/ImageData.cs:16`: float pixels or byte planes, `Resize`), `ImageCodecs` / `ImageEncoders` (`Data/ImageEncoders.cs:33`; png and netpbm in core, jpeg in Imaging), `ImageFolderSource` (`src/Idrak.Imaging/ImageFolderSource.cs:31-73`; unlabelled files at a fixed size), `ImagePreprocessor` (`Imaging/ImagePreprocessor.cs:67`; resize, crop, rescale, normalize, on the device through `ResizeNormalize`), the `Augmentations` registry (flip, resized-crop, affine, color-jitter, ...), `AugmentedImageLoader` (`src/Idrak.Vision/AugmentedImageLoader.cs:82`; worker threads, batches ahead sized from free memory) |
 | Checkpoints | `SafeTensorsReader : ITensorStore` (`src/Idrak/Models/SafeTensors.cs:38`; F32, F16, BF16 only: `SafeTensorType` `:14`), `SafeTensorsWriter`, `CheckpointFormats`, `StoredWeights.Conv2d` / `BatchNorm` / `Linear` (`Models/StoredWeights.cs:68, 94, 129`: one tensor read straight into a layer; no `GroupNorm` or `LayerNorm` helper yet), `ImageModels.Load` and `IImageModelFamily` (core, `Idrak.Models.Abstractions`), `PretrainedModel.Create` / `Load` / `SaveHuggingFace`, `BpeTokenizer` (`Models/BpeTokenizer.cs`; normalizers `:45-50, :153`), `ModelPackage` (.ikm) |
 | Text | `TextEncoder : IEmbedder` (`src/Idrak.Nlp/Retrieval/TextEncoder.cs:19`) gives pooled embeddings only, not per-token hidden states; a CLIP text model is core's `Embedding` + `PositionalEncoding` + `TransformerEncoderLayer(causal: true)` + `LayerNorm`, which is a family's job (plug-in) |
-| Command line | `Command` (`src/Idrak.Cli/Command.cs:7-41`: `Name`, `Aliases`, `Summary`, `Usage`, `ValueOptions`, `Flags`, `ShortForms`, `BeforePlugins`, `Run`), `CommandTable.cs:21` (`("Train", TrainCommands.All)`), `TrainCommands.All` (`Commands/TrainCommands.cs:11-27`: tune, train, resume, runs, predict, package, distill, create, pretrain), `-P/--plugin`, `RunLogs` (`Shared/RunLogs.cs:55 RunsFolder, :194 RunLogWriter`), `ProgressLine`, `EnvironmentVariables.cs:29-74` (the `OnDevice`, `Models`, `Data` command lists), `MeasuredBatches` (`Commands/Train/ImageModelSupport.cs:183`, internal to the CLI: plan 13 noted the ArabicOcr app had to copy it), `DeviceMemory` (`Shared/DeviceMemory.cs:12`) |
+| Command line | `Command` (`src/Idrak.Cli.Commands/Command.cs:7-41`: `Name`, `Aliases`, `Summary`, `Usage`, `ValueOptions`, `Flags`, `ShortForms`, `BeforePlugins`, `Run`), `CommandTable.cs:21` (`("Train", TrainCommands.All)`), `TrainCommands.All` (`Commands/TrainCommands.cs:11-27`: tune, train, resume, runs, predict, package, distill, create, pretrain), `-P/--plugin`, `RunLogs` (`Shared/RunLogs.cs:55 RunsFolder, :194 RunLogWriter`), `ProgressLine`, `EnvironmentVariables.cs:29-74` (the `OnDevice`, `Models`, `Data` command lists), `MeasuredBatches` (`Commands/Train/ImageModelSupport.cs:183`, internal to the CLI: plan 13 noted the ArabicOcr app had to copy it), `DeviceMemory` (`Shared/DeviceMemory.cs:12`) |
 | Registries and kit | `SlotTable<TKey, TValue>` (`src/Idrak.Abstraction/Overrides/SlotTable.cs:32`: `Register` `:128`, `RegisterDefault` `:161`, `Find` `:210`, `Unregister`, `SetPolicy`, `Origin`, `Default`), the pattern every registry copies (`RandomTextSources`, `src/Idrak.Nlp/Abstractions/RandomTextData.cs:31`), one `LibraryRegistrations` per assembly (six exist), `Idrak.Abstraction.Testing` (`ContractSuite<T>`, `Conformance.CheckX`, `DeviceCases.*` replayed per device, `OperationCalls.g.cs`) |
 | References | `tools/vlm/make_tiny_*.py`, `tools/pytorch/*_reference.py`; fixtures under `tests/Idrak.Tests/data/<name>/` with `manifest.json` and a README (tolerances as `vlm-tuning/README.md`) |
 
@@ -157,7 +157,7 @@ every model family is a plug-in sample under `samples/`. From the repository's o
 - **A command** is an `internal sealed class XCommand : Command` added to a command list, with an Arabic `Summary` entry
   (`Messages.Arabic.cs`), `Usage` sections Arguments, Options, Examples, `-x, --long` short forms, required options as
   `UsageException`, library exceptions turned into `UsageException`, progress through `ProgressLine`, `-j` JSON,
-  `ExitCodes`; the command added to the lists in `src/Idrak.Cli/Shared/EnvironmentVariables.cs`. The tests "cli
+  `ExitCodes`; the command added to the lists in `src/Idrak.Cli.Commands/Shared/EnvironmentVariables.cs`. The tests "cli
   polish", "cli health", "cli arabic" and "cli train data" check all of this.
 - **A new device operation** is a `NameKernel` on `Backend` with a `<summary>` and a host-fallback body, then
   `python3 tools/operations/generate.py` (it writes `Operations.g.cs`, `Backend.Operations.g.cs` and the kit's
@@ -521,7 +521,7 @@ run is"); D4 proves the block and its loss, not that quality.
 ## Phase D5: the generation API and `idrak diffuse`
 
 **Files.** `src/Idrak.Diffusion/ImageGenerator.cs`, `Guidance.cs`, `GenerationGraph.cs`;
-`src/Idrak.Abstraction/Devices/MeasuredBatches.cs` (moved from `src/Idrak.Cli/Commands/Train/ImageModelSupport.cs:183`,
+`src/Idrak.Abstraction/Devices/MeasuredBatches.cs` (moved from `src/Idrak.Cli.Commands/Commands/Train/ImageModelSupport.cs:183`,
 generalised: `MeasuredBatches(Device, int? ceiling, Func<long> free)`, `Run(items, batch => ...)`; the CLI and Vision's
 `ModelDetector` / `ImageModelPredictors` call it); `src/Idrak.Cli/Commands/Run/DiffuseCommand.cs`, `RunCommands.cs`
 (+1), `Shared/EnvironmentVariables.cs` ("diffuse" in `OnDevice` and `Models`), `Messages.Arabic.cs`.
@@ -609,7 +609,7 @@ halving); a shared `MemoryLadder` in `Idrak.Abstraction` is proposed to the owne
 centre-cropped or letterboxed to the resolution by `ImagePreprocessor`, `RandomFlip` and any `Augmentations` pipeline on
 worker threads through `AugmentedImageLoader`'s producer, pixels scaled to [-1, 1]), `Data/CaptionSource.cs`
 ("captions": JSON Lines `{"image": "...", "text": "..."}` beside the images or in a zip, read as plan 19's record sources
-read theirs); `src/Idrak.Cli/Commands/Train/CreateCommand.cs` (a `"diffusion"` spec: `{"format": "idrak-create/1",
+read theirs); `src/Idrak.Cli.Commands/Commands/Train/CreateCommand.cs` (a `"diffusion"` spec: `{"format": "idrak-create/1",
 "architecture": "IdrakDiffusionPipeline", "diffusion": {...}}` → `DiffusionModels.Create`), `PretrainCommand.cs`
 (dispatch on `model_index.json`: diffusion options below), `ResumeCommand`, `RunsShowCommand` (steps, loss, EMA loss).
 

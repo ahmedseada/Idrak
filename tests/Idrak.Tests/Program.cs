@@ -47,6 +47,10 @@ Idrak.Abstraction.Devices.DeviceProviders.Register(new Tests.MinimalProvider());
 // child process (the cluster ranks) finds them; a test of a family's registration takes it away and puts it back.
 TestSuite.Prepare();
 
+// The idrak tool's servers (serve, ui, the cluster dashboard: ASP.NET Core), registered as its Program does, since the tests
+// run its commands in this process (CommandLine.Run).
+Idrak.Cli.Commands.Serve.CommandServers.Register(new Idrak.Cli.AspNetCoreServers());
+
 // The tests never read this machine's calibrated link profiles (plan 23, C8: idrak cluster calibrate keeps them in the
 // tuning cache, where every topology would pick them up): a file nobody writes, unless a run names one. Child processes inherit it.
 if (Environment.GetEnvironmentVariable("IDRAK_CLUSTER_PROFILES_FILE") is null)

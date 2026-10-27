@@ -767,7 +767,7 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 What each assembly `Idrak.Gpu` names in `InternalsVisibleTo` (the tests aside) references among its non-public types
 and members, read from that assembly's metadata. Phases 2 and 4 make each one public contract, or justify it line by line.
 
-### Idrak.Cli
+### Idrak.Cli.Commands
 
 8 members on 8 types.
 

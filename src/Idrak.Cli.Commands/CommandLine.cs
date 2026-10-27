@@ -1,0 +1,538 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using Idrak.Abstraction.Plugins;
+using Idrak.Audio.Plugins;
+using Idrak.Cli.Shared;
+using Idrak.Reinforcement.Plugins;
+using Idrak.Text.Plugins;
+using Idrak.Vision.Plugins;
+
+namespace Idrak.Cli;
+
+/// <summary>
+/// Parses <c>idrak WORDS... [arguments] [options]</c>: the longest run of leading words that names a command selects it
+/// ("cache info" before "cache"), then options (<c>--name value</c>, <c>--name=value</c>, flags) and positional
+/// arguments in any order; <c>--</c> ends the options.
+/// </summary>
+internal static class CommandLine
+{
+    /// <summary>
+    /// The plug-in packages the tool ships with (plans 26 and 27), in the order they are registered (text first: a vision,
+    /// audio or reinforcement family may build on a text one), each with its short name in <see cref="PluginPackagesVariable"/>. Registered before
+    /// every command: before <c>plugins list</c> takes its snapshot (they are the tool's own, not added) and before the
+    /// <c>--plugin</c> assemblies load (which can still take a family's place). Registering is idempotent and loads no
+    /// model: only the families' names.
+    /// </summary>
+    internal static readonly (string Name, IIdrakPluginPackage Package)[] PluginPackages =
+    [
+        ("text", TextPlugins.Package),
+        ("vision", VisionPlugins.Package),
+        ("audio", AudioPlugins.Package),
+        ("reinforcement", ReinforcementPlugins.Package),
+    ];
+
+    /// <summary>
+    /// The environment variable that chooses the plug-in packages registered at startup: unset or empty for all four,
+    /// "none" for none, or a comma list of their short names (text, vision, audio, reinforcement); <c>-P</c> plug-ins load
+    /// either way.
+    /// </summary>
+    internal const string PluginPackagesVariable = "IDRAK_PLUGIN_PACKAGES";
+
+    /// <summary>
+    /// The packages <paramref name="value"/> (the variable's value) chooses, in <see cref="PluginPackages"/>' order.
+    /// </summary>
+    /// <exception cref="UsageException">A name that is not one of the packages (the message names the variable).</exception>
+    internal static IReadOnlyList<(string Name, IIdrakPluginPackage Package)> ChosenPluginPackages(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value) || value.Trim().Equals("all", StringComparison.OrdinalIgnoreCase))
+        {
+            return PluginPackages;
+        }
+
+        if (value.Trim().Equals("none", StringComparison.OrdinalIgnoreCase))
+        {
+            return [];
+        }
+
+        var names = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (string name in names)
+        {
+            if (!PluginPackages.Any(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            {
+                throw new UsageException($"{PluginPackagesVariable}={value}: '{name}' is not a plug-in package; give none, all, or a comma list of "
+                                         + $"{string.Join(", ", PluginPackages.Select(p => p.Name))}.");
+            }
+        }
+
+        return [.. PluginPackages.Where(p => names.Contains(p.Name, StringComparer.OrdinalIgnoreCase))];
+    }
+
+    /// <summary>Registers every family of the packages <see cref="PluginPackagesVariable"/> chooses (once: again changes nothing).</summary>
+    internal static void RegisterPluginPackages()
+    {
+        foreach (var (_, package) in ChosenPluginPackages(Environment.GetEnvironmentVariable(PluginPackagesVariable)))
+        {
+            IdrakPlugins.RegisterAll(package);
+        }
+    }
+
+    /// <summary>The name of the idrak tool's program assembly (src/Idrak.Cli), which a localhost cluster starts once per rank.</summary>
+    internal const string ToolAssemblyName = "Idrak.Cli";
+
+    /// <summary>
+    /// The idrak tool's program (this library's commands with its Program): the process's own when it is the tool, else the
+    /// tool's assembly beside it (the tests), else this library (where there is no tool, such as an app, which allows no
+    /// child processes).
+    /// </summary>
+    internal static System.Reflection.Assembly ToolAssembly
+    {
+        get
+        {
+            if (System.Reflection.Assembly.GetEntryAssembly() is { } entry && entry.GetName().Name == ToolAssemblyName)
+            {
+                return entry;
+            }
+
+            try
+            {
+                return System.Reflection.Assembly.Load(new System.Reflection.AssemblyName(ToolAssemblyName));
+            }
+            catch (Exception e) when (e is FileNotFoundException or FileLoadException or BadImageFormatException)
+            {
+                return typeof(CommandLine).Assembly;
+            }
+        }
+    }
+
+    /// <summary>Runs the tool with <paramref name="args"/>; returns the exit code. Used by Main and by the tests.</summary>
+    public static int Run(IReadOnlyList<string> args, TextWriter output, TextWriter error) => Run(args, output, error, CommandHost.Console, default);
+
+    /// <summary>
+    /// Runs the tool with <paramref name="args"/> in a process that is <paramref name="host"/> (an app's, through
+    /// <see cref="IdrakCommands.Run"/>): a command that needs what it does not allow is refused before it runs, its input is
+    /// the host's, and <paramref name="cancellation"/> stops the command as Ctrl+C would. Returns the exit code.
+    /// </summary>
+    public static int Run(IReadOnlyList<string> args, TextWriter output, TextWriter error, CommandHost host, CancellationToken cancellation)
+    {
+        ArgumentNullException.ThrowIfNull(host);
+        if (host.Input is null && host.WorkingFolder is null)
+        {
+            return RunOn(args, output, error, host, cancellation);
+        }
+
+        var input = StandardInput.Override;
+        string? folder = null, home = null;
+        bool homeSet = false;
+        try
+        {
+            StandardInput.Override = host.Input ?? input;
+            if (host.WorkingFolder is { } working)
+            {
+                Directory.CreateDirectory(working);
+                folder = Environment.CurrentDirectory;
+                Environment.CurrentDirectory = working;
+                if (Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) is not { Length: > 0 } profile || !Path.IsPathRooted(profile))
+                {
+                    (home, homeSet) = (Environment.GetEnvironmentVariable("HOME"), true);
+                    Environment.SetEnvironmentVariable("HOME", working);       // ~ is the working folder where the platform has none
+                }
+            }
+
+            return RunOn(args, output, error, host, cancellation);
+        }
+        finally
+        {
+            StandardInput.Override = input;
+            if (folder is not null)
+            {
+                Environment.CurrentDirectory = folder;
+            }
+
+            if (homeSet)
+            {
+                Environment.SetEnvironmentVariable("HOME", home);
+            }
+        }
+    }
+
+    private static int RunOn(IReadOnlyList<string> args, TextWriter output, TextWriter error, CommandHost host, CancellationToken cancellation)
+    {
+        var commands = CommandTable.All;
+        try
+        {
+            args = Shared.ResponseFiles.Expand(args);
+        }
+        catch (UsageException e)
+        {
+            error.WriteLine(e.Message);
+            return ExitCodes.Usage;
+        }
+
+        IDisposable language;
+        try
+        {
+            language = Messages.Begin(ref args, ref output, ref error);
+        }
+        catch (UsageException e)
+        {
+            error.WriteLine(e.Message);
+            return ExitCodes.Usage;
+        }
+
+        using (language)
+        {
+            return Dispatch(commands, args, output, error, host, cancellation);
+        }
+    }
+
+    // Runs the command args name, once the language and the rendering are set up.
+    private static int Dispatch(IReadOnlyList<Command> commands, IReadOnlyList<string> args, TextWriter output, TextWriter error, CommandHost host,
+        CancellationToken cancellation)
+    {
+        if (args.Count > 0 && args[0] is "--version" or "-V")
+        {
+            args = ["version", .. args.Skip(1)];
+        }
+
+        if (args.Count == 0 || args[0] is "--help" or "-h" or "help" && args.Count == 1)
+        {
+            output.Write(Help.Overview(commands));
+            return args.Count == 0 ? ExitCodes.Usage : ExitCodes.Ok;
+        }
+
+        if (args[0] == "help")
+        {
+            // A concept page (idrak help topics, help devices, help exit codes) first, then the command of that name.
+            var target = Find(commands, args.Skip(1).ToList(), out _);
+            string? topic = Shared.HelpTopics.Page(string.Join(' ', args.Skip(1)));
+            if (topic is not null)
+            {
+                output.Write(target is null ? topic : target.Name == "env" ? Help.For(target) : $"{topic}\n{Help.For(target)}");
+                return ExitCodes.Ok;
+            }
+
+            output.Write(target is null ? Help.Overview(commands) : Help.For(target));
+            return target is null ? ExitCodes.Usage : ExitCodes.Ok;
+        }
+
+        var command = Find(commands, args, out int used);
+        if (command is null)
+        {
+            // A group word alone ("idrak cache") lists the group's commands.
+            var group = commands.Where(c => c.Name.StartsWith(args[0] + " ", StringComparison.Ordinal)).Select(c => "idrak " + c.Name).ToList();
+            error.WriteLine(group.Count > 0
+                ? Messages.T("'{0}' needs a subcommand: {1}.", args[0], string.Join(", ", group))
+                : Messages.T("Unknown command '{0}'. Run 'idrak help' for the commands.", string.Join(' ', args.TakeWhile(a => !a.StartsWith('-')).Take(2))));
+            return ExitCodes.Usage;
+        }
+
+        CommandContext? context = null;
+        Shared.CommandProfile? profile = null;
+        Shared.VerboseLines? verbose = null;
+        int exit = ExitCodes.Failed;
+        string? failure = null;
+        try
+        {
+            var (positional, options, flags) = Parse(command, args.Skip(used).ToList());
+            if (flags.Contains("--help"))
+            {
+                output.Write(Help.For(command));
+                return ExitCodes.Ok;
+            }
+
+            context = new CommandContext(command, positional, options, flags, output, error, host, cancellation);
+            if (host.Refusal(command.Name, command.NeedsFor(context)) is { } refusal)
+            {
+                throw new CommandUnavailableException(refusal);                // what it needs, before anything runs
+            }
+
+            profile = Shared.CommandProfile.Start(context, args);              // --profile: watched from here to the end
+            verbose = Shared.VerboseLines.Start(context);                      // --verbose: the library's work as it happens
+            RegisterPluginPackages();
+            command.BeforePlugins(context);
+            context.LoadPlugins();
+            exit = command.Run(context);
+            return exit = context.Stopped && exit == ExitCodes.Ok ? ExitCodes.Stopped : exit;   // a command that stops itself cleanly on the host's stop
+        }
+        catch (UsageException e)
+        {
+            error.WriteLine(e.Message);
+            error.WriteLine(Messages.T("Usage: {0}", $"idrak {command.Name} {command.Usage.Split('\n')[0]}".TrimEnd()));
+            (exit, failure) = (ExitCodes.Usage, e.Message);
+            return ExitCodes.Usage;
+        }
+        catch (CommandUnavailableException e)
+        {
+            error.WriteLine(e.Message);
+            (exit, failure) = (ExitCodes.Unavailable, e.Message);
+            return ExitCodes.Unavailable;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException && context is { Stopped: true })
+        {
+            // Whatever the cancelled call threw (a cancelled task, a closed connection), the reason is the host's stop.
+            error.WriteLine(Messages.T("idrak {0}: stopped", command.Name));
+            (exit, failure) = (ExitCodes.Stopped, "stopped");
+            return ExitCodes.Stopped;
+        }
+        catch (PlatformNotSupportedException e) when (!ReferenceEquals(host, CommandHost.Console))
+        {
+            // What a command reached for is not on this platform (a program to start, a console's keyboard): the host's to say.
+            error.WriteLine(Messages.T("idrak {0} is not available in {1}: {2}", command.Name, host.Name, e.Message));
+            (exit, failure) = (ExitCodes.Unavailable, e.Message);
+            return ExitCodes.Unavailable;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException && context?.Timeout is { } limit && context.TimeoutToken.IsCancellationRequested)
+        {
+            // Whatever the cancelled call threw (a cancelled task, a closed connection), the reason is the time limit.
+            error.WriteLine(Messages.T("idrak {0}: gave up after --timeout {1} ({2})", command.Name, Units.Duration(limit), e.Message.Split('\n')[0]));
+            failure = $"gave up after --timeout {Units.Duration(limit)}";
+            return ExitCodes.Failed;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            error.WriteLine($"idrak {command.Name}: {e.Message}");
+            if (Environment.GetEnvironmentVariable("IDRAK_TRACE") is "1" or "true")
+            {
+                error.WriteLine(e.ToString());
+            }
+
+            failure = e.Message;
+            return ExitCodes.Failed;
+        }
+        finally
+        {
+            verbose?.Dispose();
+            profile?.End(exit, failure);                                        // the report, however the command ended
+            context?.Dispose();
+        }
+    }
+
+    // The command whose name is the longest run of leading words of args.
+    internal static Command? Find(IReadOnlyList<Command> commands, IReadOnlyList<string> args, out int used)
+    {
+        used = 0;
+        Command? best = null;
+        foreach (var command in commands)
+        {
+            foreach (string name in command.Aliases.Prepend(command.Name))
+            {
+                var words = name.Split(' ');
+                if (words.Length > used && words.Length <= args.Count && words.Select((w, i) => args[i] == w).All(m => m))
+                {
+                    best = command;
+                    used = words.Length;
+                }
+            }
+        }
+
+        return best;
+    }
+
+    internal static (List<string> Positional, Dictionary<string, List<string>> Options, HashSet<string> Flags) Parse(Command command, IReadOnlyList<string> args)
+    {
+        var valueOptions = new HashSet<string>(CommandContext.CommonValueOptions.Concat(command.ValueOptions), StringComparer.Ordinal);
+        var knownFlags = new HashSet<string>(CommandContext.CommonFlags.Concat(command.Flags), StringComparer.Ordinal);
+        var positional = new List<string>();
+        var options = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        var flags = new HashSet<string>(StringComparer.Ordinal);
+        bool optionsEnded = false;
+        for (int i = 0; i < args.Count; i++)
+        {
+            string arg = args[i];
+            if (optionsEnded || !arg.StartsWith('-') || arg == "-")
+            {
+                positional.Add(arg);
+            }
+            else if (arg == "--")
+            {
+                optionsEnded = true;
+            }
+            else
+            {
+                string name = arg, value = "";
+                int equals = arg.IndexOf('=');
+                bool inline = equals > 0;
+                if (inline)
+                {
+                    (name, value) = (arg[..equals], arg[(equals + 1)..]);
+                }
+
+                if (!name.StartsWith("--", StringComparison.Ordinal))
+                {
+                    name = CommandContext.CommonShortForms.TryGetValue(name, out string? common) ? common
+                        : command.ShortForms.TryGetValue(name, out string? own) ? own
+                        : throw new UsageException(Messages.T("Unknown option {0}.", name));
+                }
+
+                if (valueOptions.Contains(name))
+                {
+                    if (!inline)
+                    {
+                        value = i + 1 < args.Count ? args[++i] : throw new UsageException(Messages.T("{0} needs a value.", name));
+                    }
+
+                    (options.TryGetValue(name, out var list) ? list : options[name] = []).Add(value);
+                }
+                else if (inline)
+                {
+                    throw new UsageException(Messages.T("{0} takes no value.", name));
+                }
+                else if (knownFlags.Contains(name))
+                {
+                    flags.Add(name);
+                }
+                else
+                {
+                    throw new UsageException(Messages.T("Unknown option {0}.", name));
+                }
+            }
+        }
+
+        return (positional, options, flags);
+    }
+}
+
+/// <summary>Help text.</summary>
+internal static class Help
+{
+    /// <summary>
+    /// <c>idrak help</c>: the commands by group (plans/done/idrak-cli.md: setup and health, run models, serve, ...), each with
+    /// its aliases and summary, then the common options.
+    /// </summary>
+    public static string Overview(IReadOnlyList<Command> commands)
+    {
+        var text = new System.Text.StringBuilder(Messages.T("idrak: Idrak's command-line tool")).Append("\n\n")
+            .Append(Messages.T("Usage: {0}", "idrak COMMAND [arguments] [options]")).Append('\n');
+        string Name(Command c) => c.Aliases.Count > 0 ? $"{c.Name} ({string.Join(", ", c.Aliases)})" : c.Name;
+        int width = commands.Count == 0 ? 0 : commands.Max(c => Name(c).Length);
+        var groups = CommandTable.Groups.Select(g => (Title: g.Title, Commands: g.Commands.Where(commands.Contains).ToList()))
+            .Append((Title: Messages.T("Other"), Commands: commands.Where(c => !CommandTable.All.Contains(c)).ToList()));
+        foreach (var (title, members) in groups.Where(g => g.Commands.Count > 0))
+        {
+            text.Append('\n').Append(Messages.T(title)).Append(":\n");
+            foreach (var c in members)
+            {
+                text.Append("  ").Append(Name(c).PadRight(width)).Append("  ").Append(Messages.Summary(c)).Append('\n');
+            }
+        }
+
+        text.Append('\n').Append(Messages.T(CommonOptions)).Append('\n')
+            .Append(Messages.T("Run 'idrak help COMMAND' (or 'idrak COMMAND --help') for a command's options; 'idrak help topics' for concept pages."))
+            .Append('\n');
+        // Summaries longer than the width (translated ones can be) continue under their own column.
+        return string.Join('\n', Reflow(text.ToString().Split('\n'), Width));
+    }
+
+    /// <summary>
+    /// <c>idrak help COMMAND</c>, in one layout for every command: the summary, the usage line and aliases, the command's
+    /// own text (what it does, its arguments and options with their short forms, examples, limits and gaps), any short
+    /// form that text does not show, the common options, and the environment variables that affect it (generated from
+    /// <see cref="Shared.EnvironmentVariables"/>).
+    /// </summary>
+    public static string For(Command command)
+    {
+        string synopsis = command.Usage.Split('\n')[0].Trim();
+        string body = Body(command);
+        var text = new System.Text.StringBuilder($"idrak {command.Name}: {Messages.Summary(command)}\n\n");
+        text.Append(Messages.T("Usage: {0}", $"idrak {command.Name} {synopsis}".TrimEnd())).Append('\n');
+        if (command.Aliases.Count > 0)
+        {
+            text.Append(Messages.T("Aliases: {0}", string.Join(", ", command.Aliases.Select(a => "idrak " + a)))).Append('\n');
+        }
+
+        if (body.Length > 0)
+        {
+            // The command's own text is English in every language (the summary and the labels around it are translated).
+            string note = Messages.T("(The rest of this help is in English.)");
+            text.Append('\n').Append(Messages.IsArabic ? note + "\n" : "").Append(body).Append('\n');
+        }
+
+        var unshown = command.ShortForms.Where(p => !body.Contains($"{p.Key}, {p.Value}", StringComparison.Ordinal)).ToList();
+        if (unshown.Count > 0)
+        {
+            text.Append('\n').Append(Messages.T("Short forms: {0}", string.Join(", ", unshown.Select(p => $"{p.Key} {p.Value}")))).Append('\n');
+        }
+
+        return text.Append('\n').Append(Messages.T(CommonOptions)).Append(EnvironmentVariables.HelpSection(command.Name)).ToString();
+    }
+
+    /// <summary>The command's own text in its help (the usage after its first line), as <see cref="For"/> shows it.</summary>
+    public static string Body(Command command)
+    {
+        string usage = command.Usage.Replace("\r", "", StringComparison.Ordinal);
+        int newline = usage.IndexOf('\n');
+        string body = newline < 0 ? "" : usage[(newline + 1)..].Trim('\n').TrimEnd();
+        return string.Join('\n', Reflow(body.Split('\n'), Width));
+    }
+
+    /// <summary>The width help text is wrapped to.</summary>
+    public const int Width = 118;
+
+    /// <summary>
+    /// Lines longer than <paramref name="width"/> broken at spaces. The words that do not fit go under the text of an item
+    /// line (after its name and the gap of two or more spaces), else under the line's own indentation, and join the next
+    /// line when that line continues the same text (the same indentation), so a paragraph stays a paragraph.
+    /// </summary>
+    internal static List<string> Reflow(IEnumerable<string> text, int width)
+    {
+        var lines = text.ToList();
+        for (int i = 0; i < lines.Count; i++)
+        {
+            string line = lines[i];
+            if (line.Length <= width)
+            {
+                continue;
+            }
+
+            var item = System.Text.RegularExpressions.Regex.Match(line, @"^(\s*\S.*?\s{2,})\S");
+            int indent = line.Length - line.TrimStart().Length;
+            int hang = item.Success && item.Groups[1].Length < width / 2 ? item.Groups[1].Length : indent;
+            int cut = line.LastIndexOf(' ', width);
+            if (cut <= hang)
+            {
+                continue;                                                            // one long word: left as it is
+            }
+
+            lines[i] = line[..cut].TrimEnd();
+            string rest = line[(cut + 1)..].TrimStart();
+            string? next = i + 1 < lines.Count ? lines[i + 1] : null;
+            // The next line continues this text when it starts where the overflow goes and is not a new item ("Data: ...").
+            bool continues = next is { Length: > 0 } && next.Length - next.TrimStart().Length == hang
+                             && !System.Text.RegularExpressions.Regex.IsMatch(next.TrimStart(), @"^[\w<-][^ ]*:\s");
+            if (continues)
+            {
+                lines[i + 1] = new string(' ', hang) + rest + " " + next!.TrimStart();
+            }
+            else
+            {
+                lines.Insert(i + 1, new string(' ', hang) + rest);
+            }
+        }
+
+        return lines;
+    }
+
+    /// <summary>The common options' part of every help (translated whole, as one catalog entry).</summary>
+    internal const string CommonOptions =
+        "Common options:\n" +
+        "  -d, --device NAME   cpu, cuda:0, vulkan:1, hip:0 (default: the default device)\n" +
+        "  -P, --plugin PATH   load an assembly that registers formats, families, ... (repeatable)\n" +
+        "  -j, --json          machine-readable output\n" +
+        "  -q, --quiet         less output; -v, --verbose: more, and the library's work as it happens (prompt passes,\n" +
+        "                      decoding, kernel choices measured, host fallbacks; IDRAK_VERBOSE=1)\n" +
+        "      --cache DIR     the cache folder (default IDRAK_CACHE or ~/.cache/idrak)\n" +
+        "  -C, --config FILE   the config file (default IDRAK_CONFIG or ~/.idrak/config.json)\n" +
+        "      --log FILE      also write every line, verbose ones included, to FILE\n" +
+        "      @FILE           read arguments from FILE, one per line (@@text: a literal @text)\n" +
+        "  -O, --output FILE   write the command's main output to FILE\n" +
+        "      --format F      text, json, csv or md (tables)\n" +
+        "      --columns A,B   only these table columns, in this order (a header, its start or its number)\n" +
+        "      --color WHEN    auto, always or never (NO_COLOR still wins); --plain: no Unicode or progress line\n" +
+        "      --offline       use only what is cached; a download is an error\n" +
+        "      --threads N     CPU threads; --seed N: one seed for sampling, shuffling and initialization\n" +
+        "      --timeout D     give up after a duration (30s, 5m, 1h30m)\n" +
+        "      --profile       report where the command's time and memory went, at its end (stderr; IDRAK_PROFILE_OUT: a file)\n" +
+        "      --lang L        messages in en or ar (config \"lang\", IDRAK_LANG); --lang-render auto, visual or logical\n" +
+        "  -h, --help          this help; idrak -V, --version: the versions; idrak help topics: concept pages\n";
+}

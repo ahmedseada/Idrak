@@ -1,0 +1,168 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using System.Diagnostics;
+using System.Text.Json.Nodes;
+
+namespace Idrak.Cli.Commands.Developer;
+
+/// <summary>
+/// <c>idrak test [--filter TEXT] [--device NAME]</c>: runs the library's test runner (tests/Idrak.Tests) from the source
+/// checkout around the current folder, as the README gives it: <c>dotnet run -c Release --project tests/Idrak.Tests</c>
+/// with <c>IDRAK_FILTER</c> and <c>IDRAK_DEVICES</c> set from the options.
+/// </summary>
+internal sealed class TestCommand : Command
+{
+    /// <summary>The test runner's project, relative to the repository root.</summary>
+    internal const string RunnerProject = "tests/Idrak.Tests/Idrak.Tests.csproj";
+
+    /// <summary>Where the search for the repository starts (the current folder unless a test sets it).</summary>
+    internal static string? StartFolder { get; set; }
+
+    public override string Name => "test";
+
+    public override string Summary => "Runs the library's tests from a source checkout";
+
+    /// <inheritdoc />
+    public override CommandNeeds Needs => CommandNeeds.ChildProcesses;
+
+    public override string Usage =>
+        "[--filter TEXT] [--device NAME] [-- RUNNER ARGUMENTS]\n\n" +
+        "Runs tests/Idrak.Tests of the Idrak source checkout that holds the current folder (dotnet run -c Release).\n" +
+        "Arguments after -- go to the test runner (e.g. -- --bench-window, -- --progress --failures-only). Variables saved by idrak env set reach it too.\n\n" +
+        "Options:\n" +
+        "      --filter TEXT   only tests whose name contains TEXT (IDRAK_FILTER)\n" +
+        "  -d, --device NAME   only this device, or several separated by commas (IDRAK_DEVICES); default every device found\n\n" +
+        "Examples:\n" +
+        "  idrak test\n" +
+        "  idrak test --filter \"cli dev\" -d cpu\n" +
+        "  idrak test -d vulkan:0 -j\n" +
+        "  idrak test -d cuda:0 -- --bench-window";
+
+    public override IReadOnlyCollection<string> ValueOptions => ["--filter"];
+
+    public override int Run(CommandContext context)
+    {
+        // Arguments after -- go to the runner as they are (--bench-vulkan window): only a first one that is not an option is a mistake.
+        if (context.Positional.Count > 0 && !context.Positional[0].StartsWith('-') && context.Positional[0] is var stray)
+        {
+            throw new UsageException($"Unexpected argument '{stray}'; pass test names with --filter, and runner options after -- (e.g. -- --bench-window).");
+        }
+
+        string start = StartFolder ?? Environment.CurrentDirectory;
+        if (FindRepositoryRoot(start) is not { } root)
+        {
+            context.Error($"{start} is not inside an Idrak source checkout (no Idrak.slnx with {RunnerProject} above it). " +
+                "Run idrak test from a clone: git clone https://github.com/ahmedseada/Idrak && cd Idrak && idrak test");
+            return ExitCodes.Failed;
+        }
+
+        string? filter = context.Option("--filter");
+        string? devices = context.Option("--device");
+        var info = new ProcessStartInfo("dotnet") { WorkingDirectory = root, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+        foreach (string arg in new[] { "run", "-c", "Release", "--project", RunnerProject })
+        {
+            info.ArgumentList.Add(arg);
+        }
+
+        if (context.Positional.Count > 0)
+        {
+            info.ArgumentList.Add("--");
+            foreach (string arg in context.Positional)
+            {
+                info.ArgumentList.Add(arg);
+            }
+        }
+
+        if (filter is not null)
+        {
+            info.Environment["IDRAK_FILTER"] = filter;
+        }
+
+        if (devices is not null)
+        {
+            info.Environment["IDRAK_DEVICES"] = devices;
+        }
+
+        context.Detail($"in {root}: {(filter is null ? "" : $"IDRAK_FILTER=\"{filter}\" ")}{(devices is null ? "" : $"IDRAK_DEVICES={devices} ")}dotnet {string.Join(' ', info.ArgumentList)}");
+        int passed = 0, failed = 0;
+        var failures = new List<string>();
+        using var process = Process.Start(info) ?? throw new InvalidOperationException("Could not start dotnet; is the .NET SDK installed and on PATH?");
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (e.Data is { } line)
+            {
+                context.ErrorOutput.WriteLine(line);
+            }
+        };
+        process.BeginErrorReadLine();
+        while (process.StandardOutput.ReadLine() is { } line)
+        {
+            string trimmed = line.TrimStart();
+            if (trimmed.StartsWith("PASS ", StringComparison.Ordinal))
+            {
+                passed++;
+            }
+            else if (trimmed.StartsWith("FAIL ", StringComparison.Ordinal) || trimmed.StartsWith("HANG ", StringComparison.Ordinal))
+            {
+                failed++;
+                failures.Add(trimmed);
+            }
+            else if (SummaryCounts(trimmed) is var (summaryPassed, summaryFailed))
+            {
+                (passed, failed) = (summaryPassed, summaryFailed);             // the runner's own count (PASS lines are not shown under --failures-only)
+            }
+
+            context.Write(line);
+        }
+
+        process.WaitForExit();
+        context.WriteJson(new JsonObject
+        {
+            ["root"] = root,
+            ["filter"] = filter,
+            ["devices"] = devices,
+            ["passed"] = passed,
+            ["failed"] = failed,
+            ["failures"] = new JsonArray([.. failures.Select(f => (JsonNode)f)]),
+            ["exitCode"] = process.ExitCode,
+        });
+        return process.ExitCode == 0 ? ExitCodes.Ok : ExitCodes.Failed;
+    }
+
+    /// <summary>The counts of the runner's summary line ("112 passed, 2 failed", maybe followed by more), or null for another line.</summary>
+    internal static (int Passed, int Failed)? SummaryCounts(ReadOnlySpan<char> line)
+    {
+        int space = line.IndexOf(' ');
+        if (space <= 0 || !int.TryParse(line[..space], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int passed))
+        {
+            return null;
+        }
+
+        var rest = line[(space + 1)..];
+        if (!rest.StartsWith("passed, ", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        rest = rest["passed, ".Length..];
+        int end = rest.IndexOf(' ');
+        return end > 0 && rest[(end + 1)..].StartsWith("failed", StringComparison.Ordinal)
+            && int.TryParse(rest[..end], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int failed)
+            ? (passed, failed) : null;
+    }
+
+    /// <summary>The nearest folder at or above <paramref name="start"/> holding Idrak.slnx and the test runner, or null.</summary>
+    internal static string? FindRepositoryRoot(string start)
+    {
+        for (var folder = new DirectoryInfo(Path.GetFullPath(start)); folder is not null; folder = folder.Parent)
+        {
+            if (File.Exists(Path.Combine(folder.FullName, "Idrak.slnx")) && File.Exists(Path.Combine(folder.FullName, RunnerProject)))
+            {
+                return folder.FullName;
+            }
+        }
+
+        return null;
+    }
+}

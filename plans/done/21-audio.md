@@ -800,7 +800,7 @@ does); the TTS task without a neural vocoder sounds like Griffin-Lim (stated pla
 - **`idrak transcribe MODEL AUDIO... [-P plugin.dll] [--language ar] [--task transcribe|translate] [--timestamps]
   [--beam N] [--chunk-seconds S] [--overlap-seconds S] [--no-carry] [--temperature T] [--batch N] [--memory-fraction F]
   [--bf16/--no-bf16] [--cache float32|int8|bf16] [-o FILE|DIR] [--format text|json|srt|vtt] [-j] [-d DEVICE]`**
-  (`src/Idrak.Cli/Commands/Run/TranscribeCommand.cs`, in `RunCommands`): MODEL a folder, an alias or a hub id (through
+  (`src/Idrak.Cli.Commands/Commands/Run/TranscribeCommand.cs`, in `RunCommands`): MODEL a folder, an alias or a hub id (through
   `ModelChoices`); AUDIO files, folders, globs or `-` for standard input (a WAV stream); `SpeechModels.Load`, one
   `Transcribe` per file in the order given, progress per file ("segment i/n  batch b  x.x× real time  mem"), `-o` a
   file for one input or a folder of `<stem>.txt|json|srt|vtt`; `-j` the `Transcription` as JSON; `-v` the stage times

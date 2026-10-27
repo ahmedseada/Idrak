@@ -6,11 +6,11 @@
 Idrak.Text | Idrak.Layers.Linear | AttachFloat8() | FP8 weights of Linear for fine-tuning; public with packed weights' device kernels (phase 6)
 Idrak.Text | Idrak.Layers.Linear | DetachFloat8() | FP8 weights of Linear for fine-tuning; public with packed weights' device kernels (phase 6)
 Idrak.Text | Idrak.Layers.PackedSequences | Suspend() | turns packed sequences off around a fine-tuning step; moves with the decoding contracts (phase 3)
-Idrak.Cli | Idrak.Gpu.Cuda.PtxKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
-Idrak.Cli | Idrak.Gpu.Hip.HipKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
-Idrak.Cli | Idrak.Gpu.Vulkan.SpirvKernel | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
-Idrak.Cli | Idrak.Gpu.Vulkan.VulkanKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
-Idrak.Cli | Idrak.Gpu.Vulkan.VulkanKernels.CoopPrecision | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
-Idrak.Cli | Idrak.Gpu.Vulkan.VulkanKernels.CoopShape | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
-Idrak.Cli | Idrak.Gpu.Vulkan.VulkanKernels.CoopSpec | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
-Idrak.Cli | Idrak.Gpu.Vulkan.VulkanKernels.PackedFormat | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli.Commands | Idrak.Gpu.Cuda.PtxKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli.Commands | Idrak.Gpu.Hip.HipKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli.Commands | Idrak.Gpu.Vulkan.SpirvKernel | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli.Commands | Idrak.Gpu.Vulkan.VulkanKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli.Commands | Idrak.Gpu.Vulkan.VulkanKernels.CoopPrecision | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli.Commands | Idrak.Gpu.Vulkan.VulkanKernels.CoopShape | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli.Commands | Idrak.Gpu.Vulkan.VulkanKernels.CoopSpec | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli.Commands | Idrak.Gpu.Vulkan.VulkanKernels.PackedFormat | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public

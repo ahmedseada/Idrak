@@ -438,7 +438,7 @@ Status (feature-distillation): done.
   `ChatTranscriptEncoder`, since Idrak.Datasets does not reference the generators): prompts from any chat layout or a
   prompt column, greedy answers in batches, optionally with the teacher's reasoning (`reasoning_content`), answers cut
   off by the length limit left out unless kept.
-- CLI: `idrak distill` (src/Idrak.Cli/Commands/Train/DistillCommand.cs) runs idrak tune's training with a
+- CLI: `idrak distill` (src/Idrak.Cli.Commands/Commands/Train/DistillCommand.cs) runs idrak tune's training with a
   `TuneTool.BeforeTraining` hook: on the fly, `--precompute FILE` then `--teacher FILE`, or `--generate`; `--temperature`,
   `--alpha`, `--top-k`, `--teacher-weights`, `--teacher-device`, and tune's options (`--lora-alpha` for tune's
   `--alpha`).

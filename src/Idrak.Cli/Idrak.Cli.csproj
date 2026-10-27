@@ -1,5 +1,10 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <!--
+    idrak, the tool: the commands (src/Idrak.Cli.Commands, a library any host can run them from) with this Program and
+    the servers that need ASP.NET Core (serve and ui's HTTP server, the cluster dashboard), registered in CommandServers
+    at startup.
+  -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Idrak.Cli</RootNamespace>
@@ -17,45 +22,19 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Idrak\Idrak.csproj" />
-    <!-- idrak kernels dump writes the GPU kernel sources. -->
-    <ProjectReference Include="..\Idrak.Gpu\Idrak.Gpu.csproj" />
-    <ProjectReference Include="..\Idrak.Imaging\Idrak.Imaging.csproj" />
-    <ProjectReference Include="..\Idrak.Text\Idrak.Text.csproj" />
-    <ProjectReference Include="..\Idrak.Data\Idrak.Data.csproj" />
-    <!-- predict and train for image models: detectors, segmenters, augmentations, losses, matchers and metrics. -->
-    <ProjectReference Include="..\Idrak.Vision\Idrak.Vision.csproj" />
-    <!-- transcribe, speak, voice, data audio, data mel and the audio option of run and chat: sound files, features, speech and voices (plan 21). -->
-    <ProjectReference Include="..\Idrak.Audio\Idrak.Audio.csproj" />
-    <!-- The model families as plug-ins (plan 26), registered at startup before the -P plug-ins load. -->
-    <ProjectReference Include="..\Idrak.Text.Plugins\Idrak.Text.Plugins.csproj" />
-    <ProjectReference Include="..\Idrak.Vision.Plugins\Idrak.Vision.Plugins.csproj" />
-    <ProjectReference Include="..\Idrak.Audio.Plugins\Idrak.Audio.Plugins.csproj" />
-    <!-- Reinforcement learning (plan 27): the general algorithms, and the environment families as plug-ins, registered at startup with the others. -->
-    <ProjectReference Include="..\Idrak.Reinforcement\Idrak.Reinforcement.csproj" />
-    <ProjectReference Include="..\Idrak.Reinforcement.Plugins\Idrak.Reinforcement.Plugins.csproj" />
-    <ProjectReference Include="..\Idrak.Cluster\Idrak.Cluster.csproj" />
-    <ProjectReference Include="..\Idrak.Network\Idrak.Network.csproj" />
-    <ProjectReference Include="..\Idrak.Mcp\Idrak.Mcp.csproj" />
+    <ProjectReference Include="..\Idrak.Cli.Commands\Idrak.Cli.Commands.csproj" />
+    <!-- serve and ui: the inference engine's HTTP endpoints. -->
     <ProjectReference Include="..\Idrak.AspNetCore\Idrak.AspNetCore.csproj" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- serve, ui: the web server -->
+    <!-- serve, ui and cluster ui: the web server -->
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
 
   <!-- idrak cluster ui: the dashboard's page, one self-contained file served as it is (plan 23, phase C9). -->
   <ItemGroup>
     <EmbeddedResource Include="Commands\Cluster\Dashboard\dashboard.html" LogicalName="Dashboard/dashboard.html" WithCulture="false" />
-  </ItemGroup>
-
-  <!-- idrak new: the project templates, embedded as Templates/KIND/PATH (file names and contents carry __NAME__ and
-       the other placeholders NewCommand fills in); they are not part of this project's own build. -->
-  <ItemGroup>
-    <Compile Remove="Templates\**" />
-    <None Remove="Templates\**" />
-    <EmbeddedResource Include="Templates\**\*.template" LogicalName="Templates/%(RecursiveDir)%(Filename)" WithCulture="false" />
   </ItemGroup>
 
 </Project>

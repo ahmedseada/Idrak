@@ -113,7 +113,7 @@ command line; each is in "Generic components" below with its contract and phase:
   `LineSegmenter.cs` (page → lines by projection, on the library's `Foreground`), `Text.cs` (`TextAlignment`: Sellers'
   semi-global edit distance; `ReadingOrder`: visual column order), `Recognizer.cs` (a conv + BiLSTM + CTC line
   recognizer; the image-family contract has no line-recognition task), `LiveLine.cs` (a live progress line).
-- `src/Idrak.Cli/Shared/Progress.cs` (`ProgressLine`, internal to the tool) and
+- `src/Idrak.Cli.Commands/Shared/Progress.cs` (`ProgressLine`, internal to the tool) and
   `samples/Idrak.Samples.LegalOcr/StartupLoad.cs` (its own progress line); `FiniteNumbers.cs` (NaN → null in JSON).
 - `samples/Idrak.Samples.Chat` `ProfileRecorder` (time per operation and shape, per layer type: the library's
   `operations` probe counts calls only).
@@ -246,7 +246,7 @@ the rename reaches every package.
   replaced by `Idrak.Text` in 213 files (code, projects, the solution, `build/IdrakFromSource.targets`' package list,
   `LibraryDefaults`' package list and `DynamicDependency`, `InternalsVisibleTo`, `internals-justified.txt`, samples,
   tools' comments, READMEs); the plans and `CHANGELOG.md` keep their history. One short reference
-  (`typeof(Nlp.ChatTranscriptEncoder)` in `src/Idrak.Cli/Commands/Health/Machine.cs`) and two comments by hand.
+  (`typeof(Nlp.ChatTranscriptEncoder)` in `src/Idrak.Cli.Commands/Commands/Health/Machine.cs`) and two comments by hand.
 - The README's history note says `Idrak.Nlp` (renamed `Idrak.Text` in 2026-10).
 - **The naming check:** the existing former-names test scans every file, plans and changelog included, so a renamed
   package (whose history the plans must keep) gets its own test: `naming: no code, project, build file, API dump or test
@@ -268,7 +268,7 @@ the rename reaches every package.
 - Each family namespace has a public static `…Plugin` class with `Register()` (idempotent: calling it twice registers
   once) and `Unregister()`; each package has one root class (`TextPlugins`, `VisionPlugins`, `AudioPlugins`) with
   `RegisterAll()`, and a public static `RegisterIdrakPlugin()` so `-P` loads the package as it loads a sample today
-  (`src/Idrak.Cli/CommandContext.cs:314`).
+  (`src/Idrak.Cli.Commands/CommandContext.cs:314`).
 - A family that needs another package's family (Gemma 3 vision needs the Gemma text decoder) references that plug-in
   package and calls its `Register()`; the dependency is one way, vision and audio on text, never back.
 - The CLI references the three packages and calls `RegisterAll()` at startup, before `-P` plug-ins (so an outside plug-in
@@ -990,7 +990,7 @@ Why the lanes do not collide:
 - P6 and P7 both edit `src/Idrak/Models/Architectures.cs`, so they stay in lane A, one after the other.
 - P9 and P10 add to `Idrak.Text.Plugins` in their own namespaces; P6 and P7 add other namespaces there.
 - Files both lanes touch (`api/*.txt`, the abstraction inventory, the test list in `tests/Idrak.Tests/Program.cs`,
-  `src/Idrak.Cli/Shared/EnvironmentVariables.cs`) are merged one lane at a time; the generated dumps are regenerated,
+  `src/Idrak.Cli.Commands/Shared/EnvironmentVariables.cs`) are merged one lane at a time; the generated dumps are regenerated,
   never merged by hand.
 
 A step is a dependency order, not a barrier: when a lane finishes, it takes its next ready step without waiting for the

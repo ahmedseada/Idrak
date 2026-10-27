@@ -24,6 +24,8 @@ internal abstract partial class DesktopTests : Tests
         ("cli polish: --timeout gives up on a server that does not answer (ping, api)", CliPolishTimeout),
         ("cli polish: --format csv and md on the commands that print tables", CliPolishFormats),
         ("cli polish: --seed reaches the data commands and suggest; progress lines draw, erase and clear", CliPolishSeedProgress),
+        ("cli host: a host refuses a command by what it needs, before it runs (serve, ui, serve --mcp, mcp serve, shell, test, cluster ui, report --tests), "
+         + "with exit 3 naming the host and the need, its help still shown; the host's stop ends a running command with 130; its working folder holds the run; IdrakCommands lists the table and splits a typed line", CliHostRefusals),
     ];
 
     private static (int Code, string Out, string Err) PolishCli(params string[] args)
@@ -311,5 +313,91 @@ internal abstract partial class DesktopTests : Tests
         {
             Directory.Delete(folder, true);
         }
+    }
+
+    // CommandHost (plan 34): an app runs the commands in its own process; what it does not allow is refused by what each
+    // command declares it needs (never by name), and its stop reaches a running command as Ctrl+C would.
+    private static void CliHostRefusals(Device device)
+    {
+        _ = device;
+        string config = Path.Combine(Path.GetTempPath(), "idrak-cli-host-no-config.json");
+        var app = new CommandHost { Name = "the test app", Allows = CommandNeeds.None, Input = new StringReader("") };
+        (int Code, string Out, string Err) Run(CommandHost host, CancellationToken token, params string[] args)
+        {
+            var output = new StringWriter();
+            var error = new StringWriter();
+            int code = IdrakCommands.Run([.. args, "-C", config], output, error, host, token);
+            return (code, output.ToString(), error.ToString());
+        }
+
+        foreach (var (args, need) in new (string[] Args, string Need)[]
+                 {
+                     (["serve", "Qwen/Qwen3-0.6B"], "network listener"), (["ui", "qwen"], "network listener"), (["serve", "qwen", "--mcp"], "standard input"),
+                     (["mcp", "serve", "tools.dll"], "standard input"), (["shell"], "keyboard"), (["test"], "other programs"), (["cluster", "ui"], "network listener"),
+                     (["report", "--tests"], "other programs"),
+                 })
+        {
+            var (code, _, error) = Run(app, default, args);
+            Check(code == IdrakCommands.UnavailableExitCode && error.Contains("is not available in the test app", StringComparison.Ordinal) && error.Contains(need, StringComparison.Ordinal),
+                $"idrak {string.Join(' ', args)} in an app that allows nothing: {code} {error}");
+        }
+
+        Check(!Run(app, default, "serve", "qwen", "--mcp").Err.Contains("listener", StringComparison.Ordinal), "serve --mcp needs standard input, not a listener");
+        Check(Run(app, default, "serve", "--help") is { Code: 0, Out: var help } && help.Contains("idrak serve", StringComparison.Ordinal), "a refused command's help still shows");
+        Check(Run(app, default, "version") is { Code: 0, Out.Length: > 0 }, "a command that needs nothing runs in the app");
+        Check(IdrakCommands.Refusal("serve", CommandHost.Console) is null && IdrakCommands.Refusal("serve", app) is { } why && why.Contains("network listener", StringComparison.Ordinal)
+              && IdrakCommands.Refusal("cache info", app) is null && IdrakCommands.Refusal("no such command", app) is null, "Refusal by the command's words");
+        Check(IdrakCommands.Commands.Count == CommandTable.All.Count && IdrakCommands.Commands.Single(c => c.Name == "serve").Needs.HasFlag(CommandNeeds.NetworkListener)
+              && IdrakCommands.Commands.Single(c => c.Name == "cluster sim").Needs == CommandNeeds.None && IdrakCommands.Commands.All(c => c.Group.Length > 0 && c.Summary.Length > 0),
+            "the listing is the command table, with each command's group, summary and needs");
+
+        // The host's stop, while a command waits on a server that never answers.
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        var held = new List<TcpClient>();
+        var accepting = Task.Run(async () =>
+        {
+            try
+            {
+                while (true)
+                {
+                    held.Add(await listener.AcceptTcpClientAsync().ConfigureAwait(false));
+                }
+            }
+            catch (Exception e) when (e is SocketException or ObjectDisposedException)
+            {
+            }
+        });
+
+        using var stop = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+        var watch = Stopwatch.StartNew();
+        var (stopped, _, stoppedError) = Run(CommandHost.Console, stop.Token, "api", "/api/tags", "-H", "127.0.0.1", "-p", port.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        Check(stopped == IdrakCommands.StoppedExitCode && stoppedError.Contains("idrak api: stopped", StringComparison.Ordinal) && watch.Elapsed < TimeSpan.FromSeconds(10),
+            $"the host's stop: {stopped} {stoppedError} ({watch.Elapsed})");
+        listener.Stop();
+        accepting.Wait(TimeSpan.FromSeconds(5));
+        held.ForEach(h => h.Dispose());
+
+        // The host's working folder: a relative path is read from it during the run, and the process's folder comes back after.
+        string working = Path.Combine(Path.GetTempPath(), $"idrak-cli-host-{Guid.NewGuid():N}");
+        string before = Environment.CurrentDirectory;
+        try
+        {
+            var inFolder = app with { WorkingFolder = working };
+            int set = IdrakCommands.Run(["config", "set", "device", "cpu", "-C", "relative-config.json"], new StringWriter(), new StringWriter(), inFolder);
+            Check(set == 0 && File.Exists(Path.Combine(working, "relative-config.json")) && Environment.CurrentDirectory == before,
+                $"the working folder: exit {set}, {Path.Combine(working, "relative-config.json")} written, the process's folder {Environment.CurrentDirectory} (was {before})");
+        }
+        finally
+        {
+            if (Directory.Exists(working))
+            {
+                Directory.Delete(working, recursive: true);
+            }
+        }
+
+        Check(IdrakCommands.Split("idrak run \"a b\" 'c d' e\\\"f") is ["run", "a b", "c d", "e\"f"], $"split: {string.Join("|", IdrakCommands.Split("idrak run \"a b\" 'c d' e\\\"f"))}");
+        Check(Throws<FormatException>(() => IdrakCommands.Split("run \"open")), "an open quote is refused");
     }
 }

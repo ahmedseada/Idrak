@@ -1131,7 +1131,7 @@ Each section or paragraph moved out of a plan on 2026-10-22, as it was written t
 > - **P6, no GGUF mapping for Gemma** (`src/Idrak/Models/GgufModel.cs`): `gemma`, `gemma2`, `gemma3` GGUF files were and
 >   are refused; a mapping goes through `GgufArchitectures.Register` from the plug-in (llama.cpp's names for the post-norms,
 >   whether its norm weights already include the +1, a fixture).
-> - **P6, `idrak tune init` picks the vision example only with `-P`** (`src/Idrak.Cli/Commands/Train/TuneCommand.cs`, near
+> - **P6, `idrak tune init` picks the vision example only with `-P`** (`src/Idrak.Cli.Commands/Commands/Train/TuneCommand.cs`, near
 >   line 340): with Gemma 3 vision built in, `tune init -b <a Gemma 3 vision checkpoint>` without `-P` writes the text one.
 > - **P6, message wording:** `PretrainedArchitectures`' refusal says "No architecture 'X' is registered", not "not
 >   registered" like the other registries (`src/Idrak/Models/Abstractions/PretrainedArchitectures.cs`).

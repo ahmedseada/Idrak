@@ -132,7 +132,7 @@ $env:IDRAK_DEVICES="vulkan"; dotnet run -c Release --project samples\Idrak.Sampl
 
 The command line names registries only; families, decoders and heads come from plug-ins (`-P`), and a name no registry
 holds exits 1 with the registry's message and "Load its plug-in with -P (--plugin)." (Arabic too). Code in
-`src/Idrak.Cli/Commands/Train/` (`ImagePredict.cs`, `ImageTraining.cs`, `ImageModelSupport.cs`; the commands in
+`src/Idrak.Cli.Commands/Commands/Train/` (`ImagePredict.cs`, `ImageTraining.cs`, `ImageModelSupport.cs`; the commands in
 `TrainingCommands.cs`); the CLI now references Idrak.Vision.
 
 - **`idrak predict MODEL IMAGE|FOLDER|GLOB...`** (or `-i`, repeatable). MODEL is a checkpoint read by

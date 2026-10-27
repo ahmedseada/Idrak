@@ -116,7 +116,7 @@ PDF.
 
 **Settings:** the options in C8, with `IDRAK_DOCUMENT_LAYOUT`, `IDRAK_DOCUMENT_READING_ORDER`,
 `IDRAK_DOCUMENT_MAX_STREAM_BYTES` and `IDRAK_DOCUMENT_CACHE_BYTES` read by the library (names proposed), added to the
-CLI's variables table (`src/Idrak.Cli/Shared/EnvironmentVariables.cs`, which a test checks). Defaults: the stream limit and
+CLI's variables table (`src/Idrak.Cli.Commands/Shared/EnvironmentVariables.cs`, which a test checks). Defaults: the stream limit and
 the cache from the machine's measured memory, never a fixed size in GB.
 
 ---

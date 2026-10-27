@@ -246,9 +246,10 @@ internal abstract partial class DesktopTests : Tests
     {
         _ = device;
         // Every message written at a call (Messages.T("...")) in the tool's sources.
-        string root = RepositoryPath("src", "Idrak.Cli");
+        // The tool's sources: its commands (src/Idrak.Cli.Commands) and its program with the servers (src/Idrak.Cli).
+        string[] roots = [RepositoryPath("src", "Idrak.Cli.Commands"), RepositoryPath("src", "Idrak.Cli")];
         var used = new HashSet<string>(StringComparer.Ordinal);
-        foreach (string file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories).Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")))
+        foreach (string file in roots.SelectMany(root => Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)).Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}")))
         {
             foreach (Match m in Regex.Matches(File.ReadAllText(file), "Messages\\.T\\(\\s*\"((?:[^\"\\\\]|\\\\.)*)\""))
             {

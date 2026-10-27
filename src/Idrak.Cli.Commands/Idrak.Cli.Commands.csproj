@@ -1,0 +1,56 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The idrak commands as a library (plan 34): the command line, its parser and help, and every command, so a host other
+    than the idrak tool runs them in its own process (the Idrak app's terminal, through IdrakCommands). The tool
+    (src/Idrak.Cli) is this library, its Program and the servers that need ASP.NET Core (serve, ui, the cluster
+    dashboard), which it registers in CommandServers; a host without them refuses the commands that need one, by what
+    each command declares it needs (CommandNeeds), never by a list of names. Part of the tool, not a package of its own.
+    Trimmable: its commands are listed in CommandTable (no discovery by reflection), and what loads assemblies at run
+    time (-P plug-ins, tools from a DLL) is marked and guarded.
+  -->
+  <PropertyGroup>
+    <RootNamespace>Idrak.Cli</RootNamespace>
+    <AssemblyName>Idrak.Cli.Commands</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTrimmable>true</IsTrimmable>
+    <Description>The idrak commands as a library: the command line, its help and every command, for the idrak tool and any host that runs them in its own process.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Idrak.Cli" />
+    <InternalsVisibleTo Include="Idrak.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Idrak\Idrak.csproj" />
+    <!-- idrak kernels dump writes the GPU kernel sources. -->
+    <ProjectReference Include="..\Idrak.Gpu\Idrak.Gpu.csproj" />
+    <ProjectReference Include="..\Idrak.Imaging\Idrak.Imaging.csproj" />
+    <ProjectReference Include="..\Idrak.Text\Idrak.Text.csproj" />
+    <ProjectReference Include="..\Idrak.Data\Idrak.Data.csproj" />
+    <!-- predict and train for image models: detectors, segmenters, augmentations, losses, matchers and metrics. -->
+    <ProjectReference Include="..\Idrak.Vision\Idrak.Vision.csproj" />
+    <!-- transcribe, speak, voice, data audio, data mel and the audio option of run and chat: sound files, features, speech and voices (plan 21). -->
+    <ProjectReference Include="..\Idrak.Audio\Idrak.Audio.csproj" />
+    <!-- The model families as plug-ins (plan 26), registered at startup before the -P plug-ins load. -->
+    <ProjectReference Include="..\Idrak.Text.Plugins\Idrak.Text.Plugins.csproj" />
+    <ProjectReference Include="..\Idrak.Vision.Plugins\Idrak.Vision.Plugins.csproj" />
+    <ProjectReference Include="..\Idrak.Audio.Plugins\Idrak.Audio.Plugins.csproj" />
+    <!-- Reinforcement learning (plan 27): the general algorithms, and the environment families as plug-ins, registered at startup with the others. -->
+    <ProjectReference Include="..\Idrak.Reinforcement\Idrak.Reinforcement.csproj" />
+    <ProjectReference Include="..\Idrak.Reinforcement.Plugins\Idrak.Reinforcement.Plugins.csproj" />
+    <ProjectReference Include="..\Idrak.Cluster\Idrak.Cluster.csproj" />
+    <ProjectReference Include="..\Idrak.Network\Idrak.Network.csproj" />
+    <ProjectReference Include="..\Idrak.Mcp\Idrak.Mcp.csproj" />
+  </ItemGroup>
+
+  <!-- idrak new: the project templates, embedded as Templates/KIND/PATH (file names and contents carry __NAME__ and
+       the other placeholders NewCommand fills in); they are not part of this project's own build. -->
+  <ItemGroup>
+    <Compile Remove="Templates\**" />
+    <None Remove="Templates\**" />
+    <EmbeddedResource Include="Templates\**\*.template" LogicalName="Templates/%(RecursiveDir)%(Filename)" WithCulture="false" />
+  </ItemGroup>
+
+</Project>

@@ -41,6 +41,7 @@
     <ProjectReference Include="..\..\src\Idrak.Cluster\Idrak.Cluster.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Network\Idrak.Network.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Cli\Idrak.Cli.csproj" />
+    <ProjectReference Include="..\..\src\Idrak.Cli.Commands\Idrak.Cli.Commands.csproj" />
     <ProjectReference Include="..\..\src\Idrak.Abstraction.Testing\Idrak.Abstraction.Testing.csproj" />
     <!-- The reserved packages (no types yet), referenced so the API guard loads them. -->
     <ProjectReference Include="..\..\src\Idrak.Diffusion\Idrak.Diffusion.csproj" />

@@ -268,7 +268,7 @@ internal abstract partial class DesktopTests : Tests
 
         var table = EnvironmentVariables.All.Select(v => v.Name).ToHashSet();
         var missing = read.Where(n => !table.Contains(n)).ToList();
-        Check(missing.Count == 0, $"read in src but missing from src/Idrak.Cli/Shared/EnvironmentVariables.cs: {string.Join(", ", missing)}");
+        Check(missing.Count == 0, $"read in src but missing from src/Idrak.Cli.Commands/Shared/EnvironmentVariables.cs: {string.Join(", ", missing)}");
         Check(EnvironmentVariables.All.Select(v => v.Name).Distinct().Count() == EnvironmentVariables.All.Count, "the environment table lists a variable twice");
         Check(read.Count > 50, $"only {read.Count} variables found: the scan is broken");
     }

@@ -82,7 +82,7 @@ CLAUDE.md and [docs/optimization.md](../../docs/optimization.md) apply in full. 
   Group size, rollout batch and update batch default to what the device's free memory measures; each is a setting.
 - **Nothing fixed.** Every algorithm constant (clip, KL weight, group size, γ, λ, normalization), every limit (rounds,
   time, memory of a command) and every placement has an option, and an `IDRAK_RL_*` or `IDRAK_SANDBOX_*` variable where
-  the library reads one, carried into `src/Idrak.Cli/Shared/EnvironmentVariables.cs` (a test checks the table).
+  the library reads one, carried into `src/Idrak.Cli.Commands/Shared/EnvironmentVariables.cs` (a test checks the table).
 - **Long work shows live progress** through `IProgressReporter` (Plan 26, G4): episodes, mean reward, pass rate, tokens a
   second, time left.
 - **Tests only through filters,** CPU here (`IDRAK_DEVICES=cpu`); GPU tests, real models and training runs are the
@@ -125,7 +125,7 @@ own scorer** (`ChatEvaluation.Score`, `:130`), used by `ChatEvaluation`, the CLI
 - `CodingTools` (`CodingTools.cs`): list, read, search, edit, write, `run_command` through `ExecuteAsync` (`:360`), which
   starts a plain `Process` (`:400`, `:429`) limited by an allow-list of programs, read-only git, a time limit and an
   output cap; **no memory limit, no network limit, no isolation** beyond the workspace path.
-- Users: `src/Idrak.Cli/Commands/Run/AgentCommand.cs` (`idrak agent`), `samples/Idrak.Samples.CodingAgent` (`agent`,
+- Users: `src/Idrak.Cli.Commands/Commands/Run/AgentCommand.cs` (`idrak agent`), `samples/Idrak.Samples.CodingAgent` (`agent`,
   `agent-run` with `--attempts`, `agent-check`; `data/agent-demo-*.jsonl` transcripts for `idrak tune`), the tests in
   `tests/Idrak.Tests/CodingToolsTests.cs` (`coding agent:`, `coding tools`). No task suite is checked in.
 
@@ -489,7 +489,7 @@ cli health: every environment variable`.
   to the reference, gradient norm. `Save`/`Load` a folder (.ikw weights, the optimizer state as safetensors, a JSON kind
   check). `ModulePolicy.Perceptron` builds a small tanh network.
 - **Settings:** `ReinforcementOptions.FromEnvironment` and `ModulePolicyOptions.FromEnvironment`; 33 variables, all in
-  `src/Idrak.Cli/Shared/EnvironmentVariables.cs` (group "Reinforcement learning", command `test` until R5 adds `reinforce`):
+  `src/Idrak.Cli.Commands/Shared/EnvironmentVariables.cs` (group "Reinforcement learning", command `test` until R5 adds `reinforce`):
   `IDRAK_RL_ALGORITHM`, `_ESTIMATOR`, `_GROUP`, `_EPISODES`, `_ENVIRONMENTS`, `_PARALLEL_STEPS`, `_ITERATIONS`, `_EPOCHS`,
   `_MINIBATCH`, `_GAMMA`, `_LAMBDA`, `_GROUP_SCALE`, `_NORMALIZE_ADVANTAGES`, `_CLIP`, `_KL`, `_KL_ESTIMATOR`, `_ENTROPY`,
   `_VALUE`, `_NORMALIZE`, `_MAX_GRAD_NORM`, `_SCHEDULE`, `_WARMUP`, `_TEMPERATURE`, `_MAX_STEPS`, `_SEED`,
@@ -1131,7 +1131,7 @@ each task's own commands).
   (`:160`); the doc examples (`:19`, `:23`); and in the task layer that M5 moves to the coding plug-in in R4: the suite
   skipping `node_modules` (`:35`), `node_modules` linked instead of copied (`:356-375`), the build-output folders not
   copied (`:392`) and the start commit's git excludes (`:423`).
-- The CLI's `idrak agent` (`src/Idrak.Cli/Commands/Run/AgentCommand.cs:101`) reads `CodingAgent.DefaultSystemPrompt`.
+- The CLI's `idrak agent` (`src/Idrak.Cli.Commands/Commands/Run/AgentCommand.cs:101`) reads `CodingAgent.DefaultSystemPrompt`.
 
 **The contract** (`Idrak.Text.Abstractions`, since only `Idrak.Text` uses it in the library; plug-ins count as apps):
 `ICodingLanguage`: `Name` ("csharp"), `Summary`, `Detect(workspace)` (from the files at the workspace's top, e.g. a
@@ -1344,7 +1344,7 @@ no `Idrak.Text`, and the plug-ins use the public API only.
   `--out DIR` (adapters and checkpoints; `--resume`), `--list` (environments, rewards, algorithms, estimators, sandboxes,
   each from its registry). The live progress line through `IProgressReporter`; a JSON line per iteration with
   `IDRAK_RL_LOG`.
-- **Every new variable** in `src/Idrak.Cli/Shared/EnvironmentVariables.cs`: `IDRAK_RL_ALGORITHM`, `IDRAK_RL_ESTIMATOR`,
+- **Every new variable** in `src/Idrak.Cli.Commands/Shared/EnvironmentVariables.cs`: `IDRAK_RL_ALGORITHM`, `IDRAK_RL_ESTIMATOR`,
   `IDRAK_RL_GROUP`, `IDRAK_RL_KL`, `IDRAK_RL_CLIP`, `IDRAK_RL_ENVIRONMENTS`, `IDRAK_RL_WORKSPACES`,
   `IDRAK_RL_KEEP_WORKSPACES`, `IDRAK_RL_TURNS`, `IDRAK_RL_BEHAVIOR`, `IDRAK_RL_LOG`, `IDRAK_SANDBOX`,
   `IDRAK_SANDBOX_PROGRAM`, `IDRAK_SANDBOX_IMAGE`, `IDRAK_SANDBOX_NETWORK`, and R3's `IDRAK_RL_TEACHER_WEIGHT`,
@@ -1366,7 +1366,7 @@ abstraction inventory`; the CodingAgent sample built.
 
 **R5 as built (2026-10-22).** Everything in the CLI and the sample; no library code changed, so no API dump or inventory
 change (the `public API` and `abstraction inventory` guards pass as they were).
-- **`idrak reinforce MODEL`** (`src/Idrak.Cli/Commands/Train/ReinforceCommand.cs`, Train group after `tune init`): R2's
+- **`idrak reinforce MODEL`** (`src/Idrak.Cli.Commands/Commands/Train/ReinforceCommand.cs`, Train group after `tune init`): R2's
   `ReinforcementTrainer<ChatObservation, ChatMessage>` over R3's `LanguageModelPolicy` on a `FineTuningSession` of the loaded
   model. `--env NAME` is any `EnvironmentKinds` kind that observes conversations and acts with replies (another kind is
   refused naming both types; an unregistered one with the registry's "not registered" message, exit 2). `prompts`: the
@@ -1826,7 +1826,7 @@ when it is made, never grown and never pooled; only `src/Idrak.Reinforcement/Rep
 small builders (no trainer changed: `ReinforcementTrainer.cs`, `OffPolicyTrainer.cs`, `RolloutCollector.cs` are as R6 and R8
 left them; no R1 contract changed; `TrainSession.cs` and the cluster commands untouched).
 - **The dispatch** (`ReinforceCommand.Run`, four lines after `--list`): when `--env` (or `IDRAK_RL_ENV`) names a registered kind
-  whose observations are not conversations, the run goes to the new `src/Idrak.Cli/Commands/Train/ReinforceNumeric.cs`; every
+  whose observations are not conversations, the run goes to the new `src/Idrak.Cli.Commands/Commands/Train/ReinforceNumeric.cs`; every
   other run (no `--env`, `prompts`, `coding`, an unregistered name) takes the language-model path unchanged. The other edits to
   `ReinforceCommand.cs`: its option lists gain `ReinforceNumeric.ValueOptions`/`Flags`, `Settings`, `Text`, `Int` and `Float` are
   `internal` (the numeric path reuses them, not copies), `--list` gains an "off-policy (QLosses)" section, and the usage is a

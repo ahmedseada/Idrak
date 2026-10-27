@@ -23,7 +23,7 @@
     <InternalsVisibleTo Include="Idrak.Tests" />
     <InternalsVisibleTo Include="Idrak.Tests.Library" />
     <!-- idrak kernels dump writes the generated kernel sources (PTX, SPIR-V, HIP). -->
-    <InternalsVisibleTo Include="Idrak.Cli" />
+    <InternalsVisibleTo Include="Idrak.Cli.Commands" />
   </ItemGroup>
 
 </Project>

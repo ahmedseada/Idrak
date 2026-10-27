@@ -292,7 +292,7 @@ internal abstract partial class DesktopTests : Tests
     {
         _ = device;
         var plugins = PluginPackages.Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
-        foreach (string name in ApiAssemblyNames.Append("Idrak.Cli"))
+        foreach (string name in ApiAssemblyNames.Append("Idrak.Cli").Append("Idrak.Cli.Commands"))
         {
             var friends = Assembly.Load(name).GetCustomAttributes<InternalsVisibleToAttribute>().Select(a => a.AssemblyName.Split(',')[0].Trim()).ToList();
             Check(!friends.Any(f => plugins.Contains(f) || f.EndsWith(".Plugins", StringComparison.Ordinal)),

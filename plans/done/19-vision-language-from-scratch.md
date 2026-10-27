@@ -104,13 +104,13 @@ Every row names the code the phases build on (file: line at e0b8d701).
   versions and each file's size and SHA-256; a hand-written README; tolerances as `vlm-tuning/README.md`: losses within
   1e-4, gradients within 1e-4 of the largest, values within 1e-5, ids and masks exact.
 - **A command** is an `internal sealed class XCommand : Command` added to `TrainCommands.All` or `DataCommands.All`
-  (`src/Idrak.Cli/Commands/TrainCommands.cs:11`, `DataCommands.cs:11`), with `Name`, `Summary` (an Arabic entry in
+  (`src/Idrak.Cli.Commands/Commands/TrainCommands.cs:11`, `DataCommands.cs:11`), with `Name`, `Summary` (an Arabic entry in
   `Messages.Arabic.cs`, the summaries section from line 254), `Usage` (sections Arguments, Options, Examples in that
   order, a blank line before each heading, every option named, `-x, --long` for short forms, no line wider than 120),
   `ValueOptions`, `Flags`, `ShortForms` (one letter, not a common one, the same meaning across commands), required
   options as `UsageException`, library exceptions turned into `UsageException`, progress through `ProgressLine`
-  (`src/Idrak.Cli/Shared/Progress.cs:22`), `context.Write` + `context.WriteJson`, `ExitCodes`. Add the command to the
-  variable lists in `src/Idrak.Cli/Shared/EnvironmentVariables.cs` (`OnDevice`, `Models`, `Data`). The tests "cli
+  (`src/Idrak.Cli.Commands/Shared/Progress.cs:22`), `context.Write` + `context.WriteJson`, `ExitCodes`. Add the command to the
+  variable lists in `src/Idrak.Cli.Commands/Shared/EnvironmentVariables.cs` (`OnDevice`, `Models`, `Data`). The tests "cli
   polish", "cli health", "cli arabic" and "cli train data" check all of this.
 - **Spec and run files** are read with `CliConfig.ReadOptions` (comments and trailing commas allowed), carry a
   `"format"` string (`"idrak-pretrain/1"`), map underscore keys to dashed options, and refuse unknown keys
@@ -123,7 +123,7 @@ Every row names the code the phases build on (file: line at e0b8d701).
 - **Progress and telemetry.** Library loops report through `IProgress<T>` and publish `Telemetry.TrainingStarted`,
   `BatchCompleted` (one per optimizer step), `TrainingCompleted` (`src/Idrak.Abstraction/Diagnostics/Telemetry.cs:239-275`;
   `IsEnabled` is one static read and an AND). The CLI draws `ProgressLine` and writes the run folder's `log.jsonl`
-  through `RunLogWriter` / `TelemetryJson.Write` (`src/Idrak.Cli/Shared/RunLogs.cs:185`), so `runs show` reads it.
+  through `RunLogWriter` / `TelemetryJson.Write` (`src/Idrak.Cli.Commands/Shared/RunLogs.cs:185`), so `runs show` reads it.
 
 ---
 
@@ -366,7 +366,7 @@ still pass (the refactor changed no behaviour).
 
 ## Phase A4: the command line
 
-- **`idrak create SPEC.json -o FOLDER`** (`src/Idrak.Cli/Commands/Train/CreateCommand.cs`, in `TrainCommands.All`):
+- **`idrak create SPEC.json -o FOLDER`** (`src/Idrak.Cli.Commands/Commands/Train/CreateCommand.cs`, in `TrainCommands.All`):
   SPEC is `{"format": "idrak-create/1", "architecture": "LlamaForCausalLM", "spec": {DecoderSpec JSON}, "tokenizer":
   "path/tokenizer.json", "chat_template": "path.jinja" | null, "bos": "<s>", "eos": "</s>", "pad": "<pad>",
   "seed": 0, "init_std": 0.02, "dtype": "f32"}`; every key also an option (`--architecture`, `--tokenizer`,
