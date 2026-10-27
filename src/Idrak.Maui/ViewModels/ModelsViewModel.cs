@@ -102,6 +102,7 @@ public sealed class ModelsViewModel : ViewModel
         _pull = new Command(async () => await PullAsync(), () => !IsPulling);
         _cancel = new Command(Cancel, () => IsPulling);
         _refresh = new Command(async () => await RefreshAsync(), () => !IsBusy);
+        Models.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoModels));
         foreach (string model in options.SuggestedModels.Where(m => !string.IsNullOrWhiteSpace(m)).Select(m => m.Trim()).Distinct(StringComparer.OrdinalIgnoreCase))
         {
             Suggestions.Add(new SuggestionChip(model, new Command(() => ModelId = model)));
@@ -136,6 +137,9 @@ public sealed class ModelsViewModel : ViewModel
 
     /// <summary>The models stored, by id.</summary>
     public ObservableCollection<ModelEntry> Models { get; } = [];
+
+    /// <summary>Whether no model is stored (the page says so in its header: a list's empty view covers its header on Windows, taking its clicks).</summary>
+    public bool HasNoModels => Models.Count == 0;
 
     /// <summary>The pull in progress, or the last one (its amounts, share, rate and time left), or null.</summary>
     public ProgressItem? Pull

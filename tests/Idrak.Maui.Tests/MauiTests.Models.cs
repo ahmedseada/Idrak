@@ -357,6 +357,7 @@ internal static partial class MauiTests
             Check(page.HasSuggestions && page.Suggestions.Select(s => s.Model).SequenceEqual(["lab/page", "lab/gguf/model.gguf"]), "suggestions, each once");
             page.Suggestions[0].Command.Execute(null);
             Check(page.ModelId == "lab/page", "a suggestion fills the id");
+            Check(page.HasNoModels, "an empty store says so in the header");
 
             var seen = new List<long>();
             page.PropertyChanged += (_, e) =>
@@ -384,6 +385,7 @@ internal static partial class MauiTests
 
             // The list after it, with sizes; the storage and the token.
             var entry = page.Models.Single();
+            Check(!page.HasNoModels, "the empty line hidden once a model is kept");
             Check(entry.Title == "lab/page" && entry.IsComplete && entry.Details.StartsWith(ProgressText.Bytes(200_400) + " in 3 files", StringComparison.Ordinal)
                   && entry.Folder == RevisionFolder(store, "lab/page"), $"entry {entry.Details}");
             Check(page.ModelsText.StartsWith("1 model, ", StringComparison.Ordinal) && page.StorageText.Contains("free of", StringComparison.Ordinal)

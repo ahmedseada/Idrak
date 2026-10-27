@@ -2220,6 +2220,7 @@ public sealed class Idrak.Maui.ViewModels.ModelsViewModel : Idrak.Maui.ViewModel
   public System.Windows.Input.ICommand PullCommand { get; }
   public System.Windows.Input.ICommand RefreshCommand { get; }
   public bool HasError { get; }
+  public bool HasNoModels { get; }
   public bool HasPull { get; }
   public bool HasStatus { get; }
   public bool HasSuggestions { get; }

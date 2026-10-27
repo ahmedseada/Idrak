@@ -75,11 +75,10 @@
                         </Grid>
                     </Border>
                     <Label Text="Kept here" Style="{DynamicResource IdrakSectionLabel}" />
+                    <!-- In the header, not the list's EmptyView: on Windows an empty list's EmptyView covers its header and takes its clicks. -->
+                    <Label Text="No models pulled yet: pull one above." IsVisible="{Binding HasNoModels}" Style="{DynamicResource IdrakCaption}" HorizontalOptions="Center" />
                 </VerticalStackLayout>
             </CollectionView.Header>
-            <CollectionView.EmptyView>
-                <Label Text="No models pulled yet: pull one above." Style="{DynamicResource IdrakCaption}" HorizontalOptions="Center" />
-            </CollectionView.EmptyView>
             <CollectionView.ItemTemplate>
                 <DataTemplate x:DataType="vm:ModelEntry">
                     <Border Style="{DynamicResource IdrakCard}">
