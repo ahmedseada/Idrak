@@ -150,7 +150,8 @@ internal static partial class MauiTests
         page.Query = "CHAT";
         Check(page.Entries.Where(e => e.IsShown).All(e => e.Group == "Chat") && page.Groups.Single(g => g.Title == "Chat").All(e => e.IsShown), Shown());
         page.Query = "int8 weights";
-        Check(page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key).SequenceEqual(["chat_weights"]), $"every word, a choice's too: {Shown()}");
+        Check(page.Entries.Where(e => e.IsShown).Select(e => e.Setting.Key).Order(StringComparer.Ordinal).SequenceEqual(["chat_weights", "packed_cache", "packed_cache_folder"]),
+              $"every word, a choice's too (the chat's weights by a choice, the packed cache by its help): {Shown()}");
         options.MaxCpuThreads = 3;
         page.Entries.Single(e => e.Setting.Key == "cpu_threads").Text = "3";
         page.Query = "3";
