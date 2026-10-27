@@ -464,6 +464,53 @@ public sealed class Idrak.Maui.ChatModelService : Idrak.Maui.Abstractions.IChatM
   public const string HostName = "chat"
   public static bool? ThinkingDefault(Idrak.Abstraction.Generation.IChatTemplate template)
 
+public sealed class Idrak.Maui.ChatReplyOptions
+  public ChatReplyOptions()
+  public Idrak.Abstraction.Generation.GenerationOptions Over(Idrak.Abstraction.Generation.GenerationOptions defaults)
+  public Idrak.Maui.ChatReplyOptions Clone()
+  public System.Collections.Generic.IReadOnlyList<string>? Stop { get; set; }
+  public bool? AddSpecialTokens { get; set; }
+  public bool? SlideContext { get; set; }
+  public bool? Thinking { get; set; }
+  public bool? UseCache { get; set; }
+  public bool? UseGraph { get; set; }
+  public double? FrequencyPenalty { get; set; }
+  public double? MinP { get; set; }
+  public double? PresencePenalty { get; set; }
+  public double? RepeatPenalty { get; set; }
+  public double? Temperature { get; set; }
+  public double? TopP { get; set; }
+  public int? ChunkSize { get; set; }
+  public int? Context { get; set; }
+  public int? MaxNewTokens { get; set; }
+  public int? PrefillChunk { get; set; }
+  public int? PrefillMinChunk { get; set; }
+  public int? RepeatLastN { get; set; }
+  public int? RepeatStop { get; set; }
+  public int? RepeatStopMinTokens { get; set; }
+  public int? Seed { get; set; }
+  public int? TopK { get; set; }
+  public string? SystemPrompt { get; set; }
+
+public sealed record Idrak.Maui.ChatReplySetting : System.IEquatable<Idrak.Maui.ChatReplySetting>
+  public (double, double, double)? Range { get; init; }
+  public ChatReplySetting(Idrak.Maui.LabSetting<Idrak.Maui.ChatReplyOptions> Setting, string Group, System.Func<Idrak.Maui.IdrakMauiOptions, string> Default, (double, double, double)? Range = null, bool Lines = false, bool Reloads = false)
+  public Idrak.Maui.LabSetting<Idrak.Maui.ChatReplyOptions> Setting { get; init; }
+  public System.Func<Idrak.Maui.IdrakMauiOptions, string> Default { get; init; }
+  public bool Lines { get; init; }
+  public bool Reloads { get; init; }
+  public string Group { get; init; }
+
+public static class Idrak.Maui.ChatReplySettings
+  public const string Prefix = "idrak.chat.model."
+  public static Idrak.Maui.ChatReplyOptions Load(Idrak.Maui.Abstractions.ISettingsStore store, string model, out System.Collections.Generic.IReadOnlyList<string> skipped)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.ChatReplySetting> Definitions { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> Groups { get; }
+  public static string KeyOf(string model)
+  public static void Clear(Idrak.Maui.Abstractions.ISettingsStore store, string model)
+  public static void Save(Idrak.Maui.Abstractions.ISettingsStore store, string model, Idrak.Maui.ChatReplyOptions options)
+  public static void Save(Idrak.Maui.Abstractions.ISettingsStore store, string model, Idrak.Maui.ChatReplySetting setting, Idrak.Maui.ChatReplyOptions options)
+
 public abstract class Idrak.Maui.Controls.AdaptiveView : Microsoft.Maui.Controls.ContentView, Idrak.Maui.Abstractions.IHostedView
   protected AdaptiveView(System.IServiceProvider? services)
   protected abstract void Arrange(bool wide)
@@ -1154,6 +1201,7 @@ public sealed class Idrak.Maui.Navigation.SettingsSection : Idrak.Abstraction.IK
   public string Name { get; }
   public string Summary { get; }
   public string Title { get; }
+
 public sealed class Idrak.Maui.NoSoftKeyboard : Idrak.Maui.Abstractions.ISoftKeyboard
   public NoSoftKeyboard()
   public bool IsVisible { get; }
@@ -1524,9 +1572,38 @@ public sealed class Idrak.Maui.ViewModels.ChatModelChoice
   public string Path { get; }
   public string Title { get; }
 
+public sealed class Idrak.Maui.ViewModels.ChatReplyEntry : Idrak.Maui.ViewModels.ViewModel
+  public Idrak.Maui.ChatReplySetting Definition { get; }
+  public Microsoft.Maui.Keyboard Keyboard { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Choices { get; }
+  public System.Windows.Input.ICommand ResetCommand { get; }
+  public bool HasError { get; }
+  public bool HasSlider { get; }
+  public bool IsChoice { get; }
+  public bool IsLines { get; }
+  public bool IsSet { get; }
+  public bool Reloads { get; }
+  public double Maximum { get; }
+  public double Minimum { get; }
+  public double SliderValue { get; set; }
+  public string Default { get; }
+  public string DefaultText { get; }
+  public string Error { get; }
+  public string Key { get; }
+  public string Summary { get; }
+  public string Text { get; set; }
+  public string Title { get; }
+  public string? SelectedChoice { get; set; }
+
+public sealed class Idrak.Maui.ViewModels.ChatReplyGroup : System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.ChatReplyEntry>
+  public ChatReplyGroup(string title, System.Collections.Generic.IEnumerable<Idrak.Maui.ViewModels.ChatReplyEntry> entries)
+  public string Title { get; }
+
 public sealed class Idrak.Maui.ViewModels.ChatViewModel : Idrak.Maui.ViewModels.ViewModel
-  public ChatViewModel(Idrak.Maui.Abstractions.IModelStore store, Idrak.Maui.Abstractions.IChatModelService chats, Idrak.Maui.IdrakMauiOptions options, Microsoft.Maui.Dispatching.IDispatcher? dispatcher = null, System.TimeProvider? time = null, Idrak.Maui.Abstractions.IConversationStore? conversations = null, Idrak.Maui.Abstractions.IDictation? dictation = null)
+  public ChatViewModel(Idrak.Maui.Abstractions.IModelStore store, Idrak.Maui.Abstractions.IChatModelService chats, Idrak.Maui.IdrakMauiOptions options, Microsoft.Maui.Dispatching.IDispatcher? dispatcher = null, System.TimeProvider? time = null, Idrak.Maui.Abstractions.IConversationStore? conversations = null, Idrak.Maui.Abstractions.IDictation? dictation = null, Idrak.Maui.Abstractions.ISettingsStore? settings = null)
+  public Idrak.Abstraction.Generation.GenerationOptions ReplyGeneration()
   public Idrak.Maui.Abstractions.ChatModelInfo? Model { get; }
+  public Idrak.Maui.ChatReplyOptions ReplyOptions { get; }
   public Idrak.Maui.Controls.LiveLevels? DictationLevels { get; }
   public Idrak.Maui.ViewModels.ChatModelChoice? SelectedModel { get; set; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> History { get; }
@@ -1534,6 +1611,7 @@ public sealed class Idrak.Maui.ViewModels.ChatViewModel : Idrak.Maui.ViewModels.
   public System.Collections.Generic.IReadOnlyList<double> RateHistory { get; }
   public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.ChatBubble> Messages { get; }
   public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.ChatModelChoice> Models { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.ChatReplyGroup> Tuning { get; }
   public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.ConversationGroup> Conversations { get; }
   public System.Collections.ObjectModel.ObservableCollection<string> Suggestions { get; }
   public System.Func<System.Threading.Tasks.Task>? OpenModels { get; set; }
@@ -1545,13 +1623,16 @@ public sealed class Idrak.Maui.ViewModels.ChatViewModel : Idrak.Maui.ViewModels.
   public System.Threading.Tasks.Task<bool> SendAsync()
   public System.Threading.Tasks.Task<bool> ToggleDictationAsync()
   public System.Threading.Tasks.Task<bool>? Loading { get; }
+  public System.Windows.Input.ICommand CloseTuningCommand { get; }
   public System.Windows.Input.ICommand DeleteConversationCommand { get; }
   public System.Windows.Input.ICommand DictateCommand { get; }
   public System.Windows.Input.ICommand GoToModelsCommand { get; }
   public System.Windows.Input.ICommand NewChatCommand { get; }
   public System.Windows.Input.ICommand OpenConversationCommand { get; }
+  public System.Windows.Input.ICommand OpenTuningCommand { get; }
   public System.Windows.Input.ICommand RefreshCommand { get; }
   public System.Windows.Input.ICommand RegenerateCommand { get; }
+  public System.Windows.Input.ICommand ResetTuningCommand { get; }
   public System.Windows.Input.ICommand SendCommand { get; }
   public System.Windows.Input.ICommand StopCommand { get; }
   public System.Windows.Input.ICommand SuggestCommand { get; }
@@ -1572,6 +1653,7 @@ public sealed class Idrak.Maui.ViewModels.ChatViewModel : Idrak.Maui.ViewModels.
   public bool IsModelLoaded { get; }
   public bool IsNotDictating { get; }
   public bool IsStreaming { get; }
+  public bool IsTuning { get; set; }
   public bool OpenConversation(string id)
   public bool ShowSuggestions { get; }
   public bool Thinking { get; set; }
@@ -1607,6 +1689,8 @@ public sealed class Idrak.Maui.ViewModels.ChatViewModel : Idrak.Maui.ViewModels.
   public string Status { get; }
   public string TemperatureText { get; }
   public string Title { get; }
+  public string TuningStatus { get; }
+  public string TuningTitle { get; }
   public string WarmText { get; }
   public string WeightsText { get; }
   public void ListConversations()
@@ -2672,6 +2756,13 @@ public sealed class Idrak.Maui.Views.ChatFeature : Idrak.Abstraction.IKind, Idra
 
 public sealed class Idrak.Maui.Views.ChatPage : Idrak.Maui.Views.LabPage
   public ChatPage(Idrak.Maui.ViewModels.ChatViewModel viewModel, System.IServiceProvider services)
+
+public sealed class Idrak.Maui.Views.ChatReplyTemplates : Microsoft.Maui.Controls.DataTemplateSelector
+  public ChatReplyTemplates()
+  public Microsoft.Maui.Controls.DataTemplate? Choice { get; set; }
+  public Microsoft.Maui.Controls.DataTemplate? Field { get; set; }
+  public Microsoft.Maui.Controls.DataTemplate? Lines { get; set; }
+  public Microsoft.Maui.Controls.DataTemplate? Slider { get; set; }
 
 public class Idrak.Maui.Views.ChatView : Idrak.Maui.Controls.AdaptiveView
   protected override void Arrange(bool wide)

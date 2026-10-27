@@ -63,7 +63,7 @@ public sealed class ChatFeature : IMobileFeature
         var options = services.GetService<IdrakMauiOptions>() ?? new IdrakMauiOptions();
         var models = services.GetService<IModelService>() ?? new ModelService(new ManualMemoryPressure(), options);
         return new ChatViewModel(services.GetService<IModelStore>() ?? new ModelStore(options), services.GetService<IChatModelService>() ?? new ChatModelService(models), options,
-            conversations: services.GetService<IConversationStore>());
+            conversations: services.GetService<IConversationStore>(), settings: services.GetService<ISettingsStore>());
     }
 
     /// <inheritdoc />

@@ -95,6 +95,77 @@
         </DataTemplate>
 
         <views:ChatBubbleTemplates x:Key="Bubbles" User="{StaticResource UserBubble}" Assistant="{StaticResource AssistantBubble}" />
+
+        <!-- The tune sheet's settings, one template a kind: a number with a slider, a field, lines, a choice. Each shows its
+             title, its default and a reset once a value of its own is set, then its help and why a value was refused. -->
+        <DataTemplate x:Key="ReplySlider" x:DataType="vm:ChatReplyEntry">
+            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}" Padding="{DynamicResource IdrakSettingRowPadding}">
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                    <Label Text="{Binding Title}" Style="{DynamicResource IdrakItemTitle}" />
+                    <Label Grid.Column="1" Text="{Binding DefaultText}" Style="{DynamicResource IdrakMicro}" VerticalOptions="Center" />
+                    <ctl:IconView Grid.Column="2" Glyph="redo" Size="15" Stroke="{DynamicResource IdrakTextMuted}" IsVisible="{Binding IsSet}" InputTransparent="False"
+                                  SemanticProperties.Description="Back to the default">
+                        <ctl:IconView.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding ResetCommand}" />
+                        </ctl:IconView.GestureRecognizers>
+                    </ctl:IconView>
+                </Grid>
+                <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                    <Slider Maximum="{Binding Maximum}" Minimum="{Binding Minimum}" Value="{Binding SliderValue}" VerticalOptions="Center" />
+                    <Entry Grid.Column="1" Text="{Binding Text}" Placeholder="{Binding Default}" Keyboard="Numeric" WidthRequest="96" HorizontalTextAlignment="End"
+                           IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" />
+                </Grid>
+                <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+            </VerticalStackLayout>
+        </DataTemplate>
+        <DataTemplate x:Key="ReplyField" x:DataType="vm:ChatReplyEntry">
+            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}" Padding="{DynamicResource IdrakSettingRowPadding}">
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                    <Label Text="{Binding Title}" Style="{DynamicResource IdrakItemTitle}" />
+                    <Label Grid.Column="1" Text="{Binding DefaultText}" Style="{DynamicResource IdrakMicro}" VerticalOptions="Center" />
+                    <ctl:IconView Grid.Column="2" Glyph="redo" Size="15" Stroke="{DynamicResource IdrakTextMuted}" IsVisible="{Binding IsSet}" InputTransparent="False"
+                                  SemanticProperties.Description="Back to the default">
+                        <ctl:IconView.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding ResetCommand}" />
+                        </ctl:IconView.GestureRecognizers>
+                    </ctl:IconView>
+                </Grid>
+                <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" />
+                <Entry Text="{Binding Text}" Placeholder="{Binding Default}" Keyboard="{Binding Keyboard}" IsSpellCheckEnabled="False" IsTextPredictionEnabled="False"
+                       ClearButtonVisibility="WhileEditing" />
+                <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+            </VerticalStackLayout>
+        </DataTemplate>
+        <DataTemplate x:Key="ReplyLines" x:DataType="vm:ChatReplyEntry">
+            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}" Padding="{DynamicResource IdrakSettingRowPadding}">
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                    <Label Text="{Binding Title}" Style="{DynamicResource IdrakItemTitle}" />
+                    <Label Grid.Column="1" Text="{Binding DefaultText}" Style="{DynamicResource IdrakMicro}" VerticalOptions="Center" LineBreakMode="TailTruncation" MaximumWidthRequest="160" />
+                    <ctl:IconView Grid.Column="2" Glyph="redo" Size="15" Stroke="{DynamicResource IdrakTextMuted}" IsVisible="{Binding IsSet}" InputTransparent="False"
+                                  SemanticProperties.Description="Back to the default">
+                        <ctl:IconView.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding ResetCommand}" />
+                        </ctl:IconView.GestureRecognizers>
+                    </ctl:IconView>
+                </Grid>
+                <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" />
+                <Editor Text="{Binding Text}" Placeholder="{Binding Default}" AutoSize="TextChanges" MaximumHeightRequest="160" />
+                <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+            </VerticalStackLayout>
+        </DataTemplate>
+        <DataTemplate x:Key="ReplyChoice" x:DataType="vm:ChatReplyEntry">
+            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}" Padding="{DynamicResource IdrakSettingRowPadding}">
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                    <Label Text="{Binding Title}" Style="{DynamicResource IdrakItemTitle}" />
+                    <Label Grid.Column="1" Text="{Binding DefaultText}" Style="{DynamicResource IdrakMicro}" VerticalOptions="Center" />
+                </Grid>
+                <Label Text="{Binding Summary}" Style="{DynamicResource IdrakCaption}" />
+                <Picker ItemsSource="{Binding Choices}" SelectedItem="{Binding SelectedChoice}" Title="{Binding Title}" />
+            </VerticalStackLayout>
+        </DataTemplate>
+        <views:ChatReplyTemplates x:Key="ReplyTemplates" Slider="{StaticResource ReplySlider}" Field="{StaticResource ReplyField}" Lines="{StaticResource ReplyLines}"
+                                  Choice="{StaticResource ReplyChoice}" />
     </ctl:AdaptiveView.Resources>
 
     <Grid x:Name="Root" ColumnDefinitions="*">
@@ -160,7 +231,7 @@
         <Grid x:Name="Main" RowDefinitions="Auto,*,Auto">
             <BoxView Grid.RowSpan="3" Background="{DynamicResource IdrakBrushGlowIndigo}" InputTransparent="True" />
             <VerticalStackLayout x:Name="Top" Padding="{DynamicResource IdrakChatTopPadding}" Spacing="{DynamicResource IdrakSpacingSmall}">
-                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingTile}">
+                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingTile}">
                     <!-- The model: tap to choose another of the store's. -->
                     <Grid>
                         <Border x:Name="ModelCard" Style="{DynamicResource IdrakModelCard}">
@@ -183,7 +254,14 @@
                         </Border>
                         <Picker Title="Choose a model" ItemsSource="{Binding Models}" SelectedItem="{Binding SelectedModel}" IsEnabled="{Binding IsIdle}" Opacity="0" />
                     </Grid>
-                    <Border x:Name="NewChat" Grid.Column="1" Style="{DynamicResource IdrakIconButton}" WidthRequest="46" HeightRequest="46" SemanticProperties.Description="New chat">
+                    <!-- The chosen model's generation settings (the tune sheet). -->
+                    <Border Grid.Column="1" Style="{DynamicResource IdrakIconButton}" WidthRequest="46" HeightRequest="46" SemanticProperties.Description="Generation settings">
+                        <Border.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding OpenTuningCommand}" />
+                        </Border.GestureRecognizers>
+                        <ctl:IconView Glyph="sliders" Size="20" />
+                    </Border>
+                    <Border x:Name="NewChat" Grid.Column="2" Style="{DynamicResource IdrakIconButton}" WidthRequest="46" HeightRequest="46" SemanticProperties.Description="New chat">
                         <Border.GestureRecognizers>
                             <TapGestureRecognizer Command="{Binding NewChatCommand}" />
                         </Border.GestureRecognizers>
@@ -332,5 +410,59 @@
                 </Border>
             </VerticalStackLayout>
         </ScrollView>
+
+        <!-- The tune sheet: the chosen model's generation settings, kept for it, the next reply using them. A narrow window:
+             a sheet from the bottom over a scrim; a wide one: the inspector's column (ChatView.Arrange). -->
+        <Grid x:Name="TuningLayer" IsVisible="{Binding IsTuning}">
+            <BoxView x:Name="TuningScrim" Color="{DynamicResource IdrakScrim}">
+                <BoxView.GestureRecognizers>
+                    <TapGestureRecognizer Command="{Binding CloseTuningCommand}" />
+                </BoxView.GestureRecognizers>
+            </BoxView>
+            <Border x:Name="TuningPanel" Style="{DynamicResource IdrakSheet}" VerticalOptions="End">
+                <Grid RowDefinitions="Auto,Auto,*" RowSpacing="{DynamicResource IdrakSpacingSmall}">
+                    <Border x:Name="TuningHandle" Style="{DynamicResource IdrakSheetHandle}">
+                        <Border.GestureRecognizers>
+                            <TapGestureRecognizer Command="{Binding CloseTuningCommand}" />
+                            <SwipeGestureRecognizer Direction="Down" Command="{Binding CloseTuningCommand}" />
+                        </Border.GestureRecognizers>
+                    </Border>
+                    <Grid Grid.Row="1" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="{DynamicResource IdrakSpacingTile}">
+                        <VerticalStackLayout VerticalOptions="Center">
+                            <Label Text="{Binding TuningTitle}" Style="{DynamicResource IdrakSheetTitle}" />
+                            <Label Text="Kept for this model; the next reply uses them. An empty field is the default, shown beside it." Style="{DynamicResource IdrakMicro}" />
+                        </VerticalStackLayout>
+                        <Label Grid.Column="1" Text="Reset" Style="{DynamicResource IdrakLink}" VerticalOptions="Center" SemanticProperties.Description="Every setting back to its default">
+                            <Label.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding ResetTuningCommand}" />
+                            </Label.GestureRecognizers>
+                        </Label>
+                        <Border Grid.Column="2" Style="{DynamicResource IdrakIconButton}" SemanticProperties.Description="Done">
+                            <Border.GestureRecognizers>
+                                <TapGestureRecognizer Command="{Binding CloseTuningCommand}" />
+                            </Border.GestureRecognizers>
+                            <ctl:IconView Glyph="check" Size="18" />
+                        </Border>
+                    </Grid>
+                    <ScrollView Grid.Row="2">
+                        <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}" Padding="{DynamicResource IdrakBottomGap}">
+                            <Label Text="{Binding TuningStatus}" Style="{DynamicResource IdrakHighlightText}" />
+                            <VerticalStackLayout BindableLayout.ItemsSource="{Binding Tuning}" Spacing="{DynamicResource IdrakSpacingSmall}">
+                                <BindableLayout.ItemTemplate>
+                                    <DataTemplate x:DataType="vm:ChatReplyGroup">
+                                        <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}">
+                                            <Label Text="{Binding Title}" Style="{DynamicResource IdrakSectionLabel}" Margin="{DynamicResource IdrakGroupHeaderMargin}" />
+                                            <Border Style="{DynamicResource IdrakPanel}">
+                                                <VerticalStackLayout BindableLayout.ItemsSource="{Binding .}" BindableLayout.ItemTemplateSelector="{StaticResource ReplyTemplates}" />
+                                            </Border>
+                                        </VerticalStackLayout>
+                                    </DataTemplate>
+                                </BindableLayout.ItemTemplate>
+                            </VerticalStackLayout>
+                        </VerticalStackLayout>
+                    </ScrollView>
+                </Grid>
+            </Border>
+        </Grid>
     </Grid>
 </ctl:AdaptiveView>

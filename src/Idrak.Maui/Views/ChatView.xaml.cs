@@ -10,8 +10,9 @@ namespace Idrak.Maui.Views;
 /// <summary>
 /// Chat's view: reads the store's models and the kept chats each time it is shown, keeps the composer above the keyboard
 /// (the host's bottom edge follows it: <c>AppHostPage.KeyboardAware</c>) with the conversation still at its end as the
-/// keyboard takes its room, follows the streaming answer to its end, copies with the clipboard, opens Models
-/// (+); the microphone dictates into the message (<see cref="ChatViewModel.DictateCommand"/>). Wide: the conversations on the
+/// keyboard takes its room, follows the streaming answer to its end, copies with the clipboard, opens Models (+); the
+/// microphone dictates into the message (<see cref="ChatViewModel.DictateCommand"/>); the sliders open the chosen model's
+/// generation settings (a sheet from the bottom; on a wide window, the inspector's column). Wide: the conversations on the
 /// left and the inspector on the right.
 /// </summary>
 public partial class ChatView : AdaptiveView
@@ -31,6 +32,7 @@ public partial class ChatView : AdaptiveView
         viewModel.OpenModels = () => _navigator.OpenFeatureAsync(MobileFeatures.Models);
         InitializeComponent();
         MessageList.SizeChanged += OnListSize;
+        Root.SizeChanged += (_, _) => SizeSheet();
     }
 
     /// <summary>The view model.</summary>
@@ -51,6 +53,7 @@ public partial class ChatView : AdaptiveView
     public override void Hidden()
     {
         ViewModel.ScrollToEndRequested -= OnScrollToEnd;
+        ViewModel.IsTuning = false;
         base.Hidden();
     }
 
@@ -67,7 +70,29 @@ public partial class ChatView : AdaptiveView
         Grid.SetColumn(Inspector, wide ? 2 : 0);
         MessageList.SetDynamicResource(MarginProperty, wide ? "IdrakWideFeedPadding" : "IdrakFeedPadding");
         Top.SetDynamicResource(PaddingProperty, wide ? "IdrakWideChatTopPadding" : "IdrakChatTopPadding");
+
+        // The tune sheet: from the bottom over the chat (narrow), or in the inspector's column (wide).
+        Grid.SetColumn(TuningLayer, wide ? 2 : 0);
+        TuningScrim.IsVisible = !wide;
+        TuningHandle.IsVisible = !wide;
+        TuningPanel.VerticalOptions = wide ? LayoutOptions.Fill : LayoutOptions.End;
+        if (wide)
+        {
+            TuningPanel.Style = null;
+            TuningPanel.StrokeThickness = 0;
+            TuningPanel.SetDynamicResource(Border.BackgroundColorProperty, "IdrakRailBackground");
+            TuningPanel.SetDynamicResource(PaddingProperty, "IdrakPanePadding");
+        }
+        else
+        {
+            TuningPanel.SetDynamicResource(StyleProperty, "IdrakSheet");
+        }
+
+        SizeSheet();
     }
+
+    // The narrow window's sheet takes most of the view's height (what the keyboard leaves of it); the wide pane all of it.
+    private void SizeSheet() => TuningPanel.HeightRequest = IsWide || Root.Height <= 0 ? -1 : Math.Round(Root.Height * 0.86);
 
     // The conversation keeps its end in view when its room shrinks (the keyboard comes up, the composer grows).
     private void OnListSize(object? sender, EventArgs e)
@@ -110,4 +135,29 @@ public sealed class ChatBubbleTemplates : DataTemplateSelector
     /// <inheritdoc />
     protected override DataTemplate OnSelectTemplate(object item, BindableObject container) =>
         (item is ChatBubble { IsUser: true } ? User : Assistant) ?? throw new InvalidOperationException("The chat's bubble templates are not set.");
+}
+
+/// <summary>The tune sheet's settings, one template a kind: a number with a slider, a field, lines, a choice.</summary>
+public sealed class ChatReplyTemplates : DataTemplateSelector
+{
+    /// <summary>A number with a range: a slider and its field.</summary>
+    public DataTemplate? Slider { get; set; }
+
+    /// <summary>A number without a range, or a short text: a field.</summary>
+    public DataTemplate? Field { get; set; }
+
+    /// <summary>Several lines (the system prompt, the stop texts).</summary>
+    public DataTemplate? Lines { get; set; }
+
+    /// <summary>Default, on or off.</summary>
+    public DataTemplate? Choice { get; set; }
+
+    /// <inheritdoc />
+    protected override DataTemplate OnSelectTemplate(object item, BindableObject container) => (item switch
+    {
+        ChatReplyEntry { IsChoice: true } => Choice,
+        ChatReplyEntry { IsLines: true } => Lines,
+        ChatReplyEntry { HasSlider: true } => Slider,
+        _ => Field,
+    }) ?? throw new InvalidOperationException("The tune sheet's templates are not set.");
 }

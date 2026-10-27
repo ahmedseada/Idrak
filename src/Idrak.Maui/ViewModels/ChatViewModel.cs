@@ -293,6 +293,11 @@ public sealed class ChatViewModel : ViewModel
     private readonly StringBuilder _pendingThinking = new();
     private CancellationTokenSource? _cancellation;
     private ChatModelChoice? _selected;
+    private bool _refreshing;
+    private readonly ISettingsStore? _settings;
+    private ChatReplyOptions _reply = new();
+    private bool _tuning;
+    private string _tuningStatus = "";
     private ChatModelInfo? _info;
     private int _answersSinceLoad;
     private bool _flushQueued;
@@ -330,9 +335,14 @@ public sealed class ChatViewModel : ViewModel
     /// <param name="time">The clock the batching reads (tests give their own).</param>
     /// <param name="conversations">Where the chats are kept between runs; null: none kept.</param>
     /// <param name="dictation">What the composer's microphone dictates with (the Transcribe lab's, <c>UseIdrak</c>'s); null: the microphone says there is none.</param>
+    /// <param name="settings">Where each model's generation settings (the tune sheet) are kept between runs; null: kept for this run only.</param>
     public ChatViewModel(IModelStore store, IChatModelService chats, IdrakMauiOptions options, IDispatcher? dispatcher = null, TimeProvider? time = null,
-        IConversationStore? conversations = null, IDictation? dictation = null)
+        IConversationStore? conversations = null, IDictation? dictation = null, ISettingsStore? settings = null)
     {
+        _settings = settings;
+        OpenTuningCommand = new Command(OpenTuning);
+        CloseTuningCommand = new Command(() => IsTuning = false);
+        ResetTuningCommand = new Command(ResetTuning);
         _conversations = conversations;
         _dictation = dictation;
         DictateCommand = new Command(async () => await ToggleDictationAsync());
@@ -363,11 +373,24 @@ public sealed class ChatViewModel : ViewModel
         Messages.CollectionChanged += (_, _) => OnPropertyChanged(nameof(ShowSuggestions));
     }
 
-    /// <summary>The model chosen, by its name without the owner ("Qwen3-0.6B"), or what to do.</summary>
-    public string ModelName => SelectedModel is { } model ? ShortName(model.Title) : HasModels ? "Choose a model" : "No model yet";
+    // The model the header names: the one chosen, else the one loaded (a choice the store no longer lists keeps its
+    // loaded model named), else none. The title, the avatar and the status line all read it with Model, and change together.
+    private string? HeaderModel => SelectedModel?.Title ?? Model?.Model;
+
+    /// <summary>The model chosen (or loaded), by its name without the owner ("Qwen3-0.6B"), or what to do.</summary>
+    public string ModelName => HeaderModel is { } model ? ShortName(model) : HasModels ? "Choose a model" : "No model yet";
 
     /// <summary>The letter on the model's avatar.</summary>
-    public string ModelInitial => SelectedModel is { } model && ShortName(model.Title) is { Length: > 0 } name ? char.ToUpperInvariant(name[0]).ToString() : "?";
+    public string ModelInitial => HeaderModel is { } model && ShortName(model) is { Length: > 0 } name ? char.ToUpperInvariant(name[0]).ToString() : "?";
+
+    // The header's three lines change together (one state: the choice, the loaded model and the load).
+    private void HeaderChanged()
+    {
+        OnPropertyChanged(nameof(ModelName));
+        OnPropertyChanged(nameof(ModelInitial));
+        OnPropertyChanged(nameof(ModelMeta));
+        OnPropertyChanged(nameof(IsModelLoaded));
+    }
 
     /// <summary>"int8 · vulkan:0 · loaded in 3.1 s", or what is happening.</summary>
     public string ModelMeta => Model is { } m ? string.Create(CultureInfo.InvariantCulture, $"{m.Weights} · {m.Device} · loaded in {m.LoadTime.TotalSeconds:F1} s")
@@ -447,14 +470,26 @@ public sealed class ChatViewModel : ViewModel
     /// <summary>"cache 212 MB".</summary>
     public string CacheText => Model?.Estimate is { } e ? $"cache {ProgressText.Bytes(e.CacheBytes)}" : "";
 
-    /// <summary>The sampling temperature of the next answers (the settings' value, changed here for this run).</summary>
+    /// <summary>
+    /// The sampling temperature of the next answers: the chosen model's own (the tune sheet's, kept for it), else the
+    /// settings'; changed here, it is the chosen model's (the settings' when none is chosen, for this run).
+    /// </summary>
     public double Temperature
     {
-        get => _options.ChatTemperature ?? new GenerationOptions().Temperature;
+        get => ReplyGeneration().Temperature;
         set
         {
             double rounded = Math.Round(Math.Clamp(value, 0, 2), 2);
-            if (_options.ChatTemperature != rounded)
+            if (Math.Abs(Temperature - rounded) < 1e-9)
+            {
+                return;
+            }
+
+            if (SelectedModel is not null && Entry("temperature") is { } entry)
+            {
+                entry.Text = rounded.ToString("R", CultureInfo.InvariantCulture);
+            }
+            else
             {
                 _options.ChatTemperature = rounded;
                 OnPropertyChanged();
@@ -466,18 +501,152 @@ public sealed class ChatViewModel : ViewModel
     /// <summary>"0.7".</summary>
     public string TemperatureText => Temperature.ToString("0.0#", CultureInfo.InvariantCulture);
 
-    /// <summary>The most tokens of the next answers, as text ("" for until the turn ends).</summary>
+    /// <summary>The most tokens of the next answers, as text ("" for until the turn ends): the chosen model's own, else the settings'.</summary>
     public string MaxNewTokensText
     {
-        get => _options.ChatMaxNewTokens?.ToString(CultureInfo.InvariantCulture) ?? "";
+        get => ReplyGeneration().NumPredict is > 0 and int most ? most.ToString(CultureInfo.InvariantCulture) : "";
         set
         {
             int? next = int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int n) && n > 0 ? n : null;
-            if (_options.ChatMaxNewTokens != next)
+            if (SelectedModel is not null && Entry("max_new_tokens") is { } entry)
+            {
+                entry.Text = next?.ToString(CultureInfo.InvariantCulture) ?? "";
+            }
+            else if (_options.ChatMaxNewTokens != next)
             {
                 _options.ChatMaxNewTokens = next;
                 OnPropertyChanged();
             }
+        }
+    }
+
+    /// <summary>The chosen model's generation settings (the tune sheet's), grouped as the sheet shows them; empty with no model chosen.</summary>
+    public ObservableCollection<ChatReplyGroup> Tuning { get; } = [];
+
+    /// <summary>Whether the tune sheet shows.</summary>
+    public bool IsTuning
+    {
+        get => _tuning;
+        set => SetProperty(ref _tuning, value);
+    }
+
+    /// <summary>Opens the tune sheet over the chosen model's settings (says to choose one first when none is chosen).</summary>
+    public ICommand OpenTuningCommand { get; }
+
+    /// <summary>Closes the tune sheet (what was set is kept already).</summary>
+    public ICommand CloseTuningCommand { get; }
+
+    /// <summary>Puts every setting of the chosen model back to its default.</summary>
+    public ICommand ResetTuningCommand { get; }
+
+    /// <summary>"Qwen3-0.6B: generation".</summary>
+    public string TuningTitle => SelectedModel is { } model ? $"{ShortName(model.Title)}: generation" : "Generation";
+
+    /// <summary>What the last change did ("Kept for Qwen3-0.6B: the next reply uses it."), or "".</summary>
+    public string TuningStatus
+    {
+        get => _tuningStatus;
+        private set => SetProperty(ref _tuningStatus, value);
+    }
+
+    /// <summary>The chosen model's own settings (null values: the defaults); a copy.</summary>
+    public ChatReplyOptions ReplyOptions => _reply.Clone();
+
+    /// <summary>The generation options of the next reply: the chosen model's settings over the app's (<see cref="Options(IdrakMauiOptions)"/>).</summary>
+    public GenerationOptions ReplyGeneration() => _reply.Over(Options(_options));
+
+    // The sheet's entry of `key`, or null.
+    private ChatReplyEntry? Entry(string key) => Tuning.SelectMany(g => g).FirstOrDefault(e => e.Key == key);
+
+    // The chosen model's settings, read from the store, as the sheet's entries (the defaults read from the app's options now).
+    private void LoadTuning()
+    {
+        _reply = new ChatReplyOptions();
+        if (SelectedModel is { } model && _settings is not null)
+        {
+            _reply = ChatReplySettings.Load(_settings, model.Title, out var skipped);
+            TuningStatus = skipped.Count > 0 ? "Not read: " + string.Join("; ", skipped) : "";
+        }
+
+        Tuning.Clear();
+        if (SelectedModel is not null)
+        {
+            foreach (string group in ChatReplySettings.Groups)
+            {
+                Tuning.Add(new ChatReplyGroup(group, ChatReplySettings.Definitions.Where(d => d.Group == group)
+                    .Select(d => new ChatReplyEntry(d, d.Setting.Get(_reply), d.Default(_options), OnTuned))));
+            }
+        }
+
+        OnPropertyChanged(nameof(TuningTitle));
+        OnPropertyChanged(nameof(Temperature));
+        OnPropertyChanged(nameof(TemperatureText));
+        OnPropertyChanged(nameof(MaxNewTokensText));
+    }
+
+    private void OpenTuning()
+    {
+        if (SelectedModel is null)
+        {
+            Error = "Choose a model first: its generation settings are its own.";
+            return;
+        }
+
+        foreach (var entry in Tuning.SelectMany(g => g))
+        {
+            entry.Default = entry.Definition.Default(_options);              // the settings page may have changed the app's
+        }
+
+        TuningStatus = "";
+        IsTuning = true;
+    }
+
+    // A changed entry: read into a copy of the model's settings; kept for the model when it reads, else refused with why.
+    private void OnTuned(ChatReplyEntry entry)
+    {
+        var next = _reply.Clone();
+        try
+        {
+            entry.Definition.Setting.Set(next, entry.Text);
+            entry.Error = "";
+        }
+        catch (FormatException e)
+        {
+            entry.Error = e.Message;
+            return;
+        }
+
+        _reply = next;
+        string model = SelectedModel is { } chosen ? ShortName(chosen.Title) : "this model";
+        if (SelectedModel is { } choice && _settings is not null)
+        {
+            ChatReplySettings.Save(_settings, choice.Title, entry.Definition, _reply);   // this setting alone (a slider moves many times)
+        }
+
+        TuningStatus = entry.Reloads ? $"Kept for {model}: the next reply loads it again with this context."
+            : $"Kept for {model}: the next reply uses it.";
+        if (entry.Key == "thinking" && HasThinkingSwitch)
+        {
+            Thinking = _reply.Thinking ?? _options.ChatThinking ?? Model?.ThinkingDefault ?? Thinking;
+        }
+
+        OnPropertyChanged(nameof(Temperature));
+        OnPropertyChanged(nameof(TemperatureText));
+        OnPropertyChanged(nameof(MaxNewTokensText));
+    }
+
+    private void ResetTuning()
+    {
+        if (SelectedModel is { } model && _settings is not null)
+        {
+            ChatReplySettings.Clear(_settings, model.Title);
+        }
+
+        LoadTuning();
+        TuningStatus = SelectedModel is { } chosen ? $"{ShortName(chosen.Title)} takes the defaults again." : "";
+        if (HasThinkingSwitch && Model?.ThinkingDefault is { } thinks)
+        {
+            Thinking = _options.ChatThinking ?? thinks;
         }
     }
 
@@ -718,13 +887,17 @@ public sealed class ChatViewModel : ViewModel
         get => _selected;
         set
         {
+            if (value is null && _refreshing)
+            {
+                return;                                                         // the picker's list is being made again: the choice stays
+            }
+
             if (SetProperty(ref _selected, value))
             {
                 _send.ChangeCanExecute();
                 OnPropertyChanged(nameof(CanSend));
-                OnPropertyChanged(nameof(ModelName));
-                OnPropertyChanged(nameof(ModelInitial));
-                OnPropertyChanged(nameof(ModelMeta));
+                HeaderChanged();
+                LoadTuning();
                 if (value is not null)
                 {
                     Loading = LoadAsync(value);
@@ -745,8 +918,7 @@ public sealed class ChatViewModel : ViewModel
             if (SetProperty(ref _info, value))
             {
                 OnPropertyChanged(nameof(HasThinkingSwitch));
-                OnPropertyChanged(nameof(ModelMeta));
-                OnPropertyChanged(nameof(IsModelLoaded));
+                HeaderChanged();
                 OnPropertyChanged(nameof(DeviceText));
                 OnPropertyChanged(nameof(MemoryText));
                 OnPropertyChanged(nameof(WeightsShare));
@@ -792,7 +964,7 @@ public sealed class ChatViewModel : ViewModel
         {
             if (SetProperty(ref _loading, value))
             {
-                OnPropertyChanged(nameof(ModelMeta));
+                HeaderChanged();
             }
         }
     }
@@ -1050,9 +1222,9 @@ public sealed class ChatViewModel : ViewModel
         return new ChatLoadRequest(model.Model.Id, model.Path, options.Device, options.ChatWeights, options.ChatKeyValueFormat, Options(options).NumCtx);
     }
 
-    /// <summary>The messages a request sends: the system prompt of the settings (when set), then the history.</summary>
+    /// <summary>The messages a request sends: the system prompt (the chosen model's own, else the settings', when set), then the history.</summary>
     public IReadOnlyList<ChatMessage> RequestMessages() =>
-        _options.ChatSystemPrompt is { Length: > 0 } system ? [new ChatMessage("system", system), .. _history] : [.. _history];
+        (_reply.SystemPrompt ?? _options.ChatSystemPrompt) is { Length: > 0 } system ? [new ChatMessage("system", system), .. _history] : [.. _history];
 
     /// <summary>The conversation so far as the model sees it (user and assistant messages, without the system prompt).</summary>
     public IReadOnlyList<ChatMessage> History => _history;
@@ -1064,18 +1236,38 @@ public sealed class ChatViewModel : ViewModel
         {
             var models = await Task.Run(() => ChatModelChoice.From(_store.List())).ConfigureAwait(true);
             string? chosen = SelectedModel?.Path;
-            if (Lists.Replace(Models, models, static (a, b) => a.Model == b.Model && a.Path == b.Path && a.Title == b.Title))   // the same models: the picker stays
+            bool replaced;
+            _refreshing = true;                                                 // the picker sets its choice to null while its list empties
+            try
+            {
+                replaced = Lists.Replace(Models, models, static (a, b) => a.Model == b.Model && a.Path == b.Path && a.Title == b.Title);   // the same models: the picker stays
+            }
+            finally
+            {
+                _refreshing = false;
+            }
+
+            if (replaced)
             {
                 OnPropertyChanged(nameof(HasModels));
                 OnPropertyChanged(nameof(HasNoModels));
-                OnPropertyChanged(nameof(ModelName));
-                OnPropertyChanged(nameof(ModelMeta));
-                if (chosen is not null && Models.FirstOrDefault(m => m.Path == chosen) is { } same)
+                if (chosen is not null)
                 {
-                    _selected = same;                                           // the same model: not loaded again
+                    // The same model: not loaded again; one the store no longer lists is no longer chosen (the loaded one stays named).
+                    var kept = Models.FirstOrDefault(m => m.Path == chosen);
+                    _selected = kept;
                     OnPropertyChanged(nameof(SelectedModel));
+                    if (kept is null)
+                    {
+                        LoadTuning();                                           // no model chosen: no settings of its own
+                    }
+
+                    _send.ChangeCanExecute();
+                    OnPropertyChanged(nameof(CanSend));
                 }
             }
+
+            HeaderChanged();
 
             if (Model is null && ModelText.Length == 0 || !HasModels)
             {
@@ -1096,7 +1288,7 @@ public sealed class ChatViewModel : ViewModel
     public async Task<bool> LoadAsync(ChatModelChoice model)
     {
         ArgumentNullException.ThrowIfNull(model);
-        var request = LoadRequest(model, _options);
+        var request = LoadRequest(model, _options) with { Context = ReplyGeneration().NumCtx };
         IsLoading = true;
         Error = "";
         Model = null;
@@ -1153,8 +1345,12 @@ public sealed class ChatViewModel : ViewModel
         RateHistory = [];
         OnPropertyChanged(nameof(RateHistory));
         _history.Add(new ChatMessage("user", text));
-        var request = new ChatRequest(RequestMessages(), Think: HasThinkingSwitch ? Thinking : _options.ChatThinking, Options: Options(_options));
-        var load = LoadRequest(model, _options);
+        var generation = ReplyGeneration();
+        var request = new ChatRequest(RequestMessages(), Think: HasThinkingSwitch ? Thinking : _reply.Thinking ?? _options.ChatThinking, Options: generation)
+        {
+            AddSpecialTokens = _reply.AddSpecialTokens ?? false,
+        };
+        var load = LoadRequest(model, _options) with { Context = generation.NumCtx };
         using var cancellation = new CancellationTokenSource();
         _cancellation = cancellation;
         IsStreaming = true;
@@ -1269,7 +1465,7 @@ public sealed class ChatViewModel : ViewModel
 
         if (info.ThinkingDefault is { } thinks)
         {
-            Thinking = _options.ChatThinking ?? thinks;
+            Thinking = _reply.Thinking ?? _options.ChatThinking ?? thinks;
         }
 
         ModelText = string.Create(CultureInfo.InvariantCulture,
