@@ -464,15 +464,14 @@ public sealed class OcrViewModel : ViewModel
         _listing = true;
         try
         {
-            var (vision, others) = await Task.Run(() => ListVisionModels(_store)).ConfigureAwait(true);
-            VisionModels.Clear();
-            foreach (var model in vision)
+            var (found, others) = await Task.Run(() => ListVisionModels(_store)).ConfigureAwait(true);
+            if (Lists.Replace(VisionModels, found, static (a, b) => a.Model == b.Model && a.Architecture == b.Architecture))
             {
-                VisionModels.Add(model);
+                OnPropertyChanged(nameof(HasVisionModels));
+                OnPropertyChanged(nameof(HasNoVisionModels));
             }
 
-            OnPropertyChanged(nameof(HasVisionModels));
-            OnPropertyChanged(nameof(HasNoVisionModels));
+            var vision = VisionModels;
             var families = VisionFamilies.Names;
             ModelsText = vision.Count > 0 ? $"{vision.Count} vision-language model{(vision.Count == 1 ? "" : "s")} on this phone."
                 : families.Count == 0 ? "No vision family is registered: the app registers the families it shows (a vision plug-in's own Register call)."

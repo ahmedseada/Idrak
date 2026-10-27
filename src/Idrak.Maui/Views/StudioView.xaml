@@ -22,7 +22,7 @@
                         <ctl:RecordButton Command="{Binding RecordCommand}" IsRecording="{Binding IsRecording}" Scale="0.7" WidthRequest="86" HeightRequest="86" />
                         <VerticalStackLayout Grid.Column="1" Spacing="{DynamicResource IdrakSpacingTiny}" VerticalOptions="Center">
                             <Label Text="{Binding ElapsedText}" Style="{DynamicResource IdrakTimer}" />
-                            <ctl:MeterBar Progress="{Binding Level}" />
+                            <ctl:MeterBar Progress="{Binding Level}" Source="{Binding Levels}" IsLive="{Binding IsHearing}" />
                             <Label Text="{Binding LevelText}" Style="{DynamicResource IdrakMeta}" />
                         </VerticalStackLayout>
                         <VerticalStackLayout Grid.Column="2" Spacing="{DynamicResource IdrakSpacingSmall}" VerticalOptions="Center">

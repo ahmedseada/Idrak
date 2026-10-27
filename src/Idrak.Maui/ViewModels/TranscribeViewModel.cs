@@ -10,6 +10,7 @@ using System.Windows.Input;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 using Idrak.Maui.Abstractions;
+using Idrak.Maui.Controls;
 using Microsoft.Maui.ApplicationModel.DataTransfer;
 
 namespace Idrak.Maui.ViewModels;
@@ -129,7 +130,7 @@ public sealed class TranscribeSettingEntry : ViewModel
 /// stores its values and only a showing that is due is handed to the UI thread, one at a time; the last values are shown
 /// when the run ends. Stopping ends the input, so the last segment is read and committed.
 /// </summary>
-public sealed class TranscribeViewModel : ViewModel, IDisposable
+public sealed class TranscribeViewModel : ViewModel, IDisposable, ILiveLevelSource
 {
     /// <summary>The <see cref="IModelService"/> host speech models are kept in.</summary>
     public const string ModelHostName = "speech";
@@ -417,6 +418,12 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
         private set => SetProperty(ref _refused, value);
     }
 
+    /// <summary>
+    /// The levels of the sound heard, made on the capture thread as each block comes (one a <see cref="IdrakMauiOptions.LiveLevelWindow"/>
+    /// of sound), for the waveform to draw once a display frame; started afresh at each recording and dictation.
+    /// </summary>
+    public LiveLevels Levels { get; } = new();
+
     /// <summary>The level of the latest block heard, from 0 (at <see cref="MeterFloorDecibels"/> or under) to 1 (full scale).</summary>
     public double Level
     {
@@ -695,16 +702,15 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
         IsListing = true;
         try
         {
-            var (speech, others) = await Task.Run(() => ListSpeechModels(_store)).ConfigureAwait(true);
-            SpeechModels.Clear();
-            foreach (var model in speech)
+            var (found, others) = await Task.Run(() => ListSpeechModels(_store)).ConfigureAwait(true);
+            if (Lists.Replace(SpeechModels, found, static (a, b) => a.Model == b.Model && a.Architecture == b.Architecture))
             {
-                SpeechModels.Add(model);
+                OnPropertyChanged(nameof(HasSpeechModels));
+                OnPropertyChanged(nameof(ModelChip));
+                OnPropertyChanged(nameof(HasNoSpeechModels));
             }
 
-            OnPropertyChanged(nameof(HasSpeechModels));
-            OnPropertyChanged(nameof(ModelChip));
-            OnPropertyChanged(nameof(HasNoSpeechModels));
+            var speech = SpeechModels;
             var families = SpeechFamilies.Names;
             ModelsText = speech.Count > 0 ? $"{speech.Count} speech model{(speech.Count == 1 ? "" : "s")} on this phone."
                 : families.Count == 0 ? "No speech family is registered: the app registers the families it shows (SpeechFamilies.Register, a plug-in's own Register call)."
@@ -832,10 +838,11 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
                     return new DictationOutcome("", false, "");                   // stopped while the model loaded
                 }
 
+                StartLevels();
                 await Task.Run(async () =>
                 {
                     using var lease = Host.Acquire(start.Key!);
-                    await foreach (var update in LiveTranscriber.TranscribeAsync(lease.Model, input.ReadAsync(stop.Token), start.Live, abort.Token).ConfigureAwait(false))
+                    await foreach (var update in LiveTranscriber.TranscribeAsync(lease.Model, Leveled(input, stop.Token), start.Live, abort.Token).ConfigureAwait(false))
                     {
                         if (text.Add(update))
                         {
@@ -1421,6 +1428,7 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
         _stop = stop;
         _step = live.StepSeconds;
         _state.Begin(_time.GetTimestamp());
+        StartLevels();
         _live = true;
         IsRunning = true;
         IsRecording = microphone;
@@ -1515,9 +1523,29 @@ public sealed class TranscribeViewModel : ViewModel, IDisposable
         await foreach (var block in input.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
             _state.SetLevel(LevelMeter.Decibels(block.Samples));
+            Levels.Add(block.Samples, block.SampleRate, block.Channels);
             Touch(force: false);
             yield return block;
         }
+    }
+
+    // The dictation's blocks as they come, their levels made for the chat's microphone meter (no page showings: the lab's
+    // transcript is not the dictation's).
+    private async IAsyncEnumerable<AudioData> Leveled(IAudioInput input, [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await foreach (var block in input.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            Levels.Add(block.Samples, block.SampleRate, block.Channels);
+            yield return block;
+        }
+    }
+
+    // A new run's levels: none yet, one a window of sound as the settings say now.
+    private void StartLevels()
+    {
+        double window = _app.LiveLevelWindow.TotalSeconds;
+        Levels.FloorDecibels = MeterFloorDecibels < 0 ? MeterFloorDecibels : -60;
+        Levels.Reset(window > 0 ? window : null);
     }
 
     // Stores a showing and hands it to the UI thread when one is due: at most once an interval (a forced one at once), one

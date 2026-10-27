@@ -57,3 +57,16 @@ public sealed class MauiShareService : IShareService
         return Share.Default.RequestAsync(new ShareFileRequest { Title = title ?? Path.GetFileName(path), File = file });
     }
 }
+
+/// <summary>Where the platform has no way to start the app again: the settings page says so instead of offering it.</summary>
+public sealed class UnavailableAppRestarter : IAppRestarter
+{
+    /// <inheritdoc />
+    public bool CanRestart => false;
+
+    /// <inheritdoc />
+    public string Unavailable => "this platform has no way for the app to start itself again; close it and open it again";
+
+    /// <inheritdoc />
+    public void Restart() => throw new NotSupportedException($"The app cannot restart itself here: {Unavailable}.");
+}

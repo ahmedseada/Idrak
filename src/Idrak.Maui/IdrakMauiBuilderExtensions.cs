@@ -72,7 +72,12 @@ public static class IdrakMauiBuilderExtensions
         services.TryAddSingleton<IDeviceInformation, DeviceInformation>();
         services.TryAddSingleton<IPermissionService, MauiPermissionService>();
         services.TryAddSingleton<IShareService, MauiShareService>();
-        services.TryAddSingleton<ISoundPlayer, SoundPlayer>();                    // one speaker for the app: one sound at a time
+        services.TryAddSingleton<ISoundPlayer>(_ => new SoundPlayer(options: options));   // one speaker for the app: one sound at a time
+#if ANDROID
+        services.TryAddSingleton<IAppRestarter>(sp => new Idrak.Maui.Platforms.Android.AndroidAppRestarter(sp));
+#else
+        services.TryAddSingleton<IAppRestarter, UnavailableAppRestarter>();
+#endif
         services.AddTransient<DevicesViewModel>();
         services.TryAddSingleton<ModelsViewModel>();                                // one for the app: a pull outlives its page
         services.TryAddSingleton<IConversationStore>(_ => new FileConversationStore(Path.Combine(startup.AppStorage, "conversations")));
@@ -83,7 +88,7 @@ public static class IdrakMauiBuilderExtensions
             conversations: sp.GetService<IConversationStore>(), dictation: sp.GetService<IDictation>()));                                         // a chat outlives its page
         services.TryAddSingleton(sp => new OcrViewModel(sp.GetRequiredService<IModelStore>(), sp.GetRequiredService<IVisionReaderService>(),   // a read outlives its page
             sp.GetRequiredService<IPermissionService>(), sp.GetRequiredService<IShareService>(), options, store, sp.GetService<OcrLabOptions>()));
-        services.AddTransient(sp => new SettingsViewModel(options, settings, startup, progress));
+        services.AddTransient(sp => new SettingsViewModel(options, settings, startup, progress, sp.GetService<IAppRestarter>()));
         services.AddTransient<SettingsPage>();
 
         // The navigation (no Shell): the host page with the bottom bar or the rail as the window's width says, its layout,

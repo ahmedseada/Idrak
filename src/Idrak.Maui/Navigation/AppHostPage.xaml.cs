@@ -9,10 +9,14 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Idrak.Maui.Navigation;
 
 /// <summary>
-/// The app's host page: shows one section's view at a time (each made once and kept, told when it is shown and hidden),
-/// cross-fading between them; measures the window on every size change into <see cref="AppLayout"/>, which switches the
-/// bottom bar and the rail at once (rotation, split screen); opens All labs as a sheet on a narrow window. It is the
-/// <see cref="IAppNavigator"/>'s host while shown. <see cref="CreateWindow"/> makes the app's window around it.
+/// The app's host page: shows one section's view at a time. Each is made once and kept in the page (the one shown visible,
+/// the others hidden), so a tab tapped again only shows its view: nothing is made, moved or attached again. The tap's
+/// switch is made first and the view is told it is shown after (its refresh never delays the switch); a fade, when the
+/// settings ask for one, runs alongside. With <see cref="IdrakMauiOptions.PrebuildSections"/> the other tabs' views are made
+/// ahead, one at a time while the app is idle after Home first shows. It measures the window on every size change into
+/// <see cref="AppLayout"/>, which switches the bottom bar and the rail at once (rotation, split screen); opens All labs as a
+/// sheet on a narrow window. It is the <see cref="IAppNavigator"/>'s host while shown. <see cref="CreateWindow"/> makes the
+/// app's window around it.
 /// </summary>
 public partial class AppHostPage : ContentPage
 {
@@ -20,7 +24,10 @@ public partial class AppHostPage : ContentPage
     private readonly IdrakMauiOptions _options;
     private readonly Dictionary<string, View> _views = new(StringComparer.OrdinalIgnoreCase);
     private LabsView? _sheet;
+    private Page? _settingsPage;
+    private View? _current;
     private bool _onScreen;
+    private bool _prebuilt;
 
     /// <summary>The host over the app's services, showing Home.</summary>
     public AppHostPage(IServiceProvider services)
@@ -49,7 +56,10 @@ public partial class AppHostPage : ContentPage
             settings.Saved += (_, saved) => Dispatcher.Dispatch(() =>
             {
                 layout.Breakpoint = saved.WideLayoutWidth;
-                ViewModel.Refresh();
+                if (!ViewModel.ShowsSame())
+                {
+                    ViewModel.Refresh();                                         // the tabs listed again only when the features shown changed
+                }
             });
         }
 
@@ -61,7 +71,10 @@ public partial class AppHostPage : ContentPage
     public AppHostViewModel ViewModel { get; }
 
     /// <summary>The view shown.</summary>
-    public View? Current => Body.Content;
+    public View? Current => _current;
+
+    /// <summary>The sections' views made so far (shown or kept hidden), by section name.</summary>
+    public IReadOnlyDictionary<string, View> Views => _views;
 
     /// <summary>The app's window: this host (from the app's services) in a navigation page, its own bar hidden.</summary>
     public static Window CreateWindow(IServiceProvider services)
@@ -102,7 +115,19 @@ public partial class AppHostPage : ContentPage
         if (ViewModel.IsNarrow && section.Name.Equals(AppSections.Settings, StringComparison.OrdinalIgnoreCase))
         {
             ViewModel.IsSheetOpen = false;
-            return Navigation.PushAsync(SettingsPages.Create(_services)).ContinueWith(_ => true, TaskScheduler.Current);
+            if (Navigation.NavigationStack.LastOrDefault() is { } top && ReferenceEquals(top, _settingsPage))
+            {
+                return Task.FromResult(true);                                    // shown already
+            }
+
+            // The same settings page each time (made once, its views kept when it is closed), so opening it again makes nothing.
+            if (_settingsPage is null)
+            {
+                _settingsPage = SettingsPages.Create(_services);
+                _settingsPage.SetValue(HandlerProperties.DisconnectPolicyProperty, HandlerDisconnectPolicy.Manual);
+            }
+
+            return Navigation.PushAsync(_settingsPage).ContinueWith(_ => true, TaskScheduler.Current);
         }
 
         Show(section, feature);
@@ -134,10 +159,16 @@ public partial class AppHostPage : ContentPage
     {
         base.OnAppearing();
         _onScreen = true;
-        (Body.Content as IHostedView)?.Shown();
+        (_current as IHostedView)?.Shown();
         if (ViewModel.IsSheetOpen)
         {
             _sheet?.Shown();
+        }
+
+        if (!_prebuilt && _options.PrebuildSections)
+        {
+            _prebuilt = true;
+            Prebuild();
         }
     }
 
@@ -145,9 +176,65 @@ public partial class AppHostPage : ContentPage
     protected override void OnDisappearing()
     {
         _onScreen = false;
-        (Body.Content as IHostedView)?.Hidden();
+        (_current as IHostedView)?.Hidden();
         _sheet?.Hidden();
         base.OnDisappearing();
+    }
+
+    /// <summary>
+    /// Makes every visible section's view that is not made yet (and the labs of a tab of several), one a turn of the UI
+    /// thread's queue after the frame the app shows now, so each tab's first tap only shows it. Each is made hidden; none is
+    /// told it is shown. Called once after Home first shows when <see cref="IdrakMauiOptions.PrebuildSections"/> is on.
+    /// </summary>
+    public void Prebuild()
+    {
+        var pending = new Queue<Action>();
+        foreach (var section in AppSections.Visible(_options))
+        {
+            if (section.Placement == SectionPlacement.Foot && ViewModel.IsNarrow)
+            {
+                continue;                                                        // a narrow window opens these as a sheet and a page
+            }
+
+            pending.Enqueue(() =>
+            {
+                var view = ViewOf(section);
+                if (view is IPrebuilt prebuilt)
+                {
+                    foreach (var part in prebuilt.Parts())
+                    {
+                        pending.Enqueue(part);
+                    }
+                }
+            });
+        }
+
+        pending.Enqueue(() =>
+        {
+            if (ViewModel.IsNarrow)
+            {
+                _sheet ??= new LabsView(_services, asSheet: true);
+                SheetBody.Content ??= _sheet;                                    // in the page already, hidden with the sheet
+            }
+        });
+        void Next()
+        {
+            if (pending.TryDequeue(out var make))
+            {
+                try
+                {
+                    make();
+                }
+                catch (Exception e) when (e is not OutOfMemoryException)
+                {
+                    // A section that cannot be made says why when it is opened (MakeView); the rest are still made.
+                }
+
+                Dispatcher.Dispatch(Next);                                       // one a turn: a tap between two is taken at once
+            }
+        }
+
+        Dispatcher.Dispatch(Next);
     }
 
     /// <inheritdoc />
@@ -171,32 +258,58 @@ public partial class AppHostPage : ContentPage
     private void Show(IAppSection section, string? feature)
     {
         ViewModel.IsSheetOpen = false;
-        if (!_views.TryGetValue(section.Name, out var view))
+        var view = ViewOf(section);
+        ViewModel.Select(section.Name);                                          // the tab marked at once
+        if (!ReferenceEquals(_current, view))
         {
-            view = MakeView(section);
-            _views[section.Name] = view;
-        }
-
-        if (!ReferenceEquals(Body.Content, view))
-        {
-            if (_onScreen)
+            var previous = _current;
+            _current = view;
+            view.IsVisible = true;                                               // the switch first: the view is in the page already
+            if (previous is not null)
             {
-                (Body.Content as IHostedView)?.Hidden();
+                previous.IsVisible = false;
             }
 
-            Body.Content = view;
-            Motion.FadeIn(view);
+            if (_options.SectionFade > TimeSpan.Zero)
+            {
+                Motion.FadeIn(view, (uint)Math.Min(uint.MaxValue, _options.SectionFade.TotalMilliseconds));
+            }
+            else
+            {
+                view.Opacity = 1;
+            }
+
             if (_onScreen)
             {
-                (view as IHostedView)?.Shown();
+                (previous as IHostedView)?.Hidden();
+                Dispatcher.Dispatch(() =>
+                {
+                    if (_onScreen && ReferenceEquals(_current, view))
+                    {
+                        (view as IHostedView)?.Shown();                          // after the switch has drawn: its refresh never delays it
+                    }
+                });
             }
         }
 
-        ViewModel.Select(section.Name);
         if (feature is not null)
         {
             (view as IHostedView)?.ShowFeature(feature);
         }
+    }
+
+    // The section's view, made once and kept in the page, hidden until shown.
+    private View ViewOf(IAppSection section)
+    {
+        if (!_views.TryGetValue(section.Name, out var view))
+        {
+            view = MakeView(section);
+            view.IsVisible = false;
+            _views[section.Name] = view;
+            Body.Children.Add(view);
+        }
+
+        return view;
     }
 
     private View MakeView(IAppSection section)
@@ -217,7 +330,14 @@ public partial class AppHostPage : ContentPage
         {
             _sheet ??= new LabsView(_services, asSheet: true);
             SheetBody.Content ??= _sheet;
-            Motion.FadeIn(SheetPanel, 180);
+            if (_options.SectionFade > TimeSpan.Zero)
+            {
+                Motion.FadeIn(SheetPanel, (uint)Math.Min(uint.MaxValue, _options.SectionFade.TotalMilliseconds));    // alongside: the sheet is open already
+            }
+            else
+            {
+                SheetPanel.Opacity = 1;
+            }
             if (_onScreen)
             {
                 _sheet.Shown();
@@ -228,4 +348,11 @@ public partial class AppHostPage : ContentPage
             _sheet?.Hidden();
         }
     }
+}
+
+/// <summary>A view with parts it can make ahead (a tab of several labs: the labs not shown yet), one a turn.</summary>
+internal interface IPrebuilt
+{
+    /// <summary>What is left to make, each a step the host runs on its own turn of the UI thread.</summary>
+    IEnumerable<Action> Parts();
 }

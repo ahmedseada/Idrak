@@ -4,21 +4,31 @@
 using System.Runtime.CompilerServices;
 using Idrak.Audio.Abstractions;
 using Idrak.Maui.Abstractions;
+using Idrak.Maui.Controls;
 
 namespace Idrak.Maui;
 
 /// <summary>
 /// The app's speaker (<see cref="ISoundPlayer"/>) over the library's <see cref="AudioPlaybacks"/>: the playback the request
-/// names, else the first that can run here (an app's before the library's; aaudio on Android). One sound at a time.
+/// names, else the first that can run here (an app's before the library's; aaudio on Android). One sound at a time. The
+/// levels of what it plays (<see cref="Levels"/>) are made as each block is handed to the output and shown when it plays.
 /// </summary>
-public sealed class SoundPlayer : ISoundPlayer, IDisposable
+public sealed class SoundPlayer : ISoundPlayer, IDisposable, ILiveLevelSource
 {
     private readonly Lock _gate = new();
     private readonly TimeProvider _time;
+    private readonly IdrakMauiOptions? _options;
     private Run? _current;
 
-    /// <summary>A player timing its plays on <paramref name="time"/> (the system's clock when null).</summary>
-    public SoundPlayer(TimeProvider? time = null) => _time = time ?? TimeProvider.System;
+    /// <summary>A player timing its plays on <paramref name="time"/> (the system's clock when null); <paramref name="options"/> give its levels' window.</summary>
+    public SoundPlayer(TimeProvider? time = null, IdrakMauiOptions? options = null)
+    {
+        _time = time ?? TimeProvider.System;
+        _options = options;
+    }
+
+    /// <summary>The levels of the sound playing, each shown when its sound plays (paced from the first block written), for a meter to follow.</summary>
+    public LiveLevels Levels { get; } = new();
 
     /// <inheritdoc />
     public bool IsPlaying
@@ -136,6 +146,8 @@ public sealed class SoundPlayer : ISoundPlayer, IDisposable
             pending = true;
             output = playback.Open(request.Output);
             (description, rate, channels) = (output.Description, output.SampleRate, output.Channels);
+            Levels.Reset(_options?.LiveLevelWindow.TotalSeconds is > 0 and var window ? window : null);
+            Levels.Pace(System.Diagnostics.Stopwatch.GetTimestamp());
             while (true)
             {
                 pending = false;
@@ -147,7 +159,9 @@ public sealed class SoundPlayer : ISoundPlayer, IDisposable
                 var block = enumerator.Current;
                 next = enumerator.MoveNextAsync();                               // the next block is made while this one is written
                 pending = true;
-                await output.WriteAsync(block, token).ConfigureAwait(false);
+                var writing = output.WriteAsync(block, token);                   // the write starts first: the levels never delay the sound
+                Levels.Add(block.Samples, block.SampleRate, block.Channels);     // made while it queues, shown as it plays
+                await writing.ConfigureAwait(false);
                 first ??= _time.GetElapsedTime(started);
                 written++;
                 seconds += block.Duration.TotalSeconds;

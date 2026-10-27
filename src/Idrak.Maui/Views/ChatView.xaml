@@ -223,6 +223,8 @@
                         </BindableLayout.ItemTemplate>
                     </HorizontalStackLayout>
                 </ScrollView>
+                <!-- What the microphone hears while it dictates, drawn once a display frame from the capture's own levels. -->
+                <ctl:MeterBar Source="{Binding DictationLevels}" IsLive="{Binding IsDictating}" IsVisible="{Binding IsDictating}" />
                 <!-- What the dictation says: that it listens, or why it cannot (no speech model: Models offered). -->
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}" IsVisible="{Binding HasDictationNote}">
                     <Label Text="{Binding DictationNote}" Style="{DynamicResource IdrakCaption}" VerticalOptions="Center" />

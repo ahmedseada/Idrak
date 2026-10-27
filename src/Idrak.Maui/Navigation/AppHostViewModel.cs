@@ -124,6 +124,9 @@ public sealed class AppHostViewModel : ViewModel
         Mark();
     }
 
+    /// <summary>Whether the sections listed are those the options show now (in order): nothing to list again.</summary>
+    public bool ShowsSame() => AppSections.Visible(_options).Select(s => s.Name).SequenceEqual(Tabs.Concat(Foot).Select(i => i.Name), StringComparer.OrdinalIgnoreCase);
+
     /// <summary>The entry of the section <paramref name="name"/>, or null.</summary>
     public NavItem? Find(string name) => Tabs.Concat(Foot).FirstOrDefault(i => string.Equals(i.Name, name, StringComparison.OrdinalIgnoreCase));
 

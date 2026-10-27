@@ -195,12 +195,7 @@ public sealed class DeviceStatus : ViewModel
     private void ShowModels(IReadOnlyList<StoredModel> models)
     {
         var (rows, text) = Describe(models);
-        Models.Clear();
-        foreach (var row in rows)
-        {
-            Models.Add(row);
-        }
-
+        Lists.Replace(Models, rows, static (a, b) => a == b);                  // Home's rows made again only when the store changed
         ModelsText = text;
         ModelIds = [.. models.Select(m => m.Id).Distinct(StringComparer.OrdinalIgnoreCase)];
     }

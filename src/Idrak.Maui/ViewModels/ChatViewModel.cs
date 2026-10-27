@@ -315,6 +315,8 @@ public sealed class ChatViewModel : ViewModel
     private readonly List<double> _rates = [];
     private string _conversationId;
     private string _conversationQuery = "";
+    private List<ConversationSummary>? _kept;
+    private int _keptVersion;
     private string _lastRateText = "";
     private string _firstTokenText = "";
     private double _liveRate;
@@ -359,7 +361,6 @@ public sealed class ChatViewModel : ViewModel
         }
 
         Messages.CollectionChanged += (_, _) => OnPropertyChanged(nameof(ShowSuggestions));
-        ListConversations();
     }
 
     /// <summary>The model chosen, by its name without the owner ("Qwen3-0.6B"), or what to do.</summary>
@@ -491,7 +492,14 @@ public sealed class ChatViewModel : ViewModel
         {
             if (SetProperty(ref _conversationQuery, (value ?? "").Trim()))
             {
-                ListConversations();
+                if (_kept is null)
+                {
+                    ListConversations();
+                }
+                else
+                {
+                    ShowConversations();                                         // the search filters what was read; nothing read again
+                }
             }
         }
     }
@@ -508,20 +516,70 @@ public sealed class ChatViewModel : ViewModel
     /// <summary>Lists the kept chats again (matching <see cref="ConversationQuery"/>), the one shown marked.</summary>
     public void ListConversations()
     {
-        Conversations.Clear();
+        if (_conversations is null)
+        {
+            Conversations.Clear();
+            return;
+        }
+
+        try
+        {
+            _kept = [.. _conversations.List()];
+            _keptVersion++;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Conversations.Clear();
+            Error = $"The kept chats could not be read: {e.Message}";
+            return;
+        }
+
+        ShowConversations();
+    }
+
+    /// <summary>
+    /// Reads the kept chats on a worker thread (their files are read and parsed there, never on the UI thread) and lists
+    /// them when read; a change made meanwhile (a chat kept or forgotten) wins over the reading, which is then dropped.
+    /// </summary>
+    public async Task ReloadConversationsAsync()
+    {
         if (_conversations is null)
         {
             return;
         }
 
-        IReadOnlyList<ConversationSummary> kept;
+        int version = _keptVersion;
+        IReadOnlyList<ConversationSummary> read;
         try
         {
-            kept = _conversations.List();
+            read = await Task.Run(_conversations.List).ConfigureAwait(true);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             Error = $"The kept chats could not be read: {e.Message}";
+            return;
+        }
+
+        if (version != _keptVersion)
+        {
+            return;
+        }
+
+        bool same = _kept is { } kept && kept.SequenceEqual(read);
+        _kept = [.. read];
+        _keptVersion++;
+        if (!same)
+        {
+            ShowConversations();
+        }
+    }
+
+    // The kept chats as last read (and changed here since), grouped by day and filtered by the search.
+    private void ShowConversations()
+    {
+        Conversations.Clear();
+        if (_kept is not { } kept)
+        {
             return;
         }
 
@@ -562,7 +620,7 @@ public sealed class ChatViewModel : ViewModel
         LiveText = "";
         Error = "";
         Status = "";
-        ListConversations();
+        ShowConversations();
         return true;
     }
 
@@ -579,7 +637,9 @@ public sealed class ChatViewModel : ViewModel
             NewChat();
         }
 
-        ListConversations();
+        _kept?.RemoveAll(c => c.Id == id);
+        _keptVersion++;
+        ShowConversations();
         return true;
     }
 
@@ -624,8 +684,15 @@ public sealed class ChatViewModel : ViewModel
         try
         {
             string first = _history.FirstOrDefault(m => m.Role == "user")?.Content ?? "Chat";
-            _conversations.Save(new ChatConversation(_conversationId, ConversationText.Title(first), _time.GetUtcNow(), SelectedModel?.Model.Id, [.. _history]));
-            ListConversations();
+            var conversation = new ChatConversation(_conversationId, ConversationText.Title(first), _time.GetUtcNow(), SelectedModel?.Model.Id, [.. _history]);
+            _conversations.Save(conversation);
+            var summary = ConversationText.Summary(conversation);                // the one chat kept, changed in the list read before: no file read again
+            _kept ??= [];
+            _kept.RemoveAll(c => c.Id == summary.Id);
+            _kept.Insert(0, summary);
+            _kept.Sort((a, b) => b.Updated.CompareTo(a.Updated));
+            _keptVersion++;
+            ShowConversations();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -885,6 +952,9 @@ public sealed class ChatViewModel : ViewModel
     /// <summary>What the microphone does on a tap ("Dictate" or "Stop dictating").</summary>
     public string MicrophoneDescription => IsDictating ? "Stop dictating" : "Dictate";
 
+    /// <summary>The levels of what the dictation hears, for the composer's meter (when the dictation gives them), or null.</summary>
+    public Idrak.Maui.Controls.LiveLevels? DictationLevels => (_dictation as Idrak.Maui.Controls.ILiveLevelSource)?.Levels;
+
     /// <summary>What the last dictation said (why it did not start, that it listens), or "".</summary>
     public string DictationNote
     {
@@ -994,20 +1064,17 @@ public sealed class ChatViewModel : ViewModel
         {
             var models = await Task.Run(() => ChatModelChoice.From(_store.List())).ConfigureAwait(true);
             string? chosen = SelectedModel?.Path;
-            Models.Clear();
-            foreach (var model in models)
+            if (Lists.Replace(Models, models, static (a, b) => a.Model == b.Model && a.Path == b.Path && a.Title == b.Title))   // the same models: the picker stays
             {
-                Models.Add(model);
-            }
-
-            OnPropertyChanged(nameof(HasModels));
-            OnPropertyChanged(nameof(HasNoModels));
-            OnPropertyChanged(nameof(ModelName));
-            OnPropertyChanged(nameof(ModelMeta));
-            if (chosen is not null && Models.FirstOrDefault(m => m.Path == chosen) is { } same)
-            {
-                _selected = same;                                               // the same model: not loaded again
-                OnPropertyChanged(nameof(SelectedModel));
+                OnPropertyChanged(nameof(HasModels));
+                OnPropertyChanged(nameof(HasNoModels));
+                OnPropertyChanged(nameof(ModelName));
+                OnPropertyChanged(nameof(ModelMeta));
+                if (chosen is not null && Models.FirstOrDefault(m => m.Path == chosen) is { } same)
+                {
+                    _selected = same;                                           // the same model: not loaded again
+                    OnPropertyChanged(nameof(SelectedModel));
+                }
             }
 
             if (Model is null && ModelText.Length == 0 || !HasModels)
@@ -1154,7 +1221,7 @@ public sealed class ChatViewModel : ViewModel
         Error = "";
         Status = "A new chat.";
         _conversationId = ConversationText.NewId(_time.GetUtcNow());
-        ListConversations();
+        ShowConversations();
     }
 
     /// <summary>

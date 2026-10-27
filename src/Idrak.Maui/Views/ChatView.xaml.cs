@@ -49,8 +49,9 @@ public partial class ChatView : AdaptiveView
 
         ViewModel.ScrollToEndRequested -= OnScrollToEnd;
         ViewModel.ScrollToEndRequested += OnScrollToEnd;
-        ViewModel.ListConversations();
+        var conversations = ViewModel.ReloadConversationsAsync();               // read on a worker thread, listed when read
         await ViewModel.RefreshAsync();
+        await conversations;
     }
 
     /// <inheritdoc />

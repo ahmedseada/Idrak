@@ -97,7 +97,7 @@ public static class SettingsPages
         var options = services.GetService<IdrakMauiOptions>() ?? new IdrakMauiOptions();
         var settings = services.GetService<IdrakMauiSettings>() ?? new IdrakMauiSettings(new MemorySettingsStore(), new MemorySecretStore());
         var startup = services.GetService<IdrakStartupReport>() ?? new IdrakStartupReport(ComputeResources.CacheFolder, options.Device, [], FileSystemPath());
-        return new SettingsViewModel(options, settings, startup, services.GetService<ProgressCenter>());
+        return new SettingsViewModel(options, settings, startup, services.GetService<ProgressCenter>(), services.GetService<IAppRestarter>());
     }
 
     private static string FileSystemPath()

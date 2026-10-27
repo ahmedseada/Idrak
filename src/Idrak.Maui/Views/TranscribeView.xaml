@@ -78,7 +78,7 @@
                                     </Label.FormattedText>
                                 </Label>
                             </Grid>
-                            <ctl:WaveformView x:Name="Wave" Grid.Row="1" Level="{Binding Level}" IsLive="{Binding IsRunning}" HeightRequest="120" />
+                            <ctl:WaveformView x:Name="Wave" Grid.Row="1" Source="{Binding Levels}" IsLive="{Binding IsRunning}" HeightRequest="120" />
                             <Grid x:Name="LiveFoot" Grid.Row="2" ColumnDefinitions="*,Auto,*">
                                 <Label Text="{Binding HeardText}" Style="{DynamicResource IdrakMeta}" />
                                 <Label Grid.Column="1" Text="{Binding BehindText}" Style="{DynamicResource IdrakSuccessText}">

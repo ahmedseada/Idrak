@@ -9,6 +9,7 @@ using System.Windows.Input;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 using Idrak.Maui.Abstractions;
+using Idrak.Maui.Controls;
 
 namespace Idrak.Maui.ViewModels;
 
@@ -108,8 +109,9 @@ public sealed class ProcessorChip
 /// microphone through the pipeline (live steps only) on the speaker with its delay shown; it feeds back without
 /// headphones. The page is updated at most once a progress interval, not once an audio block.
 /// </summary>
-public sealed class AudioProcessViewModel : ViewModel, IDisposable
+public sealed class AudioProcessViewModel : ViewModel, IDisposable, ILiveLevelSource
 {
+    private readonly IdrakMauiOptions _app;
     private readonly ISoundPlayer _player;
     private readonly IPermissionService _permissions;
     private readonly IShareService _share;
@@ -139,7 +141,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
         _player = player ?? throw new ArgumentNullException(nameof(player));
         _permissions = permissions ?? throw new ArgumentNullException(nameof(permissions));
         _share = share ?? throw new ArgumentNullException(nameof(share));
-        ArgumentNullException.ThrowIfNull(options);
+        _app = options ?? throw new ArgumentNullException(nameof(options));
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _progress = progress ?? new ProgressCenter(options.ProgressInterval);
         _picker = picker;
@@ -386,9 +388,19 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
                 OnPropertyChanged(nameof(RecordText));
                 OnPropertyChanged(nameof(RecordGlyph));
                 OnPropertyChanged(nameof(IsIdle));
+                OnPropertyChanged(nameof(IsHearing));
             }
         }
     }
+
+    /// <summary>Whether the microphone is heard now (recording or monitoring): the level meter follows <see cref="Levels"/>.</summary>
+    public bool IsHearing => IsRecording || IsMonitoring;
+
+    /// <summary>
+    /// The levels of the sound heard (the recording, or the monitored sound after the pipeline), made on the capture thread
+    /// as each block comes, for the level meter to follow once a display frame; started afresh at each recording.
+    /// </summary>
+    public LiveLevels Levels { get; } = new();
 
     /// <summary>The record button's words.</summary>
     public string RecordText => IsRecording ? "Stop" : "Record";
@@ -419,6 +431,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
             {
                 OnPropertyChanged(nameof(MonitorButtonText));
                 OnPropertyChanged(nameof(IsIdle));
+                OnPropertyChanged(nameof(IsHearing));
             }
         }
     }
@@ -676,6 +689,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
         double longest = _options.MaxRecordSeconds ?? AudioProcessSettings.DefaultMaxRecordSeconds;
         var recording = new RecordingBuffer(input.Channels, input.SampleRate, (long)Math.Ceiling(longest * input.SampleRate));
         _meter.Begin(_time.GetTimestamp());
+        StartLevels();
         IsRecording = true;
         Status = $"Recording: {input.Description}, {input.SampleRate} Hz";
         _batcher.Start();
@@ -688,6 +702,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
                 {
                     bool full = recording.Append(block);
                     _meter.Set(LevelMeter.Decibels(block.Samples), recording.Seconds);
+                    Levels.Add(block.Samples, block.SampleRate, block.Channels);
                     _batcher.Touch();
                     if (full)
                     {
@@ -1019,6 +1034,7 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(_abort.Token);
         _stop = stop;
         _meter.Begin(_time.GetTimestamp());
+        StartLevels();
         IsMonitoring = true;
         Status = $"Monitoring {input.Description} through {(pipeline.IsEmpty ? "no steps" : pipeline.ToString())}";
         _batcher.Start();
@@ -1319,6 +1335,8 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
                 heard += block.Duration.TotalSeconds;
                 var cleaned = stage.Process(block);
                 _meter.Set(LevelMeter.Decibels(cleaned.Length > 0 ? cleaned.Samples : block.Samples), heard);
+                var leveled = cleaned.Length > 0 ? cleaned : block;
+                Levels.Add(leveled.Samples, leveled.SampleRate, leveled.Channels);
                 _batcher.Touch();
                 if (cleaned.Length > 0)
                 {
@@ -1333,6 +1351,13 @@ public sealed class AudioProcessViewModel : ViewModel, IDisposable
     }
 
     private void Keep() => AudioProcessSettings.Save(_settings, _options);
+
+    // A new run's levels: none yet, one a window of sound as the settings say now.
+    private void StartLevels()
+    {
+        double window = _app.LiveLevelWindow.TotalSeconds;
+        Levels.Reset(window > 0 ? window : null);
+    }
 
     // On the UI thread: the meter onto the page.
     private void Publish()

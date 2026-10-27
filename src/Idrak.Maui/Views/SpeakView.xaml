@@ -53,6 +53,8 @@
                         <Editor Text="{Binding Text}" Placeholder="Type what to say, in the voice's language" AutoSize="TextChanges" MinimumHeightRequest="110"
                                 IsEnabled="{Binding IsIdle}" />
                         <Label Text="{Binding ProgressLine}" Style="{DynamicResource IdrakMeta}" />
+                        <!-- The speaker's level while it plays, each step shown as its sound plays. -->
+                        <ctl:MeterBar Source="{Binding PlaybackLevels}" IsLive="{Binding IsSounding}" IsVisible="{Binding IsSounding}" />
                     </VerticalStackLayout>
                 </Border>
 

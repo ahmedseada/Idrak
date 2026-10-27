@@ -77,6 +77,16 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   and the processed played on the speaker (A/B, one at a time); the result saved and shared. Monitoring, off by default
   and with a feedback warning, plays the microphone through the pipeline's live steps on a short low-latency buffer,
   its delay shown. Settings kept under `idrak.audio_process.`.
+- **Answering at once** (the owner's lag notes): every section's view is made once and kept in the host (the one shown
+  visible, the others hidden), and with `PrebuildSections` (on by default) the tabs, their labs and the All labs sheet are
+  made ahead, one a turn of the UI thread after Home first shows; a tap switches first and tells the view it is shown after
+  (`SectionFade`, 0 by default, fades alongside, never before). A page shown again keeps its lists when nothing changed; the
+  kept chats, the models and the devices are read on worker threads. Live drawing (the Transcribe waveform, Studio's and the
+  chat microphone's meters, Speak's playback meter) reads `LiveLevels`, made on the capture or playback thread one
+  `LiveLevelWindow` of sound at a time (played sound shown when it plays), once a display frame from `FrameClocks`
+  ("display": Android's Choreographer; "timer"), at most `LiveFrameRate`, with no allocation a frame. The settings page
+  has a search over every setting (title, help, value, choices) and an App part with a restart (`IAppRestarter`; Android's
+  starts the launcher activity again and ends the process), offered when a saved change waits for the next start.
 - **Sound out**: `ISoundPlayer` (`SoundPlayer`, registered by `UseIdrak`) plays a recording or blocks as they come
   through the library's `AudioPlaybacks` (aaudio on Android), held to the sound's pace by the output's back-pressure,
   drained at the end; one sound at a time.

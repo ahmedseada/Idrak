@@ -13,7 +13,7 @@
     <ctl:AdaptiveView.Resources>
         <!-- A lab on a phone: its badge, its title, a few words or "● Planned". -->
         <DataTemplate x:Key="NarrowLab" x:DataType="vm:LabEntry">
-            <ContentView FlexLayout.Basis="50%" Padding="{DynamicResource IdrakLabCellPadding}">
+            <ContentView Padding="{DynamicResource IdrakLabCellPadding}">
                 <Border Style="{DynamicResource IdrakLabCard}" SemanticProperties.Description="{Binding Title}">
                     <Border.Triggers>
                         <DataTrigger TargetType="Border" Binding="{Binding IsPlanned}" Value="True">
@@ -117,8 +117,8 @@
 
             <Label Text="Nothing matches: try another word." IsVisible="{Binding IsEmpty}" Style="{DynamicResource IdrakCaption}" />
 
-            <!-- The groups: rows of two cards (a phone), or a column a group (a wide window). -->
-            <FlexLayout x:Name="Groups" BindableLayout.ItemsSource="{Binding Groups}" Direction="Column" AlignItems="Stretch">
+            <!-- The groups: rows of two cards (a phone), or a column a group (a wide window); measured as tall as their rows, so the list scrolls. -->
+            <ctl:UniformColumns x:Name="Groups" BindableLayout.ItemsSource="{Binding Groups}" Columns="1">
                 <BindableLayout.ItemTemplate>
                     <DataTemplate x:DataType="vm:LabGroup">
                         <VerticalStackLayout Padding="{DynamicResource IdrakGroupPadding}" Spacing="{DynamicResource IdrakSpacingChip}">
@@ -126,12 +126,11 @@
                                 <Label Text="{Binding Title}" Style="{DynamicResource IdrakSectionLabel}" />
                                 <BoxView Grid.Column="1" HeightRequest="1" Color="{DynamicResource IdrakLine}" VerticalOptions="Center" />
                             </Grid>
-                            <FlexLayout BindableLayout.ItemsSource="{Binding .}" Wrap="Wrap" Direction="Row" AlignItems="Start"
-                                        BindableLayout.ItemTemplate="{StaticResource NarrowLab}" />
+                            <ctl:UniformColumns BindableLayout.ItemsSource="{Binding .}" Columns="2" BindableLayout.ItemTemplate="{StaticResource NarrowLab}" />
                         </VerticalStackLayout>
                     </DataTemplate>
                 </BindableLayout.ItemTemplate>
-            </FlexLayout>
+            </ctl:UniformColumns>
         </VerticalStackLayout>
     </ScrollView>
 </ctl:AdaptiveView>

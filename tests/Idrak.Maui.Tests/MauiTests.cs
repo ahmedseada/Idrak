@@ -103,6 +103,10 @@ internal static partial class MauiTests
         ("maui redesign: Studio's pipeline as steps that take themselves out; Speak's measures before a speech; the caret, the record button and the waveform (nothing animates off screen)", RedesignLabParts),
         ("maui redesign: a phone's facts (phase F) on the cards and tiles: the memory from the system's figure (held to a limit), the runtime's labelled as the runtime's, the core groups and vector paths in a line; a GPU's refused kernels as an amber badge, listed folded", RedesignPhoneFacts),
         ("maui redesign: the carousel's indicator, a dot a page and the page shown an elongated pill (wider on a tablet), bound to the carousel's place", RedesignIndicator),
+        ("maui speed: live levels are made a window of sound at a time however the blocks are cut, paced ones shown as they play, a reset starts the readers again; the waveform takes a frame's levels at once and the meter eases; the frame clocks are a registry and a setting", LiveLevelsPaced),
+        ("maui speed: the settings' search shows only what it finds (title, help, value, choices; every word; a group by its heading; the labs, storage and the app's part), says when nothing matches, and is quick; a restart-only change is marked and the restart asked first; each setting makes its own control only", SettingsSearched),
+        ("maui speed: the host keeps every section's view made, the one shown visible; Prebuild makes the tabs, their labs and the sheet ahead; a tab shows its view without making it again; the tabs are listed again only when the sections change", HostKeepsSections),
+        ("maui speed: the chat reads its kept chats on a worker thread when shown (none read when it is made), a search filters what was read", ChatReadsKeptOffThread),
         ("public API: api/Idrak.Maui.txt matches the public surface of Idrak.Maui (IDRAK_UPDATE_API=1 rewrites it)", ApiSurfaceCurrent),
     ];
 

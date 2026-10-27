@@ -12,6 +12,17 @@
     measured against each other (the Devices lab's runtime line, the Chat lab's tokens per second):
       dotnet build -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -t:Install -p:IdrakAndroidRuntime=coreclr
     It sets UseMonoRuntime (true for mono, false for coreclr); any other value stops the build.
+
+    The ahead-of-time compilation on Mono, IdrakAndroidAot (Release builds; CoreCLR builds take none of these):
+      full      (the default) every method compiled ahead, so no UI code is compiled on a first touch: the taps, the tabs,
+                the settings and the scroll answer at once from the first time (the APK is larger: 60.6 MB against profiled's
+                36.1 MB, both ABIs, measured October 2026; the arm64 ahead-of-time code 51 MB unpacked against 11 MB);
+      llvm      full, and through LLVM's optimizer (faster code, a longer build, a somewhat larger APK);
+      profiled  .NET for Android's own default: only the start-up methods its profile names, the rest compiled by the JIT
+                when first run (the smallest APK; a first tap on each page waits for its code to compile);
+      none      no ahead-of-time code at all (the JIT only).
+      dotnet build -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -t:Install -p:IdrakAndroidAot=profiled
+    Any other value stops the build.
   -->
   <PropertyGroup>
     <TargetFramework>net10.0-android</TargetFramework>
@@ -30,9 +41,22 @@
     <UseMonoRuntime Condition="'$(IdrakAndroidRuntime)' == 'coreclr'">false</UseMonoRuntime>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <IdrakAndroidAot Condition="'$(IdrakAndroidAot)' == ''">full</IdrakAndroidAot>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(UseMonoRuntime)' == 'true' and '$(Configuration)' == 'Release'">
+    <RunAOTCompilation Condition="'$(IdrakAndroidAot)' != 'none'">true</RunAOTCompilation>
+    <RunAOTCompilation Condition="'$(IdrakAndroidAot)' == 'none'">false</RunAOTCompilation>
+    <AndroidEnableProfiledAot Condition="'$(IdrakAndroidAot)' == 'profiled'">true</AndroidEnableProfiledAot>
+    <AndroidEnableProfiledAot Condition="'$(IdrakAndroidAot)' == 'full' or '$(IdrakAndroidAot)' == 'llvm'">false</AndroidEnableProfiledAot>
+    <EnableLLVM Condition="'$(IdrakAndroidAot)' == 'llvm'">true</EnableLLVM>
+  </PropertyGroup>
+
   <Target Name="IdrakAndroidRuntimeCheck" BeforeTargets="PrepareForBuild">
     <Error Condition="'$(IdrakAndroidRuntime)' != 'mono' and '$(IdrakAndroidRuntime)' != 'coreclr'"
            Text="IdrakAndroidRuntime is '$(IdrakAndroidRuntime)': use mono (the default) or coreclr." />
+    <Error Condition="'$(IdrakAndroidAot)' != 'full' and '$(IdrakAndroidAot)' != 'llvm' and '$(IdrakAndroidAot)' != 'profiled' and '$(IdrakAndroidAot)' != 'none'"
+           Text="IdrakAndroidAot is '$(IdrakAndroidAot)': use full (the default), llvm, profiled or none." />
   </Target>
 
   <ItemGroup>

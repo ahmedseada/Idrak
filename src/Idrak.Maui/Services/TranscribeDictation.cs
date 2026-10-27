@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Maui.Abstractions;
+using Idrak.Maui.Controls;
 using Idrak.Maui.ViewModels;
 
 namespace Idrak.Maui;
@@ -12,9 +13,12 @@ namespace Idrak.Maui;
 /// language, cleaning pipeline and live settings, the microphone's permission. The lab's own transcript is left as it is,
 /// and the lab does not record or read a file while a dictation runs (one reading of the model at a time).
 /// </summary>
-public sealed class TranscribeDictation(TranscribeViewModel transcribe) : IDictation
+public sealed class TranscribeDictation(TranscribeViewModel transcribe) : IDictation, ILiveLevelSource
 {
     private readonly TranscribeViewModel _transcribe = transcribe ?? throw new ArgumentNullException(nameof(transcribe));
+
+    /// <summary>The levels of the sound the dictation hears, made on the capture thread (the lab's feed, started afresh at each dictation).</summary>
+    public LiveLevels Levels => _transcribe.Levels;
 
     /// <inheritdoc />
     public bool IsDictating => _transcribe.IsDictating;

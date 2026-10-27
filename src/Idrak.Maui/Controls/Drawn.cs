@@ -1,22 +1,67 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Diagnostics;
+using Idrak.Maui.Abstractions;
 using Microsoft.Maui.Graphics;
 
 namespace Idrak.Maui.Controls;
 
 /// <summary>
 /// A view drawn on a canvas whose colours are theme keys: each colour property is set from the theme with
-/// <c>SetDynamicResource</c>, so a theme change redraws it in the new colours. Drawing costs nothing when not shown.
+/// <c>SetDynamicResource</c>, so a theme change redraws it in the new colours. Drawing costs nothing when not shown. A live
+/// view (<see cref="IsTicking"/>) is told once a display frame (<see cref="FrameClocks.Current"/>) while it is on screen and
+/// shown, and redraws only when its frame changed something; it leaves the clock when it stops, is hidden or leaves the screen.
 /// </summary>
 public abstract class DrawnView : GraphicsView, IDrawable
 {
+    private IDisposable? _ticking;
+
     /// <summary>A view that draws itself.</summary>
     protected DrawnView()
     {
         Drawable = this;
         BackgroundColor = Colors.Transparent;
         InputTransparent = true;
+        HandlerChanged += (_, _) => UpdateTicking();
+        Loaded += (_, _) => UpdateTicking();
+        Unloaded += (_, _) => UpdateTicking();
+    }
+
+    /// <summary>Whether it is subscribed to the frame clock now.</summary>
+    public bool IsTicking => _ticking is not null;
+
+    /// <summary>Whether it wants a frame each display frame (a live source to draw); the base class: never.</summary>
+    protected virtual bool WantsFrames => false;
+
+    /// <summary>One display frame, on the UI thread, while it ticks: take what is new and redraw when it changed.</summary>
+    protected virtual void OnFrame()
+    {
+    }
+
+    /// <summary>Joins or leaves the frame clock as <see cref="WantsFrames"/>, the handler and the visibility say.</summary>
+    protected void UpdateTicking()
+    {
+        bool run = WantsFrames && Handler is not null && IsVisible && IsLoaded;
+        if (run && _ticking is null)
+        {
+            _ticking = FrameClocks.Current.Subscribe(OnFrame, FrameClocks.FramesPerSecond);
+        }
+        else if (!run && _ticking is not null)
+        {
+            _ticking.Dispose();
+            _ticking = null;
+        }
+    }
+
+    /// <inheritdoc />
+    protected override void OnPropertyChanged(string? propertyName = null)
+    {
+        base.OnPropertyChanged(propertyName);
+        if (propertyName == IsVisibleProperty.PropertyName)
+        {
+            UpdateTicking();
+        }
     }
 
     /// <summary>Makes a colour property that redraws the view when it changes.</summary>
@@ -34,7 +79,9 @@ public abstract class DrawnView : GraphicsView, IDrawable
 /// <summary>
 /// The live waveform (the design's recording card): one bar a level heard, newest on the right, the latest few in the head
 /// colour and a head line after them; bars not heard yet in the idle colour. <see cref="Push"/> adds a level (0 to 1);
-/// a bound <see cref="Level"/> pushes each new value while <see cref="IsLive"/> is set.
+/// a bound <see cref="Level"/> pushes each new value while <see cref="IsLive"/> is set. With a <see cref="Source"/> (the
+/// levels the capture thread makes, one a window of sound), it takes the new levels once a display frame while live and
+/// redraws once for them, whatever the model's work or the progress interval: the bars move at the sound's own pace.
 /// </summary>
 public sealed class WaveformView : DrawnView
 {
@@ -42,8 +89,13 @@ public sealed class WaveformView : DrawnView
     public static readonly BindableProperty LevelProperty =
         BindableProperty.Create(nameof(Level), typeof(double), typeof(WaveformView), 0d, propertyChanged: (b, _, n) => ((WaveformView)b).OnLevel((double)n));
 
-    /// <summary>Whether a bound level is pushed.</summary>
-    public static readonly BindableProperty IsLiveProperty = DrawnProperty<WaveformView, bool>(nameof(IsLive), false);
+    /// <summary>Whether a bound level is pushed, or the source read.</summary>
+    public static readonly BindableProperty IsLiveProperty =
+        BindableProperty.Create(nameof(IsLive), typeof(bool), typeof(WaveformView), false, propertyChanged: (b, _, n) => ((WaveformView)b).OnLive((bool)n));
+
+    /// <summary>The levels to draw while live, read once a display frame; null: the bound <see cref="Level"/> is pushed instead.</summary>
+    public static readonly BindableProperty SourceProperty =
+        BindableProperty.Create(nameof(Source), typeof(LiveLevels), typeof(WaveformView), propertyChanged: (b, _, _) => ((WaveformView)b).OnSource());
 
     /// <summary>The bars heard.</summary>
     public static readonly BindableProperty BarColorProperty = ColorProperty<WaveformView>(nameof(BarColor));
@@ -55,14 +107,18 @@ public sealed class WaveformView : DrawnView
     public static readonly BindableProperty IdleColorProperty = ColorProperty<WaveformView>(nameof(IdleColor));
 
     private readonly double[] _levels;
+    private readonly float[] _taken;
     private int _count;
     private int _next;
+    private long _cursor;
+    private int _generation = -1;
 
     /// <summary>A waveform of <paramref name="bars"/> bars in the theme's violet, light sky and idle grey.</summary>
     public WaveformView(int bars)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(bars, 8);
         _levels = new double[bars];
+        _taken = new float[bars];
         SetDynamicResource(BarColorProperty, "IdrakViolet");
         SetDynamicResource(HeadColorProperty, "IdrakWaveHead");
         SetDynamicResource(IdleColorProperty, "IdrakWaveIdle");
@@ -81,12 +137,28 @@ public sealed class WaveformView : DrawnView
         set => SetValue(LevelProperty, value);
     }
 
-    /// <summary>Whether a bound level is pushed.</summary>
+    /// <summary>Whether a bound level is pushed, or the source read.</summary>
     public bool IsLive
     {
         get => (bool)GetValue(IsLiveProperty);
         set => SetValue(IsLiveProperty, value);
     }
+
+    /// <summary>The levels to draw while live, or null.</summary>
+    public LiveLevels? Source
+    {
+        get => (LiveLevels?)GetValue(SourceProperty);
+        set => SetValue(SourceProperty, value);
+    }
+
+    /// <summary>Takes the source's new levels now, as a display frame does; true when it took any (or the source started again).</summary>
+    public bool TakeFrame() => Take(Stopwatch.GetTimestamp(), redraw: true);
+
+    /// <inheritdoc />
+    protected override bool WantsFrames => IsLive && Source is not null;
+
+    /// <inheritdoc />
+    protected override void OnFrame() => Take(Stopwatch.GetTimestamp(), redraw: true);
 
     /// <summary>The bars heard.</summary>
     public Color BarColor
@@ -128,9 +200,7 @@ public sealed class WaveformView : DrawnView
     /// <summary>Adds a level heard (clamped to 0 to 1) and redraws.</summary>
     public void Push(double level)
     {
-        _levels[_next] = double.IsFinite(level) ? Math.Clamp(level, 0, 1) : 0;
-        _next = (_next + 1) % _levels.Length;
-        _count = Math.Min(_count + 1, _levels.Length);
+        Store(level);
         Invalidate();
     }
 
@@ -167,9 +237,68 @@ public sealed class WaveformView : DrawnView
         }
     }
 
+    private void Store(double level)
+    {
+        _levels[_next] = double.IsFinite(level) ? Math.Clamp(level, 0, 1) : 0;
+        _next = (_next + 1) % _levels.Length;
+        _count = Math.Min(_count + 1, _levels.Length);
+    }
+
+    // The source's levels made since the last frame, stored without a redraw each, then one redraw. A source that started
+    // again (a new recording) clears the bars first.
+    private bool Take(long now, bool redraw)
+    {
+        if (Source is not { } source)
+        {
+            return false;
+        }
+
+        bool changed = false;
+        int generation = source.Generation;
+        if (generation != _generation)
+        {
+            _generation = generation;
+            _cursor = 0;
+            _count = 0;
+            _next = 0;
+            changed = true;
+        }
+
+        int taken = source.Read(ref _cursor, _taken, now);
+        for (int i = 0; i < taken; i++)
+        {
+            Store(_taken[i]);
+        }
+
+        changed |= taken > 0;
+        if (changed && redraw)
+        {
+            Invalidate();
+        }
+
+        return changed;
+    }
+
+    private void OnLive(bool live)
+    {
+        if (!live)
+        {
+            Take(Stopwatch.GetTimestamp(), redraw: true);                       // the last levels of the run
+        }
+
+        UpdateTicking();
+        Invalidate();
+    }
+
+    private void OnSource()
+    {
+        _generation = -1;
+        UpdateTicking();
+    }
+
     private void OnLevel(double level)
     {
-        if (IsLive)
+        if (IsLive && Source is null)
         {
             Push(level);
         }
@@ -313,11 +442,26 @@ public sealed class ProgressRing : DrawnView
     }
 }
 
-/// <summary>A thin rounded bar filled to <see cref="Progress"/> (memory used, a level), in the theme's green-to-sky gradient.</summary>
+/// <summary>
+/// A thin rounded bar filled to <see cref="Progress"/> (memory used, a level), in the theme's green-to-sky gradient. With a
+/// live <see cref="Source"/> (a level meter), it follows the source's latest level once a display frame, eased over
+/// <see cref="Smoothing"/> seconds, and redraws only when the fill moved.
+/// </summary>
 public sealed class MeterBar : DrawnView
 {
     /// <summary>The share filled, 0 to 1.</summary>
     public static readonly BindableProperty ProgressProperty = DrawnProperty<MeterBar, double>(nameof(Progress), 0d);
+
+    /// <summary>The levels a live meter follows; null: <see cref="Progress"/> is drawn.</summary>
+    public static readonly BindableProperty SourceProperty =
+        BindableProperty.Create(nameof(Source), typeof(LiveLevels), typeof(MeterBar), propertyChanged: (b, _, _) => ((MeterBar)b).OnLive());
+
+    /// <summary>Whether the source is followed (a recording, a speech playing).</summary>
+    public static readonly BindableProperty IsLiveProperty =
+        BindableProperty.Create(nameof(IsLive), typeof(bool), typeof(MeterBar), false, propertyChanged: (b, _, _) => ((MeterBar)b).OnLive());
+
+    /// <summary>How long the fill takes to ease most of the way to a new level, in seconds (0: at once).</summary>
+    public static readonly BindableProperty SmoothingProperty = BindableProperty.Create(nameof(Smoothing), typeof(double), typeof(MeterBar), 0.08d);
 
     /// <summary>A second share drawn after the first (the chat's key/value cache after the weights); 0 for none.</summary>
     public static readonly BindableProperty SecondProperty = DrawnProperty<MeterBar, double>(nameof(Second), 0d);
@@ -330,6 +474,15 @@ public sealed class MeterBar : DrawnView
 
     /// <summary>The fill's end (and the second share).</summary>
     public static readonly BindableProperty EndColorProperty = ColorProperty<MeterBar>(nameof(EndColor));
+
+    private readonly float[] _taken = new float[64];
+    private long _cursor;
+    private int _generation = -1;
+    private double _target;
+    private double _shown;
+    private long _last;
+    private LinearGradientPaint? _gradient;
+    private Color? _gradientStart, _gradientEnd;
 
     /// <summary>A meter in the theme's green and sky.</summary>
     public MeterBar()
@@ -345,6 +498,113 @@ public sealed class MeterBar : DrawnView
     {
         get => (double)GetValue(ProgressProperty);
         set => SetValue(ProgressProperty, value);
+    }
+
+    /// <summary>The levels a live meter follows, or null.</summary>
+    public LiveLevels? Source
+    {
+        get => (LiveLevels?)GetValue(SourceProperty);
+        set => SetValue(SourceProperty, value);
+    }
+
+    /// <summary>Whether the source is followed.</summary>
+    public bool IsLive
+    {
+        get => (bool)GetValue(IsLiveProperty);
+        set => SetValue(IsLiveProperty, value);
+    }
+
+    /// <summary>How long the fill eases to a new level, in seconds.</summary>
+    public double Smoothing
+    {
+        get => (double)GetValue(SmoothingProperty);
+        set => SetValue(SmoothingProperty, value);
+    }
+
+    /// <summary>The fill drawn now: the eased live level with a source, else <see cref="Progress"/>.</summary>
+    public double Shown => Source is null ? Progress : _shown;
+
+    /// <summary>Takes the source's latest level as a display frame does, <paramref name="elapsed"/> after the frame before; true when the fill moved.</summary>
+    public bool TakeFrame(TimeSpan elapsed) => Step(elapsed.TotalSeconds, Stopwatch.GetTimestamp());
+
+    /// <inheritdoc />
+    protected override bool WantsFrames => IsLive && Source is not null;
+
+    /// <inheritdoc />
+    protected override void OnFrame()
+    {
+        long now = Stopwatch.GetTimestamp();
+        double seconds = _last == 0 ? 0 : (double)(now - _last) / Stopwatch.Frequency;
+        _last = now;
+        if (Step(seconds, now))
+        {
+            Invalidate();
+        }
+    }
+
+    // The newest level due (a stopped source eases to empty), and the fill eased toward it.
+    private bool Step(double seconds, long now)
+    {
+        if (Source is not { } source)
+        {
+            return false;
+        }
+
+        if (source.Generation != _generation)
+        {
+            _generation = source.Generation;
+            _cursor = 0;
+            _target = 0;
+        }
+
+        int taken = source.Read(ref _cursor, _taken, now);
+        if (taken > 0)
+        {
+            _target = _taken[taken - 1];
+        }
+
+        if (!IsLive)
+        {
+            _target = 0;
+        }
+
+        double smoothing = Smoothing;
+        double share = smoothing <= 0 ? 1 : seconds <= 0 ? 0 : 1 - Math.Exp(-seconds / smoothing);
+        double next = _shown + (_target - _shown) * share;
+        if (Math.Abs(next - _target) < 0.002)
+        {
+            next = _target;
+        }
+
+        bool moved = Math.Abs(next - _shown) > 1e-6;
+        _shown = next;
+        return moved;
+    }
+
+    // The fill's gradient, made again only when its colours change (a live meter redraws every frame it moves).
+    private LinearGradientPaint Gradient()
+    {
+        var (start, end) = (StartColor, EndColor);
+        if (_gradient is null || !Equals(_gradientStart, start) || !Equals(_gradientEnd, end))
+        {
+            _gradient = new LinearGradientPaint([new PaintGradientStop(0, start), new PaintGradientStop(1, end)], new Point(0, 0), new Point(1, 0));
+            (_gradientStart, _gradientEnd) = (start, end);
+        }
+
+        return _gradient;
+    }
+
+    private void OnLive()
+    {
+        _last = 0;
+        if (!IsLive)
+        {
+            _shown = 0;
+            _target = 0;
+            Invalidate();
+        }
+
+        UpdateTicking();
     }
 
     /// <summary>A second share after the first.</summary>
@@ -381,7 +641,8 @@ public sealed class MeterBar : DrawnView
         float radius = dirtyRect.Height / 2;
         canvas.FillColor = TrackColor;
         canvas.FillRoundedRectangle(dirtyRect, radius);
-        float first = (float)Math.Clamp(double.IsFinite(Progress) ? Progress : 0, 0, 1) * dirtyRect.Width;
+        double progress = Shown;
+        float first = (float)Math.Clamp(double.IsFinite(progress) ? progress : 0, 0, 1) * dirtyRect.Width;
         float second = (float)Math.Clamp(double.IsFinite(Second) ? Second : 0, 0, 1) * dirtyRect.Width;
         if (first > 0)
         {
@@ -392,7 +653,7 @@ public sealed class MeterBar : DrawnView
             }
             else
             {
-                canvas.SetFillPaint(new LinearGradientPaint([new PaintGradientStop(0, StartColor), new PaintGradientStop(1, EndColor)], new Point(0, 0), new Point(1, 0)), fill);
+                canvas.SetFillPaint(Gradient(), fill);
             }
 
             canvas.FillRoundedRectangle(fill, radius);

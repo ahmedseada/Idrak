@@ -9,6 +9,7 @@ using System.Windows.Input;
 using Idrak.Audio;
 using Idrak.Audio.Abstractions;
 using Idrak.Maui.Abstractions;
+using Idrak.Maui.Controls;
 
 namespace Idrak.Maui.ViewModels;
 
@@ -300,6 +301,7 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
             if (SetProperty(ref _speaking, value))
             {
                 OnPropertyChanged(nameof(IsIdle));
+                OnPropertyChanged(nameof(IsSounding));
                 OnPropertyChanged(nameof(SpeakText));
                 OnPropertyChanged(nameof(SpeakGlyph));
             }
@@ -315,12 +317,19 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
             if (SetProperty(ref _playing, value))
             {
                 OnPropertyChanged(nameof(IsIdle));
+                OnPropertyChanged(nameof(IsSounding));
             }
         }
     }
 
     /// <summary>Whether nothing is being spoken or played.</summary>
     public bool IsIdle => !IsSpeaking && !IsPlaying;
+
+    /// <summary>Whether sound is going to the speaker (a speech made now, or the one kept played again): the playback meter follows <see cref="PlaybackLevels"/>.</summary>
+    public bool IsSounding => !IsIdle;
+
+    /// <summary>The levels of what the speaker plays, each shown as it plays (the app's player's, when it gives them), or null.</summary>
+    public LiveLevels? PlaybackLevels => (_player as ILiveLevelSource)?.Levels;
 
     /// <summary>The speak button's words.</summary>
     public string SpeakText => IsSpeaking ? "Stop" : "Speak";
@@ -550,16 +559,15 @@ public sealed class SpeakViewModel : ViewModel, IDisposable
         IsListing = true;
         try
         {
-            var (models, others) = await Task.Run(() => ListSynthesisModels(_store)).ConfigureAwait(true);
-            SynthesisModels.Clear();
-            foreach (var model in models)
+            var (found, others) = await Task.Run(() => ListSynthesisModels(_store)).ConfigureAwait(true);
+            if (Lists.Replace(SynthesisModels, found, static (a, b) => a.Model == b.Model && a.Architecture == b.Architecture && a.Reason == b.Reason))
             {
-                SynthesisModels.Add(model);
+                OnPropertyChanged(nameof(HasModels));
+                OnPropertyChanged(nameof(ModelChip));
+                OnPropertyChanged(nameof(HasNoModels));
             }
 
-            OnPropertyChanged(nameof(HasModels));
-            OnPropertyChanged(nameof(ModelChip));
-            OnPropertyChanged(nameof(HasNoModels));
+            var models = SynthesisModels;
             var families = SpeechSynthesisFamilies.Names;
             int cannot = models.Count(m => !m.CanSpeak);
             ModelsText = models.Count > 0

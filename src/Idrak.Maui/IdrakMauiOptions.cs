@@ -157,6 +157,27 @@ public sealed class IdrakMauiOptions
     /// <summary>How long Home's carousel shows a slide before the next; null or zero: it moves only when swiped. Six seconds by default.</summary>
     public TimeSpan? CarouselInterval { get; set; } = TimeSpan.FromSeconds(6);
 
+    /// <summary>
+    /// Whether the tabs' views are made ahead, one at a time while the app is idle after Home first shows (with the labs of a
+    /// tab of several), so the first tap on a tab only shows it. True by default; false makes each when first opened.
+    /// </summary>
+    public bool PrebuildSections { get; set; } = true;
+
+    /// <summary>How long a tab's view fades in when it is shown; zero (the default) shows it at once. The tap's command never waits for it.</summary>
+    public TimeSpan SectionFade { get; set; } = TimeSpan.Zero;
+
+    /// <summary>
+    /// The frame clock live views (the waveform, the level meters) draw on, a <see cref="Abstractions.FrameClocks"/> name:
+    /// "display" (Android's Choreographer) or "timer"; null or "auto": the first that can tick here.
+    /// </summary>
+    public string? FrameClock { get; set; }
+
+    /// <summary>The most frames a second live views draw; null: every frame the display shows.</summary>
+    public double? LiveFrameRate { get; set; }
+
+    /// <summary>The sound one bar of the live waveform (and one step of a level meter) stands for; 50 ms by default.</summary>
+    public TimeSpan LiveLevelWindow { get; set; } = TimeSpan.FromMilliseconds(50);
+
     /// <summary>What Home says: its slides and its tiles' samples (the app's own words; the library's by default).</summary>
     public HomeOptions Home { get; set; } = new();
 

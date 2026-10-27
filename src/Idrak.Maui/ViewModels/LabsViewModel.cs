@@ -157,6 +157,7 @@ public sealed class LabsViewModel : ViewModel
     private readonly IdrakMauiOptions _options;
     private readonly IAppNavigator? _navigator;
     private readonly List<LabEntry> _all = [];
+    private IMobileFeature[] _listed = [];
     private string _query = "";
     private LabFilter _filter = LabFilter.All;
 
@@ -247,11 +248,23 @@ public sealed class LabsViewModel : ViewModel
         _ => $"This {Noun}",
     };
 
-    /// <summary>Lists the enabled features again (the settings may have turned some on or off) and the device's lines.</summary>
+    /// <summary>
+    /// Lists the enabled features again (the settings may have turned some on or off) and the device's lines; when the same
+    /// features are enabled as before, only the device's lines are read again (the cards are kept, not made again).
+    /// </summary>
     public void Refresh()
     {
+        var enabled = MobileFeatures.Enabled(_options).ToArray();
+        if (_all.Count > 0 && enabled.Length == _listed.Length
+            && enabled.Zip(_listed).All(p => ReferenceEquals(p.First, p.Second) || p.First.Name == p.Second.Name && p.First.State == p.Second.State && p.First.Title == p.Second.Title))
+        {
+            UpdateStatus();
+            return;
+        }
+
+        _listed = enabled;
         _all.Clear();
-        foreach (var feature in MobileFeatures.Enabled(_options))
+        foreach (var feature in enabled)
         {
             string name = feature.Name;
             _all.Add(new LabEntry(name, feature.Title, feature.Tagline.Length > 0 ? feature.Tagline : feature.Summary, feature.Summary,

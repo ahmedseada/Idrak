@@ -2,7 +2,8 @@
 <!--
   The app's host (plan 34, phase R; no Shell, no Blazor): the section shown, with the bottom bar under it on a narrow
   window and the side rail beside it on a wide one, chosen by the window's measured width (AppLayout); All labs as a sheet
-  over the page on a narrow window. Pages a section opens are pushed over it (the window's navigation page).
+  over the page on a narrow window. Pages a section opens are pushed over it (the window's navigation page). Every section
+  made is kept in Body, the one shown visible and the others hidden, so a tab tapped again only shows its view.
 -->
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
@@ -15,13 +16,13 @@
         <nav:NavigationRail x:Name="Rail" IsVisible="{Binding IsWide}" />
 
         <Grid Grid.Column="1">
-            <ContentView x:Name="Body" Margin="{DynamicResource IdrakNoInset}">
-                <ContentView.Triggers>
-                    <DataTrigger TargetType="ContentView" Binding="{Binding IsNarrow}" Value="True">
+            <Grid x:Name="Body" Margin="{DynamicResource IdrakNoInset}">
+                <Grid.Triggers>
+                    <DataTrigger TargetType="Grid" Binding="{Binding IsNarrow}" Value="True">
                         <Setter Property="Margin" Value="{DynamicResource IdrakBottomBarInset}" />
                     </DataTrigger>
-                </ContentView.Triggers>
-            </ContentView>
+                </Grid.Triggers>
+            </Grid>
 
             <!-- All labs over the page (a narrow window). -->
             <Grid x:Name="Sheet" IsVisible="{Binding IsSheetOpen}">
@@ -30,8 +31,10 @@
                         <TapGestureRecognizer Command="{Binding CloseSheetCommand}" />
                     </BoxView.GestureRecognizers>
                 </BoxView>
-                <Border x:Name="SheetPanel" Style="{DynamicResource IdrakSheet}" VerticalOptions="End">
-                    <Grid RowDefinitions="Auto,*">
+                <!-- The sheet: its ground (the rounded edge) under a plain grid, so the list scrolls in a row of a fixed height. -->
+                <Grid x:Name="SheetPanel" VerticalOptions="End">
+                    <Border Style="{DynamicResource IdrakSheet}" InputTransparent="True" />
+                    <Grid RowDefinitions="Auto,*" Padding="{DynamicResource IdrakSheetPadding}">
                         <Border Style="{DynamicResource IdrakSheetHandle}">
                             <Border.GestureRecognizers>
                                 <TapGestureRecognizer Command="{Binding CloseSheetCommand}" />
@@ -40,7 +43,7 @@
                         </Border>
                         <ContentView x:Name="SheetBody" Grid.Row="1" />
                     </Grid>
-                </Border>
+                </Grid>
             </Grid>
 
             <nav:BottomNavigationBar x:Name="Bar" VerticalOptions="End" IsVisible="{Binding IsNarrow}" />

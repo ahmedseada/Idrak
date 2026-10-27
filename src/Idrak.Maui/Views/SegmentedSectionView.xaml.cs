@@ -13,10 +13,12 @@ namespace Idrak.Maui.Views;
 /// lab's view made on first choice and kept, told when it is shown and hidden; the tune button opens the shown lab's
 /// settings.
 /// </summary>
-public partial class SegmentedSectionView : AdaptiveView
+public partial class SegmentedSectionView : AdaptiveView, IPrebuilt
 {
     private readonly IServiceProvider _services;
+    private readonly IdrakMauiOptions _options;
     private readonly Dictionary<string, View> _views = new(StringComparer.OrdinalIgnoreCase);
+    private View? _current;
     private bool _onScreen;
 
     /// <summary>The section <paramref name="section"/> over the app's services.</summary>
@@ -26,6 +28,7 @@ public partial class SegmentedSectionView : AdaptiveView
         _services = services ?? throw new ArgumentNullException(nameof(services));
         ArgumentNullException.ThrowIfNull(section);
         var options = services.GetService(typeof(IdrakMauiOptions)) as IdrakMauiOptions ?? new IdrakMauiOptions();
+        _options = options;
         ViewModel = new SegmentedSectionViewModel(section, options);
         BindingContext = ViewModel;
         InitializeComponent();
@@ -49,21 +52,25 @@ public partial class SegmentedSectionView : AdaptiveView
     public SegmentedSectionViewModel ViewModel { get; }
 
     /// <summary>The lab's view shown.</summary>
-    public View? Current => Body.Content;
+    public View? Current => _current;
+
+    /// <inheritdoc />
+    IEnumerable<Action> IPrebuilt.Parts() =>
+        ViewModel.Segments.Where(s => !_views.ContainsKey(s.Name)).Select(s => (Action)(() => ViewOf(s.Name))).ToList();
 
     /// <inheritdoc />
     public override void Shown()
     {
         base.Shown();
         _onScreen = true;
-        (Body.Content as IHostedView)?.Shown();
+        (_current as IHostedView)?.Shown();
     }
 
     /// <inheritdoc />
     public override void Hidden()
     {
         _onScreen = false;
-        (Body.Content as IHostedView)?.Hidden();
+        (_current as IHostedView)?.Hidden();
         base.Hidden();
     }
 
@@ -84,6 +91,41 @@ public partial class SegmentedSectionView : AdaptiveView
 
     private void ShowView(string feature)
     {
+        var view = ViewOf(feature);
+        if (ReferenceEquals(_current, view))
+        {
+            return;
+        }
+
+        var previous = _current;
+        _current = view;
+        view.IsVisible = true;                                                   // the switch first; the lab told after it has drawn
+        if (previous is not null)
+        {
+            previous.IsVisible = false;
+        }
+
+        if (_options.SectionFade > TimeSpan.Zero)
+        {
+            Motion.FadeIn(view, (uint)Math.Min(uint.MaxValue, _options.SectionFade.TotalMilliseconds));
+        }
+
+        if (_onScreen)
+        {
+            (previous as IHostedView)?.Hidden();
+            Dispatcher.Dispatch(() =>
+            {
+                if (_onScreen && ReferenceEquals(_current, view))
+                {
+                    (view as IHostedView)?.Shown();
+                }
+            });
+        }
+    }
+
+    // The lab's view, made once and kept here, hidden until chosen.
+    private View ViewOf(string feature)
+    {
         if (!_views.TryGetValue(feature, out var view))
         {
             try
@@ -95,28 +137,15 @@ public partial class SegmentedSectionView : AdaptiveView
                 view = new FailedView(feature, e);
             }
 
+            view.IsVisible = false;
             _views[feature] = view;
+            Body.Children.Add(view);
         }
 
-        if (ReferenceEquals(Body.Content, view))
-        {
-            return;
-        }
-
-        if (_onScreen)
-        {
-            (Body.Content as IHostedView)?.Hidden();
-        }
-
-        Body.Content = view;
-        Motion.FadeIn(view);
-        if (_onScreen)
-        {
-            (view as IHostedView)?.Shown();
-        }
+        return view;
     }
 
-    private void OnTune(object? sender, TappedEventArgs e) => (Body.Content as ITunable)?.Tune();
+    private void OnTune(object? sender, TappedEventArgs e) => (_current as ITunable)?.Tune();
 }
 
 /// <summary>A lab view whose settings a section's tune button opens.</summary>

@@ -333,10 +333,13 @@ public sealed class ModelsViewModel : ViewModel
         try
         {
             var (models, space, token) = await Task.Run(() => (_store.List(), _store.FreeSpace(), _store.HasToken)).ConfigureAwait(true);
-            Models.Clear();
-            foreach (var model in models)
+            if (Models.Count != models.Count || !Models.Select(m => m.Model).SequenceEqual(models))
             {
-                Models.Add(new ModelEntry(model, new Command(async () => await RemoveAsync(model))));
+                Models.Clear();                                                 // the list made again only when the store changed
+                foreach (var model in models)
+                {
+                    Models.Add(new ModelEntry(model, new Command(async () => await RemoveAsync(model))));
+                }
             }
 
             long bytes = models.Sum(m => m.Bytes);

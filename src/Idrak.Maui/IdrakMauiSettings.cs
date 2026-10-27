@@ -85,7 +85,7 @@ public sealed class IdrakSetting
         _ when key.StartsWith("chat_", StringComparison.Ordinal) => "Chat",
         "cache_folder" or "hf_token" or "storage_headroom_mb" => "Storage",
         "model_keep_alive_s" or "max_loaded_models" or "unload_models_at" => "Models in memory",
-        "wide_layout_dp" or "carousel_s" or "progress_interval_ms" => "Layout and motion",
+        "wide_layout_dp" or "carousel_s" or "progress_interval_ms" or "prebuild_sections" or "section_fade_ms" or "frame_clock" or "live_fps" or "live_level_ms" => "Layout and motion",
         "device" or "cpu_vectors" or "theme" => "General",
         _ => "Limits",
     };
@@ -258,6 +258,16 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
         new("carousel_s", "Home carousel (s)", "How long Home's carousel shows a slide before the next; 0 keeps it still.", IdrakSettingKind.Number,
             o => o.CarouselInterval is { } c ? Text(c.TotalSeconds) : "0", (o, t) => o.CarouselInterval = Real(t, minimum: 0) is { } s && s > 0 ? TimeSpan.FromSeconds(s) : t.Length == 0 ? TimeSpan.FromSeconds(6) : null,
             placeholder: "6", range: (0, 20, 1)),
+        new("prebuild_sections", "Make the tabs ahead", "Whether the tabs' views are made while the app is idle after Home first shows, so a first tap only shows a tab; off makes each when first opened.",
+            IdrakSettingKind.Choice, o => o.PrebuildSections ? "on" : "off", (o, t) => o.PrebuildSections = Switch(t) ?? true, placeholder: "on", choices: ["on", "off"]),
+        new("section_fade_ms", "Tab fade (ms)", "How long a tab's view fades in when shown; 0 shows it at once. The tap's command never waits for it.", IdrakSettingKind.Number,
+            o => Text(o.SectionFade.TotalMilliseconds), (o, t) => o.SectionFade = TimeSpan.FromMilliseconds(Real(t, minimum: 0) ?? 0), placeholder: "0", range: (0, 400, 10)),
+        new("frame_clock", "Live drawing clock", "What the live waveform and level meters draw on (FrameClocks): display (the display's own frames, on Android), timer (a timer at the display's rate), or auto.",
+            IdrakSettingKind.Choice, o => o.FrameClock ?? "", (o, t) => o.FrameClock = FrameClockName(t), placeholder: "auto", choices: ["auto", .. FrameClocks.Names]),
+        new("live_fps", "Live drawing rate (frames/s)", "The most frames a second the live waveform and meters draw. Empty: every frame the display shows.", IdrakSettingKind.Number,
+            o => Text(o.LiveFrameRate), (o, t) => o.LiveFrameRate = Real(t, exclusiveMinimum: 0), placeholder: "the display's"),
+        new("live_level_ms", "Waveform bar (ms)", "The sound one bar of the live waveform stands for (and one step of a level meter); taken at the next recording.", IdrakSettingKind.Number,
+            o => Text(o.LiveLevelWindow.TotalMilliseconds), (o, t) => o.LiveLevelWindow = TimeSpan.FromMilliseconds(Real(t, exclusiveMinimum: 0) ?? 50), placeholder: "50", range: (10, 250, 5)),
         new("model_keep_alive_s", "Model keep-alive (s)", "How long a model stays loaded after its last use; empty: until memory pressure.", IdrakSettingKind.Number,
             o => o.ModelKeepAlive is { } k ? Text(k.TotalSeconds) : "", (o, t) => o.ModelKeepAlive = Real(t, minimum: 0) is { } s ? TimeSpan.FromSeconds(s) : null,
             placeholder: "until memory pressure"),
@@ -414,6 +424,18 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
         {
             throw new FormatException(e.Message);
         }
+    }
+
+    // "auto" or empty is the first clock that ticks here (null); else a registered frame clock, as it is spelled there.
+    private static string? FrameClockName(string text)
+    {
+        if (text.Length == 0 || text.Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return FrameClocks.Names.FirstOrDefault(n => n.Equals(text, StringComparison.OrdinalIgnoreCase))
+            ?? throw new FormatException($"'{text}' is not a frame clock: auto, {string.Join(", ", FrameClocks.Names)}.");
     }
 
     // "auto", "cpu" or kind:ordinal; whether the device exists is the start-up's to say (IdrakMauiStartup).

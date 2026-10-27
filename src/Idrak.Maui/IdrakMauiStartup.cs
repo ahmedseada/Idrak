@@ -62,6 +62,7 @@ public static class IdrakMauiStartup
         ComputeResources.CpuVectors = options.CpuVectors ?? library.CpuVectors;
         ApplyToken(options.HuggingFaceToken);
         ApplyDevice(options.Device, problems);
+        ApplyFrameClock(options, problems);
         return new IdrakStartupReport(ComputeResources.CacheFolder, options.Device, problems, appStorage);
     }
 
@@ -87,6 +88,22 @@ public static class IdrakMauiStartup
         {
             Environment.SetEnvironmentVariable(TokenVariable, null);      // the token the app had set is gone; one the process had stays
             s_tokenSet = false;
+        }
+    }
+
+    // The clock the live views draw on and their rate; a clock that is not registered or cannot tick here leaves the first
+    // that can, and says why.
+    private static void ApplyFrameClock(IdrakMauiOptions options, List<string> problems)
+    {
+        Abstractions.FrameClocks.FramesPerSecond = options.LiveFrameRate is > 0 and var rate ? rate : 0;
+        try
+        {
+            Abstractions.FrameClocks.Use(options.FrameClock);
+        }
+        catch (Exception e) when (e is NotRegisteredException or NotSupportedException)
+        {
+            Abstractions.FrameClocks.Use(null);
+            problems.Add($"{e.Message.Split('\n')[0]} Live drawing takes the first clock that ticks here.");
         }
     }
 

@@ -59,13 +59,13 @@ public partial class LabsView : AdaptiveView
         WideCounts.IsVisible = wide;
         NarrowCounts.IsVisible = !wide;
         TitleLabel.SetDynamicResource(StyleProperty, wide ? "IdrakHeroTitle" : "IdrakSheetTitle");
-        Page.SetDynamicResource(PaddingProperty, wide ? "IdrakWidePagePadding" : _sheet ? "IdrakNoInset" : "IdrakPagePadding");
+        // The sheet's list ends above the floating bottom bar drawn over it, so its last row can be scrolled into view.
+        Page.SetDynamicResource(PaddingProperty, wide ? "IdrakWidePagePadding" : _sheet ? "IdrakBottomBarInset" : "IdrakPagePadding");
         Grid.SetRow(Search, wide ? 0 : 1);
         Grid.SetColumn(Search, wide ? 1 : 0);
         Grid.SetColumnSpan(Search, wide ? 1 : 2);
         Search.WidthRequest = wide ? 360 : -1;
-        Groups.Direction = wide ? Microsoft.Maui.Layouts.FlexDirection.Row : Microsoft.Maui.Layouts.FlexDirection.Column;
-        Groups.AlignItems = wide ? Microsoft.Maui.Layouts.FlexAlignItems.Start : Microsoft.Maui.Layouts.FlexAlignItems.Stretch;
+        Groups.Columns = wide ? WideColumns : 1;
         BindableLayout.SetItemTemplate(Groups, wide ? _wideGroup ??= WideGroup() : _narrowGroup);
     }
 
@@ -87,7 +87,9 @@ public partial class LabsView : AdaptiveView
         var column = new VerticalStackLayout { head, labs };
         column.SetDynamicResource(VerticalStackLayout.SpacingProperty, "IdrakSpacingTile");
         column.SetDynamicResource(PaddingProperty, "IdrakWideGroupPadding");
-        FlexLayout.SetBasis(column, new Microsoft.Maui.Layouts.FlexBasis(0.25f, isRelative: true));
         return column;
     });
+
+    /// <summary>The groups a row on a wide window (a column each: Language, Voice, Vision, the device's).</summary>
+    public static int WideColumns { get; set; } = 4;
 }

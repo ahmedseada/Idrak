@@ -2,6 +2,8 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Globalization;
 using System.Windows.Input;
 using Idrak.Abstraction.Devices;
 using Idrak.Maui.Abstractions;
@@ -14,12 +16,15 @@ public sealed class SettingEntry : ViewModel
 {
     private string _text;
     private string _error = "";
+    private IReadOnlyList<string> _choices;
+    private bool _shown = true, _waits, _settingChoices;
+    private string? _words;
 
     internal SettingEntry(IdrakSetting setting, string text, IReadOnlyList<string> choices)
     {
         Setting = setting;
         _text = text;
-        Choices = choices;
+        _choices = choices;
         ResetCommand = new Command(() => Text = "");
         foreach (string choice in IsSegmented ? choices : [])
         {
@@ -109,8 +114,60 @@ public sealed class SettingEntry : ViewModel
     /// <summary>The keyboard for the field.</summary>
     public Keyboard Keyboard => Setting.Kind == IdrakSettingKind.Number ? Keyboard.Numeric : Keyboard.Default;
 
-    /// <summary>The values to choose from (a choice).</summary>
-    public IReadOnlyList<string> Choices { get; }
+    /// <summary>The values to choose from (a choice; the device's are listed off the UI thread and arrive after).</summary>
+    public IReadOnlyList<string> Choices
+    {
+        get => _choices;
+        internal set
+        {
+            _settingChoices = true;                                              // a picker given new items reports no choice meanwhile: not a change
+            try
+            {
+                SetProperty(ref _choices, value ?? []);
+            }
+            finally
+            {
+                _settingChoices = false;
+            }
+
+            _words = null;
+            OnPropertyChanged(nameof(SelectedChoice));
+        }
+    }
+
+    /// <summary>Whether it shows (the search finds it, or nothing is searched).</summary>
+    public bool IsShown
+    {
+        get => _shown;
+        internal set => SetProperty(ref _shown, value);
+    }
+
+    /// <summary>Whether it was changed and saved, and takes effect only when the app starts again.</summary>
+    public bool WaitsForRestart
+    {
+        get => _waits;
+        internal set => SetProperty(ref _waits, value);
+    }
+
+    /// <summary>Whether every one of <paramref name="words"/> is in its group, title, help, value, default or choices (ignoring case and accents).</summary>
+    public bool Matches(IReadOnlyList<string> words)
+    {
+        if (words.Count == 0)
+        {
+            return true;
+        }
+
+        _words ??= string.Join('\n', [Setting.Group, Setting.Title, Setting.Summary, Setting.Placeholder, Setting.Key.Replace('_', ' '), .. _choices]);
+        foreach (string word in words)
+        {
+            if (!SettingsSearch.Contains(_words, word) && !SettingsSearch.Contains(Text, word))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 
     /// <summary>The value as text ("" for the library's own).</summary>
     public string Text
@@ -132,7 +189,15 @@ public sealed class SettingEntry : ViewModel
     public string? SelectedChoice
     {
         get => Text.Length == 0 && Choices.Count > 0 ? Choices[0] : Text;
-        set => Text = value is null || Choices.Count > 0 && value == Choices[0] && Setting.Placeholder == value ? "" : value;
+        set
+        {
+            if (_settingChoices && value is null)
+            {
+                return;
+            }
+
+            Text = value is null || Choices.Count > 0 && value == Choices[0] && Setting.Placeholder == value ? "" : value;
+        }
     }
 
     /// <summary>Why the value was refused, or "".</summary>
@@ -156,6 +221,18 @@ public sealed class SettingEntry : ViewModel
 public sealed class FeatureToggle(IMobileFeature feature, bool enabled) : ViewModel
 {
     private bool _enabled = enabled;
+    private bool _shown = true;
+
+    /// <summary>Whether it shows (the search finds it, or nothing is searched).</summary>
+    public bool IsShown
+    {
+        get => _shown;
+        internal set => SetProperty(ref _shown, value);
+    }
+
+    /// <summary>Whether every one of <paramref name="words"/> is in its title, help or name, or in "labs shown".</summary>
+    public bool Matches(IReadOnlyList<string> words) =>
+        words.All(w => SettingsSearch.Contains(Title, w) || SettingsSearch.Contains(Summary, w) || SettingsSearch.Contains(Name, w) || SettingsSearch.Contains(SettingsViewModel.LabsTitle, w));
 
     /// <summary>The feature's name.</summary>
     public string Name => feature.Name;
@@ -178,27 +255,188 @@ public sealed class FeatureToggle(IMobileFeature feature, bool enabled) : ViewMo
 /// The settings page over every option of <see cref="IdrakMauiOptions"/> (<see cref="IdrakMauiSettings.Definitions"/>) and
 /// the features shown. Saving checks every value, keeps them (<see cref="IdrakMauiSettings.SaveAsync"/>), applies at once
 /// what can be (the limits, the device, the token, the theme, the progress interval, the features) and says which changes
-/// wait for the next start.
+/// wait for the next start, marking them and offering the restart (<see cref="RestartCommand"/>, through the app's
+/// <see cref="IAppRestarter"/>). A search (<see cref="Query"/>) shows only the settings whose group, title, help, value or
+/// choices hold every word typed, with their groups' headings; nothing is made again while it filters.
 /// </summary>
 public sealed class SettingsViewModel : ViewModel
 {
+    /// <summary>The heading of the labs shown.</summary>
+    public const string LabsTitle = "Labs shown";
+
+    /// <summary>The heading of the storage in effect.</summary>
+    public const string StorageTitle = "Storage in effect";
+
+    /// <summary>The heading of the app's own (the restart).</summary>
+    public const string AppTitle = "App";
+
     private readonly IdrakMauiOptions _options;
     private readonly IdrakMauiSettings _settings;
     private readonly IdrakStartupReport _startup;
     private readonly ProgressCenter? _progress;
-    private string _message = "";
+    private readonly IAppRestarter? _restarter;
+    private readonly Dictionary<string, string> _saved = new(StringComparer.Ordinal);
+    private string _message = "", _query = "";
+    private bool _showFeatures = true, _showStorage = true, _showApp = true, _noMatch, _restartPending;
 
-    /// <summary>A settings page over the app's <paramref name="options"/>.</summary>
-    public SettingsViewModel(IdrakMauiOptions options, IdrakMauiSettings settings, IdrakStartupReport startup, ProgressCenter? progress = null)
+    /// <summary>A settings page over the app's <paramref name="options"/>; <paramref name="restarter"/> restarts the app (none: the page says it cannot).</summary>
+    public SettingsViewModel(IdrakMauiOptions options, IdrakMauiSettings settings, IdrakStartupReport startup, ProgressCenter? progress = null, IAppRestarter? restarter = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _startup = startup ?? throw new ArgumentNullException(nameof(startup));
         _progress = progress;
+        _restarter = restarter;
         SaveCommand = new Command(async () => await SaveAsync());
         ResetCommand = new Command(async () => await ResetAsync());
+        RestartCommand = new Command(async () => await RestartAsync());
+        ClearQueryCommand = new Command(() => Query = "");
         Load(options);
         Message = startup.Problems.Count > 0 ? string.Join("\n", startup.Problems) : "";
+    }
+
+    /// <summary>The search: the settings shown hold every word of it (ignoring case and accents); empty shows them all.</summary>
+    public string Query
+    {
+        get => _query;
+        set
+        {
+            if (SetProperty(ref _query, value ?? ""))
+            {
+                ApplyQuery();
+            }
+        }
+    }
+
+    /// <summary>Empties the search.</summary>
+    public ICommand ClearQueryCommand { get; }
+
+    /// <summary>Whether a search is typed.</summary>
+    public bool IsSearching => Query.Trim().Length > 0;
+
+    /// <summary>Whether the labs shown show (the search finds one, or nothing is searched).</summary>
+    public bool ShowFeatures
+    {
+        get => _showFeatures;
+        private set => SetProperty(ref _showFeatures, value);
+    }
+
+    /// <summary>Whether the storage in effect shows.</summary>
+    public bool ShowStorage
+    {
+        get => _showStorage;
+        private set => SetProperty(ref _showStorage, value);
+    }
+
+    /// <summary>Whether the app's own part (the restart) shows.</summary>
+    public bool ShowApp
+    {
+        get => _showApp;
+        private set => SetProperty(ref _showApp, value);
+    }
+
+    /// <summary>Whether the search finds nothing ("No setting matches").</summary>
+    public bool HasNoMatch
+    {
+        get => _noMatch;
+        private set => SetProperty(ref _noMatch, value);
+    }
+
+    /// <summary>Whether a saved change waits for a restart (the page offers it).</summary>
+    public bool IsRestartPending
+    {
+        get => _restartPending;
+        private set => SetProperty(ref _restartPending, value);
+    }
+
+    /// <summary>Whether the app can restart itself here.</summary>
+    public bool CanRestart => _restarter?.CanRestart ?? false;
+
+    /// <summary>What the restart does, or why it cannot be done here.</summary>
+    public string RestartText => CanRestart
+        ? "Closes the app and opens it again: the library, its devices and the models load afresh with the saved settings."
+        : $"Restart the app by hand: {_restarter?.Unavailable ?? "no restart is registered here"}.";
+
+    /// <summary>Asks before the restart (the view sets it: a dialog); null: the restart is not done.</summary>
+    public Func<string, string, Task<bool>>? Confirm { get; set; }
+
+    /// <summary>Restarts the app, after <see cref="Confirm"/> agrees.</summary>
+    public ICommand RestartCommand { get; }
+
+    /// <summary>Whether a value on the page differs from the one kept (not saved yet).</summary>
+    public bool HasUnsavedChanges =>
+        Entries.Any(e => _saved.TryGetValue(e.Setting.Key, out string? kept) && kept != e.Text)
+        || Features.Any(f => f.IsEnabled != _options.IsFeatureEnabled(f.Name));
+
+    /// <summary>Asks, then restarts the app (the models released, the app started again, this process ended); false when it was not restarted.</summary>
+    public async Task<bool> RestartAsync()
+    {
+        if (_restarter is not { CanRestart: true } restarter)
+        {
+            Message = RestartText;
+            return false;
+        }
+
+        if (Confirm is not { } confirm)
+        {
+            return false;
+        }
+
+        string message = "The app closes and opens again; the library, its devices and the models load afresh with the saved settings."
+            + (HasUnsavedChanges ? " The changes on this page that are not saved are lost: save them first to keep them." : "");
+        if (!await confirm("Restart the app?", message).ConfigureAwait(true))
+        {
+            return false;
+        }
+
+        try
+        {
+            restarter.Restart();
+            return true;
+        }
+        catch (Exception e) when (e is NotSupportedException or InvalidOperationException)
+        {
+            Message = $"The app could not restart itself: {e.Message}";
+            return false;
+        }
+    }
+
+    // Shows the settings, labs and parts the search finds, a group's heading when one of its settings is found (all of a
+    // group whose heading holds the words); only visibility changes, nothing is made again.
+    private void ApplyQuery()
+    {
+        var words = SettingsSearch.Words(_query);
+        int found = 0;
+        foreach (var group in Groups)
+        {
+            bool whole = words.Count > 0 && words.All(w => SettingsSearch.Contains(group.Title, w));
+            int shown = 0;
+            foreach (var entry in group)
+            {
+                bool match = whole || entry.Matches(words);
+                entry.IsShown = match;
+                shown += match ? 1 : 0;
+            }
+
+            group.IsShown = shown > 0;
+            found += shown;
+        }
+
+        bool labs = words.Count > 0 && words.All(w => SettingsSearch.Contains(LabsTitle, w));
+        int features = 0;
+        foreach (var feature in Features)
+        {
+            bool match = labs || feature.Matches(words);
+            feature.IsShown = match;
+            features += match ? 1 : 0;
+        }
+
+        ShowFeatures = features > 0;
+        ShowStorage = words.All(w => SettingsSearch.Contains(StorageTitle, w) || SettingsSearch.Contains("cache folder app storage", w)
+            || SettingsSearch.Contains(CacheFolder, w) || SettingsSearch.Contains(AppStorage, w));
+        ShowApp = words.All(w => SettingsSearch.Contains(AppTitle, w) || SettingsSearch.Contains("restart the app start again reload", w) || SettingsSearch.Contains(RestartText, w));
+        HasNoMatch = found == 0 && features == 0 && !ShowStorage && !ShowApp;
+        OnPropertyChanged(nameof(IsSearching));
     }
 
     /// <summary>The page's title.</summary>
@@ -271,6 +509,13 @@ public sealed class SettingsViewModel : ViewModel
             return false;
         }
 
+        foreach (var entry in Entries)
+        {
+            entry.WaitsForRestart = entry.WaitsForRestart && entry.Text == _saved.GetValueOrDefault(entry.Setting.Key)
+                || entry.Setting.NeedsRestart && entry.Setting.Get(_options) != entry.Setting.Get(next)
+                || entry.Setting.Kind == IdrakSettingKind.Device && !IdrakMauiSettings.IsAuto(_options.Device) && IdrakMauiSettings.IsAuto(next.Device);
+        }
+
         next.DisabledFeatures = new HashSet<string>(Features.Where(f => !f.IsEnabled).Select(f => f.Name), StringComparer.OrdinalIgnoreCase);
         var restart = IdrakMauiSettings.NeedRestart(_options, next);
         var applied = IdrakMauiStartup.Apply(next, _startup.AppStorage, previous: _options);
@@ -297,6 +542,12 @@ public sealed class SettingsViewModel : ViewModel
         }
 
         OnPropertyChanged(nameof(CacheFolder));
+        foreach (var entry in Entries)
+        {
+            _saved[entry.Setting.Key] = entry.Text;
+        }
+
+        IsRestartPending = Entries.Any(e => e.WaitsForRestart);
         Message = string.Join("\n", new[]
         {
             "Saved.",
@@ -316,16 +567,29 @@ public sealed class SettingsViewModel : ViewModel
     private void Load(IdrakMauiOptions options)
     {
         Entries.Clear();
+        _saved.Clear();
+        SettingEntry? device = null;
         foreach (var setting in IdrakMauiSettings.Definitions)
         {
             string text = setting.Get(options);
             IReadOnlyList<string> choices = setting.Kind switch
             {
-                IdrakSettingKind.Device => DeviceChoices(text),
+                IdrakSettingKind.Device => KnownDevices(text),
                 IdrakSettingKind.Choice => setting.Choices,
                 _ => [],
             };
-            Entries.Add(new SettingEntry(setting, setting.Kind == IdrakSettingKind.Device && text == "auto" ? "" : text, choices));
+            var entry = new SettingEntry(setting, setting.Kind == IdrakSettingKind.Device && text == "auto" ? "" : text, choices);
+            Entries.Add(entry);
+            _saved[setting.Key] = entry.Text;
+            if (setting.Kind == IdrakSettingKind.Device)
+            {
+                device = entry;
+            }
+        }
+
+        if (device is not null)
+        {
+            _ = ListDevicesAsync(device);
         }
 
         Groups.Clear();
@@ -338,6 +602,22 @@ public sealed class SettingsViewModel : ViewModel
         foreach (var feature in MobileFeatures.All)
         {
             Features.Add(new FeatureToggle(feature, options.IsFeatureEnabled(feature.Name)));
+        }
+    }
+
+    // The device's choices at once (auto, cpu and the one set), then every device of every backend, counted on a worker
+    // thread (a backend may load its driver to count them) and given to the picker when counted.
+    private static IReadOnlyList<string> KnownDevices(string current) =>
+        current.Length > 0 && !current.Equals("auto", StringComparison.OrdinalIgnoreCase) && !current.Equals("cpu", StringComparison.OrdinalIgnoreCase)
+            ? ["auto", "cpu", current] : ["auto", "cpu"];
+
+    private static async Task ListDevicesAsync(SettingEntry device)
+    {
+        string current = device.Text;
+        var all = await Task.Run(() => DeviceChoices(current)).ConfigureAwait(true);
+        if (!all.SequenceEqual(device.Choices))
+        {
+            device.Choices = all;
         }
     }
 
@@ -394,6 +674,36 @@ public sealed class ChoiceChip(string text, ICommand select) : ViewModel
 /// <summary>The settings of one group ("Chat").</summary>
 public sealed class SettingGroup(string title, IEnumerable<SettingEntry> entries) : ObservableCollection<SettingEntry>(entries)
 {
+    private bool _shown = true;
+
     /// <summary>Its heading.</summary>
     public string Title { get; } = title;
+
+    /// <summary>Whether it shows (one of its settings is found, or nothing is searched).</summary>
+    public bool IsShown
+    {
+        get => _shown;
+        internal set
+        {
+            if (_shown != value)
+            {
+                _shown = value;
+                OnPropertyChanged(new PropertyChangedEventArgs(nameof(IsShown)));
+            }
+        }
+    }
+}
+
+/// <summary>The settings page's search: the words of a query, and a match that ignores case and accents.</summary>
+public static class SettingsSearch
+{
+    private const CompareOptions Loose = CompareOptions.IgnoreCase | CompareOptions.IgnoreNonSpace;
+
+    /// <summary>The words of <paramref name="query"/> (split at white space).</summary>
+    public static IReadOnlyList<string> Words(string? query) =>
+        string.IsNullOrWhiteSpace(query) ? [] : query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    /// <summary>Whether <paramref name="text"/> holds <paramref name="word"/>, ignoring case and accents.</summary>
+    public static bool Contains(string? text, string word) =>
+        !string.IsNullOrEmpty(text) && CultureInfo.InvariantCulture.CompareInfo.IndexOf(text, word, Loose) >= 0;
 }

@@ -56,6 +56,7 @@
                 <Grid x:Name="SegmentGrid" ColumnSpacing="{DynamicResource IdrakSpacingSmall}" />
             </Border>
         </Grid>
-        <ContentView x:Name="Body" Grid.Row="1" />
+        <!-- Each lab's view made once and kept here, the one chosen visible. -->
+        <Grid x:Name="Body" Grid.Row="1" />
     </Grid>
 </ctl:AdaptiveView>
