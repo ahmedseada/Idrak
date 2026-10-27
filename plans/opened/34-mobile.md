@@ -117,7 +117,7 @@ nothing that needs a shell.
 | F | **Fixes from the owner's first runs** (a phone and a tablet): the memory measured from the system where the runtime's own figure is its heap budget (Mono reported 143-172 MB); portable 128-bit vector paths where NEON is not reported but vectors are accelerated (Mono); CoreCLR as an app build option, measured against Mono; a Vulkan kernel the driver refuses retried without the subgroup-size request, then its smaller variants, then that operation on the host, never the whole device; the device list measured cold and warm; the CPU named by its core groups | M6 | A |
 | R | **The redesign the owner approved** (2026-10-27): a landing with a carousel on the library and the app, bottom navigation with Home, Chat, Voice and Vision on phones and a side rail with multi-pane pages on tablets (chosen by the window's measured width), an All labs sheet or page grouped by Language, Voice, Vision and the device, every lab laid out for its own feature, light and dark, the source commit shown instead of the version | M6 | B |
 | M8 | Bench lab: the bench rows callable from the app as the tests are (M2's pattern). **Held: the owner decides when** | M7 | A |
-| W | **Windows desktop** (the owner, 2026-10-27: "the same laptop layout for Windows"): the same app and plug-in on `net10.0-windows`, the wide layout on a laptop's window, the platform services Android has given their Windows forms, desktop input. Planned below (**Windows desktop**); not started | R | A |
+| W | **Windows desktop** (the owner, 2026-10-27: "the same laptop layout for Windows"): the same app and plug-in on `net10.0-windows`, the wide layout on a laptop's window, the platform services Android has given their Windows forms, desktop input. Planned below (**Windows desktop**) | R | A, B |
 
 **Done when:**
 
@@ -172,7 +172,7 @@ What W adds:
    start-up, no JIT on first touch), set by `IdrakWindowsAot=readytorun|none`, measured on the owner's laptop against
    none.
 
-**Open for the owner before W starts:**
+**Decided by the owner (2026-10-27): both as recommended.** Started with two agents: A the platform (target, app files, services, window), B the desktop behaviour (input, the Terminal's host).
 
 - **The Terminal on the desktop.** The app's host allows nothing beyond the library today (no child process, no network
   listener, no console input), so `serve`, `cluster start`, `test` and `shell` say they are unavailable. A desktop can
