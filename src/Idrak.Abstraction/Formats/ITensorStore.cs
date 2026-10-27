@@ -52,6 +52,19 @@ public interface ITensorStore : IDisposable
     }
 
     /// <summary>
+    /// Reads rows [<paramref name="first"/>, <paramref name="first"/> + <paramref name="count"/>) of the tensor
+    /// <paramref name="name"/> (its outermost dimension) as float32 values into <paramref name="destination"/>, row-major, as
+    /// <see cref="Read"/> gives them: so a large tensor (an embedding table) is read a block of rows at a time and never held
+    /// whole. Returns false, having written nothing, when the store cannot read part of a tensor (the default): the caller
+    /// reads it whole.
+    /// </summary>
+    /// <param name="name">The tensor.</param>
+    /// <param name="first">The first row.</param>
+    /// <param name="count">The rows.</param>
+    /// <param name="destination">At least <paramref name="count"/> rows of values.</param>
+    bool ReadRows(string name, int first, int count, Span<float> destination) => false;
+
+    /// <summary>
     /// The time spent reading tensor bytes from storage so far, apart from converting them, or null when the store does
     /// not measure it (the default): <c>PretrainedModel.LoadTimes</c> then counts reading and converting as one.
     /// </summary>

@@ -14,6 +14,20 @@ public interface IWeightSource
     float[]? Read(string name, IReadOnlyList<int> shape);
 
     /// <summary>
+    /// Reads rows [<paramref name="first"/>, <paramref name="first"/> + <paramref name="count"/>) of the matrix
+    /// <paramref name="name"/> [rows, columns] (<paramref name="shape"/>, as <see cref="Read"/> takes it) into
+    /// <paramref name="destination"/>: the values <see cref="Read"/> gives for those rows. So a large matrix (an embedding
+    /// table a tied head is packed from) is read a block at a time. False, having written nothing, when the source cannot
+    /// (the default, or a source that has not the matrix): the caller reads it whole.
+    /// </summary>
+    /// <param name="name">The tensor's name.</param>
+    /// <param name="shape">Its shape, [rows, columns].</param>
+    /// <param name="first">The first row.</param>
+    /// <param name="count">The rows.</param>
+    /// <param name="destination">At least <paramref name="count"/> rows of values.</param>
+    bool ReadRows(string name, IReadOnlyList<int> shape, int first, int count, Span<float> destination) => false;
+
+    /// <summary>
     /// The matrix <paramref name="name"/> [rows, columns] (<paramref name="shape"/>, as <see cref="Read"/> takes it), or its
     /// transpose [columns, rows] when <paramref name="transposed"/>, as bfloat16 weights on <paramref name="device"/>; null
     /// when the source does not have it. Always the weights <see cref="BFloat16Weight.FromValues(ReadOnlySpan{float}, int, int, Device)"/>

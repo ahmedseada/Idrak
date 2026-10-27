@@ -1737,6 +1737,7 @@ public interface Idrak.Models.Abstractions.IVisionFamily
 
 public interface Idrak.Models.Abstractions.IWeightSource
   public (default) Idrak.Abstraction.Generation.BFloat16Weight? ReadBFloat16(string name, System.Collections.Generic.IReadOnlyList<int> shape, Idrak.Abstraction.Device device, bool transposed = false)
+  public (default) bool ReadRows(string name, System.Collections.Generic.IReadOnlyList<int> shape, int first, int count, System.Span<float> destination)
   public float[]? Read(string name, System.Collections.Generic.IReadOnlyList<int> shape)
 
 public sealed class Idrak.Models.Abstractions.NormalizedText : System.IDisposable
@@ -2274,6 +2275,7 @@ public sealed class Idrak.Models.RenamedTensorStore : Idrak.Abstraction.Formats.
   public System.TimeSpan? ReadTime { get; }
   public bool Contains(string name)
   public bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
+  public bool ReadRows(string name, int first, int count, System.Span<float> destination)
   public bool SameValues(string first, string second)
   public float[] Read(string name)
   public float[] ReadTransposed(string name)
@@ -2303,6 +2305,7 @@ public sealed class Idrak.Models.SafeTensorsReader : Idrak.Abstraction.Formats.I
   public System.TimeSpan ReadTime { get; }
   public bool Contains(string name)
   public bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)
+  public bool ReadRows(string name, int first, int count, System.Span<float> destination)
   public bool SameValues(string first, string second)
   public float[] Read(string name)
   public float[] ReadTransposed(string name)

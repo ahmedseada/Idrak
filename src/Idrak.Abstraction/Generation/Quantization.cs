@@ -478,6 +478,60 @@ public sealed class Int8Weight : PackedWeight, IKernelPackedWeight
     }
 
     /// <summary>
+    /// Quantizes [rows, columns] weights read a block of columns at a time by <paramref name="read"/> (each column's rows
+    /// contiguous: a tied head's columns are its embedding table's rows), so neither the whole matrix nor its transpose is
+    /// held as float32: the same bytes and scales as <see cref="Quantize(ReadOnlySpan{float}, int, int, Device)"/> of the
+    /// matrix, bit for bit (a column's scale is its largest magnitude, whatever order the rows are read in).
+    /// </summary>
+    public static Int8Weight QuantizeColumns(int rows, int columns, Device device, ColumnBlockReader read)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        int stride = (columns + 3) / 4 * 4;
+        var scales = new float[columns];
+        var bytes = new sbyte[rows * stride];
+        int block = Int4Weight.ColumnBlock(rows, columns);
+        float[] buffer = System.Buffers.ArrayPool<float>.Shared.Rent(block * rows);      // returned in finally
+        try
+        {
+            for (int j0 = 0; j0 < columns; j0 += block)
+            {
+                int n = Math.Min(block, columns - j0);
+                read(j0, n, buffer.AsSpan(0, n * rows));
+                HostParallel.For(n, Math.Max(1, Abstraction.Devices.Cpu.CpuTuning.ParallelElements / Math.Max(1, rows)), (first, last) =>
+                {
+                    for (int c = first; c < last; c++)
+                    {
+                        var column = buffer.AsSpan(c * rows, rows);
+                        float largest = 0f;
+                        for (int r = 0; r < rows; r++)
+                        {
+                            largest = MathF.Max(largest, MathF.Abs(column[r]));
+                        }
+
+                        float scale = largest > 0f ? largest / 127f : 1f;
+                        int j = j0 + c;
+                        scales[j] = scale;
+                        for (int r = 0; r < rows; r++)
+                        {
+                            bytes[r * stride + j] = (sbyte)Math.Clamp(MathF.Round(column[r] / scale), -127f, 127f);
+                        }
+                    }
+                });
+            }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<float>.Shared.Return(buffer);
+        }
+
+        var packed = MemoryMarshal.Cast<sbyte, float>(bytes);
+        return new Int8Weight(
+            Tensor.Persistent(packed, [packed.Length], device, requiresGrad: false),
+            Tensor.Persistent(scales, [columns], device, requiresGrad: false),
+            rows, columns);
+    }
+
+    /// <summary>
     /// Packed bytes and scales for [rows, columns] allocated on <paramref name="device"/> without computing anything, for
     /// loading stored values into (<c>Idrak.ModuleFiles.Load</c>).
     /// </summary>
@@ -568,6 +622,14 @@ public sealed class Int8Weight : PackedWeight, IKernelPackedWeight
         Scales.Dispose();
     }
 }
+
+/// <summary>
+/// Reads columns [<paramref name="firstColumn"/>, <paramref name="firstColumn"/> + <paramref name="count"/>) of a weight
+/// matrix [rows, columns] into <paramref name="destination"/>, each column's rows contiguous (column c at
+/// [(c - <paramref name="firstColumn"/>) · rows]): what <see cref="Int4Weight.QuantizeColumns"/> and
+/// <see cref="Int8Weight.QuantizeColumns"/> pack from a block at a time (a tied head's columns are its table's rows).
+/// </summary>
+public delegate void ColumnBlockReader(int firstColumn, int count, Span<float> destination);
 
 /// <summary>
 /// The 4-bit weights of a <c>Linear</c> layer: each group of 32 input rows of a column shares one float scale and
@@ -666,6 +728,80 @@ public sealed class Int4Weight : PackedWeight, IKernelPackedWeight
     }
 
     /// <summary>
+    /// Quantizes [rows, columns] weights read a block of columns at a time by <paramref name="read"/> (each column's rows
+    /// contiguous: a tied head's columns are its embedding table's rows), so neither the whole matrix nor its transpose is
+    /// held as float32: the same nibbles and scales as <see cref="Quantize(ReadOnlySpan{float}, int, int, Device)"/> of the
+    /// matrix, bit for bit.
+    /// </summary>
+    public static unsafe Int4Weight QuantizeColumns(int rows, int columns, Device device, ColumnBlockReader read)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        int words = (columns + 7) / 8, groups = (rows + GroupSize - 1) / GroupSize;
+        var packed = new uint[rows * words];
+        var scales = new float[groups * words * 8];
+        bool vectors = VectorQuantize;
+        int block = ColumnBlock(rows, columns);
+        float[] buffer = System.Buffers.ArrayPool<float>.Shared.Rent(block * rows);      // returned in finally
+        try
+        {
+            for (int j0 = 0; j0 < columns; j0 += block)
+            {
+                int n = Math.Min(block, columns - j0);
+                read(j0, n, buffer.AsSpan(0, n * rows));
+                fixed (float* source = buffer)
+                {
+                    float* pinned = source;
+                    // Eight columns at a time (one packed word a row): each worker writes words and scales no other writes.
+                    HostParallel.For((n + 7) / 8, Math.Max(1, Abstraction.Devices.Cpu.CpuTuning.ParallelElements / Math.Max(1, 8 * rows * 21)), (first, last) =>
+                    {
+                        Span<float> w = stackalloc float[GroupSize];
+                        Span<sbyte> q = stackalloc sbyte[GroupSize];
+                        Span<sbyte> best = stackalloc sbyte[GroupSize];
+                        Span<Vector128<float>> wv = stackalloc Vector128<float>[GroupSize];
+                        Span<Vector128<float>> qv = stackalloc Vector128<float>[GroupSize];
+                        for (int c8 = first; c8 < last; c8++)
+                        {
+                            int lo = 8 * c8, hi = Math.Min(n, lo + 8);
+                            for (int g = 0; g < groups; g++)
+                            {
+                                int r0 = g * GroupSize, count = Math.Min(rows, r0 + GroupSize) - r0;
+                                int c = lo;
+                                if (vectors)
+                                {
+                                    for (; c + 4 <= hi; c += 4)
+                                    {
+                                        if (!Columns4(pinned, 1, rows, c, r0, count, j0 + c, words, g, packed, scales, wv, qv))
+                                        {
+                                            for (int k = c; k < c + 4; k++)
+                                            {
+                                                Column(pinned, 1, rows, k, r0, count, j0 + k, words, g, packed, scales, w, q, best);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                for (; c < hi; c++)
+                                {
+                                    Column(pinned, 1, rows, c, r0, count, j0 + c, words, g, packed, scales, w, q, best);
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<float>.Shared.Return(buffer);
+        }
+
+        return new Int4Weight(
+            Tensor.Persistent(MemoryMarshal.Cast<uint, float>(packed), [packed.Length], device, requiresGrad: false),
+            Tensor.Persistent(scales, [scales.Length], device, requiresGrad: false),
+            rows, columns);
+    }
+
+    /// <summary>
     /// Nibbles and scales for [rows, columns] allocated on <paramref name="device"/> without computing anything, for
     /// loading stored values into (<c>Idrak.ModuleFiles.Load</c>).
     /// </summary>
@@ -677,6 +813,10 @@ public sealed class Int4Weight : PackedWeight, IKernelPackedWeight
             Tensor.PersistentZeros([groups * words * 8], device),
             rows, columns);
     }
+
+    // The columns a block of ColumnBlockReader holds: a multiple of eight (a packed word a row) whose values make about
+    // 16 MB (the checkpoint reader's chunk, twice), at least eight, at most every column.
+    internal static int ColumnBlock(int rows, int columns) => Math.Min(Math.Max(8, (1 << 22) / Math.Max(1, rows) / 8 * 8), Math.Max(8, (columns + 7) / 8 * 8));
 
     // Whether the quantizer takes its 128-bit vector path (four columns at once): where the runtime accelerates 128-bit
     // vectors and the setting allows vectors (ComputeResources.CpuVectors). The same bits either way.
@@ -714,11 +854,11 @@ public sealed class Int4Weight : PackedWeight, IKernelPackedWeight
                     // Four adjacent columns at once, read row by row (each row's four values are contiguous).
                     for (; j + 4 <= columns; j += 4)
                     {
-                        if (!Columns4(source, columns, r0, count, j, words, g, packed, scales, wv, qv))
+                        if (!Columns4(source, columns, 1, j, r0, count, j, words, g, packed, scales, wv, qv))
                         {
                             for (int c = j; c < j + 4; c++)
                             {
-                                Column(source, columns, r0, count, c, words, g, packed, scales, w, q, best);
+                                Column(source, columns, 1, c, r0, count, c, words, g, packed, scales, w, q, best);
                             }
                         }
                     }
@@ -726,7 +866,7 @@ public sealed class Int4Weight : PackedWeight, IKernelPackedWeight
 
                 for (; j < columns; j++)
                 {
-                    Column(source, columns, r0, count, j, words, g, packed, scales, w, q, best);
+                    Column(source, columns, 1, j, r0, count, j, words, g, packed, scales, w, q, best);
                 }
             }
         });
@@ -739,13 +879,16 @@ public sealed class Int4Weight : PackedWeight, IKernelPackedWeight
 
     // One column of a group (the reference rule): the scale with the least squared error among the divisors, and its
     // nibbles.
-    private static unsafe void Column(float* source, int columns, int r0, int count, int j, int words, int g, uint[] packed, float[] scales,
+    // The element (row r, column c) of a source is source[r · rowStride + c · columnStride]: the head's own layout
+    // (rowStride = columns, columnStride = 1) or a block of the table's rows, one column a row (rowStride = 1, columnStride
+    // = rows); `column` is the local column read, `j` the weight's column written.
+    private static unsafe void Column(float* source, long rowStride, long columnStride, int column, int r0, int count, int j, int words, int g, uint[] packed, float[] scales,
         Span<float> w, Span<sbyte> q, Span<sbyte> best)
     {
         float extreme = 0f;
         for (int i = 0; i < count; i++)
         {
-            w[i] = source[(r0 + i) * columns + j];
+            w[i] = source[(r0 + i) * rowStride + column * columnStride];
             extreme = MathF.Abs(w[i]) > MathF.Abs(extreme) ? w[i] : extreme;
         }
 
@@ -801,14 +944,15 @@ public sealed class Int4Weight : PackedWeight, IKernelPackedWeight
     // order (float products, double sums over the rows in turn, round half to even, the same comparisons), so the nibbles
     // and scales are the same bits. False (nothing written) for a block the reference must answer: a value that is not
     // finite, or a group extreme so small that a divisor over it could leave float's range.
-    private static unsafe bool Columns4(float* source, int columns, int r0, int count, int j, int words, int g, uint[] packed, float[] scales,
+    private static unsafe bool Columns4(float* source, long rowStride, long columnStride, int column, int r0, int count, int j, int words, int g, uint[] packed, float[] scales,
         Span<Vector128<float>> wv, Span<Vector128<float>> qv)
     {
         var extreme = Vector128<float>.Zero;
         var finite = Vector128<float>.Zero;
         for (int i = 0; i < count; i++)
         {
-            var w = Vector128.Load(source + (r0 + i) * columns + j);
+            float* at = source + (r0 + i) * rowStride + column * columnStride;
+            var w = columnStride == 1 ? Vector128.Load(at) : Vector128.Create(at[0], at[columnStride], at[2 * columnStride], at[3 * columnStride]);
             wv[i] = w;
             finite |= w - w;                                                        // 0 for finite values, NaN otherwise
             extreme = Vector128.ConditionalSelect(Vector128.GreaterThan(Vector128.Abs(w), Vector128.Abs(extreme)), w, extreme);
@@ -868,9 +1012,9 @@ public sealed class Int4Weight : PackedWeight, IKernelPackedWeight
 
         for (int lane = 0; lane < 4; lane++)
         {
-            int column = j + lane, chosen = bestStep.GetElement(lane);
+            int written = j + lane, chosen = bestStep.GetElement(lane);
             bool none = zero.AsInt32().GetElement(lane) != 0 || chosen == int.MinValue;
-            scales[g * words * 8 + column] = none ? 0f : bestScale.GetElement(lane);
+            scales[g * words * 8 + written] = none ? 0f : bestScale.GetElement(lane);
             if (none)
             {
                 continue;                                                           // zero nibbles
@@ -881,7 +1025,7 @@ public sealed class Int4Weight : PackedWeight, IKernelPackedWeight
             for (int i = 0; i < count; i++)
             {
                 int nibble = Math.Clamp((int)MathF.Round(wv[i].GetElement(lane) * inverse), -8, 7);
-                packed[(r0 + i) * words + (column >> 3)] |= (uint)(nibble & 15) << (4 * (column & 7));
+                packed[(r0 + i) * words + (written >> 3)] |= (uint)(nibble & 15) << (4 * (written & 7));
             }
         }
 
@@ -1060,6 +1204,83 @@ public sealed class BFloat16Weight : PackedWeight, IKernelPackedWeight
         {
             packed.Dispose();
             throw;
+        }
+    }
+
+    /// <summary>
+    /// bfloat16 weights rounded from the float32 values of a matrix [rows, columns] that <paramref name="read"/> gives a
+    /// block of rows at a time (a float32 or float16 checkpoint's tensor), so the matrix is never held as float32, nor its
+    /// transpose: the weights [rows, columns], or [columns, rows] when <paramref name="transposed"/> (a tied head from its
+    /// table), with the bits <see cref="FromValues(ReadOnlySpan{float}, int, int, Device)"/> makes from the whole matrix (or
+    /// its transpose), value by value. Null when <paramref name="read"/> cannot read the first block (the source does not
+    /// read part of a tensor).
+    /// </summary>
+    /// <param name="rows">The rows of the matrix read.</param>
+    /// <param name="columns">Its columns.</param>
+    /// <param name="device">Where the weights are created.</param>
+    /// <param name="read">
+    /// Reads rows [first, first + count) row-major into the span it gets (its arguments: first, count, destination) and
+    /// returns true; false when it cannot, which only the first block may answer.
+    /// </param>
+    /// <param name="transposed">Make the weights of the transpose, [columns, rows].</param>
+    /// <exception cref="InvalidDataException">A block after the first could not be read.</exception>
+    public static unsafe BFloat16Weight? FromRows(int rows, int columns, Device device, Func<int, int, Span<float>, bool> read, bool transposed = false)
+    {
+        ArgumentNullException.ThrowIfNull(read);
+        int block = Math.Max(1, Math.Min(rows, (1 << 22) / Math.Max(1, columns)));   // about 16 MB of float32 a block
+        float[] buffer = System.Buffers.ArrayPool<float>.Shared.Rent(block * columns);      // returned in finally
+        try
+        {
+            return FromBits(transposed ? columns : rows, transposed ? rows : columns, device, (bits, stride) =>
+            {
+                fixed (ushort* target = bits)
+                {
+                    ushort* pinned = target;
+                    for (int r0 = 0; r0 < rows; r0 += block)
+                    {
+                        int n = Math.Min(block, rows - r0), start = r0;
+                        if (!read(r0, n, buffer.AsSpan(0, n * columns)))
+                        {
+                            return r0 == 0 ? false : throw new InvalidDataException($"Rows [{r0}, {r0 + n}) of [{rows}, {columns}] could not be read after the rows before them.");
+                        }
+
+                        if (transposed)
+                        {
+                            // Each worker writes its own result rows (the block's columns), reading the block's rows in turn.
+                            HostParallel.For(columns, Math.Max(1, Abstraction.Devices.Cpu.CpuTuning.ParallelElements / n), (first, last) =>
+                            {
+                                for (int j = first; j < last; j++)
+                                {
+                                    ushort* row = pinned + (long)j * stride + start;
+                                    for (int r = 0; r < n; r++)
+                                    {
+                                        row[r] = Round(buffer[r * columns + j]);
+                                    }
+                                }
+                            });
+                            continue;
+                        }
+
+                        HostParallel.For(n, Math.Max(1, Abstraction.Devices.Cpu.CpuTuning.ParallelElements / Math.Max(1, columns)), (first, last) =>
+                        {
+                            for (int r = first; r < last; r++)
+                            {
+                                ushort* row = pinned + (long)(start + r) * stride;
+                                for (int j = 0; j < columns; j++)
+                                {
+                                    row[j] = Round(buffer[r * columns + j]);
+                                }
+                            }
+                        });
+                    }
+                }
+
+                return true;
+            });
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<float>.Shared.Return(buffer);
         }
     }
 

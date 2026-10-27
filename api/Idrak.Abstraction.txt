@@ -2956,6 +2956,7 @@ public interface Idrak.Abstraction.Formats.IOnnxRuntimeLoader : Idrak.Abstractio
 public interface Idrak.Abstraction.Formats.ITensorStore : System.IDisposable
   public (default) Idrak.Abstraction.Formats.WeightFormat? FormatOf(string name)
   public (default) System.TimeSpan? ReadTime { get; }
+  public (default) bool ReadRows(string name, int first, int count, System.Span<float> destination)
   public (default) bool SameValues(string first, string second)
   public (default) float[] ReadTransposed(string name)
   public (default) long? BytesRead { get; }
@@ -3069,6 +3070,7 @@ public sealed class Idrak.Abstraction.Generation.BFloat16Weight : Idrak.Abstract
   public static Idrak.Abstraction.Generation.BFloat16Weight Empty(int rows, int columns, Idrak.Abstraction.Device device)
   public static Idrak.Abstraction.Generation.BFloat16Weight FromValues(System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
   public static Idrak.Abstraction.Generation.BFloat16Weight? FromBits(int rows, int columns, Idrak.Abstraction.Device device, System.Func<System.Span<ushort>, int, bool> write)
+  public static Idrak.Abstraction.Generation.BFloat16Weight? FromRows(int rows, int columns, Idrak.Abstraction.Device device, System.Func<int, int, System.Span<float>, bool> read, bool transposed = false)
   public static void CopyStoredBits(System.ReadOnlySpan<ushort> stored, System.Span<ushort> destination)
 
 public sealed record Idrak.Abstraction.Generation.BinaryPartRecordKeys : System.IEquatable<Idrak.Abstraction.Generation.BinaryPartRecordKeys>
@@ -3260,6 +3262,8 @@ public sealed record Idrak.Abstraction.Generation.ChatTokens : System.IEquatable
 
 public static class Idrak.Abstraction.Generation.ChatTools
   public static Idrak.Abstraction.Generation.IChatModel WithTools(this Idrak.Abstraction.Generation.IChatModel model, Idrak.Abstraction.Generation.IToolRegistry tools, int maxToolRounds)
+
+public delegate void Idrak.Abstraction.Generation.ColumnBlockReader(int firstColumn, int count, System.Span<float> destination)
 
 public sealed record Idrak.Abstraction.Generation.CreatedModelPart : System.IEquatable<Idrak.Abstraction.Generation.CreatedModelPart>
   public CreatedModelPart(System.Text.Json.Nodes.JsonObject Config, System.Collections.Generic.IReadOnlyList<(string, int[], float[])> Tensors, System.Collections.Generic.IReadOnlyDictionary<string, string> Files)
@@ -3889,6 +3893,7 @@ public sealed class Idrak.Abstraction.Generation.Int4Weight : Idrak.Abstraction.
   public static Idrak.Abstraction.Generation.Int4Weight Empty(int rows, int columns, Idrak.Abstraction.Device device)
   public static Idrak.Abstraction.Generation.Int4Weight Quantize(Idrak.Abstraction.Tensor weight)
   public static Idrak.Abstraction.Generation.Int4Weight Quantize(System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
+  public static Idrak.Abstraction.Generation.Int4Weight QuantizeColumns(int rows, int columns, Idrak.Abstraction.Device device, Idrak.Abstraction.Generation.ColumnBlockReader read)
 
 public sealed class Idrak.Abstraction.Generation.Int8Weight : Idrak.Abstraction.Generation.PackedWeight, Idrak.Abstraction.Generation.IKernelPackedWeight, Idrak.Abstraction.IRecordable
   public Idrak.Abstraction.PackedFormat Format { get; }
@@ -3916,6 +3921,7 @@ public sealed class Idrak.Abstraction.Generation.Int8Weight : Idrak.Abstraction.
   public static Idrak.Abstraction.Generation.Int8Weight Empty(int rows, int columns, Idrak.Abstraction.Device device)
   public static Idrak.Abstraction.Generation.Int8Weight Quantize(Idrak.Abstraction.Tensor weight)
   public static Idrak.Abstraction.Generation.Int8Weight Quantize(System.ReadOnlySpan<float> values, int rows, int columns, Idrak.Abstraction.Device device)
+  public static Idrak.Abstraction.Generation.Int8Weight QuantizeColumns(int rows, int columns, Idrak.Abstraction.Device device, Idrak.Abstraction.Generation.ColumnBlockReader read)
 
 public sealed class Idrak.Abstraction.Generation.KeyValueCache : System.IDisposable
   public Idrak.Abstraction.Generation.IFusedWriteLayout? FusedWriteLayout { get; }

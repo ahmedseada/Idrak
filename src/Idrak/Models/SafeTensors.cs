@@ -150,6 +150,68 @@ public sealed class SafeTensorsReader : IDisposable, IBFloat16TensorStore
         return values;
     }
 
+    /// <inheritdoc cref="ITensorStore.ReadRows"/>
+    /// <remarks>The rows' byte range alone is read (positional reads, chunks of 8 MB widened in place for 16-bit types).</remarks>
+    public bool ReadRows(string name, int first, int count, Span<float> destination)
+    {
+        var info = _tensors.TryGetValue(name, out var t) ? t : throw Missing(name);
+        if (info.Shape.Length == 0)
+        {
+            return false;
+        }
+
+        long rowValues = info.Count / Math.Max(1, info.Shape[0]);
+        if (first < 0 || count < 0 || first + count > info.Shape[0] || destination.Length < rowValues * count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count), $"Rows [{first}, {first + count}) of '{name}' [{string.Join(", ", info.Shape)}] into {destination.Length} values.");
+        }
+
+        int values = checked((int)(rowValues * count));
+        int width = info.Type == SafeTensorType.F32 ? 4 : 2;
+        long offset = info.Offset + first * rowValues * width;
+        var handle = _files[info.File].SafeFileHandle;
+        if (info.Type == SafeTensorType.F32 && BitConverter.IsLittleEndian)
+        {
+            ReadTimed(handle, MemoryMarshal.AsBytes(destination[..values]), offset);
+            return true;
+        }
+
+        const int ChunkValues = 1 << 22;                                            // 8 MB of 16-bit values
+        byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(Math.Min(values, ChunkValues) * width);
+        try
+        {
+            for (int at = 0; at < values; at += ChunkValues)
+            {
+                int n = Math.Min(ChunkValues, values - at);
+                ReadTimed(handle, buffer.AsSpan(0, n * width), offset + (long)at * width);
+                Widen(buffer.AsSpan(0, n * width), info.Type, destination.Slice(at, n));
+            }
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+        }
+
+        return true;
+    }
+
+    // Widens stored values into float32 (a span: the rows' destination).
+    private static void Widen(ReadOnlySpan<byte> bytes, SafeTensorType type, Span<float> values)
+    {
+        switch (type)
+        {
+            case SafeTensorType.F32:
+                StoredFloats.ReadFloat32(bytes, values);
+                break;
+            case SafeTensorType.F16:
+                StoredFloats.WidenFloat16(bytes, values);
+                break;
+            default:
+                StoredFloats.WidenBFloat16(bytes, values);
+                break;
+        }
+    }
+
     /// <inheritdoc cref="ITensorStore.SameValues"/>
     /// <remarks>
     /// Both tensors are read and widened a chunk at a time (1M values each, through pooled buffers) and compared chunk by

@@ -106,6 +106,14 @@ public static class DecoderBuilder
                     return Linear.FromPacked(bits ?? throw new InvalidDataException($"The weights have no '{(tiedTable is not null ? "embed" : name)}.weight'."), b);
                 }
 
+                if (tiedTable is not null && headFactory is null && factory is null && packed is PackedFormat.Int8 or PackedFormat.Int4)
+                {
+                    // A tied head's column j is the table's row j: packed from blocks of the table's rows, read a block at a time
+                    // where the weights can (TableRows), so neither the table nor its transpose is held as float32.
+                    return Linear.FromPacked(packed == PackedFormat.Int4 ? Int4Weight.QuantizeColumns(inputs, outputs, device, TableRows)
+                        : Int8Weight.QuantizeColumns(inputs, outputs, device, TableRows), b);
+                }
+
                 return isHead && headFactory is not null ? Linear.FromPacked(PackedWeightFormats.Pack(headFactory, Values(), inputs, outputs, device), b)
                     : factory is not null ? Linear.FromPacked(PackedWeightFormats.Pack(factory, Values(), inputs, outputs, device), b)
                     : packed is { } format ? Linear.FromPacked(PackedWeightFormats.Pack(format, Values(), inputs, outputs, device), b)
@@ -127,10 +135,23 @@ public static class DecoderBuilder
                 : null;
             float[] EmbeddingValues() => embeddingValues ??= weights!.Read("embed.weight", [spec.Vocabulary, spec.Dim])
                 ?? throw new InvalidDataException($"The weights have no 'embed.weight' [{spec.Vocabulary}, {spec.Dim}].");
+
+            // Rows [first, first + count) of the table into `destination`: from its values when they are held (a random build),
+            // else read as a block where the weights can (ITensorStore.ReadRows), else from the table read whole once.
+            void TableRows(int first, int count, Span<float> destination)
+            {
+                if (embeddingValues is null && weights is not null && weights.ReadRows("embed.weight", [spec.Vocabulary, spec.Dim], first, count, destination))
+                {
+                    return;
+                }
+
+                EmbeddingValues().AsSpan(first * spec.Dim, count * spec.Dim).CopyTo(destination);
+            }
             // Frozen-weight builds keep the table as bfloat16 (half the memory; lossless for bfloat16 checkpoints).
             bool frozen = packed is not null || factory is not null;
-            // A packed tied head gets its own transposed copy of the table: made now, so the table's float values are not
-            // kept alive while every layer is read (a float tied head reads the embedding in place; see below). When that
+            // A packed tied head gets its own copy of the table: made now, so the table's float values are not kept alive
+            // while every layer is read (a float tied head reads the embedding in place; see below); an int8 or int4 one is
+            // packed from blocks of the table's rows (TableRows), with no float32 table or transpose. When that
             // copy is bfloat16, it is the only one: the embedding reads its columns (the same bfloat16 values the table
             // would hold, so lookups are unchanged bit for bit), which saves the table's memory once more. Heads in
             // other formats (int8, int4, one's own) keep a separate bfloat16 table, since the head's values differ from it;

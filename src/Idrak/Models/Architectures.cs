@@ -424,6 +424,23 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
         return values;
     }
 
+    // A tensor read as stored (no transposition, no adapter adding to it): its rows are the store's rows.
+    private bool AsStored(string name, string stored) =>
+        !Deferred && !architecture.Transposed(name) && (Adapter is null || !stored.EndsWith(".weight", StringComparison.Ordinal) || !Adapter.Updates(stored[..^".weight".Length]));
+
+    public bool ReadRows(string name, IReadOnlyList<int> shape, int first, int count, Span<float> destination)
+    {
+        if (Stored(name, shape) is not { } stored || !AsStored(name, stored))
+        {
+            return false;
+        }
+
+        long start = Stopwatch.GetTimestamp();
+        bool read = reader.ReadRows(stored, first, count, destination);
+        _readTicks += Stopwatch.GetTimestamp() - start;
+        return read;
+    }
+
     public BFloat16Weight? ReadBFloat16(string name, IReadOnlyList<int> shape, Device device, bool transposed = false)
     {
         if (Stored(name, shape) is not { } stored)
@@ -454,6 +471,14 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
             {
                 return weight;
             }
+        }
+
+        // A float32 or float16 matrix as stored (an embedding table, or its transpose for a tied head): rounded a block of
+        // rows at a time, never held as float32 whole or transposed.
+        if (shape.Count == 2 && AsStored(name, stored)
+            && BFloat16Weight.FromRows(shape[0], shape[1], device, (first, count, destination) => ReadRows(name, shape, first, count, destination), transposed) is { } rounded)
+        {
+            return rounded;
         }
 
         var values = Read(name, shape)!;
