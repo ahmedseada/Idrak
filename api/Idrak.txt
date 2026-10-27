@@ -348,6 +348,7 @@ public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generatio
   public bool ReuseDecoding { get; set; }
   public bool SupportsBatches { get; }
   public int ContextLength { get; }
+  public int Vocabulary { get; }
   public void ReleaseCache()
 
 public sealed record Idrak.Inference.ClassPrediction : System.IEquatable<Idrak.Inference.ClassPrediction>

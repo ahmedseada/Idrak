@@ -144,7 +144,8 @@ public sealed class TokenSampler : ITokenSampler
         int steps = logits.Rank == 3 ? logits.Shape[1] : 1;
         if (vocabulary != Vocabulary || logits.Shape[0] != Rows)
         {
-            throw new ArgumentException($"Expected [{Rows}, ..., {Vocabulary}] logits, got {Tensor.FormatShape(logits.Shape)}.");
+            throw new ArgumentException($"Expected [{Rows}, ..., {Vocabulary}] logits, got {Tensor.FormatShape(logits.Shape)}: the sampler was made for "
+                + $"{Rows} row{(Rows == 1 ? "" : "s")} of {Vocabulary} logits (SamplerRequest.Vocabulary, the model's logit width), the model gave {logits.Shape[0]} of {vocabulary}.");
         }
 
         if (RejectNonFinite)

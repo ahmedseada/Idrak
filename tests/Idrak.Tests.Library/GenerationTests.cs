@@ -27,7 +27,62 @@ internal abstract partial class Tests
         ("generation: ReuseDecoding keeps the decoding context, sampler and recorded step between generations (the same objects while the size and sampling match, new ones otherwise, no sampler without a seed) and every text is a fresh generator's; ReleaseCache frees them", DecodingReuse),
         ("generation: the prompt's pass (its rows, pieces and piece size) and each decoding chunk reach telemetry's Stages level from one prompt and from a batch (GenerateBatch), nothing waited for", GenerationStagesReported),
         ("generation: a long prompt's pass in pieces (PrefillChunk) gives one pass's last logits within float rounding, its cache length and its greedy tokens: one row, after a kept cache's prefix, with sliding windows' caches, and rows of different lengths padded on the left (row starts)", PrefillInPieces),
+        ("generation: the sampler is as wide as the model's logits: a tokenizer with ids added past the model's vocabulary generates the model's own tokens (one prompt, a batch, a reused decoding), never an added id; a tokenizer with fewer ids than the model's logits is refused naming both sizes", SamplerWidthIsTheModels),
     ];
+
+    // A tokenizer with `extra` ids past `inner`'s (tokens added past the model's vocabulary, as Gemma 3's tokenizer has one
+    // more than its model's 262,144 logits): encodes as `inner`, decodes an added id as "<added>".
+    private sealed class AddedTokens(ITokenizer inner, int extra) : ITokenizer
+    {
+        public int VocabularySize => inner.VocabularySize + extra;
+
+        public IReadOnlyList<int> Encode(string text) => inner.Encode(text);
+
+        public string Decode(IEnumerable<int> ids) => string.Concat(ids.Select(id => id < inner.VocabularySize ? inner.Decode([id]) : "<added>"));
+    }
+
+    // The sampler's width is the model's logit width (TextGenerator.Vocabulary), not the tokenizer's size.
+    internal static void SamplerWidthIsTheModels(Device device)
+    {
+        var (tiny, tokenizer) = TinyLanguageModel(device, context: 64);
+        tiny.Dispose();
+        var spec = new DecoderSpec
+        {
+            Vocabulary = tokenizer.VocabularySize, Dim = 16, Layers = 2, Heads = 4, KvHeads = 2, HeadDim = 6, FfDim = 24, MaxPositions = 64,
+            Rope = new RopeSettings(500f, null, false, null),
+        };
+        using var decoder = spec.Build(null, new DecoderBuildOptions { Device = device, Seed = 7 });
+        var options = new GenerationOptions { Seed = 1, NumPredict = 12, Temperature = 0.8f, TopK = 0, RepeatPenalty = 1.1f, RepeatStop = 0, NumCtx = 64, ReturnTokens = true };
+        var own = new TextGenerator(decoder, tokenizer, 64) { KeepCache = false };
+        var wider = new TextGenerator(decoder, new AddedTokens(tokenizer, 3), 64) { KeepCache = false };
+        Check(own.Vocabulary == tokenizer.VocabularySize && wider.Vocabulary == tokenizer.VocabularySize,
+            $"the logit width is the head's {tokenizer.VocabularySize}: {own.Vocabulary}, {wider.Vocabulary} with {wider.Tokenizer.VocabularySize} tokenizer ids");
+        string expected = own.Generate("the fox", options).Text;
+        var (text, _, _) = wider.Generate("the fox", options);
+        Check(text == expected && !text.Contains("<added>", StringComparison.Ordinal), $"one prompt: '{text}' vs the model's own tokenizer's '{expected}'");
+
+        string[] prompts = ["the quick fox", "a dog"];
+        var ownBatch = own.GenerateBatch(prompts, options);
+        var widerBatch = wider.GenerateBatch(prompts, options);
+        for (int i = 0; i < prompts.Length; i++)
+        {
+            Check(widerBatch[i].Text == ownBatch[i].Text, $"batch row {i}: '{widerBatch[i].Text}' vs '{ownBatch[i].Text}'");
+        }
+
+        var reusing = new TextGenerator(decoder, new AddedTokens(tokenizer, 1), 64) { KeepCache = false, ReuseDecoding = true };
+        for (int round = 0; round < 2; round++)
+        {
+            Check(reusing.Generate("the fox", options).Text == expected, $"reused decoding, round {round}");
+        }
+
+        int width = tokenizer.VocabularySize + 5;
+        using var wide = (spec with { Vocabulary = width }).Build(null, new DecoderBuildOptions { Device = device, Seed = 7 });
+        var narrow = new TextGenerator(wide, tokenizer, 64) { KeepCache = false };
+        ThrowsNaming<InvalidOperationException>(() => narrow.Generate("the fox", options), "a tokenizer narrower than the logits",
+            $"{width} logits", $"{tokenizer.VocabularySize} ids");
+        ThrowsNaming<InvalidOperationException>(() => narrow.GenerateBatch(prompts, options), "a batch with a tokenizer narrower than the logits",
+            $"{width} logits", $"{tokenizer.VocabularySize} ids");
+    }
 
     // The stages a generation reports (InferenceStage at TelemetryLevel.Stages): the prompt's pass with its rows and the
     // pieces it went through (PrefillChunk), then the decoding chunks, every row's tokens counted; one prompt and a batch.

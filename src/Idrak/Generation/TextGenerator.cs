@@ -46,6 +46,25 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     /// <summary>The model's maximum context (its positional-encoding length).</summary>
     public int ContextLength { get; } = contextLength;
 
+    /// <summary>
+    /// The width of the model's logits, the ids a generation samples from: the output head's features (the model's last
+    /// module, when it is a linear layer), else the tokenizer's size. A tokenizer with more ids than this (tokens added past
+    /// the model's vocabulary, such as a placeholder the model never predicts) never has those ids sampled; one with fewer
+    /// could not decode every id the model can choose, and a generation refuses it naming both sizes.
+    /// </summary>
+    public int Vocabulary => _vocabulary ??= Model.LastOrDefault() is ILinearLayer head ? head.OutFeatures : Tokenizer.VocabularySize;
+
+    private int? _vocabulary;
+
+    // The width a generation's sampler is made for (Vocabulary), checked against the tokenizer once per generation.
+    private int SampledVocabulary()
+    {
+        int width = Vocabulary, tokens = Tokenizer.VocabularySize;
+        return tokens >= width ? width : throw new InvalidOperationException(
+            $"The model gives {width} logits a position but its tokenizer has {tokens} ids: ids {tokens} to {width - 1} could be sampled and not decoded. "
+            + $"Use the model's own tokenizer, or pad this one to the model's vocabulary (IPretrainedTokenizer.PadVocabulary({width})).");
+    }
+
     /// <summary>The device the model's parameters live on.</summary>
     public Device Device => Model.Parameters().Concat(Model.Buffers()).First().Device;
 
@@ -614,7 +633,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             ? [.. Enumerable.Range(0, rows).SelectMany(r => ImagePrefill.Locate(tokens[r], given.Token, given.Features[r], sequence: r)
                 .Select(i => i with { Position = i.Position + starts[r] }))]
             : [];
-        using var sampler = CreateSampler(new SamplerRequest(Device, rows, Tokenizer.VocabularySize, limit + 1, 1, options));   // no penalties here
+        using var sampler = CreateSampler(new SamplerRequest(Device, rows, SampledVocabulary(), limit + 1, 1, options));   // no penalties here
         // Rows of different lengths need a cache whose format attends from per-row starts (IRowStartsLayout: float32,
         // bfloat16); another format decodes them in float32.
         var batchLayout = !padded || Layout is IRowStartsLayout ? Layout : KeyValueLayouts.For(KeyValueFormat.Float32);
@@ -944,7 +963,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         // with the step recorded with it.
         bool reusing = ReuseDecoding && !KeepCache && options.UseCache;
         using var held = reusing ? TakeReusable() : new Reusable();
-        var request = new SamplerRequest(Device, 1, Tokenizer.VocabularySize, limit, Math.Max(1, options.RepeatLastN), options);
+        var request = new SamplerRequest(Device, 1, SampledVocabulary(), limit, Math.Max(1, options.RepeatLastN), options);
         if (held.Request is { } keptRequest && !SameSampling(keptRequest, request))
         {
             held.DropSampler();

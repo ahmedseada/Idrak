@@ -53,7 +53,7 @@ public interface ITokenSampler : IDisposable
 /// <summary>What a generation asks a sampler for: where it runs, its shape, and the settings to sample with.</summary>
 /// <param name="Device">The logits' device.</param>
 /// <param name="Rows">Sequences sampled per step.</param>
-/// <param name="Vocabulary">Vocabulary size.</param>
+/// <param name="Vocabulary">The width of the model's logits (its output head's features), which may be fewer than the tokenizer's ids.</param>
 /// <param name="MaxSteps">Steps whose statistics are kept.</param>
 /// <param name="HistoryCapacity">Recent tokens per row the penalties may look at.</param>
 /// <param name="Options">Temperature, top-k, top-p, min-p, penalties and seed.</param>

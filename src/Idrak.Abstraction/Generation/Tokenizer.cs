@@ -10,7 +10,7 @@ namespace Idrak.Abstraction.Generation;
 /// <summary>Turns text into token ids and back.</summary>
 public interface ITokenizer
 {
-    /// <summary>Number of distinct token ids (the model's output width).</summary>
+    /// <summary>Number of distinct token ids (the model's output width, or more when tokens were added past the model's vocabulary).</summary>
     int VocabularySize { get; }
 
     /// <summary>Token ids for <paramref name="text"/>.</summary>
