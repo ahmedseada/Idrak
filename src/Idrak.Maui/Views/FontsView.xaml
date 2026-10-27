@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  The Generate lab's fonts: every font found (the ones added first, then the phone's), searched by name, chosen by a
+  switch; added from files, or picked by the text's characters. A virtualised list: hundreds of fonts make the rows shown
+  only. Theme keys only.
+-->
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+             xmlns:ctl="clr-namespace:Idrak.Maui.Controls"
+             x:Class="Idrak.Maui.Views.FontsView"
+             x:DataType="vm:GenerateViewModel">
+    <Grid RowDefinitions="Auto,*" RowSpacing="{DynamicResource IdrakSpacing}" Padding="{DynamicResource IdrakPagePadding}">
+        <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+            <Label Text="{Binding FontsText}" Style="{DynamicResource IdrakCaption}" />
+            <Border Style="{DynamicResource IdrakSearchBox}">
+                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="{DynamicResource IdrakSpacingTile}">
+                    <ctl:IconView Glyph="search" Size="17" Stroke="{DynamicResource IdrakTextFaint}" />
+                    <Entry Grid.Column="1" Text="{Binding FontQuery}" Placeholder="Find a font by its name" ClearButtonVisibility="WhileEditing"
+                           IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" VerticalOptions="Center" />
+                </Grid>
+            </Border>
+            <FlexLayout Wrap="Wrap" Direction="Row">
+                <Button Text="Add font files" Command="{Binding AddFontsCommand}" Style="{DynamicResource IdrakChip}" Margin="{DynamicResource IdrakChipMargin}" />
+                <Button Text="Pick for the text" Command="{Binding PickFontsCommand}" Style="{DynamicResource IdrakChip}" Margin="{DynamicResource IdrakChipMargin}" />
+                <Button Text="None" Command="{Binding ClearFontsCommand}" Style="{DynamicResource IdrakChip}" Margin="{DynamicResource IdrakChipMargin}" />
+            </FlexLayout>
+            <ActivityIndicator IsRunning="{Binding IsListingFonts}" IsVisible="{Binding IsListingFonts}" HorizontalOptions="Start" />
+            <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+        </VerticalStackLayout>
+        <CollectionView Grid.Row="1" ItemsSource="{Binding Fonts}" SelectionMode="None">
+            <CollectionView.EmptyView>
+                <Label Text="No font found: add font files, or set the phone's fonts folder in the lab's settings." Style="{DynamicResource IdrakCaption}" />
+            </CollectionView.EmptyView>
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="vm:FontChoice">
+                    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacing}" Padding="{DynamicResource IdrakSettingRowPadding}">
+                        <VerticalStackLayout VerticalOptions="Center">
+                            <Label Text="{Binding Name}" Style="{DynamicResource IdrakItemTitle}" />
+                            <Label Text="{Binding Detail}" Style="{DynamicResource IdrakMicro}" />
+                        </VerticalStackLayout>
+                        <Switch Grid.Column="1" IsToggled="{Binding IsChosen}" VerticalOptions="Center" />
+                    </Grid>
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+</ContentView>

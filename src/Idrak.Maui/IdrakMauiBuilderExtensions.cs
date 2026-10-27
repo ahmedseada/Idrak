@@ -75,8 +75,10 @@ public static class IdrakMauiBuilderExtensions
         services.TryAddSingleton<ISoundPlayer>(_ => new SoundPlayer(options: options));   // one speaker for the app: one sound at a time
 #if ANDROID
         services.TryAddSingleton<IAppRestarter>(sp => new Idrak.Maui.Platforms.Android.AndroidAppRestarter(sp));
+        services.TryAddSingleton<IPictureSaver, Idrak.Maui.Platforms.Android.AndroidPictureSaver>();
 #else
         services.TryAddSingleton<IAppRestarter, UnavailableAppRestarter>();
+        services.TryAddSingleton<IPictureSaver, UnavailablePictureSaver>();
 #endif
         services.AddTransient<DevicesViewModel>();
         services.TryAddSingleton<ModelsViewModel>();                                // one for the app: a pull outlives its page

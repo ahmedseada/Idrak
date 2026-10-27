@@ -215,6 +215,7 @@ internal static partial class MauiTests
         Check(host.Views.Keys.Order(StringComparer.Ordinal).SequenceEqual([AppSections.Chat, AppSections.Home, AppSections.Vision, AppSections.Voice]) && body.Children.Count == 4
               && body.Children.Count(c => ((View)c).IsVisible) == 1 && ReferenceEquals(body.Children.Single(c => ((View)c).IsVisible), host.Current),
             $"made ahead: {string.Join(", ", host.Views.Keys)}; {body.Children.Count(c => ((View)c).IsVisible)} visible");
+        Check(((SegmentedSectionView)host.Views[AppSections.Vision]).FindByName<Grid>("Body").Children.Count == 3, "Vision's labs made ahead: Read text, Image, Generate");
         var voice = (SegmentedSectionView)host.Views[AppSections.Voice];
         Check(voice.FindByName<Grid>("Body").Children.Count == 3, $"Voice's labs made ahead: {voice.FindByName<Grid>("Body").Children.Count}");
         Check(host.FindByName<ContentView>("SheetBody").Content is LabsView, "the sheet made ahead");
@@ -223,8 +224,7 @@ internal static partial class MauiTests
         Check(ReferenceEquals(host.Current, chat) && chat.IsVisible && !host.Views[AppSections.Home].IsVisible && body.Children.Count == 4, "a tab shows its view made ahead; nothing made again");
         host.OpenSectionAsync(AppSections.Home).GetAwaiter().GetResult();
         Check(host.Current is HomeView && !chat.IsVisible && host.ViewModel.ShowsSame(), "back: the same views, the tabs the same");
-        options.DisabledFeatures.Add(MobileFeatures.Ocr);
-        options.DisabledFeatures.Add(MobileFeatures.Image);
+        options.DisabledFeatures.UnionWith([MobileFeatures.Ocr, MobileFeatures.Image, MobileFeatures.Generate]);
         Check(!host.ViewModel.ShowsSame(), "a section turned off: the tabs listed again");
         options.DisabledFeatures.Clear();
     }

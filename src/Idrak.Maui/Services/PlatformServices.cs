@@ -70,3 +70,17 @@ public sealed class UnavailableAppRestarter : IAppRestarter
     /// <inheritdoc />
     public void Restart() => throw new NotSupportedException($"The app cannot restart itself here: {Unavailable}.");
 }
+
+/// <summary>Where the platform keeps no Pictures for an app: a page shares the picture instead.</summary>
+public sealed class UnavailablePictureSaver : IPictureSaver
+{
+    /// <inheritdoc />
+    public bool CanSave => false;
+
+    /// <inheritdoc />
+    public string Unavailable => "this platform keeps no Pictures for the app; share the page instead";
+
+    /// <inheritdoc />
+    public Task<string> SaveAsync(byte[] bytes, string fileName, string mediaType, string album, CancellationToken cancellationToken = default) =>
+        throw new NotSupportedException($"Pictures cannot be saved here: {Unavailable}.");
+}

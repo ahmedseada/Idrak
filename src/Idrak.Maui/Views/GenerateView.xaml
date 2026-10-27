@@ -1,0 +1,174 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  Generate (the owner's request, October 2026): text drawn as pages by the library's synthetic pages, the way idrak data
+  synth draws them, made to look scanned by effects that stack. The large preview (pinch to zoom, double tap for the whole,
+  the page clean or scanned) stays out of the scroll; the controls scroll: the text, the fonts, the effects as chips, the
+  layouts, the seed with a shuffle, Generate and Stop with the progress, the pages as a grid, the data set, the settings.
+  A narrow window: the preview above the controls; a wide one: the controls on the left, the preview on the right. Theme
+  keys only.
+-->
+<ctl:AdaptiveView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+                  xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+                  xmlns:vm="clr-namespace:Idrak.Maui.ViewModels"
+                  xmlns:ctl="clr-namespace:Idrak.Maui.Controls"
+                  xmlns:views="clr-namespace:Idrak.Maui.Views"
+                  x:Class="Idrak.Maui.Views.GenerateView"
+                  x:DataType="vm:GenerateViewModel">
+    <Grid x:Name="Root" RowDefinitions="Auto,*" ColumnDefinitions="*" ColumnSpacing="{DynamicResource IdrakSpacingColumns}" RowSpacing="{DynamicResource IdrakSpacing}"
+          Padding="{DynamicResource IdrakLabPadding}">
+        <!-- The large preview. -->
+        <Border x:Name="PreviewCard" Style="{DynamicResource IdrakPhotoFrame}" HeightRequest="300">
+            <Grid RowDefinitions="*,Auto">
+                <ctl:ZoomView x:Name="Zoom" IsVisible="{Binding HasPage}">
+                    <Image Source="{Binding PreviewSource}" Aspect="AspectFit" SemanticProperties.Description="The page made" />
+                </ctl:ZoomView>
+                <VerticalStackLayout IsVisible="{Binding HasNoPage}" VerticalOptions="Center" HorizontalOptions="Center" Spacing="{DynamicResource IdrakSpacingSmall}"
+                                     Padding="{DynamicResource IdrakEmptyPhotoPadding}">
+                    <ctl:IconBadge Glyph="pen" Tone="Violet" BadgeSize="48" HorizontalOptions="Center" />
+                    <Label Text="Type a text and Generate: its pages show here." Style="{DynamicResource IdrakCaption}" HorizontalTextAlignment="Center" />
+                </VerticalStackLayout>
+                <Grid Grid.Row="1" ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}" Padding="{DynamicResource IdrakPhotoLabelMargin}" IsVisible="{Binding HasPage}">
+                    <Label Text="{Binding PageText}" Style="{DynamicResource IdrakMicro}" LineBreakMode="TailTruncation" MaxLines="2" VerticalOptions="Center" />
+                    <HorizontalStackLayout Grid.Column="1" Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <Button Text="{Binding CompareText}" Command="{Binding ToggleCleanCommand}" Style="{DynamicResource IdrakChip}" />
+                        <Button Text="Save" Command="{Binding SaveCommand}" IsVisible="{Binding CanSaveToPictures}" Style="{DynamicResource IdrakChip}" />
+                        <Button Text="Share" Command="{Binding ShareCommand}" Style="{DynamicResource IdrakChip}" />
+                    </HorizontalStackLayout>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <ScrollView x:Name="ControlsScroll" Grid.Row="1">
+            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacing}" Padding="{DynamicResource IdrakBottomGap}">
+                <!-- The text. -->
+                <Border Style="{DynamicResource IdrakWaveCard}">
+                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <Label Text="Text" Style="{DynamicResource IdrakSectionLabel}" />
+                        <Editor Text="{Binding Text}" Placeholder="Type or paste the text to draw: Arabic, English, or both" AutoSize="TextChanges" MinimumHeightRequest="110"
+                                IsEnabled="{Binding IsIdle}" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- The fonts. -->
+                <Border Style="{DynamicResource IdrakPanel}">
+                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <Label Text="Fonts" Style="{DynamicResource IdrakSectionLabel}" />
+                        <Label Text="{Binding FontsText}" Style="{DynamicResource IdrakCaption}" />
+                        <FlexLayout Wrap="Wrap" Direction="Row">
+                            <Button Text="Choose fonts" Clicked="OnChooseFonts" Style="{DynamicResource IdrakChip}" Margin="{DynamicResource IdrakChipMargin}" />
+                            <Button Text="Add font files" Command="{Binding AddFontsCommand}" Style="{DynamicResource IdrakChip}" Margin="{DynamicResource IdrakChipMargin}" />
+                            <Button Text="Pick for the text" Command="{Binding PickFontsCommand}" Style="{DynamicResource IdrakChip}" Margin="{DynamicResource IdrakChipMargin}" />
+                        </FlexLayout>
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- The scan effects: tapped, they stack into one look. -->
+                <Label Text="Scan effects · tap to stack them" Style="{DynamicResource IdrakSectionLabel}" />
+                <FlexLayout BindableLayout.ItemsSource="{Binding Effects}" Wrap="Wrap" Direction="Row">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="vm:EffectChip">
+                            <Border Style="{DynamicResource IdrakChipBorder}" Margin="{DynamicResource IdrakChipMargin}" SemanticProperties.Hint="{Binding Summary}">
+                                <Border.Triggers>
+                                    <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource IdrakBrushPill}" />
+                                        <Setter Property="Stroke" Value="{DynamicResource IdrakSelectedStroke}" />
+                                    </DataTrigger>
+                                </Border.Triggers>
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Command="{Binding ToggleCommand}" />
+                                </Border.GestureRecognizers>
+                                <Label Text="{Binding Name}" Style="{DynamicResource IdrakChipLabel}" />
+                            </Border>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </FlexLayout>
+                <Border Style="{DynamicResource IdrakPanel}">
+                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <Label Text="{Binding LookText}" Style="{DynamicResource IdrakCaption}" />
+                        <Entry Text="{Binding Combination}" Placeholder="aged+handled+photo, or a profile as text" IsSpellCheckEnabled="False" IsTextPredictionEnabled="False"
+                               FontFamily="{DynamicResource IdrakFontMono}" />
+                        <FlexLayout Wrap="Wrap" Direction="Row">
+                            <Button Text="Random" Command="{Binding RandomEffectsCommand}" Style="{DynamicResource IdrakChip}" Margin="{DynamicResource IdrakChipMargin}" />
+                            <Button Text="Clean" Command="{Binding ClearEffectsCommand}" Style="{DynamicResource IdrakChip}" Margin="{DynamicResource IdrakChipMargin}" />
+                            <Button Text="Every look" Command="{Binding EveryLookCommand}" Style="{DynamicResource IdrakChip}" Margin="{DynamicResource IdrakChipMargin}" />
+                        </FlexLayout>
+                    </VerticalStackLayout>
+                </Border>
+
+                <!-- The layouts, one drawn a page. -->
+                <Label Text="Page layouts" Style="{DynamicResource IdrakSectionLabel}" />
+                <FlexLayout BindableLayout.ItemsSource="{Binding Layouts}" Wrap="Wrap" Direction="Row">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="vm:LayoutChip">
+                            <Border Style="{DynamicResource IdrakChipBorder}" Margin="{DynamicResource IdrakChipMargin}">
+                                <Border.Triggers>
+                                    <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
+                                        <Setter Property="Background" Value="{DynamicResource IdrakBrushPill}" />
+                                        <Setter Property="Stroke" Value="{DynamicResource IdrakSelectedStroke}" />
+                                    </DataTrigger>
+                                </Border.Triggers>
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Command="{Binding ToggleCommand}" />
+                                </Border.GestureRecognizers>
+                                <Label Text="{Binding Name}" Style="{DynamicResource IdrakChipLabel}" />
+                            </Border>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </FlexLayout>
+
+                <!-- The seed, Generate and Stop, the progress. -->
+                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                    <Label Text="Seed" Style="{DynamicResource IdrakItemTitle}" VerticalOptions="Center" />
+                    <Entry Grid.Column="1" Text="{Binding SeedText}" Keyboard="Numeric" FontFamily="{DynamicResource IdrakFontMono}" />
+                    <Button Grid.Column="2" Text="Shuffle" Command="{Binding ShuffleCommand}" Style="{DynamicResource IdrakSecondaryButton}" />
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="{DynamicResource IdrakSpacingChip}">
+                    <Button Text="Generate" Command="{Binding GenerateCommand}" IsEnabled="{Binding CanGenerate}" Style="{DynamicResource IdrakWideGradientButton}" />
+                    <Button Grid.Column="1" Text="Stop" Command="{Binding CancelCommand}" IsVisible="{Binding IsBusy}" Style="{DynamicResource IdrakSecondaryButton}" />
+                </Grid>
+                <VerticalStackLayout IsVisible="{Binding HasWork}" Spacing="{DynamicResource IdrakSpacingSmall}">
+                    <Label Text="{Binding Work.Label}" Style="{DynamicResource IdrakCaption}" />
+                    <ctl:MeterBar Progress="{Binding Work.Fraction}" />
+                </VerticalStackLayout>
+                <Label Text="{Binding Status}" IsVisible="{Binding HasStatus}" Style="{DynamicResource IdrakHighlightText}" />
+                <Label Text="{Binding Error}" IsVisible="{Binding HasError}" Style="{DynamicResource IdrakErrorText}" />
+
+                <!-- The pages made: a tap shows one large. -->
+                <ctl:UniformColumns x:Name="Tiles" BindableLayout.ItemsSource="{Binding Variants}" Columns="2" ColumnSpacing="{DynamicResource IdrakSpacingTile}"
+                                    RowSpacing="{DynamicResource IdrakSpacingTile}">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate x:DataType="vm:PageVariant">
+                            <Border Style="{DynamicResource IdrakTile}">
+                                <Border.Triggers>
+                                    <DataTrigger TargetType="Border" Binding="{Binding IsSelected}" Value="True">
+                                        <Setter Property="Stroke" Value="{DynamicResource IdrakSelectedStroke}" />
+                                    </DataTrigger>
+                                </Border.Triggers>
+                                <Border.GestureRecognizers>
+                                    <TapGestureRecognizer Command="{Binding SelectCommand}" />
+                                </Border.GestureRecognizers>
+                                <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingTiny}">
+                                    <Image Source="{Binding TileSource}" Aspect="AspectFit" HeightRequest="150" SemanticProperties.Description="{Binding Caption}" />
+                                    <Label Text="{Binding Caption}" Style="{DynamicResource IdrakMicro}" LineBreakMode="TailTruncation" />
+                                </VerticalStackLayout>
+                            </Border>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </ctl:UniformColumns>
+
+                <!-- A data set, as the CLI writes one. -->
+                <Border Style="{DynamicResource IdrakPanel}">
+                    <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingSmall}">
+                        <Label Text="Data set" Style="{DynamicResource IdrakSectionLabel}" />
+                        <Label Text="The text's pages written as idrak data synth writes them: the records (.jsonl), the images and the manifest, in the app's storage." Style="{DynamicResource IdrakCaption}" />
+                        <Button Text="Save as a data set" Command="{Binding SaveDatasetCommand}" IsEnabled="{Binding CanGenerate}" Style="{DynamicResource IdrakSecondaryButton}" />
+                    </VerticalStackLayout>
+                </Border>
+
+                <Button Text="{Binding SettingsButtonText}" Command="{Binding ToggleSettingsCommand}" Style="{DynamicResource IdrakGhostButton}" />
+                <Label Text="{Binding SettingsMessage}" IsVisible="{Binding HasSettingsMessage}" Style="{DynamicResource IdrakHighlightText}" />
+                <views:LabSettingsList x:Name="SettingsPanel" ItemsSource="{Binding Settings}" KeepCommand="{Binding ApplySettingsCommand}" IsVisible="{Binding ShowSettings}" />
+            </VerticalStackLayout>
+        </ScrollView>
+    </Grid>
+</ctl:AdaptiveView>

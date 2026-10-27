@@ -212,7 +212,7 @@ internal static partial class MauiTests
         Check(host.OpenSettingsAsync() is not null && host.OpenSectionAsync(AppSections.Settings).GetAwaiter().GetResult() && host.Current is SettingsView, "wide: the settings in the rail");
 
         // Features turned off take their section with them when they were all it showed; an unknown section is refused.
-        options.DisabledFeatures.UnionWith([MobileFeatures.Ocr, MobileFeatures.Image]);
+        options.DisabledFeatures.UnionWith([MobileFeatures.Ocr, MobileFeatures.Image, MobileFeatures.Generate]);
         host.ViewModel.Refresh();
         Check(host.ViewModel.Find(AppSections.Vision) is null && host.ViewModel.Tabs.Count == 3, $"tabs without vision: {string.Join(", ", host.ViewModel.Tabs.Select(t => t.Name))}");
         Check(!host.OpenSectionAsync("nowhere").GetAwaiter().GetResult(), "an unknown section opened");
@@ -255,13 +255,13 @@ internal static partial class MauiTests
         Check(labs.Groups.Select(g => g.Group).SequenceEqual([FeatureGroup.Language, FeatureGroup.Voice, FeatureGroup.Vision, FeatureGroup.Device]), Groups());
         Check(labs.Groups[0].Select(l => l.Name).SequenceEqual([MobileFeatures.Chat, MobileFeatures.Search])
               && labs.Groups[1].Select(l => l.Name).SequenceEqual([MobileFeatures.Transcribe, MobileFeatures.Speak, MobileFeatures.AudioProcess])
-              && labs.Groups[2].Select(l => l.Name).SequenceEqual([MobileFeatures.Ocr, MobileFeatures.Image])
+              && labs.Groups[2].Select(l => l.Name).SequenceEqual([MobileFeatures.Ocr, MobileFeatures.Image, MobileFeatures.Generate])
               && labs.Groups[3].Select(l => l.Name).SequenceEqual([MobileFeatures.Devices, MobileFeatures.Models, AppSections.Settings]), Groups());
         var search = labs.All.Single(l => l.Name == MobileFeatures.Search);
         var chat = labs.All.Single(l => l.Name == MobileFeatures.Chat);
         Check(search is { IsPlanned: true, StateText: "● Planned", Icon: "search", Tone: "Sky" } && chat is { IsReady: true, Tagline: "Stream a model", Icon: "chat", Tone: "Indigo" },
             $"search {search.StateText} {search.Icon}; chat {chat.Tagline} {chat.Icon}");
-        Check(labs.CountsText == "9 ready · 1 planned" && labs.All.Single(l => l.Name == MobileFeatures.AudioProcess).Title == "Studio"
+        Check(labs.CountsText == "10 ready · 1 planned" && labs.All.Single(l => l.Name == MobileFeatures.AudioProcess).Title == "Studio"
               && labs.All.Single(l => l.Name == MobileFeatures.Ocr).Title == "Read text", labs.CountsText);
         Check(labs.All.Single(l => l.Name == MobileFeatures.Devices).Detail == "CPU · GPU ready" && labs.All.Single(l => l.Name == MobileFeatures.Models).Detail == $"2 pulled · {ProgressText.Bytes(885_000_000)}",
             $"{labs.All.Single(l => l.Name == MobileFeatures.Devices).Detail}; {labs.All.Single(l => l.Name == MobileFeatures.Models).Detail}");

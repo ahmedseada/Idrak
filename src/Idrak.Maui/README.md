@@ -77,6 +77,15 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   and the processed played on the speaker (A/B, one at a time); the result saved and shared. Monitoring, off by default
   and with a feedback warning, plays the microphone through the pipeline's live steps on a short low-latency buffer,
   its delay shown. Settings kept under `idrak.audio_process.`.
+- **Generate** page (Vision, after Read text and Image): text typed or pasted (Arabic and English; the library shapes it)
+  drawn as pages by the library's `SyntheticPages` (what `idrak data synth` does) in the phone's fonts (`$ANDROID_ROOT/fonts`,
+  listed, never all read) or fonts added from files (checked, copied into the app's storage), picked by the text's
+  characters when none is chosen; the scan effects (`ScanProfiles`) as chips that stack into one look ("aged+handled+photo"),
+  a random one, every look one a page, or clean; the layouts as chips; a seed with a shuffle. The pages are made on a
+  worker thread, each shown as it is made, Stop keeps those made; a large preview (pinch to zoom, before and after: the
+  same drawing without its scan) and the pages as a grid; a page saved to the phone's Pictures (`IPictureSaver`, Android
+  10 and later), shared, or the set written as a data set as the CLI writes one. Every option the CLI exposes is a setting
+  (`GenerateSettings`, under `idrak.generate.`).
 - **Answering at once** (the owner's lag notes): every section's view is made once and kept in the host (the one shown
   visible, the others hidden), and with `PrebuildSections` (on by default) the tabs, their labs and the All labs sheet are
   made ahead, one a turn of the UI thread after Home first shows; a tap switches first and tells the view it is shown after

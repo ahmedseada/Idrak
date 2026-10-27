@@ -107,6 +107,9 @@ internal static partial class MauiTests
         ("maui speed: the settings' search shows only what it finds (title, help, value, choices; every word; a group by its heading; the labs, storage and the app's part), says when nothing matches, and is quick; a restart-only change is marked and the restart asked first; each setting makes its own control only", SettingsSearched),
         ("maui speed: the host keeps every section's view made, the one shown visible; Prebuild makes the tabs, their labs and the sheet ahead; a tab shows its view without making it again; the tabs are listed again only when the sections change", HostKeepsSections),
         ("maui speed: the chat reads its kept chats on a worker thread when shown (none read when it is made), a search filters what was read", ChatReadsKeptOffThread),
+        ("maui generate: text drawn as pages by the library's synthetic pages (the library's own page for the same options, the same seed the same pages), in fonts picked for its characters; effects stack into one look, a random one, every look, clean; before and after; saved to Pictures, shared, written as a data set", GenerateMakesPages),
+        ("maui generate: Stop ends the pages being made, those made kept; no text makes nothing", GenerateCancels),
+        ("maui generate: fonts added from files (checked as fonts, copied, chosen), searched, none chosen; every setting the CLI takes checked, kept and read back; the feature in Vision after Read text and Image, its views bind in light and dark", GenerateFontsAndSettings),
         ("public API: api/Idrak.Maui.txt matches the public surface of Idrak.Maui (IDRAK_UPDATE_API=1 rewrites it)", ApiSurfaceCurrent),
     ];
 

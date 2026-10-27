@@ -214,6 +214,11 @@ public interface Idrak.Maui.Abstractions.IPermissionService
   public System.Threading.Tasks.Task<Idrak.Maui.Abstractions.PermissionOutcome> RequestAsync(Idrak.Maui.Abstractions.PhoneNeeds needs)
   public void OpenSettings()
 
+public interface Idrak.Maui.Abstractions.IPictureSaver
+  public System.Threading.Tasks.Task<string> SaveAsync(byte[] bytes, string fileName, string mediaType, string album, System.Threading.CancellationToken cancellationToken = default)
+  public bool CanSave { get; }
+  public string Unavailable { get; }
+
 public interface Idrak.Maui.Abstractions.ISecretStore
   public System.Threading.Tasks.Task SetAsync(string key, string? value)
   public System.Threading.Tasks.Task<string?> GetAsync(string key)
@@ -262,6 +267,7 @@ public static class Idrak.Maui.Abstractions.MobileFeatures
   public const string AudioProcess = "audio-process"
   public const string Chat = "chat"
   public const string Devices = "devices"
+  public const string Generate = "generate"
   public const string Image = "image"
   public const string Models = "models"
   public const string Ocr = "ocr"
@@ -611,6 +617,14 @@ public sealed class Idrak.Maui.Controls.WaveformView : Idrak.Maui.Controls.Drawn
   public void Clear()
   public void Push(double level)
 
+public sealed class Idrak.Maui.Controls.ZoomView : Microsoft.Maui.Controls.ContentView
+  public ZoomView()
+  public double MaximumScale { get; set; }
+  public double Zoom { get; }
+  public static readonly Microsoft.Maui.Controls.BindableProperty MaximumScaleProperty
+  public void Reset()
+  public void ZoomTo(double scale, double originX = 0.5, double originY = 0.5)
+
 public static class Idrak.Maui.ConversationText
   public static Idrak.Maui.Abstractions.ConversationSummary Summary(Idrak.Maui.Abstractions.ChatConversation chat)
   public static string Group(System.DateTimeOffset updated, System.DateTimeOffset now)
@@ -629,6 +643,43 @@ public sealed class Idrak.Maui.FileConversationStore : Idrak.Maui.Abstractions.I
   public bool Delete(string id)
   public string Folder { get; }
   public void Save(Idrak.Maui.Abstractions.ChatConversation conversation)
+
+public sealed class Idrak.Maui.GenerateLabOptions
+  public GenerateLabOptions()
+  public Idrak.Maui.GenerateLabOptions Clone()
+  public bool? Zip { get; set; }
+  public double? AutoFontMiB { get; set; }
+  public double? Grey { get; set; }
+  public int AutoFontCount { get; }
+  public int Thumbnail { get; }
+  public int? AutoFonts { get; set; }
+  public int? Count { get; set; }
+  public int? PreviewPixels { get; set; }
+  public int? Quality { get; set; }
+  public int? Seed { get; set; }
+  public int? ThumbnailPixels { get; set; }
+  public int? Workers { get; set; }
+  public long AutoFontBytes { get; }
+  public string AddedFontsFolder(string appStorage)
+  public string AlbumName { get; }
+  public string DatasetsFolder(string appStorage)
+  public string? Album { get; set; }
+  public string? AnswerKey { get; set; }
+  public string? DatasetFolder { get; set; }
+  public string? FontsFolder { get; set; }
+  public string? ImageFormat { get; set; }
+  public string? Page { get; set; }
+  public string? Parts { get; set; }
+  public string? Prompt { get; set; }
+  public string? SystemFonts { get; set; }
+  public string? SystemFontsFolder { get; }
+
+public static class Idrak.Maui.GenerateSettings
+  public const string Prefix = "idrak.generate."
+  public static Idrak.Maui.GenerateLabOptions Load(Idrak.Maui.Abstractions.ISettingsStore store, out System.Collections.Generic.IReadOnlyList<string> skipped, Idrak.Maui.GenerateLabOptions? defaults = null)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.LabSetting<Idrak.Maui.GenerateLabOptions>> Definitions { get; }
+  public static System.Collections.Generic.IReadOnlyList<string> Formats { get; }
+  public static void Save(Idrak.Maui.Abstractions.ISettingsStore store, Idrak.Maui.GenerateLabOptions options)
 
 public sealed class Idrak.Maui.HomeOptions
   public HomeOptions()
@@ -1304,6 +1355,12 @@ public sealed class Idrak.Maui.UnavailableAppRestarter : Idrak.Maui.Abstractions
   public string Unavailable { get; }
   public void Restart()
 
+public sealed class Idrak.Maui.UnavailablePictureSaver : Idrak.Maui.Abstractions.IPictureSaver
+  public System.Threading.Tasks.Task<string> SaveAsync(byte[] bytes, string fileName, string mediaType, string album, System.Threading.CancellationToken cancellationToken = default)
+  public UnavailablePictureSaver()
+  public bool CanSave { get; }
+  public string Unavailable { get; }
+
 public sealed class Idrak.Maui.ViewModels.AudioProcessViewModel : Idrak.Maui.ViewModels.ViewModel, Idrak.Maui.Controls.ILiveLevelSource, System.IDisposable
   public AudioProcessViewModel(Idrak.Maui.Abstractions.ISoundPlayer player, Idrak.Maui.Abstractions.IPermissionService permissions, Idrak.Maui.Abstractions.IShareService share, Idrak.Maui.IdrakMauiOptions options, Idrak.Maui.Abstractions.ISettingsStore settings, Idrak.Maui.ProgressCenter? progress = null, Microsoft.Maui.Storage.IFilePicker? picker = null)
   public Idrak.Audio.Abstractions.AudioData? Original { get; }
@@ -1624,6 +1681,13 @@ public sealed class Idrak.Maui.ViewModels.DevicesViewModel : Idrak.Maui.ViewMode
   public string Summary { get; }
   public string Title { get; }
 
+public sealed class Idrak.Maui.ViewModels.EffectChip : Idrak.Maui.ViewModels.ViewModel
+  public EffectChip(string name, string summary, System.Windows.Input.ICommand toggle)
+  public System.Windows.Input.ICommand ToggleCommand { get; }
+  public bool IsSelected { get; }
+  public string Name { get; }
+  public string Summary { get; }
+
 public sealed class Idrak.Maui.ViewModels.FeatureToggle : Idrak.Maui.ViewModels.ViewModel
   public FeatureToggle(Idrak.Maui.Abstractions.IMobileFeature feature, bool enabled)
   public bool IsEnabled { get; set; }
@@ -1639,6 +1703,89 @@ public sealed class Idrak.Maui.ViewModels.FilterChip : Idrak.Maui.ViewModels.Vie
   public System.Windows.Input.ICommand SelectCommand { get; }
   public bool IsSelected { get; }
   public string Title { get; }
+
+public sealed class Idrak.Maui.ViewModels.FontChoice : Idrak.Maui.ViewModels.ViewModel
+  public bool IsAdded { get; }
+  public bool IsChosen { get; set; }
+  public long Bytes { get; }
+  public string Detail { get; }
+  public string Name { get; }
+  public string Path { get; }
+
+public sealed class Idrak.Maui.ViewModels.GenerateViewModel : Idrak.Maui.ViewModels.ViewModel, System.IDisposable
+  public GenerateViewModel(Idrak.Maui.Abstractions.IShareService share, Idrak.Maui.Abstractions.ISettingsStore settings, string appStorage, Idrak.Maui.Abstractions.IPictureSaver? pictures = null, Idrak.Maui.ProgressCenter? progress = null, Idrak.Maui.GenerateLabOptions? defaults = null, Microsoft.Maui.Storage.IFilePicker? picker = null)
+  public Idrak.Maui.GenerateLabOptions Options { get; }
+  public Idrak.Maui.ProgressItem? Work { get; }
+  public Idrak.Maui.ViewModels.PageVariant? Selected { get; }
+  public Idrak.Text.SyntheticPageOptions PageOptions(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.IFontFace> fonts)
+  public Microsoft.Maui.Controls.ImageSource? PreviewSource { get; }
+  public System.Collections.Generic.IReadOnlyCollection<string> ChosenFonts { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Maui.ViewModels.FontChoice> AllFonts { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.EffectChip> Effects { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.FontChoice> Fonts { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.LabSettingEntry> Settings { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.LayoutChip> Layouts { get; }
+  public System.Collections.ObjectModel.ObservableCollection<Idrak.Maui.ViewModels.PageVariant> Variants { get; }
+  public System.Threading.Tasks.Task ListFontsAsync()
+  public System.Threading.Tasks.Task SelectAsync(Idrak.Maui.ViewModels.PageVariant variant)
+  public System.Threading.Tasks.Task<(byte[], string, string)?> EncodeAsync()
+  public System.Threading.Tasks.Task<bool> GenerateAsync()
+  public System.Threading.Tasks.Task<bool> ShareAsync()
+  public System.Threading.Tasks.Task<bool> ShowCleanAsync(bool clean)
+  public System.Threading.Tasks.Task<int> AddFontsAsync()
+  public System.Threading.Tasks.Task<int> AddFontsAsync(System.Collections.Generic.IReadOnlyList<(string, byte[])> files)
+  public System.Threading.Tasks.Task<int> PickFontsForTextAsync()
+  public System.Threading.Tasks.Task<string?> SaveDatasetAsync()
+  public System.Threading.Tasks.Task<string?> SaveToPicturesAsync()
+  public System.Windows.Input.ICommand AddFontsCommand { get; }
+  public System.Windows.Input.ICommand ApplySettingsCommand { get; }
+  public System.Windows.Input.ICommand CancelCommand { get; }
+  public System.Windows.Input.ICommand ClearEffectsCommand { get; }
+  public System.Windows.Input.ICommand ClearFontsCommand { get; }
+  public System.Windows.Input.ICommand EveryLookCommand { get; }
+  public System.Windows.Input.ICommand GenerateCommand { get; }
+  public System.Windows.Input.ICommand PickFontsCommand { get; }
+  public System.Windows.Input.ICommand RandomEffectsCommand { get; }
+  public System.Windows.Input.ICommand SaveCommand { get; }
+  public System.Windows.Input.ICommand SaveDatasetCommand { get; }
+  public System.Windows.Input.ICommand ShareCommand { get; }
+  public System.Windows.Input.ICommand ShuffleCommand { get; }
+  public System.Windows.Input.ICommand ToggleCleanCommand { get; }
+  public System.Windows.Input.ICommand ToggleSettingsCommand { get; }
+  public bool ApplySettings()
+  public bool CanGenerate { get; }
+  public bool CanSaveToPictures { get; }
+  public bool EveryLook { get; set; }
+  public bool HasError { get; }
+  public bool HasNoPage { get; }
+  public bool HasPage { get; }
+  public bool HasSettingsMessage { get; }
+  public bool HasStatus { get; }
+  public bool HasWork { get; }
+  public bool IsBusy { get; }
+  public bool IsIdle { get; }
+  public bool IsListingFonts { get; }
+  public bool ShowClean { get; }
+  public bool ShowSettings { get; set; }
+  public string Combination { get; set; }
+  public string CompareText { get; }
+  public string Error { get; }
+  public string FontQuery { get; set; }
+  public string FontsText { get; }
+  public string LookText { get; }
+  public string PageText { get; }
+  public string RandomEffects(int? seed = null)
+  public string SeedText { get; set; }
+  public string SettingsButtonText { get; }
+  public string SettingsMessage { get; }
+  public string Status { get; }
+  public string Text { get; set; }
+  public string Title { get; }
+  public void Cancel()
+  public void ClearFonts()
+  public void Dispose()
+  public void Shuffle()
+  public void ToggleEffect(string look)
 
 public sealed class Idrak.Maui.ViewModels.HomeViewModel : Idrak.Maui.ViewModels.ViewModel
   public HomeViewModel(Idrak.Maui.IdrakMauiOptions options, Idrak.Maui.ViewModels.DeviceStatus status, Idrak.Maui.ViewModels.ChatViewModel? chat = null, Idrak.Maui.Abstractions.IAppNavigator? navigator = null, Idrak.Maui.SourceInfo? source = null)
@@ -1798,6 +1945,12 @@ public sealed class Idrak.Maui.ViewModels.LabsViewModel : Idrak.Maui.ViewModels.
   public void Refresh()
   public void UpdateStatus()
 
+public sealed class Idrak.Maui.ViewModels.LayoutChip : Idrak.Maui.ViewModels.ViewModel
+  public LayoutChip(string name, System.Windows.Input.ICommand toggle)
+  public System.Windows.Input.ICommand ToggleCommand { get; }
+  public bool IsSelected { get; }
+  public string Name { get; }
+
 public static class Idrak.Maui.ViewModels.LevelMeter
   public static double Decibels(System.ReadOnlySpan<float> samples)
   public static double PeakDecibels(System.ReadOnlySpan<float> samples)
@@ -1945,6 +2098,17 @@ public sealed class Idrak.Maui.ViewModels.OcrViewModel : Idrak.Maui.ViewModels.V
   public string Title { get; }
   public string WarmText { get; }
   public void Stop()
+
+public sealed class Idrak.Maui.ViewModels.PageVariant : Idrak.Maui.ViewModels.ViewModel
+  public Idrak.Text.SyntheticPage Page { get; }
+  public Idrak.Text.SyntheticPage? Clean { get; }
+  public Microsoft.Maui.Controls.ImageSource TileSource { get; }
+  public System.TimeSpan Took { get; }
+  public System.Windows.Input.ICommand SelectCommand { get; }
+  public bool IsSelected { get; }
+  public int Index { get; }
+  public string Caption { get; }
+  public string Look { get; }
 
 public sealed record Idrak.Maui.ViewModels.PipelineStep : System.IEquatable<Idrak.Maui.ViewModels.PipelineStep>
   public PipelineStep(string Name, string Value, bool HasArrow, System.Windows.Input.ICommand RemoveCommand)
@@ -2432,6 +2596,40 @@ public sealed class Idrak.Maui.Views.FailedView : Microsoft.Maui.Controls.Conten
 
 public sealed class Idrak.Maui.Views.FeatureLinkView : Microsoft.Maui.Controls.ContentView
   public FeatureLinkView(Idrak.Maui.Abstractions.IMobileFeature feature, System.IServiceProvider services)
+
+public sealed class Idrak.Maui.Views.FontsPage : Idrak.Maui.Views.LabPage
+  public FontsPage(Idrak.Maui.ViewModels.GenerateViewModel viewModel)
+
+public class Idrak.Maui.Views.FontsView : Microsoft.Maui.Controls.ContentView
+  public FontsView(Idrak.Maui.ViewModels.GenerateViewModel viewModel)
+
+public sealed class Idrak.Maui.Views.GenerateFeature : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IMobileFeature
+  public GenerateFeature()
+  public Idrak.Maui.Abstractions.FeatureGroup Group { get; }
+  public Idrak.Maui.Abstractions.PhoneNeeds Needs { get; }
+  public Microsoft.Maui.Controls.Page CreatePage(System.IServiceProvider services, object viewModel)
+  public Microsoft.Maui.Controls.View? CreateView(System.IServiceProvider services, object viewModel)
+  public System.Collections.Generic.IReadOnlyList<string> ModelFamilies { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Packages { get; }
+  public int Order { get; }
+  public object CreateViewModel(System.IServiceProvider services)
+  public string Glyph { get; }
+  public string Icon { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public string Tagline { get; }
+  public string Title { get; }
+
+public sealed class Idrak.Maui.Views.GeneratePage : Idrak.Maui.Views.LabPage
+  public GeneratePage(Idrak.Maui.ViewModels.GenerateViewModel viewModel, System.IServiceProvider services)
+
+public class Idrak.Maui.Views.GenerateView : Idrak.Maui.Controls.AdaptiveView
+  protected override void Arrange(bool wide)
+  public GenerateView(Idrak.Maui.ViewModels.GenerateViewModel viewModel, System.IServiceProvider? services = null)
+  public Idrak.Maui.ViewModels.GenerateViewModel ViewModel { get; }
+  public override void Shown()
+  public static double NarrowPreviewHeight { get; set; }
+  public void Tune()
 
 public class Idrak.Maui.Views.HomeView : Idrak.Maui.Controls.AdaptiveView
   protected override void Arrange(bool wide)

@@ -15,7 +15,8 @@ internal static class LibrarySections
         new FeatureSection(AppSections.Chat, "Chat", "chat", 10, MobileFeatures.Chat, "A model from the store chats on this device"),
         new SegmentedSection(AppSections.Voice, "Voice", "mic", 20, [MobileFeatures.Transcribe, MobileFeatures.Speak, MobileFeatures.AudioProcess],
             "Speech into text, text into speech, a recording through the library's processors"),
-        new SegmentedSection(AppSections.Vision, "Vision", "vision", 30, [MobileFeatures.Ocr, MobileFeatures.Image], "A photo read by a model; transforms and scan looks on a photo"),
+        new SegmentedSection(AppSections.Vision, "Vision", "vision", 30, [MobileFeatures.Ocr, MobileFeatures.Image, MobileFeatures.Generate],
+            "A photo read by a model; transforms and scan looks on a photo; text drawn as scanned pages"),
         new LabsSection(),
         new SettingsSection(),
     ];

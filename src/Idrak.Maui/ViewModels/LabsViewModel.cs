@@ -151,7 +151,7 @@ public sealed class LabsViewModel : ViewModel
     private static readonly Dictionary<string, string> LibraryTones = new(StringComparer.OrdinalIgnoreCase)
     {
         [MobileFeatures.Chat] = "Indigo", [MobileFeatures.Search] = "Sky", [MobileFeatures.Transcribe] = "Violet", [MobileFeatures.Speak] = "Green",
-        [MobileFeatures.AudioProcess] = "Rose", [MobileFeatures.Ocr] = "Amber", [MobileFeatures.Image] = "Sky",
+        [MobileFeatures.AudioProcess] = "Rose", [MobileFeatures.Ocr] = "Amber", [MobileFeatures.Image] = "Sky", [MobileFeatures.Generate] = "Violet",
     };
 
     private readonly IdrakMauiOptions _options;

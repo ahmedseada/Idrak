@@ -157,6 +157,9 @@ public static class MobileFeatures
     /// <summary>The library's image transforms page: transforms and scan profiles on a photo.</summary>
     public const string Image = "image";
 
+    /// <summary>Text drawn as scanned pages (the Generate lab).</summary>
+    public const string Generate = "generate";
+
     /// <summary>The library's retrieval page (planned).</summary>
     public const string Search = "search";
 
@@ -173,6 +176,7 @@ public static class MobileFeatures
         table.RegisterDefault(AudioProcess, new Idrak.Maui.Views.AudioProcessFeature());
         table.RegisterDefault(Ocr, new Idrak.Maui.Views.OcrFeature());
         table.RegisterDefault(Image, new Idrak.Maui.Views.ImageFeature());
+        table.RegisterDefault(Generate, new Idrak.Maui.Views.GenerateFeature());
         return table;
     }
 

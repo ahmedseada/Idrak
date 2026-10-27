@@ -66,6 +66,12 @@ public sealed class OcrPage(OcrViewModel viewModel, IServiceProvider services) :
 /// <summary>The Image feature's page (<see cref="ImageView"/>).</summary>
 public sealed class ImagePage(ImageViewModel viewModel) : LabPage(new ImageView(viewModel), viewModel, viewModel.Title);
 
+/// <summary>The Generate feature's page (<see cref="GenerateView"/>).</summary>
+public sealed class GeneratePage(GenerateViewModel viewModel, IServiceProvider services) : LabPage(new GenerateView(viewModel, services), viewModel, viewModel.Title);
+
+/// <summary>The fonts of the Generate lab: every font found, searchable, chosen by a switch (<see cref="FontsView"/>).</summary>
+public sealed class FontsPage(GenerateViewModel viewModel) : LabPage(new FontsView(viewModel), viewModel, "Fonts");
+
 /// <summary>A planned feature's page (<see cref="PlaceholderView"/>).</summary>
 public sealed class PlaceholderPage(PlaceholderViewModel viewModel) : LabPage(new PlaceholderView(viewModel), viewModel, viewModel.Title);
 
