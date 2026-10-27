@@ -78,8 +78,8 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   and with a feedback warning, plays the microphone through the pipeline's live steps on a short low-latency buffer,
   its delay shown. Settings kept under `idrak.audio_process.`.
 - **Generate** page (Vision, after Read text and Image): text typed or pasted (Arabic and English; the library shapes it)
-  drawn as pages by the library's `SyntheticPages` (what `idrak data synth` does) in the phone's fonts (`$ANDROID_ROOT/fonts`,
-  listed, never all read) or fonts added from files (checked, copied into the app's storage), picked by the text's
+  drawn as pages by the library's `SyntheticPages` (what `idrak data synth` does) in the phone's fonts (the folders
+  `ISystemFonts` lists: Android's system fonts, found through Android's own API; listed, never all read) or fonts added from files (checked, copied into the app's storage), picked by the text's
   characters when none is chosen; the scan effects (`ScanProfiles`) as chips that stack into one look ("aged+handled+photo"),
   a random one, every look one a page, or clean; the layouts as chips; a seed with a shuffle. The pages are made on a
   worker thread, each shown as it is made, Stop keeps those made; a large preview (pinch to zoom, before and after: the

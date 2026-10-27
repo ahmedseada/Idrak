@@ -74,6 +74,8 @@
        Part of the tool, not a package, so taken from this clone's source. -->
   <ItemGroup>
     <ProjectReference Include="..\..\src\Idrak.Cli.Commands\Idrak.Cli.Commands.csproj" />
+    <!-- No -P plug-ins or --tools DLLs in the app: the trimmer drops the CLI's assembly loading, and those options are refused by name. -->
+    <RuntimeHostConfigurationOption Include="Idrak.Cli.LoadAssemblies" Value="false" Trim="true" />
   </ItemGroup>
 
   <!--

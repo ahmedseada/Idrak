@@ -171,6 +171,7 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
     private readonly ISettingsStore _settings;
     private readonly ProgressCenter _progress;
     private readonly IFilePicker? _picker;
+    private readonly ISystemFonts? _systemFonts;
     private readonly string _appStorage;
     private readonly Dictionary<string, IReadOnlyList<IFontFace>> _faces = new(StringComparer.Ordinal);
     private readonly Lock _facesGate = new();
@@ -186,7 +187,7 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
 
     /// <summary>The lab over the app's services; <paramref name="appStorage"/> is where added fonts and data sets go by default.</summary>
     public GenerateViewModel(IShareService share, ISettingsStore settings, string appStorage, IPictureSaver? pictures = null, ProgressCenter? progress = null,
-        GenerateLabOptions? defaults = null, IFilePicker? picker = null)
+        GenerateLabOptions? defaults = null, IFilePicker? picker = null, ISystemFonts? systemFonts = null)
     {
         _share = share ?? throw new ArgumentNullException(nameof(share));
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
@@ -195,6 +196,7 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
         _pictures = pictures ?? new UnavailablePictureSaver();
         _progress = progress ?? new ProgressCenter(TimeSpan.FromMilliseconds(250));
         _picker = picker;
+        _systemFonts = systemFonts;
         _options = GenerateSettings.Load(settings, out var skipped, defaults);
         if (skipped.Count > 0)
         {
@@ -585,7 +587,7 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
         try
         {
             string added = _options.AddedFontsFolder(_appStorage);
-            string? phone = _options.SystemFontsFolder;
+            var phone = _options.SystemFontFolders(_systemFonts);
             var found = await Task.Run(() => FindFonts(added, phone)).ConfigureAwait(true);
             AllFonts = [.. found.Select(f => new FontChoice(f.Path, f.Bytes, f.Added, _chosen.Contains(f.Path), () => OnChosen(f.Path)))];
             ShowFonts();
@@ -1249,11 +1251,11 @@ public sealed class GenerateViewModel : ViewModel, IDisposable
         return faces;
     }
 
-    private static List<(string Path, long Bytes, bool Added)> FindFonts(string added, string? phone)
+    private static List<(string Path, long Bytes, bool Added)> FindFonts(string added, IReadOnlyList<string> phone)
     {
         var extensions = FontFormats.Extensions.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var found = new List<(string, long, bool)>();
-        foreach (var (folder, isAdded) in new[] { (added, true), (phone, false) })
+        foreach (var (folder, isAdded) in phone.Select(f => (f, false)).Prepend((added, true)))
         {
             if (folder is null || !Directory.Exists(folder))
             {

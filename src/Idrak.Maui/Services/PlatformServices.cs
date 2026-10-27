@@ -84,3 +84,22 @@ public sealed class UnavailablePictureSaver : IPictureSaver
     public Task<string> SaveAsync(byte[] bytes, string fileName, string mediaType, string album, CancellationToken cancellationToken = default) =>
         throw new NotSupportedException($"Pictures cannot be saved here: {Unavailable}.");
 }
+
+/// <summary>The platform's font folders where .NET names one (Windows' Fonts folder); none elsewhere.</summary>
+public sealed class PlatformSystemFonts : ISystemFonts
+{
+    /// <inheritdoc />
+    public IReadOnlyList<string> Folders
+    {
+        get
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return [];
+            }
+
+            string folder = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
+            return folder.Length > 0 && Directory.Exists(folder) ? [folder] : [];
+        }
+    }
+}

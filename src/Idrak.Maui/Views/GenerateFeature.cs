@@ -60,7 +60,8 @@ public sealed class GenerateFeature : IMobileFeature
             services.GetService<IPictureSaver>(),
             services.GetService<ProgressCenter>(),
             services.GetService<GenerateLabOptions>(),
-            services.GetService<IFilePicker>());
+            services.GetService<IFilePicker>(),
+            services.GetService<ISystemFonts>() ?? new PlatformSystemFonts());
     }
 
     /// <inheritdoc />

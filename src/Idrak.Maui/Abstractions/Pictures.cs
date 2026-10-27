@@ -21,3 +21,14 @@ public interface IPictureSaver
     /// <exception cref="IOException">The phone refused or failed the write.</exception>
     Task<string> SaveAsync(byte[] bytes, string fileName, string mediaType, string album, CancellationToken cancellationToken = default);
 }
+
+/// <summary>
+/// The folders the platform keeps its own fonts in, for the Generate lab to list (Android's system fonts; Windows' Fonts
+/// folder). Android's is registered by <c>UseIdrak</c> (Android's own API, no variable read); elsewhere the platform's
+/// where .NET names it, else none. A folder set in the lab's settings goes over it.
+/// </summary>
+public interface ISystemFonts
+{
+    /// <summary>The folders that hold the platform's fonts and are there (none where the platform has none).</summary>
+    IReadOnlyList<string> Folders { get; }
+}

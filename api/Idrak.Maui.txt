@@ -257,6 +257,9 @@ public interface Idrak.Maui.Abstractions.ISoundPlayer
   public bool Stop()
   public string? Playing { get; }
 
+public interface Idrak.Maui.Abstractions.ISystemFonts
+  public System.Collections.Generic.IReadOnlyList<string> Folders { get; }
+
 public interface Idrak.Maui.Abstractions.IVisionReader
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.ChatChunk> Stream(Idrak.Text.Generation.ImageReadRequest request, System.Threading.CancellationToken cancellationToken = default)
   public void Keep(Idrak.Text.Generation.ImageReadRequest request, Idrak.Abstraction.Data.ImageData prepared)
@@ -725,6 +728,7 @@ public sealed class Idrak.Maui.FileConversationStore : Idrak.Maui.Abstractions.I
 public sealed class Idrak.Maui.GenerateLabOptions
   public GenerateLabOptions()
   public Idrak.Maui.GenerateLabOptions Clone()
+  public System.Collections.Generic.IReadOnlyList<string> SystemFontFolders(Idrak.Maui.Abstractions.ISystemFonts? platform)
   public bool? Zip { get; set; }
   public double? AutoFontMiB { get; set; }
   public double? Grey { get; set; }
@@ -750,7 +754,6 @@ public sealed class Idrak.Maui.GenerateLabOptions
   public string? Parts { get; set; }
   public string? Prompt { get; set; }
   public string? SystemFonts { get; set; }
-  public string? SystemFontsFolder { get; }
 
 public static class Idrak.Maui.GenerateSettings
   public const string Prefix = "idrak.generate."
@@ -1268,6 +1271,10 @@ public static class Idrak.Maui.Photos
   public static string Milliseconds(System.TimeSpan time)
   public static string Readable()
   public static string? HeifBrand(System.ReadOnlySpan<byte> file)
+
+public sealed class Idrak.Maui.PlatformSystemFonts : Idrak.Maui.Abstractions.ISystemFonts
+  public PlatformSystemFonts()
+  public System.Collections.Generic.IReadOnlyList<string> Folders { get; }
 
 public sealed class Idrak.Maui.ProgressCenter
   public Idrak.Abstraction.Diagnostics.IProgressReporter Start(string label, long? total = null, Idrak.Abstraction.Diagnostics.ProgressUnit unit = (Idrak.Abstraction.Diagnostics.ProgressUnit)0, System.TimeSpan? interval = null)
@@ -1842,7 +1849,7 @@ public sealed class Idrak.Maui.ViewModels.FontChoice : Idrak.Maui.ViewModels.Vie
   public string Path { get; }
 
 public sealed class Idrak.Maui.ViewModels.GenerateViewModel : Idrak.Maui.ViewModels.ViewModel, System.IDisposable
-  public GenerateViewModel(Idrak.Maui.Abstractions.IShareService share, Idrak.Maui.Abstractions.ISettingsStore settings, string appStorage, Idrak.Maui.Abstractions.IPictureSaver? pictures = null, Idrak.Maui.ProgressCenter? progress = null, Idrak.Maui.GenerateLabOptions? defaults = null, Microsoft.Maui.Storage.IFilePicker? picker = null)
+  public GenerateViewModel(Idrak.Maui.Abstractions.IShareService share, Idrak.Maui.Abstractions.ISettingsStore settings, string appStorage, Idrak.Maui.Abstractions.IPictureSaver? pictures = null, Idrak.Maui.ProgressCenter? progress = null, Idrak.Maui.GenerateLabOptions? defaults = null, Microsoft.Maui.Storage.IFilePicker? picker = null, Idrak.Maui.Abstractions.ISystemFonts? systemFonts = null)
   public Idrak.Maui.GenerateLabOptions Options { get; }
   public Idrak.Maui.ProgressItem? Work { get; }
   public Idrak.Maui.ViewModels.PageVariant? Selected { get; }

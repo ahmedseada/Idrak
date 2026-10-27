@@ -16,7 +16,7 @@ namespace Idrak.Maui;
 /// </summary>
 public sealed class GenerateLabOptions
 {
-    /// <summary>The phone's own fonts folder; null: the platform's (Android: <c>$ANDROID_ROOT/fonts</c>), none elsewhere.</summary>
+    /// <summary>The phone's own fonts folder; null: the platform's, as its <see cref="ISystemFonts"/> lists them (Android's system fonts), none where it has none.</summary>
     public string? SystemFonts { get; set; }
 
     /// <summary>Where the fonts the user adds are copied; null: <c>fonts</c> in the app's storage.</summary>
@@ -76,8 +76,8 @@ public sealed class GenerateLabOptions
     /// <summary>A copy.</summary>
     public GenerateLabOptions Clone() => (GenerateLabOptions)MemberwiseClone();
 
-    /// <summary>The phone's fonts folder in effect, or null when there is none.</summary>
-    public string? SystemFontsFolder => SystemFonts ?? PlatformFonts();
+    /// <summary>The phone's fonts folders in effect: the one set, else those <paramref name="platform"/> lists (none when it is null).</summary>
+    public IReadOnlyList<string> SystemFontFolders(ISystemFonts? platform) => SystemFonts is { } folder ? [folder] : platform?.Folders ?? [];
 
     /// <summary>The added fonts' folder in effect under <paramref name="appStorage"/>.</summary>
     public string AddedFontsFolder(string appStorage) => FontsFolder ?? Path.Combine(appStorage, "fonts");
@@ -96,19 +96,6 @@ public sealed class GenerateLabOptions
 
     /// <summary>The album in effect.</summary>
     public string AlbumName => Album ?? "Idrak";
-
-    // The platform's own fonts: Android names its system root in ANDROID_ROOT (/system), its fonts in "fonts" under it.
-    private static string? PlatformFonts()
-    {
-        if (!OperatingSystem.IsAndroid())
-        {
-            return null;
-        }
-
-        string root = Environment.GetEnvironmentVariable("ANDROID_ROOT") is { Length: > 0 } r ? r : "/system";
-        string folder = Path.Combine(root, "fonts");
-        return Directory.Exists(folder) ? folder : null;
-    }
 }
 
 /// <summary>

@@ -78,9 +78,11 @@ public static class IdrakMauiBuilderExtensions
 #if ANDROID
         services.TryAddSingleton<IAppRestarter>(sp => new Idrak.Maui.Platforms.Android.AndroidAppRestarter(sp));
         services.TryAddSingleton<IPictureSaver, Idrak.Maui.Platforms.Android.AndroidPictureSaver>();
+        services.TryAddSingleton<ISystemFonts, Idrak.Maui.Platforms.Android.AndroidSystemFonts>();
 #else
         services.TryAddSingleton<IAppRestarter, UnavailableAppRestarter>();
         services.TryAddSingleton<IPictureSaver, UnavailablePictureSaver>();
+        services.TryAddSingleton<ISystemFonts, PlatformSystemFonts>();
 #endif
         services.AddTransient<DevicesViewModel>();
         services.TryAddSingleton<ModelsViewModel>();                                // one for the app: a pull outlives its page
