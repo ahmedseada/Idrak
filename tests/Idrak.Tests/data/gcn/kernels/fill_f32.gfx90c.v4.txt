@@ -1,0 +1,162 @@
+$ llvm-readelf -h -l -S -s -d --notes fill_f32.gfx90c.v4.co
+ELF Header:
+  Magic:   7f 45 4c 46 02 01 01 40 02 00 00 00 00 00 00 00
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            AMDGPU - HSA
+  ABI Version:                       2
+  Type:                              DYN (Shared object file)
+  Machine:                           EM_AMDGPU
+  Version:                           0x1
+  Entry point address:               0x0
+  Start of program headers:          64 (bytes into file)
+  Start of section headers:          1976 (bytes into file)
+  Flags:                             0x132, gfx90c, xnack
+  Size of this header:               64 (bytes)
+  Size of program headers:           56 (bytes)
+  Number of program headers:         8
+  Size of section headers:           64 (bytes)
+  Number of section headers:         14
+  Section header string table index: 12
+There are 14 section headers, starting at offset 0x7b8:
+
+Section Headers:
+  [Nr] Name              Type            Address          Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            0000000000000000 000000 000000 00      0   0  0
+  [ 1] .note             NOTE            0000000000000200 000200 000228 00   A  0   0  4
+  [ 2] .dynsym           DYNSYM          0000000000000428 000428 000048 18   A  5   1  8
+  [ 3] .gnu.hash         GNU_HASH        0000000000000470 000470 000024 00   A  2   0  8
+  [ 4] .hash             HASH            0000000000000494 000494 000020 04   A  2   0  4
+  [ 5] .dynstr           STRTAB          00000000000004b4 0004b4 000016 00   A  0   0  1
+  [ 6] .rodata           PROGBITS        0000000000000500 000500 000040 00   A  0   0 64
+  [ 7] .text             PROGBITS        0000000000001600 000600 000034 00  AX  0   0 256
+  [ 8] .dynamic          DYNAMIC         0000000000002638 000638 000070 10  WA  5   0  8
+  [ 9] .relro_padding    NOBITS          00000000000026a8 0006a8 000958 00  WA  0   0  1
+  [10] .comment          PROGBITS        0000000000000000 0006a8 00001a 01  MS  0   0  1
+  [11] .symtab           SYMTAB          0000000000000000 0006c8 000060 18     13   2  8
+  [12] .shstrtab         STRTAB          0000000000000000 000728 000070 00      0   0  1
+  [13] .strtab           STRTAB          0000000000000000 000798 00001f 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  R (retain), p (processor specific)
+
+Elf file type is DYN (Shared object file)
+Entry point 0x0
+There are 8 program headers, starting at offset 64
+
+Program Headers:
+  Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
+  PHDR           0x000040 0x0000000000000040 0x0000000000000040 0x0001c0 0x0001c0 R   0x8
+  LOAD           0x000000 0x0000000000000000 0x0000000000000000 0x000540 0x000540 R   0x1000
+  LOAD           0x000600 0x0000000000001600 0x0000000000001600 0x000034 0x000034 R E 0x1000
+  LOAD           0x000638 0x0000000000002638 0x0000000000002638 0x000070 0x0009c8 RW  0x1000
+  DYNAMIC        0x000638 0x0000000000002638 0x0000000000002638 0x000070 0x000070 RW  0x8
+  GNU_RELRO      0x000638 0x0000000000002638 0x0000000000002638 0x000070 0x0009c8 R   0x1
+  GNU_STACK      0x000000 0x0000000000000000 0x0000000000000000 0x000000 0x000000 RW  0x0
+  NOTE           0x000200 0x0000000000000200 0x0000000000000200 0x000228 0x000228 R   0x4
+
+ Section to Segment mapping:
+  Segment Sections...
+   00     
+   01     .note .dynsym .gnu.hash .hash .dynstr .rodata 
+   02     .text 
+   03     .dynamic .relro_padding 
+   04     .dynamic 
+   05     .dynamic .relro_padding 
+   06     
+   07     .note 
+   None   .comment .symtab .shstrtab .strtab 
+Dynamic section at offset 0x638 contains 7 entries:
+  Tag                Type       Name/Value
+  0x0000000000000006 (SYMTAB)   0x428
+  0x000000000000000b (SYMENT)   24 (bytes)
+  0x0000000000000005 (STRTAB)   0x4b4
+  0x000000000000000a (STRSZ)    22 (bytes)
+  0x000000006ffffef5 (GNU_HASH) 0x470
+  0x0000000000000004 (HASH)     0x494
+  0x0000000000000000 (NULL)     0x0
+
+Symbol table '.dynsym' contains 3 entries:
+   Num:    Value          Size Type    Bind   Vis       Ndx Name
+     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT   UND 
+     1: 0000000000001600    52 FUNC    GLOBAL PROTECTED   7 fill_f32
+     2: 0000000000000500    64 OBJECT  GLOBAL DEFAULT     6 fill_f32.kd
+
+Symbol table '.symtab' contains 4 entries:
+   Num:    Value          Size Type    Bind   Vis       Ndx Name
+     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT   UND 
+     1: 0000000000002638     0 NOTYPE  LOCAL  HIDDEN      8 _DYNAMIC
+     2: 0000000000001600    52 FUNC    GLOBAL PROTECTED   7 fill_f32
+     3: 0000000000000500    64 OBJECT  GLOBAL DEFAULT     6 fill_f32.kd
+Displaying notes found in: .note
+  Owner                Data size 	Description
+  AMDGPU               0x00000214	NT_AMDGPU_METADATA (AMDGPU Metadata)
+    AMDGPU Metadata:
+        ---
+amdhsa.kernels:
+  - .args:
+      - .address_space:  global
+        .name:           out
+        .offset:         0
+        .size:           8
+        .value_kind:     global_buffer
+      - .name:           value
+        .offset:         8
+        .size:           4
+        .value_kind:     by_value
+      - .name:           count
+        .offset:         12
+        .size:           4
+        .value_kind:     by_value
+    .group_segment_fixed_size: 0
+    .kernarg_segment_align: 8
+    .kernarg_segment_size: 16
+    .max_flat_workgroup_size: 256
+    .name:           fill_f32
+    .private_segment_fixed_size: 0
+    .reqd_workgroup_size:
+      - 256
+      - 1
+      - 1
+    .sgpr_count:     12
+    .sgpr_spill_count: 0
+    .symbol:         fill_f32.kd
+    .vgpr_count:     2
+    .vgpr_spill_count: 0
+    .wavefront_size: 64
+amdhsa.target:   amdgcn-amd-amdhsa--gfx90c
+amdhsa.version:
+  - 1
+  - 1
+...
+
+$ llvm-objdump -d fill_f32.gfx90c.v4.co
+
+fill_f32.gfx90c.v4.co:	file format elf64-amdgpu
+
+Disassembly of section .text:
+
+0000000000001600 <fill_f32>:
+	s_load_dwordx4 s[4:7], s[0:1], 0x0                         // 000000001600: C00A0100 00000000
+	s_lshl_b32 s2, s2, 8                                       // 000000001608: 8E028802
+	v_add_u32_e32 v0, s2, v0                                   // 00000000160C: 68000002
+	s_waitcnt lgkmcnt(0)                                       // 000000001610: BF8CC07F
+	v_cmp_gt_u32_e32 vcc, s7, v0                               // 000000001614: 7D980007
+	s_and_saveexec_b64 s[0:1], vcc                             // 000000001618: BE80206A
+	s_cbranch_execz 4                                          // 00000000161C: BF880004 <fill_f32+0x30>
+	v_lshlrev_b32_e32 v0, 2, v0                                // 000000001620: 24000082
+	v_mov_b32_e32 v1, s6                                       // 000000001624: 7E020206
+	global_store_dword v0, v1, s[4:5]                          // 000000001628: DC708000 00040100
+	s_endpgm                                                   // 000000001630: BF810000
+
+$ llvm-objdump -s -j .rodata fill_f32.gfx90c.v4.co
+
+fill_f32.gfx90c.v4.co:	file format elf64-amdgpu
+Contents of section .rodata:
+ 0500 00000000 00000000 10000000 00000000  ................
+ 0510 00110000 00000000 00000000 00000000  ................
+ 0520 00000000 00000000 00000000 00000000  ................
+ 0530 4000af00 84000000 08000000 00000000  @...............
