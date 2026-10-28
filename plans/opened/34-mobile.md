@@ -118,6 +118,7 @@ nothing that needs a shell.
 | R | **The redesign the owner approved** (2026-10-27): a landing with a carousel on the library and the app, bottom navigation with Home, Chat, Voice and Vision on phones and a side rail with multi-pane pages on tablets (chosen by the window's measured width), an All labs sheet or page grouped by Language, Voice, Vision and the device, every lab laid out for its own feature, light and dark, the source commit shown instead of the version | M6 | B |
 | M8 | Bench lab: the bench rows callable from the app as the tests are (M2's pattern). **Held: the owner decides when** | M7 | A |
 | W | **Windows desktop** (the owner, 2026-10-27: "the same laptop layout for Windows"): the same app and plug-in on `net10.0-windows`, the wide layout on a laptop's window, the platform services Android has given their Windows forms, desktop input. Planned below (**Windows desktop**) | R | A, B |
+| S | **The splash** (the owner, 2026-10-28, from the design they approved): the mark comes alive, on Android and Windows, following the theme. Planned below (**The splash**) | W | A, B |
 
 **Done when:**
 
@@ -200,6 +201,44 @@ microphone, Speak on the speaker, Generate saving to Pictures, the Terminal); Re
 the Android build stay as they are.
 
 **Effort:** one agent, about half a day of writing, then a round or two of the owner's Windows build output.
+
+## The splash (phase S, planned 2026-10-28)
+
+The design the owner approved: https://claude.ai/artifact/Lpj1jExtho4U1i5G3xdquk (phone dark, phone light, the Windows
+window, and the sequence frame by frame). The mark comes alive: from the system splash's own frame (the mark on the
+ground), each amber node sends a signal along its edge into the white core (0.6 s), the core swells with a bloom and two
+rings and the signal runs up and down the axis (1.5 s), the mark lifts and the name arrives (Idrak, إدراك, "Perception,
+on this device.", 2 s), then the app's real start-up steps one line at a time over a thin progress bar, and at Ready the
+splash fades into Home. On a wide window (Windows) the mark glides left and the name sits beside it.
+
+The owner's decisions (2026-10-28, as recommended):
+
+- **It follows the theme.** Dark: the bare mark on #0B1020. Light: the icon's tile (the dark rounded square with the
+  mark) on the light page ground, the rings in the light accent. The system splash follows too, so nothing flashes.
+- **Its length is a setting**, `splash`: full (the whole animation, about 3 s even when start-up is quicker), short
+  (the default: the animation runs while start-up runs and ends at Ready, cutting to the name once ready), off (the
+  system splash, then Home).
+- **إدراك is drawn in IBM Plex Sans Arabic**, bundled with its licence (SIL OFL 1.1) like Inter and JetBrains Mono.
+
+Two parts:
+
+1. **The platform's own splash** (A). Android 12+ draws only an icon on one colour before the app runs: the light
+   variant (the tile on the light ground) as the default resources and the dark variant (the bare mark on #0B1020) under
+   `-night`, made from `assets/icon.svg` at build time as the icon is today, never a second copy of the mark. The MSIX
+   package's splash on Windows the same; an unpackaged `.exe` has none, so its window opens on the animated splash. The
+   font bundled. The system splash follows the system's theme; where the app's own theme setting forces the other one,
+   the animated splash starts on the system's ground and crosses to the app's in its first 200 ms.
+2. **The animated splash** (B), in `Idrak.Maui` so any app with `UseIdrak` can have it (an option, on by default in the
+   app): a view drawn with `GraphicsView` (the mark from the same geometry as the icon, not a picture), paced by
+   `FrameClocks.Current` like the live levels, no allocation per frame, the layout chosen by the window's width (stacked
+   on a narrow window, side by side on a wide one). The steps it shows are the app's real start-up work, reported by
+   `IdrakMauiStartup` as it runs (never a timer pretending), and it hands over to the host page (`AppHostPage`) when they
+   are done. Its timings, the length mode and the steps' minimum time on screen are settings with the design's values
+   as defaults.
+
+**Done when:** on the owner's phone and tablet (dark and light) and Windows laptop, the system splash and the animated
+one meet without a flash or a jump; `short` ends at Ready, `full` plays the whole sequence, `off` goes straight to Home;
+the MAUI tests cover the length modes, the steps' order and the hand-over, both themes and both layouts.
 
 ## Choices measured, not fixed
 
