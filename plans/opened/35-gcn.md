@@ -1,6 +1,6 @@
 # Plan 35: GCN kernels for HIP (AMD's PTX: written in C#, assembled by Idrak, no hipRTC, no SDK)
 
-**Status:** planned 2026-10-28 against `main` a2a6eb1. Nothing built. **Scope (the owner, 2026-10-28):** option B of
+**Status:** planned 2026-10-28 against `main` a2a6eb1. Started 2026-10-28: G0a (slot A) and G0b (slot B) in progress. **Scope (the owner, 2026-10-28):** option B of
 leftover 8.11, with a name and a structure equivalent to CUDA's, not a generic one. Idrak writes AMD's kernels in AMD's
 own assembly, GCN, in C#, as it writes NVIDIA's in PTX. Idrak's GCN assembler turns them into a code object, and the
 HIP runtime that ships with the graphics driver loads it. Neither hipRTC nor the HIP SDK is needed.
@@ -72,8 +72,10 @@ Each setting is carried into the HIP options beside the others, the apps' settin
 
 - The family comes from the version the device reports (as PTX's target comes from compute capability). It is the
   instruction set, never a card, vendor id or memory size, and it makes no tuning decision.
-- The ELF header needs a machine value per target (gfx90c has its own). One data file, `Hip/GcnTargets.MachineValues.cs`,
-  holds these as format data and is the only file exempted from `HipNoVendorNames`. Nothing branches on it.
+- The ELF header needs a machine value per target (gfx90c has its own), and each family has a name. The
+  instruction-set tables, `Hip/GcnTargets*.cs` (family names, encodings, `GcnTargets.MachineValues.cs`), hold these as
+  format data and are the only files where `HipNoVendorNames` allows target literals in code. Vendor ids and names stay
+  forbidden there too, and no tuning decision branches on a target name.
 - Block size, wave size, occupancy, k splits and the wave-operation form (DPP, `ds_swizzle`, `ds_bpermute`, LDS) are
   measured on the device (rule 84). Matrix units (MFMA, WMMA) are chosen by a probe kernel that runs and checks its
   result, never by name.
