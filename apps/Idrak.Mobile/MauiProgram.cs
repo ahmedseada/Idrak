@@ -47,6 +47,10 @@ public static class MauiProgram
                 // The app's defaults; what the user saves in the settings page is applied over them.
                 options.Theme = IdrakThemeChoice.System;
 
+                // The animated splash over the host page while the app starts (the library's is off unless an app asks: it
+                // is Idrak's own mark and name); the settings' splash length chooses how much of it plays.
+                options.ShowSplash = true;
+
                 // The small models the Models page offers to tap: the app's own list (the library suggests none). The last
                 // is the smallest Qwen-VL, a vision-language model the OCR lab reads with (the lab measures whether it fits
                 // this phone before loading it, and refuses it with the limit named when it does not).

@@ -14,6 +14,18 @@
     <Color x:Key="IdrakAmber">#F59E0B</Color>
     <Color x:Key="IdrakWhite">#FFFFFF</Color>
 
+    <!-- The animated splash (plan 34, phase S): the icon's tile (the dark rounded square and its stroke, a soft shadow) on the
+         light page ground, the signal's light, the tip's flash, the rings in the light accent (at 0.8: the design's rings
+         peak at .6 and .4 here, .75 and .5 in dark), the bar's track. -->
+    <Color x:Key="IdrakSplashGround">#F4F6FB</Color>
+    <Color x:Key="IdrakSplashTile">#0B1020</Color>
+    <Color x:Key="IdrakSplashTileStroke">#334155</Color>
+    <Color x:Key="IdrakSplashShadow">#2E0B1020</Color>
+    <Color x:Key="IdrakSplashSignal">#E0F2FE</Color>
+    <Color x:Key="IdrakSplashFlash">#BAE6FD</Color>
+    <Color x:Key="IdrakSplashRing">#CC0369A1</Color>
+    <Color x:Key="IdrakSplashTrack">#1F0F172A</Color>
+
     <!-- Grounds and surfaces. -->
     <Color x:Key="IdrakPageBackground">#F4F6FB</Color>
     <Color x:Key="IdrakPageBackground2">#EEF2F9</Color>

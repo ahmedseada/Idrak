@@ -65,7 +65,7 @@ internal static partial class MauiTests
     private static void EnsureDispatcher() => _hasDispatcher = _hasDispatcher || DispatcherProvider.SetCurrent(new TestDispatcherProvider()) || true;
 
     // The services an app's UseIdrak gives, without a platform: in-memory stores, the listing above, a scripted chat.
-    private static ServiceProvider AppServices(IdrakMauiOptions? options = null)
+    private static ServiceProvider AppServices(IdrakMauiOptions? options = null, StartupRun? run = null)
     {
         EnsureDispatcher();
         options ??= new IdrakMauiOptions { Device = "cpu" };
@@ -86,6 +86,11 @@ internal static partial class MauiTests
             .AddSingleton<IAppNavigator>(sp => new AppNavigator(sp))
             .AddSingleton(sp => new ChatViewModel(store, new OneChat(new ScriptedChat(3, "ab", Stats(3, 1))), options, new InlineDispatcher(), conversations: conversations))
             .AddTransient(sp => new SettingsViewModel(options, settings, startup));
+        if (run is not null)
+        {
+            collection.AddSingleton(run);
+        }
+
         return collection.BuildServiceProvider();
     }
 

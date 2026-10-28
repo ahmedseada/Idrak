@@ -26,6 +26,14 @@ builder.UseMauiApp<App>().UseIdrak(options =>
   live on rotation or split screen (`AppLayout`). All labs is a sheet over Home on a narrow window and a page on a wide
   one (grouped, searchable, filtered by state and needs). Views open places through `IAppNavigator`; an app adds a
   section or replaces one by name. `AppHostPage.CreateWindow(services)` is the app's window.
+- **Splash and start-up** (plan 34, phase S): `StartupRun` is the app's start-up as it runs: the settings read and
+  applied in `UseIdrak` (before any window), then the registered `StartupSteps` (the CPU read, every GPU backend started
+  with Home's device summary, the tabs made ahead; an app adds its own) once the window first shows, the worker steps one
+  after another alongside the UI ones. Where the app asks (`ShowSplash`, off by default: it is Idrak's own mark and name;
+  Idrak's app turns it on), `SplashView` lies over the host page while the page is made underneath: the mark, drawn from
+  the icon's geometry, comes alive from the system splash's size and place, then the name, then the run's steps one line
+  at a time over a thin bar, and at Ready it fades into Home. The `splash` setting: short (the default, it ends at
+  Ready), full (the whole animation) or off; its timings are settings too. A frame allocates nothing.
 - **Home**: the source commit the app was built from ("main · 628b6bb", read from git at build time into assembly
   metadata, `SourceInfo`), the device's status, a carousel of the app's slides (`IdrakMauiOptions.Home`, moving every
   `CarouselInterval` while shown), the device measured (`DeviceStatus`), the labs to try with live previews; two

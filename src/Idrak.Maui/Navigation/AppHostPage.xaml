@@ -5,6 +5,7 @@
   over the page on a narrow window. Pages a section opens are pushed over it (the window's navigation page). Every section
   made is kept in Body, the one shown visible and the others hidden, so a tab tapped again only shows its view. The bottom
   edge follows the soft keyboard (SafeAreaEdges, set in code), and the bottom bar steps aside while the keyboard is up.
+  The animated splash, when the app shows one, is laid over both columns in code until it has faded into Home.
 -->
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
@@ -13,7 +14,7 @@
              x:DataType="nav:AppHostViewModel"
              NavigationPage.HasNavigationBar="False"
              Title="Idrak">
-    <Grid ColumnDefinitions="Auto,*">
+    <Grid x:Name="Root" ColumnDefinitions="Auto,*">
         <nav:NavigationRail x:Name="Rail" IsVisible="{Binding IsWide}" />
 
         <Grid Grid.Column="1">

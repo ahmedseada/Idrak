@@ -3,6 +3,7 @@
 
 using Idrak.Maui.Abstractions;
 using Idrak.Maui.Controls;
+using Idrak.Maui.Theme;
 using Idrak.Maui.Views;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Maui.Controls.PlatformConfiguration.AndroidSpecific;
@@ -31,7 +32,10 @@ public partial class AppHostPage : ContentPage
     private bool _onScreen;
     private bool _prebuilt;
     private bool _resizes;
+    private bool _startupBegun;
     private readonly ISoftKeyboard? _keyboard;
+    private readonly StartupRun? _startup;
+    private SplashView? _splash;
 
     /// <summary>The host over the app's services, showing Home.</summary>
     public AppHostPage(IServiceProvider services)
@@ -76,6 +80,11 @@ public partial class AppHostPage : ContentPage
         }
 
         Show(AppSections.Get(AppSections.Home), null);
+        _startup = services.GetService<StartupRun>();
+        if (_startup is not null && _options.ShowSplash && _options.Splash != SplashLength.Off)
+        {
+            ShowSplash(_startup, layout.Breakpoint);
+        }
 #if WINDOWS
         Platforms.Windows.WindowsKeyInput.WatchEscape(this);                    // Esc closes the sheet on top
 #endif
@@ -120,6 +129,27 @@ public partial class AppHostPage : ContentPage
 
     /// <summary>The view shown.</summary>
     public View? Current => _current;
+
+    /// <summary>The animated splash while it shows over the page (made underneath meanwhile), or null.</summary>
+    public SplashView? Splash => _splash;
+
+    /// <summary>Whether the tabs' views were made ahead (<see cref="PrebuildAsync"/>) or are being made.</summary>
+    public bool IsPrebuilt => _prebuilt;
+
+    /// <summary>
+    /// Runs the app's start-up steps (<see cref="StartupRun.RunAsync"/>, the run from the app's services) once, with this page
+    /// as their host; the window's first showing does it, before Home is told it is shown. Null when the app has no run.
+    /// </summary>
+    public Task? BeginStartup()
+    {
+        if (_startup is null)
+        {
+            return null;
+        }
+
+        _startupBegun = true;
+        return _startup.RunAsync(new StartupContext(_services, this));
+    }
 
     /// <summary>The sections' views made so far (shown or kept hidden), by section name.</summary>
     public IReadOnlyDictionary<string, View> Views => _views;
@@ -237,6 +267,11 @@ public partial class AppHostPage : ContentPage
         }
 
         _keyboard?.Watch();
+        if (!_startupBegun)
+        {
+            _ = BeginStartup();                                                 // under the splash: the steps it shows are this work
+        }
+
         (_current as IHostedView)?.Shown();
         if (ViewModel.IsSheetOpen)
         {
@@ -262,10 +297,16 @@ public partial class AppHostPage : ContentPage
     /// <summary>
     /// Makes every visible section's view that is not made yet (and the labs of a tab of several), one a turn of the UI
     /// thread's queue after the frame the app shows now, so each tab's first tap only shows it. Each is made hidden; none is
-    /// told it is shown. Called once after Home first shows when <see cref="IdrakMauiOptions.PrebuildSections"/> is on.
+    /// told it is shown. Called once after Home first shows when <see cref="IdrakMauiOptions.PrebuildSections"/> is on (the
+    /// start-up's "sections" step, <see cref="PrebuildAsync"/>, where the app has a start-up run).
     /// </summary>
-    public void Prebuild()
+    public void Prebuild() => _ = PrebuildAsync();
+
+    /// <summary>As <see cref="Prebuild"/>; the task ends when the last view is made.</summary>
+    public Task PrebuildAsync()
     {
+        _prebuilt = true;
+        var made = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var pending = new Queue<Action>();
         foreach (var section in AppSections.Visible(_options))
         {
@@ -310,14 +351,24 @@ public partial class AppHostPage : ContentPage
 
                 Dispatcher.Dispatch(Next);                                       // one a turn: a tap between two is taken at once
             }
+            else
+            {
+                made.TrySetResult();
+            }
         }
 
         Dispatcher.Dispatch(Next);
+        return made.Task;
     }
 
     /// <inheritdoc />
     protected override bool OnBackButtonPressed()
     {
+        if (_splash is not null)
+        {
+            return true;                                                         // the splash hands over by itself; back neither closes nor skips it
+        }
+
         if (ViewModel.IsSheetOpen)
         {
             ViewModel.IsSheetOpen = false;
@@ -331,6 +382,63 @@ public partial class AppHostPage : ContentPage
         }
 
         return base.OnBackButtonPressed();
+    }
+
+    // The splash over both columns, the page's ground the splash's meanwhile (under the system's bars too), taken away once
+    // it has faded into Home. It starts where the system's splash left off: its picture's size, and its theme's ground
+    // crossing to the app's where the app's theme setting forces the other one.
+    private void ShowSplash(StartupRun run, double breakpoint)
+    {
+        var splash = new SplashView(run, _options) { Breakpoint = breakpoint };
+        var system = Microsoft.Maui.Controls.Application.Current?.PlatformAppTheme ?? AppTheme.Unspecified;
+        var effective = IdrakThemes.Effective(_options.Theme, system);
+        var drewSystem = SystemSplashTheme(system);
+        if (drewSystem is { } drew && drew != effective)
+        {
+            var colors = IdrakThemes.Colors(drew);
+            if (colors["IdrakSplashGround"] is Color ground)
+            {
+                splash.CrossFrom(ground, (Color)colors["IdrakSplashTile"], (Color)colors["IdrakSplashTileStroke"], (Color)colors["IdrakSplashShadow"]);
+            }
+        }
+
+        if ((_options.SplashPictureSize ?? SystemSplashPicture()) is double picture and > 0)
+        {
+            bool tiled = IdrakThemes.Colors(drewSystem ?? effective)["IdrakSplashTile"] is Color { Alpha: > 0 };
+            splash.StartSize = tiled ? picture * Math.Clamp(_options.SplashTileScale, 0.01, 1) : picture;
+        }
+
+        Grid.SetColumnSpan(splash, 2);
+        Root.Children.Add(splash);
+        SetDynamicResource(BackgroundColorProperty, "IdrakSplashGround");
+        splash.HandingOver += (_, _) => SetDynamicResource(BackgroundColorProperty, "IdrakPageBackground");
+        splash.Finished += (_, _) =>
+        {
+            Root.Children.Remove(splash);
+            _splash = null;
+        };
+        _splash = splash;
+    }
+
+    // The theme the system's own splash was drawn in: Android's follows the system's theme; elsewhere none is known.
+    private static AppTheme? SystemSplashTheme(AppTheme system)
+    {
+#if ANDROID
+        return system == AppTheme.Dark ? AppTheme.Dark : AppTheme.Light;
+#else
+        _ = system;
+        return null;
+#endif
+    }
+
+    // The size the system's splash drew its picture at: Android 12 and later its icon's size, before it the app's base size.
+    private double? SystemSplashPicture()
+    {
+#if ANDROID
+        return OperatingSystem.IsAndroidVersionAtLeast(31) ? _options.SplashSystemIconSize : _options.SplashBaseSize;
+#else
+        return null;
+#endif
     }
 
     private void Show(IAppSection section, string? feature)

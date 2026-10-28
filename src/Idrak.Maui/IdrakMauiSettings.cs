@@ -88,6 +88,7 @@ public sealed class IdrakSetting
         "model_keep_alive_s" or "max_loaded_models" or "unload_models_at" => "Models in memory",
         "wide_layout_dp" or "carousel_s" or "progress_interval_ms" or "prebuild_sections" or "section_fade_ms" or "frame_clock" or "live_fps" or "live_level_ms"
             or "window_keep" or "window_min_width_dp" or "window_min_height_dp" => "Layout and motion",
+        _ when key.StartsWith("splash", StringComparison.Ordinal) => "Layout and motion",
         "device" or "cpu_vectors" or "theme" => "General",
         _ => "Limits",
     };
@@ -282,6 +283,33 @@ public sealed class IdrakMauiSettings(ISettingsStore store, ISecretStore secrets
             IdrakSettingKind.Number, o => Text(o.WindowMinimumWidth), (o, t) => o.WindowMinimumWidth = Real(t, minimum: KeptWindowPlacement.LeastWidth) ?? 360, placeholder: "360"),
         new("window_min_height_dp", "Window: least height (dp)", "The shortest the main window may be made on a desktop, in device-independent units.",
             IdrakSettingKind.Number, o => Text(o.WindowMinimumHeight), (o, t) => o.WindowMinimumHeight = Real(t, minimum: KeptWindowPlacement.LeastHeight) ?? 480, placeholder: "480"),
+        new("splash", "Splash", "How much of the animated splash plays as the app starts, where the app shows one: short (the mark comes alive while the start-up runs, "
+            + "then cuts ahead to the name and fades into Home once it is done), full (the whole animation, about three seconds, even when the start-up is quicker) or off "
+            + "(straight to Home). The status line under it is the app's real start-up work as it runs. Taken at the next start.",
+            IdrakSettingKind.Choice, o => o.Splash.ToString().ToLowerInvariant(), (o, t) => o.Splash = t.Length == 0 ? SplashLength.Short
+                : Enum.TryParse<SplashLength>(t, ignoreCase: true, out var length) && Enum.IsDefined(length) ? length
+                : throw new FormatException($"'{t}' is not a splash length: short, full or off."),
+            needsRestart: true, placeholder: "short", choices: ["short", "full", "off"]),
+        new("splash_step_ms", "Splash: a step's least time (ms)", "The least time a start-up step's line stays on the splash before the next replaces it (the work is not slowed). Taken at the next start.",
+            IdrakSettingKind.Number, o => Text(o.SplashStepTime.TotalMilliseconds), (o, t) => o.SplashStepTime = TimeSpan.FromMilliseconds(Real(t, minimum: 0) ?? 600),
+            needsRestart: true, placeholder: "600", range: (0, 2000, 50)),
+        new("splash_fade_ms", "Splash: fade into Home (ms)", "How long the splash fades into Home once the start-up is done; 0 shows Home at once. Taken at the next start.",
+            IdrakSettingKind.Number, o => Text(o.SplashFade.TotalMilliseconds), (o, t) => o.SplashFade = TimeSpan.FromMilliseconds(Real(t, minimum: 0) ?? 420),
+            needsRestart: true, placeholder: "420", range: (0, 1500, 10)),
+        new("splash_cut_ms", "Splash: cut ahead (ms)", "How long the short splash takes to run ahead to the name once the start-up is done (the fade runs alongside); 0 cuts at once. Taken at the next start.",
+            IdrakSettingKind.Number, o => Text(o.SplashCutAhead.TotalMilliseconds), (o, t) => o.SplashCutAhead = TimeSpan.FromMilliseconds(Real(t, minimum: 0) ?? 200),
+            needsRestart: true, placeholder: "200", range: (0, 1000, 10)),
+        new("splash_theme_ms", "Splash: theme cross (ms)", "Where the app's theme differs from the system's, how long the splash takes to cross from the system splash's ground to the app's. Taken at the next start.",
+            IdrakSettingKind.Number, o => Text(o.SplashThemeCross.TotalMilliseconds), (o, t) => o.SplashThemeCross = TimeSpan.FromMilliseconds(Real(t, minimum: 0) ?? 200),
+            needsRestart: true, placeholder: "200", range: (0, 1000, 10)),
+        new("splash_longest_s", "Splash: longest (s)", "The longest the splash stays: past it, it fades into Home even while a start-up step still runs. Taken at the next start.",
+            IdrakSettingKind.Number, o => Text(o.SplashLongest.TotalSeconds), (o, t) => o.SplashLongest = TimeSpan.FromSeconds(Real(t, exclusiveMinimum: 0) ?? 15),
+            needsRestart: true, placeholder: "15"),
+        new("splash_picture_dp", "Splash: the system's picture (dp)", "The size of the picture the system's splash draws before the app runs (192 on Android 12 and later, 160 before), "
+            + "so the animated splash starts with the mark at that size and place. Empty: the platform's. Taken at the next start.",
+            IdrakSettingKind.Number, o => Text(o.SplashPictureSize), (o, t) => o.SplashPictureSize = Real(t, exclusiveMinimum: 0), needsRestart: true, placeholder: "the system's"),
+        new("splash_tile_scale", "Splash: the light tile's share", "The share of the system splash's picture the light theme's tile fills (the build's IdrakSplashTileScale), in (0, 1]. Taken at the next start.",
+            IdrakSettingKind.Number, o => Text(o.SplashTileScale), (o, t) => o.SplashTileScale = Fraction(t) ?? 0.8, needsRestart: true, placeholder: "0.8", range: (0.1, 1, 0.05)),
         new("model_keep_alive_s", "Model keep-alive (s)", "How long a model stays loaded after its last use; empty: until memory pressure.", IdrakSettingKind.Number,
             o => o.ModelKeepAlive is { } k ? Text(k.TotalSeconds) : "", (o, t) => o.ModelKeepAlive = Real(t, minimum: 0) is { } s ? TimeSpan.FromSeconds(s) : null,
             placeholder: "until memory pressure"),

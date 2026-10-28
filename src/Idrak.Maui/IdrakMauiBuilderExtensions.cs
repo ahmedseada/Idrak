@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Diagnostics;
 using Idrak.Maui.Abstractions;
 using Idrak.Maui.Navigation;
 using Idrak.Maui.ViewModels;
@@ -23,7 +24,9 @@ public static class IdrakMauiBuilderExtensions
     /// (<see cref="MobileFeatures"/>: Devices, Models, Chat with <see cref="IChatModelService"/> and its kept conversations
     /// (<see cref="IConversationStore"/>) and its microphone's dictation (<see cref="IDictation"/>, the Transcribe lab's), Transcribe, Speak, Studio, Read text with <see cref="IVisionReaderService"/>, and
     /// Image) and the settings page; the app's navigation (<see cref="AppHostPage"/> over <see cref="AppSections"/>, its
-    /// <see cref="AppLayout"/> and <see cref="IAppNavigator"/>, and <see cref="DeviceStatus"/>). The app registers its own
+    /// <see cref="AppLayout"/> and <see cref="IAppNavigator"/>, and <see cref="DeviceStatus"/>); the start-up's run
+    /// (<see cref="StartupRun"/>: the settings read and applied here, then the registered <see cref="StartupSteps"/> once the
+    /// window shows, under the animated splash where <see cref="IdrakMauiOptions.ShowSplash"/> asks for it). The app registers its own
     /// features and model families after; it gives its own defaults for the OCR and Image labs' settings by registering an
     /// <see cref="OcrLabOptions"/> or <see cref="ImageLabOptions"/> (what the user saves is applied over them).
     /// </summary>
@@ -35,10 +38,18 @@ public static class IdrakMauiBuilderExtensions
         var store = options.SettingsStore ?? new MauiPreferencesStore();
         var secrets = options.SecretStore ?? new MauiSecureStore();
         var settings = new IdrakMauiSettings(store, secrets);
+
+        // The start-up's first steps, before any window (the theme, the cache folder and the device come from them); the
+        // splash counts them in its bar, and the steps after them run once the window shows (StartupRun.RunAsync).
+        var run = new StartupRun();
+        long began = Stopwatch.GetTimestamp();
         var skipped = options.KeepSettings
             ? Task.Run(() => settings.LoadIntoAsync(options)).GetAwaiter().GetResult()       // off the UI thread: secure storage may post to it
             : [];
+        run.Record("settings", "Reading the settings", Stopwatch.GetElapsedTime(began));
+        began = Stopwatch.GetTimestamp();
         var startup = IdrakMauiStartup.Apply(options, FileSystem.AppDataDirectory);
+        run.Record("options", "Applying the settings", Stopwatch.GetElapsedTime(began));
         if (skipped.Count > 0)
         {
             startup = startup with { Problems = [.. startup.Problems, .. skipped.Select(s => $"A saved setting was not read: {s}")] };
@@ -60,6 +71,7 @@ public static class IdrakMauiBuilderExtensions
         services.AddSingleton(store);
         services.AddSingleton(secrets);
         services.AddSingleton(progress);
+        services.AddSingleton(run);
 #if ANDROID
         services.TryAddSingleton<IMemoryPressureSource, Idrak.Maui.Platforms.Android.AndroidMemoryPressure>();
         services.TryAddSingleton<ISoftKeyboard, Idrak.Maui.Platforms.Android.AndroidSoftKeyboard>();

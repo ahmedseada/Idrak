@@ -19,6 +19,26 @@ public enum IdrakThemeChoice
     Dark,
 }
 
+/// <summary>How much of the animated splash plays while the app starts (<see cref="IdrakMauiOptions.Splash"/>).</summary>
+public enum SplashLength
+{
+    /// <summary>The animation runs while the start-up runs; once it is done it cuts ahead to the name and fades into Home.</summary>
+    Short = 0,
+
+    /// <summary>The whole animation (about three seconds) even when the start-up is quicker, then the fade into Home.</summary>
+    Full = 1,
+
+    /// <summary>No animated splash: straight to Home (the system's own splash still shows while the app loads).</summary>
+    Off = 2,
+}
+
+/// <summary>The words the animated splash shows (Idrak's by default; an app gives its own).</summary>
+/// <param name="Name">The name under the mark ("Idrak").</param>
+/// <param name="NativeName">The name in the second script, drawn right to left in the Arabic font ("إدراك"); empty: none.</param>
+/// <param name="Tagline">The line under the names ("Perception, on this device."); empty: none.</param>
+/// <param name="Ready">The status line once the start-up is done ("Ready").</param>
+public sealed record SplashWords(string Name = "Idrak", string NativeName = "إدراك", string Tagline = "Perception, on this device.", string Ready = "Ready");
+
 /// <summary>
 /// What <c>UseIdrak</c> sets up, and the settings page edits: the device, the theme, the cache folder, every
 /// <see cref="ComputeResources"/> limit, the Hugging Face token, the storage a pull leaves free, the progress interval, the
@@ -211,6 +231,59 @@ public sealed class IdrakMauiOptions
     /// </summary>
     public double WindowMinimumHeight { get; set; } = 480;
 
+    /// <summary>
+    /// Whether the app's window opens on the animated splash (the mark coming alive, the name, then the app's real start-up
+    /// steps over a thin bar, faded into Home at Ready) over the host page, which is made underneath meanwhile. False by
+    /// default: the splash is Idrak's own mark and name, so a host app that calls <c>UseIdrak</c> shows it only when it asks
+    /// (Idrak's app does); the user's <see cref="Splash"/> then chooses how much of it plays. Not a setting of the settings page.
+    /// </summary>
+    public bool ShowSplash { get; set; }
+
+    /// <summary>How much of the animated splash plays (where the app shows one, <see cref="ShowSplash"/>): short by default.</summary>
+    public SplashLength Splash { get; set; } = SplashLength.Short;
+
+    /// <summary>The least time a start-up step's line stays on the splash before the next replaces it; 600 ms by default (the design's).</summary>
+    public TimeSpan SplashStepTime { get; set; } = TimeSpan.FromMilliseconds(600);
+
+    /// <summary>How long the splash fades into Home; 420 ms by default (the design's).</summary>
+    public TimeSpan SplashFade { get; set; } = TimeSpan.FromMilliseconds(420);
+
+    /// <summary>
+    /// How long the short splash takes to run ahead to the name once the start-up is done (the fade into Home runs alongside);
+    /// 200 ms by default, zero cuts at once.
+    /// </summary>
+    public TimeSpan SplashCutAhead { get; set; } = TimeSpan.FromMilliseconds(200);
+
+    /// <summary>
+    /// How long the splash takes to cross from the system's theme (the system splash's ground) to the app's own where the
+    /// app's theme setting forces the other one; 200 ms by default, zero crosses at once.
+    /// </summary>
+    public TimeSpan SplashThemeCross { get; set; } = TimeSpan.FromMilliseconds(200);
+
+    /// <summary>The longest the splash stays: past it, it fades into Home even while a start-up step still runs; 15 s by default.</summary>
+    public TimeSpan SplashLongest { get; set; } = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// The size, in device-independent units, of the system splash's picture (the one the platform draws before the app runs),
+    /// so the animated splash's first frame draws the mark at the same size, centred on the window as the system centres it:
+    /// <see cref="SplashSystemIconSize"/> on Android 12 and later, <see cref="SplashBaseSize"/> before. The dark picture is the bare mark in the
+    /// icon's whole 512-unit box; the light one the tile at <see cref="SplashTileScale"/> of it. Null: the platform's (those,
+    /// by the running Android's version; elsewhere, where the system draws none or a package's own, the design's size).
+    /// </summary>
+    public double? SplashPictureSize { get; set; }
+
+    /// <summary>The size, in units, Android 12 and later draws the system splash's picture at (its splash icon); 192 by default.</summary>
+    public double SplashSystemIconSize { get; set; } = 192;
+
+    /// <summary>The size, in units, of the system splash's picture before Android 12 (the app's IdrakSplashBaseSize); 160 by default.</summary>
+    public double SplashBaseSize { get; set; } = 160;
+
+    /// <summary>The share of the system splash's picture the light theme's tile fills (the app's IdrakSplashTileScale); 0.8 by default.</summary>
+    public double SplashTileScale { get; set; } = 0.8;
+
+    /// <summary>The words the splash shows (Idrak's by default). Not a setting of the settings page: the app's own.</summary>
+    public SplashWords SplashWords { get; set; } = new();
+
     /// <summary>The sound one bar of the live waveform (and one step of a level meter) stands for; 50 ms by default.</summary>
     public TimeSpan LiveLevelWindow { get; set; } = TimeSpan.FromMilliseconds(50);
 
@@ -290,6 +363,10 @@ public sealed class IdrakMauiOptions
         SuggestedModels = [.. other.SuggestedModels];
         ChatSuggestions = [.. other.ChatSuggestions];
         Home = other.Home;
+        ShowSplash = other.ShowSplash;
+        SplashWords = other.SplashWords;
+        SplashSystemIconSize = other.SplashSystemIconSize;
+        SplashBaseSize = other.SplashBaseSize;
         KeepSettings = other.KeepSettings;
         UseMauiProgress = other.UseMauiProgress;
         SettingsStore = other.SettingsStore;

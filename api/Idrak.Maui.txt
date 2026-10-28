@@ -258,6 +258,13 @@ public interface Idrak.Maui.Abstractions.ISoundPlayer
   public bool Stop()
   public string? Playing { get; }
 
+public interface Idrak.Maui.Abstractions.IStartupStep : Idrak.Abstraction.IKind
+  public Idrak.Maui.Abstractions.StartupThread Thread { get; }
+  public System.Threading.Tasks.Task RunAsync(Idrak.Maui.Abstractions.StartupContext context, System.Threading.CancellationToken cancellationToken)
+  public bool IsWanted(Idrak.Maui.Abstractions.StartupContext context)
+  public int Order { get; }
+  public string Title { get; }
+
 public interface Idrak.Maui.Abstractions.ISystemFonts
   public System.Collections.Generic.IReadOnlyList<string> Folders { get; }
 
@@ -372,6 +379,52 @@ public sealed record Idrak.Maui.Abstractions.SoundPlayback : System.IEquatable<I
   public int SampleRate { get; init; }
   public string Label { get; init; }
   public string Output { get; init; }
+
+public sealed record Idrak.Maui.Abstractions.StartupContext : System.IEquatable<Idrak.Maui.Abstractions.StartupContext>
+  public Microsoft.Maui.Controls.Page? Host { get; init; }
+  public StartupContext(System.IServiceProvider Services, Microsoft.Maui.Controls.Page? Host)
+  public System.IServiceProvider Services { get; init; }
+
+public sealed class Idrak.Maui.Abstractions.StartupRun
+  public Idrak.Maui.Abstractions.StartupStepState State(int entry)
+  public StartupRun(System.TimeProvider? time = null)
+  public System.Threading.Tasks.Task Completion { get; }
+  public System.Threading.Tasks.Task RunAsync(Idrak.Maui.Abstractions.StartupContext context, System.Collections.Generic.IReadOnlyList<Idrak.Maui.Abstractions.IStartupStep>? steps = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.TimeSpan Took(int entry)
+  public bool IsDone { get; }
+  public int Begin(string name, string title)
+  public int Count { get; }
+  public int Finished { get; }
+  public int Started { get; }
+  public int StartedEntry(int position)
+  public string Name(int entry)
+  public string Title(int entry)
+  public string? Error(int entry)
+  public void Complete()
+  public void End(int entry, System.Exception? error = null)
+  public void Record(string name, string title, System.TimeSpan took)
+
+public enum Idrak.Maui.Abstractions.StartupStepState : int
+  Done = 2
+  Failed = 3
+  Running = 1
+  Waiting = 0
+
+public static class Idrak.Maui.Abstractions.StartupSteps
+  public const string Cpu = "cpu"
+  public const string Gpu = "gpu"
+  public const string Sections = "sections"
+  public static Idrak.Maui.Abstractions.IStartupStep Get(string name)
+  public static Idrak.Maui.Abstractions.IStartupStep? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.Abstractions.IStartupStep> All { get; }
+  public static bool Unregister(string name)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Maui.Abstractions.IStartupStep step)
+
+public enum Idrak.Maui.Abstractions.StartupThread : int
+  Ui = 1
+  Worker = 0
 
 public sealed record Idrak.Maui.Abstractions.StorageSpace : System.IEquatable<Idrak.Maui.Abstractions.StorageSpace>
   public StorageSpace(string Folder, long FreeBytes, long TotalBytes)
@@ -694,6 +747,110 @@ public sealed class Idrak.Maui.Controls.SparklineView : Idrak.Maui.Controls.Draw
   public static readonly Microsoft.Maui.Controls.BindableProperty LineColorProperty
   public static readonly Microsoft.Maui.Controls.BindableProperty ValuesProperty
 
+public readonly struct Idrak.Maui.Controls.SplashFrame
+  public const double Loop = 6
+  public double BloomOpacity { get; init; }
+  public double BloomScale { get; init; }
+  public double CoreScale { get; init; }
+  public double Flash { get; init; }
+  public double FootOpacity { get; init; }
+  public double Lift { get; init; }
+  public double NameOpacity { get; init; }
+  public double NameShift { get; init; }
+  public double NodeScale { get; init; }
+  public double Ring1Opacity { get; init; }
+  public double Ring1Scale { get; init; }
+  public double Ring2Opacity { get; init; }
+  public double Ring2Scale { get; init; }
+  public double SignalAxis { get; init; }
+  public double SignalBottom { get; init; }
+  public double SignalTop { get; init; }
+  public double SubOpacity { get; init; }
+  public double SubShift { get; init; }
+  public static Idrak.Maui.Controls.SplashFrame At(double design, bool wide)
+  public static double FootStart { get; }
+  public static double IntroEnd { get; }
+  public static double Time(double percent)
+
+public sealed class Idrak.Maui.Controls.SplashTimeline
+  public Idrak.Maui.Abstractions.StartupRun Run { get; }
+  public Idrak.Maui.SplashLength Length { get; }
+  public SplashTimeline(Idrak.Maui.Abstractions.StartupRun run, Idrak.Maui.IdrakMauiOptions options, long frequency)
+  public bool IsFinished { get; }
+  public bool IsHandingOver { get; }
+  public bool IsReadyShown { get; }
+  public bool IsStarted { get; }
+  public bool Update(long now)
+  public const double LineInSeconds = 0.18
+  public const double LineOutSeconds = 0.12
+  public double Design { get; }
+  public double Elapsed { get; }
+  public double Fill { get; }
+  public double LineIn { get; }
+  public double LineOut { get; }
+  public double StageAlpha { get; }
+  public double ThemeCross { get; }
+  public int LineEntry { get; }
+  public int LinesShown { get; }
+  public int PreviousEntry { get; }
+  public void Start(long now)
+
+public sealed class Idrak.Maui.Controls.SplashView : Idrak.Maui.Controls.DrawnView
+  public Idrak.Maui.Controls.SplashTimeline Timeline { get; }
+  public Idrak.Maui.SplashWords Words { get; }
+  public Microsoft.Maui.Graphics.Color AccentColor { get; set; }
+  public Microsoft.Maui.Graphics.Color CoreColor { get; set; }
+  public Microsoft.Maui.Graphics.Color EdgeColor { get; set; }
+  public Microsoft.Maui.Graphics.Color FlashColor { get; set; }
+  public Microsoft.Maui.Graphics.Color GroundColor { get; set; }
+  public Microsoft.Maui.Graphics.Color MutedColor { get; set; }
+  public Microsoft.Maui.Graphics.Color NameColor { get; set; }
+  public Microsoft.Maui.Graphics.Color NativeColor { get; set; }
+  public Microsoft.Maui.Graphics.Color NodeColor { get; set; }
+  public Microsoft.Maui.Graphics.Color ReadyColor { get; set; }
+  public Microsoft.Maui.Graphics.Color RingColor { get; set; }
+  public Microsoft.Maui.Graphics.Color ShadowColor { get; set; }
+  public Microsoft.Maui.Graphics.Color SignalColor { get; set; }
+  public Microsoft.Maui.Graphics.Color TileColor { get; set; }
+  public Microsoft.Maui.Graphics.Color TileStrokeColor { get; set; }
+  public Microsoft.Maui.Graphics.Color TrackColor { get; set; }
+  public Microsoft.Maui.Graphics.PointF CentreShift { get; set; }
+  public SplashView(Idrak.Maui.Abstractions.StartupRun run, Idrak.Maui.IdrakMauiOptions options, System.TimeProvider? time = null)
+  public bool DrewWide { get; }
+  public double Breakpoint { get; set; }
+  public double StartSize { get; set; }
+  public event System.EventHandler? Finished
+  public event System.EventHandler? HandingOver
+  public long FramesDrawn { get; }
+  public override void Draw(Microsoft.Maui.Graphics.ICanvas canvas, Microsoft.Maui.Graphics.RectF dirtyRect)
+  public static readonly Microsoft.Maui.Controls.BindableProperty AccentColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty CoreColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty EdgeColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty FlashColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty GroundColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty MutedColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty NameColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty NameFontProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty NativeColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty NativeFontProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty NodeColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty ReadyColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty RingColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty ShadowColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty SignalColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty StatusFontProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty TaglineFontProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty TileColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty TileStrokeColorProperty
+  public static readonly Microsoft.Maui.Controls.BindableProperty TrackColorProperty
+  public string NameFont { get; set; }
+  public string NativeFont { get; set; }
+  public string StatusFont { get; set; }
+  public string TaglineFont { get; set; }
+  public void Advance(long timestamp)
+  public void CrossFrom(Microsoft.Maui.Graphics.Color ground, Microsoft.Maui.Graphics.Color tile, Microsoft.Maui.Graphics.Color tileStroke, Microsoft.Maui.Graphics.Color shadow)
+  public void NextFrame()
+
 public sealed class Idrak.Maui.Controls.TimerFrameClock : Idrak.Maui.Abstractions.IFrameClock
   public System.IDisposable Subscribe(System.Action frame, double framesPerSecond = 0)
   public TimerFrameClock()
@@ -752,6 +909,16 @@ public static class Idrak.Maui.ConversationText
   public static string Title(string question)
   public static string When(System.DateTimeOffset updated, System.DateTimeOffset now)
 
+public sealed class Idrak.Maui.CpuStartupStep : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IStartupStep
+  public CpuStartupStep()
+  public Idrak.Maui.Abstractions.StartupThread Thread { get; }
+  public System.Threading.Tasks.Task RunAsync(Idrak.Maui.Abstractions.StartupContext context, System.Threading.CancellationToken cancellationToken)
+  public bool IsWanted(Idrak.Maui.Abstractions.StartupContext context)
+  public int Order { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public string Title { get; }
+
 public sealed class Idrak.Maui.DeviceInformation : Idrak.Maui.Abstractions.IDeviceInformation
   public DeviceInformation()
   public Idrak.Maui.Abstractions.DeviceReport Read(System.Collections.Generic.IReadOnlyList<string>? devices = null)
@@ -801,6 +968,16 @@ public static class Idrak.Maui.GenerateSettings
   public static System.Collections.Generic.IReadOnlyList<string> Formats { get; }
   public static void Save(Idrak.Maui.Abstractions.ISettingsStore store, Idrak.Maui.GenerateLabOptions options)
 
+public sealed class Idrak.Maui.GpuStartupStep : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IStartupStep
+  public GpuStartupStep()
+  public Idrak.Maui.Abstractions.StartupThread Thread { get; }
+  public System.Threading.Tasks.Task RunAsync(Idrak.Maui.Abstractions.StartupContext context, System.Threading.CancellationToken cancellationToken)
+  public bool IsWanted(Idrak.Maui.Abstractions.StartupContext context)
+  public int Order { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public string Title { get; }
+
 public sealed class Idrak.Maui.HomeOptions
   public HomeOptions()
   public System.Collections.Generic.IReadOnlyList<Idrak.Maui.HomeSlide> Slides { get; set; }
@@ -842,6 +1019,8 @@ public sealed class Idrak.Maui.IdrakMauiOptions
   public Idrak.Maui.HomeOptions Home { get; set; }
   public Idrak.Maui.IdrakMauiOptions Clone()
   public Idrak.Maui.IdrakThemeChoice Theme { get; set; }
+  public Idrak.Maui.SplashLength Splash { get; set; }
+  public Idrak.Maui.SplashWords SplashWords { get; set; }
   public IdrakMauiOptions()
   public System.Collections.Generic.IReadOnlyList<string> ChatSuggestions { get; set; }
   public System.Collections.Generic.IReadOnlyList<string> SuggestedModels { get; set; }
@@ -849,23 +1028,33 @@ public sealed class Idrak.Maui.IdrakMauiOptions
   public System.TimeSpan LiveLevelWindow { get; set; }
   public System.TimeSpan ProgressInterval { get; set; }
   public System.TimeSpan SectionFade { get; set; }
+  public System.TimeSpan SplashCutAhead { get; set; }
+  public System.TimeSpan SplashFade { get; set; }
+  public System.TimeSpan SplashLongest { get; set; }
+  public System.TimeSpan SplashStepTime { get; set; }
+  public System.TimeSpan SplashThemeCross { get; set; }
   public System.TimeSpan? CarouselInterval { get; set; }
   public System.TimeSpan? ModelKeepAlive { get; set; }
   public bool IsFeatureEnabled(string name)
   public bool KeepSettings { get; set; }
   public bool KeepWindowPlace { get; set; }
   public bool PrebuildSections { get; set; }
+  public bool ShowSplash { get; set; }
   public bool UseMauiProgress { get; set; }
   public bool? ChatEnterSends { get; set; }
   public bool? ChatThinking { get; set; }
   public bool? OffloadToHostMemory { get; set; }
   public bool? PackedWeightCache { get; set; }
+  public double SplashBaseSize { get; set; }
+  public double SplashSystemIconSize { get; set; }
+  public double SplashTileScale { get; set; }
   public double WideLayoutWidth { get; set; }
   public double WindowMinimumHeight { get; set; }
   public double WindowMinimumWidth { get; set; }
   public double? ChatTemperature { get; set; }
   public double? ChatTopP { get; set; }
   public double? LiveFrameRate { get; set; }
+  public double? SplashPictureSize { get; set; }
   public double? TuningBudgetMs { get; set; }
   public double? TuningNeighbourOctaves { get; set; }
   public double? WorkspaceShare { get; set; }
@@ -1145,6 +1334,7 @@ public class Idrak.Maui.Navigation.AppHostPage : Microsoft.Maui.Controls.Content
   protected override void OnAppearing()
   protected override void OnDisappearing()
   public AppHostPage(System.IServiceProvider services)
+  public Idrak.Maui.Controls.SplashView? Splash { get; }
   public Idrak.Maui.Navigation.AppHostViewModel ViewModel { get; }
   public Microsoft.Maui.Controls.View? Current { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, Microsoft.Maui.Controls.Page> Pages { get; }
@@ -1152,8 +1342,11 @@ public class Idrak.Maui.Navigation.AppHostPage : Microsoft.Maui.Controls.Content
   public System.Threading.Tasks.Task OpenFeatureAsync(string feature)
   public System.Threading.Tasks.Task OpenLabsAsync()
   public System.Threading.Tasks.Task OpenSettingsAsync()
+  public System.Threading.Tasks.Task PrebuildAsync()
   public System.Threading.Tasks.Task<bool> OpenSectionAsync(string name, string? feature = null)
+  public System.Threading.Tasks.Task? BeginStartup()
   public bool CloseTopSheet()
+  public bool IsPrebuilt { get; }
   public static Microsoft.Maui.Controls.Window CreateWindow(System.IServiceProvider services)
   public static void KeyboardAware(Microsoft.Maui.Controls.ContentPage page)
   public void ApplySize(double width, double height)
@@ -1368,6 +1561,16 @@ public sealed class Idrak.Maui.ProgressItem : System.ComponentModel.INotifyPrope
   public string Text { get; }
   public string TimeLeftText { get; }
 
+public sealed class Idrak.Maui.SectionsStartupStep : Idrak.Abstraction.IKind, Idrak.Maui.Abstractions.IStartupStep
+  public Idrak.Maui.Abstractions.StartupThread Thread { get; }
+  public SectionsStartupStep()
+  public System.Threading.Tasks.Task RunAsync(Idrak.Maui.Abstractions.StartupContext context, System.Threading.CancellationToken cancellationToken)
+  public bool IsWanted(Idrak.Maui.Abstractions.StartupContext context)
+  public int Order { get; }
+  public string Name { get; }
+  public string Summary { get; }
+  public string Title { get; }
+
 public sealed class Idrak.Maui.SoundPlayer : Idrak.Maui.Abstractions.ISoundPlayer, Idrak.Maui.Controls.ILiveLevelSource, System.IDisposable
   public Idrak.Maui.Controls.LiveLevels Levels { get; }
   public SoundPlayer(System.TimeProvider? time = null, Idrak.Maui.IdrakMauiOptions? options = null)
@@ -1422,6 +1625,18 @@ public static class Idrak.Maui.SpeakSettings
   public static Idrak.Maui.SpeakLabOptions Load(Idrak.Maui.Abstractions.ISettingsStore store, out System.Collections.Generic.IReadOnlyList<string> skipped)
   public static System.Collections.Generic.IReadOnlyList<Idrak.Maui.LabSetting<Idrak.Maui.SpeakLabOptions>> Definitions { get; }
   public static void Save(Idrak.Maui.Abstractions.ISettingsStore store, Idrak.Maui.SpeakLabOptions options)
+
+public enum Idrak.Maui.SplashLength : int
+  Full = 1
+  Off = 2
+  Short = 0
+
+public sealed record Idrak.Maui.SplashWords : System.IEquatable<Idrak.Maui.SplashWords>
+  public SplashWords(string Name = "Idrak", string NativeName = "إدراك", string Tagline = "Perception, on this device.", string Ready = "Ready")
+  public string Name { get; init; }
+  public string NativeName { get; init; }
+  public string Ready { get; init; }
+  public string Tagline { get; init; }
 
 public sealed class Idrak.Maui.SystemWindowPlacement : Idrak.Maui.Abstractions.IWindowPlacement
   public SystemWindowPlacement()

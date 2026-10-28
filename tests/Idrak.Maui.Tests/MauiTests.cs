@@ -126,6 +126,14 @@ internal static partial class MauiTests
         ("maui desktop: in the Terminal the arrows recall the history into the line (the caret at its end) and Enter runs it; Esc closes the sheet on top (All labs, the chat's tune sheet, the Terminal's commands pane of a narrow window), nothing when none is open", DesktopTerminalKeysAndEscape),
         ("maui desktop: the mouse wheel zooms Generate's preview about the pointer, a notch a step (parts of one from a touchpad), held from the whole to the most; the preview's view is the one the wheel zooms", DesktopWheelZoom),
         ("maui desktop: the buttons, chips, lab cards and the rail's tabs hover (PointerOver) from the styles, once, on theme keys in light and dark; back to their own look after; a phone's styles take no hover; the rail's selected tab is its own style", DesktopHover),
+        ("maui splash: the start-up run records the work before the window, plans the registered steps, runs the worker ones one after another and the UI ones alongside, marks a failing one and runs the rest, and is done once both end; the library's steps are cpu, gpu and sections, an app's joins in order, an unknown one is not registered", SplashStartupRun),
+        ("maui splash: the design's motion by its time: the system splash's frame at 0, the signals, the pulse, the swell, the rings and the lift in their keyframes, the name settled at the end, the same values for the same time", SplashMotion),
+        ("maui splash: short (the default) runs while the start-up runs and, once it is done, cuts ahead to the name and fades into Home within the fade; a start-up longer than the animation keeps the status line going; past the longest it hands over", SplashShort),
+        ("maui splash: full plays the whole animation even when the start-up is quicker, then Ready its least time and the fade; the steps are shown in the order they began, each its least time, then Ready", SplashFull),
+        ("maui splash: the host lays the splash over Home (made underneath), back does nothing while it shows, and it is taken away when it has faded; off and an app that does not ask show none; the start-up steps run under it, the tabs made ahead and the device read", SplashHandOver),
+        ("maui splash: it draws in light (the tile) and dark (the bare mark), stacked on a narrow window and side by side on a wide one, from the theme's colours, the names and the status line", SplashDraws),
+        ("maui splash: a frame (the timeline moved, the view drawn) allocates nothing, across the animation, the status line's changes and both layouts", SplashNoAllocation),
+        ("maui settings: the splash's length, its timings and the system picture's size are settings (Layout and motion, found by the search), kept and read back; a bad value is refused", SplashSettings),
         ("public API: api/Idrak.Maui.txt matches the public surface of Idrak.Maui (IDRAK_UPDATE_API=1 rewrites it)", ApiSurfaceCurrent),
     ];
 
