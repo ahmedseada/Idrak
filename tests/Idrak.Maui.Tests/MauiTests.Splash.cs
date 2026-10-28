@@ -451,6 +451,10 @@ internal static partial class MauiTests
         Check(names.SequenceEqual([StartupSteps.Cpu, StartupSteps.Gpu, StartupSteps.Sections]) && Enumerable.Range(0, run.Count).All(i => run.State(i) == StartupStepState.Done),
             $"steps {string.Join(", ", Enumerable.Range(0, run.Count).Select(i => $"{run.Name(i)} {run.State(i)} {run.Error(i)}"))}");
         Check(host.IsPrebuilt && host.Views.Count >= 4 && services.GetRequiredService<DeviceStatus>().IsRead, $"made ahead: {string.Join(", ", host.Views.Keys)}; read {services.GetRequiredService<DeviceStatus>().IsRead}");
+        var dispatcher = (InlineDispatcher)host.Dispatcher;
+        int dispatched = dispatcher.Dispatched;
+        new GpuStartupStep().RunAsync(new StartupContext(services, host), CancellationToken.None).GetAwaiter().GetResult();
+        Check(dispatcher.Dispatched > dispatched, "the GPU step asks for the reading on the host's UI thread (Home's summary and models are set where it asks)");
 
         // Done: it hands over and is taken away; back is Home's again.
         bool handing = false, finished = false;

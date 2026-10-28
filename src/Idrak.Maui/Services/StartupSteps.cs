@@ -72,7 +72,12 @@ public sealed class GpuStartupStep : IStartupStep
     public Task RunAsync(StartupContext context, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
-        return context.Services.GetRequiredService<DeviceStatus>().EnsureReadAsync();
+        var status = context.Services.GetRequiredService<DeviceStatus>();
+
+        // The reading runs on a worker inside DeviceStatus, which then sets Home's summary and model list on the thread that
+        // asked: asked from this worker step, they would change off the UI thread, which WinUI refuses (a stowed exception
+        // that ends the app) and Android lets pass. So it is asked from the host's UI thread.
+        return context.Host?.Dispatcher is { IsDispatchRequired: true } dispatcher ? dispatcher.DispatchAsync(status.EnsureReadAsync) : status.EnsureReadAsync();
     }
 }
 

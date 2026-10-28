@@ -71,8 +71,12 @@ internal static partial class MauiTests
         options ??= new IdrakMauiOptions { Device = "cpu" };
         var models = new ModelService(new ManualMemoryPressure(), options);
         var settings = new IdrakMauiSettings(new MemorySettingsStore(), new MemorySecretStore());
-        var store = new ListedStore(new StoredModel("Qwen/Qwen3-0.6B", "0123456789ab", Path.GetTempPath(), 734_000_000, 9, true, DateTimeOffset.UtcNow),
-            new StoredModel("openai/whisper-tiny", "abcdef012345", Path.GetTempPath(), 151_000_000, 5, true, DateTimeOffset.UtcNow));
+        // The models' own folder with a config.json (the chat lists a folder the library loads), never the system's temp folder,
+        // whose contents differ between machines.
+        string folder = Temp("app-models");
+        File.WriteAllText(Path.Combine(folder, "config.json"), "{}");
+        var store = new ListedStore(new StoredModel("Qwen/Qwen3-0.6B", "0123456789ab", folder, 734_000_000, 9, true, DateTimeOffset.UtcNow),
+            new StoredModel("openai/whisper-tiny", "abcdef012345", folder, 151_000_000, 5, true, DateTimeOffset.UtcNow));
         var devices = new ListedDevices();
         var conversations = new MemoryConversationStore();
         var startup = new IdrakStartupReport(ComputeResources.CacheFolder, options.Device, [], Path.GetTempPath());

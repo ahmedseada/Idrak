@@ -535,7 +535,7 @@ public sealed class SplashView : DrawnView
     private Color? _fromGround, _fromTile, _fromTileStroke, _fromShadow;
     private IFont _nameFont = Microsoft.Maui.Graphics.Font.Default, _nativeFont = Microsoft.Maui.Graphics.Font.Default;
     private IFont _taglineFont = Microsoft.Maui.Graphics.Font.Default, _statusFont = Microsoft.Maui.Graphics.Font.Default;
-    private bool _coloursStale = true, _fontsStale = true, _raised, _cleared;
+    private bool _coloursStale = true, _fontsStale = true, _systemFonts, _raised, _cleared;
     private float[] _lineWidths = [];
     private float _readyWidth = -1, _nativeWidth = -1, _measuredAt = -1;
     private PointF _centreShift;
@@ -739,6 +739,21 @@ public sealed class SplashView : DrawnView
     public override void Draw(ICanvas canvas, RectF dirtyRect)
     {
         ArgumentNullException.ThrowIfNull(canvas);
+        try
+        {
+            DrawFrame(canvas, dirtyRect);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException && !_systemFonts)
+        {
+            // A font the platform's canvas refuses (Win2D given a font address an unpackaged Windows app cannot load) would end
+            // the app from inside the drawing: the system's fonts from now on, this one frame dropped.
+            _systemFonts = true;
+            _fontsStale = true;
+        }
+    }
+
+    private void DrawFrame(ICanvas canvas, RectF dirtyRect)
+    {
         var timeline = Timeline;
         if (!timeline.IsStarted || timeline.IsFinished)
         {
@@ -1086,10 +1101,10 @@ public sealed class SplashView : DrawnView
         if (_fontsStale)
         {
             var services = Handler?.MauiContext?.Services;
-            _nameFont = DrawnFonts.Resolve(NameFont, services, 800);
-            _nativeFont = DrawnFonts.Resolve(NativeFont, services, 600);
-            _taglineFont = DrawnFonts.Resolve(TaglineFont, services, 500);
-            _statusFont = DrawnFonts.Resolve(StatusFont, services, 400);
+            _nameFont = DrawnFonts.Resolve(_systemFonts ? null : NameFont, services, 800);
+            _nativeFont = DrawnFonts.Resolve(_systemFonts ? null : NativeFont, services, 600);
+            _taglineFont = DrawnFonts.Resolve(_systemFonts ? null : TaglineFont, services, 500);
+            _statusFont = DrawnFonts.Resolve(_systemFonts ? null : StatusFont, services, 400);
         }
     }
 

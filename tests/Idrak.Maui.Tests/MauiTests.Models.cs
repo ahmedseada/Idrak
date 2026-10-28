@@ -204,7 +204,7 @@ internal static partial class MauiTests
 
     private static readonly string[] TokenVariables = ["HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "HF_TOKEN_PATH"];
 
-    private static string RevisionFolder(ModelStore store, string repo) => Path.Combine(store.Folder, repo, FakeHub.ShortCommit);
+    private static string RevisionFolder(ModelStore store, string repo) => Path.Combine([store.Folder, .. repo.Split('/'), FakeHub.ShortCommit]);   // the id's parts as folders, on every platform's separator
 
     private static T Throws<T>(Func<Task> run, string what) where T : Exception
     {
