@@ -3,7 +3,9 @@
 **Status:** planned 2026-10-28 against `main` a2a6eb1. Started 2026-10-28: G0a (slot A) and G0b (slot B) in progress. **Scope (the owner, 2026-10-28):** option B of
 leftover 8.11, with a name and a structure equivalent to CUDA's, not a generic one. Idrak writes AMD's kernels in AMD's
 own assembly, GCN, in C#, as it writes NVIDIA's in PTX. Idrak's GCN assembler turns them into a code object, and the
-HIP runtime that ships with the graphics driver loads it. Neither hipRTC nor the HIP SDK is needed.
+HIP runtime that ships with the graphics driver loads it. **No SDK, like CUDA (the owner, 2026-10-28):** the library
+depends on no part of the HIP SDK or ROCm's compilers, as it depends on no CUDA Toolkit. hipRTC, its HIP C++ kernels
+and the HIP C++ plug-in kernel are removed (G2b); GCN is HIP's only kernel path, as PTX is CUDA's.
 
 ## The name: GCN
 
@@ -21,7 +23,7 @@ The owner's gfx90c is GCN 5. The device API stays HIP (AMD's CUDA), and devices 
 | `ptxas`, inside NVIDIA's driver | **`Hip/GcnAssembler*.cs`**, inside Idrak (AMD's driver has none) | Text to machine code: registers, waits, hazards, encoding |
 | a cubin made by the driver | **`Hip/GcnCodeObject.cs`** | The ELF code object `hipModuleLoadData` loads |
 | `.target sm_XX` (from compute capability) | **`Hip/GcnTargets.cs`**: `.amdgcn_target gfxXXX` (from the reported `gcnArchName`) | The instruction-set family |
-| `Cuda/CudaKernel.cs`: a plug-in's PTX text | **`Hip/GcnKernel.cs`**: a plug-in's GCN text (`HipKernel` keeps HIP C++ through hipRTC) | Plug-ins' kernels |
+| `Cuda/CudaKernel.cs`: a plug-in's PTX text | **`Hip/GcnKernel.cs`**: a plug-in's GCN text (replaces `HipKernel`, whose HIP C++ needed hipRTC) | Plug-ins' kernels |
 | `Cuda/TuningCache.cs`, `CudaMeasuredChoices` | `Hip/HipKernelCache.cs` (exists), **`HipMeasuredChoices`** | Kept code and measured choices |
 
 ### GCN text as PTX text is written
@@ -52,19 +54,17 @@ gfx90c and xnack) from a hand-written `fill_f32`.
 | Contract | Registry (`SlotTable`) | Built in | Namespace |
 |---|---|---|---|
 | `IGcnTarget`: the families it handles (from the reported version and feature flags), wave sizes, register files, encodings, wait counters, hazards, the ELF machine value | `GcnTargets` | `gfx9` (GCN 5, CDNA); later `gfx10`, `gfx11`, `gfx12` | `Idrak.Gpu.Abstractions` |
-| `IHipKernelCompiler`: the kernels for a device as a code object, or why not | `HipKernelCompilers` | `gcn` (this plan), `hiprtc` (today's path, moved behind it) | `Idrak.Gpu.Abstractions` |
 | `IGeneratedKernelDispatcher`: launch a catalog kernel by name with storages and a push block | (one per backend) | Vulkan, HIP | `Idrak.Gpu.Abstractions` |
 
-A family that is not registered fails with "not registered", naming the reported target. The device then takes
-`hiprtc` if it is present, else the host fallback, and `idrak devices` and `idrak doctor` say which and why.
+A family that is not registered fails with "not registered", naming the reported target. The device then runs every
+operation through the host fallback, and `idrak devices` and `idrak doctor` say so and why.
 
 | Setting | Variable | Default |
 |---|---|---|
-| The HIP kernels' compiler | `IDRAK_HIP_COMPILER` = `auto`, `gcn`, `hiprtc` | `auto`: `gcn` when a target handles the device, else `hiprtc`, else the host |
 | Code object format | `IDRAK_HIP_CODE_OBJECT` (exists) | As today: the newest the runtime loads |
 | Wave size where a family runs both | `IDRAK_HIP_WAVE` = `auto`, `32`, `64` | `auto`: measured |
 | Occupancy the allocator aims for | `IDRAK_HIP_OCCUPANCY` = `auto` or waves per SIMD | `auto`: measured |
-| Kernels on or off, the cache | `IDRAK_HIP_KERNELS`, `IDRAK_HIP_KERNEL_CACHE` (exist) | As today; the cache key gains the compiler and the GCN text's hash |
+| Kernels on or off, the cache | `IDRAK_HIP_KERNELS`, `IDRAK_HIP_KERNEL_CACHE` (exist) | As today; the cache key is the GCN text's hash, the target, the device and the runtime and library versions (no compiler version: Idrak is the compiler) |
 
 Each setting is carried into the HIP options beside the others, the apps' settings and the benches' variables.
 
@@ -112,14 +112,14 @@ the changed projects once, run its CPU filter once with `--no-build`, then merge
 | **G0a** | A | **Code object writer.** ELF64 shared object: `.text`, the 64-byte kernel descriptors, `.dynsym`/`.dynstr`/`.hash`/`.dynamic`, the `NT_AMDGPU_METADATA` note in MessagePack (written by hand). `GcnTargets` with `gfx9` and the machine-values file | `GcnCodeObject.cs`, `GcnTargets*.cs`, `Abstractions/IGcnTarget.cs` | none | `gcn code object` |
 | **G0b** | B | **Goldens.** `tools/gcn-golden` (development only): `llvm-mc` and `ld.lld` turn checked-in GCN text into bytes and code objects, kept under `tests/Idrak.Tests.Library/Gcn/Golden/`. The `HipNoVendorNames` exemption | `tools/gcn-golden/*`, golden files, `HipTests.cs` | none | `hip: no vendor` |
 | **G0c** | A | **The gate.** `fill_f32` in GCN with physical registers, encoded by the few forms it needs, written by G0a, equal to its golden, loaded and run by a new HIP test | `GcnKernels.cs` (one kernel), `HipTests.cs` | G0a, G0b | `gcn code object` |
-| — | owner | **The gate run**: the HIP test on the gfx90c with the HIP SDK hidden. If the driver's runtime refuses the object (it may need `amd_comgr`), the plan stops and returns to the owner | | G0c | |
+| — | owner | **The gate run**: the HIP test on the gfx90c with the HIP SDK uninstalled or off `PATH` (the driver alone). If the driver's runtime refuses the object (it may need `amd_comgr`), the plan stops and returns to the owner | | G0c | |
 | **G1a** | A | **Assembler: parse and encode.** GCN text as UTF-8 bytes; every gfx9 form the kernels use (SOP1/2/K/C/P, SMEM, VOP1/2/3/C, VOP3P, DS, GLOBAL), operands, literals, modifiers, labels and branches; each form against its golden | `GcnAssembler.Parse.cs`, `GcnAssembler.Encode.cs`, `GcnTargets.Gfx9.cs` | gate passed | `gcn assembler` |
 | **G1b** | B | **The GCN interpreter** (tests only): decodes the bytes and runs them on the CPU (waves of 64, EXEC, VCC, SCC, SGPRs and VGPRs, LDS, barriers between a block's waves, global memory, the kernel arguments). Written from the ISA reference, apart from the encoder | `tests/Idrak.Tests.Library/Gcn/GcnInterpreter*.cs` | gate passed | `gcn interpreter` |
 | **G2a** | A | **Assembler: the `ptxas` part.** Virtual registers; liveness over the branches (a register written under a narrowed EXEC stays live from before, for its other lanes); allocation of VGPRs and SGPRs within the declared block's budget; `s_waitcnt` for vmcnt, lgkmcnt and expcnt; gfx9 hazards (`s_nop`); the descriptor's register counts and segment sizes from use; the physical-register printer | `GcnAssembler.Registers.cs`, `.Waits.cs`, `.Hazards.cs`, `.Print.cs` | G1a | `gcn assembler` |
-| **G2b** | B | **`IHipKernelCompiler` and the backend.** `HipKernelCompilers` with `gcn` and `hiprtc` (today's path, unchanged behind it); `IDRAK_HIP_COMPILER`; the cache key; `idrak kernels -d hip:0` naming the compiler per kernel; `idrak kernels dump` writing the GCN text, virtual and physical | `Abstractions/IHipKernelCompiler.cs`, `HipBackend.Kernels.cs`, `HipKernelCache.cs`, CLI | G0c | `hip` |
+| **G2b** | B | **The SDK removed; GCN the only path.** `HipRtc.cs`, the HIP C++ kernels (`HipKernels*.cs`) and `HipKernel` (C++ plug-ins) deleted, with every message, test and doc that names hipRTC or the SDK; the code object format choice (`IDRAK_HIP_CODE_OBJECT`) moves to `GcnCodeObject`; `HipBackend.Kernels.cs` loads GCN code objects only, every operation without a GCN kernel yet takes the host fallback and says so; the cache key; `idrak kernels -d hip:0` and `idrak kernels dump` (the GCN text, virtual and physical); the Idrak.Gpu README's HIP row needs only the driver (Windows) or ROCm's runtime library (Linux); the public API dump and inventory regenerated | `HipBackend.Kernels.cs`, `HipKernelCache.cs`, `HipTests.cs`, CLI, `src/Idrak.Gpu/README.md`, `api/Idrak.txt` | gate passed | `hip`, `public API`, `inventory` |
 | **G3a** | A | **Hand-written GCN: element-wise.** fill, affine, axpy, multiply-add, add/sub/mul/max/min, row-vector add, the activations (ReLU, sigmoid, tanh, GELU both, SiLU, square, abs, exp, log, sqrt, sin, cos, sign), with LLVM's math sequences read from clang's output and proven against the CPU. All run in the interpreter here | `GcnKernels.Pointwise.cs` | G2a, G1b | `gcn kernels` |
 | **G3b** | B | **Hand-written GCN: rows.** RMS norm (with and without gain), layer norm (fused, training, gradients), softmax, scaled masked softmax, log-softmax top-k: reductions in a fixed LDS tree, `ds_bpermute` and DPP as measured candidates | `GcnKernels.Rows.cs` | G2a, G1b | `gcn kernels` |
-| — | owner | **First device run**: the HIP group with `IDRAK_HIP_COMPILER=gcn`, with the SDK present and hidden; cold assembly and warm load timed | | G3a, G3b | |
+| — | owner | **First device run**: the HIP group on the driver alone; cold assembly and warm load timed | | G3a, G3b | |
 | **G4a** | A | **SPIR-V to GCN.** A reader for the subset `KernelBuilder` emits (anything else refused by name); uniformity (scalar or vector per value and branch); structured ifs and loops on EXEC; shared memory, barriers, `SubgroupShuffleXor`; the math functions. Output: the same GCN text G2a assembles | `GcnKernels.Spirv*.cs` | G2a | `gcn spirv` |
 | **G4b** | B | **One operation layer for Vulkan and HIP.** The thin Vulkan operation bodies move to a shared base over `IGeneratedKernelDispatcher`. HIP's dispatcher maps bindings to 64-bit pointers and the push block to scalars in the kernel arguments, and passes grid sizes as explicit arguments (no hidden arguments). Vulkan unchanged by proof | `Abstractions/IGeneratedKernelDispatcher.cs`, `Vulkan/VulkanBackend.*.cs`, `HipBackend.Generated.cs` | G2b | `vulkan` CPU-side groups, `hip` |
 | — | owner | **Vulkan unchanged**: the Vulkan groups give the same counts and results as before G4b | | G4b | |
@@ -127,7 +127,7 @@ the changed projects once, run its CPU filter once with `--no-build`, then merge
 | — | owner | **The whole list on hip:0** with `gcn`, the device-against-CPU test included; `idrak kernels -d hip:0` shows no host fallback where Vulkan has a kernel | | G5a, G5b | |
 | **G6a** | A | **Hand-written decoding products**: few-row int8, int4, bfloat16 and float32 products per row count with k splits (leftover 8.10); each replaces its lowered kernel only when faster and proven equal | `GcnKernels.Products.cs` | G5a | `gcn kernels` |
 | **G6b** | B | **Hand-written decode attention and fused packed kernels**, under the same bar | `GcnKernels.Attention.cs`, `GcnKernels.Decoding.cs` | G5a | `gcn kernels` |
-| — | owner | **The benches**: gemv and decode on hip:0, comparing `gcn`, `hiprtc` and Vulkan on the same GPU | | G6a, G6b | |
+| — | owner | **The benches**: gemv and decode on hip:0 against Vulkan on the same GPU, and against plan 8's hipRTC numbers (2026-10-26) | | G6a, G6b | |
 | **G7a** | A | **Measured choices**: block size, k splits, occupancy and wave-operation form, measured per device, driver and build; `HipMeasuredChoices` in `MeasuredChoiceProviders` | `HipBackend.Tuning.cs` | G6a | `hip` |
 | **G7b** | B | **`GcnKernel` for plug-ins**: a plug-in's GCN text, assembled once a device and cached, launched through `IKernelLauncher<GcnKernel>`, its arguments checked against what the text declares (as `CudaKernel` does for PTX). The public API dump regenerated | `GcnKernel.cs`, `HipBackend.Plugins.cs`, `api/Idrak.txt` | G2b | `hip`, `public API` |
 | **G8a, G8b** | A, B | **The other families**: `gfx10` (RDNA 1-2: wave32/64, `s_waitcnt_vscnt`, its hazards) and `gfx11` (RDNA 3: its encodings, `s_delay_alu`), then `gfx12` (RDNA 4: split wait counters) and CDNA's gfx9 variants (gfx90a and later: AGPRs, packed float32). Each comes with its goldens and an interpreter mode | `GcnTargets.Gfx10.cs` … | G5 | `gcn assembler`, `gcn interpreter` |
@@ -137,9 +137,9 @@ the changed projects once, run its CPU filter once with `--no-build`, then merge
 
 - **G0:** the gfx90c, with the driver's runtime alone, runs a code object Idrak wrote.
 - **G1-G3:** every gfx9 form equals its golden; every hand-written kernel passes the interpreter here and the HIP group
-  on hip:0 with `gcn`, the SDK hidden.
+  on hip:0 on the driver alone.
 - **G4-G5:** Vulkan's results unchanged; HIP overrides every member Vulkan does; the whole list passes on hip:0.
-- **G6-G7:** `gcn` equal to or faster than `hiprtc` on every bench row, the gap to Vulkan stated per row with its cause;
+- **G6-G7:** faster than plan 8's hipRTC numbers on every bench row, the gap to Vulkan stated per row with its cause;
   measured choices kept and reused.
 - **G8-G9:** each family's goldens and interpreter pass here; hardware runs are the owner's, when a card is at hand.
 
@@ -150,11 +150,12 @@ After each piece is merged, one list: the pull, one build, then the runs with `-
 ```powershell
 cd D:\Projects\Idrak; git checkout main; git pull origin main
 dotnet build -c Release tests\Idrak.Tests
-$env:IDRAK_DEVICES="hip"; $env:IDRAK_FILTER="gcn"; $env:IDRAK_HIP_COMPILER="gcn"; dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\gcn-gate-fails.txt
-Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER, Env:IDRAK_HIP_COMPILER
+$env:IDRAK_DEVICES="hip"; $env:IDRAK_FILTER="gcn"; dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\gcn-gate-fails.txt
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
 ```
 
-"SDK hidden" means the HIP SDK's folder is off `PATH` and `HIP_PATH` is unset for that shell. The phase's hand-over
+For the gate, the HIP SDK is uninstalled, or its folder is off `PATH` and `HIP_PATH` unset for that shell, so only the
+driver's files can be found. The phase's hand-over
 gives the exact lines.
 
 ## Decisions for the owner
@@ -164,13 +165,14 @@ gives the exact lines.
    125 kernels written a second time, and G5 several times longer.
 2. **The shared operation layer (G4b, recommended):** one copy of Vulkan's operation bodies, proven unchanged by the
    owner's Vulkan runs. The other option is HIP's own thin copies: no Vulkan change, two copies to keep in step.
-3. **hipRTC after G5:** kept as `IDRAK_HIP_COMPILER=hiprtc` and for `HipKernel` (recommended), or the library's HIP C++
-   kernels removed.
-4. **The order of G8's families**, by the cards the owner can reach.
+3. **The order of G8's families**, by the cards the owner can reach.
 
 ## Risks
 
-- **The gate:** the driver's runtime may need SDK pieces to load any code object. G0 settles that before anything else.
+- **The gate:** the driver's runtime may need SDK pieces (`amd_comgr`) to load any code object. G0 settles that before
+  anything else; if it does, the plan returns to the owner, since the SDK is not an option.
+- **Between G2b and G5:** operations without a GCN kernel yet run on the host on hip:0, slower than the hipRTC kernels
+  they replace on a machine with the SDK, until G3 and G5 bring them back.
 - **Hazards and waits:** a mistake hangs or silently corrupts. Each family's rules come from AMD's ISA reference and
   are compared with clang's output for the same kernels; the interpreter checks the waits, and only hardware checks
   the hazards.
