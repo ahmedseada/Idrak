@@ -13,7 +13,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 |---|---|---|---|---|---|
 | `Idrak.Abstraction` | 177 | 18 | 56 | 251 | 0 |
 | `Idrak` | 54 | 5 | 20 | 79 | 0 |
-| `Idrak.Gpu` | 4 | 0 | 1 | 5 | 0 |
+| `Idrak.Gpu` | 5 | 0 | 1 | 6 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Text` | 23 | 0 | 11 | 34 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
@@ -387,6 +387,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 |---|---|---|---|---|---|---|---|
 | `Idrak.Gpu.Abstractions.GcnTargets` | registry | public | — |  | gfx9 | Gpu | Gpu |
 | `Idrak.Gpu.Abstractions.IDeviceKernel` | interface | public | Backend | CudaKernel, VulkanKernel |  | Gpu | Gpu |
+| `Idrak.Gpu.Abstractions.IGcnInstructionSet` | interface | internal | — | GcnTargets.Gfx9 |  | Gpu | Gpu |
 | `Idrak.Gpu.Abstractions.IGcnTarget` | interface | public | — | GcnTargets.Gfx9 |  | Gpu | Gpu |
 | `Idrak.Gpu.Abstractions.IKernelLauncher<TKernel>` | interface | public | — | CudaBackend |  | Gpu | Gpu |
 | `Idrak.Gpu.Abstractions.IVulkanKernelDispatcher` | interface | public | Storage | VulkanBackend |  | Gpu | Gpu |

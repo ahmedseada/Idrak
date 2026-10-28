@@ -156,6 +156,7 @@ internal static unsafe class HipRuntime
         hipEventElapsedTime = (delegate* unmanaged<float*, IntPtr, IntPtr, int>)Optional(nameof(hipEventElapsedTime));
         hipGetErrorName = (delegate* unmanaged<int, byte*>)Optional(nameof(hipGetErrorName));
         hipStreamQuery = (delegate* unmanaged<IntPtr, int>)Optional(nameof(hipStreamQuery));   // polled waits (HipBackend.WaitStream)
+        hipModuleUnload = (delegate* unmanaged<IntPtr, int>)Optional(nameof(hipModuleUnload));   // GCN modules given back (HipBackend.GcnFunction)
 
         if (missing.Count > 0)
         {
@@ -193,6 +194,9 @@ internal static unsafe class HipRuntime
     // Error codes (hipError_t).
     public const int Success = 0, ErrorOutOfMemory = 2, ErrorNoDevice = 100, ErrorNotReady = 600;
 
+    // hipModuleLaunchKernel's `extra` markers (HIP_LAUNCH_PARAM_*): the kernel arguments' buffer, its size, the end.
+    public const nint LaunchParamBufferPointer = 1, LaunchParamBufferSize = 2, LaunchParamEnd = 3;
+
     // hipMemcpyKind.
     public const int MemcpyHostToDevice = 1, MemcpyDeviceToHost = 2, MemcpyDeviceToDevice = 3;
 
@@ -226,6 +230,7 @@ internal static unsafe class HipRuntime
     public static delegate* unmanaged<IntPtr*, void*, int> hipModuleLoadData;
     public static delegate* unmanaged<IntPtr*, IntPtr, byte*, int> hipModuleGetFunction;
     public static delegate* unmanaged<IntPtr, uint, uint, uint, uint, uint, uint, uint, IntPtr, void**, void**, int> hipModuleLaunchKernel;
+    public static delegate* unmanaged<IntPtr, int> hipModuleUnload;
     public static delegate* unmanaged<byte*, int, int> hipGetDevicePropertiesR0600;
     public static delegate* unmanaged<byte*, int, int> hipGetDeviceProperties;
     public static delegate* unmanaged<byte*, int, int> hipDeviceGetUuid;

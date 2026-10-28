@@ -13,7 +13,7 @@ public static partial class GcnTargets
     /// <c>.amdhsa_next_free_vgpr</c>, <c>.amdhsa_next_free_sgpr</c> and <c>.amdhsa_reserve_*</c>, the limits from what it
     /// refused (257 vector, 103 scalar registers), the waves per SIMD from clang's reported occupancy.
     /// </summary>
-    private sealed class Gfx9 : IGcnTarget
+    private sealed class Gfx9 : IGcnTarget, IGcnInstructionSet
     {
         private static readonly GcnRegisterFile Wave64 = new(Vgprs: 256, VgprGranule: 4, Sgprs: 102, SgprGranule: 8, MaxWavesPerSimd: 10);
 
@@ -60,6 +60,43 @@ public static partial class GcnTargets
         }
 
         public uint ElfFlags(GcnIsaVersion isa, int codeObjectVersion) => ElfFlagsOf(isa, codeObjectVersion);
+
+        public GcnEncoding Encoding => GcnEncoding.Isa9;
+
+        // The opcode numbers of AMD's ISA reference for this family, each checked against llvm-mc's bytes for it
+        // (tests/Idrak.Tests/data/gcn/gfx9/forms.golden). A switch over the enum: a jump table, nothing allocated.
+        public bool TryOpcode(GcnOp op, out GcnOpcode opcode)
+        {
+            opcode = op switch
+            {
+                GcnOp.SLoadDwordx4 => new(GcnFormat.Smem, 0x02),
+                GcnOp.SLshlB32 => new(GcnFormat.Sop2, 0x1C),
+                GcnOp.SAndSaveexecB64 => new(GcnFormat.Sop1, 0x20),
+                GcnOp.SWaitcnt => new(GcnFormat.Sopp, 0x0C),
+                GcnOp.SCbranchExecz => new(GcnFormat.Sopp, 0x08),
+                GcnOp.SEndpgm => new(GcnFormat.Sopp, 0x01),
+                GcnOp.VAddU32 => new(GcnFormat.Vop2, 0x34),
+                GcnOp.VCmpGtU32 => new(GcnFormat.Vopc, 0xCC),
+                GcnOp.VLshlrevB32 => new(GcnFormat.Vop2, 0x12),
+                GcnOp.VMovB32 => new(GcnFormat.Vop1, 0x01),
+                GcnOp.GlobalStoreDword => new(GcnFormat.Global, 0x1C),
+                _ => default,
+            };
+            return opcode.Format != GcnFormat.None;
+        }
+
+        // The scalar operand codes: s0-s101 are 0-101, then flat scratch (102), the xnack mask (104), VCC (106), the trap
+        // registers, M0 (124) and EXEC (126); a global instruction's SADDR of 0x7F is off.
+        public int Special(GcnSpecial register) => register switch
+        {
+            GcnSpecial.Vcc or GcnSpecial.VccLo => 106,
+            GcnSpecial.VccHi => 107,
+            GcnSpecial.M0 => 124,
+            GcnSpecial.Exec or GcnSpecial.ExecLo => 126,
+            GcnSpecial.ExecHi => 127,
+            GcnSpecial.Off => 0x7F,
+            _ => throw new ArgumentOutOfRangeException(nameof(register), register, "Not a special register the gfx9 family encodes."),
+        };
 
         private static void CheckWave(int waveSize)
         {

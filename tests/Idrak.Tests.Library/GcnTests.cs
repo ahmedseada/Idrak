@@ -23,6 +23,9 @@ internal abstract partial class Tests
         ("gcn code object: fill_f32 for gfx90c read back: the ELF header and flags, segments, sections, symbols, the dynamic and hash tables, the metadata note; the same code, flags, note and descriptor as the golden (ld.lld's objects, formats 5 and 4)", GcnCodeObjectFill),
         ("gcn code object: several kernels: code 256-byte aligned with s_nop between, descriptors 64-byte aligned, each entry offset reaching its code, every name found through the hash table, a long name in the metadata", GcnCodeObjectKernels),
         ("gcn code object: formats 5 and 4 differ only in the ABI version and amdhsa.version; format 6, a target the family does not handle and kernels it cannot describe are refused with their reason", GcnCodeObjectFormats),
+        ("gcn assembler: each gfx9 form fill_f32 uses, encoded from typed operands (scalar and vector registers, VCC, EXEC, M0, off, inline and literal constants, offsets, glc), equals its forms.golden record for gfx90c; branches reach their labels; operands a form cannot take are refused, naming them; nothing is allocated per instruction", GcnAssemblerForms),
+        ("gcn gate: Idrak's fill_f32, written through the encoder, is the golden's code byte for byte, and its code object for gfx90c (formats 5 and 4) equals the golden's where the loader reads: the ELF header and flags, the code, the metadata note, the kernel descriptor (its code's offset aside), the kernel's symbols and segments", GcnGateGolden),
+        ("gcn gate: on a HIP device, the graphics driver's runtime alone loads Idrak's own code object for the target the device reports, and fill_f32 fills 1,000,003 floats with 2.5, the memory past them untouched; a refused object fails with the runtime's reason, never a skip (on HIP devices)", GcnGateDevice),
     ];
 
     // The golden fill_f32 (tests/Idrak.Tests/data/gcn/kernels/fill_f32.s: out[i] = value for i < count, blocks of 256)
@@ -309,27 +312,34 @@ internal abstract partial class Tests
         // and symbols (ld.lld adds .gnu.hash, .relro_padding and .comment, which move the addresses).
         foreach (int format in (int[])[5, 4])
         {
-            byte[] mine = format == 5 ? image : GcnCodeObject.Write(isa, 4, kernel);
-            var ours = new ElfReader(mine);
-            var golden = new ElfReader(File.ReadAllBytes(GoldenPath($"fill_f32.gfx90c.v{format}.co")));
-            string what = $"format {format} against fill_f32.gfx90c.v{format}.co";
-            Check(mine.AsSpan(0, 16).SequenceEqual(golden.Bytes(0, 16)) && ours.U32(48) == golden.U32(48) && ours.U16(18) == golden.U16(18) && ours.U16(16) == golden.U16(16),
-                $"{what}: e_ident, type, machine and flags");
-            Check(ours.SectionBytes(".text").SequenceEqual(golden.SectionBytes(".text")), $"{what}: the code");
-            Check(ours.SectionBytes(".note").SequenceEqual(golden.SectionBytes(".note")),
-                $"{what}: the note, byte for byte: {Convert.ToHexStringLower(ours.SectionBytes(".note"))} against {Convert.ToHexStringLower(golden.SectionBytes(".note"))}");
-            byte[] descriptor = ours.SectionBytes(".rodata"), expected = golden.SectionBytes(".rodata");
-            Check(BinaryPrimitives.ReadInt64LittleEndian(descriptor.AsSpan(16)) == (long)ours.Section(".text").Address - (long)ours.Section(".rodata").Address
-                  && BinaryPrimitives.ReadInt64LittleEndian(expected.AsSpan(16)) == (long)golden.Section(".text").Address - (long)golden.Section(".rodata").Address,
-                $"{what}: each entry offset reaches its code");
-            descriptor.AsSpan(16, 8).Clear();
-            expected.AsSpan(16, 8).Clear();
-            Check(descriptor.SequenceEqual(expected), $"{what}: the descriptor, the code's offset aside: {Convert.ToHexStringLower(descriptor)} against {Convert.ToHexStringLower(expected)}");
-            Check(ours.Symbols(".dynsym").Select(s => (s.Name, s.Info, s.Other, s.Size)).SequenceEqual(golden.Symbols(".dynsym").Select(s => (s.Name, s.Info, s.Other, s.Size))),
-                $"{what}: the dynamic symbols' names, kinds, visibility and sizes");
-            Check(ours.Segments.Select(s => (s.Type, s.Flags, s.Align)).SequenceEqual(golden.Segments.Select(s => (s.Type, s.Flags, s.Align))), $"{what}: the segments' kinds");
-            Check(ours.Dynamic().Select(e => e.Tag).SequenceEqual(golden.Dynamic().Select(e => e.Tag).Where(t => t != 0x6FFFFEF5)), $"{what}: the dynamic tags (without GNU_HASH)");
+            CheckAgainstGolden(format == 5 ? image : GcnCodeObject.Write(isa, 4, kernel), format);
         }
+    }
+
+    // A gfx90c code object of fill_f32 against the golden of its format (ld.lld's), where the loader reads it: the same
+    // flags, code, metadata, descriptor and symbols (ld.lld adds .gnu.hash, .relro_padding and .comment, which move the
+    // addresses, so the descriptor's offset to its code is checked to reach the code instead).
+    private static void CheckAgainstGolden(byte[] mine, int format)
+    {
+        var ours = new ElfReader(mine);
+        var golden = new ElfReader(File.ReadAllBytes(GoldenPath($"fill_f32.gfx90c.v{format}.co")));
+        string what = $"format {format} against fill_f32.gfx90c.v{format}.co";
+        Check(mine.AsSpan(0, 16).SequenceEqual(golden.Bytes(0, 16)) && ours.U32(48) == golden.U32(48) && ours.U16(18) == golden.U16(18) && ours.U16(16) == golden.U16(16),
+            $"{what}: e_ident, type, machine and flags");
+        Check(ours.SectionBytes(".text").SequenceEqual(golden.SectionBytes(".text")), $"{what}: the code");
+        Check(ours.SectionBytes(".note").SequenceEqual(golden.SectionBytes(".note")),
+            $"{what}: the note, byte for byte: {Convert.ToHexStringLower(ours.SectionBytes(".note"))} against {Convert.ToHexStringLower(golden.SectionBytes(".note"))}");
+        byte[] descriptor = ours.SectionBytes(".rodata"), expected = golden.SectionBytes(".rodata");
+        Check(BinaryPrimitives.ReadInt64LittleEndian(descriptor.AsSpan(16)) == (long)ours.Section(".text").Address - (long)ours.Section(".rodata").Address
+              && BinaryPrimitives.ReadInt64LittleEndian(expected.AsSpan(16)) == (long)golden.Section(".text").Address - (long)golden.Section(".rodata").Address,
+            $"{what}: each entry offset reaches its code");
+        descriptor.AsSpan(16, 8).Clear();
+        expected.AsSpan(16, 8).Clear();
+        Check(descriptor.SequenceEqual(expected), $"{what}: the descriptor, the code's offset aside: {Convert.ToHexStringLower(descriptor)} against {Convert.ToHexStringLower(expected)}");
+        Check(ours.Symbols(".dynsym").Select(s => (s.Name, s.Info, s.Other, s.Size)).SequenceEqual(golden.Symbols(".dynsym").Select(s => (s.Name, s.Info, s.Other, s.Size))),
+            $"{what}: the dynamic symbols' names, kinds, visibility and sizes");
+        Check(ours.Segments.Select(s => (s.Type, s.Flags, s.Align)).SequenceEqual(golden.Segments.Select(s => (s.Type, s.Flags, s.Align))), $"{what}: the segments' kinds");
+        Check(ours.Dynamic().Select(e => e.Tag).SequenceEqual(golden.Dynamic().Select(e => e.Tag).Where(t => t != 0x6FFFFEF5)), $"{what}: the dynamic tags (without GNU_HASH)");
     }
 
     internal static void GcnCodeObjectKernels(Device device)
@@ -432,6 +442,233 @@ internal abstract partial class Tests
         finally
         {
             Environment.SetEnvironmentVariable("IDRAK_HIP_CODE_OBJECT", saved);
+        }
+    }
+
+    internal static void GcnAssemblerForms(Device device)
+    {
+        _ = device;
+        var gfx9 = GcnTargets.For(GcnIsaVersion.Parse("gfx90c"));
+
+        // gfx90c's records of forms.golden: llvm-mc's text of each form and its bytes (a text seen twice has one encoding).
+        var golden = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string line in File.ReadLines(RepositoryPath("tests", "Idrak.Tests", "data", "gcn", "gfx9", "forms.golden")))
+        {
+            string[] fields = line.Split('\t');
+            if (fields is ["gfx90c", var text, { Length: > 0 } hex] && !golden.TryAdd(text, hex))
+            {
+                Check(golden[text] == hex, $"'{text}' has one encoding in the golden: {golden[text]} and {hex}");
+            }
+        }
+
+        string Encoded(Action<GcnAssembler> write)
+        {
+            using var asm = new GcnAssembler(gfx9);
+            write(asm);
+            return Convert.ToHexStringLower(asm.ToArray());
+        }
+
+        // Each record, written through the typed API.
+        (string Text, Action<GcnAssembler> Write)[] forms =
+        [
+            ("s_load_dwordx4 s[0:3], s[4:5], 0x0", a => a.Smem(GcnOp.SLoadDwordx4, GcnOperand.S(0, 4), GcnOperand.S(4, 2), 0)),
+            ("s_load_dwordx4 s[8:11], s[4:5], 0x20", a => a.Smem(GcnOp.SLoadDwordx4, GcnOperand.S(8, 4), GcnOperand.S(4, 2), 0x20)),
+            ("s_lshl_b32 s0, s1, 2", a => a.Sop2(GcnOp.SLshlB32, GcnOperand.S(0), GcnOperand.S(1), GcnOperand.Int(2))),
+            ("s_lshl_b32 s0, s1, s2", a => a.Sop2(GcnOp.SLshlB32, GcnOperand.S(0), GcnOperand.S(1), GcnOperand.S(2))),
+            ("s_and_saveexec_b64 s[0:1], vcc", a => a.Sop1(GcnOp.SAndSaveexecB64, GcnOperand.S(0, 2), GcnOperand.Vcc)),
+            ("s_and_saveexec_b64 s[0:1], s[2:3]", a => a.Sop1(GcnOp.SAndSaveexecB64, GcnOperand.S(0, 2), GcnOperand.S(2, 2))),
+            ("s_and_saveexec_b64 s[4:5], vcc", a => a.Sop1(GcnOp.SAndSaveexecB64, GcnOperand.S(4, 2), GcnOperand.Vcc)),
+            ("s_waitcnt lgkmcnt(0)", a => a.Waitcnt(lgkmcnt: 0)),
+            ("s_waitcnt lgkmcnt(1)", a => a.Waitcnt(lgkmcnt: 1)),
+            ("s_waitcnt vmcnt(0)", a => a.Waitcnt(vmcnt: 0)),
+            ("s_waitcnt vmcnt(15)", a => a.Waitcnt(vmcnt: 15)),
+            ("s_waitcnt vmcnt(16)", a => a.Waitcnt(vmcnt: 16)),
+            ("s_waitcnt expcnt(0)", a => a.Waitcnt(expcnt: 0)),
+            ("s_waitcnt vmcnt(2) lgkmcnt(1)", a => a.Waitcnt(vmcnt: 2, lgkmcnt: 1)),
+            ("s_waitcnt vmcnt(0) expcnt(0) lgkmcnt(0)", a => a.Waitcnt(0, 0, 0)),
+            ("s_waitcnt vmcnt(63) expcnt(7) lgkmcnt(15)", a => a.Waitcnt()),
+            ("s_endpgm", a => a.Sopp(GcnOp.SEndpgm)),
+            ("v_add_u32_e32 v0, v1, v2", a => a.Vop2(GcnOp.VAddU32, GcnOperand.V(0), GcnOperand.V(1), GcnOperand.V(2))),
+            ("v_add_u32_e32 v0, s1, v2", a => a.Vop2(GcnOp.VAddU32, GcnOperand.V(0), GcnOperand.S(1), GcnOperand.V(2))),
+            ("v_add_u32_e32 v0, 16, v2", a => a.Vop2(GcnOp.VAddU32, GcnOperand.V(0), GcnOperand.Int(16), GcnOperand.V(2))),
+            ("v_cmp_gt_u32_e32 vcc, s1, v2", a => a.Vopc(GcnOp.VCmpGtU32, GcnOperand.S(1), GcnOperand.V(2))),
+            ("v_cmp_gt_u32_e32 vcc, s2, v0", a => a.Vopc(GcnOp.VCmpGtU32, GcnOperand.S(2), GcnOperand.V(0))),
+            ("v_lshlrev_b32_e32 v0, 2, v1", a => a.Vop2(GcnOp.VLshlrevB32, GcnOperand.V(0), GcnOperand.Int(2), GcnOperand.V(1))),
+            ("v_lshlrev_b32_e32 v0, 4, v1", a => a.Vop2(GcnOp.VLshlrevB32, GcnOperand.V(0), GcnOperand.Int(4), GcnOperand.V(1))),
+            ("v_lshlrev_b32_e32 v0, s1, v2", a => a.Vop2(GcnOp.VLshlrevB32, GcnOperand.V(0), GcnOperand.S(1), GcnOperand.V(2))),
+            ("v_mov_b32_e32 v0, v1", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.V(1))),
+            ("v_mov_b32_e32 v0, s1", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.S(1))),
+            ("v_mov_b32_e32 v255, v0", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(255), GcnOperand.V(0))),
+            ("v_mov_b32_e32 v0, 0", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.Int(0))),
+            ("v_mov_b32_e32 v0, -1", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.Int(-1))),
+            ("v_mov_b32_e32 v0, 64", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.Int(64))),
+            ("v_mov_b32_e32 v0, -16", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.Int(-16))),
+            ("v_mov_b32_e32 v0, 1.0", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.Float(1f))),
+            ("v_mov_b32_e32 v0, -2.0", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.Float(-2f))),
+            ("v_mov_b32_e32 v0, 0.5", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.Float(0.5f))),
+            ("v_mov_b32_e32 v0, 4.0", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.Float(4f))),
+            ("v_mov_b32_e32 v0, 0.15915494", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.Float((float)(1 / (2 * Math.PI))))),
+            ("v_mov_b32_e32 v0, 0x3fb8aa3b", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.Bits(0x3FB8AA3B))),
+            ("v_mov_b32_e32 v0, 0x7fffffff", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.Int(int.MaxValue))),
+            ("v_mov_b32_e32 v0, 0x80000000", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.Bits(0x80000000))),
+            ("v_mov_b32_e32 v0, 0xff800000", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.Float(float.NegativeInfinity))),
+            ("v_mov_b32_e32 v0, vcc_lo", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.VccLo)),
+            ("v_mov_b32_e32 v0, exec_lo", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.ExecLo)),
+            ("v_mov_b32_e32 v0, m0", a => a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.M0)),
+            ("global_store_dword v1, v0, s[2:3]", a => a.GlobalStore(GcnOp.GlobalStoreDword, GcnOperand.V(1), GcnOperand.V(0), GcnOperand.S(2, 2))),
+            ("global_store_dword v1, v0, s[2:3] offset:4", a => a.GlobalStore(GcnOp.GlobalStoreDword, GcnOperand.V(1), GcnOperand.V(0), GcnOperand.S(2, 2), offset: 4)),
+            ("global_store_dword v[2:3], v0, off", a => a.GlobalStore(GcnOp.GlobalStoreDword, GcnOperand.V(2, 2), GcnOperand.V(0), GcnOperand.Off)),
+            ("global_store_dword v[2:3], v0, off offset:-4", a => a.GlobalStore(GcnOp.GlobalStoreDword, GcnOperand.V(2, 2), GcnOperand.V(0), GcnOperand.Off, offset: -4)),
+            ("global_store_dword v[2:3], v0, off glc", a => a.GlobalStore(GcnOp.GlobalStoreDword, GcnOperand.V(2, 2), GcnOperand.V(0), GcnOperand.Off, glc: true)),
+        ];
+        foreach (var (text, write) in forms)
+        {
+            Check(golden.TryGetValue(text, out string? expected), $"'{text}' is a gfx90c record of forms.golden");
+            string encoded = Encoded(write);
+            Check(encoded == expected, $"{text}: {encoded}, llvm-mc writes {expected}");
+        }
+
+        // Branches: the 16-bit field counts dwords from the next instruction (forms.golden's s_cbranch_execz loop_end is 4
+        // dwords before its label; a backward branch over two instructions and itself is -3).
+        string forward = Encoded(a =>
+        {
+            var end = a.NewLabel();
+            a.Branch(GcnOp.SCbranchExecz, end);
+            for (int i = 0; i < 4; i++)
+            {
+                a.Sopp(GcnOp.SEndpgm);
+            }
+
+            a.Bind(end);
+        });
+        Check(forward[..8] == golden["s_cbranch_execz loop_end"], $"a branch 4 dwords on: {forward[..8]}, llvm-mc writes {golden["s_cbranch_execz loop_end"]}");
+        string backward = Encoded(a =>
+        {
+            var top = a.NewLabel();
+            a.Bind(top);
+            a.Waitcnt(lgkmcnt: 0);
+            a.Vop1(GcnOp.VMovB32, GcnOperand.V(0), GcnOperand.S(1));
+            a.Branch(GcnOp.SCbranchExecz, top);
+        });
+        Check(backward[16..] == "fdff88bf", $"a branch 3 dwords back: {backward[16..]}");
+
+        // Refusals, each naming what it refused.
+        ThrowsNaming<ArgumentException>(() => Encoded(a => a.Vop2(GcnOp.VAddU32, GcnOperand.V(0), GcnOperand.V(1), GcnOperand.S(1))), "a scalar second source of a VOP2", "s1", "VAddU32");
+        ThrowsNaming<ArgumentException>(() => Encoded(a => a.Sop2(GcnOp.SLshlB32, GcnOperand.S(0), GcnOperand.V(1), GcnOperand.S(2))), "a vector source of a scalar instruction", "v1");
+        ThrowsNaming<ArgumentException>(() => Encoded(a => a.Smem(GcnOp.SLoadDwordx4, GcnOperand.S(1, 4), GcnOperand.S(4, 2), 0)), "a misaligned quad", "s[1:4]");
+        ThrowsNaming<ArgumentException>(() => Encoded(a => a.Smem(GcnOp.SLoadDwordx4, GcnOperand.S(0, 2), GcnOperand.S(4, 2), 0)), "two registers for four dwords", "s[0:1]", "4 aligned");
+        ThrowsNaming<ArgumentException>(() => Encoded(a => a.Smem(GcnOp.SLoadDwordx4, GcnOperand.S(0, 4), GcnOperand.S(3, 2), 0)), "an odd base pair", "s[3:4]");
+        ThrowsNaming<ArgumentException>(() => Encoded(a => a.GlobalStore(GcnOp.GlobalStoreDword, GcnOperand.V(1), GcnOperand.V(0), GcnOperand.Off)), "a 32-bit address with off", "v1", "pair");
+        ThrowsNaming<ArgumentException>(() => Encoded(a => a.Sop2(GcnOp.SLshlB32, GcnOperand.S(0), GcnOperand.Bits(0x12345678), GcnOperand.Bits(0x9ABCDEF0))), "two literals", "0x9abcdef0", "one literal");
+        ThrowsNaming<ArgumentException>(() => Encoded(a => a.Sop1(GcnOp.SAndSaveexecB64, GcnOperand.S(0), GcnOperand.Vcc)), "one register for a 64-bit destination", "s0", "2 scalar");
+        ThrowsNaming<ArgumentException>(() => Encoded(a => a.Vop1(GcnOp.VAddU32, GcnOperand.V(0), GcnOperand.V(1))), "a VOP2 instruction written as VOP1", "VAddU32", "Vop2");
+        ThrowsNaming<ArgumentOutOfRangeException>(() => Encoded(a => a.Waitcnt(vmcnt: 64)), "vmcnt(64)", "vmcnt");
+        ThrowsNaming<ArgumentOutOfRangeException>(() => Encoded(a => a.Smem(GcnOp.SLoadDwordx4, GcnOperand.S(0, 4), GcnOperand.S(4, 2), 0x100000)), "an SMEM offset past 20 bits", "0xFFFFF");
+        ThrowsNaming<ArgumentOutOfRangeException>(() => Encoded(a => a.GlobalStore(GcnOp.GlobalStoreDword, GcnOperand.V(1), GcnOperand.V(0), GcnOperand.S(2, 2), offset: 4096)), "a global offset of 4096", "4095");
+        ThrowsNaming<InvalidOperationException>(() => Encoded(a => a.Branch(GcnOp.SCbranchExecz, a.NewLabel())), "a branch to a label never bound", "never bound");
+        ThrowsNaming<NotSupportedException>(() => _ = new GcnAssembler(new AppFamily()), "a family without encodings", "app-family-test", "IGcnInstructionSet");
+
+        // Nothing allocated per instruction: 1,000 instructions into a buffer sized for them (warm, so the tiered JIT's
+        // first code is not what is counted).
+        static void Thousand(GcnAssembler a)
+        {
+            for (int i = 0; i < 200; i++)
+            {
+                a.Smem(GcnOp.SLoadDwordx4, GcnOperand.S(4, 4), GcnOperand.S(0, 2), 16 * i);
+                a.Sop2(GcnOp.SLshlB32, GcnOperand.S(2), GcnOperand.S(2), GcnOperand.Int(i % 65));   // inline
+                a.Waitcnt(lgkmcnt: 0);
+                a.Vop1(GcnOp.VMovB32, GcnOperand.V(1), GcnOperand.Float(i + 0.25f));         // a literal
+                a.GlobalStore(GcnOp.GlobalStoreDword, GcnOperand.V(0), GcnOperand.V(1), GcnOperand.S(4, 2), offset: i);
+            }
+        }
+
+        for (int warm = 0; warm < 3; warm++)
+        {
+            using var warmUp = new GcnAssembler(gfx9, 16 * 1024);
+            Thousand(warmUp);
+        }
+
+        using var asm = new GcnAssembler(gfx9, 16 * 1024);
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        Thousand(asm);
+        long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+        Check(allocated == 0 && asm.Length == 200 * 32, $"1,000 instructions ({asm.Length} bytes) allocated {allocated} bytes");
+    }
+
+    internal static void GcnGateGolden(Device device)
+    {
+        _ = device;
+        var isa = GcnIsaVersion.Parse("gfx90c");
+        var fill = GcnKernels.Fill(GcnTargets.For(isa));
+        byte[] goldenCode = new ElfReader(File.ReadAllBytes(GoldenPath("fill_f32.gfx90c.v5.co"))).SectionBytes(".text");
+        Check(fill.Code.Span.SequenceEqual(goldenCode), $"fill_f32's code: {Convert.ToHexStringLower(fill.Code.Span)}, llvm-mc's {Convert.ToHexStringLower(goldenCode)}");
+        Check(fill.Code.Span.SequenceEqual(Words(FillWords)), "the same words as the code object writer's tests");
+        Check(fill.Arguments.SequenceEqual(GcnKernels.FillArguments) && GcnCodeObject.KernargBytes(fill) == GcnKernels.FillArgumentBytes && fill is { Vgprs: 2, Sgprs: 8, UsesVcc: true },
+            "its arguments (16 bytes), registers and VCC as the golden's descriptor says");
+        foreach (int format in (int[])[5, 4])
+        {
+            CheckAgainstGolden(GcnKernels.FillCodeObject(isa, format), format);
+        }
+
+        // The arguments a launch packs, at the metadata's offsets.
+        Span<byte> arguments = stackalloc byte[GcnKernels.FillArgumentBytes];
+        GcnKernels.PackFill(arguments, 0x0000_7F12_3456_7800, 2.5f, 1_000_003);
+        Check(Convert.ToHexStringLower(arguments) == "00785634127f0000" + "00002040" + "43420f00", $"packed: out at 0, value at 8, count at 12: {Convert.ToHexStringLower(arguments)}");
+
+        // The device's own target: its features change the flags and the target id, never the code.
+        var xnackOff = GcnIsaVersion.Parse("gfx90c:xnack-");
+        var off = new ElfReader(GcnKernels.FillCodeObject(xnackOff, 5));
+        Check(off.U32(48) == 0x232 && off.SectionBytes(".text").SequenceEqual(goldenCode), $"gfx90c:xnack-: flags 0x{off.U32(48):X}, the same code");
+        ThrowsNaming<NotRegisteredException>(() => GcnKernels.FillCodeObject(GcnIsaVersion.Parse("gfx1030"), 5), "a target no family handles", "gfx1030", "not registered");
+    }
+
+    internal static void GcnGateDevice(Device device)
+    {
+        if (device.Type != DeviceType.Hip)
+        {
+            return;
+        }
+
+        // The refusal, when the runtime takes no format, is the test's failure: its message names the target, each
+        // format with the runtime's error, and the runtime.
+        var hip = (HipBackend)device.Backend;
+        using var fill = hip.LoadGcn(GcnKernels.Fill);
+        Console.WriteLine($"    {device}: Idrak's fill_f32 loaded from code object format {fill.Format} for {fill.Target}"
+                          + (fill.Refused.Length > 0 ? $" (refused first: {fill.Refused})" : "")
+                          + $"; HIP runtime {HipBackend.FormatVersion(hip.RuntimeVersion)}, driver {hip.DriverVersion}, from {HipRuntime.LoadedFrom}");
+
+        // 1,000,003 elements: 3,907 blocks, the last with 67 lanes in bounds; the floats past them (beyond the last block's
+        // reach, 1,000,192) keep what was uploaded.
+        const int Count = 1_000_003, Past = 1024;
+        float[] initial = [.. Enumerable.Range(0, Count + Past).Select(i => -1f - i % 251)];
+        var storage = hip.Allocate(Count + Past, zeroed: false);
+        try
+        {
+            hip.Upload(initial, storage);
+            hip.FillGcn(fill, storage, Count, 2.5f);
+            var result = new float[Count + Past];
+            hip.Download(storage, result);
+            int wrong = Array.FindIndex(result, 0, Count, v => v != 2.5f);
+            Check(wrong < 0, $"element {wrong} is {(wrong < 0 ? 0 : result[wrong])}, not 2.5 ({result.AsSpan(0, Count).Count(2.5f)} of {Count} filled)");
+            int touched = FirstChanged(result, initial, Count);
+            Check(touched < 0, $"element {touched}, past the count, was written: {(touched < 0 ? 0 : result[touched])} where {(touched < 0 ? 0 : initial[touched])} was");
+        }
+        finally
+        {
+            storage.Release();
+        }
+
+        static int FirstChanged(float[] result, float[] initial, int from)
+        {
+            for (int i = from; i < result.Length; i++)
+            {
+                if (BitConverter.SingleToInt32Bits(result[i]) != BitConverter.SingleToInt32Bits(initial[i]))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
         }
     }
 

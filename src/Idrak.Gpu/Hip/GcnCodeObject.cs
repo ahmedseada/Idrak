@@ -448,7 +448,8 @@ internal static partial class GcnCodeObject
         }
     }
 
-    private static int KernargBytes(GcnKernelCode kernel) =>
+    /// <summary>Bytes of <paramref name="kernel"/>'s arguments: as given, or up to the end of its last argument.</summary>
+    internal static int KernargBytes(GcnKernelCode kernel) =>
         kernel.KernargBytes ?? (kernel.Arguments.Count == 0 ? 0 : kernel.Arguments[^1].Offset + kernel.Arguments[^1].Size);
 
     // The kernel's alignment of its arguments: 8 (what LLVM writes for any kernel), or 16 for an argument of 16 bytes or more.
