@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Diagnostics.CodeAnalysis;
+
 namespace Idrak.Gpu.Abstractions;
 
 public static partial class GcnTargets
@@ -13,7 +15,7 @@ public static partial class GcnTargets
     /// <c>.amdhsa_next_free_vgpr</c>, <c>.amdhsa_next_free_sgpr</c> and <c>.amdhsa_reserve_*</c>, the limits from what it
     /// refused (257 vector, 103 scalar registers), the waves per SIMD from clang's reported occupancy.
     /// </summary>
-    private sealed class Gfx9 : IGcnTarget, IGcnInstructionSet
+    private sealed partial class Gfx9 : IGcnTarget, IGcnInstructionSet
     {
         private static readonly GcnRegisterFile Wave64 = new(Vgprs: 256, VgprGranule: 4, Sgprs: 102, SgprGranule: 8, MaxWavesPerSimd: 10);
 
@@ -63,40 +65,69 @@ public static partial class GcnTargets
 
         public GcnEncoding Encoding => GcnEncoding.Isa9;
 
-        // The opcode numbers of AMD's ISA reference for this family, each checked against llvm-mc's bytes for it
-        // (tests/Idrak.Tests/data/gcn/gfx9/forms.golden). A switch over the enum: a jump table, nothing allocated.
-        public bool TryOpcode(GcnOp op, out GcnOpcode opcode)
-        {
-            opcode = op switch
+        public int Ttmps => 16;
+
+        public GcnInstruction? Find(GcnOp op) => (uint)op < (uint)ByOp.Length ? ByOp[(int)op] : null;
+
+        public bool TryFind(ReadOnlySpan<char> mnemonic, [NotNullWhen(true)] out GcnInstruction? instruction) => ByMnemonic.TryGetValue(mnemonic, out instruction);
+
+        // The instruction groups by version (LLVM 18's FeatureISAVersion9_0_*): 9.0.0, 9.0.2, 9.0.9 and 9.0.12 mix without
+        // fusing; 9.0.4 fuses; 9.0.6 adds the dl instructions and the dot products; 9.0.8 the accumulating dot products, the
+        // accumulation registers and the float atomics without a return. Read from the version, never from a card.
+        public GcnFeatures Features(GcnIsaVersion isa) => isa is { Major: 9, Minor: 0 }
+            ? isa.Stepping switch
             {
-                GcnOp.SLoadDwordx4 => new(GcnFormat.Smem, 0x02),
-                GcnOp.SLshlB32 => new(GcnFormat.Sop2, 0x1C),
-                GcnOp.SAndSaveexecB64 => new(GcnFormat.Sop1, 0x20),
-                GcnOp.SWaitcnt => new(GcnFormat.Sopp, 0x0C),
-                GcnOp.SCbranchExecz => new(GcnFormat.Sopp, 0x08),
-                GcnOp.SEndpgm => new(GcnFormat.Sopp, 0x01),
-                GcnOp.VAddU32 => new(GcnFormat.Vop2, 0x34),
-                GcnOp.VCmpGtU32 => new(GcnFormat.Vopc, 0xCC),
-                GcnOp.VLshlrevB32 => new(GcnFormat.Vop2, 0x12),
-                GcnOp.VMovB32 => new(GcnFormat.Vop1, 0x01),
-                GcnOp.GlobalStoreDword => new(GcnFormat.Global, 0x1C),
-                _ => default,
-            };
-            return opcode.Format != GcnFormat.None;
-        }
+                0x0 or 0x2 or 0x9 or 0xC => GcnFeatures.MadMix,
+                0x4 => GcnFeatures.FmaMix,
+                0x6 => GcnFeatures.FmaMix | GcnFeatures.DeepLearning | GcnFeatures.Dot,
+                0x8 => GcnFeatures.FmaMix | GcnFeatures.DeepLearning | GcnFeatures.Dot | GcnFeatures.DotAccumulate | GcnFeatures.AccumulationRegisters
+                       | GcnFeatures.AtomicAddNoReturn,
+                _ => GcnFeatures.None,
+            }
+            : GcnFeatures.None;
 
         // The scalar operand codes: s0-s101 are 0-101, then flat scratch (102), the xnack mask (104), VCC (106), the trap
-        // registers, M0 (124) and EXEC (126); a global instruction's SADDR of 0x7F is off.
+        // registers (108-123), M0 (124) and EXEC (126); the apertures and the wave's id 235-239, VCCZ, EXECZ, SCC and LDS
+        // direct 251-254 (llvm-mc's encodings). A global instruction's SADDR of 0x7F is off.
         public int Special(GcnSpecial register) => register switch
         {
+            GcnSpecial.FlatScratch or GcnSpecial.FlatScratchLo => 102,
+            GcnSpecial.FlatScratchHi => 103,
+            GcnSpecial.XnackMask or GcnSpecial.XnackMaskLo => 104,
+            GcnSpecial.XnackMaskHi => 105,
             GcnSpecial.Vcc or GcnSpecial.VccLo => 106,
             GcnSpecial.VccHi => 107,
             GcnSpecial.M0 => 124,
             GcnSpecial.Exec or GcnSpecial.ExecLo => 126,
             GcnSpecial.ExecHi => 127,
+            GcnSpecial.SharedBase => 235,
+            GcnSpecial.SharedLimit => 236,
+            GcnSpecial.PrivateBase => 237,
+            GcnSpecial.PrivateLimit => 238,
+            GcnSpecial.PopsExitingWaveId => 239,
+            GcnSpecial.Vccz => 251,
+            GcnSpecial.Execz => 252,
+            GcnSpecial.Scc => 253,
+            GcnSpecial.LdsDirect => 254,
             GcnSpecial.Off => 0x7F,
             _ => throw new ArgumentOutOfRangeException(nameof(register), register, "Not a special register the gfx9 family encodes."),
         };
+
+        // The hardware registers s_getreg_b32 and s_setreg_b32 name (llvm-mc's ids for this family).
+        public int HardwareRegister(ReadOnlySpan<char> name) => name switch
+        {
+            "HW_REG_MODE" => 1,
+            "HW_REG_STATUS" => 2,
+            "HW_REG_TRAPSTS" => 3,
+            "HW_REG_HW_ID" => 4,
+            "HW_REG_GPR_ALLOC" => 5,
+            "HW_REG_LDS_ALLOC" => 6,
+            "HW_REG_IB_STS" => 7,
+            "HW_REG_SH_MEM_BASES" => 15,
+            _ => -1,
+        };
+
+        public int Ttmp(int index) => (uint)index < 16 ? 108 + index : throw new ArgumentOutOfRangeException(nameof(index), index, "gfx9 has ttmp0 to ttmp15.");
 
         private static void CheckWave(int waveSize)
         {

@@ -24,6 +24,10 @@ internal abstract partial class Tests
         ("gcn code object: several kernels: code 256-byte aligned with s_nop between, descriptors 64-byte aligned, each entry offset reaching its code, every name found through the hash table, a long name in the metadata", GcnCodeObjectKernels),
         ("gcn code object: formats 5 and 4 differ only in the ABI version and amdhsa.version; format 6, a target the family does not handle and kernels it cannot describe are refused with their reason", GcnCodeObjectFormats),
         ("gcn assembler: each gfx9 form fill_f32 uses, encoded from typed operands (scalar and vector registers, VCC, EXEC, M0, off, inline and literal constants, offsets, glc), equals its forms.golden record for gfx90c; branches reach their labels; operands a form cannot take are refused, naming them; nothing is allocated per instruction", GcnAssemblerForms),
+        ("gcn assembler: every forms.golden record of each registered CPU (gfx900, gfx906, gfx908, gfx90c), its text parsed from UTF-8 and encoded as one block, equals llvm-mc's bytes, labels and branches included, and each form alone too; forms.s itself (LLVM's input syntax: no suffixes, bound_ctrl:0, s_waitcnt 0) less each CPU's rejected lines gives the same block", GcnAssemblerGolden),
+        ("gcn assembler: every line forms.golden lists as rejected for a registered CPU is refused for that CPU's version, naming the instruction, feature or operand (features decided by the reported version: v_fmac_f32 on 9.0.6, not 9.0.0 or 9.0.12; without a version, none)", GcnAssemblerRejected),
+        ("gcn assembler: malformed or impossible text (unknown mnemonics, operands and modifiers, missing operands, bad ranges, virtual registers, directives, literals in VOP3, two scalar reads, labels defined twice or never) is refused with its line and column", GcnAssemblerMalformed),
+        ("gcn assembler: assembling a whole forms block (gfx90c's 759 forms, labels and branches) allocates nothing once warm, and its code array alone after; fill_f32 written as text equals the typed fill_f32", GcnAssemblerAllocations),
         ("gcn gate: Idrak's fill_f32, written through the encoder, is the golden's code byte for byte, and its code object for gfx90c (formats 5 and 4) equals the golden's where the loader reads: the ELF header and flags, the code, the metadata note, the kernel descriptor (its code's offset aside), the kernel's symbols and segments", GcnGateGolden),
         ("gcn gate: on a HIP device, the graphics driver's runtime alone loads Idrak's own code object for the target the device reports, and fill_f32 fills 1,000,003 floats with 2.5, the memory past them untouched; a refused object fails with the runtime's reason, never a skip (on HIP devices)", GcnGateDevice),
     ];
@@ -553,7 +557,7 @@ internal abstract partial class Tests
         Check(backward[16..] == "fdff88bf", $"a branch 3 dwords back: {backward[16..]}");
 
         // Refusals, each naming what it refused.
-        ThrowsNaming<ArgumentException>(() => Encoded(a => a.Vop2(GcnOp.VAddU32, GcnOperand.V(0), GcnOperand.V(1), GcnOperand.S(1))), "a scalar second source of a VOP2", "s1", "VAddU32");
+        ThrowsNaming<ArgumentException>(() => Encoded(a => a.Vop2(GcnOp.VAddU32, GcnOperand.V(0), GcnOperand.V(1), GcnOperand.S(1))), "a scalar second source of a VOP2", "s1", "v_add_u32");
         ThrowsNaming<ArgumentException>(() => Encoded(a => a.Sop2(GcnOp.SLshlB32, GcnOperand.S(0), GcnOperand.V(1), GcnOperand.S(2))), "a vector source of a scalar instruction", "v1");
         ThrowsNaming<ArgumentException>(() => Encoded(a => a.Smem(GcnOp.SLoadDwordx4, GcnOperand.S(1, 4), GcnOperand.S(4, 2), 0)), "a misaligned quad", "s[1:4]");
         ThrowsNaming<ArgumentException>(() => Encoded(a => a.Smem(GcnOp.SLoadDwordx4, GcnOperand.S(0, 2), GcnOperand.S(4, 2), 0)), "two registers for four dwords", "s[0:1]", "4 aligned");
@@ -593,6 +597,305 @@ internal abstract partial class Tests
         Thousand(asm);
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         Check(allocated == 0 && asm.Length == 200 * 32, $"1,000 instructions ({asm.Length} bytes) allocated {allocated} bytes");
+    }
+
+    // The gfx9 CPUs whose versions the registered gfx9 family handles (gfx90a and gfx94x are another family's, plan 35's G8).
+    private static readonly string[] GcnRegisteredCpus = ["gfx900", "gfx906", "gfx908", "gfx90c"];
+
+    // One CPU's block of forms.golden: its records (llvm-mc's text and bytes, labels with none) and the forms.s lines it rejects.
+    private sealed record GcnFormsBlock(List<(string Text, byte[] Bytes)> Records, List<(int Line, string Text)> Rejected);
+
+    private static string FormsPath(string file) => RepositoryPath("tests", "Idrak.Tests", "data", "gcn", "gfx9", file);
+
+    private static Dictionary<string, GcnFormsBlock> ReadFormsGolden()
+    {
+        var blocks = new Dictionary<string, GcnFormsBlock>(StringComparer.Ordinal);
+        GcnFormsBlock Block(string cpu) => blocks.TryGetValue(cpu, out var block) ? block : blocks[cpu] = new([], []);
+        string? rejecting = null;
+        foreach (string line in File.ReadLines(FormsPath("forms.golden")))
+        {
+            if (line.StartsWith("# rejected: ", StringComparison.Ordinal))
+            {
+                rejecting = line.Split(' ')[2];
+            }
+            else if (line.StartsWith("#\t", StringComparison.Ordinal) && rejecting is not null)
+            {
+                string[] fields = line.Split('\t');
+                Block(rejecting).Rejected.Add((int.Parse(fields[1], CultureInfo.InvariantCulture), fields[2]));
+            }
+            else if (line.StartsWith('#') || line.Length == 0)
+            {
+                rejecting = null;
+            }
+            else
+            {
+                string[] fields = line.Split('\t');
+                Block(fields[0]).Records.Add((fields[1], Convert.FromHexString(fields[2])));
+            }
+        }
+
+        return blocks;
+    }
+
+    private static byte[] AssembleGcn(IGcnTarget target, GcnIsaVersion isa, string text)
+    {
+        using var asm = new GcnAssembler(target, isa);
+        asm.Assemble(Encoding.UTF8.GetBytes(text));
+        return asm.ToArray();
+    }
+
+    // A branch to a label (its target needs the block): s_branch or s_cbranch_* and a name, not a number.
+    private static bool IsLabelBranch(string text) =>
+        (text.StartsWith("s_branch ", StringComparison.Ordinal) || text.StartsWith("s_cbranch_", StringComparison.Ordinal))
+        && text.Split(' ')[1] is { Length: > 0 } target && !char.IsAsciiDigit(target[0]) && target[0] != '-';
+
+    internal static void GcnAssemblerGolden(Device device)
+    {
+        _ = device;
+        var golden = ReadFormsGolden();
+        string[] source = File.ReadAllLines(FormsPath("forms.s"));
+        foreach (string cpu in GcnRegisteredCpus)
+        {
+            var block = golden[cpu];
+            var isa = GcnIsaVersion.Parse(cpu);
+            var target = GcnTargets.For(isa);
+            byte[] expected = [.. block.Records.SelectMany(r => r.Bytes)];
+            int forms = block.Records.Count(r => r.Bytes.Length > 0), labels = block.Records.Count - forms, branches = block.Records.Count(r => IsLabelBranch(r.Text));
+
+            // The block as llvm-mc prints it, one text: each record's bytes at its offset.
+            byte[] code = AssembleGcn(target, isa, string.Join('\n', block.Records.Select(r => r.Text)));
+            var wrong = new List<string>();
+            int matched = 0, at = 0;
+            foreach (var (text, bytes) in block.Records.Where(r => r.Bytes.Length > 0))
+            {
+                if (at + bytes.Length <= code.Length && code.AsSpan(at, bytes.Length).SequenceEqual(bytes))
+                {
+                    matched++;
+                }
+                else if (wrong.Count < 12)
+                {
+                    wrong.Add($"'{text}' at {at}: {Convert.ToHexStringLower(code.AsSpan(Math.Min(at, code.Length), Math.Clamp(code.Length - at, 0, bytes.Length)))}, llvm-mc {Convert.ToHexStringLower(bytes)}");
+                }
+
+                at += bytes.Length;
+            }
+
+            Check(code.Length == expected.Length && matched == forms, $"{cpu}: {matched} of {forms} forms equal llvm-mc's bytes ({code.Length} bytes, {expected.Length} expected): {string.Join("; ", wrong)}");
+
+            // Each form alone (the branches to labels aside), so a wrong one is named wherever it sits.
+            var alone = new List<string>();
+            foreach (var (text, bytes) in block.Records.Where(r => r.Bytes.Length > 0 && !IsLabelBranch(r.Text)))
+            {
+                try
+                {
+                    byte[] one = AssembleGcn(target, isa, text);
+                    if (!one.AsSpan().SequenceEqual(bytes))
+                    {
+                        alone.Add($"'{text}': {Convert.ToHexStringLower(one)}, llvm-mc {Convert.ToHexStringLower(bytes)}");
+                    }
+                }
+                catch (Exception e) when (e is GcnSyntaxException or ArgumentException or NotSupportedException or InvalidOperationException)
+                {
+                    alone.Add($"'{text}': refused: {e.Message}");
+                }
+            }
+
+            Check(alone.Count == 0, $"{cpu}: {alone.Count} forms alone differ from llvm-mc's bytes: {string.Join("; ", alone.Take(12))}");
+
+            // forms.s itself, LLVM's input (no suffixes, s_waitcnt 0, bound_ctrl:0, 65 for 0x41...), less the lines this
+            // CPU rejects: the same block.
+            var rejected = block.Rejected.Select(r => r.Line).ToHashSet();
+            byte[] fromSource = AssembleGcn(target, isa, string.Join('\n', source.Select((line, n) => rejected.Contains(n + 1) ? "" : line)));
+            int differs = fromSource.AsSpan().CommonPrefixLength(expected);
+            bool same = differs == expected.Length && fromSource.Length == expected.Length;
+            Check(same, $"{cpu}: forms.s less its {rejected.Count} rejected lines differs from the golden block at byte {differs}, in '{RecordAt(block, differs)}' "
+                        + $"({fromSource.Length} bytes, {expected.Length} expected)");
+            Console.WriteLine($"    {cpu}: {matched} of {forms} forms ({labels} labels, {branches} branches to them) equal llvm-mc's bytes, as a block and alone; "
+                              + $"forms.s less its {rejected.Count} rejected lines: {(same ? "the same block" : "differs")}");
+        }
+
+        static string RecordAt(GcnFormsBlock block, int offset)
+        {
+            int at = 0;
+            foreach (var (text, bytes) in block.Records)
+            {
+                if (offset < at + bytes.Length)
+                {
+                    return text;
+                }
+
+                at += bytes.Length;
+            }
+
+            return "(past the end)";
+        }
+    }
+
+    internal static void GcnAssemblerRejected(Device device)
+    {
+        _ = device;
+        var golden = ReadFormsGolden();
+        var counts = new List<string>();
+        foreach (string cpu in GcnRegisteredCpus)
+        {
+            var isa = GcnIsaVersion.Parse(cpu);
+            var target = GcnTargets.For(isa);
+            var taken = new List<string>();
+            var unnamed = new List<string>();
+            int refused = 0;
+            foreach (var (line, text) in golden[cpu].Rejected)
+            {
+                try
+                {
+                    _ = AssembleGcn(target, isa, text);
+                    taken.Add($"{line}: {text}");
+                }
+                catch (GcnSyntaxException e)
+                {
+                    refused++;
+
+                    // The reason names the instruction, or the operand or modifier refused (sc0, row_newbcast).
+                    string[] words = text.Split([' ', ','], StringSplitOptions.RemoveEmptyEntries);
+                    if (e.Line != 1 || e.Column < 1 || !words.Any(w => e.Reason.Contains(w.Split(':')[0], StringComparison.Ordinal)))
+                    {
+                        unnamed.Add($"{line}: {text}: {e.Message}");
+                    }
+                }
+            }
+
+            Check(taken.Count == 0, $"{cpu}: forms llvm-mc rejects for it were taken: {string.Join("; ", taken)}");
+            Check(unnamed.Count == 0, $"{cpu}: refusals that name nothing of the line: {string.Join("; ", unnamed)}");
+            counts.Add($"{cpu} {refused} of {golden[cpu].Rejected.Count}");
+        }
+
+        Console.WriteLine($"    rejected forms refused: {string.Join(", ", counts)}");
+
+        // The features follow the reported version, never a card: v_fmac_f32 is 9.0.6's and 9.0.8's, not 9.0.0's or 9.0.12's;
+        // v_mad_mix_f32 9.0.0's, v_fma_mix_f32 9.0.4's (not in the goldens: its bytes are gfx906's record's).
+        var gfx9 = GcnTargets.For(GcnIsaVersion.Parse("gfx906"));
+        Check(Convert.ToHexStringLower(AssembleGcn(gfx9, GcnIsaVersion.Parse("gfx906"), "v_fmac_f32 v0, v1, v2")) == "01050076", "v_fmac_f32 on 9.0.6");
+        ThrowsNaming<GcnSyntaxException>(() => AssembleGcn(gfx9, GcnIsaVersion.Parse("gfx900"), "v_fmac_f32 v0, v1, v2"), "v_fmac_f32 on 9.0.0", "v_fmac_f32", "dl instructions", "9.0.0");
+        ThrowsNaming<GcnSyntaxException>(() => AssembleGcn(gfx9, GcnIsaVersion.Parse("gfx90c:xnack-"), "v_fmac_f32 v0, v1, v2"), "v_fmac_f32 on 9.0.12", "9.0.12");
+        Check(Convert.ToHexStringLower(AssembleGcn(gfx9, GcnIsaVersion.Parse("gfx904"), "v_fma_mix_f32 v0, v1, v2, v3")) == "0000a0d301050e04", "v_fma_mix_f32 on 9.0.4");
+        ThrowsNaming<GcnSyntaxException>(() => AssembleGcn(gfx9, GcnIsaVersion.Parse("gfx904"), "v_mad_mix_f32 v0, v1, v2, v3"), "v_mad_mix_f32 on 9.0.4", "mad-mix", "9.0.4");
+        ThrowsNaming<GcnSyntaxException>(() =>
+        {
+            using var asm = new GcnAssembler(gfx9);
+            asm.Assemble("v_dot2_f32_f16 v0, v1, v2, v3"u8);
+        }, "a feature without a version", "v_dot2_f32_f16", "without a version");
+        ThrowsNaming<NotSupportedException>(() =>
+        {
+            using var asm = new GcnAssembler(gfx9);
+            asm.Vop2(GcnOp.VFmacF32, GcnOperand.V(0), GcnOperand.V(1), GcnOperand.V(2));
+        }, "a typed feature without a version", "v_fmac_f32", "without a version");
+        ThrowsNaming<ArgumentException>(() => _ = new GcnAssembler(gfx9, GcnIsaVersion.Parse("gfx90a")), "a version the family does not handle", "gfx90a");
+    }
+
+    internal static void GcnAssemblerMalformed(Device device)
+    {
+        _ = device;
+        var isa = GcnIsaVersion.Parse("gfx90c");
+        var gfx9 = GcnTargets.For(isa);
+        (string Text, int Line, int Column, string Names)[] cases =
+        [
+            ("v_bogus_f32 v0, v1", 1, 1, "'v_bogus_f32' is not an instruction"),
+            ("s_mov_b32 s0,", 1, 14, "expected a scalar source"),
+            ("v_add_f32 v0, v1", 1, 17, "expected ','"),
+            ("s_mov_b32 s0, s1, s2", 1, 17, "more are written"),
+            ("v_add_f32 v0, v1, v2 clamp:1", 1, 22, "clamp takes no value"),
+            ("s_nop 0\ns_nop 1 ; a comment\n  v_mov_b32 v0, q7", 3, 17, "'q7' is not an operand"),
+            ("s_nop 0\r\nv_mov_b32 v0, q7", 2, 15, "'q7'"),
+            ("v_mov_b32 v0, %v12", 1, 15, "virtual register"),
+            (".amdhsa_kernel fill", 1, 1, "directives"),
+            ("v_add_f32 v0, v1, v[2:", 1, 20, "ends with ']'"),
+            ("v_add_f32 v0, v1, v[3:2]", 1, 20, "not a register range"),
+            ("v_mov_b32 v0, v1 row_newbcast:1", 1, 18, "not a modifier"),
+            ("ds_read_b32 v0, v1 glc", 1, 20, "takes no glc"),
+            ("s_waitcnt vmcnt(64)", 1, 17, "vmcnt is 0 to 63"),
+            ("s_waitcnt vmcnt(1) vmcnt(2)", 1, 20, "named twice"),
+            ("s_branch", 1, 9, "expected a label"),
+            ("loop:\nloop:", 2, 1, "defined twice"),
+            ("s_mov_b32 s0, 0x100000000", 1, 15, "does not fit 32 bits"),
+            ("s_movk_i32 s0, 0x10000", 1, 16, "-32768 to 65535"),
+            ("s_load_dword s0, s[3:4], 0x0", 1, 18, "even scalar register pair"),
+            ("global_load_dword v0, v[2:3], off offset:4096", 1, 1, "-4096 to 4095"),
+            ("global_load_dword v0, v1, off", 1, 23, "vector register pair"),
+            ("global_atomic_add v0, v[2:3], v1, off", 1, 1, "only with glc"),
+            ("v_add_u32_e32 v0, v1, s2", 1, 23, "reads src1 from a vector register"),
+            ("v_add_f32_e64 v0, v1, 0x3fb8aa3b", 1, 23, "no literal"),
+            ("v_add_f32 v0, s1, s2", 1, 19, "at most 1 scalar value"),
+            ("v_cndmask_b32 v0, s1, v2, vcc", 1, 19, "at most 1 scalar value"),
+            ("v_add_u32_e64 v0, -v1, v2", 1, 19, "no negation"),
+            ("v_div_scale_f32 v0, vcc, v1, |v2|, v3", 1, 1, "no abs"),
+            ("v_readfirstlane_b32_e64 s0, v1", 1, 1, "no VOP3 form"),
+            ("v_cmp_lt_f32_dpp vcc, v1, v2 row_shr:1", 1, 30, "takes no row_shr"),
+            ("v_mov_b32_dpp v0, v1", 1, 1, "needs a control"),
+            ("ds_swizzle_b32 v0, v1 offset:swizzle(SWAP,3)", 1, 38, "SWAP and a group of 1-16"),
+            ("v_pk_add_f16 v0, v1, v2 op_sel_hi:[1,0,1,1]", 1, 42, "at most 3 values"),
+            ("v_pk_add_f16 v0, v1, v2 op_sel:[1,0,1,1]", 1, 1, "at most 3 sources"),
+        ];
+        foreach (var (text, line, column, names) in cases)
+        {
+            try
+            {
+                _ = AssembleGcn(gfx9, isa, text);
+                Check(false, $"'{text.ReplaceLineEndings(" | ")}' is refused");
+            }
+            catch (GcnSyntaxException e)
+            {
+                Check(e.Line == line && e.Column == column && e.Reason.Contains(names, StringComparison.Ordinal) && e.Message.StartsWith($"GCN line {line}, column {column}: ", StringComparison.Ordinal),
+                    $"'{text.ReplaceLineEndings(" | ")}': line {e.Line}, column {e.Column} ({line}, {column} expected), naming '{names}': {e.Message}");
+            }
+        }
+
+        // A label branched to and never defined: refused when the code is made, naming it and the line.
+        ThrowsNaming<InvalidOperationException>(() => AssembleGcn(gfx9, isa, "s_nop 0\ns_branch nowhere"), "a label never defined", "'nowhere'", "line 2");
+    }
+
+    internal static void GcnAssemblerAllocations(Device device)
+    {
+        _ = device;
+        var isa = GcnIsaVersion.Parse("gfx90c");
+        var gfx9 = GcnTargets.For(isa);
+        var block = ReadFormsGolden()["gfx90c"];
+        byte[] text = Encoding.UTF8.GetBytes(string.Join('\n', block.Records.Select(r => r.Text)));
+        int expected = block.Records.Sum(r => r.Bytes.Length);
+        using var asm = new GcnAssembler(gfx9, isa, 2 * expected);
+        void Block()
+        {
+            asm.Reset();
+            asm.Assemble(text);
+        }
+
+        for (int warm = 0; warm < 40; warm++)
+        {
+            Block();
+        }
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        Block();
+        long assembled = GC.GetAllocatedBytesForCurrentThread() - before;
+        byte[] code = asm.ToArray();
+        long withArray = GC.GetAllocatedBytesForCurrentThread() - before;
+        Check(assembled == 0 && asm.Length == expected, $"assembling gfx90c's block ({asm.Length} bytes of code) allocated {assembled} bytes once warm{(assembled == 0 ? "" : $" ({AllocatedTypes(Block)})")}");
+        Check(withArray - assembled <= code.Length + 32, $"the code array: {withArray - assembled} bytes allocated for {code.Length} bytes of code");
+
+        // fill_f32 as text: the same code as the typed fill_f32 (and so as llvm-mc's, GcnGateGolden).
+        byte[] fill = AssembleGcn(gfx9, isa, """
+            s_load_dwordx4 s[4:7], s[0:1], 0x0   ; s[4:5] out, s6 value, s7 count
+            s_lshl_b32 s2, s2, 8                 ; the block's first element
+            v_add_u32_e32 v0, s2, v0
+            s_waitcnt lgkmcnt(0)
+            v_cmp_gt_u32_e32 vcc, s7, v0         // element < count
+            s_and_saveexec_b64 s[0:1], vcc
+            s_cbranch_execz done
+            v_lshlrev_b32_e32 v0, 2, v0
+            v_mov_b32_e32 v1, s6
+            global_store_dword v0, v1, s[4:5]
+            done:
+            s_endpgm
+            """);
+        Check(fill.AsSpan().SequenceEqual(GcnKernels.Fill(gfx9).Code.Span), $"fill_f32 as text: {Convert.ToHexStringLower(fill)}, typed {Convert.ToHexStringLower(GcnKernels.Fill(gfx9).Code.Span)}");
     }
 
     internal static void GcnGateGolden(Device device)
