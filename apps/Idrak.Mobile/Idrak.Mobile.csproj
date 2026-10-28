@@ -137,23 +137,51 @@
     The library's icon is the app's icon (assets/icon.svg). The launcher's adaptive icon takes the icon's dark ground as
     its background and the graph mark as its foreground: the icon without its rounded square, which the launcher's own
     mask replaces. The mark is made from the repository's SVG at every build (the rounded square, the one <rect> with
-    rounded corners, taken out), so the two never drift apart; the splash screen shows the same mark on the same ground.
+    rounded corners, taken out), so the two never drift apart.
+
+    The system splash (plan 34, phase S) follows the system's theme, made from the same SVG at every build:
+      Android, light (the default resources): the icon's tile (the whole icon, its dark rounded square with the mark) on
+        IdrakSplashGround, the light page ground (Idrak.Maui's light IdrakPageBackground); MAUI's MauiSplashScreen makes
+        it (maui_splash_color, maui_splash_image and its pictures);
+      Android, dark (the -night resources, IdrakSplashNight below): the bare mark on IdrakSplashNightGround, the icon's
+        ground; the mark's pictures are a MauiImage (MAUI's resizer, the same sizes as the splash's), and the night colour
+        and the two drawables that place it (the one before Android 12, the one for Android 12's own splash) are written
+        beside them in the shape MAUI writes its own, so Maui.SplashTheme picks the night ones on a phone in dark mode;
+      Windows (the MSIX package's splash, IdrakWindowsPackage=msix): one colour only, so the dark variant, the bare mark
+        on IdrakSplashNightGround; an unpackaged .exe has no system splash.
+    Android 12 and later clip the splash icon to the launcher's icon mask, at most the circle inside the picture, so the
+    tile is drawn at IdrakSplashTileScale of the picture: 0.8 keeps its rounded corners inside that circle (the tile's
+    corner reaches 314.8 units from the centre of the 512-unit icon, the circle 256). The bare mark fits as it is.
+    IdrakSplashBaseSize is the splash picture's size in dp before Android 12 (Android 12 sizes the icon itself).
   -->
   <PropertyGroup>
     <IdrakIconSource>$(MSBuildThisFileDirectory)../../assets/icon.svg</IdrakIconSource>
     <IdrakIconGround>#0b1020</IdrakIconGround>
     <IdrakIconMark>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(BaseIntermediateOutputPath)', 'icon', 'idrakmark.svg'))</IdrakIconMark>
+    <IdrakSplashGround Condition="'$(IdrakSplashGround)' == ''">#f4f6fb</IdrakSplashGround>
+    <IdrakSplashNightGround Condition="'$(IdrakSplashNightGround)' == ''">$(IdrakIconGround)</IdrakSplashNightGround>
+    <IdrakSplashTileScale Condition="'$(IdrakSplashTileScale)' == ''">0.8</IdrakSplashTileScale>
+    <IdrakSplashBaseSize Condition="'$(IdrakSplashBaseSize)' == ''">160,160</IdrakSplashBaseSize>
+    <IdrakSplashTile>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(BaseIntermediateOutputPath)', 'icon', 'idraksplash.svg'))</IdrakSplashTile>
   </PropertyGroup>
 
   <ItemGroup>
     <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="$(IdrakIconMark)" Color="$(IdrakIconGround)" />
-    <MauiSplashScreen Include="$(IdrakIconMark)" Color="$(IdrakIconGround)" BaseSize="160,160" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <MauiSplashScreen Include="$(IdrakSplashTile)" Color="$(IdrakSplashGround)" BaseSize="$(IdrakSplashBaseSize)" />
+    <!-- The night splash's mark (drawable idrakmark), placed by the drawables IdrakSplashNight writes. -->
+    <MauiImage Include="$(IdrakIconMark)" BaseSize="$(IdrakSplashBaseSize)" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'windows'">
+    <MauiSplashScreen Include="$(IdrakIconMark)" Color="$(IdrakSplashNightGround)" BaseSize="$(IdrakSplashBaseSize)" />
   </ItemGroup>
 
   <!--
     The fonts of the approved design (plan 34, phase R), bundled with their licence texts beside them (both SIL Open Font
-    License 1.1): Inter for text (Regular, Medium, SemiBold, Bold, ExtraBold) and JetBrains Mono for figures and code
-    (Regular, Bold). MauiProgram registers them under the aliases Idrak.Maui's styles name.
+    License 1.1): Inter for text (Regular, Medium, SemiBold, Bold, ExtraBold), JetBrains Mono for figures and code
+    (Regular, Bold) and IBM Plex Sans Arabic for Arabic (SemiBold: the splash's name). MauiProgram registers them under
+    the aliases Idrak.Maui's styles name.
   -->
   <ItemGroup>
     <MauiFont Include="Resources\Fonts\*.otf;Resources\Fonts\*.ttf" />
@@ -168,6 +196,67 @@
     <Error Condition="'$(_IdrakMark)' == '$(_IdrakIcon)'" Text="$(IdrakIconSource) has no rounded square (a &lt;rect rx=...&gt;) to take out; the app's icon is made from it." />
     <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(IdrakIconMark)'))" />
     <WriteLinesToFile File="$(IdrakIconMark)" Lines="$([MSBuild]::Escape('$(_IdrakMark)'))" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!-- The light splash's picture: the whole icon, its viewBox widened so the icon takes IdrakSplashTileScale of it. -->
+  <Target Name="IdrakSplashTile" BeforeTargets="ResizetizeCollectItems;ProcessMauiSplashScreens;PrepareForBuild"
+          Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <PropertyGroup>
+      <_IdrakIcon>$([System.IO.File]::ReadAllText('$(IdrakIconSource)'))</_IdrakIcon>
+      <_IdrakViewBox>$([System.Text.RegularExpressions.Regex]::Match('$(_IdrakIcon)', '\bviewBox="[^"]*"'))</_IdrakViewBox>
+      <_IdrakViewBoxPattern>^\s*viewBox="\s*([-+.\deE]+)[\s,]+([-+.\deE]+)[\s,]+([-+.\deE]+)[\s,]+([-+.\deE]+)\s*"$</_IdrakViewBoxPattern>
+      <_IdrakViewBoxValid>$([System.Text.RegularExpressions.Regex]::IsMatch('$(_IdrakViewBox)', '$(_IdrakViewBoxPattern)'))</_IdrakViewBoxValid>
+      <_IdrakSplashTileScaleValid>$([System.Text.RegularExpressions.Regex]::IsMatch('$(IdrakSplashTileScale)', '^(0?\.\d*[1-9]\d*|1(\.0*)?)$'))</_IdrakSplashTileScaleValid>
+    </PropertyGroup>
+    <Error Condition="'$(_IdrakViewBoxValid)' != 'True'" Text="$(IdrakIconSource) has no viewBox of four numbers; the splash's tile is made from it." />
+    <Error Condition="'$(_IdrakSplashTileScaleValid)' != 'True'"
+           Text="IdrakSplashTileScale is '$(IdrakSplashTileScale)': use a number above 0, at most 1 (the share of the splash picture the tile takes)." />
+    <PropertyGroup>
+      <_IdrakVbX>$([System.Text.RegularExpressions.Regex]::Replace('$(_IdrakViewBox)', '$(_IdrakViewBoxPattern)', '$1'))</_IdrakVbX>
+      <_IdrakVbY>$([System.Text.RegularExpressions.Regex]::Replace('$(_IdrakViewBox)', '$(_IdrakViewBoxPattern)', '$2'))</_IdrakVbY>
+      <_IdrakVbW>$([System.Text.RegularExpressions.Regex]::Replace('$(_IdrakViewBox)', '$(_IdrakViewBoxPattern)', '$3'))</_IdrakVbW>
+      <_IdrakVbH>$([System.Text.RegularExpressions.Regex]::Replace('$(_IdrakViewBox)', '$(_IdrakViewBoxPattern)', '$4'))</_IdrakVbH>
+      <_IdrakTileW>$([MSBuild]::Divide($(_IdrakVbW), $(IdrakSplashTileScale)))</_IdrakTileW>
+      <_IdrakTileH>$([MSBuild]::Divide($(_IdrakVbH), $(IdrakSplashTileScale)))</_IdrakTileH>
+      <_IdrakTileX>$([MSBuild]::Subtract($(_IdrakVbX), $([MSBuild]::Divide($([MSBuild]::Subtract($(_IdrakTileW), $(_IdrakVbW))), 2))))</_IdrakTileX>
+      <_IdrakTileY>$([MSBuild]::Subtract($(_IdrakVbY), $([MSBuild]::Divide($([MSBuild]::Subtract($(_IdrakTileH), $(_IdrakVbH))), 2))))</_IdrakTileY>
+      <_IdrakTile>$([System.Text.RegularExpressions.Regex]::Replace('$(_IdrakIcon)', '\bviewBox="[^"]*"', 'viewBox="$(_IdrakTileX) $(_IdrakTileY) $(_IdrakTileW) $(_IdrakTileH)"'))</_IdrakTile>
+    </PropertyGroup>
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(IdrakSplashTile)'))" />
+    <WriteLinesToFile File="$(IdrakSplashTile)" Lines="$([MSBuild]::Escape('$(_IdrakTile)'))" Overwrite="true" WriteOnlyWhenDifferent="true" />
+  </Target>
+
+  <!--
+    The night splash on Android: the colour and the two drawables MAUI's splash theme names (maui_splash_color,
+    maui_splash_image), under -night, in a resource folder of their own added as MAUI adds its splash's folder; the
+    picture is the MauiImage above. Before Android 12 the window's background draws the picture at its size in the
+    middle; from Android 12 the system's splash takes the 108dp one as its icon (the adaptive icon's size).
+  -->
+  <Target Name="IdrakSplashNight" BeforeTargets="_ComputeAndroidResourcePaths"
+          Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <PropertyGroup>
+      <_IdrakSplashNightRes>$([System.IO.Path]::Combine('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'idraksplash'))</_IdrakSplashNightRes>
+      <_IdrakSplashNightColors><![CDATA[<?xml version="1.0" encoding="utf-8"?>
+<!-- Written by the app's build (IdrakSplashNight, Idrak.Mobile.csproj): the night splash's ground. -->
+<resources><color name="maui_splash_color">$(IdrakSplashNightGround)</color></resources>]]></_IdrakSplashNightColors>
+      <_IdrakSplashNightImage><![CDATA[<?xml version="1.0" encoding="utf-8"?>
+<!-- Written by the app's build (IdrakSplashNight, Idrak.Mobile.csproj): the night splash's mark, before Android 12. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item><bitmap android:gravity="center" android:src="@drawable/idrakmark" android:mipMap="true" /></item></layer-list>]]></_IdrakSplashNightImage>
+      <_IdrakSplashNightImage31><![CDATA[<?xml version="1.0" encoding="utf-8"?>
+<!-- Written by the app's build (IdrakSplashNight, Idrak.Mobile.csproj): the night splash's mark, Android 12 and later. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android"><item android:width="108dp" android:height="108dp" android:gravity="center"><bitmap android:gravity="fill" android:src="@drawable/idrakmark" android:mipMap="true" /></item></layer-list>]]></_IdrakSplashNightImage31>
+    </PropertyGroup>
+    <MakeDir Directories="$(_IdrakSplashNightRes)/values-night;$(_IdrakSplashNightRes)/drawable-night;$(_IdrakSplashNightRes)/drawable-night-v31" />
+    <WriteLinesToFile File="$(_IdrakSplashNightRes)/values-night/idrak_splash_colors.xml" Lines="$([MSBuild]::Escape('$(_IdrakSplashNightColors)'))" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <WriteLinesToFile File="$(_IdrakSplashNightRes)/drawable-night/maui_splash_image.xml" Lines="$([MSBuild]::Escape('$(_IdrakSplashNightImage)'))" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <WriteLinesToFile File="$(_IdrakSplashNightRes)/drawable-night-v31/maui_splash_image.xml" Lines="$([MSBuild]::Escape('$(_IdrakSplashNightImage31)'))" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <WriteLinesToFile File="$(_IdrakSplashNightRes).stamp" Lines="$([MSBuild]::Escape('$(_IdrakSplashNightColors)$(_IdrakSplashNightImage)$(_IdrakSplashNightImage31)'))" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <LibraryResourceDirectories Include="$(_IdrakSplashNightRes)">
+        <StampFile>$(_IdrakSplashNightRes).stamp</StampFile>
+      </LibraryResourceDirectories>
+      <FileWrites Include="$(_IdrakSplashNightRes)/**/*;$(_IdrakSplashNightRes).stamp" />
+    </ItemGroup>
   </Target>
 
 </Project>

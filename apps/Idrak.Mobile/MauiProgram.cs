@@ -40,6 +40,7 @@ public static class MauiProgram
                 fonts.AddFont("Inter-ExtraBold.otf", "InterExtraBold");
                 fonts.AddFont("JetBrainsMono-Regular.ttf", "JetBrainsMono");
                 fonts.AddFont("JetBrainsMono-Bold.ttf", "JetBrainsMonoBold");
+                fonts.AddFont("IBMPlexSansArabic-SemiBold.ttf", "IbmPlexArabicSemiBold");
             })
             .UseIdrak(options =>
             {

@@ -25,6 +25,7 @@
     <x:String x:Key="IdrakFontExtraBold">InterExtraBold</x:String>
     <x:String x:Key="IdrakFontMono">JetBrainsMono</x:String>
     <x:String x:Key="IdrakFontMonoBold">JetBrainsMonoBold</x:String>
+    <x:String x:Key="IdrakFontArabicSemiBold">IbmPlexArabicSemiBold</x:String>
 
     <!-- Type sizes (scaled by the phone's text size setting). -->
     <x:Double x:Key="IdrakFontSizeHero">30</x:Double>
