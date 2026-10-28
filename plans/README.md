@@ -14,6 +14,7 @@ Plans are kept by state: finished plans in [done/](done/), plans not started in 
 | Plan 31: an audio processing pipeline (filters, dynamics, noise and repair, live, rnnoise; built, the owner's runs open) | [opened/31-audio-processing.md](opened/31-audio-processing.md) |
 | Plan 32: an Opus codec plug-in (`IAudioCodec`, speech only; draft, paused after O0) | [opened/32-opus.md](opened/32-opus.md) |
 | Plan 34: Idrak.Maui and Idrak.Mobile (the library on a phone as an app; Android first) | [opened/34-mobile.md](opened/34-mobile.md) |
+| Plan 35: Idrak's own AMDGPU code (HIP kernels with no hipRTC, no SDK; planned, nothing built) | [opened/35-amdgpu.md](opened/35-amdgpu.md) |
 | Plug-in 1. Idrak.HarfBuzz: HarfBuzz as a second shaper | [opened/plugins/1-harfbuzz.md](opened/plugins/1-harfbuzz.md) |
 | Plug-in plans | [opened/plugins/README.md](opened/plugins/README.md) |
 
