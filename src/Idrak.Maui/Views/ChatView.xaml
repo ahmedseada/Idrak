@@ -34,7 +34,7 @@
 
         <!-- The model's answer: full width, its reasoning folded, its Markdown, then live or its measures. -->
         <DataTemplate x:Key="AssistantBubble" x:DataType="vm:ChatBubble">
-            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingChip}" Padding="{DynamicResource IdrakBubblePadding}">
+            <VerticalStackLayout Spacing="{DynamicResource IdrakSpacingChip}" Padding="{DynamicResource IdrakBubblePadding}" SizeChanged="OnBubbleSize">
                 <HorizontalStackLayout Spacing="{DynamicResource IdrakSpacingChip}">
                     <Border Style="{DynamicResource IdrakAvatarSmall}">
                         <Label Text="{Binding ModelInitial}" Style="{DynamicResource IdrakAvatarLetterSmall}" />

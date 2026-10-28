@@ -750,22 +750,83 @@ public sealed class ChatViewModel : ViewModel
         }
     }
 
-    // The kept chats as last read (and changed here since), grouped by day and filtered by the search.
+    // The kept chats as last read (and changed here since), grouped by day and filtered by the search: changed in place, not
+    // made again, so an answer (which moves or changes one chat) leaves the rest of the list the view shows as it is.
     private void ShowConversations()
     {
-        Conversations.Clear();
-        if (_kept is not { } kept)
+        var now = _time.GetUtcNow();
+        var wanted = new List<(string Title, List<ConversationEntry> Chats)>();
+        if (_kept is { } kept)
         {
-            return;
+            foreach (var group in kept.Where(c => _conversationQuery.Length == 0 || c.Title.Contains(_conversationQuery, StringComparison.CurrentCultureIgnoreCase)
+                         || c.Preview.Contains(_conversationQuery, StringComparison.CurrentCultureIgnoreCase))
+                         .GroupBy(c => ConversationText.Group(c.Updated, now)))
+            {
+                wanted.Add((group.Key, [.. group.Select(c => new ConversationEntry(c, ConversationText.When(c.Updated, now), c.Id == _conversationId, OpenConversationCommand))]));
+            }
         }
 
-        var now = _time.GetUtcNow();
-        foreach (var group in kept.Where(c => _conversationQuery.Length == 0 || c.Title.Contains(_conversationQuery, StringComparison.CurrentCultureIgnoreCase)
-                     || c.Preview.Contains(_conversationQuery, StringComparison.CurrentCultureIgnoreCase))
-                     .GroupBy(c => ConversationText.Group(c.Updated, now)))
+        for (int i = 0; i < wanted.Count; i++)
         {
-            Conversations.Add(new ConversationGroup(group.Key, group.Select(c => new ConversationEntry(c, ConversationText.When(c.Updated, now), c.Id == _conversationId,
-                OpenConversationCommand))));
+            var (title, chats) = wanted[i];
+            int at = -1;
+            for (int k = i; k < Conversations.Count && at < 0; k++)
+            {
+                at = Conversations[k].Title == title ? k : -1;
+            }
+
+            if (at < 0)
+            {
+                Conversations.Insert(i, new ConversationGroup(title, chats));
+                continue;
+            }
+
+            if (at != i)
+            {
+                Conversations.Move(at, i);
+            }
+
+            Reconcile(Conversations[i], chats);
+        }
+
+        while (Conversations.Count > wanted.Count)
+        {
+            Conversations.RemoveAt(Conversations.Count - 1);
+        }
+    }
+
+    // A day's chats changed to the ones wanted: each kept where it is when unchanged, moved, replaced or added where not.
+    private static void Reconcile(ConversationGroup group, List<ConversationEntry> chats)
+    {
+        for (int j = 0; j < chats.Count; j++)
+        {
+            var chat = chats[j];
+            int at = -1;
+            for (int k = j; k < group.Count && at < 0; k++)
+            {
+                at = group[k].Id == chat.Id ? k : -1;
+            }
+
+            if (at < 0)
+            {
+                group.Insert(j, chat);
+                continue;
+            }
+
+            if (at != j)
+            {
+                group.Move(at, j);
+            }
+
+            if (!group[j].Shows(chat))
+            {
+                group[j] = chat;
+            }
+        }
+
+        while (group.Count > chats.Count)
+        {
+            group.RemoveAt(group.Count - 1);
         }
     }
 
@@ -1701,6 +1762,10 @@ public sealed class ConversationEntry(ConversationSummary summary, string when, 
 
     /// <summary>Opens it (its id is the parameter).</summary>
     public ICommand OpenCommand { get; } = open;
+
+    // Whether it shows what other does (the list keeps this one then).
+    internal bool Shows(ConversationEntry other) =>
+        Id == other.Id && Title == other.Title && Preview == other.Preview && When == other.When && IsCurrent == other.IsCurrent;
 }
 
 /// <summary>The kept chats of one day group ("Today").</summary>

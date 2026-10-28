@@ -19,6 +19,7 @@ public partial class ChatView : AdaptiveView
 {
     private readonly IAppNavigator _navigator;
     private double _listHeight;
+    private bool _follow = true, _scrollQueued;
 
     /// <summary>A view bound to <paramref name="viewModel"/>; <paramref name="services"/> open Models.</summary>
     public ChatView(ChatViewModel viewModel, IServiceProvider services)
@@ -32,6 +33,8 @@ public partial class ChatView : AdaptiveView
         viewModel.OpenModels = () => _navigator.OpenFeatureAsync(MobileFeatures.Models);
         InitializeComponent();
         MessageList.SizeChanged += OnListSize;
+        MessageList.Scrolled += OnListScrolled;
+        viewModel.Messages.CollectionChanged += (_, e) => _follow |= e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Add;   // a message sent: follow it
         Root.SizeChanged += (_, _) => SizeSheet();
     }
 
@@ -119,11 +122,50 @@ public partial class ChatView : AdaptiveView
         _listHeight = height;
     }
 
+    // The end kept in view while it is followed: scrolled once the layout has measured what changed (a reply's bubble grows
+    // after its text is set, so scrolling at once would reach its old end), at most once a turn of the UI thread.
     private void OnScrollToEnd(object? sender, EventArgs e)
     {
-        if (ViewModel.Messages.Count > 0 && MessageList.Handler is not null)
+        if (!_follow || _scrollQueued)
+        {
+            return;
+        }
+
+        _scrollQueued = true;
+        if (Dispatcher?.Dispatch(ScrollNow) != true)
+        {
+            ScrollNow();
+        }
+    }
+
+    private void ScrollNow()
+    {
+        _scrollQueued = false;
+        if (_follow && ViewModel.Messages.Count > 0 && MessageList.Handler is not null)
         {
             MessageList.ScrollTo(ViewModel.Messages.Count - 1, position: ScrollToPosition.End, animate: false);
+        }
+    }
+
+    // The last reply grew (a streamed piece laid out): its new end brought into view while the chat is followed.
+    private void OnBubbleSize(object? sender, EventArgs e)
+    {
+        if (sender is BindableObject { BindingContext: ChatBubble bubble } && ViewModel.Messages.Count > 0 && ReferenceEquals(bubble, ViewModel.Messages[^1]))
+        {
+            OnScrollToEnd(sender, e);
+        }
+    }
+
+    // Scrolled up to read: no longer followed; back down to the last message: followed again.
+    private void OnListScrolled(object? sender, ItemsViewScrolledEventArgs e)
+    {
+        if (e.VerticalDelta < -4)
+        {
+            _follow = false;
+        }
+        else if (e.VerticalDelta > 0 && e.LastVisibleItemIndex >= ViewModel.Messages.Count - 1)
+        {
+            _follow = true;
         }
     }
 

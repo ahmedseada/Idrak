@@ -244,6 +244,21 @@ internal static partial class MauiTests
         kept.Save(new ChatConversation(ConversationText.NewId(now.AddSeconds(1)), "Second", now.AddSeconds(1), null, [new ChatMessage("user", "three")]));
         page.ReloadConversationsAsync().GetAwaiter().GetResult();
         Check(page.Conversations.SelectMany(g => g).Select(c => c.Title).SequenceEqual(["Second", "First"]), string.Join(", ", page.Conversations.SelectMany(g => g).Select(c => c.Title)));
+
+        // An answer kept: its chat added at the top, the list changed in place (the day's group and the other chats kept as they were).
+        var today = page.Conversations.Single();
+        var first = today.Single(c => c.Title == "First");
+        int resets = 0;
+        page.Conversations.CollectionChanged += (_, e) => resets += e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset ? 1 : 0;
+        today.CollectionChanged += (_, e) => resets += e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset ? 1 : 0;
+        page.RefreshAsync().GetAwaiter().GetResult();
+        page.SelectedModel = page.Models[0];
+        page.Loading!.GetAwaiter().GetResult();
+        page.Draft = "Third question";
+        Check(page.SendAsync().GetAwaiter().GetResult(), page.Error);
+        Check(ReferenceEquals(page.Conversations.Single(), today) && ReferenceEquals(today.Single(c => c.Title == "First"), first) && resets == 0
+              && today.Select(c => c.Title).SequenceEqual(["Second", "Third question", "First"]) && today[1].IsCurrent,   // newest first: "Second" is a second ahead
+            $"kept in place: {string.Join(", ", today.Select(c => c.Title))}, resets {resets}");
         page.ConversationQuery = "sec";
         Check(page.Conversations.SelectMany(g => g).Select(c => c.Title).SequenceEqual(["Second"]), "the search filters what was read");
     }
