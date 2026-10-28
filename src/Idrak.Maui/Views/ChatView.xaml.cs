@@ -20,6 +20,7 @@ public partial class ChatView : AdaptiveView
     private readonly IAppNavigator _navigator;
     private double _listHeight;
     private bool _follow = true, _scrollQueued;
+    private long _scrolledAt;                                                   // when this view last scrolled the list itself (ms)
 
     /// <summary>A view bound to <paramref name="viewModel"/>; <paramref name="services"/> open Models.</summary>
     public ChatView(ChatViewModel viewModel, IServiceProvider services)
@@ -141,9 +142,10 @@ public partial class ChatView : AdaptiveView
     private void ScrollNow()
     {
         _scrollQueued = false;
-        if (_follow && ViewModel.Messages.Count > 0 && MessageList.Handler is not null)
+        if (_follow && ViewModel.Messages.Count > 0)
         {
-            MessageList.ScrollTo(ViewModel.Messages.Count - 1, position: ScrollToPosition.End, animate: false);
+            _scrolledAt = Environment.TickCount64;
+            ListEnd.ScrollTo(MessageList, ViewModel.Messages.Count - 1);
         }
     }
 
@@ -156,16 +158,23 @@ public partial class ChatView : AdaptiveView
         }
     }
 
-    // Scrolled up to read: no longer followed; back down to the last message: followed again.
+    // Followed while the list shows its end: scrolled away from it (up, to read) it is no longer; back at its end it is again.
+    // The view's own scrolling and its settling do not count.
     private void OnListScrolled(object? sender, ItemsViewScrolledEventArgs e)
     {
-        if (e.VerticalDelta < -4)
+        if (Environment.TickCount64 - _scrolledAt < 300)
         {
-            _follow = false;
+            return;
         }
-        else if (e.VerticalDelta > 0 && e.LastVisibleItemIndex >= ViewModel.Messages.Count - 1)
+
+        bool atEnd = ListEnd.IsAtEnd(MessageList) ?? e.LastVisibleItemIndex >= ViewModel.Messages.Count - 1;
+        if (atEnd)
         {
             _follow = true;
+        }
+        else if (e.VerticalDelta < 0)
+        {
+            _follow = false;
         }
     }
 
