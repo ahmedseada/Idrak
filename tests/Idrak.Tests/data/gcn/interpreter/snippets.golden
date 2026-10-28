@@ -1,0 +1,177 @@
+# The GCN interpreter's snippets (*.s in this folder) as LLVM 18.1.3 assembles them for gfx900; made by
+# make_snippets.py, do not edit. Tab-separated: snippet, offset (hex), instruction (llvm-objdump's text), words (hex).
+counts	0	s_load_dwordx2 s[4:5], s[0:1], 0x0	c0060100 00000000
+counts	8	s_load_dwordx2 s[6:7], s[0:1], 0x8	c0060180 00000008
+counts	10	s_waitcnt lgkmcnt(0)	bf8cc07f
+counts	14	v_lshlrev_b32_e32 v1, 2, v0	24020082
+counts	18	global_load_dword v2, v1, s[4:5]	dc508000 02040001
+counts	20	global_load_dword v3, v1, s[4:5] offset:256	dc508100 03040001
+counts	28	s_waitcnt vmcnt(1)	bf8c0f71
+counts	2c	v_mov_b32_e32 v4, v2	7e080302
+counts	30	s_waitcnt vmcnt(0)	bf8c0f70
+counts	34	v_add_u32_e32 v4, v4, v3	68080704
+counts	38	global_store_dword v1, v4, s[6:7]	dc708000 00060401
+counts	40	s_endpgm	bf810000
+divergent	0	s_load_dwordx2 s[4:5], s[0:1], 0x0	c0060100 00000000
+divergent	8	s_load_dword s6, s[0:1], 0x8	c0020180 00000008
+divergent	10	s_lshl_b32 s2, s2, 7	8e028702
+divergent	14	v_add_u32_e32 v1, s2, v0	68020002
+divergent	18	s_waitcnt lgkmcnt(0)	bf8cc07f
+divergent	1c	v_cmp_gt_u32_e32 vcc, s6, v1	7d980206
+divergent	20	s_and_saveexec_b64 s[8:9], vcc	be88206a
+divergent	24	s_cbranch_execz 14	bf88000e
+divergent	28	v_and_b32_e32 v2, 1, v1	26040281
+divergent	2c	v_cmp_ne_u32_e32 vcc, 0, v2	7d9a0480
+divergent	30	s_and_saveexec_b64 s[10:11], vcc	be8a206a
+divergent	34	s_xor_b64 s[10:11], exec, s[10:11]	888a0a7e
+divergent	38	s_cbranch_execz 1	bf880001
+divergent	3c	v_mul_u32_u24_e32 v3, 3, v1	10060283
+divergent	40	s_andn2_saveexec_b64 s[10:11], s[10:11]	be8a230a
+divergent	44	s_cbranch_execz 2	bf880002
+divergent	48	v_sub_u32_e32 v3, 0x64, v1	6a0602ff 00000064
+divergent	50	s_or_b64 exec, exec, s[10:11]	87fe0a7e
+divergent	54	v_lshlrev_b32_e32 v4, 2, v1	24080282
+divergent	58	global_store_dword v4, v3, s[4:5]	dc708000 00040304
+divergent	60	s_endpgm	bf810000
+lanes	0	s_load_dwordx2 s[4:5], s[0:1], 0x0	c0060100 00000000
+lanes	8	v_mad_u32_u24 v1, v0, 3, 1	d1c30001 02050700
+lanes	10	v_lshlrev_b32_e32 v20, 2, v0	24280082
+lanes	14	v_mov_b32_e32 v2, 0	7e040280
+lanes	18	v_mov_b32_dpp v2, v1 row_shr:1 row_mask:0xf bank_mask:0xf bound_ctrl:1	7e0402fa ff091101
+lanes	20	v_mov_b32_e32 v3, -1	7e0602c1
+lanes	24	v_mov_b32_dpp v3, v1 quad_perm:[1,0,3,2] row_mask:0xf bank_mask:0xf	7e0602fa ff00b101
+lanes	2c	v_mov_b32_e32 v4, 7	7e080287
+lanes	30	v_mov_b32_dpp v4, v1 row_bcast:15 row_mask:0xa bank_mask:0xf	7e0802fa af014201
+lanes	38	ds_swizzle_b32 v5, v1 offset:swizzle(SWAP,16)	d87a401f 05000001
+lanes	40	v_sub_u32_e32 v6, 63, v0	6a0c00bf
+lanes	44	v_lshlrev_b32_e32 v6, 2, v6	240c0c82
+lanes	48	ds_bpermute_b32 v7, v6, v1	d87e0000 07000106
+lanes	50	v_readlane_b32 s6, v1, 5	d2890006 00010b01
+lanes	58	v_mov_b32_e32 v8, s6	7e100206
+lanes	5c	v_mov_b32_e32 v9, 0	7e120280
+lanes	60	s_movk_i32 s7, 0x2a	b007002a
+lanes	64	v_writelane_b32 v9, s7, 7	d28a0009 00010e07
+lanes	6c	v_mbcnt_lo_u32_b32 v10, -1, 0	d28c000a 000100c1
+lanes	74	v_mbcnt_hi_u32_b32 v10, -1, v10	d28d000a 000214c1
+lanes	7c	v_mov_b32_e32 v11, 9	7e160289
+lanes	80	v_mov_b32_dpp v11, v1 wave_shr:1 row_mask:0xf bank_mask:0xf	7e1602fa ff013801
+lanes	88	v_mov_b32_dpp v12, v1 row_mirror row_mask:0xf bank_mask:0xf	7e1802fa ff014001
+lanes	90	s_mov_b64 s[10:11], exec	be8a017e
+lanes	94	s_mov_b32 exec_lo, 0xff00	befe00ff 0000ff00
+lanes	9c	s_mov_b32 exec_hi, 0	beff0080
+lanes	a0	v_readfirstlane_b32 s8, v1	7e100501
+lanes	a4	s_mov_b64 exec, s[10:11]	befe010a
+lanes	a8	v_mov_b32_e32 v13, s8	7e1a0208
+lanes	ac	v_mov_b32_sdwa v14, v1 dst_sel:WORD_1 dst_unused:UNUSED_PAD src0_sel:BYTE_0	7e1c02f9 00000501
+lanes	b4	v_add_u32_sdwa v15, v1, v1 dst_sel:DWORD dst_unused:UNUSED_PAD src0_sel:BYTE_1 src1_sel:BYTE_0	681e02f9 00010601
+lanes	bc	s_waitcnt lgkmcnt(0)	bf8cc07f
+lanes	c0	global_store_dword v20, v2, s[4:5]	dc708000 00040214
+lanes	c8	global_store_dword v20, v3, s[4:5] offset:256	dc708100 00040314
+lanes	d0	global_store_dword v20, v4, s[4:5] offset:512	dc708200 00040414
+lanes	d8	global_store_dword v20, v5, s[4:5] offset:768	dc708300 00040514
+lanes	e0	global_store_dword v20, v7, s[4:5] offset:1024	dc708400 00040714
+lanes	e8	global_store_dword v20, v8, s[4:5] offset:1280	dc708500 00040814
+lanes	f0	global_store_dword v20, v9, s[4:5] offset:1536	dc708600 00040914
+lanes	f8	global_store_dword v20, v10, s[4:5] offset:1792	dc708700 00040a14
+lanes	100	global_store_dword v20, v11, s[4:5] offset:2048	dc708800 00040b14
+lanes	108	global_store_dword v20, v12, s[4:5] offset:2304	dc708900 00040c14
+lanes	110	global_store_dword v20, v13, s[4:5] offset:2560	dc708a00 00040d14
+lanes	118	global_store_dword v20, v14, s[4:5] offset:2816	dc708b00 00040e14
+lanes	120	global_store_dword v20, v15, s[4:5] offset:3072	dc708c00 00040f14
+lanes	128	s_endpgm	bf810000
+math	0	s_load_dwordx4 s[4:7], s[0:1], 0x0	c00a0100 00000000
+math	8	s_load_dwordx2 s[8:9], s[0:1], 0x10	c0060200 00000010
+math	10	v_lshlrev_b32_e32 v1, 2, v0	24020082
+math	14	s_waitcnt lgkmcnt(0)	bf8cc07f
+math	18	global_load_dword v2, v1, s[4:5]	dc508000 02040001
+math	20	global_load_dword v3, v1, s[6:7]	dc508000 03060001
+math	28	s_waitcnt vmcnt(0)	bf8c0f70
+math	2c	v_div_scale_f32 v4, s[10:11], v3, v3, v2	d1e00a04 040a0703
+math	34	v_div_scale_f32 v5, vcc, v2, v3, v2	d1e06a05 040a0702
+math	3c	v_rcp_f32_e32 v6, v4	7e0c4504
+math	40	v_fma_f32 v7, -v4, v6, 1.0	d1cb0007 23ca0d04
+math	48	v_fma_f32 v6, v7, v6, v6	d1cb0006 041a0d07
+math	50	v_mul_f32_e32 v7, v5, v6	0a0e0d05
+math	54	v_fma_f32 v8, -v4, v7, v5	d1cb0008 24160f04
+math	5c	v_fma_f32 v7, v8, v6, v7	d1cb0007 041e0d08
+math	64	v_fma_f32 v4, -v4, v7, v5	d1cb0004 24160f04
+math	6c	v_div_fmas_f32 v4, v4, v6, v7	d1e20004 041e0d04
+math	74	v_div_fixup_f32 v4, v4, v3, v2	d1de0004 040a0704
+math	7c	v_exp_f32_e32 v5, v2	7e0a4102
+math	80	v_log_f32_e64 v6, |v3|	d1610106 00000103
+math	88	v_sin_f32_e32 v7, v2	7e0e5302
+math	8c	v_cos_f32_e32 v8, v2	7e105502
+math	90	v_sqrt_f32_e64 v9, |v3|	d1670109 00000103
+math	98	v_rsq_f32_e64 v10, |v3|	d164010a 00000103
+math	a0	v_fma_f32 v11, v2, v3, -v2	d1cb000b 840a0702
+math	a8	v_mad_f32 v12, v2, v3, 0.5	d1c1000c 03c20702
+math	b0	v_med3_f32 v13, v2, -1.0, 1.0	d1d6000d 03c9e702
+math	b8	v_max_f32_e64 v14, v2, v3 clamp	d10b800e 00020702
+math	c0	v_cvt_i32_f32_e32 v15, v2	7e1e1102
+math	c4	v_cvt_f16_f32_e32 v16, v2	7e201502
+math	c8	v_cvt_f32_f16_e32 v16, v16	7e201710
+math	cc	v_rndne_f32_e32 v17, v2	7e223d02
+math	d0	v_fract_f32_e32 v18, v2	7e243702
+math	d4	v_cmp_lt_f32_e32 vcc, v2, v3	7c820702
+math	d8	v_cndmask_b32_e64 v19, v3, v2, vcc	d1000013 01aa0503
+math	e0	v_ldexp_f32 v21, v2, 3	d2880015 00010702
+math	e8	v_cvt_pkrtz_f16_f32 v22, v2, v3	d2960016 00020702
+math	f0	global_store_dword v1, v4, s[8:9]	dc708000 00080401
+math	f8	global_store_dword v1, v5, s[8:9] offset:256	dc708100 00080501
+math	100	global_store_dword v1, v6, s[8:9] offset:512	dc708200 00080601
+math	108	global_store_dword v1, v7, s[8:9] offset:768	dc708300 00080701
+math	110	global_store_dword v1, v8, s[8:9] offset:1024	dc708400 00080801
+math	118	global_store_dword v1, v9, s[8:9] offset:1280	dc708500 00080901
+math	120	global_store_dword v1, v10, s[8:9] offset:1536	dc708600 00080a01
+math	128	global_store_dword v1, v11, s[8:9] offset:1792	dc708700 00080b01
+math	130	global_store_dword v1, v12, s[8:9] offset:2048	dc708800 00080c01
+math	138	global_store_dword v1, v13, s[8:9] offset:2304	dc708900 00080d01
+math	140	global_store_dword v1, v14, s[8:9] offset:2560	dc708a00 00080e01
+math	148	global_store_dword v1, v15, s[8:9] offset:2816	dc708b00 00080f01
+math	150	global_store_dword v1, v16, s[8:9] offset:3072	dc708c00 00081001
+math	158	global_store_dword v1, v17, s[8:9] offset:3328	dc708d00 00081101
+math	160	global_store_dword v1, v18, s[8:9] offset:3584	dc708e00 00081201
+math	168	global_store_dword v1, v19, s[8:9] offset:3840	dc708f00 00081301
+math	170	s_add_u32 s8, s8, 0x1000	8008ff08 00001000
+math	178	s_addc_u32 s9, s9, 0	82098009
+math	17c	global_store_dword v1, v21, s[8:9]	dc708000 00081501
+math	184	global_store_dword v1, v22, s[8:9] offset:256	dc708100 00081601
+math	18c	s_endpgm	bf810000
+reduce	0	s_load_dwordx4 s[4:7], s[0:1], 0x0	c00a0100 00000000
+reduce	8	s_lshl_b32 s3, s2, 8	8e038802
+reduce	c	v_add_u32_e32 v1, s3, v0	68020003
+reduce	10	v_lshlrev_b32_e32 v2, 2, v1	24040282
+reduce	14	s_waitcnt lgkmcnt(0)	bf8cc07f
+reduce	18	global_load_dword v3, v2, s[4:5]	dc508000 03040002
+reduce	20	v_lshlrev_b32_e32 v4, 2, v0	24080082
+reduce	24	s_waitcnt vmcnt(0)	bf8c0f70
+reduce	28	ds_write_b32 v4, v3	d81a0000 00000304
+reduce	30	s_movk_i32 s8, 0x80	b0080080
+reduce	34	s_waitcnt lgkmcnt(0)	bf8cc07f
+reduce	38	s_barrier	bf8a0000
+reduce	3c	v_cmp_gt_u32_e32 vcc, s8, v0	7d980008
+reduce	40	s_and_saveexec_b64 s[10:11], vcc	be8a206a
+reduce	44	s_cbranch_execz 10	bf88000a
+reduce	48	s_lshl_b32 s9, s8, 2	8e098208
+reduce	4c	v_add_u32_e32 v5, s9, v4	680a0809
+reduce	50	ds_read_b32 v6, v4	d86c0000 06000004
+reduce	58	ds_read_b32 v7, v5	d86c0000 07000005
+reduce	60	s_waitcnt lgkmcnt(0)	bf8cc07f
+reduce	64	v_add_f32_e32 v6, v6, v7	020c0f06
+reduce	68	ds_write_b32 v4, v6	d81a0000 00000604
+reduce	70	s_or_b64 exec, exec, s[10:11]	87fe0a7e
+reduce	74	s_lshr_b32 s8, s8, 1	8f088108
+reduce	78	s_cmp_lg_u32 s8, 0	bf078008
+reduce	7c	s_cbranch_scc1 65517	bf85ffed
+reduce	80	s_waitcnt lgkmcnt(0)	bf8cc07f
+reduce	84	s_barrier	bf8a0000
+reduce	88	v_cmp_eq_u32_e32 vcc, 0, v0	7d940080
+reduce	8c	s_and_saveexec_b64 s[10:11], vcc	be8a206a
+reduce	90	s_cbranch_execz 8	bf880008
+reduce	94	v_mov_b32_e32 v8, 0	7e100280
+reduce	98	ds_read_b32 v9, v8	d86c0000 09000008
+reduce	a0	s_lshl_b32 s12, s2, 2	8e0c8202
+reduce	a4	v_mov_b32_e32 v10, s12	7e14020c
+reduce	a8	s_waitcnt lgkmcnt(0)	bf8cc07f
+reduce	ac	global_store_dword v10, v9, s[6:7]	dc708000 0006090a
+reduce	b4	s_endpgm	bf810000
