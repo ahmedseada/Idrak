@@ -14,12 +14,10 @@ internal sealed class HipStorage(HipBackend backend, ulong pointer, int length, 
 }
 
 /// <summary>
-/// A GPU driven through the HIP runtime (ROCm on Linux, the HIP SDK on Windows): the third backend family after CUDA
-/// and Vulkan, started from the minimum backend. Memory, uploads, downloads, copies and fills run on the device; kernels
-/// compiled at run time by hipRTC (<see cref="HipKernels"/>) run element-wise arithmetic and activations, row norms and
-/// softmaxes, the float32 and packed products, attention over key ranges and over a key/value cache, gathers, permutes
-/// and cache writes; every other operation takes the host fallback (<see cref="HostCall"/>), so every model runs from
-/// the start. All work goes on one stream; uploads and downloads wait for it, so their host memory is never read or
+/// A GPU driven through the HIP runtime (the graphics driver's on Windows, ROCm's runtime library on Linux; no part of
+/// the HIP SDK): the third backend family after CUDA and Vulkan, started from the minimum backend. Memory, uploads,
+/// downloads, copies and fills run on the device; every other operation takes the host fallback
+/// (<see cref="HostCall"/>) until Idrak's own GCN kernels land (plan 35), so every model runs from the start. All work goes on one stream; uploads and downloads wait for it, so their host memory is never read or
 /// written after they return. The device reports its memory (<see cref="IMemoryReport"/>), so paths that need much at
 /// once (the composed attention's scores, a prompt's pieces) are sized by it.
 /// </summary>
@@ -97,7 +95,7 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
         MemoryBytes = DeviceLimits.TotalMemory,
         ComputeUnits = DeviceLimits.ComputeUnits,
         SubgroupSize = DeviceLimits.WarpSize,
-        KernelWidth = HipKernels.BlockSizeFor(DeviceLimits),
+        KernelWidth = DeviceLimits.BlockSize,
         HardwareKind = DeviceLimits.Integrated ? "integrated" : "discrete",
     };
 
@@ -108,12 +106,8 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
     private int Ordinal => Array.IndexOf(Probe.Value.Devices, _device);
 
     // Every operation without a kernel of its own takes the host fallback, which runs the CPU's code: the layers follow
-    // the CPU's limits so the two agree (few rows and decoding heads: the HIP kernels take as many), except the heads the
-    // attention kernels over key ranges take, above which attention is composed on the device where its scores fit.
-    public override BackendCapabilities Capabilities =>
-        _capabilities ??= Device.Cpu.Backend.Capabilities with { SpanAttentionHeadDim = HipKernels.AttentionMaxDim };
-
-    private BackendCapabilities? _capabilities;
+    // the CPU's limits so the two agree.
+    public override BackendCapabilities Capabilities => Device.Cpu.Backend.Capabilities;
 
     /// <summary>"6.2.41134" for a runtime version 60241134 (major · 10⁷ + minor · 10⁵ + patch).</summary>
     internal static string FormatVersion(int version) => $"{version / 10_000_000}.{version / 100_000 % 100}.{version % 100_000}";
@@ -399,22 +393,10 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
 
     public override void Copy2D(Storage src, int srcOffset, int srcStride, Storage dst, int dstOffset, int dstStride, int rows, int cols, bool accumulate)
     {
-        // A strided copy is one 2-D copy on the device, an adding one a kernel (narrow's and concatenation's gradients);
-        // overlapping rows (one storage, or a destination pitch narrower than a row) and other narrow pitches take the
-        // host fallback.
-        if (accumulate)
-        {
-            if (ReferenceEquals(src, dst) || rows > 1 && dstStride < cols
-                || !Elements("copy2d_add_f32", (long)Math.Max(rows, 0) * Math.Max(cols, 0), P(src), P(dst), U(srcOffset), U(srcStride), U(dstOffset), U(dstStride),
-                    U(rows), U(cols)))
-            {
-                base.Copy2D(src, srcOffset, srcStride, dst, dstOffset, dstStride, rows, cols, accumulate);
-            }
-
-            return;
-        }
-
-        if (ReferenceEquals(src, dst) || srcStride < cols || dstStride < cols)
+        // A strided copy is one 2-D copy on the device; an adding one (narrow's and concatenation's gradients) needs a
+        // kernel and takes the host fallback until the GCN kernels land, as do overlapping rows (one storage) and pitches
+        // narrower than a row.
+        if (accumulate || ReferenceEquals(src, dst) || srcStride < cols || dstStride < cols)
         {
             base.Copy2D(src, srcOffset, srcStride, dst, dstOffset, dstStride, rows, cols, accumulate);
             return;
@@ -497,7 +479,7 @@ internal sealed class HipProvider : ISeparableDeviceProvider
 {
     public string Name => "hip";
 
-    public string Summary => "GPUs through the HIP runtime (kernels compiled with hipRTC)";
+    public string Summary => "GPUs through the HIP runtime (the graphics driver's; Idrak's own GCN kernels)";
 
     public string Display => "HIP";
 

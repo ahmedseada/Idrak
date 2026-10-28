@@ -6,7 +6,6 @@ using Idrak.Abstraction.Operations;
 using Idrak.Gpu;
 using Idrak.Gpu.Abstractions;
 using Idrak.Gpu.Cuda;
-using Idrak.Gpu.Hip;
 using Idrak.Gpu.Vulkan;
 
 // Plan 33, C1: the device contract as interfaces. What every device provides (IDeviceBackend), each optional capability
@@ -154,7 +153,6 @@ internal abstract partial class Tests
             IDeviceKernel[] kernels =
             [
                 new CudaKernel(Ptx, "contract_kernel"),
-                new HipKernel("extern \"C\" __global__ void contract_kernel(float* a, int n) { }", "contract_kernel"),
                 new VulkanKernel([0x07230203, 0, 0, 0, 0], bindings: 1, pushConstantBytes: 4, "contract_kernel"),
             ];
             foreach (var kernel in kernels)
@@ -164,8 +162,7 @@ internal abstract partial class Tests
                     $"{kernel.GetType().Name} on the CPU: {message ?? "launched"}");
             }
 
-            Check(HipKernel.UnavailableReason(cpu) is { } reason && reason.Contains("not a HIP device", StringComparison.Ordinal), "HIP's plug-in kernels on the CPU");
-            var vulkan = kernels[2];
+            var vulkan = kernels[1];
             string? shared = Refusal(() => vulkan.Launch(cpu, 1, 1, 1, 64, 1, 1, [storage, 8], sharedBytes: 16));
             string? offset = Refusal(() => vulkan.Launch(cpu, 1, 1, 1, 64, 1, 1, [KernelArgument.Pointer(storage, 4), 8]));
             Check(shared is not null && shared.Contains("shared memory", StringComparison.Ordinal) && offset is not null && offset.Contains("bound at its start", StringComparison.Ordinal),

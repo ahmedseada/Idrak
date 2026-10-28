@@ -9,8 +9,8 @@ namespace Idrak.Gpu.Hip;
 public sealed class HipException(string message) : DeviceException("hip", message);
 
 /// <summary>
-/// Bindings to the HIP runtime (libamdhip64.so on Linux, from ROCm; amdhip64_N.dll on Windows, from the HIP SDK or the
-/// graphics driver), loaded at run time and called through function pointers resolved by name. Nothing is bound at
+/// Bindings to the HIP runtime (libamdhip64.so on Linux, ROCm's runtime library; amdhip64_N.dll on Windows, installed by
+/// the graphics driver), loaded at run time and called through function pointers resolved by name. Nothing is bound at
 /// build time, so a machine without the runtime loads the library as before: the probe finds no library, reports why,
 /// and there are no HIP devices. Entry points a runtime release lacks are null (optional ones) or make the probe fail
 /// with their name (required ones), never a crash at the first call.
@@ -25,41 +25,40 @@ internal static unsafe class HipRuntime
     /// <summary>The runtime library's file names tried in order on <paramref name="os"/> ("windows" or "linux"; none elsewhere).</summary>
     internal static string[] CandidateNames(string os) => os switch
     {
-        // The SDK's major version is part of the file name (amdhip64_6.dll); older releases ship amdhip64.dll.
+        // The runtime's major version is part of the file name (amdhip64_6.dll); older drivers install amdhip64.dll.
         "windows" => ["amdhip64_7.dll", "amdhip64_6.dll", "amdhip64.dll"],
         "linux" => ["libamdhip64.so", "libamdhip64.so.7", "libamdhip64.so.6", "libamdhip64.so.5"],
         _ => [],
     };
 
     /// <summary>
-    /// Folders the runtime is looked for in when the default search does not find it: the install root named by
-    /// HIP_PATH (Windows SDK) or ROCM_PATH, then the default ROCm prefix on Linux.
+    /// Folders the runtime is looked for in when the default search does not find it: on Linux, the ROCm root named by
+    /// ROCM_PATH, then ROCm's default prefix. On Windows none: the system's search finds the runtime the graphics driver
+    /// installed, and no SDK's folder is looked in (the library depends on no part of the HIP SDK).
     /// </summary>
     internal static IEnumerable<string> SearchFolders(string os, Func<string, string?> environment)
     {
-        foreach (string variable in new[] { "HIP_PATH", "ROCM_PATH" })
+        if (os != "linux")
         {
-            if (environment(variable) is { Length: > 0 } root)
-            {
-                yield return Path.Combine(root, os == "windows" ? "bin" : "lib");
-            }
+            yield break;
         }
 
-        if (os == "linux")
+        if (environment("ROCM_PATH") is { Length: > 0 } root)
         {
-            yield return "/opt/rocm/lib";
+            yield return Path.Combine(root, "lib");
         }
+
+        yield return "/opt/rocm/lib";
     }
 
     internal static string CurrentOs => OperatingSystem.IsWindows() ? "windows" : OperatingSystem.IsLinux() ? "linux" : "";
 
     /// <summary>
     /// Opens the first library of <paramref name="names"/> found by the system's default search, else in
-    /// <paramref name="folders"/> (the install HIP_PATH or ROCM_PATH names); false (with the names tried) when none is
-    /// there; <paramref name="opened"/> is the name or path opened. The default search comes first: on Windows it finds the
-    /// runtime the graphics driver installed, the one matched to that driver (an SDK's newer runtime beside an older driver
-    /// can crash the process inside hipInit, which no handler catches). A runtime older than the SDK's compiler is met by
-    /// compiling for older code object formats (HipRtc.CodeObjectFormats); IDRAK_HIP_RUNTIME names another runtime to try first.
+    /// <paramref name="folders"/> (ROCm's on Linux); false (with the names tried) when none is there; <paramref name="opened"/>
+    /// is the name or path opened. The default search comes first: on Windows it finds the runtime the graphics driver
+    /// installed, the one matched to that driver (a newer runtime beside an older driver can crash the process inside
+    /// hipInit, which no handler catches). IDRAK_HIP_RUNTIME names another runtime to try first.
     /// Touches no shared state, so tests can ask for libraries that do not exist.
     /// </summary>
     internal static bool TryOpen(IReadOnlyList<string> names, IEnumerable<string> folders, out IntPtr handle, out string reason, out string opened)
@@ -89,7 +88,7 @@ internal static unsafe class HipRuntime
         handle = IntPtr.Zero;
         opened = "";
         reason = names.Count == 0 ? "HIP is not used on this operating system"
-            : $"the HIP runtime ({string.Join(" / ", names)}) was not found; install ROCm (Linux) or the HIP SDK (Windows)";
+            : $"the HIP runtime ({string.Join(" / ", names)}) was not found; install the GPU's graphics driver (Windows) or ROCm's runtime (Linux)";
         return false;
     }
 
@@ -161,7 +160,7 @@ internal static unsafe class HipRuntime
         if (missing.Count > 0)
         {
             NativeLibrary.Free(handle);
-            reason = $"the HIP runtime found lacks {string.Join(", ", missing)} (a newer ROCm or HIP SDK is needed)";
+            reason = $"the HIP runtime found lacks {string.Join(", ", missing)} (a newer graphics driver or ROCm runtime is needed)";
             return false;
         }
 

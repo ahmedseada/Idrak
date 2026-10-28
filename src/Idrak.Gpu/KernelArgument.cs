@@ -6,8 +6,7 @@ using System.Globalization;
 namespace Idrak.Gpu;
 
 /// <summary>
-/// One argument of a plug-in's CUDA or HIP kernel launch (<see cref="Cuda.CudaKernel.Launch(Backend, uint, uint, uint, uint, uint, uint, ReadOnlySpan{KernelArgument}, uint)"/>,
-/// <see cref="Hip.HipKernel.Launch(Backend, uint, uint, uint, uint, uint, uint, ReadOnlySpan{KernelArgument}, uint)"/>):
+/// One argument of a plug-in's CUDA kernel launch (<see cref="Cuda.CudaKernel.Launch(Backend, uint, uint, uint, uint, uint, uint, ReadOnlySpan{KernelArgument}, uint)"/>):
 /// the device address of a storage of the launching device (a <c>float*</c> parameter, 64 bits), a 32-bit integer, a
 /// float or a 64-bit integer. Storages, <c>int</c>, <c>uint</c>, <c>float</c> and <c>long</c> convert to it implicitly,
 /// so a launch reads <c>kernel.Launch(backend, blocks, 1, 1, 256, 1, 1, [rows, scales, output, n, width])</c>. Each

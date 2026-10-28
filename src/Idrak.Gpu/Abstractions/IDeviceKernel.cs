@@ -7,8 +7,8 @@ using Idrak.Gpu.Vulkan;
 namespace Idrak.Gpu.Abstractions;
 
 /// <summary>
-/// A compute kernel a plug-in ships for one kind of device: PTX text (<see cref="Cuda.CudaKernel"/>), HIP C++
-/// (<see cref="Hip.HipKernel"/>) or SPIR-V words (<see cref="Vulkan.VulkanKernel"/>), launched from a kernel the plug-in
+/// A compute kernel a plug-in ships for one kind of device: PTX text (<see cref="Cuda.CudaKernel"/>) or SPIR-V words
+/// (<see cref="Vulkan.VulkanKernel"/>), launched from a kernel the plug-in
 /// registers for that kind (<see cref="Kernels.Register{TKernel}(Operation{TKernel}, string, TKernel, Func{Backend, bool})"/>).
 /// It runs on any backend that launches kernels of its type (<see cref="IKernelLauncher{TKernel}"/>,
 /// <see cref="IVulkanKernelDispatcher"/>): the library's backend of the kind implements it, and so may a backend
@@ -34,8 +34,8 @@ public interface IDeviceKernel
 }
 
 /// <summary>
-/// A device that launches kernels of type <typeparamref name="TKernel"/> (the CUDA backend <see cref="Cuda.CudaKernel"/>s,
-/// the HIP backend <see cref="Hip.HipKernel"/>s): what a kernel's <see cref="IDeviceKernel.Launch"/> asks of the backend it
+/// A device that launches kernels of type <typeparamref name="TKernel"/> (the CUDA backend <see cref="Cuda.CudaKernel"/>s):
+/// what a kernel's <see cref="IDeviceKernel.Launch"/> asks of the backend it
 /// is given, instead of a check for one backend class.
 /// </summary>
 /// <typeparam name="TKernel">The kind of kernel the device launches.</typeparam>

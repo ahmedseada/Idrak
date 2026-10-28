@@ -139,15 +139,15 @@ internal static partial class Messages
             "ثبت مشغل بطاقة رسومات يدعم CUDA (للبطاقات التي تدعمه فقط)؛ والواجهات الأخرى تعمل بدونه",
         ["install the Vulkan loader (libvulkan.so.1, vulkan-1.dll) and the GPU's Vulkan driver"] =
             "ثبت محمل Vulkan (libvulkan.so.1 أو vulkan-1.dll) ومشغل Vulkan لبطاقة الرسومات",
-        ["install the HIP runtime and hipRTC (ROCm on Linux, the HIP SDK on Windows; HIP_PATH or ROCM_PATH finds them)"] =
-            "ثبت بيئة HIP و hipRTC (حزمة ROCm على Linux، و HIP SDK على Windows؛ ويجدهما HIP_PATH أو ROCM_PATH)",
+        ["install the AMD graphics driver (Windows) or ROCm's runtime (Linux; ROCM_PATH finds it)"] =
+            "ثبت مشغل بطاقة الرسومات من AMD (على Windows) أو بيئة تشغيل ROCm (على Linux؛ ويجدها ROCM_PATH)",
         ["install what the {0} backend needs (see the plug-in that registers it)"] = "ثبت ما تحتاجه الواجهة {0} (انظر الإضافة التي تسجلها)",
         ["CUDA drives GPUs through their CUDA driver; without it those GPUs can still run through Vulkan."] =
             "تشغل CUDA بطاقات الرسومات عبر مشغل CUDA؛ وبدونه يمكن لهذه البطاقات أن تعمل عبر Vulkan.",
         ["Vulkan compute runs Idrak's generated kernels on most GPUs (and on phones); it needs the loader and a driver."] =
             "تشغل حوسبة Vulkan النوى التي تولدها إدراك على معظم بطاقات الرسومات (وعلى الهواتف)؛ وتحتاج إلى المحمل ومشغل.",
-        ["HIP runs kernels compiled at run time by hipRTC; without the runtime those GPUs can still run through Vulkan."] =
-            "تشغل HIP نوى يترجمها hipRTC أثناء التشغيل؛ وبدون بيئتها يمكن لهذه البطاقات أن تعمل عبر Vulkan.",
+        ["HIP drives AMD GPUs through the graphics driver's runtime, with Idrak's own kernels (no SDK); without it those GPUs can still run through Vulkan."] =
+            "تشغل HIP بطاقات AMD عبر بيئة تشغيل مشغل الرسومات، بنوى إدراك الخاصة (دون SDK)؛ وبدونها يمكن لهذه البطاقات أن تعمل عبر Vulkan.",
         ["A registered backend adds devices of its kind."] = "كل واجهة خلفية مسجلة تضيف أجهزة من نوعها.",
         [", or leave the backend out with {0}"] = "، أو استبعد الواجهة بالمتغير {0}",
         ["update the device's driver{0}"] = "حدث مشغل الجهاز{0}",

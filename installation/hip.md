@@ -1,44 +1,37 @@
-# HIP (ROCm on Linux, the HIP SDK on Windows)
+# HIP (AMD GPUs: the graphics driver on Windows, ROCm's runtime on Linux)
 
-**Untested on real hardware.** The HIP backend (`hip:0`, `hip:1`, …; [plan 8](../plans/done/8-hip.md)) has not run on an AMD
-GPU yet: these are the steps a first run should follow, and what to send back. On a machine without HIP nothing
-changes: the device list shows `hip:-` with the reason, and every other backend works as before.
+The HIP backend (`hip:0`, `hip:1`, …; [plan 8](../plans/done/8-hip.md)) needs no SDK, as CUDA needs no CUDA Toolkit:
+only the HIP runtime the graphics driver installs (Windows) or ROCm's runtime library (Linux). Its kernels are Idrak's
+own GCN code, written in C# and assembled by Idrak ([plan 35](../plans/opened/35-gcn.md)); until they land, memory,
+uploads, downloads, copies and fills run on the GPU and every other operation on the CPU through the host fallback. On
+a machine without HIP nothing changes: the device list shows `hip:-` with the reason, and every other backend works as
+before.
 
 What the backend needs at run time (nothing at build time):
 
 | | Linux | Windows |
 |---|---|---|
-| Runtime (memory, copies, launches) | `libamdhip64.so` from ROCm | `amdhip64_6.dll` (or `amdhip64_7.dll`, `amdhip64.dll`) from the HIP SDK; the graphics driver also installs one |
-| Compiler (the kernels) | `libhiprtc.so` from ROCm | `hiprtcMMmm.dll` (for example `hiprtc0602.dll`) from the HIP SDK |
-| Where it is looked for | the loader's search path, then `$ROCM_PATH/lib`, then `/opt/rocm/lib` | the DLL search path, then `%HIP_PATH%\bin` |
-
-Without the compiler, HIP devices still work: memory and copies run on the GPU and every other operation on the CPU
-(the HIP device test prints why the kernels are unavailable).
+| Runtime (memory, copies, launches) | `libamdhip64.so` from ROCm's runtime | `amdhip64_6.dll` (or `amdhip64_7.dll`, `amdhip64.dll`), installed by the AMD graphics driver |
+| Where it is looked for | the loader's search path, then `$ROCM_PATH/lib`, then `/opt/rocm/lib` | the DLL search path (the driver's runtime); no SDK folder |
 
 ## 1. Install
 
-### Linux (ROCm)
+### Linux (ROCm's runtime)
 
-Install ROCm for your distribution and GPU from AMD's ROCm installation guide (the `amdgpu-install` package with the
-`rocm` use case, or the distribution's ROCm packages), then give your user access to the GPU and log in again:
+Install ROCm's runtime for your distribution and GPU from AMD's ROCm installation guide (the `amdgpu-install` package,
+or the distribution's ROCm packages), then give your user access to the GPU and log in again:
 
 ```bash
 sudo usermod -aG render,video "$USER"
 rocminfo | grep -E "Name:|Compute Unit|Wavefront"          # the GPU, its gfx target, compute units, wavefront size
-ls /opt/rocm/lib/libamdhip64.so* /opt/rocm/lib/libhiprtc.so*
+ls /opt/rocm/lib/libamdhip64.so*
 ```
 
 ROCm supports a list of GPUs per release; a GPU outside it reports no devices.
 
-### Windows (HIP SDK)
+### Windows (the graphics driver)
 
-Install the AMD HIP SDK for Windows (it sets `HIP_PATH`), with a current Adrenalin or PRO driver, then open a new
-PowerShell:
-
-```powershell
-$env:HIP_PATH
-Get-ChildItem "$env:HIP_PATH\bin\amdhip64*.dll", "$env:HIP_PATH\bin\hiprtc*.dll"
-```
+Install a current AMD Adrenalin or PRO graphics driver; it installs the HIP runtime. Nothing else is needed.
 
 ## 2. Devices
 
@@ -55,32 +48,19 @@ gives the reason when no device was found (runtime missing, no supported GPU, no
 Linux:
 
 ```bash
-IDRAK_DEVICES=hip:0 IDRAK_FILTER=hip dotnet run -c Release --project tests/Idrak.Tests   # the HIP tests first
-IDRAK_DEVICES=hip:0 dotnet run -c Release --project tests/Idrak.Tests > hip0.txt         # the whole list on the GPU
-IDRAK_DEVICES=hip:0 IDRAK_HIP_KERNELS=0 dotnet run -c Release --project tests/Idrak.Tests > hip0-nokernels.txt
+IDRAK_DEVICES=hip:0 IDRAK_FILTER=hip dotnet run -c Release --project tests/Idrak.Tests -- --progress --failures-only --failures-file test-output/hip-fails.txt
 ```
 
 Windows (PowerShell):
 
 ```powershell
-$env:IDRAK_DEVICES="hip:0"; $env:IDRAK_FILTER="hip"; dotnet run -c Release --project tests/Idrak.Tests; Remove-Item Env:IDRAK_FILTER
-dotnet run -c Release --project tests/Idrak.Tests > hip0.txt
-$env:IDRAK_HIP_KERNELS="0"; dotnet run -c Release --project tests/Idrak.Tests > hip0-nokernels.txt
-Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_HIP_KERNELS
+$env:IDRAK_DEVICES="hip:0"; $env:IDRAK_FILTER="hip"; dotnet run -c Release --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\hip-fails.txt
+Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
 ```
 
-The line "hip:0: kernels compiled, N threads per block" (or "cached" on later runs, or "unavailable (reason)") in the
-HIP device test says whether the kernels loaded. The second run without kernels separates a kernel fault from a
-runtime fault. Send back the device list, both result files and, on a failure, the run again with `IDRAK_TRACE=1`.
-
-## 4. Chat with a model
-
-```bash
-dotnet run -c Release --project samples/Idrak.Samples.Chat -- chat Qwen/Qwen3-0.6B --int8 --device hip:0
-```
-
-Most operations still run on the CPU through the host fallback, so expect this to be slower than the CPU alone; it
-shows that a model runs end to end on the device.
+The HIP device test prints "hip:0: kernels loaded" or "unavailable (reason)"; until the GCN kernels land it says they
+are not built yet, and checks memory, copies and the host fallback against the CPU. On a failure, send the failures
+file and the run again with `IDRAK_TRACE=1`.
 
 ## Settings
 
@@ -88,5 +68,7 @@ shows that a model runs end to end on the device.
 |----------|---------|
 | `IDRAK_HIP_DEFAULT=1` | Prefer a HIP device as `Device.Default` (after CUDA, before Vulkan). |
 | `IDRAK_DISABLE_HIP=1` | Do not look for HIP devices. |
-| `IDRAK_HIP_KERNELS=0` | Run no HIP kernels: every operation but memory and copies on the host fallback (diagnostics). |
-| `IDRAK_HIP_KERNEL_CACHE` | `0` keeps no compiled kernels; a folder keeps them there (default `IDRAK_CACHE/hip/kernels`, `~/.cache/idrak/hip/kernels`). |
+| `IDRAK_HIP_RUNTIME` | A HIP runtime (a file name or path) tried before the graphics driver's. |
+| `IDRAK_HIP_WAIT=block` | Waits use the runtime's blocking synchronize instead of polling. |
+| `IDRAK_HIP_KERNEL_CACHE` | `0` keeps no assembled kernels; a folder keeps them there (default `IDRAK_CACHE/hip/kernels`, `~/.cache/idrak/hip/kernels`). |
+| `IDRAK_HIP_CODE_OBJECT` | The code object version (5 or 4) Idrak writes the GCN kernels in, when the runtime needs one. |

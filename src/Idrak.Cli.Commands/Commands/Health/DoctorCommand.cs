@@ -240,7 +240,7 @@ internal sealed class DoctorCommand : Command
     {
         "cuda" => Messages.T("install a GPU driver with CUDA support (only for GPUs that have it); the other backends work without it"),
         "vulkan" => Messages.T("install the Vulkan loader (libvulkan.so.1, vulkan-1.dll) and the GPU's Vulkan driver"),
-        "hip" => Messages.T("install the HIP runtime and hipRTC (ROCm on Linux, the HIP SDK on Windows; HIP_PATH or ROCM_PATH finds them)"),
+        "hip" => Messages.T("install the AMD graphics driver (Windows) or ROCm's runtime (Linux; ROCM_PATH finds it)"),
         _ => Messages.T("install what the {0} backend needs (see the plug-in that registers it)", kind),
     };
 
@@ -248,7 +248,7 @@ internal sealed class DoctorCommand : Command
     {
         "cuda" => Messages.T("CUDA drives GPUs through their CUDA driver; without it those GPUs can still run through Vulkan."),
         "vulkan" => Messages.T("Vulkan compute runs Idrak's generated kernels on most GPUs (and on phones); it needs the loader and a driver."),
-        "hip" => Messages.T("HIP runs kernels compiled at run time by hipRTC; without the runtime those GPUs can still run through Vulkan."),
+        "hip" => Messages.T("HIP drives AMD GPUs through the graphics driver's runtime, with Idrak's own kernels (no SDK); without it those GPUs can still run through Vulkan."),
         _ => Messages.T("A registered backend adds devices of its kind."),
     };
 

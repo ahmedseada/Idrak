@@ -10,8 +10,8 @@ namespace Idrak.Gpu.Hip;
 
 /// <summary>
 /// What a HIP device reports about itself, read once when the devices are probed. The kernels' block size and every
-/// launch limit come from these values (<see cref="HipKernels.BlockSizeFor"/>), never from the device's name or
-/// architecture: the architecture string only names the compiler's target.
+/// launch limit come from these values (<see cref="BlockSize"/>), never from the device's name; the architecture string
+/// names the instruction-set target only.
 /// </summary>
 internal sealed record HipDeviceLimits
 {
@@ -53,6 +53,25 @@ internal sealed record HipDeviceLimits
     public required string PciAddress { get; init; }
 
     public Guid? Uuid { get; init; }
+
+    /// <summary>
+    /// The block size kernels run at: a quarter of the largest block (the CUDA rule), a power of two rounded down, and at
+    /// least one wavefront.
+    /// </summary>
+    public int BlockSize
+    {
+        get
+        {
+            int largest = Math.Min(MaxThreadsPerBlock, MaxBlockDimX);
+            int block = (int)BitOperations.RoundUpToPowerOf2((uint)Math.Max(1, largest / 4));
+            if (block > largest / 4)
+            {
+                block /= 2;                                                      // round down, not up
+            }
+
+            return Math.Max(block, WarpSize);
+        }
+    }
 
     /// <summary>
     /// Why the kernels cannot use these limits (values no device reports, such as a runtime that numbers its attributes

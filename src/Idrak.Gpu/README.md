@@ -1,8 +1,9 @@
 # Idrak.Gpu
 
 The GPU devices of [Idrak](https://www.nuget.org/packages/Idrak): CUDA, Vulkan and HIP, with all their kernels. No CUDA
-Toolkit, no shader compiler, no native files in the package: the kernels are generated in C# (PTX for NVIDIA, SPIR-V
-for Vulkan, HIP C for AMD) and compiled by the GPU's own driver on the user's machine.
+Toolkit, no HIP SDK, no shader compiler, no native files in the package: the kernels are generated in C# (PTX for
+NVIDIA, SPIR-V for Vulkan, GCN for AMD) and finished on the user's machine (PTX and SPIR-V by the GPU's own driver, GCN
+by Idrak's own assembler).
 
 ## Install
 
@@ -21,7 +22,7 @@ The package depends on `Idrak.Abstraction` only and is built on its public devic
 |--------|--------------|-------|
 | CUDA (`cuda:N`) | The NVIDIA driver API directly; PTX kernels generated in C#; bfloat16 and FP8 tensor cores, flash attention, CUDA graphs, memory offloading | An NVIDIA display driver (`nvcuda.dll`, `libcuda.so.1`) |
 | Vulkan (`vulkan:N`) | SPIR-V kernels generated in C# for NVIDIA, AMD, Intel and phone GPUs; fused decoding, recorded graphs, cooperative matrices; widths and splits measured on the device | A Vulkan 1.1+ driver |
-| HIP (`hip:N`, first slice) | HIP C kernels compiled on the device with hipRTC and cached; the rest through host fallbacks | ROCm or the HIP SDK |
+| HIP (`hip:N`) | The HIP runtime's memory and copies; Idrak's own GCN kernels as they land (plan 35), the rest through host fallbacks | The AMD graphics driver (Windows) or ROCm's runtime (Linux); no SDK |
 
 Every operation a device has no kernel for falls back to the CPU device of `Idrak.Abstraction`, so a model runs on any
 of them unchanged. Kernel choices come from what each device reports or from measurements on it, stored per device and
@@ -38,14 +39,12 @@ operation runs, and `idrak kernels dump` writes the generated kernel sources.
 A plug-in can ship Vulkan kernels of its own: `VulkanKernel` (`Idrak.Gpu.Vulkan`) takes SPIR-V 1.3 words (compiled
 from GLSL with glslc, say; storage buffers at set 0, binding i the i-th storage, scalars in one push-constant block) and
 `VulkanKernel.Dispatch(backend, groupsX, groupsY, groupsZ, storages, pushConstants)` queues it on a Vulkan device, from
-a kernel the plug-in registers for the "vulkan" kind with `Kernels.Register`. The same for CUDA and HIP:
-`CudaKernel` (`Idrak.Gpu.Cuda`) takes PTX text and an `.entry` name, `HipKernel` (`Idrak.Gpu.Hip`) HIP C++ source
-and an `extern "C" __global__` function name; `Launch(backend, gridX, gridY, gridZ, blockX, blockY, blockZ, arguments)`
-queues it on the device's stream, the arguments being storages, `int`, `float` and `long` values (`KernelArgument`)
-checked against the parameters the PTX or the source declares. Each device compiles a text once (the PTX by the
-driver, the HIP source by hipRTC, its code object kept in the HIP kernel cache) and keeps the module; driver and
-compiler errors raise `CudaException` and `HipException`. Register a HIP kernel with the requirement
-`b => HipKernel.UnavailableReason(b) is null`, so a machine without hipRTC runs the operation's default kernel.
+a kernel the plug-in registers for the "vulkan" kind with `Kernels.Register`. The same for CUDA: `CudaKernel`
+(`Idrak.Gpu.Cuda`) takes PTX text and an `.entry` name; `Launch(backend, gridX, gridY, gridZ, blockX, blockY, blockZ,
+arguments)` queues it on the device's stream, the arguments being storages, `int`, `float` and `long` values
+(`KernelArgument`) checked against the parameters the PTX declares. Each device compiles a text once (the PTX by the
+driver) and keeps the module; driver errors raise `CudaException`. HIP plug-in kernels come with GCN text
+(`GcnKernel`, plan 35); until then HIP runs an operation's default kernel.
 
 ## Documentation
 

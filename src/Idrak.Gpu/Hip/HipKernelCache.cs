@@ -7,12 +7,12 @@ using System.Text;
 namespace Idrak.Gpu.Hip;
 
 /// <summary>
-/// Compiled kernels kept on disk, so hipRTC runs once per device architecture, driver and library build rather than at
-/// every start. One code object per key, in the library's cache folder (ComputeResources.CacheFolder: IDRAK_CACHE, or
-/// ~/.cache/idrak) under hip/kernels/; the key hashes
-/// everything the code depends on: the source, the compiler options (block size and target), the architecture, the
-/// runtime, driver and compiler versions, the device's identity and the library's version. A file of another key is
-/// never read, and a file the runtime refuses is deleted and compiled again. IDRAK_HIP_KERNEL_CACHE=0 keeps nothing,
+/// Assembled kernels kept on disk, so Idrak's GCN assembler runs once per device architecture, driver and library
+/// build rather than at every start. One code object per key, in the library's cache folder
+/// (ComputeResources.CacheFolder: IDRAK_CACHE, or ~/.cache/idrak) under hip/kernels/; the key hashes everything the
+/// code depends on: the GCN text, the options (block size and target), the architecture, the runtime and driver
+/// versions, the device's identity and the library's version. A file of another key is never read, and a file the
+/// runtime refuses is deleted and assembled again. IDRAK_HIP_KERNEL_CACHE=0 keeps nothing,
 /// IDRAK_HIP_KERNEL_CACHE=folder moves it.
 /// </summary>
 internal sealed class HipKernelCache(string? folder)

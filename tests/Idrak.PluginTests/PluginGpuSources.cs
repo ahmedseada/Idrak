@@ -4,9 +4,9 @@
 namespace Idrak.PluginTests;
 
 /// <summary>
-/// The CUDA and HIP kernels the plug-in kernels ship (<see cref="PluginKernels"/>), the same two as the SPIR-V of
+/// The CUDA kernels the plug-in kernels ship (<see cref="PluginKernels"/>), the same two as the SPIR-V of
 /// <see cref="PluginShaders"/>: what a plug-in gets from <c>nvcc -ptx</c> (written by hand here, in the style of the
-/// library's own PTX) and the HIP C++ hipRTC compiles on the device. Each loops over its n elements with a grid stride,
+/// library's own PTX). Each loops over its n elements with a grid stride,
 /// so any number of blocks works. The PTX targets sm_50 (the driver compiles it for newer GPUs) and is assembled with
 /// ptxas by a test when ptxas is on the machine.
 /// </summary>
@@ -110,28 +110,6 @@ internal static class PluginGpuSources
             bra.uni $L_scale_next;
         $L_scale_done:
             ret;
-        }
-        """;
-
-    /// <summary>The same two kernels in HIP C++, one source (both kernels share its module on a device).</summary>
-    public const string Hip = """
-        // values[i] = the bfloat16 half i % 2 (low first) of word i / 2 of packed, as float32, for i < n.
-        extern "C" __global__ void outside_unpack_pairs(const unsigned int* packed, float* values, int n)
-        {
-            for (long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x; i < (long long)n; i += (long long)blockDim.x * gridDim.x)
-            {
-                unsigned int word = packed[i >> 1];
-                values[i] = __uint_as_float((i & 1) == 0 ? word << 16 : word & 0xFFFF0000u);
-            }
-        }
-
-        // output[i] = rows[i] * scales[i / width] for i < n.
-        extern "C" __global__ void outside_scale_rows(const float* rows, const float* scales, float* output, int n, int width)
-        {
-            for (long long i = (long long)blockIdx.x * blockDim.x + threadIdx.x; i < (long long)n; i += (long long)blockDim.x * gridDim.x)
-            {
-                output[i] = rows[i] * scales[i / width];
-            }
         }
         """;
 }

@@ -6,21 +6,21 @@ using Idrak;
 using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Gpu.Hip;
 
-// The HIP backend (ROCm on Linux, the HIP SDK on Windows): found at run time or absent without harm, its devices named
-// hip:N, its kernels compiled by hipRTC for the device's architecture with a block size from the reported limits, and
-// kept on disk per architecture and driver. Most tests here run anywhere (no runtime needed); the last runs on HIP
-// devices, which a plain run includes when present.
+// The HIP backend (the graphics driver's runtime on Windows, ROCm's on Linux; no part of the HIP SDK): found at run time
+// or absent without harm, its devices named hip:N, its block size from the reported limits, its kernels (Idrak's own GCN
+// code, plan 35) kept on disk per architecture and driver. Most tests here run anywhere (no runtime needed); the last
+// runs on HIP devices, which a plain run includes when present.
 internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] HipGroup =
     [
-        ("hip runtime: library names per system; the system's search (the driver's runtime) before the install's folder; older code object formats for an older runtime; a refusal names both releases; a missing runtime means no HIP devices, a reason and no exception", HipMissingRuntime),
+        ("hip runtime: library names per system; the system's search (the driver's runtime) first, ROCm's folders on Linux only, no SDK's folder anywhere; a missing runtime means no HIP devices, a reason and no exception", HipMissingRuntime),
         ("hip devices: named hip:N, parsed like the others, listed in --list-devices (with the reason when there are none)", HipDeviceNames),
-        ("hip kernels: the source declares every kernel with the parameters launches pass; block sizes and limits come from what the device reports", HipKernelSource),
-        ("hip kernels: the architecture string is read from the device properties by content; compiler options name it", HipArchitecture),
+        ("hip limits: the block size and the limits' plausibility come from what the device reports", HipBlockSize),
+        ("hip architecture: the target string is read from the device properties by content; runtime versions read as major.minor.patch", HipArchitecture),
         ("hip kernel cache: the key changes with every input; a stored code object comes back; IDRAK_HIP_KERNEL_CACHE moves or disables it", HipKernelCacheKeys),
-        ("hip: no vendor ids, card names or GPU targets in the code of src/Idrak.Gpu/Hip (comments may name them)", HipNoVendorNames),
-        ("hip device: memory, uploads, downloads, copies, fills and the kernels (products, rows, attention, gathers, permutes) match the CPU (on HIP devices)", HipDeviceMatchesCpu),
+        ("hip: no vendor ids or card names in the code of src/Idrak.Gpu/Hip, and GPU targets (gfx names) only in its instruction-set tables, GcnTargets*.cs (comments may name them)", HipNoVendorNames),
+        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation (products, rows, attention, gathers, permutes, through the host fallback until the GCN kernels land) match the CPU (on HIP devices)", HipDeviceMatchesCpu),
     ];
 
     internal static void HipMissingRuntime(Device device)
@@ -29,13 +29,13 @@ internal abstract partial class Tests
         Check(HipRuntime.CandidateNames("linux").Contains("libamdhip64.so") && HipRuntime.CandidateNames("linux").Contains("libamdhip64.so.6"),
             "Linux: ROCm's runtime names");
         Check(HipRuntime.CandidateNames("windows").Contains("amdhip64_6.dll") && HipRuntime.CandidateNames("windows").Contains("amdhip64.dll"),
-            "Windows: the HIP SDK's runtime names");
-        Check(HipRtc.CandidateNames("linux").Contains("libhiprtc.so") && HipRtc.CandidateNames("windows").Contains("hiprtc0600.dll"),
-            "hipRTC's names on both systems");
+            "Windows: the graphics driver's runtime names");
         Check(HipRuntime.CandidateNames("macos").Length == 0, "no names elsewhere");
-        var folders = HipRuntime.SearchFolders("windows", v => v == "HIP_PATH" ? @"C:\HIP" : null).ToList();
-        Check(folders.Count == 1 && folders[0].EndsWith("bin", StringComparison.Ordinal), "HIP_PATH's bin folder is searched on Windows");
-        Check(HipRuntime.SearchFolders("linux", _ => null).Contains("/opt/rocm/lib"), "ROCm's default folder is searched on Linux");
+        Check(!HipRuntime.SearchFolders("windows", v => v is "HIP_PATH" or "ROCM_PATH" ? @"C:\HIP" : null).Any(),
+            "Windows: only the system's search (the driver's runtime), never an SDK's folder");
+        Check(HipRuntime.SearchFolders("linux", _ => null).SequenceEqual(["/opt/rocm/lib"]), "Linux: ROCm's default folder");
+        Check(HipRuntime.SearchFolders("linux", v => v == "ROCM_PATH" ? "/r" : null).SequenceEqual([Path.Combine("/r", "lib"), "/opt/rocm/lib"]),
+            "Linux: ROCM_PATH's lib folder first");
 
         // A runtime that is not there: no handle, no exception, a reason naming what was looked for.
         bool opened = HipRuntime.TryOpen(["libidrak-no-such-hip-runtime.so"], [Path.GetTempPath()], out var handle, out string reason, out string from);
@@ -50,35 +50,6 @@ internal abstract partial class Tests
         {
             System.Runtime.InteropServices.NativeLibrary.Free(both);
         }
-
-        // The code object formats: the compiler's own, then older ones for an older runtime; the one that loaded first
-        // from then on; IDRAK_HIP_CODE_OBJECT chooses one. The process's own choice (a HIP device's kernels compiled earlier
-        // in the run) is set aside for the checks and put back after.
-        string? loadedBefore = HipRtc.LoadedFormat;
-        HipRtc.FormatLoaded(null);
-        Check(HipRtc.CodeObjectFormats(null).SequenceEqual([null, "-mcode-object-version=5", "-mcode-object-version=4"]), "the compiler's own format, then 5 and 4");
-        Check(HipRtc.CodeObjectFormats("default").SequenceEqual([null]) && HipRtc.CodeObjectFormats("4").SequenceEqual(["-mcode-object-version=4"]),
-            "IDRAK_HIP_CODE_OBJECT: default, or one version");
-        HipRtc.FormatLoaded("-mcode-object-version=5");
-        var remembered = HipRtc.CodeObjectFormats("");
-        HipRtc.FormatLoaded(loadedBefore);
-        Check(remembered.SequenceEqual(["-mcode-object-version=5", null, "-mcode-object-version=4"]), $"the format that loaded first: {string.Join(", ", remembered)}");
-        try
-        {
-            _ = HipRtc.CodeObjectFormats("newest");
-            Check(false, "an unknown IDRAK_HIP_CODE_OBJECT value is refused");
-        }
-        catch (HipException e)
-        {
-            Check(e.Message.Contains("IDRAK_HIP_CODE_OBJECT=newest", StringComparison.Ordinal), $"refused naming the value: {e.Message}");
-        }
-
-        // A refusal names both releases and files, and says when the runtime is older than the compiler.
-        string releases = HipBackend.Releases(50731541, @"C:\Windows\System32\amdhip64.dll", "7.2", @"C:\ROCm\7.2\bin\hiprtc0702.dll");
-        Check(releases.Contains("runtime HIP 5.7.31541 from C:\\Windows\\System32\\amdhip64.dll", StringComparison.Ordinal)
-              && releases.Contains("compiler hipRTC 7.2", StringComparison.Ordinal) && releases.Contains("older than the compiler", StringComparison.Ordinal),
-            $"an older runtime named: {releases}");
-        Check(!HipBackend.Releases(70253211, "amdhip64_7.dll", "7.2", "hiprtc0702.dll").Contains("older", StringComparison.Ordinal), "the same release: no hint");
 
         var provider = DeviceProviders.Find("hip");
         Check(provider is { Type: DeviceType.Hip, Display: "HIP" }, "the HIP provider is registered");
@@ -100,7 +71,7 @@ internal abstract partial class Tests
         }
         else
         {
-            Console.WriteLine($"    {provider.Count} HIP device(s); hipRTC: {(HipRtc.UnavailableReason.Length == 0 ? HipRtc.Version : HipRtc.UnavailableReason)}");
+            Console.WriteLine($"    {provider.Count} HIP device(s), runtime from {HipRuntime.LoadedFrom}");
         }
     }
 
@@ -167,43 +138,20 @@ internal abstract partial class Tests
         PciAddress = "",
     };
 
-    internal static void HipKernelSource(Device device)
+    internal static void HipBlockSize(Device device)
     {
         _ = device;
-        string source = HipKernels.Source;
-        var declared = new Dictionary<string, string>();
-        foreach (Match m in Regex.Matches(source, @"extern ""C"" __global__ void __launch_bounds__\(IDRAK_BLOCK\) (\w+)\(([^)]*)\)"))
-        {
-            string types = string.Concat(m.Groups[2].Value.Split(',', StringSplitOptions.TrimEntries).Select(p =>
-                p.Contains('*') ? 'p' : p.StartsWith("int ", StringComparison.Ordinal) ? 'i' : p.StartsWith("float ", StringComparison.Ordinal) ? 'f' : '?'));
-            declared[m.Groups[1].Value] = types;
-        }
 
-        Check(declared.Count == HipKernels.Parameters.Count, $"{declared.Count} kernels declared, {HipKernels.Parameters.Count} launched");
-        foreach (var (name, parameters) in HipKernels.Parameters)
-        {
-            Check(declared.TryGetValue(name, out string? found) && found == parameters, $"{name}: declared ({found}) as launched ({parameters})");
-        }
-
-        Check(source.Count(c => c == '{') == source.Count(c => c == '}') && source.Count(c => c == '(') == source.Count(c => c == ')'),
-            "balanced braces and parentheses");
-        Check(source.Contains("#ifndef IDRAK_BLOCK", StringComparison.Ordinal) && !Regex.IsMatch(source, @"\bwarpSize\b|__shfl"),
-            "the block size comes from the compilation; no wavefront width is assumed");
-
-        // A quarter of the largest block, a power of two, whole wavefronts, the reductions' scratch within shared memory.
-        Check(HipKernels.BlockSizeFor(HipLimits(64, 1024, 65536)) == 256, "64 lanes, 1024 threads: 256");
-        Check(HipKernels.BlockSizeFor(HipLimits(32, 1024, 65536)) == 256, "32 lanes, 1024 threads: 256");
-        Check(HipKernels.BlockSizeFor(HipLimits(64, 256, 65536)) == 64, "256 threads: one 64-lane wavefront");
-        Check(HipKernels.BlockSizeFor(HipLimits(32, 200, 65536)) == 32, "200 threads: rounded down to a power of two");
-        Check(HipKernels.BlockSizeFor(HipLimits(32, 1024, 512)) == 32, "512 bytes of shared memory: halved to one wavefront (the kernels' tiles do not fit)");
-        Check(HipKernels.SharedBytes(32) > 512 && HipKernels.SharedBytes(256) <= 16 * 1024, "the kernels' static shared memory follows the block");
-        Check(HipKernels.Tile(256) == 64 && HipKernels.Tile(128) == 32 && HipKernels.Tile(64) == 32 && HipKernels.Lanes(16) == 16 && HipKernels.AttentionRows(256) == 8,
-            "the products' and attention's shapes follow the block");
+        // A quarter of the largest block, a power of two rounded down, whole wavefronts.
+        Check(HipLimits(64, 1024, 65536).BlockSize == 256, "64 lanes, 1024 threads: 256");
+        Check(HipLimits(32, 1024, 65536).BlockSize == 256, "32 lanes, 1024 threads: 256");
+        Check(HipLimits(64, 256, 65536).BlockSize == 64, "256 threads: one 64-lane wavefront");
+        Check(HipLimits(32, 200, 65536).BlockSize == 32, "200 threads: rounded down to a power of two");
         foreach (int warp in new[] { 16, 32, 64 })
         {
             foreach (int threads in new[] { 64, 128, 256, 512, 1024, 2048 })
             {
-                int block = HipKernels.BlockSizeFor(HipLimits(warp, threads, 65536));
+                int block = HipLimits(warp, threads, 65536).BlockSize;
                 Check(block % warp == 0 && block <= threads && (block & (block - 1)) == 0, $"warp {warp}, {threads} threads: {block}");
             }
         }
@@ -222,24 +170,22 @@ internal abstract partial class Tests
         "Some GPU gfx9000"u8.CopyTo(properties);                                // in the name: not the target
         "gfx90a:sramecc+:xnack-"u8.CopyTo(properties.AsSpan(1200));
         Check(HipDeviceLimits.ArchitectureFrom(properties) == "gfx90a:sramecc+:xnack-", "the target string after the name, with its features");
-        Check(HipDeviceLimits.ArchitectureFrom(new byte[4096]) == "", "none found: empty (compile for the current device)");
+        Check(HipDeviceLimits.ArchitectureFrom(new byte[4096]) == "", "none found: empty");
         byte[] other = new byte[4096];
         "gfx 12"u8.CopyTo(other.AsSpan(800));
         Check(HipDeviceLimits.ArchitectureFrom(other) == "", "a prefix without a target is not one");
 
-        Check(HipRtc.Options("gfx1100", 256).SequenceEqual(["-O3", "-DIDRAK_BLOCK=256", "--gpu-architecture=gfx1100"]), "options name the target and the block");
-        Check(!HipRtc.Options("", 128).Any(o => o.StartsWith("--gpu-architecture", StringComparison.Ordinal)), "no target: the current device's");
         Check(HipBackend.FormatVersion(60241134) == "6.2.41134", "runtime versions read as major.minor.patch");
     }
 
     internal static void HipKernelCacheKeys(Device device)
     {
         _ = device;
-        string[] options = HipRtc.Options("gfx1100", 256);
+        string[] options = ["block=256", "target=gfx1100"];
         string key = HipKernelCache.Key("source", options, "gfx1100", "device", "runtime 1");
         Check(key.Length == 32 && key == HipKernelCache.Key("source", options, "gfx1100", "device", "runtime 1"), "the same inputs, the same key");
         Check(key != HipKernelCache.Key("source2", options, "gfx1100", "device", "runtime 1")
-              && key != HipKernelCache.Key("source", HipRtc.Options("gfx1100", 128), "gfx1100", "device", "runtime 1")
+              && key != HipKernelCache.Key("source", ["block=128", "target=gfx1100"], "gfx1100", "device", "runtime 1")
               && key != HipKernelCache.Key("source", options, "gfx1101", "device", "runtime 1")
               && key != HipKernelCache.Key("source", options, "gfx1100", "device 2", "runtime 1")
               && key != HipKernelCache.Key("source", options, "gfx1100", "device", "runtime 2"),
@@ -277,10 +223,17 @@ internal abstract partial class Tests
         _ = device;
         string folder = RepositoryPath("src", "Idrak.Gpu", "Hip");
         var vendorIds = new Regex(@"0x0*(10DE|1002|1022|8086|13B5|5143|106B)\b", RegexOptions.IgnoreCase);
-        var names = new Regex(@"\b(NVIDIA|AMD|ATI|Intel|Radeon|Instinct|MI\d{2,3}X?|RDNA\d?|CDNA\d?|Vega|Navi|GeForce|RTX|GTX|Arc|Iris)\b|\bgfx\d", RegexOptions.IgnoreCase);
+        var names = new Regex(@"\b(NVIDIA|AMD|ATI|Intel|Radeon|Instinct|MI\d{2,3}X?|RDNA\d?|CDNA\d?|Vega|Navi|GeForce|RTX|GTX|Arc|Iris)\b", RegexOptions.IgnoreCase);
+        var targets = new Regex(@"\bgfx\d", RegexOptions.IgnoreCase);
         var found = new List<string>();
-        foreach (string path in Directory.EnumerateFiles(folder, "*.cs"))
+        foreach (string path in Directory.EnumerateFiles(folder, "*.cs", SearchOption.AllDirectories))
         {
+            // GPU targets (gfx9, gfx90c) are instruction-set families and the ELF machine values a code object's format
+            // requires: the instruction-set tables (GcnTargets*.cs, in this folder itself) may hold them in code, and the
+            // target triple (amdgcn-amd-amdhsa) the format names. Vendor ids and other vendor or card names stay out of
+            // every file, those tables included.
+            string relative = Path.GetRelativePath(folder, path);
+            bool targetTable = Path.GetFileName(relative) == relative && relative.StartsWith("GcnTargets", StringComparison.Ordinal);
             string[] lines = File.ReadAllLines(path);
             for (int n = 0; n < lines.Length; n++)
             {
@@ -297,9 +250,16 @@ internal abstract partial class Tests
                     found.Add($"{Path.GetFileName(path)}:{n + 1}: {id.Value}");
                 }
 
-                if (names.Match(code) is { Success: true } name)
+                // The code object's target triple names the vendor as format data: allowed in the tables too.
+                string named = targetTable ? code.Replace("amdgcn-amd-amdhsa", "", StringComparison.Ordinal) : code;
+                if (names.Match(named) is { Success: true } name)
                 {
-                    found.Add($"{Path.GetFileName(path)}:{n + 1}: {name.Value}");
+                    found.Add($"{relative}:{n + 1}: {name.Value}");
+                }
+
+                if (!targetTable && targets.Match(code) is { Success: true } target)
+                {
+                    found.Add($"{relative}:{n + 1}: {target.Value} (GPU targets belong in GcnTargets*.cs)");
                 }
             }
         }
@@ -368,8 +328,8 @@ internal abstract partial class Tests
             Check(Idrak.Abstraction.Operations.Kernels.HostCalls(hip) == before, "memory and copies took no host fallback");
 
             // The kernels against the CPU (or the host fallback, when they are unavailable: same results either way).
-            bool kernels = hip.HasKernels;
-            Console.WriteLine($"    {device}: kernels {(kernels ? $"{hip.KernelsOrigin}, {hip.BlockSize} threads per block" : $"unavailable ({hip.KernelsUnavailableReason})")}");
+            bool kernels = ((IKernelAvailability)hip).KernelsUnavailable() is null;
+            Console.WriteLine($"    {device}: kernels {(kernels ? "loaded" : $"unavailable ({hip.KernelsUnavailableReason})")}");
             before = Idrak.Abstraction.Operations.Kernels.HostCalls(hip);
             var db = On(hip, b);
             var ca = On(cpu, a);

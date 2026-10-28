@@ -47,7 +47,7 @@ along; the GPU devices are `dotnet add package Idrak.Gpu`, and the others are ad
 |---|---|
 | `Idrak.Abstraction` | The contracts the library is built on, each with its default implementation: `Tensor`, `Autograd`, `Module`, devices and the CPU device (the host fallback of every other device), optimizers and schedules, telemetry, tokenizers, chat and tools, serving contracts, sample sources, the `SlotTable` registries. Reference it alone to write a plug-in. |
 | `Idrak` | Layers and networks, training (`Trainer`, callbacks, mixed precision, activation checkpointing), datasets and loaders, model loading (safetensors, GGUF, PyTorch zip, PEFT adapters), packed weights (bfloat16, int8, int4), ONNX export and import, the inference engine, model packages (`.ikm`). |
-| `Idrak.Gpu` | The GPU devices: CUDA (driver API, PTX generated in C#), Vulkan (SPIR-V generated in C#), HIP (hipRTC). Loads the driver installed on the machine; no native files of its own. Kernel tuning per size class with a persisted cache. |
+| `Idrak.Gpu` | The GPU devices: CUDA (driver API, PTX generated in C#), Vulkan (SPIR-V generated in C#), HIP (GCN generated and assembled in C#; no SDK). Loads the driver installed on the machine; no native files of its own. Kernel tuning per size class with a persisted cache. |
 | `Idrak.Network` | The real transports and collectives of a cluster: shared memory, TCP with a keyed rendezvous, a direct cable, host-staged and peer copies between the GPUs of one process; naive, ring and hierarchical all-reduce, all-gather, reduce-scatter and broadcast over any transport; the fastest-first transport selector and the `network` profiler probe. Built on `Idrak.Abstraction`'s cluster contracts. |
 | `Idrak.Cluster` | A cluster of GPUs and machines simulated on one machine: devices carved from a physical one with hard memory caps, the `sim` transport charged on a virtual clock from link profiles, the built-in link profiles, the topology builder and the `cluster` profiler probe. Built on `Idrak.Abstraction`'s cluster contracts; `Idrak.Network` holds the real transports. |
 | `Idrak.Data` | Row datasets: JSON Lines, JSON, CSV, TSV, text, code and Parquet; archives and compressed files; sources file, folder, http, Hugging Face, GitHub, Kaggle, Zenodo; filter, map, shuffle, deduplicate, split, mix; chat transcripts for fine-tuning; the Hugging Face model downloader. |
@@ -100,8 +100,9 @@ but holds no types yet; installing one adds nothing beyond its dependency.
   neighbouring class's choice until it measures its own; a persisted tuning cache.
 - **Vulkan:** SPIR-V generated in C# for any Vulkan 1.1 device (discrete, integrated or software), subgroup or
   workgroup-memory reductions chosen per device, the same tuning.
-- **HIP:** the AMD ROCm path, compiled at run time with hipRTC; builds and runs against a host stand-in, not yet tested
-  on real hardware.
+- **HIP:** AMD GPUs through the graphics driver's runtime (ROCm's on Linux), with no SDK; Idrak's own GCN kernels,
+  written in C# and assembled by Idrak, are being built (plan 35); until then memory and copies run on the GPU and the
+  rest through the host fallback.
 - Nothing is tuned for a card: devices report their limits and the library measures what it uses. Limits, when a user
   wants them, are `ComputeResources` options, each with an environment variable (`idrak env` lists them all).
 - Telemetry: layered events (operations, devices, kernel tunings, batches, epochs, generation) to a console logger, a
@@ -235,7 +236,7 @@ memory growth) and saved regression cases. `idrak check` runs the device kit; `i
 | CPU | supported everywhere .NET 10 runs | Windows 11 (4 to 24 threads), Ubuntu; the full CPU test list |
 | NVIDIA, CUDA | supported from compute 5.0 | compute 12.0 and 8.6 GPUs; the kit, the benches and training runs, 2026-10 |
 | Any Vulkan 1.1 GPU | supported | the same NVIDIA GPUs through Vulkan, and lavapipe (software) on Linux; the kit passes on both |
-| AMD, HIP | built, inert where ROCm is absent | not yet run on real hardware |
+| AMD, HIP | built, inert where the runtime is absent; no SDK | memory and copies on an integrated GCN 5 GPU (Windows, 2026-10); GCN kernels in progress |
 | AMD, Intel, Apple GPUs | run on the CPU today | not started; Vulkan is the planned route for AMD and Intel |
 
 The GPUs are named here as the record of what has been run, not as targets: nothing in the code or the tuning refers to

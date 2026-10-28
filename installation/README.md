@@ -10,7 +10,7 @@ architectures").
 | [Linux and WSL2](linux.md) | Ubuntu on x64, Ubuntu under WSL2 | CPU, CUDA, Vulkan (lavapipe under WSL2) |
 | [macOS](macos.md) | Apple silicon Macs (tested on an M4 Max) | CPU (ARM64 NEON); no GPU backend yet (Metal is planned) |
 | [Android phone](android-termux.md) | Snapdragon phone, Termux + Ubuntu (proot), Mesa Turnip | CPU (ARM64 NEON), Vulkan (Adreno) |
-| [HIP](hip.md) (untested on real hardware) | Linux with ROCm, Windows with the HIP SDK, an AMD GPU | HIP |
+| [HIP](hip.md) | An AMD GPU: Windows with the graphics driver, Linux with ROCm's runtime; no SDK | HIP |
 
 Every guide ends with the same three checks:
 

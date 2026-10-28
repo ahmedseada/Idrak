@@ -5,7 +5,7 @@ leftover 8.11, with a name and a structure equivalent to CUDA's, not a generic o
 own assembly, GCN, in C#, as it writes NVIDIA's in PTX. Idrak's GCN assembler turns them into a code object, and the
 HIP runtime that ships with the graphics driver loads it. **No SDK, like CUDA (the owner, 2026-10-28):** the library
 depends on no part of the HIP SDK or ROCm's compilers, as it depends on no CUDA Toolkit. hipRTC, its HIP C++ kernels
-and the HIP C++ plug-in kernel are removed (G2b); GCN is HIP's only kernel path, as PTX is CUDA's.
+and the HIP C++ plug-in kernel are removed (done 2026-10-28, ahead of G2b); GCN is HIP's only kernel path, as PTX is CUDA's.
 
 ## The name: GCN
 
@@ -116,7 +116,7 @@ the changed projects once, run its CPU filter once with `--no-build`, then merge
 | **G1a** | A | **Assembler: parse and encode.** GCN text as UTF-8 bytes; every gfx9 form the kernels use (SOP1/2/K/C/P, SMEM, VOP1/2/3/C, VOP3P, DS, GLOBAL), operands, literals, modifiers, labels and branches; each form against its golden | `GcnAssembler.Parse.cs`, `GcnAssembler.Encode.cs`, `GcnTargets.Gfx9.cs` | gate passed | `gcn assembler` |
 | **G1b** | B | **The GCN interpreter** (tests only): decodes the bytes and runs them on the CPU (waves of 64, EXEC, VCC, SCC, SGPRs and VGPRs, LDS, barriers between a block's waves, global memory, the kernel arguments). Written from the ISA reference, apart from the encoder | `tests/Idrak.Tests.Library/Gcn/GcnInterpreter*.cs` | gate passed | `gcn interpreter` |
 | **G2a** | A | **Assembler: the `ptxas` part.** Virtual registers; liveness over the branches (a register written under a narrowed EXEC stays live from before, for its other lanes); allocation of VGPRs and SGPRs within the declared block's budget; `s_waitcnt` for vmcnt, lgkmcnt and expcnt; gfx9 hazards (`s_nop`); the descriptor's register counts and segment sizes from use; the physical-register printer | `GcnAssembler.Registers.cs`, `.Waits.cs`, `.Hazards.cs`, `.Print.cs` | G1a | `gcn assembler` |
-| **G2b** | B | **The SDK removed; GCN the only path.** `HipRtc.cs`, the HIP C++ kernels (`HipKernels*.cs`) and `HipKernel` (C++ plug-ins) deleted, with every message, test and doc that names hipRTC or the SDK; the code object format choice (`IDRAK_HIP_CODE_OBJECT`) moves to `GcnCodeObject`; `HipBackend.Kernels.cs` loads GCN code objects only, every operation without a GCN kernel yet takes the host fallback and says so; the cache key; `idrak kernels -d hip:0` and `idrak kernels dump` (the GCN text, virtual and physical); the Idrak.Gpu README's HIP row needs only the driver (Windows) or ROCm's runtime library (Linux); the public API dump and inventory regenerated | `HipBackend.Kernels.cs`, `HipKernelCache.cs`, `HipTests.cs`, CLI, `src/Idrak.Gpu/README.md`, `api/Idrak.txt` | gate passed | `hip`, `public API`, `inventory` |
+| **G2b** | B | **GCN the only path.** The SDK's half is **done early (the owner, 2026-10-28: "delete now so no agent uses it wrongly")**: `HipRtc.cs`, the HIP C++ kernels (`HipKernels*.cs`), their operation overrides and `HipKernel` (C++ plug-ins) deleted, with every message, test and doc that named hipRTC or the SDK; the runtime is looked for only where the driver (Windows) or ROCm (Linux) puts it, never in `HIP_PATH`; every kernel operation on hip:0 takes the host fallback and says why. Left for G2b: `HipBackend.Kernels.cs` loading GCN code objects through the kernel cache; `idrak kernels -d hip:0` and `idrak kernels dump gcn` (the GCN text, virtual and physical) | `HipBackend.Kernels.cs`, `HipKernelCache.cs`, CLI | gate passed | `hip` |
 | **G3a** | A | **Hand-written GCN: element-wise.** fill, affine, axpy, multiply-add, add/sub/mul/max/min, row-vector add, the activations (ReLU, sigmoid, tanh, GELU both, SiLU, square, abs, exp, log, sqrt, sin, cos, sign), with LLVM's math sequences read from clang's output and proven against the CPU. All run in the interpreter here | `GcnKernels.Pointwise.cs` | G2a, G1b | `gcn kernels` |
 | **G3b** | B | **Hand-written GCN: rows.** RMS norm (with and without gain), layer norm (fused, training, gradients), softmax, scaled masked softmax, log-softmax top-k: reductions in a fixed LDS tree, `ds_bpermute` and DPP as measured candidates | `GcnKernels.Rows.cs` | G2a, G1b | `gcn kernels` |
 | — | owner | **First device run**: the HIP group on the driver alone; cold assembly and warm load timed | | G3a, G3b | |
@@ -171,8 +171,8 @@ gives the exact lines.
 
 - **The gate:** the driver's runtime may need SDK pieces (`amd_comgr`) to load any code object. G0 settles that before
   anything else; if it does, the plan returns to the owner, since the SDK is not an option.
-- **Between G2b and G5:** operations without a GCN kernel yet run on the host on hip:0, slower than the hipRTC kernels
-  they replace on a machine with the SDK, until G3 and G5 bring them back.
+- **Until G3 and G5:** with hipRTC removed (2026-10-28), operations without a GCN kernel yet run on the host on hip:0,
+  slower than the hipRTC kernels were on a machine with the SDK, until G3 and G5 bring them back.
 - **Hazards and waits:** a mistake hangs or silently corrupts. Each family's rules come from AMD's ISA reference and
   are compared with clang's output for the same kernels; the interpreter checks the waits, and only hardware checks
   the hazards.

@@ -134,7 +134,7 @@ internal static class EnvironmentVariables
         new("IDRAK_CPU_TUNING_FILE", Tuning, "<cache>/cpu/tuning.tsv", "The CPU tuning file (empty: none)", Caches),
         new("IDRAK_VULKAN_TUNE_OPS", Tuning, "every operation", "Operation names (comma-separated: MatMul, Rows, Splits, SpanAttention, …): only these measure their Vulkan kernel choices, the others keep the stored or formula's (diagnostics: isolating one operation's measurement)", OnDevice),
         new("IDRAK_VULKAN_TUNING_CACHE", Tuning, "<cache>/vulkan/tuning.tsv", "0 or false: no Vulkan tuning file; a path: the file", Caches),
-        new("IDRAK_HIP_KERNEL_CACHE", Tuning, "<cache>/hip/kernels", "0 or false: compiled HIP kernels are not kept; a path: the folder", Caches),
+        new("IDRAK_HIP_KERNEL_CACHE", Tuning, "<cache>/hip/kernels", "0 or false: assembled HIP kernels are not kept; a path: the folder", Caches),
 
         new("IDRAK_MATMUL", Precision, "float32", "bf16 (bfloat16) or fp8 (float8): the precision of matrix products outside any precision scope", OnDevice),
         new("IDRAK_FP8_DELAYED", Precision, "not set", "1: delayed column scaling for float8 products on CUDA", OnDevice),
@@ -189,10 +189,8 @@ internal static class EnvironmentVariables
         new("VK_DRIVER_FILES", Vulkan, "the loader's search", "The Vulkan loader: the newer name of VK_ICD_FILENAMES", [.. OnDevice, "setup android"]),
         new("VK_INSTANCE_LAYERS", Vulkan, "none", "The Vulkan loader: layers to enable (e.g. validation), read by the loader itself", OnDevice),
 
-        new("IDRAK_HIP_KERNELS", Hip, "on", "0 or false: every HIP operation through the host fallback", OnDevice),
-        new("IDRAK_HIP_RUNTIME", Hip, "the system's search", "A HIP runtime (a file name or path) tried before the graphics driver's and the SDK's", OnDevice),
-        new("IDRAK_HIP_CODE_OBJECT", Hip, "the compiler's own, then 5, then 4", "The code object version HIP kernels are compiled for (4, 5, 6), or 'default': the compiler's own only", OnDevice),
-        new("HIP_PATH", Hip, "not set", "Where the HIP SDK is (Windows)", OnDevice),
+        new("IDRAK_HIP_RUNTIME", Hip, "the system's search", "A HIP runtime (a file name or path) tried before the graphics driver's", OnDevice),
+        new("IDRAK_HIP_CODE_OBJECT", Hip, "5, then 4", "The code object version Idrak writes HIP's GCN kernels in (5 or 4), when the runtime needs one", OnDevice),
         new("ROCM_PATH", Hip, "/opt/rocm", "Where ROCm is (Linux)", OnDevice),
 
         new("IDRAK_VOICES", Sources, "voices/ under IDRAK_CACHE or ~/.cache/idrak", "The installed voices' folder (--voices wins; with --cache given and this unset: voices/ under it)", VoiceStore),

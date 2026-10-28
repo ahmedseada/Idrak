@@ -9,7 +9,6 @@ using Idrak.Abstraction.Operations;
 using Idrak.Abstraction.Testing;
 using Idrak.Generation;
 using Idrak.Gpu.Cuda;
-using Idrak.Gpu.Hip;
 using Idrak.Layers;
 using Idrak.Layers.Abstractions;
 
@@ -18,7 +17,7 @@ namespace Idrak.PluginTests;
 /// <summary>
 /// The plug-ins' own device kernels (<see cref="PluginKernels"/>): the packed format, the cache layout, an
 /// <see cref="Autograd.Function"/> and a graph operation each run their plug-in operation, through its default kernel or
-/// through the kernel <see cref="PluginKernels.Install"/> registers for the device's kind (the CPU; Vulkan, CUDA and HIP
+/// through the kernel <see cref="PluginKernels.Install"/> registers for the device's kind (the CPU; Vulkan and CUDA
 /// for the packed format and the cache layout), seen in <see cref="Kernels.Chain"/> and counted by <see cref="Kernels.Trace"/>. The test
 /// runner in tests/Idrak.Tests runs <see cref="All"/> on every device; a failed check throws.
 /// </summary>
@@ -27,11 +26,11 @@ public static class KernelPluginTests
     /// <summary>The tests, by name.</summary>
     public static IReadOnlyList<(string Name, Action<Device> Run)> All { get; } =
     [
-        ("outside plug-in kernels: the packed format unpacks through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V, CUDA PTX, HIP C++), to the same weights and products", PackedFormatKernel),
-        ("outside plug-in kernels: the key/value cache layout expands its rows through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V, CUDA PTX, HIP C++), and generates the float32 cache's text", CacheLayoutKernel),
+        ("outside plug-in kernels: the packed format unpacks through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V, CUDA PTX), to the same weights and products", PackedFormatKernel),
+        ("outside plug-in kernels: the key/value cache layout expands its rows through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V, CUDA PTX), and generates the float32 cache's text", CacheLayoutKernel),
         ("outside plug-in kernels: an Autograd.Function and a graph operation run their plug-in operations, by default and through the CPU kernel, with their gradients", FunctionAndGraphOpKernels),
         ("outside plug-in kernels: the testing kit checks each plug-in kernel on the device against its default kernel on the CPU (Conformance.Check)", KitChecksKernels),
-        ("outside plug-in kernels: CUDA and HIP kernels read their parameters from the PTX and the HIP C++ source and refuse other devices and mismatched arguments", GpuKernelShapes),
+        ("outside plug-in kernels: CUDA kernels read their parameters from the PTX and refuse other devices and mismatched arguments", GpuKernelShapes),
         ("outside plug-in kernels: the plug-in's PTX assembles with ptxas for every GPU target the installed ptxas lists at or above the PTX's own (no list of cards; skipped without ptxas: IDRAK_PTXAS, PATH or CUDA_PATH)", PtxAssembles),
     ];
 
@@ -229,23 +228,17 @@ public static class KernelPluginTests
         }
     }
 
-    // Whether Install registers the packed format's and the cache layout's kernels for this device: every kind but HIP,
-    // and HIP where hipRTC can compile them.
-    private static bool RegistersFormatKernels(Backend backend) =>
-        backend.Kind is "cpu" or "vulkan" or "cuda" || (backend.Kind == "hip" && HipKernel.UnavailableReason(backend) is null);
+    // Whether Install registers the packed format's and the cache layout's kernels for this device: the CPU, Vulkan and
+    // CUDA (HIP takes the default kernels until plug-ins can ship GCN kernels).
+    private static bool RegistersFormatKernels(Backend backend) => backend.Kind is "cpu" or "vulkan" or "cuda";
 
     private static void GpuKernelShapes(Device device)
     {
         var cuda = PluginKernels.CudaKernels;
-        var hip = PluginKernels.HipKernels;
         Check(cuda[0].Parameters == "ppi" && cuda[1].Parameters == "pppii", $"PTX parameters: {cuda[0].Parameters}, {cuda[1].Parameters}");
-        Check(hip[0].Parameters == "ppi" && hip[1].Parameters == "pppii", $"HIP parameters: {hip[0].Parameters}, {hip[1].Parameters}");
         Check(new CudaKernel(".visible .entry k(.param .u64 a, .param .b32 b, .param .f32 c, .param .s32 d, .param .align 8 .b8 e[16]) { ret; }", "k").Parameters == "xwfi?",
             "PTX parameter types");
-        Check(new HipKernel("""extern "C" __global__ void __launch_bounds__(256) k(float* __restrict__ a, unsigned int b, float c, long long d, double e) {}""", "k").Parameters == "pifl?",
-            "HIP parameter types");
         Throws<ArgumentException>(() => new CudaKernel(PluginGpuSources.Ptx, "outside_missing"), "an entry the PTX does not declare");
-        Throws<ArgumentException>(() => new HipKernel(PluginGpuSources.Hip, "outside_missing"), "a function the source does not declare");
 
         var backend = device.Backend;
         var x = backend.Allocate(4, zeroed: true);
@@ -259,16 +252,6 @@ public static class KernelPluginTests
             {
                 Throws<ArgumentException>(() => cuda[0].Launch(backend, 1, 1, 1, 64, 1, 1, [x, x, 4f]), "a float for an integer parameter");
                 Throws<ArgumentException>(() => cuda[0].Launch(backend, 1, 1, 1, 64, 1, 1, [x, x]), "one argument short");
-            }
-
-            if (backend.Kind != "hip")
-            {
-                Throws<ArgumentException>(() => hip[0].Launch(backend, 1, 1, 1, 64, 1, 1, [x, x, 4]), "a HIP kernel on another device");
-                Check(HipKernel.UnavailableReason(backend) is { Length: > 0 }, "no HIP kernels on another device");
-            }
-            else
-            {
-                Throws<ArgumentException>(() => hip[0].Launch(backend, 1, 1, 1, 64, 1, 1, [x, 4, x]), "an integer for a pointer parameter");
             }
         }
         finally

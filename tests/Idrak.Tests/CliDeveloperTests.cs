@@ -20,7 +20,7 @@ internal abstract partial class DesktopTests : Tests
         ("cli dev: new writes each template with its placeholders filled; the plug-in project builds and its tests pass (on the CPU)", CliDevNew),
         ("cli dev: onnx export of a small network round-trips through onnx import; onnx check matches the round trip, ONNX Runtime and reference outputs", CliDevOnnx),
         ("cli dev: kernels lists the kernel each operation runs on a device (registered, device, composed, host, none), as text and JSON, filtered by --source", CliDevKernelChain),
-        ("cli dev: kernels dump writes non-empty PTX, SPIR-V and HIP files", CliDevKernels),
+        ("cli dev: kernels dump writes non-empty PTX and SPIR-V files; hip is not a kind (its GCN kernels are not built yet)", CliDevKernels),
         ("cli dev: test finds the source checkout and fails clearly outside one, and counts from the runner's summary line", CliDevTest),
         ("cli dev: trace runs a command with telemetry to JSON Lines, live, and wrapped in one JSON document", CliDevTrace),
         ("cli dev: demo xor reaches its result on the device; spirals, shapes and gpt on the CPU", CliDevDemo),
@@ -244,12 +244,12 @@ internal abstract partial class DesktopTests : Tests
         Check(DevJson("kernels", "-d", name, "--source", "registered", "-j")["operations"]!.AsArray().Count == 0, "removed again");
 
         // The kernels of the outside plug-ins (tests/Idrak.PluginTests): "plug-in" rows, registered on the CPU, Vulkan and
-        // CUDA (and HIP where its compiler is found).
+        // CUDA (HIP takes them through the host fallback: plug-ins ship no HIP kernels until GcnKernel lands).
         using (Idrak.PluginTests.PluginKernels.Install())
         {
             var rows = DevJson("kernels", "-d", name, "-j")["operations"]!.AsArray()
                 .Where(o => (bool)o!["plugin"]!).ToDictionary(o => (string)o!["name"]!, o => (string)o!["kernel"]!);
-            bool own = device.Backend.Kind is "cpu" or "vulkan" or "cuda" || device.Backend.Kind == "hip" && Idrak.Gpu.Hip.HipKernel.UnavailableReason(device.Backend) is null;
+            bool own = device.Backend.Kind is "cpu" or "vulkan" or "cuda";
             Check(rows.GetValueOrDefault("Outside.UnpackPairs") == (own ? "registered" : "host") && rows.GetValueOrDefault("Outside.ScaleRows") == (own ? "registered" : "composed")
                   && rows.GetValueOrDefault("Outside.Softplus") == (device.Type == DeviceType.Cpu ? "registered" : "composed"), $"plug-in rows: {string.Join(", ", rows)}");
             var (code, output, _) = DevRun("kernels", "-d", name, "--source", "registered");
@@ -273,11 +273,11 @@ internal abstract partial class DesktopTests : Tests
             Check(files.Count(f => f.Path.EndsWith(".spv", StringComparison.Ordinal)) > 20 && File.Exists(Path.Combine(folder, "spirv", "kernels.txt")), "SPIR-V modules and their contracts");
             var spv = File.ReadAllBytes(files.First(f => f.Path.EndsWith(".spv", StringComparison.Ordinal)).Path);
             Check(BitConverter.ToUInt32(spv, 0) == 0x07230203, "a SPIR-V module starts with the magic number");
-            Check(File.ReadAllText(Path.Combine(folder, "idrak_kernels.hip")).Contains("__global__", StringComparison.Ordinal)
-                  && File.ReadAllText(Path.Combine(folder, "hip-kernels.txt")).Contains("add_f32(pointer, pointer, pointer, int)", StringComparison.Ordinal), "the HIP source and its parameters");
+            Check(files.All(f => f.Kind is "ptx" or "spirv"), "PTX and SPIR-V only (no HIP C++ source: the library has no HIP compiler)");
             string only = Path.Combine(folder, "only");
-            var (code, output, _) = DevRun("kernels", "dump", "hip", "-o", only);
-            Check(code == 0 && output.StartsWith("hip", StringComparison.Ordinal) && Directory.GetFiles(only).Length == 2, $"one kind: {output}");
+            var (code, output, _) = DevRun("kernels", "dump", "ptx", "-o", only);
+            Check(code == 0 && output.StartsWith("ptx", StringComparison.Ordinal) && Directory.GetFiles(only).Length == 2, $"one kind: {output}");
+            Check(DevRun("kernels", "dump", "hip", "-o", only).Code == 2, "hip is not a kind of kernels dump");
         }
         finally
         {

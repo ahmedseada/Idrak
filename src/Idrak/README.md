@@ -4,8 +4,8 @@
 
 A self-contained deep-learning library for .NET 10, written in C#, with its own GPU kernels for every backend. No
 TensorFlow, no PyTorch, no CUDA Toolkit, no cuBLAS or cuDNN, no shader compiler, no native libraries: kernels are
-generated in C# (PTX for NVIDIA, SPIR-V for Vulkan, HIP C for AMD) and compiled by the GPU's own driver on the user's
-machine.
+generated in C# (PTX for NVIDIA, SPIR-V for Vulkan, GCN for AMD) and finished on the user's machine (by the GPU's own
+driver, or for GCN by Idrak's own assembler).
 
 ## Install
 
@@ -65,7 +65,7 @@ both, so `dotnet add package Idrak` gives every device.
 | CPU | SIMD kernels (AVX2, AVX-512, NEON), register-tiled products sized from the CPU's caches, multi-threading measured per machine | .NET 10 |
 | CUDA | The NVIDIA driver API directly; PTX kernels generated in C#; bfloat16 and FP8 tensor cores, flash attention, CUDA graphs | An NVIDIA display driver |
 | Vulkan | SPIR-V kernels generated in C# for NVIDIA, AMD, Intel and phone GPUs; fused decoding, recorded graphs, cooperative matrices | A Vulkan 1.1+ driver |
-| HIP (first slice) | hipRTC kernels for AMD GPUs; the rest through host fallbacks | ROCm or the HIP SDK |
+| HIP | AMD GPUs; Idrak's own GCN kernels as they land, the rest through host fallbacks | The AMD graphics driver (Windows) or ROCm's runtime (Linux); no SDK |
 
 `Device.Default` picks a CUDA GPU when there is one, else the CPU; any device is available by name
 (`Device.Parse("vulkan:0")`). Kernel choices come from what each device reports or from measurements on it, stored
