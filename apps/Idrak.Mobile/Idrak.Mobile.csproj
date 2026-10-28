@@ -18,7 +18,8 @@
       dotnet build -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -f net10.0-windows10.0.19041.0
       apps/Idrak.Mobile/bin/Release/net10.0-windows10.0.19041.0/win-x64/Idrak.Mobile.exe
     or published with the start-up pre-compiled (IdrakWindowsAot below) into a folder to run from:
-      dotnet publish -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -f net10.0-windows10.0.19041.0 -r win-x64 -o test-output/windows/publish
+      dotnet publish -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -f net10.0-windows10.0.19041.0 -p:RuntimeIdentifierOverride=win-x64 -o test-output/windows/publish
+    (RuntimeIdentifierOverride, not -r: -r reaches the restore of every target, and the Android one then asks for a Mono runtime for Windows.)
 
     The runtime: IdrakAndroidRuntime, mono (the default, .NET for Android's own) or coreclr, so both can be built and
     measured against each other (the Devices lab's runtime line, the Chat lab's tokens per second):
@@ -50,7 +51,7 @@
                   the start-up and a first tap need no JIT; taken by dotnet publish (a dotnet build runs on the JIT, as
                   a debug run does);
       none        no pre-compiled code (the JIT only), to measure against.
-      dotnet publish -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -f net10.0-windows10.0.19041.0 -r win-x64 -p:IdrakWindowsAot=none -o test-output/windows/publish-jit
+      dotnet publish -c Release apps/Idrak.Mobile/Idrak.Mobile.csproj -f net10.0-windows10.0.19041.0 -p:RuntimeIdentifierOverride=win-x64 -p:IdrakWindowsAot=none -o test-output/windows/publish-jit
     Any other value stops the build.
   -->
   <PropertyGroup>
