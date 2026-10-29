@@ -21,7 +21,9 @@ internal sealed unsafe partial class HipBackend : IKernelProfiler
     private readonly Lock _profileLock = new();
 
     // The label and floating-point operations of the next launch on this thread while profiling (later phases: products
-    // as "kernel m x n x k" with 2·m·n·k, attention with its shape), consumed by that launch.
+    // as "kernel m x n x k" with 2·m·n·k, attention with its shape; rows and element-wise kernels as "kernel rows x cols" or
+    // "kernel n" with their floating-point operations from GcnKernels.Rows.cs's and GcnKernels.Pointwise.cs's tables),
+    // consumed by that launch.
     [ThreadStatic]
     private static string? t_profileLabel;
 
@@ -100,22 +102,22 @@ internal sealed unsafe partial class HipBackend : IKernelProfiler
     /// events, the host's launch cost excluded) to the profile. A launch the runtime refuses throws a
     /// <see cref="HipException"/> naming the kernel and its grid, which the telemetry reports.
     /// </summary>
-    private void Launch(GcnFunction function, uint blocks, uint blockSize, void** extra)
+    private void Launch(GcnFunction function, uint blocks, uint blocksY, uint blockSize, void** extra)
     {
         if (_profile is { } profile && hipEventCreate != null && hipEventRecord != null && hipEventSynchronize != null && hipEventElapsedTime != null)
         {
-            LaunchTimed(profile, function, blocks, blockSize, extra);
+            LaunchTimed(profile, function, blocks, blocksY, blockSize, extra);
             return;
         }
 
-        int result = hipModuleLaunchKernel(function.Handle, blocks, 1, 1, blockSize, 1, 1, 0, _stream, null, extra);
+        int result = hipModuleLaunchKernel(function.Handle, blocks, blocksY, 1, blockSize, 1, 1, 0, _stream, null, extra);
         if (result != Success)
         {
-            throw LaunchFailed(function, blocks, blockSize, result);
+            throw LaunchFailed(function, blocks, blocksY, blockSize, result);
         }
     }
 
-    private void LaunchTimed(Dictionary<string, (long Calls, long Ticks, double Flops)> profile, GcnFunction function, uint blocks, uint blockSize, void** extra)
+    private void LaunchTimed(Dictionary<string, (long Calls, long Ticks, double Flops)> profile, GcnFunction function, uint blocks, uint blocksY, uint blockSize, void** extra)
     {
         string key = t_profileLabel ?? function.Name;
         double flops = t_profileFlops;
@@ -132,10 +134,10 @@ internal sealed unsafe partial class HipBackend : IKernelProfiler
             }
 
             Check(hipEventRecord(_profileEvents.Start, _stream), nameof(hipEventRecord));
-            int result = hipModuleLaunchKernel(function.Handle, blocks, 1, 1, blockSize, 1, 1, 0, _stream, null, extra);
+            int result = hipModuleLaunchKernel(function.Handle, blocks, blocksY, 1, blockSize, 1, 1, 0, _stream, null, extra);
             if (result != Success)
             {
-                throw LaunchFailed(function, blocks, blockSize, result);
+                throw LaunchFailed(function, blocks, blocksY, blockSize, result);
             }
 
             Check(hipEventRecord(_profileEvents.End, _stream), nameof(hipEventRecord));

@@ -618,8 +618,8 @@ Project templates, the library's tests, ONNX, the generated kernels and telemetr
 | `idrak onnx export` | Exports a model package (.ikm) or a network JSON to ONNX |
 | `idrak onnx check` | Checks an ONNX model: Idrak's import against a round trip and against ONNX Runtime |
 | `idrak vlm check` | Compares a vision-language model with a transformers reference folder (`tools/vlm/compare_real.py`): pixels, encoder, image features, logits per position (near-tie or real difference), greedy tokens |
-| `idrak kernels` | Which kernel each operation runs on a device: registered, its own, composed, host fallback or none |
-| `idrak kernels dump` | Writes the generated GPU kernels (PTX, SPIR-V, HIP source) for debugging |
+| `idrak kernels` | Which kernel each operation runs on a device: registered, its own, composed, host fallback or none; on a device whose kernels load on first need (`hip:0`'s GCN set, Vulkan's), whether they loaded or why not |
+| `idrak kernels dump` | Writes the generated GPU kernels (PTX, SPIR-V, GCN) for debugging; `gcn` writes HIP's kernels as written (virtual registers) and as Idrak's assembler prints them for a target (`--target`, default `hip:0`'s) |
 | `idrak trace` | Runs an idrak command with telemetry printed live or written to JSON Lines |
 | `idrak demo` | Trains a small built-in sample in seconds on the device, with the speed |
 | `idrak shell` | An interactive prompt for idrak commands, with history and completion |
@@ -629,6 +629,8 @@ idrak new plugin MyFormat
 idrak test --filter "cli" -d cpu
 idrak onnx check model.onnx -d vulkan:0
 idrak vlm check ./gemma-ocr --reference ref -d cuda:0 -w bf16        # ref: python tools/vlm/compare_real.py ... --out ref
+idrak kernels -d hip:0 --source device                               # HIP's operations on its GCN kernels, and their state
+idrak kernels dump gcn -o test-output/kernels                         # gcn/virtual/NAME.s and gcn/TARGET/NAME.s
 idrak trace -o train.jsonl --levels training,batches -- train network.json --data houses.csv
 idrak demo shapes -d vulkan:0
 ```

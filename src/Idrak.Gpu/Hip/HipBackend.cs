@@ -16,8 +16,9 @@ internal sealed class HipStorage(HipBackend backend, ulong pointer, int length, 
 /// <summary>
 /// A GPU driven through the HIP runtime (the graphics driver's on Windows, ROCm's runtime library on Linux; no part of
 /// the HIP SDK): the third backend family after CUDA and Vulkan, started from the minimum backend. Memory, uploads,
-/// downloads, copies and fills run on the device; every other operation takes the host fallback
-/// (<see cref="HostCall"/>) until Idrak's own GCN kernels land (plan 35), so every model runs from the start. All work goes on one stream; uploads and downloads wait for it, so their host memory is never read or
+/// downloads, copies and fills run on the device, and so do the row and element-wise operations, on Idrak's own GCN
+/// kernels (plan 35: HipBackend.Kernels.cs, .Rows.cs, .Pointwise.cs); every other operation takes the host fallback
+/// (<see cref="HostCall"/>) until its kernel lands, so every model runs from the start. All work goes on one stream; uploads and downloads wait for it, so their host memory is never read or
 /// written after they return. The device reports its memory (<see cref="IMemoryReport"/>), so paths that need much at
 /// once (the composed attention's scores, a prompt's pieces) are sized by it.
 /// </summary>

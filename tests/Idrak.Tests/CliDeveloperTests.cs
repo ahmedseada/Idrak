@@ -19,8 +19,8 @@ internal abstract partial class DesktopTests : Tests
         ("cli dev: every developer command has help with examples and environment, and no shared short forms", CliDevHelp),
         ("cli dev: new writes each template with its placeholders filled; the plug-in project builds and its tests pass (on the CPU)", CliDevNew),
         ("cli dev: onnx export of a small network round-trips through onnx import; onnx check matches the round trip, ONNX Runtime and reference outputs", CliDevOnnx),
-        ("cli dev: kernels lists the kernel each operation runs on a device (registered, device, composed, host, none), as text and JSON, filtered by --source", CliDevKernelChain),
-        ("cli dev: kernels dump writes non-empty PTX and SPIR-V files; hip is not a kind (its GCN kernels are not built yet)", CliDevKernels),
+        ("cli dev: kernels lists the kernel each operation runs on a device (registered, device, composed, host, none), as text and JSON, filtered by --source; a device whose kernels load on first need says whether they loaded", CliDevKernelChain),
+        ("cli dev: kernels dump writes non-empty PTX, SPIR-V and GCN files (HIP's kernels as written, with virtual registers, and as printed for a target with physical ones; --target chooses it, an unknown one is a usage error); hip is not a kind", CliDevKernels),
         ("cli dev: test finds the source checkout and fails clearly outside one, and counts from the runner's summary line", CliDevTest),
         ("cli dev: trace runs a command with telemetry to JSON Lines, live, and wrapped in one JSON document", CliDevTrace),
         ("cli dev: demo xor reaches its result on the device; spirals, shapes and gpt on the CPU", CliDevDemo),
@@ -230,6 +230,18 @@ internal abstract partial class DesktopTests : Tests
             Check(operations.Single(o => o.Name == "Fill").Kernel == "device" && (int)counts["host"]! == 0, "the CPU runs its own kernels");
         }
 
+        // The kernels' state: on a device whose kernels load on first need (HIP, Vulkan), loaded or why not; none elsewhere.
+        string? unavailable = (device.Backend as IKernelAvailability)?.KernelsUnavailable();
+        Check(device.Backend is IKernelAvailability
+                ? (string?)json["kernels"] == (unavailable is null ? "loaded" : "unavailable") && (string?)json["kernels_unavailable"] == unavailable
+                : json["kernels"] is null && json["kernels_unavailable"] is null,
+            $"the kernels' state: {json["kernels"]?.ToJsonString()} {json["kernels_unavailable"]?.ToJsonString()}");
+        if (device.Type == DeviceType.Hip)
+        {
+            Check(new[] { "RmsNorm", "Softmax", "LayerNormBackward", "LogSoftmaxTopK", "Unary", "Binary", "Axpy" }.All(op => operations.Single(o => o.Name == op).Kernel == "device"),
+                "HIP runs the row and element-wise operations on its own kernels");
+        }
+
         // A kernel registered for the device's kind shows; --source keeps only the operations of one kind.
         OperationKernels.Softmax softmax = (b, x, y, rows, cols, log) => b.SoftmaxKernel(x, y, rows, cols, log);
         using (Kernels.Register(Ops.Softmax, device.Backend.Kind, softmax))
@@ -273,10 +285,24 @@ internal abstract partial class DesktopTests : Tests
             Check(files.Count(f => f.Path.EndsWith(".spv", StringComparison.Ordinal)) > 20 && File.Exists(Path.Combine(folder, "spirv", "kernels.txt")), "SPIR-V modules and their contracts");
             var spv = File.ReadAllBytes(files.First(f => f.Path.EndsWith(".spv", StringComparison.Ordinal)).Path);
             Check(BitConverter.ToUInt32(spv, 0) == 0x07230203, "a SPIR-V module starts with the magic number");
-            Check(files.All(f => f.Kind is "ptx" or "spirv"), "PTX and SPIR-V only (no HIP C++ source: the library has no HIP compiler)");
+            Check(files.All(f => f.Kind is "ptx" or "spirv" or "gcn"), "PTX, SPIR-V and GCN only (no HIP C++ source: the library has no HIP compiler)");
+            var gcn = files.Where(f => f.Kind == "gcn").ToList();
+            Check(gcn.Count == 2 * Idrak.Gpu.Hip.GcnKernels.All.Count, $"GCN: each kernel twice, as written and as printed ({gcn.Count})");
+            string written = File.ReadAllText(Path.Combine(folder, "gcn", "virtual", "rms_norm_f32.s"));
+            Check(written.StartsWith(".kernel rms_norm_f32", StringComparison.Ordinal) && written.Contains("%v", StringComparison.Ordinal), "the virtual form: the kernel as written");
+            string target = Idrak.Gpu.Hip.GcnKernels.DefaultTarget().Processor;
+            string printed = File.ReadAllText(Path.Combine(folder, "gcn", target, "rms_norm_f32.s"));
+            Check(printed.Contains("s_waitcnt", StringComparison.Ordinal) && !printed.Contains("%v", StringComparison.Ordinal) && printed.Contains("s_endpgm", StringComparison.Ordinal),
+                $"the physical form for {target}: registers allocated, waits placed");
             string only = Path.Combine(folder, "only");
             var (code, output, _) = DevRun("kernels", "dump", "ptx", "-o", only);
             Check(code == 0 && output.StartsWith("ptx", StringComparison.Ordinal) && Directory.GetFiles(only).Length == 2, $"one kind: {output}");
+            string chosen = Path.Combine(folder, "chosen");
+            (code, output, _) = DevRun("kernels", "dump", "gcn", "--target", "gfx908", "-o", chosen);
+            Check(code == 0 && output.StartsWith("gcn", StringComparison.Ordinal) && File.Exists(Path.Combine(chosen, "gcn", "gfx908", "softmax_f32.s"))
+                  && File.Exists(Path.Combine(chosen, "gcn", "virtual", "add_f32.s")), $"gcn for a chosen target: {output}");
+            Check(DevRun("kernels", "dump", "gcn", "--target", "gfx1100", "-o", chosen).Code == 2 && DevRun("kernels", "dump", "gcn", "--target", "sm_80", "-o", chosen).Code == 2,
+                "a target no family handles, or not a target: a usage error");
             Check(DevRun("kernels", "dump", "hip", "-o", only).Code == 2, "hip is not a kind of kernels dump");
         }
         finally

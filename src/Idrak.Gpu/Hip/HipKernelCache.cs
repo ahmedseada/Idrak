@@ -10,9 +10,10 @@ namespace Idrak.Gpu.Hip;
 /// Assembled kernels kept on disk, so Idrak's GCN assembler runs once per device architecture, driver and library
 /// build rather than at every start. One code object per key, in the library's cache folder
 /// (ComputeResources.CacheFolder: IDRAK_CACHE, or ~/.cache/idrak) under hip/kernels/; the key hashes everything the
-/// code depends on: the GCN text, the options (block size and target), the architecture, the runtime and driver
-/// versions, the device's identity and the library's version. A file of another key is never read, and a file the
-/// runtime refuses is deleted and assembled again. IDRAK_HIP_KERNEL_CACHE=0 keeps nothing,
+/// code depends on: every kernel's GCN text (<see cref="KeyOf"/>: HIP's whole kernel set, one code object), the options
+/// (the code object format), the target, the runtime and driver versions, the device's identity and the library's
+/// version. No compiler version: Idrak is the compiler, so the library's version stands for it. A file of another key is
+/// never read, and a file the runtime refuses (or whose metadata does not read) is deleted and assembled again. IDRAK_HIP_KERNEL_CACHE=0 keeps nothing,
 /// IDRAK_HIP_KERNEL_CACHE=folder moves it.
 /// </summary>
 internal sealed class HipKernelCache(string? folder)
@@ -56,6 +57,33 @@ internal sealed class HipKernelCache(string? folder)
             .AppendJoin(' ', options).Append('\n')
             .Append(source);
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text.ToString())))[..32];
+    }
+
+    /// <summary>
+    /// The key of a kernel set's code object: <see cref="Key"/> over every kernel's name and GCN text in order (hashed as
+    /// they are, without one string of them all), with <paramref name="options"/> (the code object format), the
+    /// <paramref name="target"/> the device reports, the <paramref name="device"/>'s identity and the runtime and driver
+    /// <paramref name="versions"/>.
+    /// </summary>
+    public static string KeyOf(IReadOnlyList<GcnKernelSource> kernels, IEnumerable<string> options, string target, string device, string versions)
+    {
+        ArgumentNullException.ThrowIfNull(kernels);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        hash.AppendData(Encoding.UTF8.GetBytes(new StringBuilder()
+            .Append(FormatVersion).Append('\n')
+            .Append(typeof(HipKernelCache).Assembly.GetName().Version).Append('\n')
+            .Append(target).Append('\n')
+            .Append(device).Append('\n')
+            .Append(versions).Append('\n')
+            .AppendJoin(' ', options).Append('\n')
+            .Append(kernels.Count).Append('\n').ToString()));
+        foreach (var kernel in kernels)
+        {
+            hash.AppendData(Encoding.UTF8.GetBytes(kernel.Name + "\n" + kernel.Text.Length.ToString(System.Globalization.CultureInfo.InvariantCulture) + "\n"));
+            hash.AppendData(kernel.Text);
+        }
+
+        return Convert.ToHexStringLower(hash.GetHashAndReset())[..32];
     }
 
     /// <summary>The file a key's code object is kept in (null when nothing is kept).</summary>

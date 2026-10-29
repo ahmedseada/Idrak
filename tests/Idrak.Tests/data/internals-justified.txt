@@ -7,6 +7,9 @@ Idrak.Text | Idrak.Layers.Linear | AttachFloat8() | FP8 weights of Linear for fi
 Idrak.Text | Idrak.Layers.Linear | DetachFloat8() | FP8 weights of Linear for fine-tuning; public with packed weights' device kernels (phase 6)
 Idrak.Text | Idrak.Layers.PackedSequences | Suspend() | turns packed sequences off around a fine-tuning step; moves with the decoding contracts (phase 3)
 Idrak.Cli.Commands | Idrak.Gpu.Cuda.PtxKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli.Commands | Idrak.Gpu.Hip.GcnKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
+Idrak.Cli.Commands | Idrak.Gpu.Hip.GcnKernels | DefaultTarget() | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public (gcn: the target printed for, hip:0's when there is one)
+Idrak.Cli.Commands | Idrak.Gpu.Hip.GcnKernels | Dump() | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public (gcn: each kernel as written and as Idrak's assembler prints it)
 Idrak.Cli.Commands | Idrak.Gpu.Vulkan.SpirvKernel | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
 Idrak.Cli.Commands | Idrak.Gpu.Vulkan.VulkanKernels | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public
 Idrak.Cli.Commands | Idrak.Gpu.Vulkan.VulkanKernels.CoopPrecision | (the type) | idrak kernels dump writes the generated kernel sources; Idrak.Gpu is reached through the device API, its kernel generators are not public

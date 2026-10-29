@@ -10,7 +10,8 @@ namespace Idrak.Cli.Shared;
 /// <c>--verbose</c> (or <c>IDRAK_VERBOSE=1</c>), common to every command: what the library does, printed as it happens,
 /// besides the lines a command prints with it: each prompt pass (rows, positions, pieces, time), decoding summed every
 /// few seconds and before the next prompt pass, the vision encoder and sound features, each kernel choice a device
-/// measured, the first host fallback of each operation, each device failure (a kernel refused, a launch or runtime call
+/// measured, each kernel set a device loaded (from the kernel cache or made first, with its time and size), the first
+/// host fallback of each operation, each device failure (a kernel refused, a launch or runtime call
 /// that failed, kernels a profile cannot time: each different one once), and each graph recording that failed (with its
 /// reason). On the error output, over the progress line (which redraws under it); the main output and <c>--json</c> stay
 /// as they are.
@@ -92,6 +93,15 @@ internal sealed class VerboseLines : ITelemetryHook, IDisposable
         lock (_lock)
         {
             Line($"measured {e.Operation} on {e.Device}: {e.Candidates} choices, {Time(e.Duration)}{(e.Nested ? " (within another measuring)" : "")}");
+        }
+    }
+
+    public void OnKernelsLoaded(in KernelsLoaded e)
+    {
+        lock (_lock)
+        {
+            string how = e.FromCache ? "from the kernel cache (warm)" : "made and loaded (cold)";
+            Line($"kernels on {e.Device}: {e.Kernels} {e.Backend} kernels {how}, {Time(e.Duration)}, {e.Bytes:N0} bytes{(e.Detail is { } detail ? $" ({detail})" : "")}");
         }
     }
 

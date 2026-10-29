@@ -3,39 +3,47 @@
 
 using System.Globalization;
 using System.Text.Json.Nodes;
+using Idrak.Gpu.Abstractions;
 using Idrak.Gpu.Cuda;
+using Idrak.Gpu.Hip;
 using Idrak.Gpu.Vulkan;
 
 namespace Idrak.Cli.Commands.Developer;
 
 /// <summary>
-/// <c>idrak kernels dump [ptx|spirv]</c>: writes the kernels the GPU backends generate, for debugging: the CUDA
-/// PTX (what the test runner's <c>--dump-ptx</c> writes) and the Vulkan SPIR-V modules with their contracts (its
-/// <c>--dump-spirv</c>). HIP's GCN kernels join them when they land (plan 35). No GPU is needed: the kernels are generated, not read
-/// from a device.
+/// <c>idrak kernels dump [ptx|spirv|gcn]</c>: writes the kernels the GPU backends generate, for debugging: the CUDA
+/// PTX (what the test runner's <c>--dump-ptx</c> writes), the Vulkan SPIR-V modules with their contracts (its
+/// <c>--dump-spirv</c>) and HIP's GCN kernels (plan 35), each as written (virtual registers) and as Idrak's assembler
+/// prints it for a target (physical registers, waits and wait states: text LLVM's llvm-mc reads). No GPU is needed: the
+/// kernels are generated, not read from a device.
 /// </summary>
 internal sealed class KernelsDumpCommand : Command
 {
     /// <summary>The kinds of kernels, in the order they are written.</summary>
-    public static readonly string[] Kinds = ["ptx", "spirv"];
+    public static readonly string[] Kinds = ["ptx", "spirv", "gcn"];
 
     public override string Name => "kernels dump";
 
-    public override string Summary => "Writes the generated GPU kernels (PTX, SPIR-V) for debugging";
+    public override string Summary => "Writes the generated GPU kernels (PTX, SPIR-V, GCN) for debugging";
 
     public override string Usage =>
-        "[ptx|spirv] [-o DIR]\n\n" +
-        "Writes the generated kernels to DIR (default ./kernels); without a kind, both:\n" +
+        "[ptx|spirv|gcn] [-o DIR] [--target TARGET]\n\n" +
+        "Writes the generated kernels to DIR (default ./kernels); without a kind, all three:\n" +
         "  ptx     the CUDA kernels: idrak.ptx and idrak.tensorcore.ptx (the default kernel shapes)\n" +
         "  spirv   the Vulkan kernels: spirv/NAME.spv and spirv/kernels.txt (bindings, push constants); the\n" +
-        "          cooperative-matrix products in the 16 x 16 x 16 shape (a device builds them in the shape it reports)\n\n" +
+        "          cooperative-matrix products in the 16 x 16 x 16 shape (a device builds them in the shape it reports)\n" +
+        "  gcn     HIP's kernels: gcn/virtual/NAME.s as written (virtual registers) and gcn/TARGET/NAME.s as Idrak's\n" +
+        "          assembler prints them for TARGET (physical registers, waits and wait states; llvm-mc reads it)\n\n" +
         "Options:\n" +
-        "  -o, --out DIR       the folder to write to (default ./kernels)\n\n" +
+        "  -o, --out DIR       the folder to write to (default ./kernels)\n" +
+        "  --target TARGET     gcn: the GCN target to print for, as a device reports it (default: hip:0's, else the\n" +
+        "                      first processor a registered family handles)\n\n" +
         "Examples:\n" +
         "  idrak kernels dump\n" +
-        "  idrak kernels dump spirv -o /tmp/spv && spirv-val /tmp/spv/spirv/add.spv";
+        "  idrak kernels dump spirv -o /tmp/spv && spirv-val /tmp/spv/spirv/add.spv\n" +
+        "  idrak kernels dump gcn -o test-output/kernels";
 
-    public override IReadOnlyCollection<string> ValueOptions => ["--out"];
+    public override IReadOnlyCollection<string> ValueOptions => ["--out", "--target"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } = new Dictionary<string, string> { ["-o"] = "--out" };
 
@@ -43,13 +51,20 @@ internal sealed class KernelsDumpCommand : Command
     {
         if (context.Positional.Count > 1)
         {
-            throw new UsageException($"Unexpected argument '{context.Positional[1]}'; give one kind (ptx or spirv) or none for both.");
+            throw new UsageException($"Unexpected argument '{context.Positional[1]}'; give one kind (ptx, spirv or gcn) or none for all.");
         }
 
         string[] kinds = context.Positional.Count == 0 ? Kinds : [context.Positional[0].ToLowerInvariant()];
         if (!Kinds.Contains(kinds[0]))
         {
-            throw new UsageException($"Unknown kind '{context.Positional[0]}'; choose ptx or spirv.");
+            throw new UsageException($"Unknown kind '{context.Positional[0]}'; choose ptx, spirv or gcn.");
+        }
+
+        GcnIsaVersion? target = null;
+        if (context.Option("--target") is { } named)
+        {
+            target = GcnIsaVersion.TryParse(named, out var parsed) && GcnTargets.TryFor(parsed, out _) ? parsed
+                : throw new UsageException($"--target {named}: not a GCN target a registered family handles (families: {string.Join(", ", GcnTargets.Names)}).");
         }
 
         string folder = Path.GetFullPath(context.Option("--out") ?? "kernels");
@@ -64,6 +79,9 @@ internal sealed class KernelsDumpCommand : Command
                     files.Add((kind, WriteText(Path.Combine(folder, "idrak.ptx"), PtxKernels.Source), 0));
                     files.Add((kind, WriteText(Path.Combine(folder, "idrak.tensorcore.ptx"), PtxKernels.TensorCoreSource), 0));
                     break;
+                case "gcn":
+                    files.AddRange(DumpGcn(Path.Combine(folder, "gcn"), target ?? GcnKernels.DefaultTarget()).Select(p => (kind, p, 0L)));
+                    break;
                 default:
                     files.AddRange(DumpSpirv(Path.Combine(folder, "spirv")).Select(p => (kind, p, 0L)));
                     break;
@@ -75,7 +93,8 @@ internal sealed class KernelsDumpCommand : Command
             }
 
             var mine = files.Skip(before).ToList();
-            context.Write(string.Create(CultureInfo.InvariantCulture, $"{kind,-6} {mine.Count,4} files  {mine.Sum(f => f.Bytes),12:N0} bytes  {Path.GetDirectoryName(mine[0].Path)}"));
+            string where = kind == "gcn" ? Path.Combine(folder, "gcn") : Path.GetDirectoryName(mine[0].Path)!;
+            context.Write(string.Create(CultureInfo.InvariantCulture, $"{kind,-6} {mine.Count,4} files  {mine.Sum(f => f.Bytes),12:N0} bytes  {where}"));
         }
 
         foreach (var file in files)
@@ -89,6 +108,22 @@ internal sealed class KernelsDumpCommand : Command
             ["files"] = new JsonArray([.. files.Select(f => (JsonNode)new JsonObject { ["kind"] = f.Kind, ["path"] = f.Path, ["bytes"] = f.Bytes })]),
         });
         return ExitCodes.Ok;
+    }
+
+    // HIP's kernels: each as written (virtual registers, the same for every target) and as printed for the target.
+    private static IEnumerable<string> DumpGcn(string folder, GcnIsaVersion target)
+    {
+        string written = Path.Combine(folder, "virtual"), printed = Path.Combine(folder, target.Processor);
+        Directory.CreateDirectory(written);
+        Directory.CreateDirectory(printed);
+        var paths = new List<string>();
+        foreach (var (name, text, physical) in GcnKernels.Dump(target))
+        {
+            paths.Add(WriteText(Path.Combine(written, name + ".s"), text));
+            paths.Add(WriteText(Path.Combine(printed, name + ".s"), $"; {name} for {target}, printed by Idrak's GCN assembler\n{physical}"));
+        }
+
+        return paths;
     }
 
     // The test runner's --dump-spirv: every kernel at its default width, and the cooperative-matrix products in one shape.

@@ -10,8 +10,9 @@ namespace Idrak.Gpu.Hip;
 /// HIP's kernels in GCN, AMD's own instruction set, written in C# as <c>Cuda/PtxKernels.cs</c> writes CUDA's in PTX:
 /// with virtual registers, which Idrak's assembler (<see cref="GcnAssembler.AssembleKernel"/>) allocates, adding the
 /// waits and wait states, for the family of the target a device reports, then into the code object the HIP runtime
-/// loads (<see cref="GcnCodeObject"/>). No SDK, no compiler: the driver's runtime alone loads them (plan 35). So far
-/// the gate kernel, <c>fill_f32</c>.
+/// loads (<see cref="GcnCodeObject"/>). No SDK, no compiler: the driver's runtime alone loads them (plan 35). The gate
+/// kernel, <c>fill_f32</c>, then the element-wise and row kernels, all in one code object per device
+/// (<see cref="AssembleAll"/>, loaded by <c>HipBackend.Kernels.cs</c> through the kernel cache).
 /// </summary>
 internal static partial class GcnKernels
 {
@@ -23,6 +24,76 @@ internal static partial class GcnKernels
     /// (<see cref="Pointwise"/>, <see cref="Rows"/>; later phases add theirs here).
     /// </summary>
     internal static IReadOnlyList<GcnKernelSource> All => _all ??= [new("fill_f32", FillText.ToArray()), .. Pointwise, .. Rows];
+
+    /// <summary>
+    /// Every kernel of <see cref="All"/> assembled for <paramref name="isa"/> by <paramref name="target"/>'s family (one
+    /// assembler, reset between kernels), in <see cref="All"/>'s order: what one code object of HIP's kernels holds.
+    /// </summary>
+    /// <exception cref="GcnSyntaxException">A kernel's text is refused (its line and reason).</exception>
+    /// <exception cref="GcnAllocationException">A kernel's registers do not fit its block's budget.</exception>
+    internal static GcnKernelCode[] AssembleAll(IGcnTarget target, GcnIsaVersion isa)
+    {
+        var all = All;
+        var codes = new GcnKernelCode[all.Count];
+        using var asm = new GcnAssembler(target, isa, bytes: 4096);
+        for (int i = 0; i < codes.Length; i++)
+        {
+            codes[i] = asm.AssembleKernel(all[i].Text);
+        }
+
+        return codes;
+    }
+
+    /// <summary>One code object of every kernel (<see cref="AssembleAll"/>) for <paramref name="isa"/> in format <paramref name="format"/>.</summary>
+    /// <exception cref="NotRegisteredException">No registered family handles the target.</exception>
+    internal static byte[] CodeObject(GcnIsaVersion isa, int format)
+    {
+        var target = GcnTargets.For(isa);
+        return GcnCodeObject.Write(target, isa, format, AssembleAll(target, isa));
+    }
+
+    /// <summary>
+    /// Every kernel's text for <c>idrak kernels dump gcn</c>: as written (virtual registers, the same for every target)
+    /// and as Idrak's assembler prints it for <paramref name="isa"/> (physical registers, waits and wait states, LLVM's
+    /// syntax), in <see cref="All"/>'s order.
+    /// </summary>
+    /// <exception cref="NotRegisteredException">No registered family handles the target.</exception>
+    internal static IReadOnlyList<(string Name, string Virtual, string Physical)> Dump(GcnIsaVersion isa)
+    {
+        var target = GcnTargets.For(isa);
+        var all = All;
+        var texts = new (string, string, string)[all.Count];
+        using var asm = new GcnAssembler(target, isa, bytes: 4096);
+        for (int i = 0; i < texts.Length; i++)
+        {
+            asm.AssembleKernel(all[i].Text);
+            texts[i] = (all[i].Name, System.Text.Encoding.UTF8.GetString(all[i].Text), asm.PrintedText);
+        }
+
+        return texts;
+    }
+
+    /// <summary>
+    /// The target <c>idrak kernels dump gcn</c> prints for without one given: the first HIP device's reported target when
+    /// there is one a family handles, else the first processor a registered family handles (format data, no card chosen).
+    /// </summary>
+    internal static GcnIsaVersion DefaultTarget()
+    {
+        if (HipBackend.DeviceCount > 0 && GcnIsaVersion.TryParse(HipBackend.Limits(0).Architecture, out var reported) && GcnTargets.TryFor(reported, out _))
+        {
+            return reported;
+        }
+
+        foreach (string processor in GcnTargets.Processors)
+        {
+            if (GcnIsaVersion.TryParse(processor, out var isa) && GcnTargets.TryFor(isa, out _))
+            {
+                return isa;
+            }
+        }
+
+        throw new NotRegisteredException(nameof(GcnTargets), "any", GcnTargets.Names, "No registered GCN family handles any processor Idrak knows.");
+    }
 
     /// <summary>The block <c>fill_f32</c> is written for (its required workgroup size): one element a work-item.</summary>
     internal const int FillBlock = 256;

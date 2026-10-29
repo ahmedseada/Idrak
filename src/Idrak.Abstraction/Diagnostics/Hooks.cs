@@ -138,6 +138,11 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
             $"Device {e.Device} listed {(e.Cold ? "cold" : "warm")}: started in {e.Start.TotalMilliseconds:F1} ms, described in {e.Describe.TotalMilliseconds:F1} ms{(e.Error is { } error ? $" (could not start: {error})" : "")}"));
 
     /// <inheritdoc />
+    public void OnKernelsLoaded(in KernelsLoaded e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"Device {e.Device} loaded {e.Kernels} {e.Backend} kernels {(e.FromCache ? "from the kernel cache (warm)" : "made and loaded (cold)")} in {e.Duration.TotalMilliseconds:F1} ms, {e.Bytes:N0} bytes{(e.Detail is { } detail ? $" ({detail})" : "")}"));
+
+    /// <inheritdoc />
     public void OnGraphRecordingFailed(in GraphRecordingFailed e) =>
         _out.WriteLine($"Device {e.Device} could not record {e.Work} as a graph: {e.Reason}; it runs as ordinary steps");
 
@@ -442,6 +447,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnDeviceListed(in DeviceListed e) => Write(e);
 
     /// <inheritdoc />
+    public void OnKernelsLoaded(in KernelsLoaded e) => Write(e);
+
+    /// <inheritdoc />
     public void OnGraphRecordingFailed(in GraphRecordingFailed e) => Write(e);
 
     /// <inheritdoc />
@@ -546,6 +554,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnDeviceListed(in DeviceListed e) => _channel.OnDeviceListed(in e);
+
+    /// <inheritdoc />
+    public void OnKernelsLoaded(in KernelsLoaded e) => _channel.OnKernelsLoaded(in e);
 
     /// <inheritdoc />
     public void OnGraphRecordingFailed(in GraphRecordingFailed e) => _channel.OnGraphRecordingFailed(in e);
@@ -763,6 +774,16 @@ public static class TelemetryJson
                 w.WriteNumber("describe_ms", e.Describe.TotalMilliseconds);
                 w.WriteBoolean("cold", e.Cold);
                 if (e.Error is { } listedError) w.WriteString("error", listedError);
+                break;
+            case KernelsLoaded e:
+                w.WriteString("event", "kernels_loaded");
+                w.WriteString("device", e.Device);
+                w.WriteString("backend", e.Backend);
+                w.WriteNumber("kernels", e.Kernels);
+                w.WriteBoolean("from_cache", e.FromCache);
+                w.WriteNumber("duration_ms", e.Duration.TotalMilliseconds);
+                w.WriteNumber("bytes", e.Bytes);
+                if (e.Detail is { } loadedDetail) w.WriteString("detail", loadedDetail);
                 break;
             case GraphRecordingFailed e:
                 w.WriteString("event", "graph_recording_failed");

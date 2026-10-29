@@ -10,13 +10,15 @@ namespace Idrak.Gpu.Hip;
 
 // GCN code objects Idrak wrote, loaded and launched on this device (plan 35's gate): the code object is written for the
 // target the device reports, in the formats IDRAK_HIP_CODE_OBJECT gives (5, then 4), each tried until the runtime takes
-// one; a launch passes the kernel arguments as one buffer laid out as the code object's metadata says. Kept apart from
-// the operations (HipBackend.Kernels.cs), which take the host fallback until the kernels are wired there.
+// one; a launch passes the kernel arguments as one buffer laid out as the code object's metadata says. The operations'
+// kernels are one code object of every kernel (HipBackend.Kernels.cs), launched through the same LaunchGcn.
 internal sealed unsafe partial class HipBackend
 {
     /// <summary>
     /// A GCN kernel loaded on this device: its module and function, the target and the code object format the runtime
-    /// took, and the bytes of kernel arguments its metadata declares. <see cref="Dispose"/> unloads the module.
+    /// took, and its arguments as the code object's metadata declares them (each at its offset, of its size, and the
+    /// bytes a launch passes). <see cref="Dispose"/> unloads the module when the function owns it (<see cref="LoadGcn"/>);
+    /// a function of the kernel set (<see cref="GcnKernelSet"/>) shares the set's module, which the set unloads.
     /// </summary>
     internal sealed class GcnFunction : IDisposable
     {
@@ -24,7 +26,8 @@ internal sealed unsafe partial class HipBackend
         private IntPtr _module;
         private GCHandle _image;                                                  // the loaded image, pinned while its module lives
 
-        internal GcnFunction(HipBackend backend, IntPtr module, IntPtr handle, GCHandle image, string name, GcnIsaVersion target, int format, int argumentBytes, string refused)
+        internal GcnFunction(HipBackend backend, IntPtr module, IntPtr handle, GCHandle image, string name, GcnIsaVersion target, int format, int argumentBytes, string refused,
+            IReadOnlyList<GcnArgument>? arguments = null, int block = 0)
         {
             _backend = backend;
             _module = module;
@@ -35,7 +38,21 @@ internal sealed unsafe partial class HipBackend
             Format = format;
             ArgumentBytes = argumentBytes;
             Refused = refused;
+            Arguments = arguments ?? [];
+            Block = block;
         }
+
+        /// <summary>A function of a module another owner unloads (the kernel set's), with its layout from the metadata.</summary>
+        internal GcnFunction(HipBackend backend, IntPtr handle, GcnKernelLayout layout, GcnIsaVersion target, int format)
+            : this(backend, IntPtr.Zero, handle, default, layout.Name, target, format, layout.ArgumentBytes, "", layout.Arguments, layout.Block)
+        {
+        }
+
+        /// <summary>The block the kernel runs in, as its metadata declares it (0 when the function was loaded without it).</summary>
+        public int Block { get; }
+
+        /// <summary>The arguments the metadata declares, by offset (empty when the function was loaded without them).</summary>
+        public IReadOnlyList<GcnArgument> Arguments { get; }
 
         /// <summary>The kernel's name.</summary>
         public string Name { get; }
@@ -129,7 +146,8 @@ internal sealed unsafe partial class HipBackend
 
             if (result == Success)
             {
-                return new GcnFunction(this, module, function, image, code.Name, isa, format, GcnCodeObject.KernargBytes(code), refused.ToString());
+                return new GcnFunction(this, module, function, image, code.Name, isa, format, GcnCodeObject.KernargBytes(code), refused.ToString(), code.Arguments,
+                    code.RequiredWorkgroupSize?.X ?? code.MaxFlatWorkgroupSize);
             }
 
             if (module != IntPtr.Zero && hipModuleUnload != null)
@@ -153,7 +171,13 @@ internal sealed unsafe partial class HipBackend
     /// with its size: HIP's documented form for a module's kernel (the runtime reads each argument from the buffer at
     /// the offset the code object's metadata gives, and copies them before the call returns).
     /// </summary>
-    internal void LaunchGcn(GcnFunction function, uint blocks, uint blockSize, ReadOnlySpan<byte> arguments)
+    internal void LaunchGcn(GcnFunction function, uint blocks, uint blockSize, ReadOnlySpan<byte> arguments) => LaunchGcn(function, blocks, 1, blockSize, arguments);
+
+    /// <summary>
+    /// <see cref="LaunchGcn(GcnFunction, uint, uint, ReadOnlySpan{byte})"/> over a grid of <paramref name="blocks"/> ×
+    /// <paramref name="blocksY"/> blocks (a block is one high).
+    /// </summary>
+    internal void LaunchGcn(GcnFunction function, uint blocks, uint blocksY, uint blockSize, ReadOnlySpan<byte> arguments)
     {
         ArgumentNullException.ThrowIfNull(function);
         if (function.Handle == IntPtr.Zero)
@@ -166,9 +190,10 @@ internal sealed unsafe partial class HipBackend
             throw new ArgumentException($"{function.Name} takes {function.ArgumentBytes} bytes of kernel arguments, not {arguments.Length}.", nameof(arguments));
         }
 
-        if (blocks == 0 || blocks > (uint)DeviceLimits.MaxGridDimX || blockSize == 0 || blockSize > (uint)DeviceLimits.MaxBlockDimX)
+        if (blocks == 0 || blocks > (uint)DeviceLimits.MaxGridDimX || blocksY == 0 || blocksY > (uint)DeviceLimits.MaxGridDimY || blockSize == 0 || blockSize > (uint)DeviceLimits.MaxBlockDimX)
         {
-            throw new ArgumentOutOfRangeException(nameof(blocks), $"{function.Name}: {blocks} blocks of {blockSize}; the device takes 1 to {DeviceLimits.MaxGridDimX} blocks of 1 to {DeviceLimits.MaxBlockDimX}.");
+            throw new ArgumentOutOfRangeException(nameof(blocks), $"{function.Name}: {blocks} × {blocksY} blocks of {blockSize}; the device takes 1 to {DeviceLimits.MaxGridDimX} × "
+                + $"{DeviceLimits.MaxGridDimY} blocks of 1 to {DeviceLimits.MaxBlockDimX}.");
         }
 
         MakeCurrent();
@@ -181,7 +206,7 @@ internal sealed unsafe partial class HipBackend
             extra[2] = (void*)LaunchParamBufferSize;
             extra[3] = &size;
             extra[4] = (void*)LaunchParamEnd;
-            Launch(function, blocks, blockSize, extra);                       // timed while a profile runs (HipBackend.Profile.cs)
+            Launch(function, blocks, blocksY, blockSize, extra);              // timed while a profile runs (HipBackend.Profile.cs)
         }
     }
 

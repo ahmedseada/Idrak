@@ -2,10 +2,29 @@
 
 The HIP backend (`hip:0`, `hip:1`, …; [plan 8](../plans/done/8-hip.md)) needs no SDK, as CUDA needs no CUDA Toolkit:
 only the HIP runtime the graphics driver installs (Windows) or ROCm's runtime library (Linux). Its kernels are Idrak's
-own GCN code, written in C# and assembled by Idrak ([plan 35](../plans/opened/35-gcn.md)); until they land, memory,
-uploads, downloads, copies and fills run on the GPU and every other operation on the CPU through the host fallback. On
-a machine without HIP nothing changes: the device list shows `hip:-` with the reason, and every other backend works as
-before.
+own GCN code, written in C# and assembled by Idrak ([plan 35](../plans/opened/35-gcn.md)). Memory, uploads, downloads,
+copies and fills run on the GPU, and so do the row operations (RMS norm with and without gain, layer norm fused, its
+training forward and gradients, softmax, log-softmax, the scaled masked softmax, log-softmax top-k) and the element-wise
+ones (the activations, add, sub, mul, max, min, affine, axpy, multiply-add, the row-vector add) on Idrak's GCN kernels;
+every other operation (products, attention, training's other kernels, ...) still runs on the CPU through the host
+fallback until its kernel lands. On a machine without HIP nothing changes: the device list shows `hip:-` with the
+reason, and every other backend works as before.
+
+### The kernels and their cache
+
+On the first operation that needs them, Idrak assembles every GCN kernel for the target the GPU reports (its
+`gcnArchName`, such as `gfx90c`) into one code object, keeps it in the kernel cache (`IDRAK_CACHE/hip/kernels`, or
+`~/.cache/idrak/hip/kernels`) and loads it once; later runs read it from the cache. The cache key hashes every kernel's
+text, the target, the device, the code object format and the runtime, driver and library versions: there is no compiler
+version, because Idrak is the compiler, so a new library build assembles again. A cached file the runtime refuses, or
+whose metadata does not read, is deleted and assembled again. The load is reported once to the telemetry
+(`KernelsLoaded`: from the cache or assembled, the time, the kernels and the bytes), so `--verbose` shows the cold
+assembly apart from the warm load.
+
+The kernels are unavailable, and every operation takes the host fallback, when `IDRAK_HIP_KERNELS=0` turns them off,
+when the GPU reports a target no registered GCN family handles (the reason names it: "not registered"; gfx9 is built
+in, later families come with plan 35's phase G8), or when the runtime refuses the code object in every format. The
+reason shows in `idrak kernels -d hip:0`, `idrak devices`, the host fallbacks' `--verbose` lines and the HIP device test.
 
 What the backend needs at run time (nothing at build time):
 
@@ -58,9 +77,10 @@ $env:IDRAK_DEVICES="hip:0"; $env:IDRAK_FILTER="hip"; dotnet run -c Release --pro
 Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
 ```
 
-The HIP device test prints "hip:0: kernels loaded" or "unavailable (reason)"; until the GCN kernels land it says they
-are not built yet, and checks memory, copies and the host fallback against the CPU. On a failure, send the failures
-file and the run again with `IDRAK_TRACE=1`.
+The HIP device test prints "hip:0: kernels loaded" or "unavailable (reason)", and compares every operation against the
+CPU: the row and element-wise operations on the GPU's kernels (none of them may take the host fallback while the kernels
+are loaded), the rest through the host fallback. A run whose kernels did not load is reported as a skip, not a pass. On a
+failure, send the failures file and the run again with `IDRAK_TRACE=1`.
 
 ## 4. Profiling, verbose output, benches and telemetry
 
@@ -68,19 +88,22 @@ file and the run again with `IDRAK_TRACE=1`.
 
 - **Profiler.** The backend times its kernels (`IKernelProfiler`) as CUDA's does: while a profile runs, each GCN launch
   is timed on the GPU between two HIP events (created once and reused), by the kernel's name, or by a label with its
-  floating-point operations for products and attention. `idrak profile MODEL -d hip:0` lists the kernels of one decoding
-  step, and `--profile` with `IDRAK_PROFILE_PROBES=kernels` adds them to any command's report. Until the GCN kernels
-  land, the operations take the host fallback, so the table shows no kernel and the report says why. A runtime without
-  the event functions times nothing, and the telemetry says which functions it lacks.
-- **Verbose.** `--verbose` (or `IDRAK_VERBOSE=1`) prints, on the error stream, the first host fallback of each
-  operation with the reason the kernels are unavailable, and each device failure once: a code object the runtime refused
+  floating-point operations: the row kernels as "kernel rows x cols" and the element-wise ones as "kernel n", each with
+  its floating-point operations, so the report gives their rate. `idrak profile MODEL -d hip:0` lists the kernels of one
+  decoding step, and `--profile` with `IDRAK_PROFILE_PROBES=kernels` adds them to any command's report. Operations still
+  on the host fallback show in its table, not the kernels'. A runtime without the event functions times nothing, and the
+  telemetry says which functions it lacks.
+- **Verbose.** `--verbose` (or `IDRAK_VERBOSE=1`) prints, on the error stream, the kernel set's load (from the cache or
+  assembled, its time and size), the first host fallback of each operation (with the reason when the kernels are
+  unavailable), and each device failure once: a code object the runtime refused
   (each format tried with its error), a launch it refused (the kernel and its grid), a profile that cannot time.
-- **Telemetry.** The same events reach every hook at `TelemetryLevel.Devices` (`DeviceFailed`, `HostFallback`), as on
-  Vulkan.
-- **Bench.** `--bench-hip [launch|copies|fill]` in the test runner times the launch cost of `fill_f32` (its code object
-  loaded, cold and again; a launch over one float, queued, with a wait, and on the device; a launch over a large buffer),
-  uploads, downloads and copies on the device, and fill bandwidth (`fill_f32` beside the runtime's own fill), each first
-  call apart from the warm ones. The large buffer is a sixteenth of the memory the GPU has free (at most 256 MB), or
+- **Telemetry.** The same events reach every hook at `TelemetryLevel.Devices` (`KernelsLoaded`, `DeviceFailed`,
+  `HostFallback`), as on Vulkan.
+- **Bench.** `--bench-hip [launch|copies|fill|rows|pointwise]` in the test runner times the launch cost of `fill_f32`
+  (its code object loaded, cold and again; a launch over one float, queued, with a wait, and on the device; a launch
+  over a large buffer), uploads, downloads and copies on the device, fill bandwidth (`fill_f32` beside the runtime's own
+  fill), the kernel set (assembled cold, then read from a cache warm) and each row and element-wise kernel (its first
+  call, then warm: GB/s and GFLOP/s), each first call apart from the warm ones. The large buffer is a sixteenth of the memory the GPU has free (at most 256 MB), or
   `IDRAK_BENCH_HIP_MB`; `IDRAK_BENCH_HIP_REPEATS` sets the warm calls (default 20). Without a HIP device it prints one
   line saying why. `idrak bench -d hip:0` and `idrak report --bench -d hip:0` run their benchmarks on `hip:0` as on any
   device.
@@ -91,6 +114,8 @@ Windows (PowerShell), every output under `test-output\`:
 cd D:\Projects\Idrak
 dotnet build -c Release tests\Idrak.Tests
 dotnet run -c Release --no-build --project tests\Idrak.Tests -- --bench-hip > test-output\bench-hip.txt
+dotnet run -c Release --no-build --project src\Idrak.Cli -- kernels -d hip:0 > test-output\kernels-hip.txt
+dotnet run -c Release --no-build --project src\Idrak.Cli -- kernels dump gcn -o test-output\kernels
 dotnet run -c Release --no-build --project src\Idrak.Cli -- profile Qwen/Qwen3-0.6B -d hip:0 > test-output\profile-hip.txt
 $env:IDRAK_PROFILE_OUT="test-output\profile-hip-run.txt"; $env:IDRAK_PROFILE_PROBES="kernels,operations"
 dotnet run -c Release --no-build --project src\Idrak.Cli -- run Qwen/Qwen3-0.6B "Hello" -d hip:0 --profile --verbose 2> test-output\verbose-hip.txt
@@ -106,5 +131,7 @@ dotnet run -c Release --no-build --project src\Idrak.Cli -- bench -d hip:0 > tes
 | `IDRAK_DISABLE_HIP=1` | Do not look for HIP devices. |
 | `IDRAK_HIP_RUNTIME` | A HIP runtime (a file name or path) tried before the graphics driver's. |
 | `IDRAK_HIP_WAIT=block` | Waits use the runtime's blocking synchronize instead of polling. |
-| `IDRAK_HIP_KERNEL_CACHE` | `0` keeps no assembled kernels; a folder keeps them there (default `IDRAK_CACHE/hip/kernels`, `~/.cache/idrak/hip/kernels`). |
+| `IDRAK_HIP_KERNELS=0` | HIP's GCN kernels stay off: every operation through the host fallback (to compare or isolate a kernel). |
+| `IDRAK_HIP_KERNEL_CACHE` | `0` keeps no assembled kernel set (assembled at every start); a folder keeps it there (default `IDRAK_CACHE/hip/kernels`, `~/.cache/idrak/hip/kernels`). |
+| `IDRAK_HIP_POINTWISE_BLOCKS` | Blocks of 256 an element-wise launch may take per compute unit the GPU reports (default 8); each kernel's grid-stride loop takes the rest. |
 | `IDRAK_HIP_CODE_OBJECT` | The code object version (5 or 4) Idrak writes the GCN kernels in, when the runtime needs one. |

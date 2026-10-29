@@ -602,7 +602,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `CpuBackend` | 128 of 144 |
 | `CudaBackend` | 136 of 144 |
 | `DeferredBackend` | 11 of 144 |
-| `HipBackend` | 14 of 144 |
+| `HipBackend` | 28 of 144 |
 | `VulkanBackend` | 124 of 144 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
@@ -616,8 +616,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `AddBroadcastScalarKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AddDropoutKernel(6)` | virtual |  | ✓ |  |  |  |
 | `AddRmsNormAffineKernel(9)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AddRowVectorKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AffineKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `AddRowVectorKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `AffineKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Allocate(2)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `ArgMaxKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `Attach(2)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -634,12 +634,12 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `AvgPoolBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AvgPoolKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AxpyAtKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AxpyKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `AxpyKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `BFloat16DequantizeKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `BFloat16MatMulKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `BatchedMatMulKernel(10)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `BiasGeluKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `BinaryKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `BinaryKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `BoxIouLossBackwardKernel(7)` | virtual | ✓ |  |  |  |  |
 | `BoxIouLossKernel(6)` | virtual | ✓ |  |  |  |  |
 | `BroadcastAxisKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
@@ -690,19 +690,19 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `KeyValueWriteBFloat16Kernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `KeyValueWriteInt8Kernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `KeyValueWriteKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `LayerNormBackwardKernel(9)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `LayerNormFusedKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `LayerNormTrainKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `LayerNormBackwardKernel(9)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `LayerNormFusedKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `LayerNormTrainKernel(8)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `LeakyReluBackwardKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `LeakyReluKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `LiveStorages(1)` | virtual |  |  |  |  |  |
-| `LogSoftmaxTopKKernel(6)` | virtual | ✓ | ✓ |  |  |  |
+| `LogSoftmaxTopKKernel(6)` | virtual | ✓ | ✓ |  | ✓ |  |
 | `MatMulBiasKernel(7)` | virtual |  | ✓ |  |  | ✓ |
 | `MatMulManyKernel(4)` | virtual |  | ✓ |  |  |  |
 | `MaxPoolBackwardKernel(4)` | virtual | ✓ | ✓ |  |  |  |
 | `MaxPoolBackwardKernel(4)` | virtual |  | ✓ |  |  | ✓ |
 | `MaxPoolKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `MulAddKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `MulAddKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `NormApplyKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `NormBackwardKernel(9)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `NormRopeHeadsKernel(26)` | virtual |  | ✓ |  |  | ✓ |
@@ -721,21 +721,21 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `ResizeNormalizeKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `Return(1)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `ReuseQuantizedOperands(0)` | virtual |  | ✓ |  |  |  |
-| `RmsNormAffineKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `RmsNormAffineKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `RmsNormBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `RmsNormKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `RmsNormKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `RmsNormRopeKernel(14)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `RmsNormRopePairKernel(21)` | virtual |  | ✓ |  |  | ✓ |
 | `RopeKernel(12)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SampleRowsKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `ScaleMaskSoftmaxKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `ScaleMaskSoftmaxKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ScatterAddKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SgdStepKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SigmoidFocalLossBackwardKernel(7)` | virtual | ✓ |  |  |  |  |
 | `SigmoidFocalLossKernel(6)` | virtual | ✓ |  |  |  |  |
 | `SoftmaxBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SoftmaxCrossEntropyRowsKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `SoftmaxKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `SoftmaxKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `SumAxisKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SumColumnsKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SumKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
@@ -744,7 +744,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `Synchronize(0)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `TensorCoresUnavailable(0)` | virtual | ✓ |  |  |  | ✓ |
 | `UnaryBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `UnaryKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `UnaryKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Upload(2)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `UploadRange(3)` | virtual | ✓ | ✓ | ✓ |  | ✓ |
 | `WeightNormBackwardKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
@@ -774,11 +774,12 @@ and members, read from that assembly's metadata. Phases 2 and 4 make each one pu
 
 ### Idrak.Cli.Commands
 
-7 members on 7 types.
+10 members on 8 types.
 
 | Type | Internal members used |
 |---|---|
 | `Idrak.Gpu.Cuda.PtxKernels` | (the type) |
+| `Idrak.Gpu.Hip.GcnKernels` | (the type), DefaultTarget(), Dump() |
 | `Idrak.Gpu.Vulkan.SpirvKernel` | (the type) |
 | `Idrak.Gpu.Vulkan.VulkanKernels` | (the type) |
 | `Idrak.Gpu.Vulkan.VulkanKernels.CoopPrecision` | (the type) |

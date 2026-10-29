@@ -45,7 +45,8 @@ public enum TelemetryLevel
     /// <summary>
     /// Device failures (<see cref="DeviceFailed"/>): a GPU error, and an operation retried on the CPU; and the first host
     /// fallback of each operation on a device (<see cref="HostFallback"/>); and each tuning a device measured
-    /// (<see cref="TuningCompleted"/>: once per shape class, where a run's early steps spend their time). Rare; the built-in
+    /// (<see cref="TuningCompleted"/>: once per shape class, where a run's early steps spend their time); and each kernel
+    /// set a device loads (<see cref="KernelsLoaded"/>: cold apart from warm). Rare; the built-in
     /// <see cref="ConsoleLogger"/> and <see cref="JsonLinesLogger"/> always include it.
     /// </summary>
     Devices = 1 << 8,
@@ -165,6 +166,11 @@ public interface ITelemetryHook
 
     /// <summary>A device was described for a listing, cold (its backend started) or warm (<see cref="TelemetryLevel.Devices"/>).</summary>
     void OnDeviceListed(in DeviceListed e)
+    {
+    }
+
+    /// <summary>A device loaded its kernel set, from the kernel cache or made first (<see cref="TelemetryLevel.Devices"/>).</summary>
+    void OnKernelsLoaded(in KernelsLoaded e)
     {
     }
 
@@ -566,6 +572,18 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Devices) != 0)
             {
                 h.OnTuning(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports a device's kernel set loaded (from the cache or made first), to the hooks listening at <see cref="TelemetryLevel.Devices"/>.</summary>
+    public static void KernelsLoaded(in KernelsLoaded e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Devices) != 0)
+            {
+                h.OnKernelsLoaded(in e);
             }
         }
     }

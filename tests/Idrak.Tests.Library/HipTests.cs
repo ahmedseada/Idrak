@@ -1,9 +1,12 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Idrak;
 using Idrak.Abstraction.Devices.Cpu;
+using Idrak.Gpu.Abstractions;
 using Idrak.Gpu.Hip;
 
 // The HIP backend (the graphics driver's runtime on Windows, ROCm's on Linux; no part of the HIP SDK): found at run time
@@ -18,10 +21,13 @@ internal abstract partial class Tests
         ("hip devices: named hip:N, parsed like the others, listed in --list-devices (with the reason when there are none)", HipDeviceNames),
         ("hip limits: the block size and the limits' plausibility come from what the device reports", HipBlockSize),
         ("hip architecture: the target string is read from the device properties by content; runtime versions read as major.minor.patch", HipArchitecture),
-        ("hip kernel cache: the key changes with every input; a stored code object comes back; IDRAK_HIP_KERNEL_CACHE moves or disables it", HipKernelCacheKeys),
+        ("hip kernel cache: the key changes with every input (a kernel set's with any kernel's text, the target, the device, the format and the versions); a stored code object comes back; IDRAK_HIP_KERNEL_CACHE moves or disables it", HipKernelCacheKeys),
+        ("hip kernels: GcnKernels.All (fill_f32, the element-wise and row kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c (formats 5 and 4), whose metadata, read back by the library, declares every kernel once with the arguments, kernel argument bytes and block it was written with; malformed objects are refused", HipKernelSet),
+        ("hip kernels: IDRAK_HIP_KERNELS=0 turns the kernels off with that reason; a target Idrak does not read or no family handles gives a reason naming it (not registered); every kernel has its profile cost; the element-wise grid's blocks per compute unit come from IDRAK_HIP_POINTWISE_BLOCKS", HipKernelSettings),
+        ("hip telemetry: KernelsLoaded (a device's kernel set, from the cache or assembled, its time, kernels and bytes) reaches the hooks at the Devices level, the console logger's line and the JSON lines' kernels_loaded", HipKernelsLoadedEvent),
         ("hip: no vendor ids or card names in the code of src/Idrak.Gpu/Hip, and GPU targets (gfx names) only in its instruction-set tables, GcnTargets*.cs (comments may name them)", HipNoVendorNames),
         ("hip profiler and telemetry: HipBackend times its kernels (IKernelProfiler) as CUDA does; a runtime without the event functions times nothing and says why; on HIP devices fill_f32's launches are timed under its name or a label with its floating-point operations, a refused code object reaches the telemetry, and a host fallback carries why the kernels are unavailable", HipProfilerAndTelemetry),
-        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation (products, rows, attention, gathers, permutes, through the host fallback until the GCN kernels land) match the CPU (on HIP devices)", HipDeviceMatchesCpu),
+        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row and element-wise operations on the GCN kernels (kernels loaded: none of them through the host fallback), products, attention, gathers and permutes through the host fallback until their kernels land (on HIP devices)", HipDeviceMatchesCpu),
     ];
 
     internal static void HipMissingRuntime(Device device)
@@ -192,6 +198,20 @@ internal abstract partial class Tests
               && key != HipKernelCache.Key("source", options, "gfx1100", "device", "runtime 2"),
             "source, options, architecture, device and versions each change the key");
 
+        // A kernel set's key: every kernel's text, the options (the format), the target, the device and the versions.
+        GcnKernelSource[] set = [new("a", "s_endpgm\n"u8.ToArray()), new("b", "s_nop 0\n"u8.ToArray())];
+        string setKey = HipKernelCache.KeyOf(set, ["format=5"], "gfx90c", "device", "runtime 1");
+        Check(setKey.Length == 32 && setKey == HipKernelCache.KeyOf([.. set], ["format=5"], "gfx90c", "device", "runtime 1"), "a kernel set: the same inputs, the same key");
+        Check(setKey != HipKernelCache.KeyOf([set[0], new("b", "s_nop 1\n"u8.ToArray())], ["format=5"], "gfx90c", "device", "runtime 1")
+              && setKey != HipKernelCache.KeyOf([set[0], new("c", set[1].Text)], ["format=5"], "gfx90c", "device", "runtime 1")
+              && setKey != HipKernelCache.KeyOf([set[0]], ["format=5"], "gfx90c", "device", "runtime 1")
+              && setKey != HipKernelCache.KeyOf(set, ["format=4"], "gfx90c", "device", "runtime 1")
+              && setKey != HipKernelCache.KeyOf(set, ["format=5"], "gfx908", "device", "runtime 1")
+              && setKey != HipKernelCache.KeyOf(set, ["format=5"], "gfx90c", "device 2", "runtime 1")
+              && setKey != HipKernelCache.KeyOf(set, ["format=5"], "gfx90c", "device", "runtime 2"),
+            "a kernel set: any kernel's text or name, the kernel count, the format, the target, the device and the versions each change the key");
+        Check(HipKernelCache.KeyOf(GcnKernels.All, ["format=5"], "gfx90c", "d", "v") is { Length: 32 }, "HIP's own kernel set has a key");
+
         string folder = Path.Combine(Path.GetTempPath(), $"idrak-hip-cache-{Environment.ProcessId}");
         try
         {
@@ -217,6 +237,138 @@ internal abstract partial class Tests
         Check(HipKernelCache.DefaultFolder(v => v == "IDRAK_HIP_KERNEL_CACHE" ? "0" : null) is null, "IDRAK_HIP_KERNEL_CACHE=0 keeps nothing");
         Check(HipKernelCache.DefaultFolder(v => v == "IDRAK_HIP_KERNEL_CACHE" ? "/tmp/k" : null) == "/tmp/k", "IDRAK_HIP_KERNEL_CACHE=folder moves it");
         Check(HipKernelCache.DefaultFolder(v => v == "IDRAK_CACHE" ? "/c" : null) == Path.Combine("/c", "hip", "kernels"), "under IDRAK_CACHE");
+    }
+
+    internal static void HipKernelSet(Device device)
+    {
+        _ = device;
+        if (!FirstRun(nameof(HipKernelSet)))
+        {
+            return;
+        }
+
+        var all = GcnKernels.All;
+        Check(all.Select(k => k.Name).Distinct().Count() == all.Count && all.Count == 1 + GcnKernels.Pointwise.Count + GcnKernels.Rows.Count && all[0].Name == "fill_f32",
+            $"GcnKernels.All: fill_f32, then the element-wise and row kernels, each once ({all.Count})");
+        foreach (string processor in new[] { "gfx900", "gfx906", "gfx908", "gfx90c" })
+        {
+            var isa = GcnIsaVersion.Parse(processor);
+            var target = GcnTargets.For(isa);
+            var codes = GcnKernels.AssembleAll(target, isa);
+            Check(codes.Length == all.Count && codes.Select(c => c.Name).SequenceEqual(all.Select(k => k.Name)), $"{processor}: every kernel assembled, in order");
+            foreach (int format in new[] { 5, 4 })
+            {
+                byte[] image = GcnCodeObject.Write(target, isa, format, codes);
+                var layouts = GcnCodeObject.ReadKernels(image);
+                Check(layouts.Select(l => l.Name).SequenceEqual(all.Select(k => k.Name)), $"{processor}, format {format}: the metadata declares every kernel once, in order");
+                for (int i = 0; i < codes.Length; i++)
+                {
+                    var (code, layout) = (codes[i], layouts[i]);
+                    Check(layout.Arguments.SequenceEqual(code.Arguments) && layout.ArgumentBytes == GcnCodeObject.KernargBytes(code)
+                          && layout.Block == (code.RequiredWorkgroupSize?.X ?? code.MaxFlatWorkgroupSize) && layout.Block == 256,
+                        $"{processor}, format {format}, {code.Name}: arguments, bytes and block as assembled ({layout.ArgumentBytes} bytes, block {layout.Block})");
+                }
+
+                // The test runner's own reader (tests/Gcn) finds every kernel's code too.
+                Check(Idrak.Tests.Gcn.GcnCodeObjectReader.Read(image, "layernorm_bwd_params_f32") is not null, $"{processor}, format {format}: the reader of the tests finds a row kernel");
+            }
+
+            Check(GcnKernels.CodeObject(isa, 5).Length > 0, $"{processor}: GcnKernels.CodeObject writes the set");
+        }
+
+        // Malformed code objects are refused, never read past.
+        bool Refused(byte[] bytes)
+        {
+            try
+            {
+                GcnCodeObject.ReadKernels(bytes);
+                return false;
+            }
+            catch (InvalidDataException)
+            {
+                return true;
+            }
+        }
+
+        byte[] good = GcnKernels.CodeObject(GcnIsaVersion.Parse("gfx90c"), 5);
+        Check(Refused([]) && Refused(new byte[64]) && Refused(good[..(good.Length / 3)]), "an empty, a zeroed and a cut code object are refused");
+        int note = good.AsSpan().IndexOf("amdhsa.kernels"u8);
+        byte[] broken = (byte[])good.Clone();
+        broken[note - 1] = 0xC1;                                                  // a MessagePack type that does not exist, before the key
+        Check(note > 0 && Refused(broken), "a metadata note that does not parse is refused");
+    }
+
+    internal static void HipKernelSettings(Device device)
+    {
+        _ = device;
+        Check(HipBackend.KernelsSettingReason("0") == "turned off by IDRAK_HIP_KERNELS=0" && HipBackend.KernelsSettingReason("false") == "turned off by IDRAK_HIP_KERNELS=false",
+            $"IDRAK_HIP_KERNELS=0: {HipBackend.KernelsSettingReason("0")}");
+        Check(HipBackend.KernelsSettingReason(null) is null && HipBackend.KernelsSettingReason("") is null && HipBackend.KernelsSettingReason("1") is null, "unset or 1: on");
+        Check(HipBackend.TargetUnavailable("hip:0", "gfx90c:xnack-", out var isa, out var target) is null && target is { Family: "gfx9" } && isa.Minor == 0 && isa.Stepping == 12,
+            "a target gfx9 handles: no reason, its family");
+        string? unregistered = HipBackend.TargetUnavailable("hip:0", "gfx1100", out _, out var none);
+        Check(none is null && unregistered is not null && unregistered.Contains("gfx1100", StringComparison.Ordinal) && unregistered.Contains("not registered", StringComparison.Ordinal)
+              && unregistered.Contains("hip:0", StringComparison.Ordinal), $"a target no family handles: {unregistered}");
+        string? unread = HipBackend.TargetUnavailable("hip:0", "sm_80", out _, out _);
+        Check(unread is not null && unread.Contains("'sm_80'", StringComparison.Ordinal) && unread.Contains("not a target string", StringComparison.Ordinal), $"a target Idrak does not read: {unread}");
+
+        var missing = GcnKernels.All.Where(k => HipBackend.Cost(k.Name).Bytes <= 0).Select(k => k.Name).ToList();
+        Check(missing.Count == 0, $"every kernel has its profile cost (the tables of GcnKernels.Rows.cs and .Pointwise.cs): {string.Join(", ", missing)}");
+        Check(Enum.GetValues<UnaryOp>().Count(op => HipBackend.UnaryKernelName(op) is { } name && GcnKernels.All.Any(k => k.Name == name)) == 14
+              && Enum.GetValues<BinaryOp>().All(op => HipBackend.BinaryKernelName(op) is { } name && GcnKernels.All.Any(k => k.Name == name)),
+            "the activations and binary operations CUDA runs on kernels name kernels of the set");
+        Check(HipBackend.PointwiseBlocksPerUnit(null) == 8 && HipBackend.PointwiseBlocksPerUnit("12") == 12 && HipBackend.PointwiseBlocksPerUnit("0") == 8
+              && HipBackend.PointwiseBlocksPerUnit("x") == 8, "IDRAK_HIP_POINTWISE_BLOCKS: blocks per compute unit, 8 unless a positive number is given");
+    }
+
+    internal static void HipKernelsLoadedEvent(Device device)
+    {
+        _ = device;
+        if (!FirstRun(nameof(HipKernelsLoadedEvent)))
+        {
+            return;
+        }
+
+        var seen = new List<KernelsLoaded>();
+        var text = new StringWriter();
+        var loaded = new KernelsLoaded("hip:0", "hip", 34, FromCache: false, TimeSpan.FromMilliseconds(123.4), 98_304, "gfx90c, code object format 5");
+        using (Telemetry.Subscribe(new KernelsLoadedHook(seen)))
+        using (Telemetry.Subscribe(new ConsoleLogger(TelemetryLevel.Devices, output: text)))
+        {
+            Telemetry.KernelsLoaded(loaded);
+            Telemetry.KernelsLoaded(loaded with { FromCache = true, Duration = TimeSpan.FromMilliseconds(2.5) });
+        }
+
+        Check(seen.Count == 2 && seen[0] == loaded && seen[1].FromCache, $"the hooks at the Devices level get each load: {seen.Count}");
+        string[] lines = text.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Check(lines.Length == 2 && lines[0] == "Device hip:0 loaded 34 hip kernels made and loaded (cold) in 123.4 ms, 98,304 bytes (gfx90c, code object format 5)"
+              && lines[1].Contains("from the kernel cache (warm) in 2.5 ms", StringComparison.Ordinal), $"the console logger's lines: {text}");
+
+        var json = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(json))
+        {
+            TelemetryJson.Write(writer, new TelemetryRecord(DateTimeOffset.UnixEpoch, loaded));
+        }
+
+        using var parsed = JsonDocument.Parse(json.ToArray());
+        var root = parsed.RootElement;
+        Check(root.GetProperty("event").GetString() == "kernels_loaded" && root.GetProperty("device").GetString() == "hip:0" && root.GetProperty("backend").GetString() == "hip"
+              && root.GetProperty("kernels").GetInt32() == 34 && !root.GetProperty("from_cache").GetBoolean() && root.GetProperty("bytes").GetInt64() == 98_304
+              && Math.Abs(root.GetProperty("duration_ms").GetDouble() - 123.4) < 1e-9 && root.GetProperty("detail").GetString() == "gfx90c, code object format 5",
+            $"the JSON lines' record: {Encoding.UTF8.GetString(json.ToArray())}");
+    }
+
+    private sealed class KernelsLoadedHook(List<KernelsLoaded> seen) : ITelemetryHook
+    {
+        public TelemetryLevel Levels => TelemetryLevel.Devices;
+
+        public void OnKernelsLoaded(in KernelsLoaded e)
+        {
+            lock (seen)
+            {
+                seen.Add(e);
+            }
+        }
     }
 
     internal static void HipNoVendorNames(Device device)
@@ -328,10 +480,25 @@ internal abstract partial class Tests
             AssertClose(expected, Read(hip, block, 64 * 40), 0f, "strided copy");
             Check(Idrak.Abstraction.Operations.Kernels.HostCalls(hip) == before, "memory and copies took no host fallback");
 
-            // The kernels against the CPU (or the host fallback, when they are unavailable: same results either way).
+            // The kernels against the CPU (or the host fallback, when they are unavailable: same results either way). The
+            // operations on GCN kernels (rows and element-wise) are counted apart: with the kernels loaded, none of them may
+            // take the host fallback; the others still do until their kernels land.
             bool kernels = ((IKernelAvailability)hip).KernelsUnavailable() is null;
             Console.WriteLine($"    {device}: kernels {(kernels ? "loaded" : $"unavailable ({hip.KernelsUnavailableReason})")}");
-            before = Idrak.Abstraction.Operations.Kernels.HostCalls(hip);
+            long wiredFallbacks = 0;
+            var wiredNames = new List<string>();
+            void Wired(string what, Action run)
+            {
+                long start = Idrak.Abstraction.Operations.Kernels.HostCalls(hip);
+                run();
+                long taken = Idrak.Abstraction.Operations.Kernels.HostCalls(hip) - start;
+                wiredFallbacks += taken;
+                if (taken > 0)
+                {
+                    wiredNames.Add(what);
+                }
+            }
+
             var db = On(hip, b);
             var ca = On(cpu, a);
             var cb = On(cpu, b);
@@ -339,17 +506,17 @@ internal abstract partial class Tests
             {
                 var hy = On(hip, Values(n));
                 var cy = On(cpu, Read(hip, hy, n));
-                op(hip, da, db, hy);
+                Wired(what, () => op(hip, da, db, hy));
                 op(cpu, ca, cb, cy);
                 AssertClose(Read(cpu, cy, n), Read(hip, hy, n), tolerance, what);
             }
 
-            foreach (var op in new[] { BinaryOp.Add, BinaryOp.Sub, BinaryOp.Mul })
+            foreach (var op in new[] { BinaryOp.Add, BinaryOp.Sub, BinaryOp.Mul, BinaryOp.Maximum, BinaryOp.Minimum })
             {
                 Compare($"{op}", (k, x, y, z) => k.Binary(op, x, y, z, n));
             }
 
-            foreach (var op in new[] { UnaryOp.Relu, UnaryOp.Sigmoid, UnaryOp.Tanh, UnaryOp.Square, UnaryOp.Abs, UnaryOp.Exp })
+            foreach (var op in new[] { UnaryOp.Relu, UnaryOp.Sigmoid, UnaryOp.Tanh, UnaryOp.Square, UnaryOp.Abs, UnaryOp.Exp, UnaryOp.Sign })
             {
                 Compare($"{op}", (k, x, _, z) => k.Unary(op, x, z, n), 1e-4f);
             }
@@ -367,11 +534,11 @@ internal abstract partial class Tests
             var hinv = Keep(hip.Allocate(rows, zeroed: true));
             var cy2 = Keep(cpu.Allocate(rows * cols, zeroed: true));
             var cinv = Keep(cpu.Allocate(rows, zeroed: true));
-            hip.RmsNorm(hx, hy2, hinv, rows, cols, 1e-6f);
+            Wired("RMS norm", () => hip.RmsNorm(hx, hy2, hinv, rows, cols, 1e-6f));
             cpu.RmsNorm(On(cpu, x2), cy2, cinv, rows, cols, 1e-6f);
             AssertClose(Read(cpu, cy2, rows * cols), Read(hip, hy2, rows * cols), 1e-4f, "RMS norm");
             AssertClose(Read(cpu, cinv, rows), Read(hip, hinv, rows), 1e-4f, "RMS norm scales");
-            hip.RmsNormAffine(hx, hg, hy2, rows, cols, 1e-6f, 1f);
+            Wired("RMS norm with gain", () => hip.RmsNormAffine(hx, hg, hy2, rows, cols, 1e-6f, 1f));
             cpu.RmsNormAffine(On(cpu, x2), On(cpu, gain), cy2, rows, cols, 1e-6f, 1f);
             AssertClose(Read(cpu, cy2, rows * cols), Read(hip, hy2, rows * cols), 1e-4f, "RMS norm with gain");
 
@@ -390,11 +557,19 @@ internal abstract partial class Tests
 
             // Every other kernel against the CPU: the same inputs on both, the outputs starting from the same values (for the
             // products' beta and the accumulating copies), every output compared.
-            void Both(string what, float[][] inputs, int[] outputs, Action<Backend, Storage[]> op, float tolerance = 1e-4f)
+            void Both(string what, float[][] inputs, int[] outputs, Action<Backend, Storage[]> op, float tolerance = 1e-4f, bool wired = false)
             {
                 var hs = inputs.Select(v => On(hip, v)).Concat(outputs.Select(count => On(hip, Values(count)))).ToArray();
                 var cs = inputs.Select(v => On(cpu, v)).Concat(outputs.Select((count, i) => On(cpu, Read(hip, hs[inputs.Length + i], count)))).ToArray();
-                op(hip, hs);
+                if (wired)
+                {
+                    Wired(what, () => op(hip, hs));
+                }
+                else
+                {
+                    op(hip, hs);
+                }
+
                 op(cpu, cs);
                 for (int i = 0; i < outputs.Length; i++)
                 {
@@ -448,15 +623,32 @@ internal abstract partial class Tests
             // Rows: softmax and log-softmax, the masked softmax, layer norm with its statistics, GELU after a bias.
             int sr = 5, sc = 513;
             float[] logits = Values(sr * sc, -6f, 6f), mask = [.. Enumerable.Range(0, 2 * sc).Select(i => i % 4 == 0 ? -1e9f : random.NextSingle())];
-            Both("softmax", [logits], [sr * sc], (k, s) => k.Softmax(s[0], s[1], sr, sc, false));
-            Both("log-softmax", [logits], [sr * sc], (k, s) => k.Softmax(s[0], s[1], sr, sc, true));
-            Both("masked softmax", [logits, mask], [sr * sc], (k, s) => k.ScaleMaskSoftmax(s[0], s[1], s[2], sr, sc, 2, 0.5f));
-            Both("layer norm", [logits, Values(sc), Values(sc)], [sr * sc, 2 * sr], (k, s) => k.LayerNormTrain(s[0], s[1], s[2], s[3], s[4], sr, sc, 1e-5f));
-            Both("GELU after a bias", [logits, Values(sc)], [sr * sc], (k, s) => k.BiasGelu(s[0], s[1], s[2], sr * sc, sc));
-            Both("best k log-probabilities", [logits], [sr * 8, sr * 8], (k, s) => k.LogSoftmaxTopK(s[0], s[1], s[2], sr, sc, 8));
-            foreach (var op in new[] { UnaryOp.Gelu, UnaryOp.GeluErf, UnaryOp.Silu, UnaryOp.Sqrt, UnaryOp.Sin, UnaryOp.Cos, UnaryOp.Sign })
+            Both("softmax", [logits], [sr * sc], (k, s) => k.Softmax(s[0], s[1], sr, sc, false), wired: true);
+            Both("log-softmax", [logits], [sr * sc], (k, s) => k.Softmax(s[0], s[1], sr, sc, true), wired: true);
+            Both("masked softmax", [logits, mask], [sr * sc], (k, s) => k.ScaleMaskSoftmax(s[0], s[1], s[2], sr, sc, 2, 0.5f), wired: true);
+            Both("scaled softmax without a mask", [logits], [sr * sc], (k, s) => k.ScaleMaskSoftmax(s[0], null, s[1], sr, sc, 1, 0.5f), wired: true);
+            Both("layer norm, training", [logits, Values(sc), Values(sc)], [sr * sc, 2 * sr], (k, s) => k.LayerNormTrain(s[0], s[1], s[2], s[3], s[4], sr, sc, 1e-5f), wired: true);
+            Both("layer norm", [logits, Values(sc), Values(sc)], [sr * sc], (k, s) => k.LayerNormFused(s[0], s[1], s[2], s[3], sr, sc, 1e-5f), wired: true);
+
+            // Layer norm's gradients over one chunk of rows and over three (partials folded in chunk order), dgamma alone too.
+            foreach (int lr in new[] { 5, 130 })
             {
-                Both($"{op}", [Values(1000, 0.01f, 4f)], [1000], (k, s) => k.Unary(op, s[0], s[1], 1000));
+                int lc = 300;
+                float[] lx = Values(lr * lc), lgamma = Values(lc), lbeta = Values(lc), ldy = Values(lr * lc);
+                var cstats = Keep(cpu.Allocate(2 * lr, zeroed: true));
+                cpu.LayerNormTrain(On(cpu, lx), On(cpu, lgamma), On(cpu, lbeta), Keep(cpu.Allocate(lr * lc, zeroed: true)), cstats, lr, lc, 1e-5f);
+                float[] stats = Read(cpu, cstats, 2 * lr);
+                Both($"layer norm gradients, {lr} rows", [lx, lgamma, ldy, stats], [lr * lc, lc, lc],
+                    (k, s) => k.LayerNormBackward(s[0], s[1], s[2], s[3], s[4], s[5], s[6], lr, lc), 1e-3f, wired: true);
+                Both($"layer norm gradients, {lr} rows, dgamma alone", [lx, lgamma, ldy, stats], [lc],
+                    (k, s) => k.LayerNormBackward(s[0], s[1], s[2], s[3], null, s[4], null, lr, lc), 1e-3f, wired: true);
+            }
+
+            Both("GELU after a bias", [logits, Values(sc)], [sr * sc], (k, s) => k.BiasGelu(s[0], s[1], s[2], sr * sc, sc));
+            Both("best k log-probabilities", [logits], [sr * 8, sr * 8], (k, s) => k.LogSoftmaxTopK(s[0], s[1], s[2], sr, sc, 8), wired: true);
+            foreach (var op in new[] { UnaryOp.Gelu, UnaryOp.GeluErf, UnaryOp.Silu, UnaryOp.Sqrt, UnaryOp.Sin, UnaryOp.Cos, UnaryOp.Sign, UnaryOp.Log })
+            {
+                Both($"{op}", [Values(1000, 0.01f, 4f)], [1000], (k, s) => k.Unary(op, s[0], s[1], 1000), wired: true);
             }
 
             // Attention over key ranges (grouped heads, two tables; with the log-sum-exp, then with an empty range, whose
@@ -484,11 +676,17 @@ internal abstract partial class Tests
             Both("permute, adding", [Values(2 * 3 * 4 * 5)], [120], (k, s) => k.Permute(s[0], s[1], [2, 4, 5, 3], [60, 5, 1, 20], accumulate: true));
             Both("strided copy, adding", [Values(200)], [200], (k, s) => k.Copy2D(s[0], 5, 13, s[1], 3, 20, 6, 9, accumulate: true));
 
-            Check(!kernels || Idrak.Abstraction.Operations.Kernels.HostCalls(hip) == before, $"with kernels, none of these took the host fallback ({Idrak.Abstraction.Operations.Kernels.HostCalls(hip) - before} did)");
+            Check(!kernels || wiredFallbacks == 0,
+                $"with kernels, no row or element-wise operation took the host fallback ({wiredFallbacks} calls did: {string.Join(", ", wiredNames)})");
             hip.Synchronize();
             if (!kernels)
             {
-                // Seen even with --failures-only: a run whose kernels never loaded is not a pass of the kernels.
+                // Unavailable kernels fail the test, unless the setting turned them off or no registered family handles the
+                // device's target (its reason says "not registered"): then a skip, seen even with --failures-only, since a
+                // run whose kernels never loaded is not a pass of the kernels.
+                bool understood = HipBackend.KernelsSettingReason(Environment.GetEnvironmentVariable(HipBackend.KernelsVariable)) is not null
+                                || HipBackend.TargetUnavailable(device.ToString(), hip.DeviceLimits.Architecture, out _, out _) is not null;
+                Check(understood, $"{device}: kernels loaded, expected for its target {hip.DeviceLimits.Architecture}; unavailable: {hip.KernelsUnavailableReason}");
                 Skip($"the kernels are unavailable ({hip.KernelsUnavailableReason}): memory, copies and the host fallback were checked against the CPU, the kernels were not");
             }
         }

@@ -283,6 +283,21 @@ public readonly record struct HostFallback(string Device, string Operation, stri
 public readonly record struct TuningCompleted(string Device, string Operation, int Candidates, TimeSpan Duration, bool Nested);
 
 /// <summary>
+/// A device loaded its set of kernels (<c>TelemetryLevel.Devices</c>), once per device and process: from the kernel cache
+/// (warm: the code read and handed to the driver) or made first (cold: generated, assembled or compiled, then loaded and
+/// kept in the cache), with the time it took and the code's size, so the cold start shows apart from the warm one
+/// (rule 76) on any device whose kernels are loaded as a set.
+/// </summary>
+/// <param name="Device">The device ("hip:0").</param>
+/// <param name="Backend">The kind of device ("hip", …).</param>
+/// <param name="Kernels">The kernels in the set.</param>
+/// <param name="FromCache">True when the code came from the kernel cache (warm); false when it was made in this call (cold).</param>
+/// <param name="Duration">Making or reading the code, and loading it.</param>
+/// <param name="Bytes">The code's size in bytes (the code object the driver loaded).</param>
+/// <param name="Detail">What the code was made for (the target and the code object format), or null.</param>
+public readonly record struct KernelsLoaded(string Device, string Backend, int Kernels, bool FromCache, TimeSpan Duration, long Bytes, string? Detail = null);
+
+/// <summary>
 /// A device described for a listing (<c>Diagnostics.DeviceListing</c>, <c>TelemetryLevel.Devices</c>): its backend
 /// started in this call (the first listing of the device in the process: the driver loaded, the device created, its
 /// kernels' width measured: the cold time) or was running already (warm), and how long starting and reading what it
