@@ -5,8 +5,9 @@ using System.Diagnostics;
 using System.Globalization;
 using Idrak.Diagnostics;
 using Idrak.Gpu.Hip;
+using GcnWeights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
 
-// dotnet run -c Release --project tests/Idrak.Tests -- --bench-hip [launch|copies|fill|rows|pointwise …]
+// dotnet run -c Release --project tests/Idrak.Tests -- --bench-hip [launch|copies|fill|rows|pointwise|products …]
 //
 // Every HIP device found, or those IDRAK_DEVICES names (hip:0, …), section by section (all of them, or those named), as
 // --bench-vulkan is for Vulkan. Each time is the first call (cold: the code object written and loaded, the first launch,
@@ -25,6 +26,11 @@ using Idrak.Gpu.Hip;
 //            GcnKernels.Rows.cs's table (HipBackend.Cost), and a check that none took the host fallback
 //   pointwise each element-wise operation on its kernel over the large buffer: the first call apart from the warm ones,
 //            GB/s and GFLOP/s from GcnKernels.Pointwise.cs's table, none through the host fallback
+//   products the float32 product (nn, nt, tn, tt; a batch; with a bias), the few-row float32 products, the packed few-row
+//            products (int8, int4, bfloat16, float16; 1, 4 and 8 rows; the leftover-8.10 shapes int8 1 x 3072 -> 1024 and
+//            int4 1 x 1024 -> 32000), more int8 rows, the expansions and bfloat16 packing: the first call apart from the
+//            warm ones, GB/s and GFLOP/s from GcnKernels.Products.cs's table (HipBackend.ProductCost, Cost), the k splits
+//            each packed product took (IDRAK_HIP_GEMV_SPLITS forces them), none through the host fallback
 // Each later phase of plan 35 adds the sections of its kernels to HipBenchSections (rule 78).
 // Settings (environment variables):
 //   IDRAK_BENCH_HIP_MB        the large buffer in MB (default: a sixteenth of the memory the device has free, at most
@@ -34,7 +40,7 @@ internal abstract partial class DesktopTests
 {
     private static readonly (string Name, Action<Device> Run)[] HipBenchGroup =
     [
-        ("hip bench: --bench-hip [launch|copies|fill|rows|pointwise] without a HIP device (or with IDRAK_DEVICES naming none) prints why in one line and exits cleanly; an unknown section is refused naming the sections", HipBenchWithoutDevice),
+        ("hip bench: --bench-hip [launch|copies|fill|rows|pointwise|products] without a HIP device (or with IDRAK_DEVICES naming none) prints why in one line and exits cleanly; an unknown section is refused naming the sections", HipBenchWithoutDevice),
     ];
 
     private static void HipBenchWithoutDevice(Device device)
@@ -45,7 +51,7 @@ internal abstract partial class DesktopTests
             return;
         }
 
-        Check(HipBenchSections.Select(s => s.Name).SequenceEqual(["launch", "copies", "fill", "rows", "pointwise"]), "the sections: launch cost, copies, fill, rows, element-wise");
+        Check(HipBenchSections.Select(s => s.Name).SequenceEqual(["launch", "copies", "fill", "rows", "pointwise", "products"]), "the sections: launch cost, copies, fill, rows, element-wise, products");
         (int Exit, string Out, string Err) Bench(string[] sections, string? devices)
         {
             var (savedOut, savedError) = (Console.Out, Console.Error);
@@ -80,7 +86,7 @@ internal abstract partial class DesktopTests
         }
 
         var unknown = Bench(["launch", "nope"], "cpu");
-        Check(unknown.Exit == 2 && unknown.Out.Length == 0 && unknown.Err.Contains("unknown section 'nope' (sections: launch, copies, fill, rows, pointwise)", StringComparison.Ordinal),
+        Check(unknown.Exit == 2 && unknown.Out.Length == 0 && unknown.Err.Contains("unknown section 'nope' (sections: launch, copies, fill, rows, pointwise, products)", StringComparison.Ordinal),
             $"an unknown section refused before anything runs: {unknown.Exit} '{unknown.Err}'");
     }
 
@@ -95,6 +101,7 @@ internal abstract partial class DesktopTests
         new("fill", "fill bandwidth: GCN's fill_f32 beside the runtime's memset, each result checked", BenchHipFill),
         new("rows", "the kernel set (assembled cold, then from the cache warm) and each row operation on its GCN kernel (cold and warm, GB/s, GFLOP/s)", BenchHipRows),
         new("pointwise", "each element-wise operation on its GCN kernel over the large buffer (cold and warm, GB/s, GFLOP/s)", BenchHipPointwise),
+        new("products", "the float32, few-row and packed few-row products, the expansions and bfloat16 packing on their GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipProducts),
     ];
 
     internal static int BenchHip(string[] sections)
@@ -460,6 +467,148 @@ internal abstract partial class DesktopTests
     }
 }
 
+internal abstract partial class DesktopTests
+{
+    // One product timed: its first call apart from the warm ones, its rates from the whole call's flops and bytes.
+    private static void BenchProduct(HipBench b, string name, (double Flops, double Bytes) cost, Action run) => BenchOperation(b, name, 1, cost, run);
+
+    private static void BenchHipProducts(HipBench b)
+    {
+        if (!BenchKernelSet(b))
+        {
+            return;
+        }
+
+        var hip = b.Hip;
+        var random = new Random(7);
+        var owned = new List<Storage>();
+        Storage On(long count)
+        {
+            var values = new float[Math.Max(1, count)];
+            for (int i = 0; i < values.Length; i++)
+            {
+                values[i] = random.NextSingle() - 0.5f;
+            }
+
+            var s = hip.Allocate(values.Length, zeroed: false);
+            owned.Add(s);
+            hip.Upload(values, s);
+            return s;
+        }
+
+        // Packed weights of random bits: small integers for int8 and int4, the high halves of floats for bfloat16 and float16.
+        Storage Packed(long words, bool halves)
+        {
+            var values = new float[Math.Max(1, words)];
+            var bits = System.Runtime.InteropServices.MemoryMarshal.Cast<float, uint>(values.AsSpan());
+            for (int i = 0; i < bits.Length; i++)
+            {
+                bits[i] = halves ? 0x3C003C00u ^ (uint)random.Next(0, 0x03FF03FF) : (uint)random.Next();
+            }
+
+            var s = hip.Allocate(values.Length, zeroed: false);
+            owned.Add(s);
+            hip.Upload(values, s);
+            return s;
+        }
+
+        long before = Idrak.Abstraction.Operations.Kernels.HostCalls(hip);
+        try
+        {
+            // The float32 product: the side the large buffer holds three of, at most 1,024.
+            int side = (int)Math.Clamp(Math.Sqrt(b.LargeElements / 3.0), 64, 1024) / 64 * 64;
+            Storage a = On((long)side * side), w = On((long)side * side), c = On((long)side * side), bias = On(side);
+            foreach (var (ta, tb) in new[] { (false, false), (false, true), (true, false), (true, true) })
+            {
+                BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"matmul_{(ta ? 't' : 'n')}{(tb ? 't' : 'n')} {side}x{side}x{side}"),
+                    HipBackend.ProductCost("matmul_f32", side, side, side), () => hip.MatMul(a, w, c, side, side, side, ta, tb, 0f));
+            }
+
+            BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"matmul_nn+bias {side}x{side}x{side}"), HipBackend.ProductCost("matmul_f32", side, side, side),
+                () => hip.MatMulBiasKernel(a, w, bias, c, side, side, side));
+            int quarter = side / 4;
+            BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"matmul_nt {quarter}x{quarter}x{side} batch 16"), HipBackend.ProductCost("matmul_f32", quarter, quarter, side, batch: 16),
+                () => hip.BatchedMatMul(a, w, c, 16, quarter, quarter, side, false, true, 0f));
+
+            // Few rows (decoding) through the float32 kernels and the packed ones.
+            int k = (int)Math.Clamp(b.LargeElements / 4096L, 256, 4096) / 64 * 64, n = 4096;
+            Storage weights = On((long)k * n), x = On(8L * Math.Max(k, 3072)), y = On(8L * 32000);
+            foreach (int m in new[] { 1, 8 })
+            {
+                BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"gemv_nn {m}x{n}x{k}"), HipBackend.ProductCost("gemv_nn_f32", m, n, k),
+                    () => hip.MatMul(x, weights, y, m, n, k, false, false, 0f));
+                BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"gemv_nt {m}x{k}x{n}"), HipBackend.ProductCost("gemv_nt_f32", m, k, n),
+                    () => hip.MatMul(x, weights, y, m, k, n, false, true, 0f));
+            }
+
+            (GcnWeights Format, int K, int N)[] shapes =
+            [
+                (GcnWeights.Int8, 3072, 1024), (GcnWeights.Int8, k, n), (GcnWeights.Int4, 1024, 32000), (GcnWeights.Int4, k, n), (GcnWeights.BFloat16, k, n), (GcnWeights.Float16, k, n),
+            ];
+            foreach (var (format, kk, nn) in shapes)
+            {
+                int perWord = GcnKernels.ColumnsPerWord(format);
+                long words = (nn + perWord - 1) / perWord;
+                Storage packed = Packed(kk * words, format is GcnWeights.BFloat16 or GcnWeights.Float16);
+                Storage scales = On(format == GcnWeights.Int4 ? (kk + 31) / 32 * 8 * words : nn);
+                foreach (int m in new[] { 1, 4, 8 })
+                {
+                    string kernel = GcnKernels.PackedGemvKernel(format, m);
+                    int splits = HipBackend.GemvSplitCount(hip.DeviceLimits.ComputeUnits, (int)((words + 63) / 64), kk, HipBackend.GemvSplitsSetting(Environment.GetEnvironmentVariable(HipBackend.GemvSplitsVariable)));
+                    var cost = HipBackend.ProductCost(kernel, m, nn, kk, splits);
+                    Action run = format switch
+                    {
+                        GcnWeights.Int8 => () => hip.Int8MatMul(x, packed, scales, y, m, nn, kk),
+                        GcnWeights.Int4 => () => hip.Int4MatMul(x, packed, scales, y, m, nn, kk),
+                        GcnWeights.BFloat16 => () => hip.BFloat16MatMul(x, packed, y, m, nn, kk),
+                        _ => () => hip.Float16MatMul(x, packed, y, m, nn, kk),
+                    };
+                    BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{kernel} {m}x{kk}->{nn} (about {splits} splits)"), cost, run);
+                }
+            }
+
+            int rows = 64;
+            {
+                long words = (n + 3) / 4;
+                Storage packed = Packed(k * words, false), scales = On(n), many = On((long)rows * k), output = On((long)rows * n);
+                BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"int8_matmul_f32 {rows}x{k}->{n}"), HipBackend.ProductCost("int8_matmul_f32", rows, n, k),
+                    () => hip.Int8MatMul(many, packed, scales, output, rows, n, k));
+            }
+
+            // The expansions over k x n weights, and bfloat16 packing over the large buffer.
+            Storage expanded = On((long)k * n);
+            foreach (var format in new[] { GcnWeights.Int8, GcnWeights.Int4, GcnWeights.BFloat16, GcnWeights.Float16 })
+            {
+                int perWord = GcnKernels.ColumnsPerWord(format);
+                long words = (n + perWord - 1) / perWord;
+                Storage packed = Packed(k * words, format is GcnWeights.BFloat16 or GcnWeights.Float16);
+                Storage scales = On(format == GcnWeights.Int4 ? (k + 31) / 32 * 8 * words : n);
+                string kernel = GcnKernels.DequantKernel(format);
+                Action run = format switch
+                {
+                    GcnWeights.Int8 => () => hip.Int8Dequantize(packed, scales, expanded, k, n),
+                    GcnWeights.Int4 => () => hip.Int4Dequantize(packed, scales, expanded, k, n),
+                    GcnWeights.BFloat16 => () => hip.BFloat16Dequantize(packed, expanded, k, n),
+                    _ => () => hip.Float16Dequantize(packed, expanded, k, n),
+                };
+                BenchOperation(b, string.Create(CultureInfo.InvariantCulture, $"{kernel} {k}x{n}"), (long)k * n, HipBackend.Cost(kernel), run);
+            }
+
+            Storage source = On(b.LargeElements), target = On(b.LargeElements / 2);
+            BenchOperation(b, $"bf16_pack_f32 {b.LargeText}", b.LargeElements, HipBackend.Cost("bf16_pack_f32"), () => hip.PackBFloat16(source, target, b.LargeElements));
+            long fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(hip) - before;
+            b.Row("  (host fallbacks during the section)", fallbacks == 0 ? "none: every operation ran on its kernel" : $"{fallbacks} (SHOULD BE NONE)");
+        }
+        finally
+        {
+            foreach (var s in owned)
+            {
+                s.Release();
+            }
+        }
+    }
+}
+
 /// <summary>What a <c>--bench-hip</c> section works with: the device, its backend, the large buffer's size, fill_f32 once loaded, and the timing helpers.</summary>
 internal sealed class HipBench : IDisposable
 {
@@ -500,7 +649,7 @@ internal sealed class HipBench : IDisposable
     {
         Console.WriteLine($"== {Device}: {Hip.Name}");
         Console.WriteLine($"   HIP runtime {HipBackend.FormatVersion(Hip.RuntimeVersion)}, driver {Hip.DriverVersion}, from {HipRuntime.LoadedFrom}; target {Hip.DeviceLimits.Architecture}");
-        Console.WriteLine($"   operations: {(Hip.KernelsUnavailableReason is { } off ? $"every one through the host fallback ({off})" : "rows and element-wise on Idrak's GCN kernels, the rest through the host fallback")}");
+        Console.WriteLine($"   operations: {(Hip.KernelsUnavailableReason is { } off ? $"every one through the host fallback ({off})" : "rows, element-wise and products on Idrak's GCN kernels, the rest through the host fallback")}");
         Console.WriteLine($"   kernel timing: {Hip.ProfileUnavailableReason ?? "each launch between two events while profiling"}");
         Console.WriteLine($"   large buffer {LargeText}, {Repeats} warm calls a row");
     }

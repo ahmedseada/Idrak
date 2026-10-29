@@ -21,9 +21,9 @@ internal static partial class GcnKernels
 
     /// <summary>
     /// Every kernel of HIP's code object, in the order it is assembled: the gate kernel, then each kernel file's list
-    /// (<see cref="Pointwise"/>, <see cref="Rows"/>; later phases add theirs here).
+    /// (<see cref="Pointwise"/>, <see cref="Rows"/>, <see cref="Products"/>; later phases add theirs here).
     /// </summary>
-    internal static IReadOnlyList<GcnKernelSource> All => _all ??= [new("fill_f32", FillText.ToArray()), .. Pointwise, .. Rows];
+    internal static IReadOnlyList<GcnKernelSource> All => _all ??= [new("fill_f32", FillText.ToArray()), .. Pointwise, .. Rows, .. Products];
 
     /// <summary>
     /// Every kernel of <see cref="All"/> assembled for <paramref name="isa"/> by <paramref name="target"/>'s family (one

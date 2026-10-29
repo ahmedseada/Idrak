@@ -20,8 +20,9 @@ internal sealed unsafe partial class HipBackend
 
     /// <summary>
     /// A kernel's floating-point operations and global-memory bytes per element, from the tables at the top of
-    /// <c>GcnKernels.Rows.cs</c> and <c>GcnKernels.Pointwise.cs</c> (<paramref name="k"/>: the top-k's picks; masked
-    /// softmax and log-softmax with their own byte counts); (0, 0) for a kernel the tables do not list. The profile's
+    /// <c>GcnKernels.Rows.cs</c> and <c>GcnKernels.Pointwise.cs</c>, and the expansions' of <c>GcnKernels.Products.cs</c>
+    /// (<paramref name="k"/>: the top-k's picks, int8_gemv_finish_f32's splits; masked softmax and log-softmax with their
+    /// own byte counts); (0, 0) for a kernel the tables do not list (the products: <see cref="ProductCost"/>). The profile's
     /// labels and <c>--bench-hip</c>'s rates read them.
     /// </summary>
     internal static (double Flops, double Bytes) Cost(string kernel, int k = 0, bool variant = false) => kernel switch
@@ -50,6 +51,11 @@ internal sealed unsafe partial class HipBackend
         "sqrt_f32" => (7, 8),
         "sin_f32" or "cos_f32" => (32, 8),
         "fill_f32" => (0, 4),
+        "int8_dequant_f32" => (1, 5),                                           // per weight (GcnKernels.Products.cs)
+        "int4_dequant_f32" => (1, 4.5),
+        "bf16_dequant_f32" or "f16_dequant_f32" => (0, 6),
+        "bf16_pack_f32" => (0, 6),                                              // per float
+        "int8_gemv_finish_f32" => (k, 4.0 * (k + 1)),                            // per output; k: the splits
         _ => (0, 0),
     };
 

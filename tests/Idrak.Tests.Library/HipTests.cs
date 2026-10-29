@@ -22,12 +22,12 @@ internal abstract partial class Tests
         ("hip limits: the block size and the limits' plausibility come from what the device reports", HipBlockSize),
         ("hip architecture: the target string is read from the device properties by content; runtime versions read as major.minor.patch", HipArchitecture),
         ("hip kernel cache: the key changes with every input (a kernel set's with any kernel's text, the target, the device, the format and the versions); a stored code object comes back; IDRAK_HIP_KERNEL_CACHE moves or disables it", HipKernelCacheKeys),
-        ("hip kernels: GcnKernels.All (fill_f32, the element-wise and row kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c (formats 5 and 4), whose metadata, read back by the library, declares every kernel once with the arguments, kernel argument bytes and block it was written with; malformed objects are refused", HipKernelSet),
-        ("hip kernels: IDRAK_HIP_KERNELS=0 turns the kernels off with that reason; a target Idrak does not read or no family handles gives a reason naming it (not registered); every kernel has its profile cost; the element-wise grid's blocks per compute unit come from IDRAK_HIP_POINTWISE_BLOCKS", HipKernelSettings),
+        ("hip kernels: GcnKernels.All (fill_f32, the element-wise, row and product kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c (formats 5 and 4), whose metadata, read back by the library, declares every kernel once with the arguments, kernel argument bytes and block it was written with; malformed objects are refused", HipKernelSet),
+        ("hip kernels: IDRAK_HIP_KERNELS=0 turns the kernels off with that reason; a target Idrak does not read or no family handles gives a reason naming it (not registered); every kernel has its profile cost; IDRAK_HIP_GEMV_SPLITS and the k splits of the packed few-row products; the element-wise grid's blocks per compute unit come from IDRAK_HIP_POINTWISE_BLOCKS", HipKernelSettings),
         ("hip telemetry: KernelsLoaded (a device's kernel set, from the cache or assembled, its time, kernels and bytes) reaches the hooks at the Devices level, the console logger's line and the JSON lines' kernels_loaded", HipKernelsLoadedEvent),
         ("hip: no vendor ids or card names in the code of src/Idrak.Gpu/Hip, and GPU targets (gfx names) only in its instruction-set tables, GcnTargets*.cs (comments may name them)", HipNoVendorNames),
         ("hip profiler and telemetry: HipBackend times its kernels (IKernelProfiler) as CUDA does; a runtime without the event functions times nothing and says why; on HIP devices fill_f32's launches are timed under its name or a label with its floating-point operations, a refused code object reaches the telemetry, and a host fallback carries why the kernels are unavailable", HipProfilerAndTelemetry),
-        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row and element-wise operations on the GCN kernels (kernels loaded: none of them through the host fallback), products, attention, gathers and permutes through the host fallback until their kernels land (on HIP devices)", HipDeviceMatchesCpu),
+        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row, element-wise and product operations (float32, few-row, packed int8, int4, bfloat16 and float16, the expansions and bfloat16 packing) on the GCN kernels (kernels loaded: none of them through the host fallback), attention, gathers and permutes through the host fallback until their kernels land (on HIP devices)", HipDeviceMatchesCpu),
     ];
 
     internal static void HipMissingRuntime(Device device)
@@ -248,8 +248,8 @@ internal abstract partial class Tests
         }
 
         var all = GcnKernels.All;
-        Check(all.Select(k => k.Name).Distinct().Count() == all.Count && all.Count == 1 + GcnKernels.Pointwise.Count + GcnKernels.Rows.Count && all[0].Name == "fill_f32",
-            $"GcnKernels.All: fill_f32, then the element-wise and row kernels, each once ({all.Count})");
+        Check(all.Select(k => k.Name).Distinct().Count() == all.Count && all.Count == 1 + GcnKernels.Pointwise.Count + GcnKernels.Rows.Count + GcnKernels.Products.Count && all[0].Name == "fill_f32",
+            $"GcnKernels.All: fill_f32, then the element-wise, row and product kernels, each once ({all.Count})");
         foreach (string processor in new[] { "gfx900", "gfx906", "gfx908", "gfx90c" })
         {
             var isa = GcnIsaVersion.Parse(processor);
@@ -265,7 +265,7 @@ internal abstract partial class Tests
                 {
                     var (code, layout) = (codes[i], layouts[i]);
                     Check(layout.Arguments.SequenceEqual(code.Arguments) && layout.ArgumentBytes == GcnCodeObject.KernargBytes(code)
-                          && layout.Block == (code.RequiredWorkgroupSize?.X ?? code.MaxFlatWorkgroupSize) && layout.Block == 256,
+                          && layout.Block == (code.RequiredWorkgroupSize?.X ?? code.MaxFlatWorkgroupSize) && layout.Block is 256 or GcnKernels.PackedGemvWords,
                         $"{processor}, format {format}, {code.Name}: arguments, bytes and block as assembled ({layout.ArgumentBytes} bytes, block {layout.Block})");
                 }
 
@@ -312,8 +312,11 @@ internal abstract partial class Tests
         string? unread = HipBackend.TargetUnavailable("hip:0", "sm_80", out _, out _);
         Check(unread is not null && unread.Contains("'sm_80'", StringComparison.Ordinal) && unread.Contains("not a target string", StringComparison.Ordinal), $"a target Idrak does not read: {unread}");
 
-        var missing = GcnKernels.All.Where(k => HipBackend.Cost(k.Name).Bytes <= 0).Select(k => k.Name).ToList();
-        Check(missing.Count == 0, $"every kernel has its profile cost (the tables of GcnKernels.Rows.cs and .Pointwise.cs): {string.Join(", ", missing)}");
+        var missing = GcnKernels.All.Where(k => HipBackend.Cost(k.Name).Bytes <= 0 && HipBackend.ProductCost(k.Name, 2, 3, 4).Bytes <= 0).Select(k => k.Name).ToList();
+        Check(missing.Count == 0, $"every kernel has its profile cost (the tables of GcnKernels.Rows.cs, .Pointwise.cs and .Products.cs): {string.Join(", ", missing)}");
+        Check(HipBackend.GemvSplitsSetting(null) is null && HipBackend.GemvSplitsSetting("6") == 6 && HipBackend.GemvSplitsSetting("0") is null && HipBackend.GemvSplitsSetting("x") is null
+              && HipBackend.GemvSplitCount(8, 4, 3072) == 4 && HipBackend.GemvSplitCount(8, 4, 3072, forced: 6) == 6 && HipBackend.GemvSplitCount(64, 1, 100) == 1
+              && HipBackend.GemvSplitCount(1000, 1, 1 << 20) == 64, "IDRAK_HIP_GEMV_SPLITS forces the packed few-row products' k splits; else about two blocks a compute unit, a power of two, at most min(64, k / 64)");
         Check(Enum.GetValues<UnaryOp>().Count(op => HipBackend.UnaryKernelName(op) is { } name && GcnKernels.All.Any(k => k.Name == name)) == 14
               && Enum.GetValues<BinaryOp>().All(op => HipBackend.BinaryKernelName(op) is { } name && GcnKernels.All.Any(k => k.Name == name)),
             "the activations and binary operations CUDA runs on kernels name kernels of the set");
@@ -551,7 +554,7 @@ internal abstract partial class Tests
             float[] x8 = Values(m * k8), scales = Values(cols8, 0.001f, 0.01f);
             var hy8 = Keep(hip.Allocate(m * cols8, zeroed: true));
             var cy8 = Keep(cpu.Allocate(m * cols8, zeroed: true));
-            hip.Int8MatMul(On(hip, x8), On(hip, packed), On(hip, scales), hy8, m, cols8, k8);
+            Wired("int8 product", () => hip.Int8MatMul(On(hip, x8), On(hip, packed), On(hip, scales), hy8, m, cols8, k8));
             cpu.Int8MatMul(On(cpu, x8), On(cpu, packed), On(cpu, scales), cy8, m, cols8, k8);
             AssertClose(Read(cpu, cy8, m * cols8), Read(hip, hy8, m * cols8), 1e-3f, "int8 product");
 
@@ -587,12 +590,12 @@ internal abstract partial class Tests
                     {
                         float beta = ta ? 1f : 0f;
                         Both($"product {pm}x{pn}x{pk} transA={ta} transB={tb}", [Values(pm * pk), Values(pk * pn)], [pm * pn],
-                            (k, s) => k.MatMul(s[0], s[1], s[2], pm, pn, pk, ta, tb, beta), 1e-3f);
+                            (k, s) => k.MatMul(s[0], s[1], s[2], pm, pn, pk, ta, tb, beta), 1e-3f, wired: true);
                     }
                 }
             }
 
-            Both("batched product", [Values(3 * 17 * 5), Values(3 * 5 * 66)], [3 * 17 * 66], (k, s) => k.BatchedMatMul(s[0], s[1], s[2], 3, 17, 66, 5, false, true, 0f));
+            Both("batched product", [Values(3 * 17 * 5), Values(3 * 5 * 66)], [3 * 17 * 66], (k, s) => k.BatchedMatMul(s[0], s[1], s[2], 3, 17, 66, 5, false, true, 0f), wired: true);
             Both("product with a bias", [Values(4 * 300), Values(300 * 260), Values(260)], [4 * 260], (k, s) =>
             {
                 if (!k.MatMulBias(s[0], s[1], s[2], s[3], 4, 260, 300))
@@ -600,7 +603,7 @@ internal abstract partial class Tests
                     k.MatMul(s[0], s[1], s[3], 4, 260, 300, false, false, 0f);
                     k.AddRowVector(s[3], s[2], s[3], 4, 260);
                 }
-            }, 1e-3f);
+            }, 1e-3f, wired: true);
 
             // Packed products of few rows and the expansions (bfloat16 packed on the CPU; 4-bit words of random nibbles).
             int pr = 2, pcols = 300, pdepth = 70;
@@ -608,17 +611,22 @@ internal abstract partial class Tests
             var packedStorage = On(cpu, packedRows);
             cpu.PackBFloat16(On(cpu, Values(pdepth * pcols)), packedStorage, pdepth * pcols);
             cpu.Download(packedStorage, packedRows);
-            Both("bfloat16 product", [Values(pr * pdepth), packedRows], [pr * pcols], (k, s) => k.BFloat16MatMul(s[0], s[1], s[2], pr, pcols, pdepth), 1e-3f);
-            Both("bfloat16 expansion", [packedRows], [pdepth * pcols], (k, s) => k.BFloat16Dequantize(s[0], s[1], pdepth, pcols), 0f);
-            Both("bfloat16 packing", [Values(301)], [151], (k, s) => k.PackBFloat16(s[0], s[1], 301), 0f);
+            Both("bfloat16 product", [Values(pr * pdepth), packedRows], [pr * pcols], (k, s) => k.BFloat16MatMul(s[0], s[1], s[2], pr, pcols, pdepth), 1e-3f, wired: true);
+            Both("bfloat16 expansion", [packedRows], [pdepth * pcols], (k, s) => k.BFloat16Dequantize(s[0], s[1], pdepth, pcols), 0f, wired: true);
+            Both("bfloat16 packing", [Values(301)], [151], (k, s) => k.PackBFloat16(s[0], s[1], 301), 0f, wired: true);
+            Both("float16 product", [Values(pr * pdepth), packedRows], [pr * pcols], (k, s) => k.Float16MatMul(s[0], s[1], s[2], pr, pcols, pdepth), 1e-3f, wired: true);
+            Both("float16 expansion", [packedRows], [pdepth * pcols], (k, s) => k.Float16Dequantize(s[0], s[1], pdepth, pcols), 0f, wired: true);
+            Both("bfloat16 product of 11 rows (expanded)", [Values(11 * pdepth), packedRows], [11 * pcols], (k, s) => k.BFloat16MatMul(s[0], s[1], s[2], 11, pcols, pdepth), 1e-3f, wired: true);
+            Both("int8 product of 11 rows", [Values(11 * k8), packed, scales], [11 * cols8], (k, s) => k.Int8MatMul(s[0], s[1], s[2], s[3], 11, cols8, k8), 1e-3f, wired: true);
+            Both("int8 expansion", [packed, scales], [k8 * cols8], (k, s) => k.Int8Dequantize(s[0], s[1], s[2], k8, cols8), 0f, wired: true);
             int int4Words = (pcols + 7) / 8;                                           // rows of ⌈n / 8⌉ words, scale rows of 8 · that
             var nibbles = new byte[pdepth * int4Words * 4];
             random.NextBytes(nibbles);
             var int4 = new float[pdepth * int4Words];
             Buffer.BlockCopy(nibbles, 0, int4, 0, nibbles.Length);
             float[] int4Scales = Values((pdepth + 31) / 32 * int4Words * 8, 0.001f, 0.01f);
-            Both("4-bit product", [Values(pr * pdepth), int4, int4Scales], [pr * pcols], (k, s) => k.Int4MatMul(s[0], s[1], s[2], s[3], pr, pcols, pdepth), 1e-3f);
-            Both("4-bit expansion", [int4, int4Scales], [pdepth * pcols], (k, s) => k.Int4Dequantize(s[0], s[1], s[2], pdepth, pcols), 0f);
+            Both("4-bit product", [Values(pr * pdepth), int4, int4Scales], [pr * pcols], (k, s) => k.Int4MatMul(s[0], s[1], s[2], s[3], pr, pcols, pdepth), 1e-3f, wired: true);
+            Both("4-bit expansion", [int4, int4Scales], [pdepth * pcols], (k, s) => k.Int4Dequantize(s[0], s[1], s[2], pdepth, pcols), 0f, wired: true);
 
             // Rows: softmax and log-softmax, the masked softmax, layer norm with its statistics, GELU after a bias.
             int sr = 5, sc = 513;

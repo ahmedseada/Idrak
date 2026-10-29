@@ -36,6 +36,9 @@ internal sealed record HipDeviceLimits
 
     public required int MaxGridDimY { get; init; }
 
+    /// <summary>Blocks a grid may have in z (a batch of products); 0 when the runtime does not say (one a launch then).</summary>
+    public int MaxGridDimZ { get; init; }
+
     /// <summary>Shared memory (LDS) a block may use, in bytes.</summary>
     public required int SharedMemoryPerBlock { get; init; }
 
@@ -142,6 +145,7 @@ internal sealed record HipDeviceLimits
             MaxBlockDimX = Attribute(AttributeMaxBlockDimX),
             MaxGridDimX = Attribute(AttributeMaxGridDimX),
             MaxGridDimY = Attribute(AttributeMaxGridDimY),
+            MaxGridDimZ = Attribute(AttributeMaxGridDimZ),
             SharedMemoryPerBlock = Attribute(AttributeMaxSharedMemoryPerBlock),
             L2CacheBytes = Attribute(AttributeL2CacheSize),
             MemoryBusWidth = Attribute(AttributeMemoryBusWidth),

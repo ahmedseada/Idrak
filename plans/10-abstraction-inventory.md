@@ -602,7 +602,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `CpuBackend` | 128 of 144 |
 | `CudaBackend` | 136 of 144 |
 | `DeferredBackend` | 11 of 144 |
-| `HipBackend` | 28 of 144 |
+| `HipBackend` | 39 of 144 |
 | `VulkanBackend` | 124 of 144 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
@@ -635,9 +635,9 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `AvgPoolKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AxpyAtKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AxpyKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `BFloat16DequantizeKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `BFloat16MatMulKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `BatchedMatMulKernel(10)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `BFloat16DequantizeKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `BFloat16MatMulKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `BatchedMatMulKernel(10)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `BiasGeluKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `BinaryKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `BoxIouLossBackwardKernel(7)` | virtual | ✓ |  |  |  |  |
@@ -664,8 +664,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `DropoutKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `ExtremumBackwardKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `FillKernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `Float16DequantizeKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `Float16MatMulKernel(6)` | virtual |  |  |  |  |  |
+| `Float16DequantizeKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `Float16MatMulKernel(6)` | virtual |  |  |  | ✓ |  |
 | `FusedAdamWKernel(9)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `GatedActivationBackwardKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `GatedActivationBackwardPackedKernel(8)` | virtual | ✓ | ✓ |  |  |  |
@@ -679,10 +679,10 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `GroupScaleShiftKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `HistoryPushKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `Im2ColKernel(3)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `Int4DequantizeKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `Int4MatMulKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `Int8DequantizeKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `Int8MatMulKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `Int4DequantizeKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `Int4MatMulKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `Int8DequantizeKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `Int8MatMulKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Interpolate2dBackwardKernel(11)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `Interpolate2dKernel(11)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `InvSqrtKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
@@ -697,7 +697,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `LeakyReluKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `LiveStorages(1)` | virtual |  |  |  |  |  |
 | `LogSoftmaxTopKKernel(6)` | virtual | ✓ | ✓ |  | ✓ |  |
-| `MatMulBiasKernel(7)` | virtual |  | ✓ |  |  | ✓ |
+| `MatMulBiasKernel(7)` | virtual |  | ✓ |  | ✓ | ✓ |
 | `MatMulManyKernel(4)` | virtual |  | ✓ |  |  |  |
 | `MaxPoolBackwardKernel(4)` | virtual | ✓ | ✓ |  |  |  |
 | `MaxPoolBackwardKernel(4)` | virtual |  | ✓ |  |  | ✓ |
@@ -708,7 +708,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `NormRopeHeadsKernel(26)` | virtual |  | ✓ |  |  | ✓ |
 | `NormStatsKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `OneHotKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `PackBFloat16Kernel(3)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `PackBFloat16Kernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `PackedMatMulEpilogueKernel(11)` | virtual |  | ✓ |  |  |  |
 | `PackedMatMulNormAddRmsNormKernel(17)` | virtual |  | ✓ |  |  |  |
 | `PenalizeRowsKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |

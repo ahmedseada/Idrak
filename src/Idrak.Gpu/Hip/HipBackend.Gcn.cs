@@ -177,7 +177,15 @@ internal sealed unsafe partial class HipBackend
     /// <see cref="LaunchGcn(GcnFunction, uint, uint, ReadOnlySpan{byte})"/> over a grid of <paramref name="blocks"/> ×
     /// <paramref name="blocksY"/> blocks (a block is one high).
     /// </summary>
-    internal void LaunchGcn(GcnFunction function, uint blocks, uint blocksY, uint blockSize, ReadOnlySpan<byte> arguments)
+    internal void LaunchGcn(GcnFunction function, uint blocks, uint blocksY, uint blockSize, ReadOnlySpan<byte> arguments) =>
+        LaunchGcn(function, blocks, blocksY, 1, blockSize, arguments);
+
+    /// <summary>
+    /// <see cref="LaunchGcn(GcnFunction, uint, uint, ReadOnlySpan{byte})"/> over a grid of <paramref name="blocks"/> ×
+    /// <paramref name="blocksY"/> × <paramref name="blocksZ"/> blocks (a block is one high and one deep; z within what the
+    /// device reports, one when it reports nothing).
+    /// </summary>
+    internal void LaunchGcn(GcnFunction function, uint blocks, uint blocksY, uint blocksZ, uint blockSize, ReadOnlySpan<byte> arguments)
     {
         ArgumentNullException.ThrowIfNull(function);
         if (function.Handle == IntPtr.Zero)
@@ -196,6 +204,11 @@ internal sealed unsafe partial class HipBackend
                 + $"{DeviceLimits.MaxGridDimY} blocks of 1 to {DeviceLimits.MaxBlockDimX}.");
         }
 
+        if (blocksZ == 0 || blocksZ > (uint)Math.Max(1, DeviceLimits.MaxGridDimZ))
+        {
+            throw new ArgumentOutOfRangeException(nameof(blocksZ), $"{function.Name}: {blocksZ} blocks in z; the device takes 1 to {Math.Max(1, DeviceLimits.MaxGridDimZ)}.");
+        }
+
         MakeCurrent();
         nuint size = (nuint)arguments.Length;
         fixed (byte* p = arguments)
@@ -206,7 +219,7 @@ internal sealed unsafe partial class HipBackend
             extra[2] = (void*)LaunchParamBufferSize;
             extra[3] = &size;
             extra[4] = (void*)LaunchParamEnd;
-            Launch(function, blocks, blocksY, blockSize, extra);              // timed while a profile runs (HipBackend.Profile.cs)
+            Launch(function, blocks, blocksY, blocksZ, blockSize, extra);              // timed while a profile runs (HipBackend.Profile.cs)
         }
     }
 

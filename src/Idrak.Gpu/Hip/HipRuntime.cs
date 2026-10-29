@@ -204,7 +204,7 @@ internal static unsafe class HipRuntime
     // plausibility (HipDeviceLimits.Problem): a runtime numbering them differently disables the kernels instead of
     // launching them with wrong sizes.
     public const int AttributeIntegrated = 16, AttributeL2CacheSize = 19, AttributeComputeCapabilityMajor = 23,
-        AttributeMaxBlockDimX = 26, AttributeMaxGridDimX = 29, AttributeMaxGridDimY = 30, AttributeMaxThreadsPerBlock = 56,
+        AttributeMaxBlockDimX = 26, AttributeMaxGridDimX = 29, AttributeMaxGridDimY = 30, AttributeMaxGridDimZ = 31, AttributeMaxThreadsPerBlock = 56,
         AttributeMemoryBusWidth = 59, AttributeComputeCapabilityMinor = 61, AttributeMultiprocessorCount = 63,
         AttributePciBusId = 67, AttributePciDeviceId = 68, AttributePciDomainId = 69, AttributeMaxSharedMemoryPerBlock = 74,
         AttributeWarpSize = 87;
