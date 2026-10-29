@@ -607,16 +607,17 @@ internal static partial class GcnKernels
 
         private readonly StringBuilder _text = new();
         private readonly string _name;
-        private readonly int _areaBytes;
+        private readonly int _areaBytes, _extraLds;
         private readonly bool _workgroupY;
         private int _s = 100, _v = 100, _labels;
         private string _rows = "";
 
-        public RowWriter(string name, int arrays, bool workgroupY = false)
+        public RowWriter(string name, int arrays, bool workgroupY = false, int extraLds = 0)
         {
             _name = name;
             _areaBytes = 1024 * arrays;
             _workgroupY = workgroupY;
+            _extraLds = extraLds;
             Raw($".kernel {name}");
         }
 
@@ -632,6 +633,9 @@ internal static partial class GcnKernels
         private static string Area => "%v4";
 
         private static string AreaBase => "%v5";
+
+        /// <summary>The first byte of the LDS a kernel asked for beyond the reductions' two areas (<c>extraLds</c>).</summary>
+        public int ExtraLdsBase => 2 * _areaBytes;
 
         /// <summary>The current row, and the grid's workgroups (the row loop's stride).</summary>
         public string Row => "%s90";
@@ -713,9 +717,9 @@ internal static partial class GcnKernels
             }
 
             Raw($".reqd_workgroup_size {RowThreads}, 1, 1");
-            if (_areaBytes > 0)
+            if (_areaBytes > 0 || _extraLds > 0)
             {
-                Raw($".lds {2 * _areaBytes}");
+                Raw($".lds {2 * _areaBytes + _extraLds}");
             }
 
             Raw($".user_sgpr dispatch_ptr");

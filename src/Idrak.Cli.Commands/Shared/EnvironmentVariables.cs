@@ -194,6 +194,7 @@ internal static class EnvironmentVariables
         new("IDRAK_HIP_KERNELS", Hip, "on", "0 or false: HIP's GCN kernels stay off, every operation through the host fallback (to compare or isolate a kernel)", OnDevice),
         new("IDRAK_HIP_POINTWISE_BLOCKS", Hip, "8", "Blocks of 256 an element-wise HIP launch may take per compute unit (its grid-stride loop takes the rest)", OnDevice),
         new("IDRAK_HIP_GEMV_SPLITS", Hip, "about two blocks a compute unit", "The k splits of HIP's packed few-row products (int8, int4, bfloat16, float16 weights; a positive count), added in split order", OnDevice),
+        new("IDRAK_HIP_ATTENTION_SPLIT", Hip, "512", "Key positions one split of a HIP attention row takes (a multiple of 256; 0: no splits); the splits are merged in split order", OnDevice),
         new("ROCM_PATH", Hip, "/opt/rocm", "Where ROCm is (Linux)", OnDevice),
 
         new("IDRAK_VOICES", Sources, "voices/ under IDRAK_CACHE or ~/.cache/idrak", "The installed voices' folder (--voices wins; with --cache given and this unset: voices/ under it)", VoiceStore),

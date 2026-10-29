@@ -7,7 +7,7 @@ using Idrak.Diagnostics;
 using Idrak.Gpu.Hip;
 using GcnWeights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
 
-// dotnet run -c Release --project tests/Idrak.Tests -- --bench-hip [launch|copies|fill|rows|pointwise|products …]
+// dotnet run -c Release --project tests/Idrak.Tests -- --bench-hip [launch|copies|fill|rows|pointwise|products|attention|shapes …]
 //
 // Every HIP device found, or those IDRAK_DEVICES names (hip:0, …), section by section (all of them, or those named), as
 // --bench-vulkan is for Vulkan. Each time is the first call (cold: the code object written and loaded, the first launch,
@@ -31,6 +31,12 @@ using GcnWeights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
 //            int4 1 x 1024 -> 32000), more int8 rows, the expansions and bfloat16 packing: the first call apart from the
 //            warm ones, GB/s and GFLOP/s from GcnKernels.Products.cs's table (HipBackend.ProductCost, Cost), the k splits
 //            each packed product took (IDRAK_HIP_GEMV_SPLITS forces them), none through the host fallback
+//   attention decoding over float32, bfloat16 and int8 caches (one row a head, the cache's positions split), the tiled
+//            form with the log-sum-exp, attention over causal key ranges with grouped heads, and the int8 cache's scores
+//            and weighted values (BenchHip.Attention.cs): cold apart from warm, GB/s and GFLOP/s from
+//            GcnKernels.Attention.cs's table, none through the host fallback
+//   shapes   the cache writes (float32, bfloat16, int8), the decoder mask, the gathers, a permute and the adding strided
+//            copy over the large buffer (BenchHip.Attention.cs): cold apart from warm, none through the host fallback
 // Each later phase of plan 35 adds the sections of its kernels to HipBenchSections (rule 78).
 // Settings (environment variables):
 //   IDRAK_BENCH_HIP_MB        the large buffer in MB (default: a sixteenth of the memory the device has free, at most
@@ -40,7 +46,7 @@ internal abstract partial class DesktopTests
 {
     private static readonly (string Name, Action<Device> Run)[] HipBenchGroup =
     [
-        ("hip bench: --bench-hip [launch|copies|fill|rows|pointwise|products] without a HIP device (or with IDRAK_DEVICES naming none) prints why in one line and exits cleanly; an unknown section is refused naming the sections", HipBenchWithoutDevice),
+        ("hip bench: --bench-hip [launch|copies|fill|rows|pointwise|products|attention|shapes] without a HIP device (or with IDRAK_DEVICES naming none) prints why in one line and exits cleanly; an unknown section is refused naming the sections", HipBenchWithoutDevice),
     ];
 
     private static void HipBenchWithoutDevice(Device device)
@@ -51,7 +57,8 @@ internal abstract partial class DesktopTests
             return;
         }
 
-        Check(HipBenchSections.Select(s => s.Name).SequenceEqual(["launch", "copies", "fill", "rows", "pointwise", "products"]), "the sections: launch cost, copies, fill, rows, element-wise, products");
+        Check(HipBenchSections.Select(s => s.Name).SequenceEqual(["launch", "copies", "fill", "rows", "pointwise", "products", "attention", "shapes"]),
+            "the sections: launch cost, copies, fill, rows, element-wise, products, attention, shapes");
         (int Exit, string Out, string Err) Bench(string[] sections, string? devices)
         {
             var (savedOut, savedError) = (Console.Out, Console.Error);
@@ -86,7 +93,7 @@ internal abstract partial class DesktopTests
         }
 
         var unknown = Bench(["launch", "nope"], "cpu");
-        Check(unknown.Exit == 2 && unknown.Out.Length == 0 && unknown.Err.Contains("unknown section 'nope' (sections: launch, copies, fill, rows, pointwise, products)", StringComparison.Ordinal),
+        Check(unknown.Exit == 2 && unknown.Out.Length == 0 && unknown.Err.Contains("unknown section 'nope' (sections: launch, copies, fill, rows, pointwise, products, attention, shapes)", StringComparison.Ordinal),
             $"an unknown section refused before anything runs: {unknown.Exit} '{unknown.Err}'");
     }
 
@@ -102,6 +109,8 @@ internal abstract partial class DesktopTests
         new("rows", "the kernel set (assembled cold, then from the cache warm) and each row operation on its GCN kernel (cold and warm, GB/s, GFLOP/s)", BenchHipRows),
         new("pointwise", "each element-wise operation on its GCN kernel over the large buffer (cold and warm, GB/s, GFLOP/s)", BenchHipPointwise),
         new("products", "the float32, few-row and packed few-row products, the expansions and bfloat16 packing on their GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipProducts),
+        new("attention", "decoding over float32, bfloat16 and int8 caches, the tiled form and attention over key ranges on the GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipAttention),
+        new("shapes", "the cache writes, the decoder mask, the gathers, a permute and the adding strided copy on the GCN kernels (cold and warm, GB/s)", BenchHipShapes),
     ];
 
     internal static int BenchHip(string[] sections)
@@ -649,7 +658,7 @@ internal sealed class HipBench : IDisposable
     {
         Console.WriteLine($"== {Device}: {Hip.Name}");
         Console.WriteLine($"   HIP runtime {HipBackend.FormatVersion(Hip.RuntimeVersion)}, driver {Hip.DriverVersion}, from {HipRuntime.LoadedFrom}; target {Hip.DeviceLimits.Architecture}");
-        Console.WriteLine($"   operations: {(Hip.KernelsUnavailableReason is { } off ? $"every one through the host fallback ({off})" : "rows, element-wise and products on Idrak's GCN kernels, the rest through the host fallback")}");
+        Console.WriteLine($"   operations: {(Hip.KernelsUnavailableReason is { } off ? $"every one through the host fallback ({off})" : "rows, element-wise, products, attention and shapes on Idrak's GCN kernels, the rest through the host fallback")}");
         Console.WriteLine($"   kernel timing: {Hip.ProfileUnavailableReason ?? "each launch between two events while profiling"}");
         Console.WriteLine($"   large buffer {LargeText}, {Repeats} warm calls a row");
     }

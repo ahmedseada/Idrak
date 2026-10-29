@@ -5,11 +5,13 @@ only the HIP runtime the graphics driver installs (Windows) or ROCm's runtime li
 own GCN code, written in C# and assembled by Idrak ([plan 35](../plans/opened/35-gcn.md)). Memory, uploads, downloads,
 copies and fills run on the GPU, and so do the row operations (RMS norm with and without gain, layer norm fused, its
 training forward and gradients, softmax, log-softmax, the scaled masked softmax, log-softmax top-k) and the element-wise
-ones (the activations, add, sub, mul, max, min, affine, axpy, multiply-add, the row-vector add) and the matrix products
+ones (the activations, add, sub, mul, max, min, affine, axpy, multiply-add, the row-vector add), the matrix products
 (float32 in every transposition with beta, batches and a bias; few rows for decoding; int8, int4, bfloat16 and float16
-weights; their expansions and bfloat16 packing) on Idrak's GCN kernels;
-every other operation (attention, training's other kernels, ...) still runs on the CPU through the host
-fallback until its kernel lands. On a machine without HIP nothing changes: the device list shows `hip:-` with the
+weights; their expansions and bfloat16 packing), attention (decoding and the tiled form over float32, bfloat16 and int8
+key/value caches, attention over key ranges with grouped heads and its strided form, the int8 cache's scores and
+weighted values) and the shape operations (the cache writes, the decoder mask, the gathers, permutes, the adding
+strided copy) on Idrak's GCN kernels; every other operation (training's other kernels, ...) still runs on the CPU
+through the host fallback until its kernel lands. On a machine without HIP nothing changes: the device list shows `hip:-` with the
 reason, and every other backend works as before.
 
 ### The kernels and their cache
@@ -80,8 +82,8 @@ Remove-Item Env:IDRAK_DEVICES, Env:IDRAK_FILTER
 ```
 
 The HIP device test prints "hip:0: kernels loaded" or "unavailable (reason)", and compares every operation against the
-CPU: the row, element-wise and product operations on the GPU's kernels (none of them may take the host fallback while the kernels
-are loaded), the rest through the host fallback. A run whose kernels did not load is reported as a skip, not a pass. On a
+CPU: the row, element-wise, product, attention and shape operations on the GPU's kernels (none of them may take the host
+fallback while the kernels are loaded), the rest through the host fallback. A run whose kernels did not load is reported as a skip, not a pass. On a
 failure, send the failures file and the run again with `IDRAK_TRACE=1`.
 
 ## 4. Profiling, verbose output, benches and telemetry
@@ -90,7 +92,9 @@ failure, send the failures file and the run again with `IDRAK_TRACE=1`.
 
 - **Profiler.** The backend times its kernels (`IKernelProfiler`) as CUDA's does: while a profile runs, each GCN launch
   is timed on the GPU between two HIP events (created once and reused), by the kernel's name, or by a label with its
-  floating-point operations: the row kernels as "kernel rows x cols" and the element-wise ones as "kernel n", each with
+  floating-point operations: the row kernels as "kernel rows x cols", the attention kernels as "kernel rows x positions x
+  head" (the positions the cache's capacity or the key rows: an upper bound) and the element-wise and shape ones as
+  "kernel n", each with
   its floating-point operations, so the report gives their rate. `idrak profile MODEL -d hip:0` lists the kernels of one
   decoding step, and `--profile` with `IDRAK_PROFILE_PROBES=kernels` adds them to any command's report. Operations still
   on the host fallback show in its table, not the kernels'. A runtime without the event functions times nothing, and the
@@ -101,12 +105,14 @@ failure, send the failures file and the run again with `IDRAK_TRACE=1`.
   (each format tried with its error), a launch it refused (the kernel and its grid), a profile that cannot time.
 - **Telemetry.** The same events reach every hook at `TelemetryLevel.Devices` (`KernelsLoaded`, `DeviceFailed`,
   `HostFallback`), as on Vulkan.
-- **Bench.** `--bench-hip [launch|copies|fill|rows|pointwise|products]` in the test runner times the launch cost of `fill_f32`
+- **Bench.** `--bench-hip [launch|copies|fill|rows|pointwise|products|attention|shapes]` in the test runner times the launch cost of `fill_f32`
   (its code object loaded, cold and again; a launch over one float, queued, with a wait, and on the device; a launch
   over a large buffer), uploads, downloads and copies on the device, fill bandwidth (`fill_f32` beside the runtime's own
-  fill), the kernel set (assembled cold, then read from a cache warm), each row and element-wise kernel and the products
-  (float32, few-row, packed few-row with the k splits each took, the expansions and bfloat16 packing) (its first
-  call, then warm: GB/s and GFLOP/s), each first call apart from the warm ones. The large buffer is a sixteenth of the memory the GPU has free (at most 256 MB), or
+  fill), the kernel set (assembled cold, then read from a cache warm), each row and element-wise kernel, the products
+  (float32, few-row, packed few-row with the k splits each took, the expansions and bfloat16 packing), attention
+  (decoding over each cache format, the tiled form, key ranges, the int8 cache's products) and the shape operations (its
+  first call, then warm: GB/s and GFLOP/s), each first call apart from the warm ones, each section ending with the host
+  fallbacks it took (none expected). The large buffer is a sixteenth of the memory the GPU has free (at most 256 MB), or
   `IDRAK_BENCH_HIP_MB`; `IDRAK_BENCH_HIP_REPEATS` sets the warm calls (default 20). Without a HIP device it prints one
   line saying why. `idrak bench -d hip:0` and `idrak report --bench -d hip:0` run their benchmarks on `hip:0` as on any
   device.
@@ -138,4 +144,5 @@ dotnet run -c Release --no-build --project src\Idrak.Cli -- bench -d hip:0 > tes
 | `IDRAK_HIP_KERNEL_CACHE` | `0` keeps no assembled kernel set (assembled at every start); a folder keeps it there (default `IDRAK_CACHE/hip/kernels`, `~/.cache/idrak/hip/kernels`). |
 | `IDRAK_HIP_POINTWISE_BLOCKS` | Blocks of 256 an element-wise launch may take per compute unit the GPU reports (default 8); each kernel's grid-stride loop takes the rest. |
 | `IDRAK_HIP_GEMV_SPLITS` | The k splits of the packed few-row products (decoding through int8, int4, bfloat16 and float16 weights): a positive count; by default about two blocks a compute unit the GPU reports, a power of two, at most min(64, k / 64). The splits' sums are added in split order by a second kernel. |
+| `IDRAK_HIP_ATTENTION_SPLIT` | Key positions one split of an attention row takes (rounded up to a multiple of 256; default 512; `0` turns splits off): few rows over many keys split them over blocks (at most 64 splits, 4,096 blocks), merged in split order. |
 | `IDRAK_HIP_CODE_OBJECT` | The code object version (5 or 4) Idrak writes the GCN kernels in, when the runtime needs one. |

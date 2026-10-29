@@ -602,7 +602,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `CpuBackend` | 128 of 144 |
 | `CudaBackend` | 136 of 144 |
 | `DeferredBackend` | 11 of 144 |
-| `HipBackend` | 39 of 144 |
+| `HipBackend` | 55 of 144 |
 | `VulkanBackend` | 124 of 144 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
@@ -621,16 +621,16 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `Allocate(2)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `ArgMaxKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `Attach(2)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `AttentionBFloat16Kernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AttentionContextInt8Kernel(8)` | virtual | ✓ | ✓ |  |  |  |
-| `AttentionDecodeKernel(12)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AttentionInt8Kernel(15)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AttentionScoresInt8Kernel(8)` | virtual | ✓ | ✓ |  |  |  |
+| `AttentionBFloat16Kernel(13)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `AttentionContextInt8Kernel(8)` | virtual | ✓ | ✓ |  | ✓ |  |
+| `AttentionDecodeKernel(12)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `AttentionInt8Kernel(15)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `AttentionScoresInt8Kernel(8)` | virtual | ✓ | ✓ |  | ✓ |  |
 | `AttentionSpansBackwardKernel(19)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AttentionSpansKernel(15)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AttentionSpansStridedKernel(18)` | virtual |  | ✓ |  |  |  |
+| `AttentionSpansKernel(15)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `AttentionSpansStridedKernel(18)` | virtual |  | ✓ |  | ✓ |  |
 | `AttentionTiledBackwardKernel(16)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AttentionTiledKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `AttentionTiledKernel(13)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AvgPoolBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AvgPoolKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AxpyAtKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
@@ -656,7 +656,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `CreateHostStaging(2)` | virtual |  | ✓ |  |  |  |
 | `CtcLossBackwardKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `CtcLossKernel(12)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `DecoderMaskKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `DecoderMaskKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Detach(1)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `Download(2)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `DownloadRange(3)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -671,9 +671,9 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `GatedActivationBackwardPackedKernel(8)` | virtual | ✓ | ✓ |  |  |  |
 | `GatedActivationKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `GatedActivationPackedKernel(9)` | virtual | ✓ | ✓ |  |  |  |
-| `GatherBFloat16ColumnsKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `GatherBFloat16Kernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `GatherKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `GatherBFloat16ColumnsKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `GatherBFloat16Kernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `GatherKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `GetMemoryUsage(0)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `GroupReduceKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `GroupScaleShiftKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
@@ -687,9 +687,9 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `Interpolate2dKernel(11)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `InvSqrtKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `KernelFellBack(3)` | virtual |  |  |  |  | ✓ |
-| `KeyValueWriteBFloat16Kernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `KeyValueWriteInt8Kernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `KeyValueWriteKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `KeyValueWriteBFloat16Kernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `KeyValueWriteInt8Kernel(8)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `KeyValueWriteKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `LayerNormBackwardKernel(9)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `LayerNormFusedKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `LayerNormTrainKernel(8)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
@@ -712,7 +712,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `PackedMatMulEpilogueKernel(11)` | virtual |  | ✓ |  |  |  |
 | `PackedMatMulNormAddRmsNormKernel(17)` | virtual |  | ✓ |  |  |  |
 | `PenalizeRowsKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `PermuteKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `PermuteKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `PowBackwardKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `PowKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `PrefersComposedAttention(12)` | virtual |  | ✓ |  |  | ✓ |

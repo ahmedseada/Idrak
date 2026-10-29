@@ -11,7 +11,7 @@ namespace Idrak.Gpu.Hip;
 /// with virtual registers, which Idrak's assembler (<see cref="GcnAssembler.AssembleKernel"/>) allocates, adding the
 /// waits and wait states, for the family of the target a device reports, then into the code object the HIP runtime
 /// loads (<see cref="GcnCodeObject"/>). No SDK, no compiler: the driver's runtime alone loads them (plan 35). The gate
-/// kernel, <c>fill_f32</c>, then the element-wise and row kernels, all in one code object per device
+/// kernel, <c>fill_f32</c>, then the element-wise, row, attention and shape kernels, all in one code object per device
 /// (<see cref="AssembleAll"/>, loaded by <c>HipBackend.Kernels.cs</c> through the kernel cache).
 /// </summary>
 internal static partial class GcnKernels
@@ -21,9 +21,9 @@ internal static partial class GcnKernels
 
     /// <summary>
     /// Every kernel of HIP's code object, in the order it is assembled: the gate kernel, then each kernel file's list
-    /// (<see cref="Pointwise"/>, <see cref="Rows"/>, <see cref="Products"/>; later phases add theirs here).
+    /// (<see cref="Pointwise"/>, <see cref="Rows"/>, <see cref="Products"/>, <see cref="Attention"/>, <see cref="Shapes"/>; later phases add theirs here).
     /// </summary>
-    internal static IReadOnlyList<GcnKernelSource> All => _all ??= [new("fill_f32", FillText.ToArray()), .. Pointwise, .. Rows, .. Products];
+    internal static IReadOnlyList<GcnKernelSource> All => _all ??= [new("fill_f32", FillText.ToArray()), .. Pointwise, .. Rows, .. Products, .. Attention, .. Shapes];
 
     /// <summary>
     /// Every kernel of <see cref="All"/> assembled for <paramref name="isa"/> by <paramref name="target"/>'s family (one

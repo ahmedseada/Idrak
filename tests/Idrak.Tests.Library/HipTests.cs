@@ -22,12 +22,12 @@ internal abstract partial class Tests
         ("hip limits: the block size and the limits' plausibility come from what the device reports", HipBlockSize),
         ("hip architecture: the target string is read from the device properties by content; runtime versions read as major.minor.patch", HipArchitecture),
         ("hip kernel cache: the key changes with every input (a kernel set's with any kernel's text, the target, the device, the format and the versions); a stored code object comes back; IDRAK_HIP_KERNEL_CACHE moves or disables it", HipKernelCacheKeys),
-        ("hip kernels: GcnKernels.All (fill_f32, the element-wise, row and product kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c (formats 5 and 4), whose metadata, read back by the library, declares every kernel once with the arguments, kernel argument bytes and block it was written with; malformed objects are refused", HipKernelSet),
-        ("hip kernels: IDRAK_HIP_KERNELS=0 turns the kernels off with that reason; a target Idrak does not read or no family handles gives a reason naming it (not registered); every kernel has its profile cost; IDRAK_HIP_GEMV_SPLITS and the k splits of the packed few-row products; the element-wise grid's blocks per compute unit come from IDRAK_HIP_POINTWISE_BLOCKS", HipKernelSettings),
+        ("hip kernels: GcnKernels.All (fill_f32, the element-wise, row, product, attention and shape kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c (formats 5 and 4), whose metadata, read back by the library, declares every kernel once with the arguments, kernel argument bytes and block it was written with; malformed objects are refused", HipKernelSet),
+        ("hip kernels: IDRAK_HIP_KERNELS=0 turns the kernels off with that reason; a target Idrak does not read or no family handles gives a reason naming it (not registered); every kernel has its profile cost; IDRAK_HIP_ATTENTION_SPLIT and attention's splits; IDRAK_HIP_GEMV_SPLITS and the k splits of the packed few-row products; the element-wise grid's blocks per compute unit come from IDRAK_HIP_POINTWISE_BLOCKS", HipKernelSettings),
         ("hip telemetry: KernelsLoaded (a device's kernel set, from the cache or assembled, its time, kernels and bytes) reaches the hooks at the Devices level, the console logger's line and the JSON lines' kernels_loaded", HipKernelsLoadedEvent),
         ("hip: no vendor ids or card names in the code of src/Idrak.Gpu/Hip, and GPU targets (gfx names) only in its instruction-set tables, GcnTargets*.cs (comments may name them)", HipNoVendorNames),
         ("hip profiler and telemetry: HipBackend times its kernels (IKernelProfiler) as CUDA does; a runtime without the event functions times nothing and says why; on HIP devices fill_f32's launches are timed under its name or a label with its floating-point operations, a refused code object reaches the telemetry, and a host fallback carries why the kernels are unavailable", HipProfilerAndTelemetry),
-        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row, element-wise and product operations (float32, few-row, packed int8, int4, bfloat16 and float16, the expansions and bfloat16 packing) on the GCN kernels (kernels loaded: none of them through the host fallback), attention, gathers and permutes through the host fallback until their kernels land (on HIP devices)", HipDeviceMatchesCpu),
+        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row, element-wise, attention, shape and product operations (float32, few-row, packed int8, int4, bfloat16 and float16, the expansions and bfloat16 packing) on the GCN kernels (kernels loaded: none of them through the host fallback; on HIP devices)", HipDeviceMatchesCpu),
     ];
 
     internal static void HipMissingRuntime(Device device)
@@ -248,8 +248,10 @@ internal abstract partial class Tests
         }
 
         var all = GcnKernels.All;
-        Check(all.Select(k => k.Name).Distinct().Count() == all.Count && all.Count == 1 + GcnKernels.Pointwise.Count + GcnKernels.Rows.Count + GcnKernels.Products.Count && all[0].Name == "fill_f32",
-            $"GcnKernels.All: fill_f32, then the element-wise, row and product kernels, each once ({all.Count})");
+        Check(all.Select(k => k.Name).Distinct().Count() == all.Count
+              && all.Count == 1 + GcnKernels.Pointwise.Count + GcnKernels.Rows.Count + GcnKernels.Products.Count + GcnKernels.Attention.Count + GcnKernels.Shapes.Count
+              && all[0].Name == "fill_f32",
+            $"GcnKernels.All: fill_f32, then the element-wise, row, product, attention and shape kernels, each once ({all.Count})");
         foreach (string processor in new[] { "gfx900", "gfx906", "gfx908", "gfx90c" })
         {
             var isa = GcnIsaVersion.Parse(processor);
@@ -313,10 +315,17 @@ internal abstract partial class Tests
         Check(unread is not null && unread.Contains("'sm_80'", StringComparison.Ordinal) && unread.Contains("not a target string", StringComparison.Ordinal), $"a target Idrak does not read: {unread}");
 
         var missing = GcnKernels.All.Where(k => HipBackend.Cost(k.Name).Bytes <= 0 && HipBackend.ProductCost(k.Name, 2, 3, 4).Bytes <= 0).Select(k => k.Name).ToList();
-        Check(missing.Count == 0, $"every kernel has its profile cost (the tables of GcnKernels.Rows.cs, .Pointwise.cs and .Products.cs): {string.Join(", ", missing)}");
+        Check(missing.Count == 0, $"every kernel has its profile cost (the tables of GcnKernels.Rows.cs, .Pointwise.cs, .Products.cs, .Attention.cs and .Shapes.cs): {string.Join(", ", missing)}");
         Check(HipBackend.GemvSplitsSetting(null) is null && HipBackend.GemvSplitsSetting("6") == 6 && HipBackend.GemvSplitsSetting("0") is null && HipBackend.GemvSplitsSetting("x") is null
               && HipBackend.GemvSplitCount(8, 4, 3072) == 4 && HipBackend.GemvSplitCount(8, 4, 3072, forced: 6) == 6 && HipBackend.GemvSplitCount(64, 1, 100) == 1
               && HipBackend.GemvSplitCount(1000, 1, 1 << 20) == 64, "IDRAK_HIP_GEMV_SPLITS forces the packed few-row products' k splits; else about two blocks a compute unit, a power of two, at most min(64, k / 64)");
+        Check(HipBackend.AttentionSplitPositions(null) == 512 && HipBackend.AttentionSplitPositions("0") == 0 && HipBackend.AttentionSplitPositions("300") == 512
+              && HipBackend.AttentionSplitPositions("1024") == 1024 && HipBackend.AttentionSplitPositions("x") == 512,
+            "IDRAK_HIP_ATTENTION_SPLIT: positions a split, a multiple of the 256-key tile (512 unless given), 0 for none");
+        Check(HipBackend.AttentionSplits(32, 4096, 128, 512) == (8, 512) && HipBackend.AttentionSplits(32, 400, 128, 512) == (1, 400)
+              && HipBackend.AttentionSplits(32, 4096, 128, 0) == (1, 4096) && HipBackend.AttentionSplits(8192, 4096, 128, 512) == (1, 4096)
+              && HipBackend.AttentionSplits(4, 1 << 20, 64, 512) == (64, 16384),
+            "attention's splits follow the shapes alone: the positions a split takes, at most 64 splits and 4,096 blocks, chunks of whole tiles");
         Check(Enum.GetValues<UnaryOp>().Count(op => HipBackend.UnaryKernelName(op) is { } name && GcnKernels.All.Any(k => k.Name == name)) == 14
               && Enum.GetValues<BinaryOp>().All(op => HipBackend.BinaryKernelName(op) is { } name && GcnKernels.All.Any(k => k.Name == name)),
             "the activations and binary operations CUDA runs on kernels name kernels of the set");
@@ -660,32 +669,74 @@ internal abstract partial class Tests
             }
 
             // Attention over key ranges (grouped heads, two tables; with the log-sum-exp, then with an empty range, whose
-            // log-sum-exp is -∞) and over a cache up to the device position.
+            // log-sum-exp is -∞; a soft-cap; enough keys to split them), its strided form over packed rows, and over a cache up to
+            // the device position (decoding and the tiled form with the log-sum-exp; a window, a soft-cap; bfloat16 and int8
+            // caches), all on the GCN kernels.
             int heads = 4, kvHeads = 2, rowsA = 9, keyRows = 37, dimA = 64;
             float[] q = Values(heads * rowsA * dimA), keysA = Values(kvHeads * keyRows * dimA), valuesA = Values(kvHeads * keyRows * dimA);
             float[] starts = [.. Enumerable.Range(0, 2 * rowsA).Select(i => (float)(i % 3))], ends = [.. Enumerable.Range(0, 2 * rowsA).Select(i => (float)(keyRows - i))];
             Both("attention over key ranges", [q, keysA, valuesA, starts, ends], [heads * rowsA * dimA, heads * rowsA],
-                (k, s) => k.AttentionSpans(s[0], s[1], s[2], s[3], s[4], s[5], s[6], heads, kvHeads, heads / 2, rowsA, keyRows, dimA, 0.125f));
+                (k, s) => k.AttentionSpans(s[0], s[1], s[2], s[3], s[4], s[5], s[6], heads, kvHeads, heads / 2, rowsA, keyRows, dimA, 0.125f), wired: true);
             ends[4] = 1f;                                                                // row 4 of the first table: from key 1 to key 1
             Both("attention over key ranges, an empty one", [q, keysA, valuesA, starts, ends], [heads * rowsA * dimA],
-                (k, s) => k.AttentionSpans(s[0], s[1], s[2], s[3], s[4], s[5], null, heads, kvHeads, heads / 2, rowsA, keyRows, dimA, 0.125f));
+                (k, s) => k.AttentionSpans(s[0], s[1], s[2], s[3], s[4], s[5], null, heads, kvHeads, heads / 2, rowsA, keyRows, dimA, 0.125f), wired: true);
+            Both("attention over key ranges, soft-capped", [q, keysA, valuesA, starts, ends], [heads * rowsA * dimA],
+                (k, s) => k.AttentionSpans(s[0], s[1], s[2], s[3], s[4], s[5], null, heads, kvHeads, heads / 2, rowsA, keyRows, dimA, 0.125f, new AttentionVariant(0, 5f)), wired: true);
+            int longKeys = 1500;
+            float[] spanStarts = [.. Enumerable.Range(0, 2).Select(i => (float)(3 * i))], spanEnds = [.. Enumerable.Range(0, 2).Select(i => (float)(longKeys - i))];
+            Both("attention over key ranges, splits merged", [Values(2 * dimA), Values(2 * longKeys * dimA), Values(2 * longKeys * dimA), spanStarts, spanEnds],
+                [2 * dimA, 2], (k, s) => k.AttentionSpans(s[0], s[1], s[2], s[3], s[4], s[5], s[6], 2, 2, 1, 1, longKeys, dimA, 0.125f), 1e-3f, wired: true);
+            int sb = 2, sh = 2, skv = 1, sRows = 7, sd = 24, sPitch = (sh + 2 * skv) * sd;
+            Both("attention over key ranges, strided", [Values(sb * sRows * sPitch), [.. Enumerable.Range(0, sb * sh * sRows).Select(i => (float)Math.Max(0, i % sRows - 2))],
+                    [.. Enumerable.Range(0, sb * sh * sRows).Select(i => (float)(i % sRows + 1))]], [sb * sh * sRows * sd],
+                (k, s) => k.AttentionSpansStrided(s[0], 0, s[0], sh * sd, s[0], (sh + skv) * sd, sPitch, sPitch, s[1], s[2], s[3], sb, sh, skv, 1, sRows, sd, 0.2f), wired: true);
             foreach (int rowsPerHead in new[] { 1, 12 })
             {
                 Both($"attention over a cache, {rowsPerHead} rows", [Values(heads * rowsPerHead * dimA), Values(heads * 50 * dimA), Values(heads * 50 * dimA), [6f]],
-                    [heads * rowsPerHead * dimA], (k, s) => k.AttentionDecode(s[0], s[1], s[2], s[3], s[4], heads, rowsPerHead, Math.Min(rowsPerHead, 4), 50, dimA, 0.125f));
+                    [heads * rowsPerHead * dimA], (k, s) => k.AttentionDecode(s[0], s[1], s[2], s[3], s[4], heads, rowsPerHead, Math.Min(rowsPerHead, 4), 50, dimA, 0.125f),
+                    wired: true);
             }
 
-            // Gathers, the cache write and mask, permutes and an accumulating strided copy.
+            Both("tiled attention over a cache with the log-sum-exp, a window and a soft-cap", [Values(heads * 8 * dimA), Values(heads * 50 * dimA), Values(heads * 50 * dimA), [20f]],
+                [heads * 8 * dimA, heads * 8], (k, s) => k.AttentionTiled(s[0], s[1], s[2], s[3], s[4], s[5], heads, 8, 8, 50, dimA, 0.125f, new AttentionVariant(9, 4f)),
+                wired: true);
+            Both("decoding over a long cache, splits merged", [Values(heads * dimA), Values(heads * 2000 * dimA), Values(heads * 2000 * dimA), [1990f]],
+                [heads * dimA], (k, s) => k.AttentionDecode(s[0], s[1], s[2], s[3], s[4], heads, 1, 1, 2000, dimA, 0.125f), 1e-3f, wired: true);
+            int dimP = 37, capP = 40;
+            var bf16Cache = Keep(cpu.Allocate(heads * capP * ((dimP + 1) / 2), zeroed: true));
+            cpu.KeyValueWriteBFloat16(On(cpu, Values(heads * capP * dimP)), bf16Cache, On(cpu, [0f]), heads, capP, capP, dimP);
+            float[] bf16Keys = Read(cpu, bf16Cache, heads * capP * ((dimP + 1) / 2));
+            Both("attention over a bfloat16 cache", [Values(heads * 3 * dimP), bf16Keys, bf16Keys, [30f]], [heads * 3 * dimP],
+                (k, s) => k.AttentionBFloat16(s[0], s[1], s[2], s[3], s[4], heads, 3, 3, capP, dimP, 0.15f, tiled: false), wired: true);
+            var int8Cache = Keep(cpu.Allocate(heads * capP * ((dimP + 3) / 4), zeroed: true));
+            var int8Scales = Keep(cpu.Allocate(heads * capP, zeroed: true));
+            cpu.KeyValueWriteInt8(On(cpu, Values(heads * capP * dimP)), int8Cache, int8Scales, On(cpu, [0f]), heads, capP, capP, dimP);
+            float[] int8Keys = Read(cpu, int8Cache, heads * capP * ((dimP + 3) / 4)), int8KeyScales = Read(cpu, int8Scales, heads * capP);
+            Both("attention over an int8 cache", [Values(heads * 2 * dimP), int8Keys, int8Keys, int8KeyScales, int8KeyScales, [30f]], [heads * 2 * dimP],
+                (k, s) => k.AttentionInt8(s[0], s[1], s[2], s[3], s[4], s[5], s[6], heads, 2, 2, capP, dimP, 0.15f, tiled: false, new AttentionVariant(16, 0f)), wired: true);
+            Both("int8 cache scores", [Values(2 * 3 * dimP), int8Keys, int8KeyScales], [2 * 3 * capP],
+                (k, s) => k.AttentionScoresInt8(s[0], s[1], s[2], s[3], 2, 3, capP, dimP), wired: true);
+            Both("int8 cache weighted values", [Values(2 * 3 * capP, 0f, 0.1f), int8Keys, int8KeyScales], [2 * 3 * dimP],
+                (k, s) => k.AttentionContextInt8(s[0], s[1], s[2], s[3], 2, 3, capP, dimP), wired: true);
+
+            // Gathers, the cache writes and mask, permutes and an accumulating strided copy, on the GCN kernels.
             float[] ids = [0f, 5f, 36f, 2f];
-            Both("gather", [Values(37 * 13), ids], [4 * 13], (k, s) => k.Gather(s[0], s[1], s[2], 4, 13, 37), 0f);
-            Both("cache write", [Values(heads * 2 * dimA), [6f]], [heads * 50 * dimA], (k, s) => k.KeyValueWrite(s[0], s[2], s[1], heads, 2, 50, dimA), 0f);
-            Both("decoder mask", [[6f]], [3 * 50], (k, s) => k.DecoderMask(s[0], s[1], 3, 50), 0f);
-            Both("permute", [Values(2 * 3 * 4 * 5)], [120], (k, s) => k.Permute(s[0], s[1], [2, 4, 5, 3], [60, 5, 1, 20], accumulate: false), 0f);
-            Both("permute, adding", [Values(2 * 3 * 4 * 5)], [120], (k, s) => k.Permute(s[0], s[1], [2, 4, 5, 3], [60, 5, 1, 20], accumulate: true));
-            Both("strided copy, adding", [Values(200)], [200], (k, s) => k.Copy2D(s[0], 5, 13, s[1], 3, 20, 6, 9, accumulate: true));
+            Both("gather", [Values(37 * 13), ids], [4 * 13], (k, s) => k.Gather(s[0], s[1], s[2], 4, 13, 37), 0f, wired: true);
+            float[] bf16Table = Read(cpu, bf16Cache, 37 * 7);                          // 37 rows of 13 halves: 7 words each
+            Both("bfloat16 gather", [bf16Table, ids], [4 * 13], (k, s) => k.GatherBFloat16(s[0], s[1], s[2], 4, 13, 37), 0f, wired: true);
+            Both("bfloat16 column gather", [bf16Table, ids], [4 * 7], (k, s) => k.GatherBFloat16Columns(s[0], s[1], s[2], 4, 7, 37), 0f, wired: true);
+            Both("cache write", [Values(heads * 2 * dimA), [6f]], [heads * 50 * dimA], (k, s) => k.KeyValueWrite(s[0], s[2], s[1], heads, 2, 50, dimA), 0f, wired: true);
+            Both("bfloat16 cache write", [Values(heads * 2 * dimP), [6f]], [heads * capP * ((dimP + 1) / 2)],
+                (k, s) => k.KeyValueWriteBFloat16(s[0], s[2], s[1], heads, 2, capP, dimP), 0f, wired: true);
+            Both("int8 cache write", [Values(heads * 2 * dimP), [6f]], [heads * capP * ((dimP + 3) / 4), heads * capP],
+                (k, s) => k.KeyValueWriteInt8(s[0], s[2], s[3], s[1], heads, 2, capP, dimP), 0f, wired: true);
+            Both("decoder mask", [[6f]], [3 * 50], (k, s) => k.DecoderMask(s[0], s[1], 3, 50), 0f, wired: true);
+            Both("permute", [Values(2 * 3 * 4 * 5)], [120], (k, s) => k.Permute(s[0], s[1], [2, 4, 5, 3], [60, 5, 1, 20], accumulate: false), 0f, wired: true);
+            Both("permute, adding", [Values(2 * 3 * 4 * 5)], [120], (k, s) => k.Permute(s[0], s[1], [2, 4, 5, 3], [60, 5, 1, 20], accumulate: true), wired: true);
+            Both("strided copy, adding", [Values(200)], [200], (k, s) => k.Copy2D(s[0], 5, 13, s[1], 3, 20, 6, 9, accumulate: true), wired: true);
 
             Check(!kernels || wiredFallbacks == 0,
-                $"with kernels, no row or element-wise operation took the host fallback ({wiredFallbacks} calls did: {string.Join(", ", wiredNames)})");
+                $"with kernels, no row, element-wise, product, attention or shape operation took the host fallback ({wiredFallbacks} calls did: {string.Join(", ", wiredNames)})");
             hip.Synchronize();
             if (!kernels)
             {

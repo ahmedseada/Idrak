@@ -394,12 +394,16 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
 
     public override void Copy2D(Storage src, int srcOffset, int srcStride, Storage dst, int dstOffset, int dstStride, int rows, int cols, bool accumulate)
     {
-        // A strided copy is one 2-D copy on the device; an adding one (narrow's and concatenation's gradients) needs a
-        // kernel and takes the host fallback until the GCN kernels land, as do overlapping rows (one storage) and pitches
-        // narrower than a row.
+        // A strided copy is one 2-D copy on the device; an adding one (narrow's and concatenation's gradients), one within a
+        // storage and one with a pitch narrower than a row run on copy2d_f32 (HipBackend.Shapes.cs), as CUDA's do, or the
+        // host fallback where the kernel cannot take them.
         if (accumulate || ReferenceEquals(src, dst) || srcStride < cols || dstStride < cols)
         {
-            base.Copy2D(src, srcOffset, srcStride, dst, dstOffset, dstStride, rows, cols, accumulate);
+            if (!Copy2DKernel(src, srcOffset, srcStride, dst, dstOffset, dstStride, rows, cols, accumulate))
+            {
+                base.Copy2D(src, srcOffset, srcStride, dst, dstOffset, dstStride, rows, cols, accumulate);
+            }
+
             return;
         }
 
