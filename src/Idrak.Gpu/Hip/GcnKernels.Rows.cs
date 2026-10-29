@@ -695,7 +695,8 @@ internal static partial class GcnKernels
 
         private static string F(FormattableString text) => text.ToString(CultureInfo.InvariantCulture);
 
-        private string NewLabel() => F($".L{_labels++}");
+        /// <summary>A fresh label (".L" and a number), unique in the kernel.</summary>
+        public string NewLabel() => F($".L{_labels++}");
 
         public GcnKernelSource Source() => new(_name, Encoding.UTF8.GetBytes(_text.ToString()));
 

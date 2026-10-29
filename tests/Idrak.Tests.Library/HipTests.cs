@@ -23,7 +23,7 @@ internal abstract partial class Tests
         ("hip architecture: the target string is read from the device properties by content; runtime versions read as major.minor.patch", HipArchitecture),
         ("hip kernel cache: the key changes with every input (a kernel set's with any kernel's text, the target, the device, the format and the versions); a stored code object comes back; IDRAK_HIP_KERNEL_CACHE moves or disables it", HipKernelCacheKeys),
         ("hip kernels: GcnKernels.All (fill_f32, the element-wise, row, product, attention, shape, decoding, training, convolution, CTC and recurrent kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c (formats 5 and 4), whose metadata, read back by the library, declares every kernel once with the arguments, kernel argument bytes and block it was written with; malformed objects are refused", HipKernelSet),
-        ("hip kernels: IDRAK_HIP_KERNELS=0 turns the kernels off with that reason; a target Idrak does not read or no family handles gives a reason naming it (not registered); every kernel has its profile cost; IDRAK_HIP_ATTENTION_SPLIT and attention's splits; IDRAK_HIP_GEMV_SPLITS and the k splits of the packed few-row products; the element-wise grid's blocks per compute unit come from IDRAK_HIP_POINTWISE_BLOCKS", HipKernelSettings),
+        ("hip kernels: IDRAK_HIP_KERNELS=0 turns the kernels off with that reason; a target Idrak does not read or no family handles gives a reason naming it (not registered); every kernel has its profile cost; IDRAK_HIP_ATTENTION_SPLIT and attention's splits; IDRAK_HIP_GEMV_SPLITS and the k splits of the packed few-row products; the element-wise grid's blocks per compute unit come from IDRAK_HIP_POINTWISE_BLOCKS; IDRAK_HIP_FINISH chooses the last block's finish or a second launch; IDRAK_HIP_ATTENTION_ROWS and the device's LDS the tiled attention's rows a block", HipKernelSettings),
         ("hip telemetry: KernelsLoaded (a device's kernel set, from the cache or assembled, its time, kernels and bytes) reaches the hooks at the Devices level, the console logger's line and the JSON lines' kernels_loaded", HipKernelsLoadedEvent),
         ("hip: no vendor ids or card names in the code of src/Idrak.Gpu/Hip, and GPU targets (gfx names) only in its instruction-set tables, GcnTargets*.cs (comments may name them)", HipNoVendorNames),
         ("hip profiler and telemetry: HipBackend times its kernels (IKernelProfiler) as CUDA does; a runtime without the event functions times nothing and says why; on HIP devices fill_f32's launches are timed under its name or a label with its floating-point operations, a refused code object reaches the telemetry, and a host fallback carries why the kernels are unavailable", HipProfilerAndTelemetry),
@@ -332,6 +332,15 @@ internal abstract partial class Tests
             "the activations and binary operations CUDA runs on kernels name kernels of the set");
         Check(HipBackend.PointwiseBlocksPerUnit(null) == 8 && HipBackend.PointwiseBlocksPerUnit("12") == 12 && HipBackend.PointwiseBlocksPerUnit("0") == 8
               && HipBackend.PointwiseBlocksPerUnit("x") == 8, "IDRAK_HIP_POINTWISE_BLOCKS: blocks per compute unit, 8 unless a positive number is given");
+        Check(HipBackend.FinishByLastBlockSetting(null) && HipBackend.FinishByLastBlockSetting("block") && !HipBackend.FinishByLastBlockSetting("launch")
+              && !HipBackend.FinishByLastBlockSetting(" Launch ") && HipBackend.FinishByLastBlockSetting("x"),
+            "IDRAK_HIP_FINISH: the last block finishes split sums and the fused kernels' tails (one launch) unless it is launch");
+        Check(HipBackend.AttentionRowsSetting(null) is null && HipBackend.AttentionRowsSetting("4") == 4 && HipBackend.AttentionRowsSetting("x") is null
+              && HipBackend.AttentionTiledRowsFor(512, 65536, null) == 8 && HipBackend.AttentionTiledRowsFor(512, 65536, 5) == 4
+              && HipBackend.AttentionTiledRowsFor(3, 65536, null) == 2 && HipBackend.AttentionTiledRowsFor(1, 65536, null) == 1
+              && HipBackend.AttentionTiledRowsFor(512, 65536, 1) == 1 && HipBackend.AttentionTiledRowsFor(512, GcnKernels.AttentionTiledLdsBytes(4), null) == 4
+              && HipBackend.AttentionTiledRowsFor(512, 1024, null) == 1,
+            "IDRAK_HIP_ATTENTION_ROWS: the tiled attention's rows a block, the most of 2, 4 and 8 within the setting, the rows of a head and the device's LDS; 1 for a block a row");
     }
 
     internal static void HipKernelsLoadedEvent(Device device)

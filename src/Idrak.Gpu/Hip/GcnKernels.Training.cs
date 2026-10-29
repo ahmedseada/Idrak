@@ -25,8 +25,9 @@ namespace Idrak.Gpu.Hip;
 // - Rows (RowWriter, GcnKernels.Rows.cs): one block of 256 a row, grid-stride, the block's sums in RowWriter's fixed LDS
 //   tree; the whole sum, the sums of squares and the chunks of the split group reductions write one value a block that a
 //   second launch adds in block (chunk) order: never atomics, the same bits on every grid and device (rule 86).
-// - Columns (sum_rows_f32, sum_cols_strided_f32): a thread a column, rows in order; chunks of rows in grid y store
-//   partials that fold_chunks_f32 (GcnKernels.Rows.cs) adds in chunk order.
+// - Columns (sum_rows_f32, sum_cols_strided_f32): a thread a column, rows in order (eight rows' loads in flight a step,
+//   rule 80, then added in row order: the same bits); chunks of rows in grid y store partials that fold_chunks_f32
+//   (GcnKernels.Rows.cs) adds in chunk order.
 //
 // Scatter-add (an embedding's gradient) is CUDA's, which is deterministic without atomics: scatter_chain_u32 links each
 // position to the next with the same id (the LDS holds a tile of ids at a time, each lane compares its own against them
@@ -121,29 +122,8 @@ internal static partial class GcnKernels
     // Built on first use: the kernels read static fields declared further down (the attention backward's arguments).
     private static GcnKernelSource[]? _training;
 
-    /// <summary>The flags of the power x^<paramref name="p"/> (pow_bwd_f32 reads them, as CUDA's PtxKernels.PowFlags).</summary>
-    internal static uint PowGradientFlags(float p)
-    {
-        bool integer = float.IsFinite(p) && MathF.Floor(p) == p;
-        uint flags = 0;
-        if (integer && MathF.IEEERemainder(p, 2f) != 0f)
-        {
-            flags |= PowGradientOdd;
-        }
-
-        if (float.IsFinite(p) && !integer)
-        {
-            flags |= PowGradientFractional;
-        }
-
-        if (float.IsNaN(p))
-        {
-            flags |= PowGradientNaN;
-        }
-
-        flags |= p == 0f ? PowGradientZero : p == 1f ? PowGradientOne : p == 2f ? PowGradientTwo : 0u;
-        return flags;
-    }
+    /// <summary>The flags of the power x^<paramref name="p"/> (pow_bwd_f32 reads them): pow_f32's, <see cref="PowFlags"/>.</summary>
+    internal static uint PowGradientFlags(float p) => PowFlags(p);
 
     private static string TrainingText(FormattableString text) => text.ToString(CultureInfo.InvariantCulture);
 
@@ -799,61 +779,8 @@ internal static partial class GcnKernels
             w.I(TrainingText($"v_add_f32_e32 {e.Out[2]}, {e.In[2]}, {t}"));
         });
 
-    // target = x^p as MathF.Pow (CUDA's PowOf): |x|^p = 2^(p · log2|x|), the product's rounding error carried into the
-    // exponential; denormal |x| scaled by 2^32 before the logarithm and results below 2^-126 scaled after the
-    // exponential, as LLVM does; then MathF.Pow's special cases from the flags.
-    private static void TrainingPow(PointwiseWriter w, string target, string x, string p, string flags)
-    {
-        string ax = w.V(), scaled = w.V(), lg = w.V(), shift = w.V(), t = w.V(), err = w.V(), small = w.V(), r = w.V(), corrected = w.V(), negated = w.V();
-        string finite = w.Mask(), unit = w.Mask(), one = w.Mask(), flag = w.Mask(), sign = w.Mask(), negative = w.Mask();
-        w.I(TrainingText($"v_and_b32_e32 {ax}, 0x7fffffff, {x}"));
-        w.I(TrainingText($"v_cmp_gt_f32_e32 vcc, {w.S(0x00800000u)}, {ax}          ; below the smallest normal: scaled by 2^32"));
-        w.I(TrainingText($"v_cndmask_b32_e32 {scaled}, 1.0, {w.VC(0x4f800000u)}, vcc"));
-        w.I(TrainingText($"v_mul_f32_e32 {scaled}, {ax}, {scaled}"));
-        w.I(TrainingText($"v_log_f32_e32 {lg}, {scaled}"));
-        w.I(TrainingText($"v_cndmask_b32_e32 {shift}, 0, {w.VC(32f)}, vcc"));
-        w.I(TrainingText($"v_sub_f32_e32 {lg}, {lg}, {shift}"));
-        w.I(TrainingText($"v_mul_f32_e32 {t}, {p}, {lg}"));
-        w.I(TrainingText($"v_fma_f32 {err}, {lg}, {p}, -{t}                     ; the product's rounding error"));
-        w.I(TrainingText($"v_mul_f32_e32 {err}, {PointwiseWriter.Literal(0x3f317218u)}, {err}"));
-        w.I(TrainingText($"v_cmp_gt_f32_e32 vcc, {w.S(-126f)}, {t}               ; below 2^-126: 2^(t + 64) · 2^-64"));
-        w.I(TrainingText($"v_cndmask_b32_e32 {small}, 0, {w.VC(64f)}, vcc"));
-        w.I(TrainingText($"v_add_f32_e32 {small}, {t}, {small}"));
-        w.I(TrainingText($"v_exp_f32_e32 {r}, {small}"));
-        w.I(TrainingText($"v_cndmask_b32_e32 {small}, 1.0, {w.VC(0x1f800000u)}, vcc"));
-        w.I(TrainingText($"v_mul_f32_e32 {r}, {r}, {small}"));
-        w.I(TrainingText($"v_cmp_lt_f32_e64 {finite}, |{t}|, {w.S(0x7f800000u)}"));
-        w.I(TrainingText($"v_fma_f32 {corrected}, {r}, {err}, {r}"));
-        w.I(TrainingText($"v_cndmask_b32_e64 {r}, {r}, {corrected}, {finite}"));
-        w.I(TrainingText($"v_cmp_eq_f32_e64 {unit}, 1.0, {ax}                    ; |x| = 1: 1, but for a NaN power unless x = 1"));
-        w.I(TrainingText($"v_cmp_eq_f32_e64 {one}, 1.0, {x}"));
-        w.I(TrainingText($"s_bitcmp1_b32 {flags}, 2"));
-        w.I(TrainingText($"s_cselect_b64 {unit}, {one}, {unit}"));
-        w.I(TrainingText($"v_cndmask_b32_e64 {r}, {r}, 1.0, {unit}"));
-        w.I(TrainingText($"v_cmp_gt_i32_e64 {sign}, 0, {x}                       ; a negative x to an odd power: negative"));
-        w.I(TrainingText($"s_bitcmp1_b32 {flags}, 0"));
-        w.I(TrainingText($"s_cselect_b64 {flag}, -1, 0"));
-        w.I(TrainingText($"s_and_b64 {sign}, {sign}, {flag}"));
-        w.I(TrainingText($"v_xor_b32_e32 {negated}, 0x80000000, {r}"));
-        w.I(TrainingText($"v_cndmask_b32_e64 {r}, {r}, {negated}, {sign}"));
-        w.I(TrainingText($"v_cmp_gt_f32_e64 {negative}, 0, {x}                  ; a finite negative x to a fractional power: NaN"));
-        w.I(TrainingText($"v_cmp_lt_f32_e64 {finite}, |{x}|, {w.S(0x7f800000u)}"));
-        w.I(TrainingText($"s_and_b64 {negative}, {negative}, {finite}"));
-        w.I(TrainingText($"s_bitcmp1_b32 {flags}, 1"));
-        w.I(TrainingText($"s_cselect_b64 {flag}, -1, 0"));
-        w.I(TrainingText($"s_and_b64 {negative}, {negative}, {flag}"));
-        w.I(TrainingText($"v_cndmask_b32_e64 {r}, {r}, {w.VC(0xffc00000u)}, {negative}"));
-        w.I(TrainingText($"s_bitcmp1_b32 {flags}, 3                             ; p = 0: 1"));
-        w.I(TrainingText($"s_cselect_b64 {flag}, -1, 0"));
-        w.I(TrainingText($"v_cndmask_b32_e64 {r}, {r}, 1.0, {flag}"));
-        w.I(TrainingText($"s_bitcmp1_b32 {flags}, 4                             ; p = 1: x"));
-        w.I(TrainingText($"s_cselect_b64 {flag}, -1, 0"));
-        w.I(TrainingText($"v_cndmask_b32_e64 {r}, {r}, {x}, {flag}"));
-        w.I(TrainingText($"v_mul_f32_e32 {corrected}, {x}, {x}"));
-        w.I(TrainingText($"s_bitcmp1_b32 {flags}, 5                             ; p = 2: x · x"));
-        w.I(TrainingText($"s_cselect_b64 {flag}, -1, 0"));
-        w.I(TrainingText($"v_cndmask_b32_e64 {target}, {r}, {corrected}, {flag}"));
-    }
+    // target = x^p as MathF.Pow: pow_f32's sequence (PointwiseWriter.Pow, the one generator both kernels write).
+    private static void TrainingPow(PointwiseWriter w, string target, string x, string p, string flags) => w.Pow(target, x, p, flags);
 
     // dgate += dy · up · act'(gate) (flags bit 0; bit 2: written instead), dup += dy · act(gate) (bit 1; bit 3: written);
     // kind 0 SiLU, 1 GELU (tanh form), 2 ReLU, 3 tanh(gate) · sigmoid(up) (CpuBackend.Quantized's Activation and UpSide).
@@ -1787,6 +1714,66 @@ internal static partial class GcnKernels
 
     // ---- Sums ----------------------------------------------------------------------------------------------------------
 
+    // Rows a column sum loads a step: each its own register, all in flight before the first is added (rule 80).
+    private const int SumRowsInFlight = 8;
+
+    // acc += x[r · ld + j] for the rows from `first` (the row at `at`, rows `rowBytes` apart) below `last`, in row order:
+    // SumRowsInFlight rows' loads a step, then one at a time.
+    private static void SumRowsInOrder(RowWriter w, string acc, string off, string at, string rowBytes, string first, string last)
+    {
+        string r = w.S(), end = w.S(), label = w.NewLabel();
+        var bases = new string[SumRowsInFlight];
+        var values = new string[SumRowsInFlight];
+        for (int k = 0; k < SumRowsInFlight; k++)
+        {
+            (bases[k], values[k]) = (k == 0 ? at : w.SPair(), w.V());
+        }
+
+        string main = label + "_sum", tail = label + "_tail", done = label + "_done";
+        w.L($"s_mov_b32 {r}, {first}");
+        w.Label(main);
+        w.L($"""
+            s_add_u32 {end}, {r}, {SumRowsInFlight}
+            s_cmp_gt_u32 {end}, {last}
+            s_cbranch_scc1 {tail}
+            """);
+        for (int k = 1; k < SumRowsInFlight; k++)
+        {
+            w.L($"s_add_u32 {RowWriter.Lo(bases[k])}, {RowWriter.Lo(bases[k - 1])}, {RowWriter.Lo(rowBytes)}");
+            w.L($"s_addc_u32 {RowWriter.Hi(bases[k])}, {RowWriter.Hi(bases[k - 1])}, {RowWriter.Hi(rowBytes)}");
+        }
+
+        for (int k = 0; k < SumRowsInFlight; k++)
+        {
+            w.L($"global_load_dword {values[k]}, {off}, {bases[k]}");
+        }
+
+        for (int k = 0; k < SumRowsInFlight; k++)
+        {
+            w.L($"v_add_f32_e32 {acc}, {acc}, {values[k]}");
+        }
+
+        w.L($"""
+            s_add_u32 {RowWriter.Lo(at)}, {RowWriter.Lo(bases[SumRowsInFlight - 1])}, {RowWriter.Lo(rowBytes)}
+            s_addc_u32 {RowWriter.Hi(at)}, {RowWriter.Hi(bases[SumRowsInFlight - 1])}, {RowWriter.Hi(rowBytes)}
+            s_mov_b32 {r}, {end}
+            s_branch {main}
+            """);
+        w.Label(tail);
+        w.L($"""
+            s_cmp_ge_u32 {r}, {last}
+            s_cbranch_scc1 {done}
+            global_load_dword {values[0]}, {off}, {at}
+            v_add_f32_e32 {acc}, {acc}, {values[0]}
+            """);
+        w.Add64(at, rowBytes);
+        w.L($"""
+            s_add_u32 {r}, {r}, 1
+            s_branch {tail}
+            """);
+        w.Label(done);
+    }
+
     // y[j] += Σ_r x[r, j] (few rows): a thread a column, the rows added in order onto y (the CPU's order: bit for bit).
     private static GcnKernelSource SumRows()
     {
@@ -1799,7 +1786,7 @@ internal static partial class GcnKernels
         w.L($"s_lshr_b32 {stride}, {grid}, 8");
         w.L($"s_mov_b32 {block}, s4");
         w.Label(".Lblocks");
-        string column0 = w.S(), column = w.V(), off = w.V(), saved = w.SPair(), acc = w.V(), value = w.V(), at = w.SPair(), r = w.S();
+        string column0 = w.S(), column = w.V(), off = w.V(), saved = w.SPair(), acc = w.V(), at = w.SPair();
         w.L($"""
             s_lshl_b32 {column0}, {block}, 8
             s_cmp_ge_u32 {column0}, {cols}
@@ -1810,21 +1797,8 @@ internal static partial class GcnKernels
             s_and_saveexec_b64 {saved}, vcc
             global_load_dword {acc}, {off}, {y}
             s_mov_b64 {at}, {x}
-            s_mov_b32 {r}, 0
             """);
-        w.Label(".Lrows");
-        w.L($"""
-            s_cmp_ge_u32 {r}, {rows}
-            s_cbranch_scc1 .Lrows_end
-            global_load_dword {value}, {off}, {at}
-            v_add_f32_e32 {acc}, {acc}, {value}
-            """);
-        w.Add64(at, rowBytes);
-        w.L($"""
-            s_add_u32 {r}, {r}, 1
-            s_branch .Lrows
-            """);
-        w.Label(".Lrows_end");
+        SumRowsInOrder(w, acc, off, at, rowBytes, "0", rows);
         w.L($"""
             global_store_dword {off}, {acc}, {y}
             s_or_b64 exec, exec, {saved}
@@ -1856,7 +1830,7 @@ internal static partial class GcnKernels
         string pb = w.Base(partials, w.Product64("s5", cols));
         w.L($"s_mov_b32 {block}, s4");
         w.Label(".Lblocks");
-        string column0 = w.S(), column = w.V(), off = w.V(), saved = w.SPair(), acc = w.V(), value = w.V(), at = w.SPair(), r = w.S();
+        string column0 = w.S(), column = w.V(), off = w.V(), saved = w.SPair(), acc = w.V(), value = w.V(), at = w.SPair();
         w.L($"""
             s_lshl_b32 {column0}, {block}, 8
             s_cmp_ge_u32 {column0}, {cols}
@@ -1867,21 +1841,8 @@ internal static partial class GcnKernels
             s_and_saveexec_b64 {saved}, vcc
             v_mov_b32_e32 {acc}, 0
             s_mov_b64 {at}, {xb}
-            s_mov_b32 {r}, {first}
             """);
-        w.Label(".Lrows");
-        w.L($"""
-            s_cmp_ge_u32 {r}, {last}
-            s_cbranch_scc1 .Lrows_end
-            global_load_dword {value}, {off}, {at}
-            v_add_f32_e32 {acc}, {acc}, {value}
-            """);
-        w.Add64(at, rowBytes);
-        w.L($"""
-            s_add_u32 {r}, {r}, 1
-            s_branch .Lrows
-            """);
-        w.Label(".Lrows_end");
+        SumRowsInOrder(w, acc, off, at, rowBytes, first, last);
         w.L($"""
             s_cmp_eq_u32 {chunks}, 1
             s_cbranch_scc0 .Lpartial
@@ -2527,27 +2488,41 @@ internal static partial class GcnKernels
 // attention weights are recomputed, never stored: P = e^(s - lse) with s the scaled (and soft-capped) score, dS = P ·
 // (dout · v - Δ) · the cap's slope, Δ = dout · output per row (attn_bwd_d_f32).
 // - attn_bwd_q_f32 / attn_spans_bwd_q_f32: one block a query row (grid-stride); the query and dout rows go to LDS once;
-//   tiles of 256 keys, a thread a key (its two dot products over the head, four dimensions a step), the tile's scale · dS
-//   to LDS, then each thread adds scale · dS · key over the tile for its dimensions (d = tid + 256 k), in key order.
+//   tiles of 256 keys, a thread a key (its two dot products over the head, four dimensions a step, read from the keys and
+//   values transposed, kt and vt: consecutive threads read consecutive floats, rule 83), the tile's scale · dS to LDS,
+//   then each thread adds scale · dS · key over the tile for its dimensions (d = tid + 256 k), in key order.
 // - attn_bwd_kv_f32 / attn_spans_bwd_kv_f32: one block a key position of a key/value head (grid-stride); its key and
 //   value rows go to LDS once; for each query head of its group, in order, tiles of 256 query rows, a thread a row (the
-//   rows that do not see the key give 0), the tile's P and scale · dS to LDS, then each thread adds scale · dS · q and
-//   P · dout over the tile for its dimensions, in row order.
+//   rows that do not see the key give 0; its dot products read q and dout transposed, qt and doutt), the tile's P and
+//   scale · dS to LDS, then each thread adds scale · dS · q and P · dout over the tile's seen rows for its dimensions,
+//   in row order: the block's first and last seen rows (its fixed tree) bound the walk, a tile without one is skipped,
+//   and over a cache the tiles start at the key (a row before it never sees it), so the causal half is not walked (the
+//   rows left out added only exact zeros: the same bits).
+// HipBackend makes the transposed copies once a call (permute_f32, one pass each), as rule 83 asks of an operand a kernel
+// walks across its rows.
 // So every gradient is summed in an order fixed by the shapes, owned by one block: no atomics, the same bits on every grid
 // and device (rule 86). Head sizes up to AttentionMaxDim, byte offsets within a head 32-bit (the backend checks).
 internal static partial class GcnKernels
 {
-    // The arguments: CUDA's (PtxKernels.Rows.cs attn_bwd_*, .SpansBackward.cs), then the spans' head count and n.
-    private static readonly string[] TiledBackwardPointers = ["q", "keys", "values", "dout", "lse", "delta", "dq", "dk", "dv"];
+    // The arguments: CUDA's (PtxKernels.Rows.cs attn_bwd_*, .SpansBackward.cs), then the transposed copies the dot
+    // products read (qt, doutt: each head's [dim, rows]; kt, vt: each key/value head's [dim, positions]; HipBackend makes
+    // them once a call, rule 83), then the spans' head count and n.
+    private static readonly string[] TiledBackwardPointers = ["q", "keys", "values", "dout", "lse", "delta", "dq", "dk", "dv", "qt", "doutt", "kt", "vt"];
 
     private static readonly string[] TiledBackwardScalars = ["rph", "steps", "cap", "dim", "scale", "window", "softcap", "n"];
 
-    private static readonly string[] SpansBackwardPointers = ["q", "keys", "values", "starts", "ends", "dout", "lse", "delta", "dq", "dk", "dv"];
+    private static readonly string[] SpansBackwardPointers = ["q", "keys", "values", "starts", "ends", "dout", "lse", "delta", "dq", "dk", "dv", "qt", "doutt", "kt", "vt"];
 
     private static readonly string[] SpansBackwardScalars = ["rows", "keyrows", "dim", "scale", "group", "hpt", "softcap", "heads", "n"];
 
-    /// <summary>The LDS an attention backward block declares: two head rows and two tiles of weights.</summary>
-    internal const int AttentionBackwardLdsBytes = 8 * AttentionMaxDim + 8 * AttentionTile;
+    // Two head rows and two tiles of weights.
+    private const int AttentionBackwardRowsLds = 8 * AttentionMaxDim + 8 * AttentionTile;
+
+    /// <summary>
+    /// The most LDS an attention backward block declares: two head rows, two tiles of weights and (the key kernels') the
+    /// reduction areas of a tile's seen rows. The backend runs the kernels only where a block may have this much.
+    /// </summary>
+    internal const int AttentionBackwardLdsBytes = AttentionBackwardRowsLds + 4 * 1024;
 
     private static IEnumerable<GcnKernelSource> TrainingAttention()
     {
@@ -2624,17 +2599,31 @@ internal static partial class GcnKernels
         w.L($"s_barrier");
     }
 
-    // Two dot products over the head in dimension order, four a step: Σ x[d] · ldsX[d] and Σ y[d] · ldsY[d], x and y read
-    // at `at` (a byte offset, stepped) from bases xb and yb; into dotX and dotY.
-    private static void AttentionDots(RowWriter w, string label, string dim, string at, string xb, string yb, int ldsX, int ldsY, string dotX, string dotY)
+    // Two dot products over the head in dimension order, four a step, reading transposed copies: Σ xt[d · stride + i] ·
+    // ldsX[d] and Σ yt[…] · ldsY[d] for this thread's row i (`at` = i · 4, bases xt and yt at the head's first float):
+    // consecutive threads read consecutive floats (rule 83), the sums in dimension order as before (the same bits).
+    private static void AttentionDotsTransposed(RowWriter w, string label, string dim, string at, string stride, string xt, string yt, int ldsX, int ldsY, string dotX,
+        string dotY)
     {
-        string readX = w.V(), d = w.S(), dim4 = w.S();
+        string readX = w.V(), d = w.S(), dim4 = w.S(), strideBytes = w.S(), stepBytes = w.S();
+        var ats = new string[4];
+        for (int e = 0; e < 4; e++)
+        {
+            ats[e] = w.V();
+        }
+
         w.L($"""
             v_mov_b32_e32 {dotX}, 0
             v_mov_b32_e32 {dotY}, 0
             v_mov_b32_e32 {readX}, 0
             s_mov_b32 {d}, 0
             s_and_b32 {dim4}, {dim}, -4
+            s_lshl_b32 {strideBytes}, {stride}, 2
+            s_lshl_b32 {stepBytes}, {stride}, 4
+            v_mov_b32_e32 {ats[0]}, {at}
+            v_add_u32_e32 {ats[1]}, {strideBytes}, {ats[0]}
+            v_add_u32_e32 {ats[2]}, {strideBytes}, {ats[1]}
+            v_add_u32_e32 {ats[3]}, {strideBytes}, {ats[2]}
             """);
         w.Label(label);
         w.L($"s_cmp_ge_u32 {d}, {dim4}");
@@ -2646,8 +2635,8 @@ internal static partial class GcnKernels
         for (int e = 0; e < 4; e++)
         {
             (xs[e], ys[e]) = (w.V(), w.V());
-            w.L($"global_load_dword {xs[e]}, {at}, {xb}{AttentionOffset(4 * e)}");
-            w.L($"global_load_dword {ys[e]}, {at}, {yb}{AttentionOffset(4 * e)}");
+            w.L($"global_load_dword {xs[e]}, {ats[e]}, {xt}");
+            w.L($"global_load_dword {ys[e]}, {ats[e]}, {yt}");
         }
 
         w.L($"ds_read_b128 {lx}, {readX} offset:{ldsX}");
@@ -2658,8 +2647,12 @@ internal static partial class GcnKernels
             w.L($"v_fma_f32 {dotY}, %v{fy + e}, {ys[e]}, {dotY}");
         }
 
+        for (int e = 0; e < 4; e++)
+        {
+            w.L($"v_add_u32_e32 {ats[e]}, {stepBytes}, {ats[e]}");
+        }
+
         w.L($"""
-            v_add_u32_e32 {at}, 16, {at}
             v_add_u32_e32 {readX}, 16, {readX}
             s_add_u32 {d}, {d}, 4
             s_branch {label}
@@ -2673,8 +2666,8 @@ internal static partial class GcnKernels
             w.L($"""
                 s_cmp_le_u32 {rest}, {e}
                 s_cbranch_scc1 {label}_tail
-                global_load_dword {x}, {at}, {xb}{AttentionOffset(4 * e)}
-                global_load_dword {y}, {at}, {yb}{AttentionOffset(4 * e)}
+                global_load_dword {x}, {ats[e]}, {xt}
+                global_load_dword {y}, {ats[e]}, {yt}
                 ds_read_b32 {lxe}, {readX} offset:{ldsX + 4 * e}
                 ds_read_b32 {lye}, {readX} offset:{ldsY + 4 * e}
                 v_fma_f32 {dotX}, {lxe}, {x}, {dotX}
@@ -2684,6 +2677,12 @@ internal static partial class GcnKernels
 
         w.Label(label + "_tail");
     }
+
+    // A tile's seen rows: the first (an unsigned minimum) and one past the last (a maximum) over the block.
+    private static string FirstAndPast(RowWriter writer, string[] held, string[] other) => $"""
+        v_min_u32_e32 {held[0]}, {held[0]}, {other[0]}
+        v_max_u32_e32 {held[1]}, {held[1]}, {other[1]}
+        """;
 
     // From the dot products: P = e^(s - lse) (s the scaled score, soft-capped as the forward pass caps it), and scale · dS
     // with dS = P · (dp - Δ) · the cap's slope 1 - (capped / softcap)².
@@ -2720,7 +2719,7 @@ internal static partial class GcnKernels
     // For each slot, acc[k] += Σ_j weight[j] · x[(first + j) · rowBytes + d] over `count` rows from LDS weights at
     // `weights` (and acc2 with the second weights and rows, when given), in j order, four rows a step.
     private static void AttentionAccumulate(RowWriter w, string label, string dim, string count, string firstBytes, string rowBytes, string[] dims, string[] bytes,
-        (string Base, int Weights, string[] Acc)[] sums)
+        (string Base, int Weights, string[] Acc)[] sums, string weightStart = "0")
     {
         for (int k = 0; k < AttentionSlots; k++)
         {
@@ -2735,7 +2734,7 @@ internal static partial class GcnKernels
                 v_cmp_gt_u32_e32 vcc, {dim}, {dims[k]}
                 s_and_saveexec_b64 {saved}, vcc
                 v_add_u32_e32 {o}, {firstBytes}, {bytes[k]}
-                v_mov_b32_e32 {read}, 0
+                v_mov_b32_e32 {read}, {weightStart}
                 s_mov_b32 {j}, 0
                 s_and_b32 {count4}, {count}, -4
                 """);
@@ -2844,7 +2843,7 @@ internal static partial class GcnKernels
     // dq of one query row a block (see the remarks above).
     private static GcnKernelSource AttentionBackwardQueries(bool spans)
     {
-        var w = new RowWriter(spans ? "attn_spans_bwd_q_f32" : "attn_bwd_q_f32", arrays: 0, extraLds: AttentionBackwardLdsBytes);
+        var w = new RowWriter(spans ? "attn_spans_bwd_q_f32" : "attn_bwd_q_f32", arrays: 0, extraLds: AttentionBackwardRowsLds);
         int queryLds = w.ExtraLdsBase, doutLds = queryLds + 4 * AttentionMaxDim, weightLds = doutLds + 4 * AttentionMaxDim;
         var a = spans ? w.Arguments(SpansBackwardPointers, SpansBackwardScalars) : w.Arguments(TiledBackwardPointers, TiledBackwardScalars);
         string dim = a.Scalar("dim"), scale = a.Scalar("scale"), softcap = a.Scalar("softcap");
@@ -2900,6 +2899,7 @@ internal static partial class GcnKernels
         string queryOffset = AttentionIndex(w, (w.Row, dim));
         string qb = w.ElementAddress(a.Pointer("q"), queryOffset), ob = w.ElementAddress(a.Pointer("dout"), queryOffset), dqb = w.ElementAddress(a.Pointer("dq"), queryOffset);
         string kb = w.ElementAddress(a.Pointer("keys"), kvOffset), vb = w.ElementAddress(a.Pointer("values"), kvOffset);
+        string ktb = w.ElementAddress(a.Pointer("kt"), kvOffset), vtb = w.ElementAddress(a.Pointer("vt"), kvOffset);
         string lse = w.V(), delta = w.V();
         w.L($"global_load_dword {lse}, {w.Zero}, {w.ElementAddress(a.Pointer("lse"), w.Row)}");
         w.L($"global_load_dword {delta}, {w.Zero}, {w.ElementAddress(a.Pointer("delta"), w.Row)}");
@@ -2917,9 +2917,9 @@ internal static partial class GcnKernels
             v_cmp_gt_u32_e32 vcc, {count}, {w.Tid}
             s_and_saveexec_b64 {inTile}, vcc
             v_add_u32_e32 {key}, {c0}, {w.Tid}
-            v_mul_lo_u32 {at}, {key}, {rowBytes}
+            v_lshlrev_b32_e32 {at}, 2, {key}
             """);
-        AttentionDots(w, ".Lq_dot", dim, at, kb, vb, queryLds, doutLds, dot, dp);
+        AttentionDotsTransposed(w, ".Lq_dot", dim, at, a.Scalar(spans ? "keyrows" : "cap"), ktb, vtb, queryLds, doutLds, dot, dp);
         var (_, ds) = AttentionGradient(w, ".Lq_capped", dot, dp, lse, delta, scale, softcap, capInverse);
         w.L($"""
             v_mov_b32_e32 {weight}, {ds}
@@ -2965,7 +2965,7 @@ internal static partial class GcnKernels
     // dk and dv of one key position a block (see the remarks above).
     private static GcnKernelSource AttentionBackwardKeys(bool spans)
     {
-        var w = new RowWriter(spans ? "attn_spans_bwd_kv_f32" : "attn_bwd_kv_f32", arrays: 0, extraLds: AttentionBackwardLdsBytes);
+        var w = new RowWriter(spans ? "attn_spans_bwd_kv_f32" : "attn_bwd_kv_f32", arrays: 2, extraLds: AttentionBackwardRowsLds);
         int keyLds = w.ExtraLdsBase, valueLds = keyLds + 4 * AttentionMaxDim, pLds = valueLds + 4 * AttentionMaxDim, dsLds = pLds + 4 * AttentionTile;
         var a = spans ? w.Arguments(SpansBackwardPointers, SpansBackwardScalars) : w.Arguments(TiledBackwardPointers, TiledBackwardScalars);
         string dim = a.Scalar("dim"), scale = a.Scalar("scale"), softcap = a.Scalar("softcap");
@@ -3013,10 +3013,14 @@ internal static partial class GcnKernels
 
         string headRow = AttentionIndex(w, (h, rows)), headOffset = AttentionIndex(w, (headRow, dim));
         string qb = w.ElementAddress(a.Pointer("q"), headOffset), ob = w.ElementAddress(a.Pointer("dout"), headOffset);
+        string qtb = w.ElementAddress(a.Pointer("qt"), headOffset), dtb = w.ElementAddress(a.Pointer("doutt"), headOffset);
         string lseb = w.ElementAddress(a.Pointer("lse"), headRow), deltab = w.ElementAddress(a.Pointer("delta"), headRow);
         string r0 = w.S(), count = w.S(), inTile = w.SPair(), i = w.V(), sees = w.SPair(), first = w.V(), past = w.V(), t = w.V();
         string pw = w.V(), dw = w.V(), at = w.V(), rowAt = w.V(), lse = w.V(), delta = w.V(), dot = w.V(), dp = w.V(), tileBytes = w.S();
-        w.L($"s_mov_b32 {r0}, 0");
+        string seen = w.V(), firstSeen = w.V(), pastSeen = w.V(), sFirst = w.S(), sPast = w.S(), start = w.S(), seenRows = w.S(), weightStart = w.S();
+
+        // A cache's rows before the key never see it (row i's step is at most i): the tiles start at the key.
+        w.L(spans ? (FormattableString)$"s_mov_b32 {r0}, 0" : $"s_mov_b32 {r0}, {c}");
         w.Label(".Lkv_tile");
         w.L($"""
             s_cmp_ge_u32 {r0}, {rows}
@@ -3025,6 +3029,7 @@ internal static partial class GcnKernels
             s_min_u32 {count}, {count}, 0x{AttentionTile:x}
             v_mov_b32_e32 {pw}, 0
             v_mov_b32_e32 {dw}, 0
+            v_mov_b32_e32 {seen}, 0
             v_cmp_gt_u32_e32 vcc, {count}, {w.Tid}
             s_and_saveexec_b64 {inTile}, vcc
             v_add_u32_e32 {i}, {r0}, {w.Tid}
@@ -3067,26 +3072,45 @@ internal static partial class GcnKernels
             s_and_b64 {sees}, {sees}, {after}
             s_and_b64 exec, exec, {sees}
             s_cbranch_execz .Lkv_unseen
+            v_mov_b32_e32 {seen}, 1
             v_lshlrev_b32_e32 {t}, 2, {i}
             global_load_dword {lse}, {t}, {lseb}
             global_load_dword {delta}, {t}, {deltab}
-            v_mul_lo_u32 {rowAt}, {i}, {rowBytes}
+            v_lshlrev_b32_e32 {rowAt}, 2, {i}
             """);
-        AttentionDots(w, ".Lkv_dot", dim, rowAt, qb, ob, keyLds, valueLds, dot, dp);
+        AttentionDotsTransposed(w, ".Lkv_dot", dim, rowAt, rows, qtb, dtb, keyLds, valueLds, dot, dp);
         var (p, ds) = AttentionGradient(w, ".Lkv_capped", dot, dp, lse, delta, scale, softcap, capInverse);
         w.L($"""
             v_mov_b32_e32 {pw}, {p}
             v_mov_b32_e32 {dw}, {ds}
             """);
         w.Label(".Lkv_unseen");
+
+        // The tile's seen rows, [first, past) over the block (its tree, which also orders the weights' stores before the
+        // reads); the rows outside, whose weights are 0, are not walked (their terms added only +0), a tile with none skipped.
         w.L($"""
             s_or_b64 exec, exec, {inTile}
             ds_write_b32 {tid4}, {pw} offset:{pLds}
             ds_write_b32 {tid4}, {dw} offset:{dsLds}
-            s_barrier
-            s_mul_i32 {tileBytes}, {r0}, {rowBytes}
+            v_cmp_ne_u32_e32 vcc, 0, {seen}
+            v_cndmask_b32_e32 {firstSeen}, -1, {w.Tid}, vcc
+            v_add_u32_e32 {pastSeen}, 1, {w.Tid}
+            v_cndmask_b32_e32 {pastSeen}, 0, {pastSeen}, vcc
             """);
-        AttentionAccumulate(w, ".Lkv_acc", dim, count, tileBytes, rowBytes, dims, bytes, [(qb, dsLds, accK), (ob, pLds, accV)]);
+        w.Reduce(FirstAndPast, firstSeen, pastSeen);
+        w.L($"""
+            v_readfirstlane_b32 {sFirst}, {firstSeen}
+            v_readfirstlane_b32 {sPast}, {pastSeen}
+            s_cmp_ge_u32 {sFirst}, {sPast}
+            s_cbranch_scc1 .Lkv_none_seen
+            s_and_b32 {start}, {sFirst}, -4
+            s_sub_u32 {seenRows}, {sPast}, {start}
+            s_add_u32 {tileBytes}, {r0}, {start}
+            s_mul_i32 {tileBytes}, {tileBytes}, {rowBytes}
+            s_lshl_b32 {weightStart}, {start}, 2
+            """);
+        AttentionAccumulate(w, ".Lkv_acc", dim, seenRows, tileBytes, rowBytes, dims, bytes, [(qb, dsLds, accK), (ob, pLds, accV)], weightStart);
+        w.Label(".Lkv_none_seen");
         w.L($"""
             s_barrier
             s_add_u32 {r0}, {r0}, 0x{AttentionTile:x}

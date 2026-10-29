@@ -11,8 +11,10 @@ namespace Idrak.Gpu.Hip;
 //   the products of one input (queries, keys and values, or gate and up with act(gate) · up written by the same pass)
 //   and the product followed by the residual addition and the next norms, few rows each (up to 8), with the plain
 //   packed products' k splits (HipBackend.GemvSplitCount, IDRAK_HIP_GEMV_SPLITS) and their sums added in split order by
-//   a second launch (rule 86). The prompt-sized and low-rank forms are CUDA's tensor-core kernels: here they decline
-//   (callers then run the packed products HIP has), as does PrefersPackedMatMul.
+//   the launch's last block (rule 86's order, a completion counter only signalling; IDRAK_HIP_FINISH=block, the
+//   default), so each is one launch as on CUDA, or by a second launch (IDRAK_HIP_FINISH=launch). The prompt-sized and
+//   low-rank forms are CUDA's tensor-core kernels: here they decline (callers then run the packed products HIP has), as
+//   does PrefersPackedMatMul.
 // - IRowAttentionBackend: rows of different lengths decoded together over a float32 or bfloat16 cache
 //   (attention_rows_f32, attention_rows_bf16: the decoding kernel with each row's start), and ISegmentedAttentionBackend:
 //   packed sequences, their key ranges written on the device (segment_spans_f32) for attention_spans_f32. Their head sizes
@@ -21,10 +23,46 @@ namespace Idrak.Gpu.Hip;
 //   and after the norm (one tensor, queries and keys in one launch, and the attention layer's heads into their layouts
 //   and cache, NormRopeHeads true as on CUDA), one-hot rows, the token history and its repetition penalties.
 // - The sampler: CUDA's paths (the whole row; top-k ≤ 64 over a vocabulary past four candidate slices through the
-//   candidates; greedy rows finished from the candidate blocks' parts), each draw the CPU's (GcnKernels' Sampler).
+//   candidates; greedy rows sampled by their last candidate block, one launch), each draw the CPU's (GcnKernels' Sampler).
 // Each launch is labelled for --profile with its shape and floating-point operations (Cost, ProductCost).
 internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAttentionBackend, ISegmentedAttentionBackend
 {
+    /// <summary>
+    /// The setting for how a split sum, and a fused decoding kernel's tail, are finished: <c>block</c> (the default, CUDA's
+    /// form): the last block of the launch, counted by a completion counter, in the same launch (GcnKernels.Finish.cs);
+    /// <c>launch</c>: a second kernel, as before plan 35's G6b. Both add in the same order (rule 86); which is faster may
+    /// depend on the device and the shape (a launch's cost against one block doing the tail), so both stay.
+    /// </summary>
+    internal const string FinishVariable = "IDRAK_HIP_FINISH";
+
+    /// <summary>Whether <c>IDRAK_HIP_FINISH</c> (<paramref name="setting"/>) asks for the last block's finish: anything but <c>launch</c>.</summary>
+    internal static bool FinishByLastBlockSetting(string? setting) => !string.Equals(setting?.Trim(), "launch", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether split sums and the fused decoding kernels' tails are finished by their launch's last block (one launch) or
+    /// by a second launch: <c>IDRAK_HIP_FINISH</c>, settable by tests and benchmarks to time both forms.
+    /// </summary>
+    internal static bool FinishByLastBlock { get; set; } = FinishByLastBlockSetting(Environment.GetEnvironmentVariable(FinishVariable));
+
+    // The completion counters, zeroed once and kept (rule 77: never a buffer per call); every launch that uses them
+    // leaves them zero (its last block resets each), so the next launch, in stream order, finds them so.
+    private Storage? _counters;
+
+    // At least `count` zeroed completion counters (a larger buffer replaces a smaller one, which the pool takes back in
+    // stream order).
+    private Storage Counters(int count)
+    {
+        var current = _counters;
+        if (current is null || current.Length < count)
+        {
+            var larger = Allocate(Math.Max(count, 4096), zeroed: true);
+            current?.Release();
+            _counters = current = larger;
+        }
+
+        return current;
+    }
+
     /// <summary>The add-and-normalize finish of a packed product: the residual, sum, gain, normalized and the norm's eps and offset, and y's own gain (null: y not normalized first).</summary>
     private readonly record struct AddNormTail(Storage? Residual, Storage? Sum, Storage? Gain, Storage? Normalized, float Eps, float Offset, Storage? YGain, float YEps,
         float YOffset);
@@ -126,10 +164,12 @@ internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAtten
         return products.Length == 2 && products[0].Columns == products[1].Columns && activation is >= 0 and <= 2 && PackedMany(format, x, m, k, products, activation, hidden);
     }
 
-    // Products of one input in one launch (grid z), k split as the plain products' (their columns' blocks summed), then
-    // with several splits or a gate/up pair gemv_multi_finish_f32: the splits' sums in split order, scaled, plus the bias,
-    // and hidden = act(gate) · up. One split without a pair: the product writes each output whole. False when the kernels
-    // cannot take it (the caller then runs the products one by one).
+    // Products of one input in one launch (grid z), k split as the plain products' (their columns' blocks summed). With
+    // several splits, the last block of each product's column range adds them in split order, scaled, plus the bias; for
+    // a gate/up pair the second of the two products to finish a column range writes hidden = act(gate) · up
+    // (IDRAK_HIP_FINISH=block, the default: one launch). With IDRAK_HIP_FINISH=launch, gemv_multi_finish_f32 does both in
+    // a second launch. One split without a pair: the product writes each output whole. False when the kernels cannot take
+    // it (the caller then runs the products one by one).
     private bool PackedMany(PackedFormat format, Storage x, int m, int k, ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products,
         int activation, Storage? hidden)
     {
@@ -163,19 +203,22 @@ internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAtten
         int wanted = GemvSplitCount(DeviceLimits.ComputeUnits, totalBlocks, k, ForcedGemvSplits);
         int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
         int count = (k + chunk - 1) / chunk;
-        bool pair = hidden is not null, finishing = count > 1 || pair;
-        var finish = finishing ? Gcn("gemv_multi_finish_f32") : null;
-        if (count > DeviceLimits.MaxGridDimY || finishing && finish is null)
+        bool pair = hidden is not null, lastBlock = FinishByLastBlock;
+        bool finishing = count > 1 || pair;
+        var finish = finishing && !lastBlock ? Gcn("gemv_multi_finish_f32") : null;
+        if (count > DeviceLimits.MaxGridDimY || finishing && !lastBlock && finish is null)
         {
             return false;
         }
 
-        var part = finishing ? Allocate(products.Length * count * m * nmax, zeroed: false) : null;
+        // The splits' parts (the old form: also a pair's, which its finish reads); the counters for the last blocks.
+        var part = count > 1 || finishing && !lastBlock ? Allocate(products.Length * count * m * nmax, zeroed: false) : null;
+        ulong counters = lastBlock && finishing ? P(Counters(GcnKernels.MultiGemvProducts * columnBlocks)) : 0UL;
         try
         {
-            Span<ulong> values = stackalloc ulong[9 + 5 * GcnKernels.MultiGemvProducts];
+            Span<ulong> values = stackalloc ulong[11 + 5 * GcnKernels.MultiGemvProducts];
             (values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8]) =
-                (P(x), part is null ? 0UL : P(part), U(m), U(k), U(chunk), U(count), 0UL, U(columnBlocks), U(nmax));
+                (P(x), part is null ? 0UL : P(part), U(m), U(k), U(chunk), U(count), counters, U(columnBlocks), U(nmax));
             double flops = 0;
             for (int j = 0; j < GcnKernels.MultiGemvProducts; j++)
             {
@@ -188,10 +231,12 @@ internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAtten
                 flops += j < products.Length ? 2.0 * m * product.Columns * k : 0;
             }
 
+            (values[^2], values[^1]) = (pair && lastBlock ? U(activation + 1) : 0UL, pair && lastBlock ? P(hidden!) : 0UL);
             if (Profiling)
             {
                 LabelNextLaunch(string.Create(CultureInfo.InvariantCulture,
-                    $"{function.Name} {m}x{string.Join('+', products.ToArray().Select(p => p.Columns))}x{k}{(count > 1 ? $" split {count}" : "")}"), flops);
+                    $"{function.Name} {m}x{string.Join('+', products.ToArray().Select(p => p.Columns))}x{k}{(count > 1 ? $" split {count}" : "")}{(pair && lastBlock ? " pair" : "")}{(counters != 0 ? " (last block)" : "")}"),
+                    flops + (pair && lastBlock ? Cost("gemv_multi_finish_f32", 1).Flops * m * nmax : 0));
             }
 
             LaunchProduct(function, columnBlocks, count, products.Length, values);
@@ -497,11 +542,14 @@ internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAtten
         return true;
     }
 
+    // Greedy rows sample themselves in topk_greedy_f32's last block of each row (IDRAK_HIP_FINISH=block, the default: one
+    // launch), else in sample_candidates_greedy_f32 after it; top-k rows through topk_candidates_f32, then
+    // sample_candidates_f32.
     private bool SampleCandidates(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int topK, float minP,
         in GcnKernels.SamplerSettings settings)
     {
         int blocks = (vocabulary + GcnKernels.CandidateSlice - 1) / GcnKernels.CandidateSlice, slots = blocks * GcnKernels.CandidateSlots;
-        bool greedy = GreedyRows && topK == 1 && minP <= 0.5f;
+        bool greedy = GreedyRows && topK == 1 && minP <= 0.5f, lastBlock = greedy && FinishByLastBlock;
         var form = greedy ? GcnKernels.SamplerForm.Greedy : GcnKernels.SamplerForm.Candidates;
         if (!ShapeFits((long)rows * slots, (long)rows * blocks * 3) || Gcn(greedy ? "topk_greedy_f32" : "topk_candidates_f32") is not { } stage
             || Gcn(GcnKernels.SamplerKernel(form)) is not { } sampler)
@@ -515,7 +563,7 @@ internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAtten
         var parts = greedy ? Allocate(rows * blocks * 3, zeroed: false) : null;
         try
         {
-            Span<ulong> first = stackalloc ulong[12];
+            Span<ulong> first = stackalloc ulong[21];
             int at = 0;
             first[at++] = P(logits);
             first[at++] = P(candidateScores);
@@ -524,11 +572,35 @@ internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAtten
             if (parts is not null)
             {
                 first[at++] = P(parts);
+                first[at++] = P(ids);
+                first[at++] = P(stats);
+                first[at++] = P(step);
+                first[at++] = lastBlock ? P(Counters(rows)) : 0UL;
             }
 
-            (first[at], first[at + 1], first[at + 2], first[at + 3], first[at + 4], first[at + 5], first[at + 6]) =
-                (settings.Vocabulary, settings.RowStride, settings.RowOffset, F(settings.InverseTemperature), settings.TopK, U(blocks), U(rows * blocks));
-            LaunchRows(stage, rows * blocks, GcnKernels.CandidateSlice, Cost(stage.Name, topK).Flops, first[..(at + 7)]);
+            (first[at], first[at + 1], first[at + 2], first[at + 3], first[at + 4], first[at + 5]) =
+                (settings.Vocabulary, settings.RowStride, settings.RowOffset, F(settings.InverseTemperature), settings.TopK, U(blocks));
+            at += 6;
+            if (parts is not null)
+            {
+                (first[at], first[at + 1], first[at + 2], first[at + 3], first[at + 4]) = (F(settings.TopP), F(settings.LogMinP), settings.Seed, settings.Rows, U(slots));
+                at += 5;
+            }
+
+            first[at++] = U(rows * blocks);
+            if (lastBlock)
+            {
+                if (Profiling)
+                {
+                    LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"{stage.Name} {rows * blocks}x{GcnKernels.CandidateSlice} (last block samples)"),
+                        Cost(stage.Name, topK).Flops * rows * (double)blocks * GcnKernels.CandidateSlice + Cost(sampler.Name).Flops * rows * (double)slots);
+                }
+
+                LaunchKernel(stage, (uint)Math.Min(rows * blocks, DeviceLimits.MaxGridDimX), 1, first[..at]);
+                return true;
+            }
+
+            LaunchRows(stage, rows * blocks, GcnKernels.CandidateSlice, Cost(stage.Name, topK).Flops, first[..at]);
 
             Span<ulong> second = stackalloc ulong[19];
             at = 0;

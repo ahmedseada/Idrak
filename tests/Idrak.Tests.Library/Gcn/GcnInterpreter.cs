@@ -71,10 +71,27 @@ internal sealed record GcnDispatch
 
     /// <summary>Whether races between waves and workgroups are tracked (on by default).</summary>
     public bool TrackRaces { get; init; } = true;
+
+    /// <summary>
+    /// Whether the workgroups run in an order drawn from <see cref="Seed"/> instead of x fastest: a device runs them in
+    /// no set order, so a kernel whose last block finishes the work (a completion counter) is run with another block last.
+    /// </summary>
+    public bool ShuffleGroups { get; init; }
 }
 
-/// <summary>What a run did.</summary>
-internal readonly record struct GcnRunResult(long Instructions, int Waves, int Workgroups);
+/// <summary>
+/// The instructions a run executed by class (summed over its waves): vector memory (global and flat loads, stores and
+/// atomics), scalar memory (s_load), LDS (ds_*, the lane permutes included), s_waitcnt and s_barrier; the evidence of a
+/// kernel's cost the interpreter can give (rules 80-83), per element of a kernel's work.
+/// </summary>
+internal readonly record struct GcnCounts(long VectorMemory, long ScalarMemory, long Lds, long Waits, long Barriers)
+{
+    public static GcnCounts operator +(GcnCounts a, GcnCounts b) =>
+        new(a.VectorMemory + b.VectorMemory, a.ScalarMemory + b.ScalarMemory, a.Lds + b.Lds, a.Waits + b.Waits, a.Barriers + b.Barriers);
+}
+
+/// <summary>What a run did: the instructions its waves executed (and by class), its waves and its workgroups.</summary>
+internal readonly record struct GcnRunResult(long Instructions, int Waves, int Workgroups, GcnCounts Counts = default);
 
 /// <summary>A pending memory operation: counted by vmcnt, lgkmcnt or both until a wait (or the wave's end) retires it.</summary>
 internal sealed class GcnPending
@@ -111,6 +128,9 @@ internal sealed class GcnPending
 
     /// <summary>The store this entry is, when it is one.</summary>
     public GcnStoreRecord? Store { get; init; }
+
+    /// <summary>Run when a wait retires the entry (an atomic's acquire: the workgroup may then read what it released).</summary>
+    public Action<GcnWave>? OnRetire { get; init; }
 }
 
 /// <summary>A store's place in the race tracking: who wrote, in which barrier interval, and whether a wait retired it.</summary>
@@ -123,6 +143,9 @@ internal sealed class GcnStoreRecord
     public int Epoch { get; init; }
 
     public bool Retired { get; set; }
+
+    /// <summary>A store to global memory (not the LDS): what a completion counter's atomic releases to other workgroups.</summary>
+    public bool Global { get; init; }
 
     public GcnInstruction? Instruction { get; init; }
 }
@@ -220,6 +243,16 @@ internal sealed partial class GcnMachine
     private readonly List<GcnWave> wavePool = [];
     private ulong random;
     private long instructions;
+    private readonly byte[] classes;
+    private long vectorMemory, scalarMemory, ldsOps, waits, barriers;
+
+    // Completion counters (rule 86's signalling, never sums): per atomic address, the workgroups that released their
+    // global stores to it (every one retired by a wait before the atomic) and how many store records existed then; and
+    // the workgroups the current one acquired through such an address (the atomic retired), with the wave that did and
+    // its barrier interval: the stores it may then read (with glc, past the vector L1) or overwrite.
+    private readonly Dictionary<ulong, List<(int Group, int UpTo)>> releases = [];
+    private readonly Dictionary<int, (int UpTo, int Wave, int Epoch)> acquired = [];
+    private int groupFirstStore;
 
     internal readonly List<GcnStoreRecord> Stores = [new GcnStoreRecord()];
 
@@ -253,6 +286,7 @@ internal sealed partial class GcnMachine
         descriptor = kernel.Descriptor;
         decoder = new GcnDecoder(kernel.Cpu);
         decoded = new GcnInstruction?[(kernel.Code.Length + 3) / 4];
+        classes = new byte[decoded.Length];
         random = dispatch.Seed * 0x9E3779B97F4A7C15UL + 0x632BE59BD9B4E019UL;
     }
 
@@ -298,19 +332,30 @@ internal sealed partial class GcnMachine
         memory.BeginDispatch();
         int threads = bx * by * bz;
         int waveCount = (threads + 63) / 64;
+        var order = new (int X, int Y, int Z)[gx * gy * gz];
+        for (int z = 0, n = 0; z < gz; z++)
+        {
+            for (int y = 0; y < gy; y++)
+            {
+                for (int x = 0; x < gx; x++)
+                {
+                    order[n++] = (x, y, z);
+                }
+            }
+        }
+
+        if (dispatch.ShuffleGroups)
+        {
+            new Random((int)(dispatch.Seed * 2654435761UL)).Shuffle(order);
+        }
+
         try
         {
-            for (int z = 0; z < gz; z++)
+            foreach (var id in order)
             {
-                for (int y = 0; y < gy; y++)
-                {
-                    for (int x = 0; x < gx; x++)
-                    {
-                        GroupId = (x, y, z);
-                        RunGroup(waveCount);
-                        Group++;
-                    }
-                }
+                GroupId = id;
+                RunGroup(waveCount);
+                Group++;
             }
         }
         finally
@@ -326,7 +371,7 @@ internal sealed partial class GcnMachine
             }
         }
 
-        return new GcnRunResult(instructions, Group * waveCount, Group);
+        return new GcnRunResult(instructions, Group * waveCount, Group, new GcnCounts(vectorMemory, scalarMemory, ldsOps, waits, barriers));
     }
 
     private void Validate()
@@ -384,6 +429,8 @@ internal sealed partial class GcnMachine
         }
 
         Epoch = 0;
+        acquired.Clear();
+        groupFirstStore = Stores.Count;
         if (Lds.Length != descriptor.LdsBytes)
         {
             Lds = new byte[descriptor.LdsBytes];
@@ -565,8 +612,111 @@ internal sealed partial class GcnMachine
 
         wave.Next = wave.Pc + instruction.Size;
         instructions++;
+        Count(wave.Pc, instruction);
         execute(this, wave, instruction);
         wave.Pc = wave.Next;
+    }
+
+    // The instruction's class for GcnCounts, worked out once per decoded instruction.
+    private void Count(int pc, GcnInstruction instruction)
+    {
+        ref byte kind = ref classes[pc / 4];
+        if (kind == 0)
+        {
+            string name = instruction.Opcode.Base;
+            kind = name.StartsWith("global_", StringComparison.Ordinal) || name.StartsWith("flat_", StringComparison.Ordinal) ? (byte)1
+                : name.StartsWith("s_load", StringComparison.Ordinal) || name.StartsWith("s_buffer_load", StringComparison.Ordinal) ? (byte)2
+                : name.StartsWith("ds_", StringComparison.Ordinal) ? (byte)3
+                : name == "s_waitcnt" ? (byte)4
+                : name == "s_barrier" ? (byte)5 : (byte)6;
+        }
+
+        switch (kind)
+        {
+            case 1:
+                vectorMemory++;
+                break;
+            case 2:
+                scalarMemory++;
+                break;
+            case 3:
+                ldsOps++;
+                break;
+            case 4:
+                waits++;
+                break;
+            case 5:
+                barriers++;
+                break;
+        }
+    }
+
+    /// <summary>
+    /// A returning atomic's release (at its issue): when every global store of the current workgroup is retired, the
+    /// stores so far are released to the address; later, when a wait retires the atomic, its workgroup acquires every
+    /// workgroup that released to the address before (<see cref="Acquire"/>).
+    /// </summary>
+    internal void Release(ulong address)
+    {
+        for (int s = groupFirstStore; s < Stores.Count; s++)
+        {
+            if (Stores[s] is { Global: true, Retired: false })
+            {
+                return;                                                          // not released: a reader of these stores fails loudly
+            }
+        }
+
+        if (!releases.TryGetValue(address, out var list))
+        {
+            releases[address] = list = [];
+        }
+
+        list.Add((Group, Stores.Count));
+    }
+
+    /// <summary>The current workgroup acquires, through <paramref name="address"/>, what was released to it (its wave <paramref name="wave"/> waited for the atomic).</summary>
+    internal void Acquire(ulong address, GcnWave wave)
+    {
+        if (!releases.TryGetValue(address, out var list))
+        {
+            return;
+        }
+
+        foreach (var (group, upTo) in list)
+        {
+            if (group == Group)
+            {
+                continue;
+            }
+
+            int known = acquired.TryGetValue(group, out var before) ? before.UpTo : 0;
+            acquired[group] = (Math.Max(known, upTo), wave.Index, Epoch);
+        }
+    }
+
+    // Whether store record `id` of another workgroup is ordered before this access: its workgroup released it to an
+    // address this one acquired, by this wave or before a barrier since; a read must also pass the vector L1 (glc).
+    private bool Ordered(int id, GcnStoreRecord store, GcnWave wave, GcnInstruction i, bool read, out string why)
+    {
+        why = "";
+        if (!acquired.TryGetValue(store.Group, out var acquisition) || id >= acquisition.UpTo)
+        {
+            return false;
+        }
+
+        if (acquisition.Wave != wave.Index && Epoch <= acquisition.Epoch)
+        {
+            why = $"; wave {acquisition.Wave} acquired it through a completion counter, but no s_barrier since orders this wave after";
+            return false;
+        }
+
+        if (read && !i.Glc)
+        {
+            why = "; it was acquired through a completion counter, but the load has no glc (the vector L1 may hold a stale line)";
+            return false;
+        }
+
+        return true;
     }
 
     private GcnInstruction Fetch(GcnWave wave)
@@ -992,14 +1142,15 @@ internal sealed partial class GcnMachine
             store.Retired = true;
         }
 
+        pending.OnRetire?.Invoke(wave);
         wave.VmQueue.Remove(pending);
         wave.LgkmQueue.Remove(pending);
     }
 
     /// <summary>A new store record of the current workgroup, wave and barrier interval; its index is what the race tracking keeps per byte.</summary>
-    internal int NewStore(GcnWave wave, GcnInstruction i, out GcnStoreRecord record)
+    internal int NewStore(GcnWave wave, GcnInstruction i, out GcnStoreRecord record, bool global = false)
     {
-        record = new GcnStoreRecord { Group = Group, Wave = wave.Index, Epoch = Epoch, Instruction = i };
+        record = new GcnStoreRecord { Group = Group, Wave = wave.Index, Epoch = Epoch, Instruction = i, Global = global };
         Stores.Add(record);
         return Stores.Count - 1;
     }

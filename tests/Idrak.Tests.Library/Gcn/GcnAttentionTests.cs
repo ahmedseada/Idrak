@@ -23,6 +23,7 @@ internal abstract partial class Tests
         ("gcn kernels: attention: every attention and shape kernel assembles for gfx90c and gfx906 with its block of 256 declared, within its register budget, its printed text reading back to its bytes; GcnKernels.All lists each once", GcnAttentionAssembled),
         ("gcn kernels: attention: attention_decode_f32 equals the CPU's decoding and tiled attention over a cache (1 to 300 positions, heads of 37, 64 and 300, rows of several steps, a window, a soft-cap, the log-sum-exp; one split, and two merged by attention_merge_f32), the same bits on two grids and wave orders", GcnAttentionDecode),
         ("gcn kernels: attention: attention_decode_bf16 and attention_decode_int8 equal the CPU's attention over bfloat16 and int8 caches (odd heads, several steps, a window, a soft-cap, two splits merged), the same bits on two grids and wave orders", GcnAttentionPacked),
+        ("gcn kernels: attention: attention_tiled_r2/r4/r8_f32 (a block's rows sharing each key and value tile) equal attention_decode_f32 bit for bit without a window and the CPU's tiled attention over a cache with a window and a soft-cap (heads of 37, 64 and 256, rows of a head not a multiple of the block's, the log-sum-exp), the same bits on two grids and wave orders", GcnAttentionTiled),
         ("gcn kernels: attention: attention_spans_f32 equals the CPU's attention over key ranges (grouped heads, two tables, an empty range: zeros and a log-sum-exp of -inf; a soft-cap; two splits merged) and its strided form over packed rows (two batches), the same bits on two grids and wave orders", GcnAttentionSpans),
         ("gcn kernels: attention: attn_scores_int8 and attn_context_int8 equal the CPU's scores and weighted values over an int8 cache (an odd head), the same bits on two grids and wave orders", GcnAttentionInt8Products),
         ("gcn kernels: shapes: kv_write_f32, kv_write_bf16 (an odd head, a NaN kept quiet) and kv_write_int8 (an odd head, a zero row) write the CPU's cache bit for bit, decoder_mask_f32 its mask, the same bits on two grids and wave orders", GcnShapesCache),
@@ -73,8 +74,35 @@ internal abstract partial class Tests
         GcnKernels.PackArguments(code.Arguments, arguments, values);
         GcnInterpreter.Run(image, memory, new GcnDispatch
         {
-            Workgroups = (grid.X, grid.Y, 1), WorkgroupSize = (GcnKernels.RowThreads, 1, 1), Arguments = arguments, Seed = seed,
+            Workgroups = (grid.X, grid.Y, 1), WorkgroupSize = (GcnKernels.RowThreads, 1, 1), Arguments = arguments, Seed = seed, ShuffleGroups = seed != 1,
         });
+    }
+
+    // A split attention launch merged both ways (plan 35, G6b): by attention_merge_f32 in a second launch, and by each
+    // row's last split block (its completion counters mapped here, `rows` of them): run on every row's block with the
+    // blocks in three orders (another block last each time), the outputs equal the second launch's bit for bit, and
+    // every counter is left at zero (a second run, the replay, finds them so and gives the same bits).
+    private static void AttentionMergedAlike(string what, float[][] inputs, int[] outputs, int rows, Action<GcnMemory, ulong[], (int X, int Y), ulong, ulong> gcn)
+    {
+        float[][] launched = RowsOnGcn(inputs, (m, a) => gcn(m, a, (rows, 1), 7, 0UL));
+        foreach (ulong seed in (ulong[])[3, 11, 29])
+        {
+            float[] counters = [];
+            float[][] merged = RowsOnGcn(inputs, (m, a) =>
+            {
+                ulong at = m.Map<float>("counters", new float[rows]);
+                gcn(m, a, (rows, 1), seed, at);
+                gcn(m, a, (rows, 1), seed + 1, at);
+                counters = m.Read<float>(at, rows);
+            });
+            foreach (int o in outputs)
+            {
+                Check(MemoryMarshal.AsBytes(launched[o].AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(merged[o].AsSpan())),
+                    $"{what}: storage {o} merged by the last split blocks (blocks in order {seed}) differs from attention_merge_f32's bit for bit");
+            }
+
+            Check(counters.All(v => BitConverter.SingleToUInt32Bits(v) == 0), $"{what}: the last split blocks left a counter that is not zero (blocks in order {seed})");
+        }
     }
 
     // Blocks of 256 for n elements of a one-element-a-work-item kernel.
@@ -142,7 +170,7 @@ internal abstract partial class Tests
     {
         _ = device;
         var names = AttentionAndShapes.Select(k => k.Name).ToArray();
-        Check(names.Length == 16 && names.Distinct().Count() == names.Length, $"16 attention and shape kernels, each once: {string.Join(", ", names)}");
+        Check(names.Length == 19 && names.Distinct().Count() == names.Length, $"19 attention and shape kernels, each once: {string.Join(", ", names)}");
         foreach (string name in names)
         {
             Check(GcnKernels.All.Count(k => k.Name == name) == 1, $"GcnKernels.All lists {name} once");
@@ -153,8 +181,10 @@ internal abstract partial class Tests
                 Check(code is { RequiredWorkgroupSize: (256, 1, 1), MaxFlatWorkgroupSize: 256, WaveSize: 64 },
                     $"{name} ({isa}): declares the block of 256 (required {code.RequiredWorkgroupSize}, max flat {code.MaxFlatWorkgroupSize}, wave {code.WaveSize})");
                 bool rows = name is "attention_decode_f32" or "attention_decode_bf16" or "attention_decode_int8" or "attention_spans_f32";
-                Check(rows ? code.LdsBytes == GcnKernels.AttentionLdsBytes : code.LdsBytes == 0,
-                    $"{name} ({isa}): {code.LdsBytes} bytes of LDS ({(rows ? $"{GcnKernels.AttentionLdsBytes}: the reductions, a tile's weights and the query" : "none")})");
+                int tiled = name.StartsWith("attention_tiled_r", StringComparison.Ordinal) ? name["attention_tiled_r".Length] - '0' : 0;
+                int lds = rows ? GcnKernels.AttentionLdsBytes : tiled > 0 ? GcnKernels.AttentionTiledLdsBytes(tiled) : 0;
+                Check(code.LdsBytes == lds && name == (tiled > 0 ? GcnKernels.AttentionTiledKernel(tiled) : name),
+                    $"{name} ({isa}): {code.LdsBytes} bytes of LDS ({lds}: {(rows ? "the reductions, a tile's weights and the query" : tiled > 0 ? "a row's reductions, tile weights and query" : "none")})");
                 Console.WriteLine($"    {name} ({isa}): {code.Code.Length} bytes of code, {code.Vgprs} VGPRs, {code.Sgprs} SGPRs, {code.LdsBytes} bytes of LDS");
             }
         }
@@ -187,18 +217,79 @@ internal abstract partial class Tests
                 string what = $"attention_decode_f32 ({isa}), {Heads} heads x {rph} rows, cache {capacity} at {position}, head {dim}, window {window}, cap {softcap}, {splits} splits";
                 RowsCase(what, [q, keys, values, [position], new float[rows * dim], new float[rows]], rows, lse ? [4, 5] : [4],
                     (b, s) => b.AttentionTiledKernel(s[0], s[1], s[2], s[3], s[4], lse ? s[5] : null, Heads, rph, steps, capacity, dim, Scale, variant),
-                    (m, a, grid, seed) =>
-                    {
-                        ulong part = splits > 1 ? m.Map<float>("part", new float[rows * splits * (dim + 2)]) : 0UL, logSumExp = lse ? a[5] : 0UL;
-                        AttentionDispatch("attention_decode_f32", isa, m, (grid.X, splits), seed, a[0], a[1], a[2], a[3], a[4], logSumExp, part,
-                            (ulong)rph, (ulong)steps, (ulong)capacity, (ulong)dim, Bits(Scale), (ulong)window, Bits(softcap), (ulong)size, (ulong)splits, (ulong)rows);
-                        if (splits > 1)
-                        {
-                            AttentionDispatch("attention_merge_f32", isa, m, (grid.X, 1), seed, part, a[4], logSumExp, (ulong)splits, (ulong)dim, 1UL, (ulong)rows, 0UL, 0UL,
-                                (ulong)dim, (ulong)rows);
-                        }
-                    },
+                    (m, a, grid, seed) => Launch(m, a, grid, seed, 0UL),
                     worst, splits > 1 ? "attention_decode_f32 + attention_merge_f32" : "attention_decode_f32");
+                if (splits > 1)
+                {
+                    AttentionMergedAlike(what, [q, keys, values, [position], new float[rows * dim], new float[rows]], lse ? [4, 5] : [4], rows, Launch);
+                }
+
+                // counters: 0 merges the splits by attention_merge_f32; else each row's last split block merges them.
+                void Launch(GcnMemory m, ulong[] a, (int X, int Y) grid, ulong seed, ulong counters)
+                {
+                    ulong part = splits > 1 ? m.Map<float>("part", new float[rows * splits * (dim + 2)]) : 0UL, logSumExp = lse ? a[5] : 0UL;
+                    AttentionDispatch("attention_decode_f32", isa, m, (grid.X, splits), seed, a[0], a[1], a[2], a[3], a[4], logSumExp, part, counters,
+                        (ulong)rph, (ulong)steps, (ulong)capacity, (ulong)dim, Bits(Scale), (ulong)window, Bits(softcap), (ulong)size, (ulong)splits, (ulong)rows);
+                    if (splits > 1 && counters == 0)
+                    {
+                        AttentionDispatch("attention_merge_f32", isa, m, (grid.X, 1), seed, part, a[4], logSumExp, (ulong)splits, (ulong)dim, 1UL, (ulong)rows, 0UL, 0UL,
+                            (ulong)dim, (ulong)rows);
+                    }
+                }
+            }
+        }
+
+        RowsReport(worst);
+    }
+
+    internal static void GcnAttentionTiled(Device device)
+    {
+        _ = device;
+        const int Heads = 2;
+        const float Scale = 0.125f;
+        var worst = new Dictionary<string, float>();
+        var random = new Random(44);
+
+        // Rows of a head (steps), the cache, the head size, a window and a soft-cap; the rows not a multiple of a block's.
+        (int Steps, int Capacity, int Dim, int Window, float Softcap)[] cases =
+        [
+            (13, 13, 37, 0, 0f),                                                  // a prompt over itself, causal
+            (21, 300, 64, 0, 0f),                                                 // a longer cache: a row past 256 keys
+            (19, 300, 256, 0, 0f),                                                // the largest head
+            (11, 40, 24, 5, 0f),                                                  // a window
+            (9, 30, 37, 0, 2f),                                                   // a soft-cap
+        ];
+        foreach (var (steps, capacity, dim, window, softcap) in cases)
+        {
+            int rows = Heads * steps;
+            float[] q = RowsRandom(random, rows * dim, 2f), keys = RowsRandom(random, Heads * capacity * dim, 2f), values = RowsRandom(random, Heads * capacity * dim, 2f);
+            float position = capacity - steps;
+            var variant = new AttentionVariant(window, softcap);
+            float[][] inputs = [q, keys, values, [position], new float[rows * dim], new float[rows]];
+            foreach (int perBlock in GcnKernels.AttentionTiledRows)
+            {
+                string kernel = GcnKernels.AttentionTiledKernel(perBlock);
+                int blocksPerHead = (steps + perBlock - 1) / perBlock, blocks = Heads * blocksPerHead;
+                foreach (var isa in AttentionIsas)
+                {
+                    void Tiled(GcnMemory m, ulong[] a, (int X, int Y) grid, ulong seed) =>
+                        AttentionDispatch(kernel, isa, m, (grid.X, 1), seed, a[0], a[1], a[2], a[3], a[4], a[5], (ulong)steps, (ulong)steps, (ulong)capacity, (ulong)dim,
+                            Bits(Scale), (ulong)window, Bits(softcap), (ulong)blocksPerHead, (ulong)blocks);
+                    string what = $"{kernel} ({isa}), {Heads} heads x {steps} rows, cache {capacity} at {position}, head {dim}, window {window}, cap {softcap}";
+                    RowsCase(what, inputs, blocks, [4, 5],
+                        (b, s) => b.AttentionTiledKernel(s[0], s[1], s[2], s[3], s[4], s[5], Heads, steps, steps, capacity, dim, Scale, variant), Tiled, worst, kernel);
+                    if (window == 0)
+                    {
+                        float[][] tiled = RowsOnGcn(inputs, (m, a) => Tiled(m, a, (blocks, 1), 7));
+                        float[][] decoded = RowsOnGcn(inputs, (m, a) => AttentionDispatch("attention_decode_f32", isa, m, (rows, 1), 7, a[0], a[1], a[2], a[3], a[4], a[5], 0UL, 0UL,
+                            (ulong)steps, (ulong)steps, (ulong)capacity, (ulong)dim, Bits(Scale), 0UL, Bits(softcap), (ulong)capacity, 1UL, (ulong)rows));
+                        foreach (int o in (int[])[4, 5])
+                        {
+                            Check(MemoryMarshal.AsBytes(tiled[o].AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(decoded[o].AsSpan())),
+                                $"{what}: storage {o} differs from attention_decode_f32's (a block a row) bit for bit");
+                        }
+                    }
+                }
             }
         }
 
@@ -226,13 +317,13 @@ internal abstract partial class Tests
             var variant = new AttentionVariant(window, softcap);
             foreach (var isa in AttentionIsas)
             {
-                void Run(GcnMemory m, ulong[] a, (int X, int Y) grid, ulong seed, string kernel, int pointers, int words)
+                void Run(GcnMemory m, ulong[] a, (int X, int Y) grid, ulong seed, string kernel, int pointers, int words, ulong counters = 0)
                 {
                     ulong part = splits > 1 ? m.Map<float>("part", new float[rows * splits * (dim + 2)]) : 0UL;
-                    ulong[] values = [.. a.Take(pointers), 0UL, part, (ulong)rph, (ulong)steps, (ulong)capacity, (ulong)dim, Bits(Scale), (ulong)words, (ulong)window,
-                        Bits(softcap), (ulong)size, (ulong)splits, (ulong)rows];
+                    ulong[] values = [.. a.Take(pointers), 0UL, part, counters, (ulong)rph, (ulong)steps, (ulong)capacity, (ulong)dim, Bits(Scale), (ulong)words,
+                        (ulong)window, Bits(softcap), (ulong)size, (ulong)splits, (ulong)rows];
                     AttentionDispatch(kernel, isa, m, (grid.X, splits), seed, values);
-                    if (splits > 1)
+                    if (splits > 1 && counters == 0)
                     {
                         AttentionDispatch("attention_merge_f32", isa, m, (grid.X, 1), seed, part, a[pointers - 1], 0UL, (ulong)splits, (ulong)dim, 1UL, (ulong)rows, 0UL, 0UL,
                             (ulong)dim, (ulong)rows);
@@ -246,12 +337,24 @@ internal abstract partial class Tests
                     (b, s) => b.AttentionBFloat16Kernel(s[0], s[1], s[2], s[3], s[4], Heads, rph, steps, capacity, dim, Scale, tiled: false, variant),
                     (m, a, grid, seed) => Run(m, a, grid, seed, "attention_decode_bf16", 5, (dim + 1) / 2),
                     worst, splits > 1 ? "attention_decode_bf16 + attention_merge_f32" : "attention_decode_bf16");
+                if (splits > 1)
+                {
+                    AttentionMergedAlike($"attention_decode_bf16 ({isa}), {shape}", [q, keys, values, [position], new float[rows * dim]], [4], rows,
+                        (m, a, grid, seed, counters) => Run(m, a, grid, seed, "attention_decode_bf16", 5, (dim + 1) / 2, counters));
+                }
+
                 float[] keys8 = PackBytes(random, Heads * capacity, dim), values8 = PackBytes(random, Heads * capacity, dim);
                 float[] keyScales = RowsRandom(random, Heads * capacity, 0.01f, 0.02f), valueScales = RowsRandom(random, Heads * capacity, 0.01f, 0.02f);
                 RowsCase($"attention_decode_int8 ({isa}), {shape}", [q, keys8, values8, keyScales, valueScales, [position], new float[rows * dim]], rows, [6],
                     (b, s) => b.AttentionInt8Kernel(s[0], s[1], s[2], s[3], s[4], s[5], s[6], Heads, rph, steps, capacity, dim, Scale, tiled: false, variant),
                     (m, a, grid, seed) => Run(m, a, grid, seed, "attention_decode_int8", 7, (dim + 3) / 4),
                     worst, splits > 1 ? "attention_decode_int8 + attention_merge_f32" : "attention_decode_int8");
+                if (splits > 1)
+                {
+                    AttentionMergedAlike($"attention_decode_int8 ({isa}), {shape}", [q, keys8, values8, keyScales, valueScales, [position], new float[rows * dim]], [6], rows,
+                        (m, a, grid, seed, counters) => Run(m, a, grid, seed, "attention_decode_int8", 7, (dim + 3) / 4, counters));
+                }
+
             }
         }
 
@@ -281,19 +384,25 @@ internal abstract partial class Tests
                 string what = $"attention_spans_f32 ({isa}), {Heads} heads over {KvHeads}, {rows} rows over {keyRows} keys, head {dim}, cap {softcap}, {splits} splits";
                 RowsCase(what, [q, keys, values, starts, ends, new float[all * dim], new float[all]], all, [5, 6],
                     (b, s) => b.AttentionSpansKernel(s[0], s[1], s[2], s[3], s[4], s[5], s[6], Heads, KvHeads, PerTable, rows, keyRows, dim, Scale, new AttentionVariant(0, softcap)),
-                    (m, a, grid, seed) =>
-                    {
-                        ulong part = splits > 1 ? m.Map<float>("part", new float[all * splits * (dim + 2)]) : 0UL;
-                        AttentionDispatch("attention_spans_f32", isa, m, (grid.X, splits), seed, a[0], a[1], a[2], a[3], a[4], a[5], a[6], part,
-                            Heads, Heads / KvHeads, PerTable, (ulong)rows, (ulong)keyRows, (ulong)dim, Bits(Scale), Bits(softcap), (ulong)size, (ulong)splits,
-                            0UL, (ulong)(rows * dim), (ulong)dim, 0UL, (ulong)(keyRows * dim), (ulong)dim, 0UL, (ulong)(rows * dim), (ulong)dim, (ulong)all);
-                        if (splits > 1)
-                        {
-                            AttentionDispatch("attention_merge_f32", isa, m, (grid.X, 1), seed, part, a[5], a[6], (ulong)splits, (ulong)dim, Heads, (ulong)rows, 0UL,
-                                (ulong)(rows * dim), (ulong)dim, (ulong)all);
-                        }
-                    },
+                    (m, a, grid, seed) => Launch(m, a, grid, seed, 0UL),
                     worst, splits > 1 ? "attention_spans_f32 + attention_merge_f32" : "attention_spans_f32");
+                if (splits > 1)
+                {
+                    AttentionMergedAlike(what, [q, keys, values, starts, ends, new float[all * dim], new float[all]], [5, 6], all, Launch);
+                }
+
+                void Launch(GcnMemory m, ulong[] a, (int X, int Y) grid, ulong seed, ulong counters)
+                {
+                    ulong part = splits > 1 ? m.Map<float>("part", new float[all * splits * (dim + 2)]) : 0UL;
+                    AttentionDispatch("attention_spans_f32", isa, m, (grid.X, splits), seed, a[0], a[1], a[2], a[3], a[4], a[5], a[6], part, counters,
+                        Heads, Heads / KvHeads, PerTable, (ulong)rows, (ulong)keyRows, (ulong)dim, Bits(Scale), Bits(softcap), (ulong)size, (ulong)splits,
+                        0UL, (ulong)(rows * dim), (ulong)dim, 0UL, (ulong)(keyRows * dim), (ulong)dim, 0UL, (ulong)(rows * dim), (ulong)dim, (ulong)all);
+                    if (splits > 1 && counters == 0)
+                    {
+                        AttentionDispatch("attention_merge_f32", isa, m, (grid.X, 1), seed, part, a[5], a[6], (ulong)splits, (ulong)dim, Heads, (ulong)rows, 0UL,
+                            (ulong)(rows * dim), (ulong)dim, (ulong)all);
+                    }
+                }
             }
         }
 
@@ -309,7 +418,7 @@ internal abstract partial class Tests
                 RowsCase($"attention_spans_f32 strided ({isa}), {Batch} batches of {SHeads} heads over {SKv}, {Rows} rows, head {Dim}", [packed, starts, ends, new float[all * Dim]], all, [3],
                     (b, s) => b.AttentionSpansStridedKernel(s[0], 0, s[0], SHeads * Dim, s[0], (SHeads + SKv) * Dim, row, row, s[1], s[2], s[3], Batch, SHeads, SKv, SPerTable, Rows, Dim, Scale),
                     (m, a, grid, seed) => AttentionDispatch("attention_spans_f32", isa, m, (grid.X, 1), seed, a[0], a[0] + (ulong)(4 * SHeads * Dim),
-                        a[0] + (ulong)(4 * (SHeads + SKv) * Dim), a[1], a[2], a[3], 0UL, 0UL, SHeads, SHeads / SKv, SPerTable, Rows, Rows, Dim, Bits(Scale), 0UL, Rows, 1UL,
+                        a[0] + (ulong)(4 * (SHeads + SKv) * Dim), a[1], a[2], a[3], 0UL, 0UL, 0UL, SHeads, SHeads / SKv, SPerTable, Rows, Rows, Dim, Bits(Scale), 0UL, Rows, 1UL,
                         (ulong)(Rows * row), Dim, (ulong)row, (ulong)(Rows * row), Dim, (ulong)row, (ulong)(Rows * SHeads * Dim), Dim, (ulong)(SHeads * Dim), (ulong)all),
                     worst, "attention_spans_f32 (strided)");
             }

@@ -12,7 +12,8 @@ namespace Idrak.Gpu.Hip;
 // kernels and the rest on the tiled one; the packed few-row products (int8, int4, bfloat16, float16 weights, 1 to 8
 // rows, the kernel written for the fewest rows that hold m) with k split over grid y (leftover 8.10: about two blocks a
 // compute unit the device reports, a power of two, at most 64 and chunks of 64 rows or more, as CUDA's formula, or
-// IDRAK_HIP_GEMV_SPLITS), the splits' sums added in split order by int8_gemv_finish_f32 (rule 86, no atomics); more int8
+// IDRAK_HIP_GEMV_SPLITS), the splits' sums added in split order by each column range's last block (IDRAK_HIP_FINISH) or by
+// int8_gemv_finish_f32 (rule 86: never added by atomics); more int8
 // rows on int8_matmul_f32; more int4 and bfloat16 rows expanded to float32 and multiplied (as CUDA without tensor cores);
 // the expansions and bfloat16 packing; up to three float32 products of one input of few rows in one launch
 // (MatMulManyKernel, gemv_multi_f32, as CUDA's). Batches run in grid z up to the device's reported limit (rule 84), each launch
@@ -67,6 +68,7 @@ internal sealed unsafe partial class HipBackend
             "matmul_f32" => (mnk * batch, 4.0 * batch * (m * k + k * n + m * n * (beta ? 2 : 1))),
             "gemv_nn_f32" or "gemv_nt_f32" => (mnk * batch, 4.0 * batch * (m * k + (m + 7) / 8 * k * n + m * n)),
             "gemv_multi_f32" => (mnk, 4.0 * (m * k + k * n + m * n + n)),                       // n: the products' columns together
+            _ when kernel.Contains("_gemv_addnorm", StringComparison.Ordinal) => AddNormProductCost(kernel, m, n, k, splits, batch, beta),
             _ when kernel.StartsWith("int8_gemv", StringComparison.Ordinal) && kernel != "int8_gemv_finish_f32" => (mnk, 4.0 * k * WordsOf(4) + 4.0 * m * k + 4.0 * n + outputs),
             _ when kernel.StartsWith("int4_gemv", StringComparison.Ordinal) => (mnk + (double)k * n, 4.0 * k * WordsOf(8) + 32.0 * ((k + 31) / 32) * WordsOf(8) + 4.0 * m * k + outputs),
             _ when kernel.StartsWith("bf16_gemv", StringComparison.Ordinal) || kernel.StartsWith("f16_gemv", StringComparison.Ordinal) => (mnk, 4.0 * k * WordsOf(2) + 4.0 * m * k + outputs),
@@ -74,6 +76,14 @@ internal sealed unsafe partial class HipBackend
             "int8_matmul_f32" => (mnk, 4.0 * m * WordsOf(4) * k + 4.0 * m * k * WordsOf(4) + 4.0 * m * n + 4.0 * n),
             _ => (0, 0),
         };
+    }
+
+    // A product with the add and norms (*_gemv_addnorm[_rR]_f32): the plain product's cost, then its last block's three
+    // passes over the m × n outputs (gemv_addnorm_f32's operations, y read back instead of the splits).
+    private static (double Flops, double Bytes) AddNormProductCost(string kernel, long m, long n, long k, int splits, int batch, bool beta)
+    {
+        var product = ProductCost(kernel.Replace("_gemv_addnorm", "_gemv", StringComparison.Ordinal), m, n, k, splits, batch, beta);
+        return (product.Flops + 9.0 * m * n, product.Bytes + 4.0 * 9 * m * n);
     }
 
     // Launches `function` over x × y × z blocks of its declared block, its arguments packed from one 64-bit value each.
@@ -260,10 +270,12 @@ internal sealed unsafe partial class HipBackend
         base.Float16MatMulKernel(x, packed, y, m, n, k);                     // widened, then the float32 product (both on kernels)
     }
 
-    // Few rows through packed weights on the kernel written for the fewest rows holding m, k split over grid y, the splits'
-    // sums added in split order by int8_gemv_finish_f32: false when the kernels cannot take it. A gated variant reads its
-    // input row as act(x) · up (x the gate, HipBackend.Decoding.cs); with `tail`, the splits' sums (or y itself) are
-    // finished by gemv_addnorm_f32, which also adds the residual and normalizes (and normalizes y first, with a y gain).
+    // Few rows through packed weights on the kernel written for the fewest rows holding m, k split over grid y: false when
+    // the kernels cannot take it. The splits' sums are added in split order by the launch's last block of each column
+    // range (IDRAK_HIP_FINISH=block, the default: one launch), or by int8_gemv_finish_f32 (launch). A gated variant reads
+    // its input row as act(x) · up (x the gate, HipBackend.Decoding.cs); with `tail`, the residual addition and the norms
+    // follow (y normalized first with a y gain): by the add-and-norm product's last block, or by gemv_addnorm_f32 after
+    // the plain product.
     private bool PackedFewRows(Weights format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
         GcnKernels.PackedGemvVariant variant = GcnKernels.PackedGemvVariant.Plain, Storage? up = null, in AddNormTail tail = default)
     {
@@ -274,8 +286,9 @@ internal sealed unsafe partial class HipBackend
             return false;
         }
 
-        bool addNorm = tail.Residual is not null;
-        string name = variant == GcnKernels.PackedGemvVariant.Plain ? GcnKernels.PackedGemvKernel(format, m) : GcnKernels.FusedGemvKernel(format, variant, m);
+        bool addNorm = tail.Residual is not null, lastBlock = FinishByLastBlock;
+        var kernel = addNorm && lastBlock ? GcnKernels.PackedGemvVariant.AddNorm : variant;
+        string name = kernel == GcnKernels.PackedGemvVariant.Plain ? GcnKernels.PackedGemvKernel(format, m) : GcnKernels.FusedGemvKernel(format, kernel, m);
         int columnBlocks = (int)((words + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords);
         if (Gcn(name) is not { } function || columnBlocks > DeviceLimits.MaxGridDimX)
         {
@@ -287,32 +300,42 @@ internal sealed unsafe partial class HipBackend
         int wanted = GemvSplitCount(DeviceLimits.ComputeUnits, columnBlocks, k, ForcedGemvSplits);
         int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
         int count = (k + chunk - 1) / chunk;
-        var finish = count > 1 && !addNorm ? Gcn("int8_gemv_finish_f32") : null;
-        var normalizing = addNorm ? Gcn("gemv_addnorm_f32") : null;
-        if (count > DeviceLimits.MaxGridDimY || count > 1 && !addNorm && finish is null || addNorm && normalizing is null)
+        var finish = count > 1 && !addNorm && !lastBlock ? Gcn("int8_gemv_finish_f32") : null;
+        var normalizing = addNorm && !lastBlock ? Gcn("gemv_addnorm_f32") : null;
+        if (count > DeviceLimits.MaxGridDimY || count > 1 && !addNorm && !lastBlock && finish is null || addNorm && !lastBlock && normalizing is null)
         {
             return false;
         }
 
         bool scaled = format == Weights.Int8;
         var part = count > 1 ? Allocate(count * m * n, zeroed: false) : null;
+        ulong counters = lastBlock && (count > 1 || addNorm) ? P(Counters(columnBlocks + 1)) : 0UL;
         try
         {
             if (Profiling)
             {
-                LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"{name} {m}x{n}x{k}{(count > 1 ? $" split {count}" : "")}"), 2.0 * m * n * k);
+                string form = counters != 0 ? " (last block)" : "";
+                double flops = 2.0 * m * n * k + (kernel == GcnKernels.PackedGemvVariant.AddNorm ? Cost("gemv_addnorm_f32", 1).Flops * m * n : 0);
+                LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"{name} {m}x{n}x{k}{(count > 1 ? $" split {count}" : "")}{form}"), flops);
             }
 
             ulong scaleAddress = format is Weights.Int8 or Weights.Int4 ? P(scales!) : 0UL;
-            if (up is null)
+            ulong partAddress = part is null ? P(y) : P(part);
+            if (kernel == GcnKernels.PackedGemvVariant.AddNorm)
             {
-                LaunchProduct(function, columnBlocks, count, 1, P(x), P(packed), scaleAddress, P(y), part is null ? P(y) : P(part), U(m), U(n), U(k), (ulong)words,
-                    U(chunk), U(count), 0UL);
+                LaunchProduct(function, columnBlocks, count, 1, P(x), P(packed), scaleAddress, P(y), partAddress, U(m), U(n), U(k), (ulong)words, U(chunk), U(count),
+                    counters, P(tail.Residual!), P(tail.Sum!), P(tail.Gain!), P(tail.Normalized!), tail.YGain is null ? 0UL : P(tail.YGain), F(tail.Eps), F(tail.Offset),
+                    F(tail.YEps), F(tail.YOffset), tail.YGain is null ? 0UL : 1UL);
+            }
+            else if (up is null)
+            {
+                LaunchProduct(function, columnBlocks, count, 1, P(x), P(packed), scaleAddress, P(y), partAddress, U(m), U(n), U(k), (ulong)words, U(chunk), U(count),
+                    counters);
             }
             else
             {
-                LaunchProduct(function, columnBlocks, count, 1, P(x), P(packed), scaleAddress, P(y), part is null ? P(y) : P(part), U(m), U(n), U(k), (ulong)words,
-                    U(chunk), U(count), 0UL, P(up));
+                LaunchProduct(function, columnBlocks, count, 1, P(x), P(packed), scaleAddress, P(y), partAddress, U(m), U(n), U(k), (ulong)words, U(chunk), U(count),
+                    counters, P(up));
             }
 
             if (normalizing is not null)
@@ -328,7 +351,7 @@ internal sealed unsafe partial class HipBackend
                     P(tail.Residual!), P(tail.Sum!), P(tail.Gain!), P(tail.Normalized!), tail.YGain is null ? 0UL : P(tail.YGain), U(n), U(count), U(m * n),
                     F(tail.Eps), F(tail.Offset), F(tail.YEps), F(tail.YOffset), tail.YGain is null ? 0UL : 1UL, U(m));
             }
-            else if (part is not null)
+            else if (finish is not null)
             {
                 int size = m * n;
                 if (Profiling)
@@ -336,7 +359,7 @@ internal sealed unsafe partial class HipBackend
                     LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"int8_gemv_finish_f32 {m}x{n} split {count}"), (double)count * size);
                 }
 
-                LaunchProduct(finish!, (int)PointwiseBlocks(size), 1, 1, P(part), scaled ? P(scales!) : 0UL, P(y), U(n), U(size), U(count), U(size));
+                LaunchProduct(finish, (int)PointwiseBlocks(size), 1, 1, P(part!), scaled ? P(scales!) : 0UL, P(y), U(n), U(size), U(count), U(size));
             }
         }
         finally

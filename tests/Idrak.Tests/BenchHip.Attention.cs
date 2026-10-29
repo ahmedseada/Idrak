@@ -64,24 +64,24 @@ internal abstract partial class DesktopTests
             Storage last = on.Of([capacity - 1]), start = on.Of([0f]);
             var (splits, chunk) = HipBackend.AttentionSplits(Heads, capacity, Dim, HipBackend.AttentionSplitPositions(Environment.GetEnvironmentVariable(HipBackend.AttentionSplitVariable)));
             b.Row("  (splits a decoding row takes)", string.Create(CultureInfo.InvariantCulture,
-                $"{splits} of {chunk} positions for {Heads} rows over {capacity} ({HipBackend.AttentionSplitVariable}), merged by attention_merge_f32"));
+                $"{splits} of {chunk} positions for {Heads} rows over {capacity} ({HipBackend.AttentionSplitVariable}), merged in split order by each row's last split block, or by attention_merge_f32 ({HipBackend.FinishVariable})"));
             string shape = string.Create(CultureInfo.InvariantCulture, $"{Heads} heads x {capacity} positions, head {Dim}");
             long decoding = (long)Heads * capacity * Dim;
-            BenchOperation(b, $"decoding, float32 cache, {shape}", decoding, HipBackend.Cost("attention_decode_f32"),
-                () => hip.AttentionDecode(q, keys, values, last, y, Heads, 1, 1, capacity, Dim, Scale));
+            BenchFinishes(form => BenchOperation(b, $"decoding, float32 cache, {shape}{form}", decoding, HipBackend.Cost("attention_decode_f32"),
+                () => hip.AttentionDecode(q, keys, values, last, y, Heads, 1, 1, capacity, Dim, Scale)), both: splits > 1);
 
             // The packed caches written from the float32 one on the device (every position, as a prompt would).
             Storage keys16 = on.Random(Heads * capacity * (Dim / 2)), values16 = on.Random(Heads * capacity * (Dim / 2));
             hip.KeyValueWriteBFloat16(keys, keys16, start, Heads, capacity, capacity, Dim);
             hip.KeyValueWriteBFloat16(values, values16, start, Heads, capacity, capacity, Dim);
-            BenchOperation(b, $"decoding, bfloat16 cache, {shape}", decoding, HipBackend.Cost("attention_decode_bf16"),
-                () => hip.AttentionBFloat16(q, keys16, values16, last, y, Heads, 1, 1, capacity, Dim, Scale, tiled: false));
+            BenchFinishes(form => BenchOperation(b, $"decoding, bfloat16 cache, {shape}{form}", decoding, HipBackend.Cost("attention_decode_bf16"),
+                () => hip.AttentionBFloat16(q, keys16, values16, last, y, Heads, 1, 1, capacity, Dim, Scale, tiled: false)), both: splits > 1);
             Storage keys8 = on.Random(Heads * capacity * (Dim / 4)), values8 = on.Random(Heads * capacity * (Dim / 4));
             Storage keyScales = on.Random(Heads * capacity), valueScales = on.Random(Heads * capacity);
             hip.KeyValueWriteInt8(keys, keys8, keyScales, start, Heads, capacity, capacity, Dim);
             hip.KeyValueWriteInt8(values, values8, valueScales, start, Heads, capacity, capacity, Dim);
-            BenchOperation(b, $"decoding, int8 cache, {shape}", decoding, HipBackend.Cost("attention_decode_int8"),
-                () => hip.AttentionInt8(q, keys8, values8, keyScales, valueScales, last, y, Heads, 1, 1, capacity, Dim, Scale, tiled: false));
+            BenchFinishes(form => BenchOperation(b, $"decoding, int8 cache, {shape}{form}", decoding, HipBackend.Cost("attention_decode_int8"),
+                () => hip.AttentionInt8(q, keys8, values8, keyScales, valueScales, last, y, Heads, 1, 1, capacity, Dim, Scale, tiled: false)), both: splits > 1);
 
             // A prompt over itself: each row sees the positions up to its own (causal), with the log-sum-exp.
             Storage qp = on.Random(Heads * prompt * Dim), yp = on.Random(Heads * prompt * Dim), lse = on.Random(Heads * prompt);

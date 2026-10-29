@@ -34,6 +34,7 @@ internal abstract partial class Tests
         ("gcn kernels: training: norm_stats_f32 and group_reduce_f32 (one block a group), and norm_stats_part_f32 + norm_stats_final_f32 and group_reduce_part_f32 + group_reduce_final_f32 (groups of three chunks merged in chunk order) equal the CPU's statistics, the same bits on two grids and wave orders", GcnTrainingGroupStats),
         ("gcn kernels: training: attn_bwd_d_f32, attn_bwd_kv_f32 and attn_bwd_q_f32 equal the CPU's gradients of tiled attention over a cache (heads of 37, 64 and 300; plain, a window, a soft-cap, both), dk and dv summed without atomics, the same bits on two grids and wave orders", GcnTrainingAttentionTiled),
         ("gcn kernels: training: attn_spans_bwd_kv_f32 and attn_spans_bwd_q_f32 equal the CPU's gradients of attention over key ranges (grouped heads, two tables, an empty range, a soft-cap), the same bits on two grids and wave orders", GcnTrainingAttentionSpans),
+        ("gcn kernels: training: counts: the interpreter's instructions, memory instructions, waits and barriers per element of the attention backward passes (a causal cache and causal ranges) and the column sums, printed as G6b's evidence", GcnTrainingCounts),
     ];
 
     private static readonly GcnIsaVersion[] TrainingIsas = [GcnIsaVersion.Parse("gfx90c"), GcnIsaVersion.Parse("gfx906")];
@@ -73,12 +74,12 @@ internal abstract partial class Tests
     }
 
     // One dispatch: the arguments as 64-bit values (addresses, 32-bit values, float bits) in order.
-    private static void TrainingDispatch(string name, GcnIsaVersion isa, GcnMemory memory, (int X, int Y) grid, ulong seed, params ulong[] values)
+    private static GcnRunResult TrainingDispatch(string name, GcnIsaVersion isa, GcnMemory memory, (int X, int Y) grid, ulong seed, params ulong[] values)
     {
         var (code, image) = TrainingKernel(name, isa);
         var arguments = new byte[GcnCodeObject.KernargBytes(code)];
         GcnKernels.PackArguments(code.Arguments, arguments, values);
-        GcnInterpreter.Run(image, memory, new GcnDispatch
+        return GcnInterpreter.Run(image, memory, new GcnDispatch
         {
             Workgroups = (grid.X, grid.Y, 1), WorkgroupSize = (GcnKernels.RowThreads, 1, 1), Arguments = arguments, Seed = seed,
         });
@@ -710,17 +711,18 @@ internal abstract partial class Tests
                 float[][] forward = RowsOnCpu([q, k, v, [0f], new float[rows * dim], new float[rows]],
                     (b, s) => b.AttentionTiledKernel(s[0], s[1], s[2], s[3], s[4], s[5], Heads, Rph, Steps, Cap, dim, Scale, variant));
                 float[] dout = TrainingRandom(random, rows * dim, -1, 1);
+                float[][] transposed = [HeadsTransposed(q, Heads, Rph, dim), HeadsTransposed(dout, Heads, Rph, dim), HeadsTransposed(k, Heads, Cap, dim), HeadsTransposed(v, Heads, Cap, dim)];
                 foreach (var isa in TrainingIsas)
                 {
                     TrainingCase($"attn_bwd_kv_f32 + attn_bwd_q_f32 ({isa}), head {dim}, window {variant.Window}, soft-cap {variant.Softcap}",
                         [q, k, v, forward[4], forward[5], dout, TrainingRandom(random, rows * dim, -1, 1), TrainingRandom(random, Heads * Cap * dim, -1, 1),
-                            TrainingRandom(random, Heads * Cap * dim, -1, 1), new float[rows]], [6, 7, 8],
+                            TrainingRandom(random, Heads * Cap * dim, -1, 1), new float[rows], .. transposed], [6, 7, 8],
                         (b, s) => b.AttentionTiledBackwardKernel(s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], Heads, Rph, Steps, Cap, dim, Scale, variant),
                         (m, a, grid, seed) =>
                         {
                             TrainingDispatch("attn_bwd_d_f32", isa, m, (Math.Min(grid, rows), 1), seed, a[3], a[5], a[9], (ulong)dim, (ulong)rows);
-                            ulong[] Args(int n) => [a[0], a[1], a[2], a[5], a[4], a[9], a[6], a[7], a[8], Rph, Steps, Cap, (ulong)dim, Bits(Scale), (ulong)variant.Window,
-                                Bits(variant.Softcap), (ulong)n];
+                            ulong[] Args(int n) => [a[0], a[1], a[2], a[5], a[4], a[9], a[6], a[7], a[8], a[10], a[11], a[12], a[13], Rph, Steps, Cap, (ulong)dim, Bits(Scale),
+                                (ulong)variant.Window, Bits(variant.Softcap), (ulong)n];
                             TrainingDispatch("attn_bwd_kv_f32", isa, m, (Math.Min(grid, Heads * Cap), 1), seed, Args(Heads * Cap));
                             TrainingDispatch("attn_bwd_q_f32", isa, m, (Math.Min(grid, rows), 1), seed, Args(rows));
                         }, (2, rows), worst, "attn_bwd_d_f32 + attn_bwd_kv_f32 + attn_bwd_q_f32");
@@ -729,6 +731,25 @@ internal abstract partial class Tests
         }
 
         TrainingReport(worst);
+    }
+
+    // Each head's rows transposed, [heads, rows, dim] to [heads, dim, rows]: the copies HipBackend makes for the attention
+    // backward passes' dot products (permute_f32).
+    private static float[] HeadsTransposed(float[] x, int heads, int rows, int dim)
+    {
+        var y = new float[heads * rows * dim];
+        for (int h = 0; h < heads; h++)
+        {
+            for (int r = 0; r < rows; r++)
+            {
+                for (int d = 0; d < dim; d++)
+                {
+                    y[(h * dim + d) * rows + r] = x[(h * rows + r) * dim + d];
+                }
+            }
+        }
+
+        return y;
     }
 
     internal static void GcnTrainingAttentionSpans(Device device)
@@ -750,18 +771,22 @@ internal abstract partial class Tests
                 float[][] forward = RowsOnCpu([q, k, v, starts, ends, new float[Heads * Rows * dim], new float[Heads * Rows]],
                     (b, s) => b.AttentionSpansKernel(s[0], s[1], s[2], s[3], s[4], s[5], s[6], Heads, KvHeads, Hpt, Rows, KeyRows, dim, Scale, variant));
                 float[] dout = TrainingRandom(random, Heads * Rows * dim, -1, 1);
+                float[][] transposed =
+                [
+                    HeadsTransposed(q, Heads, Rows, dim), HeadsTransposed(dout, Heads, Rows, dim), HeadsTransposed(k, KvHeads, KeyRows, dim), HeadsTransposed(v, KvHeads, KeyRows, dim),
+                ];
                 foreach (var isa in TrainingIsas)
                 {
                     TrainingCase($"attn_spans_bwd_kv_f32 + attn_spans_bwd_q_f32 ({isa}), head {dim}, soft-cap {softcap}",
                         [q, k, v, starts, ends, forward[5], forward[6], dout, TrainingRandom(random, Heads * Rows * dim, -1, 1), TrainingRandom(random, KvHeads * KeyRows * dim, -1, 1),
-                            TrainingRandom(random, KvHeads * KeyRows * dim, -1, 1), new float[Heads * Rows]], [8, 9, 10],
+                            TrainingRandom(random, KvHeads * KeyRows * dim, -1, 1), new float[Heads * Rows], .. transposed], [8, 9, 10],
                         (b, s) => b.AttentionSpansBackwardKernel(s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9], s[10], Heads, KvHeads, Hpt, Rows, KeyRows, dim, Scale, variant),
                         (m, a, grid, seed) =>
                         {
                             int all = Heads * Rows;
                             TrainingDispatch("attn_bwd_d_f32", isa, m, (Math.Min(grid, all), 1), seed, a[5], a[7], a[11], (ulong)dim, (ulong)all);
-                            ulong[] Args(int n) => [a[0], a[1], a[2], a[3], a[4], a[7], a[6], a[11], a[8], a[9], a[10], Rows, KeyRows, (ulong)dim, Bits(Scale), Heads / KvHeads, Hpt,
-                                Bits(softcap), Heads, (ulong)n];
+                            ulong[] Args(int n) => [a[0], a[1], a[2], a[3], a[4], a[7], a[6], a[11], a[8], a[9], a[10], a[12], a[13], a[14], a[15], Rows, KeyRows, (ulong)dim,
+                                Bits(Scale), Heads / KvHeads, Hpt, Bits(softcap), Heads, (ulong)n];
                             TrainingDispatch("attn_spans_bwd_kv_f32", isa, m, (Math.Min(grid, KvHeads * KeyRows), 1), seed, Args(KvHeads * KeyRows));
                             TrainingDispatch("attn_spans_bwd_q_f32", isa, m, (Math.Min(grid, all), 1), seed, Args(all));
                         }, (2, Heads * Rows), worst, "attn_spans_bwd_kv_f32 + attn_spans_bwd_q_f32");

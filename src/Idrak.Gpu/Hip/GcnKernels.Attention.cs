@@ -25,8 +25,10 @@ namespace Idrak.Gpu.Hip;
 // Splits (decoding's few rows over a long cache, rule 81): split s takes the positions [s · chunk, s · chunk + chunk)
 // of the row's range, chunk a multiple of the tile chosen by the backend from the shapes only. With one split a block
 // writes the row's output (and its log-sum-exp, the natural log of Σ e^score, when lse is not 0; -∞ and zeros for an
-// empty range); with several it writes (max, sum, accumulators) to part[row, split] and attention_merge_f32 adds the
-// splits in split order (a second launch instead of CUDA's last-block merge, which counts blocks with an atomic).
+// empty range); with several it writes (max, sum, accumulators) to part[row, split], and the row's last split block,
+// counted in counters[row] (GcnKernels.Finish.cs: the counter only signals and resets itself), merges the splits in
+// split order (attention_merge_f32's body: one launch, as CUDA's last-block merge). With counters 0, attention_merge_f32
+// merges them in a second launch (IDRAK_HIP_FINISH=launch).
 //
 // For the profile's labels and --bench-hip's rates (HipBackend.Cost): each kernel, its arguments (pointers, then 32-bit
 // values, the float ones as their bits, in this order; PackArguments packs them; a pointer of 0 for lse skips it), its
@@ -35,10 +37,10 @@ namespace Idrak.Gpu.Hip;
 //
 // | Kernel                | Arguments                                                                                   | Launch (blocks of 256)            | Unit                     | Flops | Bytes |
 // |-----------------------|---------------------------------------------------------------------------------------------|-----------------------------------|--------------------------|-------|-------|
-// | attention_decode_f32  | q, keys, values, pos, y, lse, part; rph, steps, cap, dim, scale, window, softcap, chunk, splits, n | rows (or fewer) x splits    | row x position x dim     | 4     | 8     |
-// | attention_decode_bf16 | q, keys, values, pos, y, lse, part; rph, steps, cap, dim, scale, words, window, softcap, chunk, splits, n | rows x splits         | row x position x dim     | 4     | 4     |
-// | attention_decode_int8 | q, keys, values, kscales, vscales, pos, y, lse, part; rph, steps, cap, dim, scale, words, window, softcap, chunk, splits, n | rows x splits | row x position x dim | 4 | 2 |
-// | attention_spans_f32   | q, keys, values, starts, ends, y, lse, part; heads, group, hpt, rows, keyrows, dim, scale, softcap, chunk, splits, qbatch, qhead, qrow, kbatch, khead, krow, ybatch, yhead, yrow, n | rows x splits | row x key x dim | 4 | 8 |
+// | attention_decode_f32  | q, keys, values, pos, y, lse, part, counters; rph, steps, cap, dim, scale, window, softcap, chunk, splits, n | rows (or fewer) x splits | row x position x dim | 4 | 8 |
+// | attention_decode_bf16 | q, keys, values, pos, y, lse, part, counters; rph, steps, cap, dim, scale, words, window, softcap, chunk, splits, n | rows x splits | row x position x dim | 4 | 4 |
+// | attention_decode_int8 | q, keys, values, kscales, vscales, pos, y, lse, part, counters; rph, steps, cap, dim, scale, words, window, softcap, chunk, splits, n | rows x splits | row x position x dim | 4 | 2 |
+// | attention_spans_f32   | q, keys, values, starts, ends, y, lse, part, counters; heads, group, hpt, rows, keyrows, dim, scale, softcap, chunk, splits, qbatch, qhead, qrow, kbatch, khead, krow, ybatch, yhead, yrow, n | rows x splits | row x key x dim | 4 | 8 |
 // | attention_merge_f32   | part, y, lse; splits, dim, heads, rows, ybatch, yhead, yrow, n                              | rows (or fewer)                   | row x split x dim        | 3     | 4     |
 // | attn_scores_int8      | q, cache, scales, y; steps, capacity, dim, words, n                                         | one score a work-item (n)         | score x dim              | 2     | 5     |
 // | attn_context_int8     | w, cache, scales, y; steps, capacity, dim, words, n                                         | one word of 4 outputs a work-item | output x position        | 2     | 3     |
@@ -80,6 +82,9 @@ internal static partial class GcnKernels
         AttentionRows("attention_decode_int8", AttentionCache.Int8, spans: false),
         AttentionRows("attention_spans_f32", AttentionCache.Float32, spans: true),
         AttentionMerge(),
+        AttentionTiled(2),
+        AttentionTiled(4),
+        AttentionTiled(8),
         AttentionScoresInt8(),
         AttentionContextInt8(),
     ];
@@ -171,11 +176,11 @@ internal static partial class GcnKernels
         var w = new RowWriter(name, arrays: 1, workgroupY: true, extraLds: 4 * AttentionTile + 4 * AttentionMaxDim);
         int weightsLds = w.ExtraLdsBase, queryLds = w.ExtraLdsBase + 4 * AttentionTile;
         var a = spans
-            ? w.Arguments(["q", "keys", "values", "starts", "ends", "y", "lse", "part"],
+            ? w.Arguments(["q", "keys", "values", "starts", "ends", "y", "lse", "part", "counters"],
                 ["heads", "group", "hpt", "rows", "keyrows", "dim", "scale", "softcap", "chunk", "splits", "qbatch", "qhead", "qrow", "kbatch", "khead", "krow",
                     "ybatch", "yhead", "yrow", "n"])
-            : w.Arguments(int8 ? ["q", "keys", "values", "kscales", "vscales", "pos", "y", "lse", "part"]
-                    : rows ? ["q", "keys", "values", "pos", "y", "lse", "part", "starts"] : ["q", "keys", "values", "pos", "y", "lse", "part"],
+            : w.Arguments(int8 ? ["q", "keys", "values", "kscales", "vscales", "pos", "y", "lse", "part", "counters"]
+                    : rows ? ["q", "keys", "values", "pos", "y", "lse", "part", "counters", "starts"] : ["q", "keys", "values", "pos", "y", "lse", "part", "counters"],
                 [.. (packed ? (string[])["rph", "steps", "cap", "dim", "scale", "words", "window", "softcap", "chunk", "splits"]
                     : ["rph", "steps", "cap", "dim", "scale", "window", "softcap", "chunk", "splits"]), .. (rows ? (string[])["hpr", "n"] : ["n"])]);
         string dim = a.Scalar("dim"), scale = a.Scalar("scale"), softcap = a.Scalar("softcap"), chunk = a.Scalar("chunk"), splits = a.Scalar("splits");
@@ -696,6 +701,20 @@ internal static partial class GcnKernels
             }
         }
 
+        // With counters (not 0): the row's last split block merges its splits in split order (attention_merge_f32's
+        // body); without, attention_merge_f32 does in a second launch.
+        string counters = a.Pointer("counters"), rowPart = w.S(), partStride = w.S();
+        w.L($"""
+            s_cmp_eq_u64 {counters}, 0
+            s_cbranch_scc1 .La_row_end
+            """);
+        BlockArrive(w, counters, w.Row, splits, ".La_row_end", weightsLds);
+        w.L($"""
+            s_mul_i32 {rowPart}, {w.Row}, {splits}
+            s_mul_i32 {rowPart}, {rowPart}, {dimPlus2}
+            s_lshl_b32 {partStride}, {dimPlus2}, 2
+            """);
+        AttentionMergeRow(w, ".La_m", w.ElementAddress(part, rowPart), partStride, splits, dim, yb, lse, ln2, glc: true);
         w.Label(".La_row_end");
         w.EndRows();
         return w.Source();
@@ -752,23 +771,38 @@ internal static partial class GcnKernels
         string partIndex = AttentionIndex(w, (w.Row, splits));
         w.L($"s_mul_i32 {partIndex}, {partIndex}, {dimPlus2}");
         string pb = w.ElementAddress(part, partIndex);
+        var (headAll, index) = AttentionDivMod(w, w.Row, a.Scalar("rows"), byRows);
+        var (batch, head) = AttentionDivMod(w, headAll, a.Scalar("heads"), byHeads);
+        string outputOffset = AttentionIndex(w, (batch, a.Scalar("ybatch")), (head, a.Scalar("yhead")), (index, a.Scalar("yrow")));
+        string yb = w.ElementAddress(y, outputOffset);
+        AttentionMergeRow(w, ".Lm", pb, stride, splits, dim, yb, lse, ln2, glc: false);
+        w.EndRows();
+        return w.Source();
+    }
+
+    // One row's merge of its splits' parts at pb (a split every `stride` bytes: max, sum, then the accumulators), into
+    // its output at yb and, when lse is not 0, lse[row]: attention_merge_f32's body, and the last split block's in the
+    // attention kernels (there with glc: other blocks stored the parts).
+    private static void AttentionMergeRow(RowWriter w, string label, string pb, string stride, string splits, string dim, string yb, string lse, string ln2, bool glc)
+    {
+        string coherent = glc ? " glc" : "";
         string max = w.V(), offset = w.V(), m = w.V(), s = w.S();
         w.L($"""
             v_mov_b32_e32 {max}, {RowWriter.NegativeInfinity}
             v_mov_b32_e32 {offset}, 0
             s_mov_b32 {s}, 0
             """);
-        w.Label(".Lm_max");
+        w.Label($"{label}_max");
         w.L($"""
             s_cmp_ge_u32 {s}, {splits}
-            s_cbranch_scc1 .Lm_max_end
-            global_load_dword {m}, {offset}, {pb}
+            s_cbranch_scc1 {label}_max_end
+            global_load_dword {m}, {offset}, {pb}{coherent}
             v_max_f32_e32 {max}, {max}, {m}
             v_add_u32_e32 {offset}, {stride}, {offset}
             s_add_u32 {s}, {s}, 1
-            s_branch .Lm_max
+            s_branch {label}_max
             """);
-        w.Label(".Lm_max_end");
+        w.Label($"{label}_max_end");
         string shift = w.V(), sum = w.V(), l = w.V(), e = w.V();
         w.L($"""
             v_cmp_eq_f32_e32 vcc, {RowWriter.NegativeInfinity}, {max}
@@ -777,43 +811,46 @@ internal static partial class GcnKernels
             v_mov_b32_e32 {offset}, 0
             s_mov_b32 {s}, 0
             """);
-        w.Label(".Lm_sum");
+        w.Label($"{label}_sum");
         w.L($"""
             s_cmp_ge_u32 {s}, {splits}
-            s_cbranch_scc1 .Lm_sum_end
-            global_load_dword {m}, {offset}, {pb}
-            global_load_dword {l}, {offset}, {pb} offset:4
+            s_cbranch_scc1 {label}_sum_end
+            global_load_dword {m}, {offset}, {pb}{coherent}
+            global_load_dword {l}, {offset}, {pb} offset:4{coherent}
             {RowWriter.Exp(e, m, shift)}
             v_fma_f32 {sum}, {l}, {e}, {sum}
             v_add_u32_e32 {offset}, {stride}, {offset}
             s_add_u32 {s}, {s}, 1
-            s_branch .Lm_sum
+            s_branch {label}_sum
             """);
-        w.Label(".Lm_sum_end");
+        w.Label($"{label}_sum_end");
         string inverse = w.V();
         w.L($"""
             v_rcp_f32_e32 {inverse}, {sum}
             v_cmp_lt_f32_e32 vcc, 0, {sum}
             v_cndmask_b32_e32 {inverse}, 0, {inverse}, vcc
             """);
-        var (headAll, index) = AttentionDivMod(w, w.Row, a.Scalar("rows"), byRows);
-        var (batch, head) = AttentionDivMod(w, headAll, a.Scalar("heads"), byHeads);
-        string outputOffset = AttentionIndex(w, (batch, a.Scalar("ybatch")), (head, a.Scalar("yhead")), (index, a.Scalar("yrow")));
-        string yb = w.ElementAddress(y, outputOffset), logSumExp = w.V();
+        string logSumExp = w.V();
         w.L($"""
             s_cmp_eq_u64 {lse}, 0
-            s_cbranch_scc1 .Lm_lse_done
+            s_cbranch_scc1 {label}_lse_done
             v_log_f32_e32 {logSumExp}, {sum}
             v_fma_f32 {logSumExp}, {logSumExp}, {ln2}, {max}
             """);
         w.StoreFirstLane((w.ElementAddress(lse, w.Row), logSumExp));
-        w.Label(".Lm_lse_done");
+        w.Label($"{label}_lse_done");
         string d0 = w.S(), dd = w.V(), db = w.V(), acc = w.V(), o = w.V(), x = w.V(), saved = w.SPair();
-        w.L($"s_mov_b32 {d0}, 0");
-        w.Label(".Lm_dims");
+        w.L($"""
+            s_mov_b32 {d0}, 0
+            v_mov_b32_e32 {db}, 0
+            v_mov_b32_e32 {acc}, 0
+            v_mov_b32_e32 {o}, 0
+            v_mov_b32_e32 {x}, 0
+            """);
+        w.Label($"{label}_dims");
         w.L($"""
             s_cmp_ge_u32 {d0}, {dim}
-            s_cbranch_scc1 .Lm_dims_end
+            s_cbranch_scc1 {label}_dims_end
             v_add_u32_e32 {dd}, {d0}, {w.Tid}
             v_cmp_gt_u32_e32 vcc, {dim}, {dd}
             s_and_saveexec_b64 {saved}, vcc
@@ -823,30 +860,28 @@ internal static partial class GcnKernels
             v_mov_b32_e32 {offset}, 0
             s_mov_b32 {s}, 0
             """);
-        w.Label(".Lm_acc");
+        w.Label($"{label}_acc");
         w.L($"""
             s_cmp_ge_u32 {s}, {splits}
-            s_cbranch_scc1 .Lm_acc_end
-            global_load_dword {m}, {offset}, {pb}
-            global_load_dword {x}, {o}, {pb} offset:8
+            s_cbranch_scc1 {label}_acc_end
+            global_load_dword {m}, {offset}, {pb}{coherent}
+            global_load_dword {x}, {o}, {pb} offset:8{coherent}
             {RowWriter.Exp(e, m, shift)}
             v_fma_f32 {acc}, {x}, {e}, {acc}
             v_add_u32_e32 {o}, {stride}, {o}
             v_add_u32_e32 {offset}, {stride}, {offset}
             s_add_u32 {s}, {s}, 1
-            s_branch .Lm_acc
+            s_branch {label}_acc
             """);
-        w.Label(".Lm_acc_end");
+        w.Label($"{label}_acc_end");
         w.L($"""
             v_mul_f32_e32 {acc}, {acc}, {inverse}
             global_store_dword {db}, {acc}, {yb}
             s_or_b64 exec, exec, {saved}
             s_add_u32 {d0}, {d0}, 0x{RowThreads:x}
-            s_branch .Lm_dims
+            s_branch {label}_dims
             """);
-        w.Label(".Lm_dims_end");
-        w.EndRows();
-        return w.Source();
+        w.Label($"{label}_dims_end");
     }
 
     // scores[r, t, c] = scales[r, c] · Σ_d q[r, t, d] · keys[r, c, d] over an int8 cache: one score a work-item.

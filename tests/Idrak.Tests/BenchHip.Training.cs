@@ -8,7 +8,7 @@ using Idrak.Gpu.Hip;
 // apart from warm (BenchOperation), with GB/s and GFLOP/s from the table of GcnKernels.Training.cs (HipBackend.Cost), the
 // section ending with the host fallbacks it took (none expected). Sizes follow the large buffer (from the memory the device
 // reports), never a card's: element-wise passes over a quarter of it, rows of 4,096 columns, a prompt of up to 512 rows
-// for the attention gradients.
+// for the attention gradients (their copies transposed once a call included, plan 35 G6b).
 internal abstract partial class DesktopTests
 {
     private static void BenchHipTraining(HipBench b)
@@ -46,6 +46,8 @@ internal abstract partial class DesktopTests
             BenchOperation(b, $"sum, {count} elements", n, HipBackend.Cost("sum_f32"), () => hip.Sum(x, dx, n, 1f));
             BenchOperation(b, $"sum of squares, {count} elements", n, HipBackend.Cost("sumsq_f32"), () => hip.SumSquares(x, dx, n));
             BenchOperation(b, $"sums of {rows} rows of {Cols} (chunks folded)", (long)rows * Cols, HipBackend.Cost("sum_cols_strided_f32"), () => hip.SumRows(x, dx, rows, Cols));
+            int few = Math.Min(rows, 200);
+            BenchOperation(b, $"sums of {few} rows of {Cols} (a thread a column, {few} rows in order)", (long)few * Cols, HipBackend.Cost("sum_rows_f32"), () => hip.SumRows(x, dx, few, Cols));
             IDisposable? fused = null;
             var tensors = new (Storage, Storage, Storage, Storage, int)[] { (x, g, m, v, n) };
             BenchOperation(b, $"fused AdamW with clipping, {count} elements", n, HipBackend.Cost("multi_adamw_f32"),

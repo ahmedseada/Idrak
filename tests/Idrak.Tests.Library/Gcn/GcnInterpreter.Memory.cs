@@ -142,10 +142,12 @@ internal sealed partial class GcnMachine
                 var store = Stores[id];
                 if (store.Group != Group)
                 {
-                    throw Fail(GcnFailure.Race, wave, i, $"it reads {where(b)}, which workgroup {store.Group} wrote ('{store.Instruction?.Text}' at 0x{store.Instruction?.Offset:X4}); workgroups run in no set order");
+                    if (!Ordered(id, store, wave, i, read: true, out string why))
+                    {
+                        throw Fail(GcnFailure.Race, wave, i, $"it reads {where(b)}, which workgroup {store.Group} wrote ('{store.Instruction?.Text}' at 0x{store.Instruction?.Offset:X4}); workgroups run in no set order{why}");
+                    }
                 }
-
-                if (store.Wave != wave.Index)
+                else if (store.Wave != wave.Index)
                 {
                     if (store.Epoch == Epoch)
                     {
@@ -192,10 +194,12 @@ internal sealed partial class GcnMachine
                 var other = Stores[id];
                 if (other.Group != Group)
                 {
-                    throw Fail(GcnFailure.Race, wave, i, $"it writes {where(b)}, which workgroup {other.Group} also wrote ('{other.Instruction?.Text}' at 0x{other.Instruction?.Offset:X4}); workgroups run in no set order");
+                    if (!Ordered(id, other, wave, i, read: false, out string why))
+                    {
+                        throw Fail(GcnFailure.Race, wave, i, $"it writes {where(b)}, which workgroup {other.Group} also wrote ('{other.Instruction?.Text}' at 0x{other.Instruction?.Offset:X4}); workgroups run in no set order{why}");
+                    }
                 }
-
-                if (other.Wave != wave.Index && (other.Epoch == Epoch || !other.Retired))
+                else if (other.Wave != wave.Index && (other.Epoch == Epoch || !other.Retired))
                 {
                     throw Fail(GcnFailure.Race, wave, i,
                         $"it writes {where(b)}, which wave {other.Wave} also wrote ('{other.Instruction?.Text}' at 0x{other.Instruction?.Offset:X4}) with no s_barrier (or no wait) between them");
@@ -206,7 +210,7 @@ internal sealed partial class GcnMachine
             if (r != 0)
             {
                 int group = (int)(r >> 32) - 1;
-                if (group != Group)
+                if (group != Group && !(group >= 0 && acquired.TryGetValue(group, out var acquisition) && (acquisition.Wave == wave.Index || Epoch > acquisition.Epoch)))
                 {
                     throw Fail(GcnFailure.Race, wave, i, $"it writes {where(b)}, which {(group == -2 ? "several workgroups" : $"workgroup {group}")} read; workgroups run in no set order");
                 }
@@ -718,7 +722,7 @@ internal sealed partial class GcnMachine
             m.ReadVector(w, i.S0 - 256 + k, i, data.AsSpan(k * 64, 64));
         }
 
-        int store = m.NewStore(w, i, out var record);
+        int store = m.NewStore(w, i, out var record, global: true);
         Span<byte> bytes = stackalloc byte[16];
         for (ulong mask = exec; mask != 0; mask &= mask - 1)
         {
@@ -812,7 +816,21 @@ internal sealed partial class GcnMachine
             }
         }
 
+        // A completion counter: the atomic releases this workgroup's retired stores; with glc it returns the count, and
+        // once a wait retires it the workgroup acquires what the others released (CUDA's membar.gl and atom.global.add).
+        var touched = new List<ulong>();
+        for (ulong mask = exec; mask != 0; mask &= mask - 1)
+        {
+            ulong address = addresses[BitOperations.TrailingZeroCount(mask)];
+            m.Release(address);
+            touched.Add(address);
+        }
+
         bool flat = i.Opcode.Format == GcnFormat.Flat;
-        m.Issue(w, new GcnPending { Instruction = i, Vm = true, Lgkm = flat, VFirst = old is null ? -1 : i.D - 256, VCount = regs, VValues = old, Lanes = exec });
+        m.Issue(w, new GcnPending
+        {
+            Instruction = i, Vm = true, Lgkm = flat, VFirst = old is null ? -1 : i.D - 256, VCount = regs, VValues = old, Lanes = exec,
+            OnRetire = old is null ? null : wave => touched.ForEach(a => m.Acquire(a, wave)),
+        });
     }
 }

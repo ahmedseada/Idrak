@@ -17,11 +17,14 @@ namespace Idrak.Gpu.Hip;
 //   values, v_readlane hands each to the scalar unit, which then feeds the product as the plain kernels' scalar loads do.
 //   {int8,int4,bf16}_gemv_multi[_rR]_f32, the multi-output products, take products of one input in grid z (each its
 //   own weights, scales, output, bias and width), so the queries, keys and values (or gate and up) are one launch. The
-//   k splits are the plain products' (HipBackend.GemvSplitCount) and their sums are added in split order by a second
-//   launch, never by CUDA's atomic arrival counter (rule 86): int8_gemv_finish_f32 for the gated products,
-//   gemv_multi_finish_f32 for the multi-output ones (which also writes act(gate) · up for a gate/up pair), and for the
-//   product followed by the residual addition and the next norm, gemv_addnorm_f32 (CUDA's *_gemv_addnorm_f32 and
-//   *_gemv_normaddnorm_f32 do this in the product's last block: here the plain product, then this row kernel).
+//   k splits are the plain products' (HipBackend.GemvSplitCount); their sums are added in split order by the last block
+//   of each column range, which a completion counter names (GcnKernels.Finish.cs; rule 86 forbids adding with atomics,
+//   not signalling), as CUDA's kernels do: one launch. For a gate/up pair (act not 0) the second of the two products to
+//   finish a column range writes act(gate) · up for it. {int8,int4,bf16}_gemv_addnorm[_rR]_f32 (CUDA's
+//   *_gemv_addnorm_f32 and *_gemv_normaddnorm_f32, the sandwich block's y norm by flags bit 0) are the plain product
+//   whose last block of all then adds the residual and takes the norms, gemv_addnorm_f32's passes on one wave (the same
+//   bits). With counters 0 the kernels leave the splits (and the pair) to a second launch, as before G6b:
+//   int8_gemv_finish_f32, gemv_multi_finish_f32, and gemv_addnorm_f32 after the plain product (IDRAK_HIP_FINISH=launch).
 // - attention_rows_f32 and attention_rows_bf16: decoding over a float32 or bfloat16 cache, each row from its sequence's
 //   start (GcnKernels.Attention.cs's kernel with a table of starts); segment_spans_f32 writes the key range of each row
 //   of packed sequences (causal, from the sequence's start, a window), so attention_spans_f32 runs them.
@@ -32,11 +35,12 @@ namespace Idrak.Gpu.Hip;
 //   Backend.RmsNormRopePair) and norm_rope_heads_f32 (queries, keys and values into the layouts attention reads, the
 //   keys and values into a float32 or bfloat16 cache, Backend.NormRopeHeads), written by rms_norm_rope_f32's generator.
 // - The sampler (Backend.SampleRows): sample_rows_f32 over the whole row, or for top-k ≤ 64 over a large vocabulary
-//   topk_candidates_f32 then sample_candidates_f32 (CUDA's two stages), and for greedy rows topk_greedy_f32 then
-//   sample_candidates_greedy_f32 (a row with one best score finished from its blocks' parts). Each draw is the CPU's:
-//   its counter-based random value bit for bit, its cut-offs the CPU's (ln(min-p) computed on the host), its weights
-//   LLVM's exp (see Sampler's remarks). CUDA's atomic flags and arrival counter become a block's own flag and parts,
-//   folded by the sampling launch in a fixed order (rule 86).
+//   topk_candidates_f32 then sample_candidates_f32 (CUDA's two stages), and for greedy rows topk_greedy_f32 alone: the
+//   last of a row's blocks (a completion counter) samples the row from its blocks' candidates and parts as
+//   sample_candidates_greedy_f32 does (a row with one best score finished from the parts), one launch a step (with
+//   counters 0, sample_candidates_greedy_f32 in a second launch). Each draw is the CPU's: its counter-based random value
+//   bit for bit, its cut-offs the CPU's (ln(min-p) computed on the host), its weights LLVM's exp (see Sampler's
+//   remarks). CUDA's atomic flags become a block's own flag and parts, folded in a fixed order (rule 86).
 //
 // For the profile's labels and --bench-hip's rates (HipBackend.Cost, HipBackend.ProductCost): each kernel, its
 // arguments (pointers, then 32-bit values, float ones as their bits; PackArguments packs them), its launch, and its
@@ -45,11 +49,12 @@ namespace Idrak.Gpu.Hip;
 // | Kernel                    | Arguments                                                                               | Launch (block)                   | Unit            | Flops | Bytes |
 // |---------------------------|-----------------------------------------------------------------------------------------|----------------------------------|-----------------|-------|-------|
 // | *_gemv_silu/gelu[_rR]_f32 | the packed product's (x is the gate), then up                                           | ⌈w/64⌉ × splits (64)             | as *_gemv_f32 (ProductCost)     |
-// | *_gemv_multi[_rR]_f32     | x, part, m, k, chunk, splits, counters, blocks, nmax; 3 × (q, s, y, bias, n)            | ⌈w/64⌉ × splits × products (64)  | as *_gemv_f32 (ProductCost)     |
+// | *_gemv_multi[_rR]_f32     | x, part, m, k, chunk, splits, counters, blocks, nmax; 3 × (q, s, y, bias, n); act, hidden | ⌈w/64⌉ × splits × products (64) | as *_gemv_f32 (ProductCost)     |
+// | *_gemv_addnorm[_rR]_f32   | the packed product's, then residual, sum, gain, normalized, ygain; eps, offset, yeps, yoffset, flags | ⌈w/64⌉ × splits (64) | output | as *_gemv_f32 + 9 | + 36 |
 // | gemv_multi_finish_f32     | part, hidden, splits, m, nmax, act; 3 × (s, y, bias, n)                                 | ⌈m·n/256⌉ or fewer × products     | output          | 1 + splits | 4·(splits + 2) |
 // | gemv_addnorm_f32          | part, s, y, residual, sum, gain, normalized, ygain; cols, splits, size, eps, offset, yeps, yoffset, flags, n | rows (256) | element | 8 + splits | 4·(splits + 8) |
-// | attention_rows_f32        | attention_decode_f32's, then starts; hpr before n                                       | rows x splits (256)              | row × position × dim | 4 | 8 |
-// | attention_rows_bf16       | attention_decode_bf16's, then starts; hpr before n                                      | rows x splits (256)              | row × position × dim | 4 | 4 |
+// | attention_rows_f32        | attention_decode_f32's (counters after part), then starts; hpr before n                 | rows x splits (256)              | row × position × dim | 4 | 8 |
+// | attention_rows_bf16       | attention_decode_bf16's (counters after part), then starts; hpr before n                | rows x splits (256)              | row × position × dim | 4 | 4 |
 // | segment_spans_f32         | starts, begins, ends; rows, steps, window, n                                            | ⌈n/256⌉ or fewer (256)           | row             | 0     | 12    |
 // | argmax_f32                | x, y; cols, n                                                                           | rows (256)                       | element         | 1     | 4     |
 // | class_match_f32           | predictions, targets, y; cols, threshold, n                                             | rows (256)                       | element         | 2     | 8     |
@@ -62,7 +67,7 @@ namespace Idrak.Gpu.Hip;
 // | rms_norm_rope2_f32        | x, gain, cos, sin, positions, y, x2, gain2, y2; cols, eps, offset, heads, steps, half, interleaved, rows1, eps2, offset2, heads2, n | rows1 + rows2 (256) | element | 7 | 20 |
 // | norm_rope_heads_f32       | x, gain, x2, gain2, x3, cos, sin, positions, pos, y, y2, y3; cols, eps, offset, heads, eps2, offset2, heads2, steps, half, interleaved, rows1, rows2, flags, cap, stride, n | rows1 + 2 · rows2 (256) | element | 7 | 20 |
 // | topk_candidates_f32       | logits, candv, candi, flags; vocab, rowstride, rowoffset, invt, topk, bpr, n             | rows · bpr (256)                 | score           | 3k + 3 | 4.25 |
-// | topk_greedy_f32           | logits, candv, candi, flags, parts; vocab, rowstride, rowoffset, invt, topk, bpr, n      | rows · bpr (256)                 | score           | 3k + 7 | 4.25 |
+// | topk_greedy_f32           | logits, candv, candi, flags, parts, ids, stats, step, counters; vocab, rowstride, rowoffset, invt, topk, bpr, topp, logminp, seed, rows, slots, n | rows · bpr (256) | score | 3k + 7 | 4.25 |
 // | sample_rows_f32           | logits, ids, stats, step; vocab, rowstride, rowoffset, invt, topk, topp, logminp, seed, rows, n | rows (256)               | score           | 150   | 36    |
 // | sample_candidates_f32     | logits, ids, stats, step, candv, candi, flags; (sample_rows_f32's), slots before n       | rows (256)                       | candidate       | 150   | 36    |
 // | sample_candidates_greedy_f32 | logits, ids, stats, step, candv, candi, flags, parts; (sample_candidates_f32's)       | rows (256)                       | candidate       | 150   | 36    |
@@ -88,7 +93,13 @@ internal static partial class GcnKernels
         Silu,
         Gelu,
         Multi,
+
+        /// <summary>The product, then the residual addition and the next norm (and y's own norm first), by its last block.</summary>
+        AddNorm,
     }
+
+    // The fused variants, in the order of their names.
+    private static readonly string[] FusedVariantNames = ["silu", "gelu", "multi", "addnorm"];
 
     /// <summary>The packed formats the fused products are written for (the built-in packed layers' formats).</summary>
     internal static IReadOnlyList<PackedWeights> FusedGemvFormats { get; } = [PackedWeights.Int8, PackedWeights.Int4, PackedWeights.BFloat16];
@@ -103,7 +114,7 @@ internal static partial class GcnKernels
         var names = new List<string>();
         foreach (string prefix in (string[])["int8", "int4", "bf16"])
         {
-            foreach (string variant in (string[])["silu", "gelu", "multi"])
+            foreach (string variant in FusedVariantNames)
             {
                 foreach (int rows in PackedGemvRowCounts)
                 {
@@ -133,7 +144,7 @@ internal static partial class GcnKernels
         }
 
         int f = format == PackedWeights.Int8 ? 0 : format == PackedWeights.Int4 ? 1 : 2;
-        return FusedGemvNames[(f * 3 + (int)variant - 1) * 4 + i];
+        return FusedGemvNames[(f * FusedVariantNames.Length + (int)variant - 1) * 4 + i];
     }
 
     // ---- Arguments and packing -------------------------------------------------------------------------------------
@@ -146,6 +157,26 @@ internal static partial class GcnKernels
     /// <summary>Bytes of a gated product's arguments.</summary>
     internal const int GatedGemvArgumentBytes = 80;
 
+    /// <summary>
+    /// A product with the add and norms' arguments: the packed product's (<see cref="PackedGemvArguments"/>; counters
+    /// required, at least the column ranges + 1), then residual, sum, gain, normalized and ygain (0 unless flags bit 0),
+    /// eps, offset, yeps, yoffset and flags (bit 0: y normalized first, the sandwich block), from 72.
+    /// </summary>
+    internal static IReadOnlyList<GcnArgument> AddNormGemvArguments => _addNormGemvArguments ??=
+    [
+        .. PackedGemvArguments, GcnArgument.Buffer(72, "residual"), GcnArgument.Buffer(80, "sum"), GcnArgument.Buffer(88, "gain"), GcnArgument.Buffer(96, "normalized"),
+        GcnArgument.Buffer(104, "ygain"), GcnArgument.Value(112, 4, "eps"), GcnArgument.Value(116, 4, "offset"), GcnArgument.Value(120, 4, "yeps"),
+        GcnArgument.Value(124, 4, "yoffset"), GcnArgument.Value(128, 4, "flags"),
+    ];
+
+    private static GcnArgument[]? _addNormGemvArguments;
+
+    /// <summary>Bytes of a product with the add and norms' arguments.</summary>
+    internal const int AddNormGemvArgumentBytes = 132;
+
+    // Where the add and norms' arguments start (the last block reads them alone).
+    private const int AddNormTailOffset = 72;
+
     /// <summary>Bytes of a multi-output product's shared arguments (x, part; m, k, chunk, splits; counters; blocks, nmax).</summary>
     internal const int MultiGemvSharedBytes = 48;
 
@@ -156,9 +187,12 @@ internal static partial class GcnKernels
     internal const int MultiGemvProducts = 3;
 
     /// <summary>
-    /// A multi-output product's arguments, CUDA's (RunMany's): x, part (0: each output written whole), m, k, chunk,
-    /// splits, counters (unused), blocks, nmax (the widest product's columns: part's row length), then for products 0
-    /// to 2 the packed weights, scales (0: none), output, bias (0: none) and columns, from 48 + 40j.
+    /// A multi-output product's arguments, CUDA's (RunMany's, with its gate/up pair's): x, part (0: each output written
+    /// whole), m, k, chunk, splits, counters (0: the splits and the pair finished by gemv_multi_finish_f32; else at least 3 ·
+    /// blocks, each product's column ranges, then the pair's), blocks (the column ranges, grid x), nmax (the widest
+    /// product's columns: part's row length), then for products 0 to 2 the packed weights, scales (0: none), output, bias
+    /// (0: none) and columns, from 48 + 40j; then act (0: none, else the gated kind + 1: hidden = act(y0) · y1 for a pair
+    /// of equal widths) and hidden.
     /// </summary>
     internal static IReadOnlyList<GcnArgument> MultiGemvArguments => _multiGemvArguments ??= BuildMultiGemvArguments();
 
@@ -182,11 +216,16 @@ internal static partial class GcnKernels
             list.Add(GcnArgument.Value(at + 32, 4, $"n{j}"));
         }
 
+        list.Add(GcnArgument.Value(MultiPairOffset, 4, "act"));
+        list.Add(GcnArgument.Buffer(MultiPairOffset + 4, "hidden"));
         return [.. list];
     }
 
-    /// <summary>Bytes of a multi-output product's arguments (the last product's width ends them, with no padding after it).</summary>
-    internal const int MultiGemvArgumentBytes = MultiGemvSharedBytes + MultiGemvProductBytes * (MultiGemvProducts - 1) + 36;
+    // Where a multi-output product's pair arguments (act, hidden) start: past the last product's width.
+    private const int MultiPairOffset = MultiGemvSharedBytes + MultiGemvProductBytes * (MultiGemvProducts - 1) + 36;
+
+    /// <summary>Bytes of a multi-output product's arguments (hidden ends them).</summary>
+    internal const int MultiGemvArgumentBytes = MultiPairOffset + 12;
 
     /// <summary>
     /// gemv_multi_finish_f32's arguments: part, hidden (0: none), splits, m, nmax, act (0: none, else the gated kind +
@@ -222,11 +261,12 @@ internal static partial class GcnKernels
 
     /// <summary>A multi-output product's arguments (<see cref="MultiGemvArguments"/>) into <paramref name="arguments"/>, <see cref="MultiGemvArgumentBytes"/> long; products past those given are the first again with 0 columns.</summary>
     internal static void PackMultiGemv(Span<byte> arguments, ulong x, ulong part, uint m, uint k, uint chunk, uint splits, uint blocks, uint nmax,
-        ReadOnlySpan<MultiProduct> products)
+        ReadOnlySpan<MultiProduct> products, ulong counters = 0, uint act = 0, ulong hidden = 0)
     {
         ArgumentOutOfRangeException.ThrowIfNotEqual(arguments.Length, MultiGemvArgumentBytes);
-        Span<ulong> values = stackalloc ulong[9 + 5 * MultiGemvProducts];
-        (values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8]) = (x, part, m, k, chunk, splits, 0UL, blocks, nmax);
+        Span<ulong> values = stackalloc ulong[11 + 5 * MultiGemvProducts];
+        (values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8]) = (x, part, m, k, chunk, splits, counters, blocks, nmax);
+        (values[^2], values[^1]) = (act, hidden);
         for (int j = 0; j < MultiGemvProducts; j++)
         {
             var p = products[j < products.Length ? j : 0];
@@ -293,7 +333,7 @@ internal static partial class GcnKernels
         var kernels = new List<GcnKernelSource>();
         foreach (var format in FusedGemvFormats)
         {
-            foreach (var variant in (PackedGemvVariant[])[PackedGemvVariant.Silu, PackedGemvVariant.Gelu, PackedGemvVariant.Multi])
+            foreach (var variant in (PackedGemvVariant[])[PackedGemvVariant.Silu, PackedGemvVariant.Gelu, PackedGemvVariant.Multi, PackedGemvVariant.AddNorm])
             {
                 foreach (int rows in PackedGemvRowCounts)
                 {
@@ -1467,9 +1507,11 @@ internal static partial class GcnKernels
             ["vocab", "rowstride", "rowoffset", "invt", "topk", "topp", "logminp", "seed", "rows", "slots", "n"]),
     };
 
-    // The candidate kernels' argument names (topk_greedy_f32 adds parts).
-    private static (string[] Pointers, string[] Scalars) CandidateNames(bool greedy) =>
-        (greedy ? ["logits", "candv", "candi", "flags", "parts"] : ["logits", "candv", "candi", "flags"], ["vocab", "rowstride", "rowoffset", "invt", "topk", "bpr", "n"]);
+    // The candidate kernels' argument names (topk_greedy_f32 adds parts and the sampler's: its last block of a row samples it).
+    private static (string[] Pointers, string[] Scalars) CandidateNames(bool greedy) => greedy
+        ? (["logits", "candv", "candi", "flags", "parts", "ids", "stats", "step", "counters"],
+            ["vocab", "rowstride", "rowoffset", "invt", "topk", "bpr", "topp", "logminp", "seed", "rows", "slots", "n"])
+        : (["logits", "candv", "candi", "flags"], ["vocab", "rowstride", "rowoffset", "invt", "topk", "bpr", "n"]);
 
     /// <summary>
     /// A sampler kernel's arguments: CUDA's sample_rows_f32 (logits, ids, stats, step; vocab, rowstride, rowoffset, invt,
@@ -1482,7 +1524,12 @@ internal static partial class GcnKernels
         return RowArgumentList(pointers, scalars);
     }
 
-    /// <summary>A candidate kernel's arguments: CUDA's topk_candidates_f32 (logits, candv, candi, flags; vocab, rowstride, rowoffset, invt, topk, bpr, n), with parts after flags for topk_greedy_f32.</summary>
+    /// <summary>
+    /// A candidate kernel's arguments: CUDA's topk_candidates_f32 (logits, candv, candi, flags; vocab, rowstride, rowoffset,
+    /// invt, topk, bpr, n); topk_greedy_f32 adds parts, ids, stats, step and counters after flags (counters 0: the rows are
+    /// sampled by sample_candidates_greedy_f32 in a second launch; else at least one a row) and the sampler's topp,
+    /// logminp, seed, rows and slots before n.
+    /// </summary>
     internal static IReadOnlyList<GcnArgument> CandidateArguments(bool greedy)
     {
         var (pointers, scalars) = CandidateNames(greedy);
@@ -1521,13 +1568,21 @@ internal static partial class GcnKernels
         PackArguments(list, arguments, values);
     }
 
-    /// <summary>A candidate kernel's arguments (<see cref="CandidateArguments"/>) into <paramref name="arguments"/>, for the settings' rows of <paramref name="blocks"/> blocks each.</summary>
-    internal static void PackCandidates(Span<byte> arguments, bool greedy, ulong logits, ulong candv, ulong candi, ulong flags, ulong parts, in SamplerSettings s, uint blocks)
+    /// <summary>
+    /// A candidate kernel's arguments (<see cref="CandidateArguments"/>) into <paramref name="arguments"/>, for the settings'
+    /// rows of <paramref name="blocks"/> blocks each; the greedy kernel's sampling arguments (ids, stats, step, counters)
+    /// only where it takes them.
+    /// </summary>
+    internal static void PackCandidates(Span<byte> arguments, bool greedy, ulong logits, ulong candv, ulong candi, ulong flags, ulong parts, in SamplerSettings s, uint blocks,
+        ulong ids = 0, ulong stats = 0, ulong step = 0, ulong counters = 0)
     {
         var list = CandidateArguments(greedy);
         ArgumentOutOfRangeException.ThrowIfNotEqual(arguments.Length, list[^1].Offset + 4);
-        ulong[] tail = [s.Vocabulary, s.RowStride, s.RowOffset, ArgumentBits(s.InverseTemperature), s.TopK, blocks, s.Rows * blocks];
-        PackArguments(list, arguments, greedy ? [logits, candv, candi, flags, parts, .. tail] : [logits, candv, candi, flags, .. tail]);
+        ulong[] settings = [s.Vocabulary, s.RowStride, s.RowOffset, ArgumentBits(s.InverseTemperature), s.TopK, blocks];
+        PackArguments(list, arguments, greedy
+            ? [logits, candv, candi, flags, parts, ids, stats, step, counters, .. settings, ArgumentBits(s.TopP), ArgumentBits(s.LogMinP), s.Seed, s.Rows,
+                (ulong)blocks * CandidateSlots, s.Rows * blocks]
+            : [logits, candv, candi, flags, .. settings, s.Rows * blocks]);
     }
 
     // RowWriter's reductions the sampler adds: the larger unsigned value (the candidates' flags); a sum and a minimum.
@@ -1567,12 +1622,28 @@ internal static partial class GcnKernels
     // its blocks' parts (topk_greedy_f32): one best score, finite and |s| ≤ 1e38, gives the token with probability 1,
     // entropy 0 and four alternatives of -1 and 0, the statistics the sampler writes for it; any other row samples as
     // sample_candidates_f32 does.
+    // The sampler's constants, set before its rows (Sampler, and topk_greedy_f32 when it samples its rows' last blocks).
+    private sealed record SamplerConstants(string Rows, string TopK, string Extra, int SlotBase, string D, string Ex, string Sc, string E, string One, string DivN,
+        string DivD, string DivQ, StringBuilder ExpText, StringBuilder DivText, string PosInf, string Two32, string ThirtyTwo, string Tid4, string StepNumber,
+        string StreamBase, string Slots, string Blocks);
+
     private static GcnKernelSource Sampler(SamplerForm form)
     {
-        bool candidates = form != SamplerForm.Rows, greedy = form == SamplerForm.Greedy;
         var w = new RowWriter(SamplerKernel(form), arrays: 2, extraLds: SamplerExtraLds);
         var (pointerNames, scalarNames) = SamplerNames(form);
         var a = w.Arguments(pointerNames, scalarNames);
+        var constants = SamplerSetup(w, a, form);
+        w.BeginRows(a.Scalar("n"));
+        SamplerRow(w, a, form, constants, w.Row, ".L", glc: false);
+        w.EndRows();
+        return w.Source();
+    }
+
+    // The per-call part of the sampler (rule 85): the held constants of its exp and division, the step number and the
+    // random stream's base, the candidate blocks of a row.
+    private static SamplerConstants SamplerSetup(RowWriter w, RowWriter.Args a, SamplerForm form)
+    {
+        bool candidates = form != SamplerForm.Rows, greedy = form == SamplerForm.Greedy;
         string rows = a.Scalar("rows"), topk = a.Scalar("topk"), extra = w.ExtraLdsBase.ToString(CultureInfo.InvariantCulture);
         int slotBase = w.ExtraLdsBase + 4 * RowThreads;
 
@@ -1613,24 +1684,37 @@ internal static partial class GcnKernels
             w.L($"s_lshr_b32 {blocks}, {slots}, 6                          ; the candidate blocks of a row");
         }
 
-        w.BeginRows(a.Scalar("n"));
+        return new(rows, topk, extra, slotBase, d, ex, sc, e, one, divN, divD, divQ, expText, divText, posInf, two32, thirtyTwo, tid4, stepNumber, streamBase, slots, blocks);
+    }
+
+    // One row of the sampler (see Sampler's remarks), row `row` (a scalar register), its labels prefixed; with glc,
+    // what it reads from the candidate blocks (their candidates, flags and parts) passes the vector L1 (topk_greedy_f32's
+    // last block of the row: the other blocks stored them).
+    private static void SamplerRow(RowWriter w, RowWriter.Args a, SamplerForm form, SamplerConstants k, string row, string prefix, bool glc)
+    {
+        bool candidates = form != SamplerForm.Rows, greedy = form == SamplerForm.Greedy;
+        string coherent = glc ? " glc" : "";
+        var (rows, topk, extra, slotBase, d, ex, sc, e, one, divN) = (k.Rows, k.TopK, k.Extra, k.SlotBase, k.D, k.Ex, k.Sc, k.E, k.One, k.DivN);
+        var (divD, divQ, expText, divText, posInf, two32, thirtyTwo, tid4, stepNumber, streamBase) =
+            (k.DivD, k.DivQ, k.ExpText, k.DivText, k.PosInf, k.Two32, k.ThirtyTwo, k.Tid4, k.StepNumber, k.StreamBase);
+        var (slots, blocks) = (k.Slots, k.Blocks);
 
         // The row's statistics, its id, its logits and (with candidates) its candidates.
-        string statsRow, idsAt = w.ElementAddress(a.Pointer("ids"), w.Row), t = w.S();
+        string statsRow, idsAt = w.ElementAddress(a.Pointer("ids"), row), t = w.S();
         w.L($"""
             s_mul_i32 {t}, {stepNumber}, {rows}
-            s_add_u32 {t}, {t}, {w.Row}
+            s_add_u32 {t}, {t}, {row}
             s_mul_i32 {t}, {t}, 13
             """);
         statsRow = w.ElementAddress(a.Pointer("stats"), t);
         string first = w.S();
-        w.L($"s_mul_i32 {first}, {w.Row}, {a.Scalar("rowstride")}");
+        w.L($"s_mul_i32 {first}, {row}, {a.Scalar("rowstride")}");
         w.L($"s_add_u32 {first}, {first}, {a.Scalar("rowoffset")}");
         string logitsRow = w.ElementAddress(a.Pointer("logits"), first);
         string candvRow = "", candiRow = "", full = w.S(), rowFlag = w.S();
         if (candidates)
         {
-            int at = w.Product64(w.Row, slots);
+            int at = w.Product64(row, slots);
             candvRow = w.Base(a.Pointer("candv"), at);
             candiRow = w.Base(a.Pointer("candi"), at);
         }
@@ -1640,7 +1724,7 @@ internal static partial class GcnKernels
             // A top-k 1 row with one best score: its token and statistics from its blocks' parts.
             string partsFirst = w.S(), i = w.S(), best = w.V(), count = w.V(), firstId = w.V(), index = w.V(), offset = w.V(), partsSaved = w.SPair();
             string score = w.V(), ties = w.V(), id = w.V(), tie = w.V(), ided = w.V();
-            w.L($"s_mul_i32 {partsFirst}, {w.Row}, {blocks}");
+            w.L($"s_mul_i32 {partsFirst}, {row}, {blocks}");
             w.L($"s_mul_i32 {partsFirst}, {partsFirst}, 3");
             string partsRow = w.ElementAddress(a.Pointer("parts"), partsFirst);
             void Parts(string label, string body)
@@ -1663,17 +1747,17 @@ internal static partial class GcnKernels
             }
 
             w.L($"v_mov_b32_e32 {best}, {RowWriter.NegativeInfinity}");
-            Parts(".Lparts_best", $"""
-                global_load_dword {score}, {offset}, {partsRow}
+            Parts(prefix + "parts_best", $"""
+                global_load_dword {score}, {offset}, {partsRow}{coherent}
                 v_max_f32_e32 {best}, {best}, {score}
                 """);
             w.Reduce(RowWriter.Max, best);
             w.L($"v_mov_b32_e32 {count}, 0");
             w.L($"v_mov_b32_e32 {firstId}, {RowWriter.PositiveInfinity}");
-            Parts(".Lparts_ties", $"""
-                global_load_dword {score}, {offset}, {partsRow}
-                global_load_dword {ties}, {offset}, {partsRow} offset:4
-                global_load_dword {id}, {offset}, {partsRow} offset:8
+            Parts(prefix + "parts_ties", $"""
+                global_load_dword {score}, {offset}, {partsRow}{coherent}
+                global_load_dword {ties}, {offset}, {partsRow} offset:4{coherent}
+                global_load_dword {id}, {offset}, {partsRow} offset:8{coherent}
                 v_cmp_eq_f32_e32 vcc, {score}, {best}
                 v_cndmask_b32_e32 {tie}, 0, {ties}, vcc
                 v_add_f32_e32 {count}, {count}, {tie}
@@ -1687,7 +1771,7 @@ internal static partial class GcnKernels
                 v_cmp_ge_f32_e32 vcc, {PointwiseWriter.Literal(1e38f)}, {magnitude}
                 v_cmp_eq_f32_e64 {single}, 1.0, {count}
                 s_and_b64 vcc, vcc, {single}
-                s_cbranch_vccz .Lsample
+                s_cbranch_vccz {prefix}sample
                 v_mov_b32_e32 {minus}, -1.0
                 v_mov_b32_e32 {unity}, 1.0
                 v_cmp_eq_u32_e32 vcc, 0, {w.Tid}
@@ -1707,9 +1791,9 @@ internal static partial class GcnKernels
                 global_store_dword {w.Zero}, {minus}, {statsRow} offset:44
                 global_store_dword {w.Zero}, {w.Zero}, {statsRow} offset:48
                 s_or_b64 exec, exec, {greedySaved}
-                s_branch .Lrow_done
+                s_branch {prefix}row_done
                 """);
-            w.Label(".Lsample");
+            w.Label(prefix + "sample");
         }
 
         if (candidates)
@@ -1717,10 +1801,10 @@ internal static partial class GcnKernels
             // The row's flag: the largest of its blocks' (0xFFFFFFFF, an overflow, wins); an overflow walks the whole row.
             string flagsFirst = w.S(), flag = w.V();
             var fs = w.Vs();
-            w.L($"s_mul_i32 {flagsFirst}, {w.Row}, {blocks}");
+            w.L($"s_mul_i32 {flagsFirst}, {row}, {blocks}");
             string flagsRow = w.ElementAddress(a.Pointer("flags"), flagsFirst);
             w.L($"v_mov_b32_e32 {flag}, 0");
-            w.Columns(blocks, el => $"global_load_dword {fs[el.K]}, {el.Off}, {flagsRow}{el.Imm}", el => $"v_max_u32_e32 {flag}, {flag}, {fs[el.K]}");
+            w.Columns(blocks, el => $"global_load_dword {fs[el.K]}, {el.Off}, {flagsRow}{el.Imm}{coherent}", el => $"v_max_u32_e32 {flag}, {flag}, {fs[el.K]}");
             w.Reduce(UnsignedMax, flag);
             w.L($"""
                 v_readfirstlane_b32 {rowFlag}, {flag}
@@ -1735,7 +1819,7 @@ internal static partial class GcnKernels
 
         // The scores walked: the row's logits (· invt), or its candidates (as they are, their ids through candi).
         string source = w.SPair(), count2 = w.S(), factor = w.S(), mapped = w.S();
-        w.Label(".Lsource");
+        w.Label(prefix + "source");
         w.L($"""
             s_mov_b64 {source}, {logitsRow}
             s_mov_b32 {count2}, {a.Scalar("vocab")}
@@ -1746,18 +1830,18 @@ internal static partial class GcnKernels
         {
             w.L($"""
                 s_cmp_lg_u32 {full}, 0
-                s_cbranch_scc1 .Lsourced
+                s_cbranch_scc1 {prefix}sourced
                 s_mov_b64 {source}, {candvRow}
                 s_mov_b32 {count2}, {slots}
                 s_mov_b32 {factor}, 1.0
                 s_mov_b32 {mapped}, 1
                 """);
-            w.Label(".Lsourced");
+            w.Label(prefix + "sourced");
         }
 
         string cnt = count2;
         var xs = w.Vs();
-        string Load(RowWriter.Element el) => $"global_load_dword {xs[el.K]}, {el.Off}, {source}{el.Imm}";
+        string Load(RowWriter.Element el) => $"global_load_dword {xs[el.K]}, {el.Off}, {source}{el.Imm}{coherent}";
         string Score(string x) => $"v_mul_f32_e32 {sc}, {factor}, {x}";
 
         // The weight of the score in sc into e (see the remarks).
@@ -1796,18 +1880,18 @@ internal static partial class GcnKernels
         string kk = w.S(), largest = w.V(), below = w.SPair(), largestBits = w.S();
         w.L($"""
             s_cmp_lg_u32 {special}, 0
-            s_cbranch_scc1 .Ltopk_done
+            s_cbranch_scc1 {prefix}topk_done
             s_cmp_eq_u32 {topk}, 0
-            s_cbranch_scc1 .Ltopk_done
+            s_cbranch_scc1 {prefix}topk_done
             s_cmp_ge_u32 {topk}, {cnt}
-            s_cbranch_scc1 .Ltopk_done
+            s_cbranch_scc1 {prefix}topk_done
             v_mov_b32_e32 {threshold}, {RowWriter.PositiveInfinity}
             s_mov_b32 {kk}, 0
             """);
-        w.Label(".Ltopk");
+        w.Label(prefix + "topk");
         w.L($"""
             s_cmp_ge_u32 {kk}, {topk}
-            s_cbranch_scc1 .Ltopk_done
+            s_cbranch_scc1 {prefix}topk_done
             v_mov_b32_e32 {largest}, {RowWriter.NegativeInfinity}
             """);
         w.Columns(cnt, Load, el => $"""
@@ -1822,44 +1906,44 @@ internal static partial class GcnKernels
             v_mov_b32_e32 {threshold}, {largest}
             v_readfirstlane_b32 {largestBits}, {largest}
             s_cmp_eq_u32 {largestBits}, {RowWriter.NegativeInfinity}
-            s_cbranch_scc1 .Ltopk_done
+            s_cbranch_scc1 {prefix}topk_done
             s_add_u32 {kk}, {kk}, 1
-            s_branch .Ltopk
+            s_branch {prefix}topk
             """);
-        w.Label(".Ltopk_done");
+        w.Label(prefix + "topk_done");
         if (candidates)
         {
             // The candidates hold every token top-k keeps unless a block dropped a tied score at or above the cut-off.
             string ordered = w.S(), sign = w.S();
             w.L($"""
                 s_cmp_lg_u32 {full}, 0
-                s_cbranch_scc1 .Lcomplete
+                s_cbranch_scc1 {prefix}complete
                 s_cmp_eq_u32 {rowFlag}, 0
-                s_cbranch_scc1 .Lcomplete
+                s_cbranch_scc1 {prefix}complete
                 v_readfirstlane_b32 {ordered}, {threshold}
                 s_ashr_i32 {sign}, {ordered}, 31
                 s_or_b32 {sign}, {sign}, 0x80000000
                 s_xor_b32 {ordered}, {ordered}, {sign}
                 s_cmp_gt_u32 {ordered}, {rowFlag}
-                s_cbranch_scc1 .Lcomplete
+                s_cbranch_scc1 {prefix}complete
                 s_mov_b32 {full}, 1
-                s_branch .Lsource
+                s_branch {prefix}source
                 """);
-            w.Label(".Lcomplete");
+            w.Label(prefix + "complete");
         }
 
         // Min-p: max(cut-off, max + ln(min-p)) (-∞ without min-p leaves it). Top-p: the bisection.
         string minimum = w.V(), total = w.V(), goal = w.V(), lo = w.V(), hi = w.V(), mid = w.V(), mass = w.V(), kept = w.V(), halvings = w.S(), within = w.SPair();
         w.L($"""
             s_cmp_lg_u32 {special}, 0
-            s_cbranch_scc1 .Lcutoffs_done
+            s_cbranch_scc1 {prefix}cutoffs_done
             v_add_f32_e32 {minimum}, {a.Scalar("logminp")}, {max}
             v_max_f32_e32 {threshold}, {threshold}, {minimum}
             v_mov_b32_e32 {goal}, {a.Scalar("topp")}
             v_cmp_lt_f32_e32 vcc, 0, {goal}
             v_cmp_gt_f32_e64 {within}, 1.0, {goal}
             s_and_b64 vcc, vcc, {within}
-            s_cbranch_vccz .Lcutoffs_done
+            s_cbranch_vccz {prefix}cutoffs_done
             v_mov_b32_e32 {total}, 0
             """);
         w.Columns(cnt, Load, el => $"""
@@ -1875,10 +1959,10 @@ internal static partial class GcnKernels
             v_mov_b32_e32 {hi}, {max}
             s_mov_b32 {halvings}, 0
             """);
-        w.Label(".Lhalving");
+        w.Label(prefix + "halving");
         w.L($"""
             s_cmp_ge_u32 {halvings}, 24
-            s_cbranch_scc1 .Lhalved
+            s_cbranch_scc1 {prefix}halved
             v_add_f32_e32 {mid}, {lo}, {hi}
             v_mul_f32_e32 {mid}, 0.5, {mid}
             v_mov_b32_e32 {mass}, 0
@@ -1896,11 +1980,11 @@ internal static partial class GcnKernels
             v_cndmask_b32_e32 {lo}, {lo}, {mid}, vcc
             v_cndmask_b32_e32 {hi}, {mid}, {hi}, vcc
             s_add_u32 {halvings}, {halvings}, 1
-            s_branch .Lhalving
+            s_branch {prefix}halving
             """);
-        w.Label(".Lhalved");
+        w.Label(prefix + "halved");
         w.L($"v_mov_b32_e32 {threshold}, {lo}");
-        w.Label(".Lcutoffs_done");
+        w.Label(prefix + "cutoffs_done");
 
         // Σ weights; the target from the CPU's counter-based random value.
         string sum = w.V(), safe = w.V(), hash = w.S(), mixed = w.S(), target = w.V(), uniform = w.V();
@@ -1912,7 +1996,7 @@ internal static partial class GcnKernels
             """);
         w.Reduce(RowWriter.Add, sum);
         w.L($"""
-            s_mul_i32 {mixed}, {w.Row}, 0x85ebca6b
+            s_mul_i32 {mixed}, {row}, 0x85ebca6b
             s_xor_b32 {hash}, {streamBase}, {mixed}
             s_lshr_b32 {mixed}, {hash}, 16
             s_xor_b32 {hash}, {hash}, {mixed}
@@ -1957,15 +2041,15 @@ internal static partial class GcnKernels
             v_lshlrev_b32_e32 {ats[1]}, 2, {ats[1]}
             v_lshlrev_b32_e32 {ats[2]}, 2, {ats[2]}
             v_lshlrev_b32_e32 {ats[3]}, 2, {ats[3]}
-            global_load_dword {cxs[0]}, {ats[0]}, {source}
-            global_load_dword {cxs[1]}, {ats[1]}, {source}
-            global_load_dword {cxs[2]}, {ats[2]}, {source}
-            global_load_dword {cxs[3]}, {ats[3]}, {source}
+            global_load_dword {cxs[0]}, {ats[0]}, {source}{coherent}
+            global_load_dword {cxs[1]}, {ats[1]}, {source}{coherent}
+            global_load_dword {cxs[2]}, {ats[2]}, {source}{coherent}
+            global_load_dword {cxs[3]}, {ats[3]}, {source}{coherent}
             """;
-        w.Label(".Lchunk");
+        w.Label(prefix + "chunk");
         w.L($"""
             s_cmp_ge_u32 {step}, {chunk}
-            s_cbranch_scc1 .Lchunk_end
+            s_cbranch_scc1 {prefix}chunk_end
             {LoadFour()}
             """);
         for (int u = 0; u < 4; u++)
@@ -1981,9 +2065,9 @@ internal static partial class GcnKernels
 
         w.L($"""
             s_add_u32 {step}, {step}, 4
-            s_branch .Lchunk
+            s_branch {prefix}chunk
             """);
-        w.Label(".Lchunk_end");
+        w.Label(prefix + "chunk_end");
 
         // Thread 0 walks the chunks' sums in order: the chunk where the running total passes the target, and the total before it.
         string partAt = w.V(), lastChunk = w.V(), before = w.V(), running = w.V(), loaded = w.V(), scan = w.S(), scanAt = w.S(), saved = w.SPair(), minusOne = w.V();
@@ -1993,40 +2077,40 @@ internal static partial class GcnKernels
             s_barrier
             v_cmp_eq_u32_e32 vcc, 0, {w.Tid}
             s_and_saveexec_b64 {saved}, vcc
-            s_cbranch_execz .Lscan_done
+            s_cbranch_execz {prefix}scan_done
             v_mov_b32_e32 {running}, 0
             v_mov_b32_e32 {before}, 0
             v_mov_b32_e32 {lastChunk}, -1
             s_mov_b32 {scan}, 0
             """);
-        w.Label(".Lscan");
+        w.Label(prefix + "scan");
         w.L($"""
             s_cmp_ge_u32 {scan}, 0x{RowThreads:x}
-            s_cbranch_scc1 .Lscanned
+            s_cbranch_scc1 {prefix}scanned
             s_lshl_b32 {scanAt}, {scan}, 2
             v_mov_b32_e32 {partAt}, {scanAt}
             ds_read_b32 {loaded}, {partAt} offset:{extra}
             v_cmp_lt_f32_e32 vcc, 0, {loaded}
-            s_cbranch_vccz .Lscan_next
+            s_cbranch_vccz {prefix}scan_next
             v_mov_b32_e32 {lastChunk}, {scan}
             v_mov_b32_e32 {before}, {running}
             v_add_f32_e32 {running}, {running}, {loaded}
             v_cmp_lt_f32_e32 vcc, {target}, {running}
-            s_cbranch_vccnz .Lscanned
+            s_cbranch_vccnz {prefix}scanned
             """);
-        w.Label(".Lscan_next");
+        w.Label(prefix + "scan_next");
         w.L($"""
             s_add_u32 {scan}, {scan}, 1
-            s_branch .Lscan
+            s_branch {prefix}scan
             """);
-        w.Label(".Lscanned");
+        w.Label(prefix + "scanned");
         w.L($"""
             ds_write_b32 {w.Zero}, {lastChunk} offset:{slotBase}
             ds_write_b32 {w.Zero}, {before} offset:{slotBase + 4}
             ds_write_b32 {w.Zero}, {minusOne} offset:{slotBase + 8}
             ds_write_b32 {w.Zero}, {w.Zero} offset:{slotBase + 12}
             """);
-        w.Label(".Lscan_done");
+        w.Label(prefix + "scan_done");
         w.L($"""
             s_or_b64 exec, exec, {saved}
             s_barrier
@@ -2041,14 +2125,14 @@ internal static partial class GcnKernels
             v_mov_b32_e32 {chosenWeight}, 0
             v_cmp_eq_u32_e32 vcc, {lastChunk}, {w.Tid}
             s_and_saveexec_b64 {saved2}, vcc
-            s_cbranch_execz .Lpicked_none
+            s_cbranch_execz {prefix}picked_none
             v_mov_b32_e32 {running}, {before}
             s_mov_b32 {step}, 0
             """);
-        w.Label(".Lpick");
+        w.Label(prefix + "pick");
         w.L($"""
             s_cmp_ge_u32 {step}, {chunk}
-            s_cbranch_scc1 .Lpicked
+            s_cbranch_scc1 {prefix}picked
             {LoadFour()}
             """);
         for (int u = 0; u < 4; u++)
@@ -2059,26 +2143,26 @@ internal static partial class GcnKernels
                 v_cmp_gt_u32_e32 vcc, {end}, {js[u]}
                 v_cmp_lt_f32_e64 {weighted}, 0, {e}
                 s_and_b64 vcc, vcc, {weighted}
-                s_cbranch_vccz .Lpick_next{u}
+                s_cbranch_vccz {prefix}pick_next{u}
                 v_mov_b32_e32 {chosen}, {js[u]}
                 v_mov_b32_e32 {chosenWeight}, {e}
                 v_add_f32_e32 {running}, {running}, {e}
                 v_cmp_lt_f32_e32 vcc, {target}, {running}
-                s_cbranch_vccnz .Lpicked
+                s_cbranch_vccnz {prefix}picked
                 """);
-            w.Label($".Lpick_next{u}");
+            w.Label($"{prefix}pick_next{u}");
         }
 
         w.L($"""
             s_add_u32 {step}, {step}, 4
-            s_branch .Lpick
+            s_branch {prefix}pick
             """);
-        w.Label(".Lpicked");
+        w.Label(prefix + "picked");
         w.L($"""
             ds_write_b32 {w.Zero}, {chosen} offset:{slotBase + 8}
             ds_write_b32 {w.Zero}, {chosenWeight} offset:{slotBase + 12}
             """);
-        w.Label(".Lpicked_none");
+        w.Label(prefix + "picked_none");
         w.L($"""
             s_or_b64 exec, exec, {saved2}
             s_barrier
@@ -2100,13 +2184,13 @@ internal static partial class GcnKernels
             return $"""
                 {text}
                 s_cmp_eq_u32 {mapped}, 0
-                s_cbranch_scc1 .Lmapped{n}
+                s_cbranch_scc1 {prefix}mapped{n}
                 v_max_i32_e32 {at}, 0, {index}
                 v_lshlrev_b32_e32 {at}, 2, {at}
-                global_load_dword {value}, {at}, {candiRow}
+                global_load_dword {value}, {at}, {candiRow}{coherent}
                 v_cmp_lt_i32_e32 vcc, -1, {index}
                 v_cndmask_b32_e32 {id}, {id}, {value}, vcc
-                .Lmapped{n}:
+                {prefix}mapped{n}:
                 """;
         }
 
@@ -2168,10 +2252,10 @@ internal static partial class GcnKernels
             s_mov_b32 {alternative}, 0
             s_mov_b32 {statOffset}, 12
             """);
-        w.Label(".Ltop");
+        w.Label(prefix + "top");
         w.L($"""
             s_cmp_ge_u32 {alternative}, 5
-            s_cbranch_scc1 .Ltop_end
+            s_cbranch_scc1 {prefix}top_end
             v_mov_b32_e32 {bestWeight}, 0
             v_mov_b32_e32 {bestIndex}, -1
             """);
@@ -2208,12 +2292,10 @@ internal static partial class GcnKernels
             s_mov_b32 {taken[0]}, {pick}
             s_add_u32 {alternative}, {alternative}, 1
             s_add_u32 {statOffset}, {statOffset}, 8
-            s_branch .Ltop
+            s_branch {prefix}top
             """);
-        w.Label(".Ltop_end");
-        w.Label(".Lrow_done");
-        w.EndRows();
-        return w.Source();
+        w.Label(prefix + "top_end");
+        w.Label(prefix + "row_done");
     }
 
     // topk_candidates_f32 (CUDA's stage one of top-k sampling, topk ≤ 64): block b of row r (item g = r · bpr + b of the
@@ -2233,6 +2315,7 @@ internal static partial class GcnKernels
         var w = new RowWriter(greedy ? "topk_greedy_f32" : "topk_candidates_f32", arrays: 2, extraLds: 2 * 4 * RowThreads);
         var (pointerNames, scalarNames) = CandidateNames(greedy);
         var a = w.Arguments(pointerNames, scalarNames);
+        var sampling = greedy ? SamplerSetup(w, a, SamplerForm.Greedy) : null;
         string vocab = a.Scalar("vocab"), blocks = a.Scalar("bpr"), topk = a.Scalar("topk"), invt = a.Scalar("invt");
         string byBlocks = AttentionReciprocal(w, blocks), lastIndex = w.S(), negInf = w.S(), tid8 = w.V(), tid4 = w.V(), minusOne = w.V(), negInfV = w.V(), posInfV = w.V();
         int scanA = w.ExtraLdsBase, scanB = w.ExtraLdsBase + 4 * RowThreads;
@@ -2451,6 +2534,20 @@ internal static partial class GcnKernels
             v_mov_b32_e32 {flagValue}, {flag}
             """);
         w.StoreFirstLane((w.ElementAddress(a.Pointer("flags"), w.Row), flagValue));
+        if (sampling is not null)
+        {
+            // With counters (not 0): the row's last block samples it (sample_candidates_greedy_f32's body over the blocks'
+            // candidates, flags and parts, read with glc), so a greedy row takes one launch.
+            string counters = a.Pointer("counters");
+            w.L($"""
+                s_cmp_eq_u64 {counters}, 0
+                s_cbranch_scc1 .Lrow_next
+                """);
+            BlockArrive(w, counters, row, blocks, ".Lrow_next", scanA);
+            SamplerRow(w, a, SamplerForm.Greedy, sampling, row, ".Ls_", glc: true);
+            w.Label(".Lrow_next");
+        }
+
         w.EndRows();
         return w.Source();
     }

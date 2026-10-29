@@ -14,6 +14,26 @@ using Idrak.Gpu.Hip;
 // products of one input within a third of it.
 internal abstract partial class DesktopTests
 {
+    // Runs `bench` with each finish of the split sums and the fused kernels' tails (IDRAK_HIP_FINISH, plan 35 G6b): the
+    // launch's last block (one launch), then a second launch, the row named with its form; with `both` false, once as set.
+    // The setting is restored after.
+    private static void BenchFinishes(Action<string> bench, bool both = true)
+    {
+        bool kept = HipBackend.FinishByLastBlock;
+        try
+        {
+            foreach (bool lastBlock in both ? new[] { true, false } : [kept])
+            {
+                HipBackend.FinishByLastBlock = lastBlock;
+                bench(!both ? "" : lastBlock ? " (one launch: the last block finishes)" : " (two launches)");
+            }
+        }
+        finally
+        {
+            HipBackend.FinishByLastBlock = kept;
+        }
+    }
+
     private static void BenchHipDecoding(HipBench b)
     {
         if (!BenchKernelSet(b))
@@ -52,19 +72,37 @@ internal abstract partial class DesktopTests
                 string name = format switch { PackedFormat.Int8 => "int8", PackedFormat.Int4 => "int4", _ => "bf16" };
                 foreach (int m in new[] { 1, 8 })
                 {
+                    // Each fused product with each finish (IDRAK_HIP_FINISH): its last block (one launch) and a second launch.
                     var cost = HipBackend.ProductCost($"{name}_gemv_f32", m, n, k);
-                    BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} gated (SiLU) {m}x{k}->{n}"), cost,
-                        () => hip.PackedMatMulGated(format, 0, x, up, w1, scales, y, m, n, k));
-                    BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} with residual and norm {m}x{k}->{n}"), cost,
-                        () => hip.PackedMatMulAddRmsNorm(format, x, w1, scales, y, m, n, k, residual, sum, gain, normalized, 1e-6f, 0f));
-                    BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} norm, residual and norm {m}x{k}->{n}"), cost,
-                        () => hip.PackedMatMulNormAddRmsNorm(format, x, w1, scales, y, m, n, k, gain, 1e-6f, 0f, residual, sum, gain, normalized, 1e-6f, 0f));
+                    void Plain()
+                    {
+                        switch (format)
+                        {
+                            case PackedFormat.Int8:
+                                hip.Int8MatMul(x, w1, scales!, y, m, n, k);
+                                break;
+                            case PackedFormat.Int4:
+                                hip.Int4MatMul(x, w1, scales!, y, m, n, k);
+                                break;
+                            default:
+                                hip.BFloat16MatMul(x, w1, y, m, n, k);
+                                break;
+                        }
+                    }
+
+                    BenchFinishes(form => BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} plain {m}x{k}->{n}{form}"), cost, Plain));
+                    BenchFinishes(form => BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} gated (SiLU) {m}x{k}->{n}{form}"), cost,
+                        () => hip.PackedMatMulGated(format, 0, x, up, w1, scales, y, m, n, k)));
+                    BenchFinishes(form => BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} with residual and norm {m}x{k}->{n}{form}"), cost,
+                        () => hip.PackedMatMulAddRmsNorm(format, x, w1, scales, y, m, n, k, residual, sum, gain, normalized, 1e-6f, 0f)));
+                    BenchFinishes(form => BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} norm, residual and norm {m}x{k}->{n}{form}"), cost,
+                        () => hip.PackedMatMulNormAddRmsNorm(format, x, w1, scales, y, m, n, k, gain, 1e-6f, 0f, residual, sum, gain, normalized, 1e-6f, 0f)));
                     var three = HipBackend.ProductCost($"{name}_gemv_f32", m, 3 * n, k);
-                    BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} three products of one input {m}x{k}->3x{n}"), three,
-                        () => hip.PackedMatMulMany(format, x, m, k, [(w1, scales, bias, y, n), (w2, scales, null, y2, n), (w1, scales, null, y3, n)]));
+                    BenchFinishes(form => BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} three products of one input {m}x{k}->3x{n}{form}"), three,
+                        () => hip.PackedMatMulMany(format, x, m, k, [(w1, scales, bias, y, n), (w2, scales, null, y2, n), (w1, scales, null, y3, n)])));
                     var two = HipBackend.ProductCost($"{name}_gemv_f32", m, 2 * n, k);
-                    BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} gate/up pair (SiLU) {m}x{k}->2x{n}"), two,
-                        () => hip.PackedMatMulGatedPair(format, 0, x, m, k, [(w1, scales, null, y, n), (w2, scales, null, y2, n)], hidden));
+                    BenchFinishes(form => BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{name} gate/up pair (SiLU) {m}x{k}->2x{n}{form}"), two,
+                        () => hip.PackedMatMulGatedPair(format, 0, x, m, k, [(w1, scales, null, y, n), (w2, scales, null, y2, n)], hidden)));
                 }
             }
 
@@ -147,8 +185,8 @@ internal abstract partial class DesktopTests
                          ("top-p 0.9 (the whole row)", 0, 0.9f, "sample_rows_f32"),
                      })
             {
-                BenchOperation(b, $"sampler, {label}, {vocab}", (long)rows * vocabulary, HipBackend.Cost(kernel),
-                    () => hip.SampleRows(logits, sampled, samplerStats, samplerStep, rows, vocabulary, vocabulary, 0, 0.8f, topK, topP, 0f, 7u));
+                BenchFinishes(form => BenchOperation(b, $"sampler, {label}, {vocab}{(topK == 1 ? form : "")}", (long)rows * vocabulary, HipBackend.Cost(kernel),
+                    () => hip.SampleRows(logits, sampled, samplerStats, samplerStep, rows, vocabulary, vocabulary, 0, 0.8f, topK, topP, 0f, 7u)), both: topK == 1);
             }
 
             // The element-wise operations with parameters over the large buffer.

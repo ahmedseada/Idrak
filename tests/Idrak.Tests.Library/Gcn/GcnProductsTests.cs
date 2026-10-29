@@ -72,7 +72,7 @@ internal abstract partial class Tests
         var (code, image) = ProductKernel(name, isa);
         var arguments = new byte[GcnCodeObject.KernargBytes(code)];
         pack(arguments);
-        GcnInterpreter.Run(image, memory, new GcnDispatch { Workgroups = grid, WorkgroupSize = (block, 1, 1), Arguments = arguments, Seed = seed });
+        GcnInterpreter.Run(image, memory, new GcnDispatch { Workgroups = grid, WorkgroupSize = (block, 1, 1), Arguments = arguments, Seed = seed, ShuffleGroups = seed != 1 });
     }
 
     // Runs `gcn` twice (the second with another seed, so another wave order, and second = true, which may pick another
@@ -307,15 +307,17 @@ internal abstract partial class Tests
             foreach (int chunk in (int[])[k, splitChunk])
             {
                 int splits = (k + chunk - 1) / chunk;
+                int columnBlocks = (words + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords;
                 float[] y = new float[m * n], part = new float[splits * m * n];
                 foreach (var isa in ProductIsas)
                 {
-                    void Run(GcnMemory memory, ulong[] at, bool second, ulong seed)
+                    // lastBlock: each column range's last split block adds the splits (the counters at[5]); else int8_gemv_finish_f32.
+                    void Run(GcnMemory memory, ulong[] at, bool second, ulong seed, bool lastBlock)
                     {
-                        ProductDispatch(kernel, isa, memory, ((words + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords, splits, 1), GcnKernels.PackedGemvWords, seed,
+                        ProductDispatch(kernel, isa, memory, (columnBlocks, splits, 1), GcnKernels.PackedGemvWords, seed,
                             args => GcnKernels.PackPackedGemv(args.AsSpan(0, GcnKernels.PackedGemvArgumentBytes), at[0], at[1], format == GcnWeights.BFloat16 || format == GcnWeights.Float16 ? 0UL : at[2],
-                                at[3], at[4], (uint)m, (uint)n, (uint)k, (uint)words, (uint)chunk, (uint)splits));
-                        if (splits > 1)
+                                at[3], at[4], (uint)m, (uint)n, (uint)k, (uint)words, (uint)chunk, (uint)splits, lastBlock ? at[5] : 0UL));
+                        if (splits > 1 && !lastBlock)
                         {
                             // One block (the grid-stride loop) on the first run, every element's on the second.
                             int blocks = second ? (m * n + GcnKernels.ExpansionBlock - 1) / GcnKernels.ExpansionBlock : 1;
@@ -324,9 +326,18 @@ internal abstract partial class Tests
                         }
                     }
 
-                    string what = $"{kernel}, {m} rows, {k} x {n}, {splits} split{(splits > 1 ? "s and int8_gemv_finish_f32" : "")} ({isa})";
-                    ProductsCase(what, [x, packed, scales, y, part], [3], [x, packed, scales, expected, part], Run, worst,
-                        splits > 1 ? $"{kernel} + int8_gemv_finish_f32" : kernel);
+                    string what = $"{kernel}, {m} rows, {k} x {n}, {splits} split{(splits > 1 ? "s" : "")} ({isa})";
+                    float[] counters = new float[columnBlocks];
+                    if (splits > 1)
+                    {
+                        FinishCase(what, [x, packed, scales, y, part, counters], [3], [x, packed, scales, expected, part, counters], Run, 5, worst,
+                            $"{kernel} + int8_gemv_finish_f32", $"{kernel} (last block)");
+                    }
+                    else
+                    {
+                        ProductsCase(what, [x, packed, scales, y, part, counters], [3], [x, packed, scales, expected, part, counters],
+                            (mem, at, second, seed) => Run(mem, at, second, seed, false), worst, kernel);
+                    }
                 }
             }
         }

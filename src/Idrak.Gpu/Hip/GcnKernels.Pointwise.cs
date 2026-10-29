@@ -790,12 +790,14 @@ internal static partial class GcnKernels
 
         /// <summary>
         /// target = MathF.Pow(x, p) as CUDA's pow_f32 computes it (PowOf, with PtxKernels.PowFlags' bits in the scalar
-        /// <paramref name="flags"/>): 2^(p · log2 |x|) with the product's rounding error taken back by a fused step, then the
-        /// sign, NaN and the exponents 0, 1 and 2 as MathF.Pow has them.
+        /// <paramref name="flags"/>): 2^(p · log2 |x|) with the product's rounding error taken back by a fused step, a
+        /// denormal |x| scaled by 2^32 before the logarithm and a result below 2^-126 scaled after the exponential (as
+        /// LLVM does), then the sign, NaN and the exponents 0, 1 and 2 as MathF.Pow has them. The one pow sequence:
+        /// pow_f32 and pow_bwd_f32 both write it (plan 35, G6b).
         /// </summary>
         public void Pow(string target, string x, string p, string flags)
         {
-            string a = V(), scaled = V(), l = V(), shift = V(), hi = V(), lo = V(), r = V(), t = V(), negated = V(), xx = V();
+            string a = V(), scaled = V(), l = V(), shift = V(), hi = V(), lo = V(), small = V(), r = V(), t = V(), negated = V(), xx = V();
             string finite = Mask(), one = Mask(), unit = Mask(), xIsOne = Mask(), chosen = Mask();
             I($"v_and_b32_e32 {a}, 0x7fffffff, {x}");
             I($"v_cmp_gt_f32_e32 vcc, {S(0x00800000u)}, {a}               ; below the smallest normal: scaled by 2^32");
@@ -807,7 +809,12 @@ internal static partial class GcnKernels
             I($"v_mul_f32_e32 {hi}, {p}, {l}");
             I($"v_fma_f32 {lo}, {l}, {p}, -{hi}                          ; the product's rounding error");
             I($"v_mul_f32_e32 {lo}, {Literal(0x3f317218u)}, {lo}");
-            I($"v_exp_f32_e32 {r}, {hi}");
+            I($"v_cmp_gt_f32_e32 vcc, {S(-126f)}, {hi}                     ; below 2^-126: 2^(hi + 64) · 2^-64");
+            I($"v_cndmask_b32_e32 {small}, 0, {VC(64f)}, vcc");
+            I($"v_add_f32_e32 {small}, {hi}, {small}");
+            I($"v_exp_f32_e32 {r}, {small}");
+            I($"v_cndmask_b32_e32 {small}, 1.0, {VC(0x1f800000u)}, vcc");
+            I($"v_mul_f32_e32 {r}, {r}, {small}");
             I($"v_fma_f32 {t}, {r}, {lo}, {r}");
             I($"v_cmp_class_f32_e64 {finite}, {hi}, {S(0x1f8u)}          ; a finite product: corrected");
             I($"v_cndmask_b32_e64 {r}, {r}, {t}, {finite}");

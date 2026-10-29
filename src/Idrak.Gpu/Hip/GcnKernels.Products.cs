@@ -10,7 +10,8 @@ namespace Idrak.Gpu.Hip;
 // .Rows.cs, .Quantized.cs): CUDA's names, CUDA's arguments in CUDA's order, the CPU backend's results within the
 // device-against-CPU tolerance. Every output's sum is taken in one order fixed by the shapes (rule 86): over k in
 // increasing order within a thread, then the parts (slices of k inside a block, splits of k across blocks) added in
-// their order, by LDS in a fixed shape or by a second kernel, never by atomics; so a result is the same on every grid,
+// their order, by LDS in a fixed shape, by the launch's last block or by a second kernel, never added by atomics; so a
+// result is the same on every grid,
 // every wave order and every device of the family.
 //
 // - matmul_f32: c[b] = alpha · op(a[b]) · op(b[b]) + beta · c[b] (+ bias[j] on every row), CUDA's matmul_f32 (its twelve
@@ -34,10 +35,11 @@ namespace Idrak.Gpu.Hip;
 // - {int8,int4,bf16,f16}_gemv[_rR]_f32: the packed few-row products (Backend.Int8MatMul, Int4MatMul, BFloat16MatMul,
 //   Float16MatMul for m ≤ R; R = 1, 2, 4, 8, the last without a suffix as CUDA's int8_gemv_f32): one wave of 64 packed
 //   words (4, 8, 2, 2 columns each), every weight word read once a split; k in splits of `chunk` rows (grid y, leftover
-//   8.10): one split stores y (int8 scaled per column), several store each split's sums in part[split, r, j] and
-//   int8_gemv_finish_f32 adds them in split order (and scales them for int8). Four rows of k a step, the four words in
-//   flight, each row's four inputs read by the scalar unit. int4: a group's eight scales read once for its 32 rows;
-//   `chunk` a multiple of 32 (CUDA's splits start on 64). CUDA's argument list, `counters` unused (no atomics).
+//   8.10): one split stores y (int8 scaled per column), several store each split's sums in part[split, r, j] and the
+//   last block of the column range (CUDA's `counters`, a completion counter that only signals: GcnKernels.Finish.cs)
+//   adds them in split order (and scales them for int8) in the same launch; with counters 0, int8_gemv_finish_f32 does
+//   in a second launch. Four rows of k a step, the four words in flight, each row's four inputs read by the scalar unit.
+//   int4: a group's eight scales read once for its 32 rows; `chunk` a multiple of 32 (CUDA's splits start on 64).
 // - int8_gemv_finish_f32: y[i] = Σ_split part[split · size + i] in split order, times s[i mod cols] (s = 0: unscaled,
 //   for int4, bfloat16 and float16, which CUDA sums in the product kernel).
 // - int8_matmul_f32: many rows through int8 weights (CUDA's m > 8 path): a thread a (row, word), k in order.
@@ -228,7 +230,8 @@ internal static partial class GcnKernels
 
     /// <summary>
     /// A packed few-row product's arguments, CUDA's: x, q, s, y, part; m, n, k, n4 (words per weight row), chunk (rows of
-    /// k a split), splits; counters (unused: the splits are added by int8_gemv_finish_f32).
+    /// k a split), splits; counters (0: the splits are added by int8_gemv_finish_f32; else at least one a column range,
+    /// zeroed: the last split block of each range adds them, GcnKernels.Finish.cs).
     /// </summary>
     internal static IReadOnlyList<GcnArgument> PackedGemvArguments { get; } =
     [
@@ -310,10 +313,11 @@ internal static partial class GcnKernels
     /// <see cref="PackedGemvArgumentBytes"/> long. <paramref name="scales"/>: int8's per column, int4's per group (0 for the
     /// half-width formats); <paramref name="part"/>: the splits' sums when <paramref name="splits"/> &gt; 1.
     /// </summary>
-    internal static void PackPackedGemv(Span<byte> arguments, ulong x, ulong q, ulong scales, ulong y, ulong part, uint m, uint n, uint k, uint words, uint chunk, uint splits)
+    internal static void PackPackedGemv(Span<byte> arguments, ulong x, ulong q, ulong scales, ulong y, ulong part, uint m, uint n, uint k, uint words, uint chunk, uint splits,
+        ulong counters = 0)
     {
         ArgumentOutOfRangeException.ThrowIfNotEqual(arguments.Length, PackedGemvArgumentBytes);
-        PackArguments(PackedGemvArguments, arguments, x, q, scales, y, part, m, n, k, words, chunk, splits, 0UL);
+        PackArguments(PackedGemvArguments, arguments, x, q, scales, y, part, m, n, k, words, chunk, splits, counters);
     }
 
     /// <summary>int8_gemv_finish_f32's arguments (<see cref="GemvFinishArguments"/>) into <paramref name="arguments"/>, <see cref="GemvFinishArgumentBytes"/> long.</summary>
@@ -1028,12 +1032,18 @@ internal static partial class GcnKernels
         int cpw = ColumnsPerWord(format);
         var counts = PackedGemvRowCounts;
         bool gated = variant is PackedGemvVariant.Silu or PackedGemvVariant.Gelu, multi = variant == PackedGemvVariant.Multi;
+        bool addNorm = variant == PackedGemvVariant.AddNorm;
         string name = variant == PackedGemvVariant.Plain ? PackedGemvNames[(int)format * 4 + counts.IndexOf(rows)] : FusedGemvKernel(format, variant, rows);
         var w = new ProductWriter(name);
         if (multi)
         {
             // The shared arguments alone (12 dwords); each product's 10 are read for this block's product (grid z) below.
             w.Head(MultiGemvArguments, PackedGemvWords, workgroupIds: 3, loadDwords: MultiGemvSharedBytes / 4);
+        }
+        else if (addNorm)
+        {
+            // The product's arguments; the add and norms' are read by the last block alone (GcnKernels.Finish.cs).
+            w.Head(AddNormGemvArguments, PackedGemvWords, workgroupIds: 2, loadDwords: PackedGemvArgumentBytes / 4);
         }
         else
         {
@@ -1222,6 +1232,9 @@ internal static partial class GcnKernels
 
         w.L(multi ? (FormattableString)$"s_cmp_eq_u64 {part}, 0" : $"s_cmp_eq_u32 {splits}, 1");
         w.L($"s_cbranch_scc0 .Lpartial");
+
+        // Every row of k summed (one split, or the splits added by the last block below): y.
+        w.Label(".Lwhole");
         string[] scaleOf = new string[cpw];
         if (format == PackedWeights.Int8)
         {
@@ -1258,7 +1271,7 @@ internal static partial class GcnKernels
 
         StorePacked(w, acc, rows, cpw, m, n, columns, masks, saved, y, rowStart: null, scaleOf: format == PackedWeights.Int8 ? scaleOf : null, label: "y",
             biasOf: biasOf);
-        w.L($"s_branch .Ldone");
+        w.L($"s_branch {(addNorm ? ".Lcolumns_done" : multi ? ".Lpair" : ".Ldone")}");
         w.Label(".Lpartial");
         string first = w.S();
         if (multi)
@@ -1273,9 +1286,161 @@ internal static partial class GcnKernels
         }
 
         StorePacked(w, acc, rows, cpw, m, rowStride, columns, masks, saved, part, rowStart: first, scaleOf: null, label: "part");
+
+        // With counters (not 0): the last block of this column range (of this product) adds the splits in split order, as
+        // int8_gemv_finish_f32 and gemv_multi_finish_f32 do (from 0; the add-and-norm form from the first split, as
+        // gemv_addnorm_f32), and writes y above. Without: a second launch adds them.
+        string counters = w.Pointer("counters"), index = w.GroupX;
+        w.L($"s_cmp_eq_u64 {counters}, 0");
+        w.L($"s_cbranch_scc1 .Ldone");
+        if (multi)
+        {
+            index = w.S();
+            w.L($"s_mul_i32 {index}, {w.GroupZ}, {w.Scalar("blocks")}");
+            w.L($"s_add_u32 {index}, {index}, {w.GroupX}                 ; this product's range of counters");
+        }
+
+        WaveArrive(w, counters, index, splits, ".Ldone");
+        SplitSums(w, acc, rows, cpw, m, n, rowStride, columns, splits, part, multi ? w.GroupZ : null, fromFirst: addNorm);
+        w.L($"s_branch .Lwhole");
+        if (addNorm)
+        {
+            // Every block whose columns are final arrives once more (counters[column ranges]); the last does the rows.
+            w.Label(".Lcolumns_done");
+            string ranges = w.S();
+            w.L($"s_add_u32 {ranges}, {words}, {PackedGemvWords - 1}");
+            w.L($"s_lshr_b32 {ranges}, {ranges}, {int.Log2(PackedGemvWords)}          ; the column ranges (grid x)");
+            WaveArrive(w, counters, ranges, ranges, ".Ldone");
+            AddNormTail(w, y, m, n);
+        }
+
+        if (multi)
+        {
+            PairFinish(w, m, counters, columns, cpw);
+        }
+
         w.Label(".Ldone");
         w.L($"s_endpgm");
         return w.Source();
+    }
+
+    // acc[r, c] = Σ_split part[(z · splits + split) · m + r, column c] in split order (glc: other blocks stored them),
+    // from 0, or from the first split's (fromFirst); rows past m read row m - 1 and columns past n column n - 1 (never
+    // stored). A row's loads of a split (its columns) in flight together, the next row's issued before its adds wait:
+    // few registers beyond the accumulators, so the kernel's register count (its occupancy) stays the product's.
+    private static void SplitSums(ProductWriter w, string[,] acc, int rows, int cpw, string m, string n, string stride, string[] columns, string splits, string part,
+        string? product, bool fromFirst)
+    {
+        string lastColumn = w.S(), lastRow = w.S(), splitBytes = w.S(), t = w.S(), split = w.S(), at = w.SPair();
+        w.L($"s_sub_u32 {lastColumn}, {n}, 1");
+        w.L($"s_sub_u32 {lastRow}, {m}, 1");
+        w.L($"s_mul_i32 {splitBytes}, {m}, {stride}");
+        w.L($"s_lshl_b32 {splitBytes}, {splitBytes}, 2                  ; a split's rows of part");
+        string[] read = new string[cpw];
+        for (int c = 0; c < cpw; c++)
+        {
+            read[c] = w.V();
+            w.L($"v_min_u32_e32 {read[c]}, {lastColumn}, {columns[c]}");
+            w.L($"v_lshlrev_b32_e32 {read[c]}, 2, {read[c]}");
+        }
+
+        string[] rowBytes = new string[rows];
+        for (int r = 0; r < rows; r++)
+        {
+            rowBytes[r] = w.S();
+            w.L($"s_min_u32 {t}, {r}, {lastRow}");
+            w.L($"s_mul_i32 {t}, {t}, {stride}");
+            w.L($"s_lshl_b32 {rowBytes[r]}, {t}, 2");
+        }
+
+        w.L($"s_mov_b64 {at}, {part}");
+        if (product is not null)
+        {
+            string first = w.S();
+            w.L($"s_mul_i32 {first}, {product}, {splits}");
+            w.L($"s_mul_i32 {first}, {first}, {splitBytes}");
+            w.Add64(at, first);
+        }
+
+        string[] bases = new string[rows];
+        for (int r = 0; r < rows; r++)
+        {
+            bases[r] = w.SPair();
+        }
+
+        void Bases()
+        {
+            for (int r = 0; r < rows; r++)
+            {
+                w.L($"s_add_u32 {ProductWriter.Lo(bases[r])}, {ProductWriter.Lo(at)}, {rowBytes[r]}");
+                w.L($"s_addc_u32 {ProductWriter.Hi(bases[r])}, {ProductWriter.Hi(at)}, 0");
+            }
+        }
+
+        if (fromFirst)
+        {
+            Bases();
+            for (int r = 0; r < rows; r++)
+            {
+                for (int c = 0; c < cpw; c++)
+                {
+                    w.L($"global_load_dword {acc[r, c]}, {read[c]}, {bases[r]} glc");
+                }
+            }
+
+            w.Add64(at, splitBytes);
+            w.L($"s_mov_b32 {split}, 1");
+        }
+        else
+        {
+            for (int r = 0; r < rows; r++)
+            {
+                for (int c = 0; c < cpw; c++)
+                {
+                    w.L($"v_mov_b32_e32 {acc[r, c]}, 0");
+                }
+            }
+
+            w.L($"s_mov_b32 {split}, 0");
+        }
+
+        // Two rows' loads alternate between two sets of registers.
+        string[,] loaded = new string[2, cpw];
+        for (int b = 0; b < 2; b++)
+        {
+            for (int c = 0; c < cpw; c++)
+            {
+                loaded[b, c] = w.V();
+            }
+        }
+
+        w.Label(".Lfinish_split");
+        w.L($"s_cmp_ge_u32 {split}, {splits}");
+        w.L($"s_cbranch_scc1 .Lfinish_split_end");
+        Bases();
+        for (int r = 0; r <= rows; r++)
+        {
+            if (r < rows)
+            {
+                for (int c = 0; c < cpw; c++)
+                {
+                    w.L($"global_load_dword {loaded[r % 2, c]}, {read[c]}, {bases[r]} glc");
+                }
+            }
+
+            if (r > 0)
+            {
+                for (int c = 0; c < cpw; c++)
+                {
+                    w.L($"v_add_f32_e32 {acc[r - 1, c]}, {acc[r - 1, c]}, {loaded[(r - 1) % 2, c]}");
+                }
+            }
+        }
+
+        w.Add64(at, splitBytes);
+        w.L($"s_add_u32 {split}, {split}, 1");
+        w.L($"s_branch .Lfinish_split");
+        w.Label(".Lfinish_split_end");
     }
 
     // Stores the rows below m of `acc` (times the column's scale when given, then plus the column's bias when given) at
@@ -1714,6 +1879,22 @@ internal static partial class GcnKernels
 
         /// <summary>Lines another writer made (each indented already), as they are.</summary>
         public void Lines(StringBuilder lines) => _text.Append(lines);
+
+        /// <summary>Several instruction lines (split at their line breaks), each indented; labels (ending in ':') as they are.</summary>
+        public void Block(string lines)
+        {
+            foreach (var part in lines.Split('\n'))
+            {
+                string line = part.Trim();
+                if (line.Length > 0)
+                {
+                    _text.Append(line.EndsWith(':') ? "" : "  ").Append(line).Append('\n');
+                }
+            }
+        }
+
+        /// <summary>The kernel arguments' address (s[0:1], or s[2:3] after the dispatch packet's).</summary>
+        public string Kernarg => _dispatch ? "s[2:3]" : "s[0:1]";
 
         private void Raw(FormattableString line) => _text.Append(line.ToString(CultureInfo.InvariantCulture)).Append('\n');
 
