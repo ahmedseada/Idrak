@@ -181,7 +181,7 @@ internal sealed unsafe partial class HipBackend
             extra[2] = (void*)LaunchParamBufferSize;
             extra[3] = &size;
             extra[4] = (void*)LaunchParamEnd;
-            Check(hipModuleLaunchKernel(function.Handle, blocks, 1, 1, blockSize, 1, 1, 0, _stream, null, extra), nameof(hipModuleLaunchKernel));
+            Launch(function, blocks, blockSize, extra);                       // timed while a profile runs (HipBackend.Profile.cs)
         }
     }
 

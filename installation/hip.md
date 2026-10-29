@@ -62,6 +62,42 @@ The HIP device test prints "hip:0: kernels loaded" or "unavailable (reason)"; un
 are not built yet, and checks memory, copies and the host fallback against the CPU. On a failure, send the failures
 file and the run again with `IDRAK_TRACE=1`.
 
+## 4. Profiling, verbose output, benches and telemetry
+
+`hip:0` takes the same diagnostics as the other GPUs:
+
+- **Profiler.** The backend times its kernels (`IKernelProfiler`) as CUDA's does: while a profile runs, each GCN launch
+  is timed on the GPU between two HIP events (created once and reused), by the kernel's name, or by a label with its
+  floating-point operations for products and attention. `idrak profile MODEL -d hip:0` lists the kernels of one decoding
+  step, and `--profile` with `IDRAK_PROFILE_PROBES=kernels` adds them to any command's report. Until the GCN kernels
+  land, the operations take the host fallback, so the table shows no kernel and the report says why. A runtime without
+  the event functions times nothing, and the telemetry says which functions it lacks.
+- **Verbose.** `--verbose` (or `IDRAK_VERBOSE=1`) prints, on the error stream, the first host fallback of each
+  operation with the reason the kernels are unavailable, and each device failure once: a code object the runtime refused
+  (each format tried with its error), a launch it refused (the kernel and its grid), a profile that cannot time.
+- **Telemetry.** The same events reach every hook at `TelemetryLevel.Devices` (`DeviceFailed`, `HostFallback`), as on
+  Vulkan.
+- **Bench.** `--bench-hip [launch|copies|fill]` in the test runner times the launch cost of `fill_f32` (its code object
+  loaded, cold and again; a launch over one float, queued, with a wait, and on the device; a launch over a large buffer),
+  uploads, downloads and copies on the device, and fill bandwidth (`fill_f32` beside the runtime's own fill), each first
+  call apart from the warm ones. The large buffer is a sixteenth of the memory the GPU has free (at most 256 MB), or
+  `IDRAK_BENCH_HIP_MB`; `IDRAK_BENCH_HIP_REPEATS` sets the warm calls (default 20). Without a HIP device it prints one
+  line saying why. `idrak bench -d hip:0` and `idrak report --bench -d hip:0` run their benchmarks on `hip:0` as on any
+  device.
+
+Windows (PowerShell), every output under `test-output\`:
+
+```powershell
+cd D:\Projects\Idrak
+dotnet build -c Release tests\Idrak.Tests
+dotnet run -c Release --no-build --project tests\Idrak.Tests -- --bench-hip > test-output\bench-hip.txt
+dotnet run -c Release --no-build --project src\Idrak.Cli -- profile Qwen/Qwen3-0.6B -d hip:0 > test-output\profile-hip.txt
+$env:IDRAK_PROFILE_OUT="test-output\profile-hip-run.txt"; $env:IDRAK_PROFILE_PROBES="kernels,operations"
+dotnet run -c Release --no-build --project src\Idrak.Cli -- run Qwen/Qwen3-0.6B "Hello" -d hip:0 --profile --verbose 2> test-output\verbose-hip.txt
+Remove-Item Env:IDRAK_PROFILE_OUT, Env:IDRAK_PROFILE_PROBES
+dotnet run -c Release --no-build --project src\Idrak.Cli -- bench -d hip:0 > test-output\kernel-bench-hip.txt
+```
+
 ## Settings
 
 | Variable | Meaning |

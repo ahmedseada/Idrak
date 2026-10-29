@@ -10,8 +10,10 @@ namespace Idrak.Cli.Shared;
 /// <c>--verbose</c> (or <c>IDRAK_VERBOSE=1</c>), common to every command: what the library does, printed as it happens,
 /// besides the lines a command prints with it: each prompt pass (rows, positions, pieces, time), decoding summed every
 /// few seconds and before the next prompt pass, the vision encoder and sound features, each kernel choice a device
-/// measured, the first host fallback of each operation, and each graph recording that failed (with its reason). On the
-/// error output, over the progress line (which redraws under it); the main output and <c>--json</c> stay as they are.
+/// measured, the first host fallback of each operation, each device failure (a kernel refused, a launch or runtime call
+/// that failed, kernels a profile cannot time: each different one once), and each graph recording that failed (with its
+/// reason). On the error output, over the progress line (which redraws under it); the main output and <c>--json</c> stay
+/// as they are.
 /// Stages are read at <c>TelemetryLevel.Stages</c>, which waits for nothing, so the run's timing is the run's.
 /// <c>--profile</c> is the report at the end; both can be on. The test runner takes both too.
 /// </summary>
@@ -25,6 +27,7 @@ internal sealed class VerboseLines : ITelemetryHook, IDisposable
     private readonly TextWriter _error;
     private readonly bool _console;
     private readonly IDisposable _subscription;
+    private readonly HashSet<(string Device, string? Operation, string Message)> _failures = [];
     private long _tokens, _chunks, _flushed = Stopwatch.GetTimestamp();
     private TimeSpan _decoding;
 
@@ -103,6 +106,19 @@ internal sealed class VerboseLines : ITelemetryHook, IDisposable
             else
             {
                 Line($"{e.Operation} ran on the host: {e.Device} has no kernel for it (its later calls are counted in the report)");
+            }
+        }
+    }
+
+    public void OnDeviceFailed(in DeviceFailed e)
+    {
+        lock (_lock)
+        {
+            // Each different failure once: an operation retried on the host on every call would repeat it.
+            if (_failures.Add((e.Device, e.Operation, e.Message)))
+            {
+                string operation = e.Operation is { } op ? $" ({op})" : "";
+                Line($"{e.Device} failed{operation}: {e.Message}{(e.RetriedOnHost ? "; retried on the CPU" : "")}");
             }
         }
     }

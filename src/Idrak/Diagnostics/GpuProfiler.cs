@@ -12,8 +12,9 @@ namespace Idrak.Diagnostics;
 public sealed record GpuProfileEntry(string Name, long Calls, double Milliseconds, double? Tflops);
 
 /// <summary>
-/// Times every kernel a CUDA device runs between <see cref="Start"/> and <see cref="Stop"/>, by waiting for each one:
-/// shows where a training step's GPU time goes. Much slower than normal running, so profile a step or two, not a run.
+/// Times every kernel a device that times its kernels (CUDA, HIP) runs between <see cref="Start"/> and <see cref="Stop"/>,
+/// by waiting for each one: shows where a training step's GPU time goes. Much slower than normal running, so profile a
+/// step or two, not a run.
 /// </summary>
 public static class GpuProfiler
 {

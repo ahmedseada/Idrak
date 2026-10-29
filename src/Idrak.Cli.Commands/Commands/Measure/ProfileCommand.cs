@@ -160,6 +160,11 @@ internal sealed class ProfileCommand : Command
             context.Table(["Kernel", "Calls", "ms", "Share"],
                 kernels.Take(top).Select(k => (IReadOnlyList<string>)[k.Name, k.Calls.ToString(CultureInfo.InvariantCulture), k.Milliseconds.ToString("F3", CultureInfo.InvariantCulture), Share(k.Milliseconds, kernels.Sum(e => e.Milliseconds))]));
         }
+        else if (device.Backend is IKernelProfiler)
+        {
+            string why = (device.Backend as IKernelAvailability)?.KernelsUnavailable() is { } off ? $" (its kernels are unavailable: {off})" : "";
+            context.Write($"\nKernel times: no kernel of {device}'s own ran in the step{why}; the operations above are its finest timing.");
+        }
         else
         {
             context.Write($"\nKernel times: {device} does not time kernels; the operations above are its finest timing.");

@@ -143,9 +143,14 @@ internal abstract partial class Tests
             $"the operations' pass counts the calls: {report["operations"]}, {report["operation kinds"]}");
         var pass = report.Runs.Single(r => r.Probe == "operations");
         Check(pass.Tables.Any(t => t.Name == "operations" && t.Rows.Any(r => r[0] == "Softmax")), "the operations by count name Softmax");
+        // A device that times its kernels but runs none of its own yet (HIP until its GCN kernels land: every operation a
+        // host fallback) records a kernel time of 0.
         bool times = device.Backend is IKernelProfiler;
-        Check(times ? report["kernel time"] is { Value: > 0 } && report.Probes.Contains("kernels") : report.Skipped.Contains("kernels") && report["kernel time"] is null,
-            times ? "the device times its kernels" : $"kernels skipped on {device}: {string.Join(", ", report.Skipped)}");
+        string? kernelsOff = (device.Backend as IKernelAvailability)?.KernelsUnavailable();
+        Check(times ? report["kernel time"] is { } kernelTime && (kernelTime.Value > 0 || (kernelsOff is not null && kernelTime.Value == 0)) && report.Probes.Contains("kernels")
+                : report.Skipped.Contains("kernels") && report["kernel time"] is null,
+            times ? $"the device times its kernels{(kernelsOff is null ? "" : $" (none of its own ran: {kernelsOff})")}: {report["kernel time"]}"
+                : $"kernels skipped on {device}: {string.Join(", ", report.Skipped)}");
 
         // A device without kernels of its own: every operation a host fallback, counted by operation.
         if (device.Type == DeviceType.Cpu)

@@ -20,6 +20,7 @@ internal abstract partial class Tests
         ("hip architecture: the target string is read from the device properties by content; runtime versions read as major.minor.patch", HipArchitecture),
         ("hip kernel cache: the key changes with every input; a stored code object comes back; IDRAK_HIP_KERNEL_CACHE moves or disables it", HipKernelCacheKeys),
         ("hip: no vendor ids or card names in the code of src/Idrak.Gpu/Hip, and GPU targets (gfx names) only in its instruction-set tables, GcnTargets*.cs (comments may name them)", HipNoVendorNames),
+        ("hip profiler and telemetry: HipBackend times its kernels (IKernelProfiler) as CUDA does; a runtime without the event functions times nothing and says why; on HIP devices fill_f32's launches are timed under its name or a label with its floating-point operations, a refused code object reaches the telemetry, and a host fallback carries why the kernels are unavailable", HipProfilerAndTelemetry),
         ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation (products, rows, attention, gathers, permutes, through the host fallback until the GCN kernels land) match the CPU (on HIP devices)", HipDeviceMatchesCpu),
     ];
 
@@ -497,6 +498,95 @@ internal abstract partial class Tests
             {
                 s.Release();
             }
+        }
+    }
+
+    internal static void HipProfilerAndTelemetry(Device device)
+    {
+        if (FirstRun(nameof(HipProfilerAndTelemetry)))
+        {
+            Check(typeof(IKernelProfiler).IsAssignableFrom(typeof(HipBackend)), "HipBackend times its kernels (IKernelProfiler), so the profile's kernels probe and idrak profile take hip:N");
+            Check(HipBackend.ProfileUnavailable("hip:0", "libamdhip64.so", []) is null, "a runtime with every event function: nothing to say");
+            string? why = HipBackend.ProfileUnavailable("hip:0", "libamdhip64.so", ["hipEventCreate", "hipEventElapsedTime"]);
+            Check(why is not null && why.Contains("hip:0 cannot time its kernels", StringComparison.Ordinal) && why.Contains("libamdhip64.so", StringComparison.Ordinal)
+                  && why.Contains("hipEventCreate, hipEventElapsedTime", StringComparison.Ordinal), $"a runtime without events: the device, the runtime and what it lacks: {why}");
+        }
+
+        if (device.Type != DeviceType.Hip)
+        {
+            return;
+        }
+
+        var hip = (HipBackend)device.Backend;
+        var failures = new DeviceFailures("hip");
+        var fallbacks = new HostFallbacks("hip");
+        using var listening = Telemetry.Subscribe(failures);
+        using var listeningFallbacks = Telemetry.Subscribe(fallbacks);
+
+        // A host fallback says why the kernels are unavailable (what --verbose prints), when it is the first of its operation.
+        var a = hip.Allocate(64, zeroed: true);
+        var b = hip.Allocate(64, zeroed: true);
+        try
+        {
+            hip.Copy2D(a, 0, 8, b, 0, 8, 8, 8, accumulate: true);
+            hip.Synchronize();
+        }
+        finally
+        {
+            a.Release();
+            b.Release();
+        }
+
+        string? off = ((IKernelAvailability)hip).KernelsUnavailable();
+        var first = fallbacks.Events.FirstOrDefault(e => e.Operation == "Copy2D");
+        Check(first.Operation is null || first.KernelsUnavailable == off, $"the host fallback's reason: {first.KernelsUnavailable ?? "(reported earlier in the run)"} / {off ?? "kernels available"}");
+
+        if (hip.ProfileUnavailableReason is { } cannot)
+        {
+            Idrak.Diagnostics.GpuProfiler.Start(device);
+            var none = Idrak.Diagnostics.GpuProfiler.Stop(device);
+            Check(none.Count == 0 && failures.Events.Any(e => e.Operation == "profile" && e.Message == cannot), $"no events: nothing timed, and the telemetry says why: {cannot}");
+            Skip($"the HIP runtime cannot time kernels ({cannot})");
+        }
+
+        HipBackend.GcnFunction fill;
+        try
+        {
+            fill = hip.LoadGcn(GcnKernels.Fill);
+        }
+        catch (HipException e)
+        {
+            Check(failures.Events.Any(f => f.Message == e.Message), $"a refused code object reaches the telemetry: {e.Message}");
+            Skip($"the runtime refused Idrak's GCN code object, so no launch was timed: {e.Message}");
+            return;
+        }
+
+        const int Count = 1 << 20;
+        var storage = hip.Allocate(Count, zeroed: false);
+        try
+        {
+            hip.FillGcn(fill, storage, Count, 1f);                              // a launch outside the profile: not timed
+            Idrak.Diagnostics.GpuProfiler.Start(device);
+            Check(hip.Profiling, "profiling while the profiler runs");
+            for (int i = 0; i < 3; i++)
+            {
+                hip.FillGcn(fill, storage, Count, i);
+            }
+
+            HipBackend.LabelNextLaunch("fill_f32 labelled", 2.0 * Count);
+            hip.FillGcn(fill, storage, Count, 4f);
+            var entries = Idrak.Diagnostics.GpuProfiler.Stop(device);
+            Check(!hip.Profiling, "not profiling after the profiler stopped");
+            var named = entries.FirstOrDefault(e => e.Name == "fill_f32");
+            var labelled = entries.FirstOrDefault(e => e.Name == "fill_f32 labelled");
+            Check(entries.Count == 2 && named is { Calls: 3, Milliseconds: > 0, Tflops: null } && labelled is { Calls: 1, Milliseconds: > 0, Tflops: > 0 },
+                $"fill_f32 timed three times under its name and once under its label with its operations: {string.Join("; ", entries)}");
+            Console.WriteLine($"    {device}: fill_f32 over {Count:N0} floats, {named!.Milliseconds / 3 * 1000:F1} µs a launch on the device");
+        }
+        finally
+        {
+            storage.Release();
+            fill.Dispose();
         }
     }
 }
