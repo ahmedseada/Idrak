@@ -43,8 +43,13 @@ a kernel the plug-in registers for the "vulkan" kind with `Kernels.Register`. Th
 (`Idrak.Gpu.Cuda`) takes PTX text and an `.entry` name; `Launch(backend, gridX, gridY, gridZ, blockX, blockY, blockZ,
 arguments)` queues it on the device's stream, the arguments being storages, `int`, `float` and `long` values
 (`KernelArgument`) checked against the parameters the PTX declares. Each device compiles a text once (the PTX by the
-driver) and keeps the module; driver errors raise `CudaException`. HIP plug-in kernels come with GCN text
-(`GcnKernel`, plan 35); until then HIP runs an operation's default kernel.
+driver) and keeps the module; driver errors raise `CudaException`. The same for HIP: `GcnKernel` (`Idrak.Gpu.Hip`)
+takes GCN text, AMD's assembly written with virtual registers as PTX is, whose `.kernel` line names it and whose `.arg`
+lines declare its arguments; each device assembles it once with Idrak's own assembler for the target it reports (no
+SDK), keeps the code object in the HIP kernel cache and loads it once, and `Launch` checks the arguments and the block
+against what the text declares. A plug-in registers it with the requirement `b => GcnKernel.UnavailableReason(b) is null`,
+so a GPU no registered GCN family handles runs the operation's default kernel; errors raise `HipException` (text that
+does not assemble names its line and column). `installation/hip.md` shows a whole example.
 
 ## Documentation
 

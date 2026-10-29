@@ -183,6 +183,63 @@ internal sealed partial class GcnAssembler
         }
     }
 
+    /// <summary>
+    /// A kernel's declarations as <see cref="AssembleKernel"/> reads them (<c>.kernel</c>, each <c>.arg</c> laid out at its
+    /// offset, the block and <c>.lds</c>), without its instructions: the lines up to the first instruction or label. The
+    /// directives are Idrak's syntax, the same for every family, so what a plug-in's kernel (<see cref="GcnKernel"/>)
+    /// checks its launches against is known before any device assembles it. The assembler starts again first.
+    /// </summary>
+    /// <exception cref="GcnSyntaxException">A directive is refused, or the text does not start with <c>.kernel</c>: its line, column and reason.</exception>
+    public GcnKernelDeclarations ReadDeclarations(ReadOnlySpan<byte> text)
+    {
+        Reset();
+        _kernel = true;
+        _parsing = true;
+        try
+        {
+            while (true)
+            {
+                int newline = text.IndexOf((byte)'\n');
+                ReadOnlySpan<byte> line = newline < 0 ? text : text[..newline];
+                line = line.Length > 0 && line[^1] == (byte)'\r' ? line[..^1] : line;
+                _line++;
+                line = line[..CommentStart(line)];
+                int at = SkipSpaces(line, 0);
+                if (at < line.Length)
+                {
+                    int end = NameEnd(line, at);
+                    bool label = end > at && end < line.Length && line[end] == (byte)':' && !IsDigit(line[at]);
+                    if (label || line[at] != (byte)'.')
+                    {
+                        break;                                                      // the first label or instruction: the declarations end
+                    }
+
+                    Directive(line, at);
+                }
+
+                if (newline < 0)
+                {
+                    break;
+                }
+
+                text = text[(newline + 1)..];
+            }
+
+            if (_kernelName is null)
+            {
+                throw new GcnSyntaxException(1, 1, "a kernel's text starts with .kernel <name>");
+            }
+
+            FixLayout();
+            return new GcnKernelDeclarations(_kernelName, _arguments is null ? [] : [.. _arguments], _maxFlat, _required, _lds);
+        }
+        finally
+        {
+            _kernel = false;
+            _parsing = false;
+        }
+    }
+
     /// <summary>The first physical register the last kernel gave virtual register <paramref name="id"/> of file <paramref name="file"/> ('s' or 'v').</summary>
     internal int PhysicalRegister(char file, int id)
     {

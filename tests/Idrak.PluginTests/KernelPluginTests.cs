@@ -9,6 +9,7 @@ using Idrak.Abstraction.Operations;
 using Idrak.Abstraction.Testing;
 using Idrak.Generation;
 using Idrak.Gpu.Cuda;
+using Idrak.Gpu.Hip;
 using Idrak.Layers;
 using Idrak.Layers.Abstractions;
 
@@ -17,7 +18,7 @@ namespace Idrak.PluginTests;
 /// <summary>
 /// The plug-ins' own device kernels (<see cref="PluginKernels"/>): the packed format, the cache layout, an
 /// <see cref="Autograd.Function"/> and a graph operation each run their plug-in operation, through its default kernel or
-/// through the kernel <see cref="PluginKernels.Install"/> registers for the device's kind (the CPU; Vulkan and CUDA
+/// through the kernel <see cref="PluginKernels.Install"/> registers for the device's kind (the CPU; Vulkan, CUDA and HIP
 /// for the packed format and the cache layout), seen in <see cref="Kernels.Chain"/> and counted by <see cref="Kernels.Trace"/>. The test
 /// runner in tests/Idrak.Tests runs <see cref="All"/> on every device; a failed check throws.
 /// </summary>
@@ -26,11 +27,11 @@ public static class KernelPluginTests
     /// <summary>The tests, by name.</summary>
     public static IReadOnlyList<(string Name, Action<Device> Run)> All { get; } =
     [
-        ("outside plug-in kernels: the packed format unpacks through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V, CUDA PTX), to the same weights and products", PackedFormatKernel),
-        ("outside plug-in kernels: the key/value cache layout expands its rows through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V, CUDA PTX), and generates the float32 cache's text", CacheLayoutKernel),
+        ("outside plug-in kernels: the packed format unpacks through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V, CUDA PTX, HIP GCN), to the same weights and products", PackedFormatKernel),
+        ("outside plug-in kernels: the key/value cache layout expands its rows through its plug-in operation, by default and through the kernel registered for the device (CPU, Vulkan SPIR-V, CUDA PTX, HIP GCN), and generates the float32 cache's text", CacheLayoutKernel),
         ("outside plug-in kernels: an Autograd.Function and a graph operation run their plug-in operations, by default and through the CPU kernel, with their gradients", FunctionAndGraphOpKernels),
         ("outside plug-in kernels: the testing kit checks each plug-in kernel on the device against its default kernel on the CPU (Conformance.Check)", KitChecksKernels),
-        ("outside plug-in kernels: CUDA kernels read their parameters from the PTX and refuse other devices and mismatched arguments", GpuKernelShapes),
+        ("outside plug-in kernels: CUDA kernels read their parameters from the PTX, HIP's GCN kernels theirs from the .arg lines (refusing text whose declarations do not read, with the line and column), and both refuse other devices, mismatched arguments and, for GCN, a block its text does not declare", GpuKernelShapes),
         ("outside plug-in kernels: the plug-in's PTX assembles with ptxas for every GPU target the installed ptxas lists at or above the PTX's own (no list of cards; skipped without ptxas: IDRAK_PTXAS, PATH or CUDA_PATH)", PtxAssembles),
     ];
 
@@ -228,9 +229,9 @@ public static class KernelPluginTests
         }
     }
 
-    // Whether Install registers the packed format's and the cache layout's kernels for this device: the CPU, Vulkan and
-    // CUDA (HIP takes the default kernels until plug-ins can ship GCN kernels).
-    private static bool RegistersFormatKernels(Backend backend) => backend.Kind is "cpu" or "vulkan" or "cuda";
+    // Whether Install registers the packed format's and the cache layout's kernels for this device: the CPU, Vulkan,
+    // CUDA, and HIP where a registered GCN family handles the device's target.
+    private static bool RegistersFormatKernels(Backend backend) => backend.Kind is "cpu" or "vulkan" or "cuda" || (backend.Kind == "hip" && PluginKernels.RunsGcn(backend));
 
     private static void GpuKernelShapes(Device device)
     {
@@ -239,6 +240,15 @@ public static class KernelPluginTests
         Check(new CudaKernel(".visible .entry k(.param .u64 a, .param .b32 b, .param .f32 c, .param .s32 d, .param .align 8 .b8 e[16]) { ret; }", "k").Parameters == "xwfi?",
             "PTX parameter types");
         Throws<ArgumentException>(() => new CudaKernel(PluginGpuSources.Ptx, "outside_missing"), "an entry the PTX does not declare");
+
+        // GCN: the arguments from the .arg lines ('p' a buffer, 'w' a 4-byte value, 'l' an 8-byte one), named.
+        var gcn = PluginKernels.GcnKernels;
+        Check(gcn[0].Parameters == "ppw" && gcn[1].Parameters == "pppww" && gcn[1].ParameterNames.SequenceEqual(["rows", "scales", "output", "n", "width"]),
+            $"GCN arguments: {gcn[0].Parameters}, {gcn[1].Parameters} ({string.Join(", ", gcn[1].ParameterNames)})");
+        Check(new GcnKernel(".kernel k\n.arg a, 8, global\n.arg b, 4, value\n.arg c, 8, value\n.arg d, 2, value\n  s_endpgm\n", "k").Parameters == "pwl?", "GCN argument kinds");
+        Throws<ArgumentException>(() => new GcnKernel(PluginGpuSources.GcnScaleRows, "outside_missing"), "an entry the GCN text does not declare");
+        string? refused = Message(() => new GcnKernel(".kernel k\n.arg a, 8, global\n.arg b, 4, bytes\n  s_endpgm\n", "k"));
+        Check(refused is not null && refused.Contains("line 3, column 12", StringComparison.Ordinal), $"GCN declarations refused with the line and column: {refused}");
 
         var backend = device.Backend;
         var x = backend.Allocate(4, zeroed: true);
@@ -252,6 +262,19 @@ public static class KernelPluginTests
             {
                 Throws<ArgumentException>(() => cuda[0].Launch(backend, 1, 1, 1, 64, 1, 1, [x, x, 4f]), "a float for an integer parameter");
                 Throws<ArgumentException>(() => cuda[0].Launch(backend, 1, 1, 1, 64, 1, 1, [x, x]), "one argument short");
+            }
+
+            if (backend.Kind != "hip")
+            {
+                Throws<ArgumentException>(() => gcn[0].Launch(backend, 1, 1, 1, 256, 1, 1, [x, x, 4]), "a GCN kernel on another device");
+            }
+            else
+            {
+                string? storage = Message(() => gcn[0].Launch(backend, 1, 1, 1, 256, 1, 1, [x, 4f, 4]));
+                Check(storage is not null && storage.Contains("outside_unpack_pairs", StringComparison.Ordinal) && storage.Contains("(values)", StringComparison.Ordinal),
+                    $"a float for a buffer, named: {storage}");
+                Throws<ArgumentException>(() => gcn[0].Launch(backend, 1, 1, 1, 256, 1, 1, [x, x]), "one argument short");
+                Throws<ArgumentOutOfRangeException>(() => gcn[0].Launch(backend, 1, 1, 1, 128, 1, 1, [x, x, 4]), "a block its text does not declare");
             }
         }
         finally
@@ -343,6 +366,20 @@ public static class KernelPluginTests
         }
 
         throw new InvalidOperationException($"{what}: no {typeof(TException).Name}");
+    }
+
+    // The message of the ArgumentException the action throws, or null when it throws none.
+    private static string? Message(Action action)
+    {
+        try
+        {
+            action();
+            return null;
+        }
+        catch (ArgumentException e)
+        {
+            return e.Message;
+        }
     }
 
     private static void Check(bool condition, string message)

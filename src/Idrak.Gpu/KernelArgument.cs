@@ -6,7 +6,8 @@ using System.Globalization;
 namespace Idrak.Gpu;
 
 /// <summary>
-/// One argument of a plug-in's CUDA kernel launch (<see cref="Cuda.CudaKernel.Launch(Backend, uint, uint, uint, uint, uint, uint, ReadOnlySpan{KernelArgument}, uint)"/>):
+/// One argument of a plug-in's GPU kernel launch (<see cref="Cuda.CudaKernel.Launch(Backend, uint, uint, uint, uint, uint, uint, ReadOnlySpan{KernelArgument}, uint)"/>,
+/// <see cref="Hip.GcnKernel.Launch(Backend, uint, uint, uint, uint, uint, uint, ReadOnlySpan{KernelArgument}, uint)"/>):
 /// the device address of a storage of the launching device (a <c>float*</c> parameter, 64 bits), a 32-bit integer, a
 /// float or a 64-bit integer. Storages, <c>int</c>, <c>uint</c>, <c>float</c> and <c>long</c> convert to it implicitly,
 /// so a launch reads <c>kernel.Launch(backend, blocks, 1, 1, 256, 1, 1, [rows, scales, output, n, width])</c>. Each
@@ -86,13 +87,16 @@ public readonly struct KernelArgument
     /// <summary>
     /// Checks <paramref name="arguments"/> against a kernel's parameters, one letter each ('p' a device pointer, 'i' a
     /// 32-bit integer, 'f' a float, 'l' a 64-bit integer; 'w' a 32-bit word that takes an integer or a float, 'x' a
-    /// 64-bit word that takes a pointer or a 64-bit integer).
+    /// 64-bit word that takes a pointer or a 64-bit integer), each named in a refusal by <paramref name="names"/>[i] when
+    /// given (the names the kernel's text declares).
     /// </summary>
-    internal static void CheckAgainst(string kernel, string parameters, ReadOnlySpan<KernelArgument> arguments)
+    internal static void CheckAgainst(string kernel, string parameters, ReadOnlySpan<KernelArgument> arguments, IReadOnlyList<string>? names = null)
     {
         if (arguments.Length != parameters.Length)
         {
-            throw new ArgumentException($"Kernel '{kernel}' declares {parameters.Length} parameters ({parameters}); {arguments.Length} arguments given.", nameof(arguments));
+            string declared = names is null ? parameters
+                : string.Join(", ", names.Select((name, i) => $"{name}: {Describe(parameters[i])}"));
+            throw new ArgumentException($"Kernel '{kernel}' declares {parameters.Length} parameters ({declared}); {arguments.Length} arguments given.", nameof(arguments));
         }
 
         for (int i = 0; i < arguments.Length; i++)
@@ -111,7 +115,7 @@ public readonly struct KernelArgument
             if (!fits)
             {
                 throw new ArgumentException(
-                    $"Kernel '{kernel}': argument {i} is {Describe(kind)} ({arguments[i]}), but parameter {i} takes {Describe(parameters[i])}.", nameof(arguments));
+                    $"Kernel '{kernel}': argument {i} is {Describe(kind)} ({arguments[i]}), but parameter {i}{(names is null ? "" : $" ({names[i]})")} takes {Describe(parameters[i])}.", nameof(arguments));
             }
         }
     }

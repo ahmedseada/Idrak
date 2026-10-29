@@ -76,6 +76,17 @@ public sealed class Idrak.Gpu.Cuda.CudaKernel : Idrak.Gpu.Abstractions.IDeviceKe
   public string Ptx { get; }
   public void Launch(Idrak.Abstraction.Devices.Backend backend, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ, System.ReadOnlySpan<Idrak.Gpu.KernelArgument> arguments, uint sharedBytes = 0)
 
+public sealed class Idrak.Gpu.Hip.GcnKernel : Idrak.Gpu.Abstractions.IDeviceKernel
+  public GcnKernel(string gcn, string entry, string? name = null)
+  public System.Collections.Generic.IReadOnlyList<string> ParameterNames { get; }
+  public override string ToString()
+  public static string? UnavailableReason(Idrak.Abstraction.Devices.Backend backend)
+  public string Entry { get; }
+  public string Gcn { get; }
+  public string Name { get; }
+  public string Parameters { get; }
+  public void Launch(Idrak.Abstraction.Devices.Backend backend, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ, System.ReadOnlySpan<Idrak.Gpu.KernelArgument> arguments, uint sharedBytes = 0)
+
 public sealed class Idrak.Gpu.Hip.HipException : Idrak.Abstraction.Devices.DeviceException
   public HipException(string message)
 

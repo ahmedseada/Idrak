@@ -4,11 +4,13 @@
 namespace Idrak.PluginTests;
 
 /// <summary>
-/// The CUDA kernels the plug-in kernels ship (<see cref="PluginKernels"/>), the same two as the SPIR-V of
-/// <see cref="PluginShaders"/>: what a plug-in gets from <c>nvcc -ptx</c> (written by hand here, in the style of the
-/// library's own PTX). Each loops over its n elements with a grid stride,
-/// so any number of blocks works. The PTX targets sm_50 (the driver compiles it for newer GPUs) and is assembled with
-/// ptxas by a test when ptxas is on the machine.
+/// The CUDA and HIP kernels the plug-in kernels ship (<see cref="PluginKernels"/>), the same two as the SPIR-V of
+/// <see cref="PluginShaders"/>: for CUDA, what a plug-in gets from <c>nvcc -ptx</c> (written by hand here, in the style
+/// of the library's own PTX); for HIP, GCN with virtual registers in the syntax of the library's own GCN kernels, which
+/// Idrak assembles on each device (no SDK). Each loops over its n elements with a grid stride, so any number of blocks
+/// works. The PTX targets sm_50 (the driver compiles it for newer GPUs) and is assembled with ptxas by a test when
+/// ptxas is on the machine; the GCN is assembled for gfx900, gfx906, gfx908 and gfx90c and run in the GCN interpreter
+/// against the CPU by the library's tests.
 /// </summary>
 internal static class PluginGpuSources
 {
@@ -111,5 +113,103 @@ internal static class PluginGpuSources
         $L_scale_done:
             ret;
         }
+        """;
+
+    /// <summary>
+    /// <c>outside_unpack_pairs(packed, values, n)</c> in GCN, as the PTX's: values[i] = the bfloat16 half i % 2 (low first)
+    /// of word i / 2 of packed, for i &lt; n, in blocks of 256, grid-stride by the dispatch's work-items (the dispatch
+    /// packet's grid size).
+    /// </summary>
+    public const string GcnUnpackPairs = """
+        .kernel outside_unpack_pairs
+        .arg packed, 8, global
+        .arg values, 8, global
+        .arg n, 4, value
+        .reqd_workgroup_size 256, 1, 1
+        .user_sgpr dispatch_ptr
+        .user_sgpr kernarg_segment_ptr
+        .system_sgpr workgroup_id_x
+          s_load_dword %s10, s[0:1], 0xc            ; the grid's work-items: the stride
+          s_load_dwordx4 %s[0:3], s[2:3], 0x0       ; packed, values
+          s_load_dword %s7, s[2:3], 0x10            ; n
+          s_lshl_b32 %s8, s4, 8                     ; the block's first work-item
+          v_add_u32_e32 %v0, %s8, v0                ; i
+          v_cmp_gt_u32_e32 vcc, %s7, %v0
+          s_and_saveexec_b64 %s[12:13], vcc         ; the work-items below n
+          s_cbranch_execz .Lunpack_done
+        .Lunpack_next:
+          v_lshrrev_b32_e32 %v1, 1, %v0             ; word i / 2
+          v_lshlrev_b32_e32 %v1, 2, %v1             ; its bytes
+          global_load_dword %v2, %v1, %s[0:1]
+          v_and_b32_e32 %v3, 1, %v0
+          v_cmp_eq_u32_e32 vcc, 0, %v3              ; an even i takes the low half
+          v_lshlrev_b32_e32 %v4, 16, %v2            ; the low half
+          v_and_b32_e32 %v5, 0xffff0000, %v2        ; the high half
+          v_cndmask_b32_e32 %v6, %v5, %v4, vcc
+          v_lshlrev_b32_e32 %v7, 2, %v0
+          global_store_dword %v7, %v6, %s[2:3]
+          v_add_u32_e32 %v0, %s10, %v0              ; the next i, a grid further
+          v_cmp_gt_u32_e32 vcc, %s7, %v0
+          s_and_b64 exec, exec, vcc
+          s_cbranch_execnz .Lunpack_next
+        .Lunpack_done:
+          s_endpgm
+        """;
+
+    /// <summary>
+    /// <c>outside_scale_rows(rows, scales, output, n, width)</c> in GCN, as the PTX's: output[i] = rows[i] · scales[i / width]
+    /// for i &lt; n, in blocks of 256, grid-stride; i / width as LLVM divides unsigned integers (a reciprocal of width
+    /// once, then a high product and two corrections an element).
+    /// </summary>
+    public const string GcnScaleRows = """
+        .kernel outside_scale_rows
+        .arg rows, 8, global
+        .arg scales, 8, global
+        .arg output, 8, global
+        .arg n, 4, value
+        .arg width, 4, value
+        .reqd_workgroup_size 256, 1, 1
+        .user_sgpr dispatch_ptr
+        .user_sgpr kernarg_segment_ptr
+        .system_sgpr workgroup_id_x
+          s_load_dword %s10, s[0:1], 0xc            ; the grid's work-items: the stride
+          s_load_dwordx8 %s[0:7], s[2:3], 0x0       ; rows, scales, output, n, width
+          s_lshl_b32 %s8, s4, 8                     ; the block's first work-item
+          v_add_u32_e32 %v0, %s8, v0                ; i
+          v_cvt_f32_u32_e32 %v1, %s7                ; 2^32 / width, rounded down (LLVM's unsigned division)
+          s_sub_i32 %s9, 0, %s7
+          v_rcp_iflag_f32_e32 %v1, %v1
+          v_mul_f32_e32 %v1, 0x4f7ffffe, %v1
+          v_cvt_u32_f32_e32 %v1, %v1
+          v_mul_lo_u32 %v2, %s9, %v1
+          v_mul_hi_u32 %v2, %v1, %v2
+          v_add_u32_e32 %v1, %v1, %v2
+          v_cmp_gt_u32_e32 vcc, %s6, %v0
+          s_and_saveexec_b64 %s[12:13], vcc         ; the work-items below n
+          s_cbranch_execz .Lscale_done
+        .Lscale_next:
+          v_lshlrev_b32_e32 %v3, 2, %v0
+          global_load_dword %v4, %v3, %s[0:1]       ; rows[i]
+          v_mul_hi_u32 %v5, %v0, %v1                ; the row, i / width: an estimate
+          v_mul_lo_u32 %v6, %v5, %s7
+          v_sub_u32_e32 %v6, %v0, %v6               ; its remainder
+          v_add_u32_e32 %v7, 1, %v5
+          v_cmp_le_u32_e32 vcc, %s7, %v6
+          v_cndmask_b32_e32 %v5, %v5, %v7, vcc
+          v_subrev_u32_e32 %v8, %s7, %v6
+          v_cndmask_b32_e32 %v6, %v6, %v8, vcc
+          v_add_u32_e32 %v7, 1, %v5
+          v_cmp_le_u32_e32 vcc, %s7, %v6
+          v_cndmask_b32_e32 %v5, %v5, %v7, vcc      ; the row
+          v_lshlrev_b32_e32 %v9, 2, %v5
+          global_load_dword %v10, %v9, %s[2:3]      ; scales[row]
+          v_mul_f32_e32 %v11, %v4, %v10
+          global_store_dword %v3, %v11, %s[4:5]
+          v_add_u32_e32 %v0, %s10, %v0              ; the next i, a grid further
+          v_cmp_gt_u32_e32 vcc, %s6, %v0
+          s_and_b64 exec, exec, vcc
+          s_cbranch_execnz .Lscale_next
+        .Lscale_done:
+          s_endpgm
         """;
 }

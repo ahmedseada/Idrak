@@ -37,6 +37,63 @@ What the backend needs at run time (nothing at build time):
 | Runtime (memory, copies, launches) | `libamdhip64.so` from ROCm's runtime | `amdhip64_6.dll` (or `amdhip64_7.dll`, `amdhip64.dll`), installed by the AMD graphics driver |
 | Where it is looked for | the loader's search path, then `$ROCM_PATH/lib`, then `/opt/rocm/lib` | the DLL search path (the driver's runtime); no SDK folder |
 
+### A plug-in's own kernels, in GCN
+
+A plug-in can ship HIP kernels of its own, as it ships PTX for CUDA (`CudaKernel`) and SPIR-V for Vulkan
+(`VulkanKernel`): `GcnKernel` (`Idrak.Gpu.Hip`) takes GCN text in the syntax of Idrak's own kernels (`GcnKernels*.cs`):
+virtual registers (`%v12` a vector register, `%s3` a scalar one, `%s[0:3]` a range), the instructions of AMD's GCN
+reference, and before them the directives `.kernel name`, `.arg name, bytes, global|value[, offset]` (one a kernel
+argument, in order; a `global` buffer pointer is 8 bytes), `.reqd_workgroup_size x, y, z` or `.max_flat_workgroup_size n`
+(256 when neither), `.lds bytes`, and the values the hardware loads (`.user_sgpr kernarg_segment_ptr` puts the kernel
+arguments' address in `s[0:1]`, `.system_sgpr workgroup_id_x` the block's index in `s2`; the work-item's index is in
+`v0`). Idrak's assembler gives the registers, the waits and the wait states, as `ptxas` does for PTX.
+
+```csharp
+const string ScaleText = """
+    .kernel my_scale
+    .arg x, 8, global
+    .arg y, 8, global
+    .arg scale, 4, value
+    .arg n, 4, value
+    .reqd_workgroup_size 256, 1, 1
+    .user_sgpr kernarg_segment_ptr
+    .system_sgpr workgroup_id_x
+      s_load_dwordx4 %s[0:3], s[0:1], 0x0          ; x, y
+      s_load_dwordx2 %s[4:5], s[0:1], 0x10         ; scale, n
+      s_lshl_b32 %s6, s2, 8                        ; the block's first element
+      v_add_u32_e32 %v0, %s6, v0                   ; this work-item's element
+      v_cmp_gt_u32_e32 vcc, %s5, %v0
+      s_and_saveexec_b64 %s[8:9], vcc              ; the work-items below n
+      s_cbranch_execz .Ldone
+      v_lshlrev_b32_e32 %v1, 2, %v0
+      global_load_dword %v2, %v1, %s[0:1]
+      v_mul_f32_e32 %v3, %s4, %v2
+      global_store_dword %v1, %v3, %s[2:3]
+    .Ldone:
+      s_endpgm
+    """;
+static readonly GcnKernel Scale = new(ScaleText, "my_scale");
+
+Kernels.Register(MyOps.Scale, "hip", (b, x, y, scale, n) => Scale.Launch(b, (uint)((n + 255) / 256), 1, 1, 256, 1, 1, [x, y, scale, n]),
+    b => GcnKernel.UnavailableReason(b) is null);
+```
+
+- **Arguments.** Read from the `.arg` lines (`Parameters`: `p` a storage, `w` a 4-byte value that takes an `int` or a
+  `float`, `l` an 8-byte value that takes a `long`), and each launch is checked against them: a wrong count or kind is
+  refused naming the kernel and the argument. The block must be the one the text declares, the grid within what the
+  GPU reports, the dynamic shared memory (`sharedBytes`) within the GPU's after the text's `.lds`.
+- **Assembled once, cached.** The first launch on a GPU assembles the text for the target it reports, writes a code
+  object and loads it; the module stays loaded and the function is looked up once. The code object is kept in the
+  kernel cache under a key of its own (the text, the target, the device, the code object format and the runtime,
+  driver and library versions), so a later run loads it without assembling. The load is reported once to the telemetry
+  (`KernelsLoaded`, "plug-in GCN kernel …", from the cache or assembled).
+- **Errors.** Declarations that do not read are refused when the kernel is made; text that does not assemble for the
+  GPU's target raises `HipException` at its first launch, with the line and column. A GPU whose target no registered
+  GCN family handles gives `GcnKernel.UnavailableReason`, so the requirement above runs the operation's default kernel.
+- **Profiling and telemetry.** Each launch is timed under the kernel's name while a profile runs, and a launch the
+  runtime refuses reaches the telemetry, as Idrak's own kernels do. `IDRAK_HIP_KERNELS=0` turns off Idrak's kernels,
+  not a plug-in's (as CUDA always runs a plug-in's PTX).
+
 ## 1. Install
 
 ### Linux (ROCm's runtime)
@@ -140,8 +197,8 @@ dotnet run -c Release --no-build --project src\Idrak.Cli -- bench -d hip:0 > tes
 | `IDRAK_DISABLE_HIP=1` | Do not look for HIP devices. |
 | `IDRAK_HIP_RUNTIME` | A HIP runtime (a file name or path) tried before the graphics driver's. |
 | `IDRAK_HIP_WAIT=block` | Waits use the runtime's blocking synchronize instead of polling. |
-| `IDRAK_HIP_KERNELS=0` | HIP's GCN kernels stay off: every operation through the host fallback (to compare or isolate a kernel). |
-| `IDRAK_HIP_KERNEL_CACHE` | `0` keeps no assembled kernel set (assembled at every start); a folder keeps it there (default `IDRAK_CACHE/hip/kernels`, `~/.cache/idrak/hip/kernels`). |
+| `IDRAK_HIP_KERNELS=0` | HIP's GCN kernels stay off: every operation through the host fallback (to compare or isolate a kernel). A plug-in's `GcnKernel` still runs. |
+| `IDRAK_HIP_KERNEL_CACHE` | `0` keeps no assembled kernel set or plug-in kernel (assembled at every start); a folder keeps them there (default `IDRAK_CACHE/hip/kernels`, `~/.cache/idrak/hip/kernels`). |
 | `IDRAK_HIP_POINTWISE_BLOCKS` | Blocks of 256 an element-wise launch may take per compute unit the GPU reports (default 8); each kernel's grid-stride loop takes the rest. |
 | `IDRAK_HIP_GEMV_SPLITS` | The k splits of the packed few-row products (decoding through int8, int4, bfloat16 and float16 weights): a positive count; by default about two blocks a compute unit the GPU reports, a power of two, at most min(64, k / 64). The splits' sums are added in split order by a second kernel. |
 | `IDRAK_HIP_ATTENTION_SPLIT` | Key positions one split of an attention row takes (rounded up to a multiple of 256; default 512; `0` turns splits off): few rows over many keys split them over blocks (at most 64 splits, 4,096 blocks), merged in split order. |

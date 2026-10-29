@@ -6,6 +6,7 @@ using Idrak.Abstraction.Operations;
 using Idrak.Gpu;
 using Idrak.Gpu.Abstractions;
 using Idrak.Gpu.Cuda;
+using Idrak.Gpu.Hip;
 using Idrak.Gpu.Vulkan;
 
 // Plan 33, C1: the device contract as interfaces. What every device provides (IDeviceBackend), each optional capability
@@ -154,6 +155,7 @@ internal abstract partial class Tests
             [
                 new CudaKernel(Ptx, "contract_kernel"),
                 new VulkanKernel([0x07230203, 0, 0, 0, 0], bindings: 1, pushConstantBytes: 4, "contract_kernel"),
+                new GcnKernel(".kernel contract_kernel\n.arg a, 8, global\n.arg n, 4, value\n  s_endpgm\n", "contract_kernel"),
             ];
             foreach (var kernel in kernels)
             {

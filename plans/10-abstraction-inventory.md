@@ -386,10 +386,10 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
 |---|---|---|---|---|---|---|---|
 | `Idrak.Gpu.Abstractions.GcnTargets` | registry | public | — |  | gfx9 | Gpu | Gpu |
-| `Idrak.Gpu.Abstractions.IDeviceKernel` | interface | public | Backend | CudaKernel, VulkanKernel |  | Gpu | Gpu |
+| `Idrak.Gpu.Abstractions.IDeviceKernel` | interface | public | Backend | CudaKernel, GcnKernel, VulkanKernel |  | Gpu | Gpu |
 | `Idrak.Gpu.Abstractions.IGcnInstructionSet` | interface | internal | — | GcnTargets.Gfx9 |  | Gpu | Gpu |
 | `Idrak.Gpu.Abstractions.IGcnTarget` | interface | public | — | GcnTargets.Gfx9 |  | Gpu | Gpu |
-| `Idrak.Gpu.Abstractions.IKernelLauncher<TKernel>` | interface | public | — | CudaBackend |  | Gpu | Gpu |
+| `Idrak.Gpu.Abstractions.IKernelLauncher<TKernel>` | interface | public | — | CudaBackend, HipBackend |  | Gpu | Gpu |
 | `Idrak.Gpu.Abstractions.IVulkanKernelDispatcher` | interface | public | Storage | VulkanBackend |  | Gpu | Gpu |
 
 ### Idrak.Text
