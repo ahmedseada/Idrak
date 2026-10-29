@@ -602,19 +602,19 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `CpuBackend` | 128 of 144 |
 | `CudaBackend` | 136 of 144 |
 | `DeferredBackend` | 11 of 144 |
-| `HipBackend` | 73 of 144 |
+| `HipBackend` | 106 of 144 |
 | `VulkanBackend` | 124 of 144 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
 |---|---|---|---|---|---|---|
-| `AdamStep8BitKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `AdamStepKernel(9)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `AdamStep8BitKernel(13)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `AdamStepKernel(9)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AdaptiveAvgPoolBackwardKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AdaptiveAvgPoolKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AdaptiveMaxPoolBackwardKernel(8)` | virtual |  | ✓ |  |  | ✓ |
 | `AdaptiveMaxPoolKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AddBroadcastScalarKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `AddDropoutKernel(6)` | virtual |  | ✓ |  |  |  |
+| `AddDropoutKernel(6)` | virtual |  | ✓ |  | ✓ |  |
 | `AddRmsNormAffineKernel(9)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AddRowVectorKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AffineKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
@@ -626,10 +626,10 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `AttentionDecodeKernel(12)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AttentionInt8Kernel(15)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AttentionScoresInt8Kernel(8)` | virtual | ✓ | ✓ |  | ✓ |  |
-| `AttentionSpansBackwardKernel(19)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `AttentionSpansBackwardKernel(19)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AttentionSpansKernel(15)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AttentionSpansStridedKernel(18)` | virtual |  | ✓ |  | ✓ |  |
-| `AttentionTiledBackwardKernel(16)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `AttentionTiledBackwardKernel(16)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AttentionTiledKernel(13)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AvgPoolBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `AvgPoolKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
@@ -642,11 +642,11 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `BinaryKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `BoxIouLossBackwardKernel(7)` | virtual | ✓ |  |  |  |  |
 | `BoxIouLossKernel(6)` | virtual | ✓ |  |  |  |  |
-| `BroadcastAxisKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `ClampBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `BroadcastAxisKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `ClampBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ClampKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ClassMatchKernel(6)` | virtual | ✓ | ✓ |  | ✓ |  |
-| `ClipFactorKernel(3)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `ClipFactorKernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Col2ImKernel(3)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `ConvolutionBackwardInputKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `ConvolutionBackwardWeightKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
@@ -660,14 +660,14 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `Detach(1)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `Download(2)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `DownloadRange(3)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `DropoutBackwardKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `DropoutKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `ExtremumBackwardKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `DropoutBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `DropoutKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `ExtremumBackwardKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `FillKernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Float16DequantizeKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Float16MatMulKernel(6)` | virtual |  |  |  | ✓ |  |
-| `FusedAdamWKernel(9)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `GatedActivationBackwardKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `FusedAdamWKernel(9)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `GatedActivationBackwardKernel(8)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `GatedActivationBackwardPackedKernel(8)` | virtual | ✓ | ✓ |  |  |  |
 | `GatedActivationKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `GatedActivationPackedKernel(9)` | virtual | ✓ | ✓ |  |  |  |
@@ -675,8 +675,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `GatherBFloat16Kernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `GatherKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `GetMemoryUsage(0)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `GroupReduceKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `GroupScaleShiftKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `GroupReduceKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `GroupScaleShiftKernel(8)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `HistoryPushKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Im2ColKernel(3)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `Int4DequantizeKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
@@ -693,7 +693,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `LayerNormBackwardKernel(9)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `LayerNormFusedKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `LayerNormTrainKernel(8)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `LeakyReluBackwardKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `LeakyReluBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `LeakyReluKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `LiveStorages(1)` | virtual |  |  |  |  |  |
 | `LogSoftmaxTopKKernel(6)` | virtual | ✓ | ✓ |  | ✓ |  |
@@ -703,17 +703,17 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `MaxPoolBackwardKernel(4)` | virtual |  | ✓ |  |  | ✓ |
 | `MaxPoolKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `MulAddKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `NormApplyKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `NormBackwardKernel(9)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `NormApplyKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `NormBackwardKernel(9)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `NormRopeHeadsKernel(26)` | virtual |  | ✓ |  |  | ✓ |
-| `NormStatsKernel(8)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `NormStatsKernel(8)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `OneHotKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `PackBFloat16Kernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `PackedMatMulEpilogueKernel(11)` | virtual |  | ✓ |  |  |  |
 | `PackedMatMulNormAddRmsNormKernel(17)` | virtual |  | ✓ |  | ✓ |  |
 | `PenalizeRowsKernel(13)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `PermuteKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `PowBackwardKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `PowBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `PowKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `PrefersComposedAttention(12)` | virtual |  | ✓ |  |  | ✓ |
 | `ReleaseCachedMemory(0)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -722,34 +722,34 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `Return(1)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `ReuseQuantizedOperands(0)` | virtual |  | ✓ |  |  |  |
 | `RmsNormAffineKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `RmsNormBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `RmsNormBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `RmsNormKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `RmsNormRopeKernel(14)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `RmsNormRopePairKernel(21)` | virtual |  | ✓ |  |  | ✓ |
 | `RopeKernel(12)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `SampleRowsKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `ScaleMaskSoftmaxKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `ScatterAddKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `SgdStepKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `ScatterAddKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `SgdStepKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `SigmoidFocalLossBackwardKernel(7)` | virtual | ✓ |  |  |  |  |
 | `SigmoidFocalLossKernel(6)` | virtual | ✓ |  |  |  |  |
-| `SoftmaxBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `SoftmaxBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `SoftmaxCrossEntropyRowsKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `SoftmaxKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `SumAxisKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `SumColumnsKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `SumKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `SumRowsKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `SumSquaresKernel(3)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `SumAxisKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `SumColumnsKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `SumKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `SumRowsKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `SumSquaresKernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Synchronize(0)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `TensorCoresUnavailable(0)` | virtual | ✓ |  |  |  | ✓ |
-| `UnaryBackwardKernel(6)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `UnaryBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `UnaryKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Upload(2)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `UploadRange(3)` | virtual | ✓ | ✓ | ✓ |  | ✓ |
-| `WeightNormBackwardKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `WeightNormKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
-| `WhereBackwardKernel(5)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `WeightNormBackwardKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `WeightNormKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `WhereBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `WhereKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 
 

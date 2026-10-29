@@ -72,7 +72,7 @@ internal sealed unsafe partial class HipBackend
         return splits <= 1 ? (1, whole) : ((int)splits, (int)chunk);
     }
 
-    /// <summary>The cost of an attention or shape kernel from the tables at the top of GcnKernels.Attention.cs and .Shapes.cs; (0, 0) for another.</summary>
+    /// <summary>The cost of an attention or shape kernel from the tables at the top of GcnKernels.Attention.cs and .Shapes.cs, else a training kernel's (TrainingCost); (0, 0) for another.</summary>
     private static (double Flops, double Bytes) AttentionShapeCost(string kernel, bool variant) => kernel switch
     {
         "attention_decode_f32" or "attention_spans_f32" => (4, 8),                // per row × position × dimension
@@ -86,7 +86,7 @@ internal sealed unsafe partial class HipBackend
         "kv_write_int8" => (3, 9),
         "decoder_mask_f32" => (0, 4),
         "permute_f32" or "copy2d_f32" => variant ? (1, 12) : (0, 8),             // variant: adding into the output
-        _ => (0, 0),
+        _ => TrainingCost(kernel),                                          // GcnKernels.Training.cs's table
     };
 
     // An attention kernel for head size dim, or null: the kernels unavailable, a head past the kernels' slots, or a block
@@ -326,5 +326,92 @@ internal sealed unsafe partial class HipBackend
 
         LaunchShape(f, (int)n, Cost(f.Name).Flops * rows * steps * (double)capacity * dim, P(weights), P(cache), P(scales), P(y), U(steps), U(capacity), U(dim),
             U(words), U((int)n));
+    }
+
+    // ---- The backward passes (plan 35, G5b) -------------------------------------------------------------------------
+
+    // An attention backward kernel for head size dim, or null: the kernels unavailable, a head past the kernels' slots, or
+    // a block that may not have their LDS (the device's reported limit, rule 84).
+    private GcnFunction? AttentionBackwardKernel(string name, int dim) =>
+        dim >= 1 && dim <= GcnKernels.AttentionMaxDim && GcnKernels.AttentionBackwardLdsBytes <= DeviceLimits.SharedMemoryPerBlock ? Gcn(name) : null;
+
+    // Δ = dout · output per row (attn_bwd_d_f32), then dk and dv (a block a key position) and dq (a block a query row),
+    // each labelled for the profile; the work counted over every row and position (the causal half included: an upper bound).
+    private void AttentionBackward(GcnFunction delta, GcnFunction keys, GcnFunction queries, int rows, int keyBlocks, int positions, int dim, Storage output,
+        Storage dOutput, Span<ulong> arguments, int deltaArgument)
+    {
+        var d = Allocate(rows, zeroed: false);
+        try
+        {
+            LaunchRows(delta, rows, dim, Cost(delta.Name).Flops, P(output), P(dOutput), P(d), U(dim), U(rows));
+            arguments[deltaArgument] = P(d);
+            double work = (double)rows * positions * dim;
+            string shape = string.Create(CultureInfo.InvariantCulture, $"{rows}x{positions}x{dim}");
+            arguments[^1] = U(keyBlocks);
+            if (Profiling)
+            {
+                LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"{keys.Name} {shape}"), Cost(keys.Name).Flops * work);
+            }
+
+            LaunchKernel(keys, (uint)Math.Min(keyBlocks, DeviceLimits.MaxGridDimX), 1, arguments);
+            arguments[^1] = U(rows);
+            if (Profiling)
+            {
+                LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"{queries.Name} {shape}"), Cost(queries.Name).Flops * work);
+            }
+
+            LaunchKernel(queries, (uint)Math.Min(rows, DeviceLimits.MaxGridDimX), 1, arguments);
+        }
+        finally
+        {
+            d.Release();                                                         // reused in stream order
+        }
+    }
+
+    public override void AttentionTiledBackwardKernel(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
+        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    {
+        long rows = (long)heads * rowsPerHead, positions = (long)heads * capacity;
+        if (AttentionBackwardKernel("attn_bwd_q_f32", dim) is not { } queries || AttentionBackwardKernel("attn_bwd_kv_f32", dim) is not { } keyKernel
+            || Gcn("attn_bwd_d_f32") is not { } delta || heads <= 0 || rowsPerHead <= 0 || steps <= 0 || capacity <= 0 || rows > int.MaxValue || positions > int.MaxValue
+            || rows * dim >= 1L << 30 || positions * dim >= 1L << 30)
+        {
+            base.AttentionTiledBackwardKernel(q, keys, values, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
+        }
+
+        Span<ulong> arguments =
+        [
+            P(q), P(keys), P(values), P(dOutput), P(logSumExp), 0UL, P(dq), P(dkeys), P(dvalues),
+            U(rowsPerHead), U(steps), U(capacity), U(dim), F(scale), U(Math.Max(0, variant.Window)), F(variant.Softcap), 0UL,
+        ];
+        AttentionBackward(delta, keyKernel, queries, (int)rows, (int)positions, capacity, dim, output, dOutput, arguments, 5);
+    }
+
+    public override void AttentionSpansBackwardKernel(Storage q, Storage keys, Storage values, Storage starts, Storage ends, Storage output, Storage logSumExp,
+        Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int kvHeads, int headsPerTable, int rows, int keyRows, int dim, float scale,
+        AttentionVariant variant = default)
+    {
+        long all = (long)heads * rows, positions = (long)kvHeads * keyRows;
+        if (AttentionBackwardKernel("attn_spans_bwd_q_f32", dim) is not { } queries || AttentionBackwardKernel("attn_spans_bwd_kv_f32", dim) is not { } keyKernel
+            || Gcn("attn_bwd_d_f32") is not { } delta || kvHeads <= 0 || headsPerTable <= 0 || heads <= 0 || heads % kvHeads != 0 || heads % headsPerTable != 0
+            || all > int.MaxValue || positions > int.MaxValue || all * dim >= 1L << 30 || positions * dim >= 1L << 30)
+        {
+            base.AttentionSpansBackwardKernel(q, keys, values, starts, ends, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, kvHeads, headsPerTable, rows,
+                keyRows, dim, scale, variant);
+            return;
+        }
+
+        if (rows <= 0 || keyRows <= 0)
+        {
+            return;
+        }
+
+        Span<ulong> arguments =
+        [
+            P(q), P(keys), P(values), P(starts), P(ends), P(dOutput), P(logSumExp), 0UL, P(dq), P(dkeys), P(dvalues),
+            U(rows), U(keyRows), U(dim), F(scale), U(heads / kvHeads), U(headsPerTable), F(variant.Softcap), U(heads), 0UL,
+        ];
+        AttentionBackward(delta, keyKernel, queries, (int)all, (int)positions, keyRows, dim, output, dOutput, arguments, 7);
     }
 }

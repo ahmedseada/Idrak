@@ -250,9 +250,9 @@ internal abstract partial class Tests
         var all = GcnKernels.All;
         Check(all.Select(k => k.Name).Distinct().Count() == all.Count
               && all.Count == 1 + GcnKernels.Pointwise.Count + GcnKernels.Rows.Count + GcnKernels.Products.Count + GcnKernels.Attention.Count + GcnKernels.Shapes.Count
-                 + GcnKernels.Decoding.Count
+                 + GcnKernels.Decoding.Count + GcnKernels.Training.Count
               && all[0].Name == "fill_f32",
-            $"GcnKernels.All: fill_f32, then the element-wise, row, product, attention, shape and decoding kernels, each once ({all.Count})");
+            $"GcnKernels.All: fill_f32, then the element-wise, row, product, attention, shape, decoding and training kernels, each once ({all.Count})");
         foreach (string processor in new[] { "gfx900", "gfx906", "gfx908", "gfx90c" })
         {
             var isa = GcnIsaVersion.Parse(processor);
@@ -869,9 +869,104 @@ internal abstract partial class Tests
                 }, 1e-3f, wired: true);
                 Check(fused, $"{format}: with kernels, every fused packed product ran on HIP's kernels (none declined)");
             }
+            // Training (plan 35, G5b): the backward passes, the optimizers and the reductions on the GCN kernels.
+            int tn = 3001;
+            float[] tx = Values(tn), tdy = Values(tn), tpos = Values(tn, 0.1f, 3f);
+            foreach (var op in new[] { UnaryOp.Sigmoid, UnaryOp.Tanh, UnaryOp.Relu, UnaryOp.Square, UnaryOp.Abs, UnaryOp.Exp, UnaryOp.Gelu, UnaryOp.GeluErf, UnaryOp.Sin, UnaryOp.Cos, UnaryOp.Silu })
+            {
+                var cyo = Keep(cpu.Allocate(tn, zeroed: true));
+                cpu.Unary(op, On(cpu, tx), cyo, tn);
+                Both($"{op} gradient", [tx, Read(cpu, cyo, tn), tdy], [tn], (k, s) => k.UnaryBackward(op, s[0], s[1], s[2], s[3], tn), wired: true);
+            }
+
+            foreach (var op in new[] { UnaryOp.Log, UnaryOp.Sqrt })
+            {
+                var cyo = Keep(cpu.Allocate(tn, zeroed: true));
+                cpu.Unary(op, On(cpu, tpos), cyo, tn);
+                Both($"{op} gradient", [tpos, Read(cpu, cyo, tn), tdy], [tn], (k, s) => k.UnaryBackward(op, s[0], s[1], s[2], s[3], tn), wired: true);
+            }
+
+            Both("maximum gradient", [tx, tdy], [tn, tn], (k, s) => k.ExtremumBackward(BinaryOp.Maximum, s[0], s[1], s[1], s[2], s[3], tn), 0f, wired: true);
+            Both("minimum gradient, a alone", [tx, tdy], [tn], (k, s) => k.ExtremumBackward(BinaryOp.Minimum, s[0], s[1], s[1], s[2], null, tn), 0f, wired: true);
+            Both("power gradient", [tpos, tdy], [tn], (k, s) => k.PowBackward(s[0], s[1], s[2], tn, 2.5f), 1e-3f, wired: true);
+            Both("clamp gradient", [tx, tdy], [tn], (k, s) => k.ClampBackward(s[0], s[1], s[2], tn, -1f, 0.5f), 0f, wired: true);
+            Both("leaky ReLU gradient", [tx, tdy], [tn], (k, s) => k.LeakyReluBackward(s[0], s[1], s[2], tn, 0.1f), 0f, wired: true);
+            Both("selection gradient", [tx, tdy], [tn, tn], (k, s) => k.WhereBackward(s[0], s[1], s[2], s[3], tn), 0f, wired: true);
+            foreach (int kind in new[] { 0, 1, 2, 3 })
+            {
+                Both($"gated activation gradient, kind {kind}", [tx, tdy, Values(tn)], [tn, tn], (k, s) => k.GatedActivationBackward(s[0], s[1], s[2], s[3], s[4], tn, kind, 3), 1e-3f, wired: true);
+            }
+
+            Both("softmax gradient", [Values(sr * sc, 0f, 0.01f), Values(sr * sc)], [sr * sc], (k, s) => k.SoftmaxBackward(s[0], s[1], s[2], sr, sc, false), wired: true);
+            Both("log-softmax gradient", [Values(sr * sc, -6f, -1f), Values(sr * sc)], [sr * sc], (k, s) => k.SoftmaxBackward(s[0], s[1], s[2], sr, sc, true), 1e-3f, wired: true);
+            Both("RMS norm gradient", [Values(sr * sc), Values(sr * sc), Values(sr, 0.5f, 2f)], [sr * sc], (k, s) => k.RmsNormBackward(s[0], s[1], s[2], s[3], sr, sc), 1e-3f, wired: true);
+            Both("SGD with momentum", [Values(tn)], [tn, tn], (k, s) => k.SgdStep(s[1], s[0], s[2], tn, 0.1f, 0.9f), wired: true);
+            Both("Adam", [Values(tn), Values(tn, 0f, 0.01f)], [tn, tn], (k, s) => k.AdamStep(s[2], s[0], s[3], s[1], tn, 1e-3f, 0.9f, 0.999f, 1e-8f), 1e-3f, wired: true);
+            Both("dropout", [tx], [tn], (k, s) => k.Dropout(s[0], s[1], tn, 0.3f, 99u), 0f, wired: true);
+            Both("dropout gradient", [tx], [tn], (k, s) => k.DropoutBackward(s[0], s[1], tn, 0.3f, 99u), 0f, wired: true);
+            Both("residual and dropout", [tx, tdy], [tn], (k, s) => k.AddDropout(s[0], s[1], s[2], tn, 0.3f, 99u), 0f, wired: true);
+            Both("clipping factor", [[16f]], [1], (k, s) => k.ClipFactor(s[0], s[1], 2f), wired: true);
+            Both("sums of rows", [Values(7 * 300)], [300], (k, s) => k.SumRows(s[0], s[1], 7, 300), wired: true);
+            Both("sums of 300 rows (chunks folded)", [Values(300 * 77)], [77], (k, s) => k.SumRows(s[0], s[1], 300, 77), 1e-3f, wired: true);
+            Both("sum", [Values(70_000)], [1], (k, s) => k.Sum(s[0], s[1], 70_000, 0.5f), 1e-3f, wired: true);
+            Both("sum of squares", [Values(70_000)], [1], (k, s) => k.SumSquares(s[0], s[1], 70_000), 1e-3f, wired: true);
+            Both("sum along an axis", [Values(3 * 9 * 13)], [3 * 13], (k, s) => k.SumAxis(s[0], s[1], 3, 9, 13, 0.5f, false), 1e-3f, wired: true);
+            Both("sum along the last axis", [Values(4 * 300)], [4], (k, s) => k.SumAxis(s[0], s[1], 4, 300, 1, 1f, true), 1e-3f, wired: true);
+            Both("broadcast along an axis", [Values(3 * 13)], [3 * 9 * 13], (k, s) => k.BroadcastAxis(s[0], s[1], 3, 9, 13, 0.5f), wired: true);
+            float[] embedIds = [.. Enumerable.Range(0, 300).Select(i => (float)(i * 7 % 37))];
+            Both("scatter-add", [Values(300 * 13), embedIds], [37 * 13], (k, s) => k.ScatterAdd(s[0], s[1], s[2], 300, 13, 37), 1e-3f, wired: true);
+            foreach (var (no, ng, ni) in new[] { (3, 4, 50), (2, 2, 9000) })
+            {
+                int gn = no * ng * ni;
+                Both($"group statistics {no}x{ng}x{ni}", [Values(gn)], [ng, ng, ng], (k, s) => k.NormStats(s[0], s[1], s[2], s[3], no, ng, ni, 1e-5f), 1e-3f, wired: true);
+                Both($"group sums {no}x{ng}x{ni}", [Values(gn), Values(gn)], [ng, ng], (k, s) => k.GroupReduce(s[0], s[1], s[2], s[3], no, ng, ni), 1e-3f, wired: true);
+                Both($"normalization {no}x{ng}x{ni}", [Values(gn), Values(ng), Values(ng, 0.5f, 2f)], [gn], (k, s) => k.NormApply(s[0], s[1], s[2], s[3], no, ng, ni), 1e-3f, wired: true);
+                Both($"normalization gradient {no}x{ng}x{ni}", [Values(gn), Values(gn), Values(ng), Values(ng), Values(ng, 0.5f, 2f)], [gn],
+                    (k, s) => k.NormBackward(s[0], s[1], s[2], s[3], s[4], s[5], no, ng, ni), 1e-3f, wired: true);
+                Both($"group scale and shift {no}x{ng}x{ni}", [Values(gn), Values(ng), Values(ng)], [gn], (k, s) => k.GroupScaleShift(s[0], s[1], s[2], s[3], gn, ng, ni, true), 1e-3f, wired: true);
+            }
+
+            Both("weight norm", [Values(5, 0.5f, 2f), Values(5 * 300)], [5 * 300], (k, s) => k.WeightNorm(s[0], s[1], s[2], 5, 300), 1e-3f, wired: true);
+            Both("weight norm gradient", [Values(5, 0.5f, 2f), Values(5 * 300), Values(5 * 300)], [5, 5 * 300],
+                (k, s) => k.WeightNormBackward(s[0], s[1], s[2], s[3], s[4], 5, 300), 1e-3f, wired: true);
+            var codes = new byte[2 * 700];
+            random.NextBytes(codes);
+            float[] moments = new float[2 * 175];
+            Buffer.BlockCopy(codes, 0, moments, 0, codes.Length);
+            float[] map = [.. Enumerable.Range(0, 256).Select(i => MathF.Pow((i - 127.5f) / 127.5f, 3)), .. Enumerable.Range(0, 256).Select(i => i * i / 65025f)];
+            Both("8-bit Adam", [Values(700), moments[..175], moments[175..], Values(6, 0.01f, 0.1f), map], [700],
+                (k, s) => k.AdamStep8Bit(s[5], s[0], s[1], s[2], s[3], s[4], 700, 1e-3f, 0.9f, 0.999f, 1e-8f, 1f, 1f), 1e-3f, wired: true);
+            Both("fused AdamW", [Values(5000), Values(300), Values(5000, 0f, 0.01f), Values(300, 0f, 0.01f)], [5000, 5000, 300, 300], (k, s) =>
+            {
+                IDisposable? fused = null;
+                var tensors = new (Storage, Storage, Storage, Storage, int)[] { (s[4], s[0], s[5], s[2], 5000), (s[6], s[1], s[7], s[3], 300) };
+                if (!k.FusedAdamW(tensors, ref fused, 1f, 1e-3f, 0.99f, 0.9f, 0.999f, 1e-8f, false))
+                {
+                    throw new InvalidOperationException("no fused AdamW");
+                }
+
+                fused?.Dispose();
+            }, 1e-3f, wired: true);
+
+            // The attention gradients: tiled over a cache (a window and a soft-cap) and over key ranges (grouped heads).
+            float[] aq = Values(heads * 8 * dimA), ak = Values(heads * 50 * dimA), av = Values(heads * 50 * dimA), ady = Values(heads * 8 * dimA);
+            var cOut = Keep(cpu.Allocate(heads * 8 * dimA, zeroed: true));
+            var cLse = Keep(cpu.Allocate(heads * 8, zeroed: true));
+            var tiled = new AttentionVariant(5, 4f);
+            cpu.AttentionTiled(On(cpu, aq), On(cpu, ak), On(cpu, av), On(cpu, [0f]), cOut, cLse, heads, 8, 8, 50, dimA, 0.125f, tiled);
+            Both("tiled attention gradients", [aq, ak, av, Read(cpu, cOut, heads * 8 * dimA), Read(cpu, cLse, heads * 8), ady],
+                [heads * 8 * dimA, heads * 50 * dimA, heads * 50 * dimA],
+                (k, s) => k.AttentionTiledBackward(s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], heads, 8, 8, 50, dimA, 0.125f, tiled), 1e-3f, wired: true);
+            var sOut = Keep(cpu.Allocate(heads * rowsA * dimA, zeroed: true));
+            var sLse = Keep(cpu.Allocate(heads * rowsA, zeroed: true));
+            cpu.AttentionSpans(On(cpu, q), On(cpu, keysA), On(cpu, valuesA), On(cpu, starts), On(cpu, ends), sOut, sLse, heads, kvHeads, heads / 2, rowsA, keyRows, dimA, 0.125f);
+            Both("attention gradients over key ranges", [q, keysA, valuesA, starts, ends, Read(cpu, sOut, heads * rowsA * dimA), Read(cpu, sLse, heads * rowsA), Values(heads * rowsA * dimA)],
+                [heads * rowsA * dimA, kvHeads * keyRows * dimA, kvHeads * keyRows * dimA],
+                (k, s) => k.AttentionSpansBackward(s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9], s[10], heads, kvHeads, heads / 2, rowsA, keyRows, dimA, 0.125f),
+                1e-3f, wired: true);
 
             Check(!kernels || wiredFallbacks == 0,
-                $"with kernels, no row, element-wise, product, attention or shape operation took the host fallback ({wiredFallbacks} calls did: {string.Join(", ", wiredNames)})");
+                $"with kernels, no row, element-wise, product, attention, shape or training operation took the host fallback ({wiredFallbacks} calls did: {string.Join(", ", wiredNames)})");
             hip.Synchronize();
             if (!kernels)
             {
