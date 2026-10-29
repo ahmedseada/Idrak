@@ -57,6 +57,9 @@ These are the owner's standing rules. They hold in every session, after every co
   so builds do not compete for the machine. A slot never idles while work is ready: the moment an agent finishes, the
   slot takes the next piece of work whose inputs are already merged, without waiting for the current wave to end
   (waves are a dependency order, not a barrier).
+- **No idle background processes.** A session or agent never follows a file (`tail -f`, `less +F`, `watch`) and never
+  polls another slot's files: it reads a finished output once (`tail -n`, `grep`), waits only on its own command, and
+  leaves no background process running when it reports.
 - **Keep the owner informed.** Before each step, say in a line what you are about to do and why; never go quiet while
   working. The same for the software: long work shows live progress (what it is doing, how far, how fast, time left).
 - **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`. After
