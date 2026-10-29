@@ -27,7 +27,7 @@ internal abstract partial class Tests
         ("hip telemetry: KernelsLoaded (a device's kernel set, from the cache or assembled, its time, kernels and bytes) reaches the hooks at the Devices level, the console logger's line and the JSON lines' kernels_loaded", HipKernelsLoadedEvent),
         ("hip: no vendor ids or card names in the code of src/Idrak.Gpu/Hip, and GPU targets (gfx names) only in its instruction-set tables, GcnTargets*.cs (comments may name them)", HipNoVendorNames),
         ("hip profiler and telemetry: HipBackend times its kernels (IKernelProfiler) as CUDA does; a runtime without the event functions times nothing and says why; on HIP devices fill_f32's launches are timed under its name or a label with its floating-point operations, a refused code object reaches the telemetry, and a host fallback carries why the kernels are unavailable", HipProfilerAndTelemetry),
-        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row, element-wise, attention, shape and product operations (float32, few-row, packed int8, int4, bfloat16 and float16, the expansions and bfloat16 packing) and the decoding ones (the fused packed products, attention over rows and packed sequences, penalties, rotary embeddings, the element-wise operations with parameters) on the GCN kernels (kernels loaded: none of them through the host fallback; on HIP devices)", HipDeviceMatchesCpu),
+        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row, element-wise, attention, shape and product operations (float32, few-row, packed int8, int4, bfloat16 and float16, the expansions and bfloat16 packing) and the decoding ones (the fused packed products, attention over rows and packed sequences, penalties, rotary embeddings, the element-wise operations with parameters, the float32 products of one input, the norm and rotation of queries and keys and of the attention heads into a cache with NormRopeHeads true, the sampler's three paths with the CPU's tokens) on the GCN kernels (kernels loaded: none of them through the host fallback; on HIP devices)", HipDeviceMatchesCpu),
     ];
 
     internal static void HipMissingRuntime(Device device)
@@ -964,6 +964,96 @@ internal abstract partial class Tests
                 [heads * rowsA * dimA, kvHeads * keyRows * dimA, kvHeads * keyRows * dimA],
                 (k, s) => k.AttentionSpansBackward(s[0], s[1], s[2], s[3], s[4], s[5], s[6], s[7], s[8], s[9], s[10], heads, kvHeads, heads / 2, rowsA, keyRows, dimA, 0.125f),
                 1e-3f, wired: true);
+
+            // G5a's rest: the float32 products of one input, the norm and rotation of queries and keys and of the attention
+            // heads (NormRopeHeads true with the kernels, as on CUDA), and the sampler on each of its paths.
+            Both("three float32 products of one input, two with a bias", [Values(3 * 70), Values(70 * 130), Values(70 * 67), Values(70 * 200), Values(130), Values(200)],
+                [3 * 130, 3 * 67, 3 * 200], (k, s) => k.MatMulMany(s[0], 3, 70, [(s[1], s[4], s[6], 130), (s[2], null, s[7], 67), (s[3], s[5], s[8], 200)]), 1e-3f, wired: true);
+            Both("RMS norm and rotary embedding of queries and keys", [ropeX, Values(40), Values(2 * 40), Values(40), ropeCos, ropeSin, [5f, 7f]], [6 * 40, 2 * 40],
+                (k, s) => k.RmsNormRopePair(s[0], s[1], s[7], 6, 1e-6f, 0f, 3, s[2], s[3], s[8], 2, 1e-5f, 1f, 1, s[4], s[5], s[6], 40, 2, 16, false), wired: true);
+            foreach (bool bf16 in new[] { false, true })
+            {
+                // A decoding step (one sequence, one step): 4 query heads over 2 key/value heads of 40, keys and values
+                // into a cache of 8 rows at row 3; the CPU's steps: the norms with rotation, then the cache writes.
+                const int Heads = 4, Kv = 2, Dim = 40, Cache = 8;
+                int words = bf16 ? Dim / 2 : Dim;
+                bool ran = true;
+                float[][] headsInputs = [Values(Heads * Dim), Values(Kv * Dim), Values(Kv * Dim), Values(Dim), Values(Dim), ropeCos, ropeSin, [5f], [3f]];
+                var hs = headsInputs.Select(v => On(hip, v)).Concat([On(hip, Values(Heads * Dim)), On(hip, Values(Kv * Cache * words)), On(hip, Values(Kv * Cache * words))]).ToArray();
+                var cs = headsInputs.Select(v => On(cpu, v)).Concat(Enumerable.Range(9, 3).Select(i => On(cpu, Read(hip, hs[i], i == 9 ? Heads * Dim : Kv * Cache * words)))).ToArray();
+                Wired($"queries, keys and values into a {(bf16 ? "bfloat16" : "float32")} cache", () => ran = hip.NormRopeHeads(hs[0], hs[1], hs[2], 1, 1, Heads, Kv, Dim, hs[3], 1e-6f,
+                    0f, hs[4], 1e-5f, 1f, hs[5], hs[6], hs[7], 16, false, hs[9], hs[10], hs[11], hs[8], Cache, bf16 ? 2 * words : Dim, bf16));
+                Check(ran == kernels, $"NormRopeHeads ({(bf16 ? "bfloat16" : "float32")} cache): {ran} on HIP, {kernels} expected (the kernel with the kernels loaded)");
+                var normalized = Keep(cpu.Allocate(Kv * Dim, zeroed: false));
+                cpu.RmsNormRope(cs[0], cs[3], cs[5], cs[6], cs[7], cs[9], Heads, Dim, 1e-6f, 0f, Heads, 1, 16, false);
+                cpu.RmsNormRope(cs[1], cs[4], cs[5], cs[6], cs[7], normalized, Kv, Dim, 1e-5f, 1f, Kv, 1, 16, false);
+                if (bf16)
+                {
+                    cpu.KeyValueWriteBFloat16(normalized, cs[10], cs[8], Kv, 1, Cache, Dim);
+                    cpu.KeyValueWriteBFloat16(cs[2], cs[11], cs[8], Kv, 1, Cache, Dim);
+                }
+                else
+                {
+                    cpu.KeyValueWrite(normalized, cs[10], cs[8], Kv, 1, Cache, Dim);
+                    cpu.KeyValueWrite(cs[2], cs[11], cs[8], Kv, 1, Cache, Dim);
+                }
+
+                if (!ran)
+                {
+                    continue;
+                }
+
+                AssertClose(Read(cpu, cs[9], Heads * Dim), Read(hip, hs[9], Heads * Dim), 1e-4f, "NormRopeHeads: queries");
+                foreach (var (index, tensor) in new[] { (10, "keys"), (11, "values") })
+                {
+                    float[] want = Read(cpu, cs[index], Kv * Cache * words), have = Read(hip, hs[index], Kv * Cache * words);
+                    if (!bf16)
+                    {
+                        AssertClose(want, have, 1e-4f, $"NormRopeHeads: {tensor}");
+                        continue;
+                    }
+
+                    // bfloat16 halves as floats: a value rounded on either side of a tie may differ by one bfloat16 step.
+                    var wh = System.Runtime.InteropServices.MemoryMarshal.Cast<float, ushort>(want.AsSpan()).ToArray();
+                    var hh = System.Runtime.InteropServices.MemoryMarshal.Cast<float, ushort>(have.AsSpan()).ToArray();
+                    for (int i = 0; i < wh.Length; i++)
+                    {
+                        float e = BitConverter.UInt32BitsToSingle((uint)wh[i] << 16), g = BitConverter.UInt32BitsToSingle((uint)hh[i] << 16);
+                        Check(wh[i] == hh[i] || MathF.Abs(e - g) <= 1e-2f * MathF.Max(1f, MathF.Abs(e)), $"NormRopeHeads: {tensor} (bfloat16): half {i} is {g}, the CPU's {e}");
+                    }
+                }
+            }
+
+            // The sampler: the whole row with top-p and min-p, top-k 40 over the candidates, greedy rows; two steps each, the
+            // tokens and alternatives the CPU's, the probabilities within the tolerance.
+            foreach (var (vocabulary, topK, topP, minP) in new[] { (3000, 0, 0.9f, 0.05f), (9000, 40, 0.95f, 0.02f), (9000, 1, 1f, 0f) })
+            {
+                float[] samplerLogits = Values(4 * vocabulary, -6f, 6f);
+                samplerLogits[vocabulary + 77] = float.PositiveInfinity;                               // a row of +∞: its +∞ tokens alone
+                string what = $"sampler over {vocabulary} tokens, top-k {topK}, top-p {topP}, min-p {minP}";
+                (float[] Ids, float[] Stats) Sample(Backend b)
+                {
+                    var (x, ids, stats) = (On(b, samplerLogits), On(b, new float[4]), On(b, new float[2 * 4 * 13]));
+                    var steps = new[] { On(b, [0f]), On(b, [1f]) };
+                    foreach (var step in steps)
+                    {
+                        b.SampleRows(x, ids, stats, step, 4, vocabulary, vocabulary, 0, 0.8f, topK, topP, minP, 77u);
+                    }
+
+                    return (Read(b, ids, 4), Read(b, stats, 2 * 4 * 13));
+                }
+
+                var (cpuIds, cpuStats) = Sample(cpu);
+                (float[] Ids, float[] Stats) onHip = ([], []);
+                Wired(what, () => onHip = Sample(hip));
+                Check(onHip.Ids.SequenceEqual(cpuIds), $"{what}: tokens {string.Join(' ', onHip.Ids)}, the CPU's {string.Join(' ', cpuIds)}");
+                for (int i = 0; i < cpuStats.Length; i++)
+                {
+                    bool id = i % 13 is 0 or 3 or 5 or 7 or 9 or 11;
+                    Check(id ? onHip.Stats[i] == cpuStats[i] : MathF.Abs(onHip.Stats[i] - cpuStats[i]) <= 1e-3f * MathF.Max(1f, MathF.Abs(cpuStats[i])),
+                        $"{what}: statistic {i % 13} of step {i / 52}, row {i / 13 % 4} is {onHip.Stats[i]}, the CPU's {cpuStats[i]}");
+                }
+            }
 
             Check(!kernels || wiredFallbacks == 0,
                 $"with kernels, no row, element-wise, product, attention, shape or training operation took the host fallback ({wiredFallbacks} calls did: {string.Join(", ", wiredNames)})");

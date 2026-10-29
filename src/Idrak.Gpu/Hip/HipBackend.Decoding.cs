@@ -18,7 +18,10 @@ namespace Idrak.Gpu.Hip;
 //   packed sequences, their key ranges written on the device (segment_spans_f32) for attention_spans_f32. Their head sizes
 //   are the CPU's; a shape the kernels cannot take runs on the host, as before. The segmented gradient is G5b's: the host.
 // - The rows of decoding: the arg-max, class matches, the residual addition with its norm, the rotary embedding alone
-//   and after the norm, one-hot rows, the token history and its repetition penalties.
+//   and after the norm (one tensor, queries and keys in one launch, and the attention layer's heads into their layouts
+//   and cache, NormRopeHeads true as on CUDA), one-hot rows, the token history and its repetition penalties.
+// - The sampler: CUDA's paths (the whole row; top-k ≤ 64 over a vocabulary past four candidate slices through the
+//   candidates; greedy rows finished from the candidate blocks' parts), each draw the CPU's (GcnKernels' Sampler).
 // Each launch is labelled for --profile with its shape and floating-point operations (Cost, ProductCost).
 internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAttentionBackend, ISegmentedAttentionBackend
 {
@@ -50,6 +53,10 @@ internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAtten
         "one_hot_f32" => (0, 8),
         "history_push_f32" => (0, 8),                                                            // per row
         "penalize_rows_f32" => (0, 8),
+        "rms_norm_rope2_f32" or "norm_rope_heads_f32" => (7, 20),                               // per element
+        "topk_candidates_f32" => (3.0 * k + 3, 4.25),                                            // per score; k: the top-k
+        "topk_greedy_f32" => (3.0 * k + 7, 4.25),
+        "sample_rows_f32" or "sample_candidates_f32" or "sample_candidates_greedy_f32" => (150, 36), // per score or candidate
         "pow_f32" => (12, 8),
         "clamp_f32" => (4, 8),
         "leaky_relu_f32" => (1, 8),
@@ -353,6 +360,46 @@ internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAtten
             U(interleaved ? 1 : 0), U(rows));
     }
 
+    public override void RmsNormRopePairKernel(Storage x, Storage gain, Storage y, int rows1, float eps, float offset, int heads,
+        Storage x2, Storage gain2, Storage y2, int rows2, float eps2, float offset2, int heads2,
+        Storage cos, Storage sin, Storage positions, int cols, int steps, int half, bool interleaved)
+    {
+        if (rows1 < 0 || rows2 < 0 || heads <= 0 || heads2 <= 0 || steps <= 0 || half < 0 || 2L * half > cols || !ShapeFits((long)rows1 * cols, (long)rows2 * cols)
+            || RowKernel("rms_norm_rope2_f32", cols) is not { } f)
+        {
+            base.RmsNormRopePairKernel(x, gain, y, rows1, eps, offset, heads, x2, gain2, y2, rows2, eps2, offset2, heads2, cos, sin, positions, cols, steps, half, interleaved);
+            return;
+        }
+
+        LaunchRows(f, rows1 + rows2, cols, Cost(f.Name).Flops, P(x), P(gain), P(cos), P(sin), P(positions), P(y), P(x2), P(gain2), P(y2), U(cols), F(eps), F(offset),
+            U(heads), U(steps), U(half), U(interleaved ? 1 : 0), U(rows1), F(eps2), F(offset2), U(heads2), U(rows1 + rows2));
+    }
+
+    // The attention layer's queries, keys and values into the layouts attention reads in one launch (norm_rope_heads_f32,
+    // CUDA's flags: 1 the norms, 2 bfloat16 caches, 4 a cache position); false where the kernel cannot take it (the same
+    // refusals as Vulkan's, a tensor of 2^30 elements or more), so callers run the steps one by one.
+    public override bool NormRopeHeadsKernel(Storage q, Storage k, Storage v, int batch, int steps, int heads, int kvHeads, int cols,
+        Storage? gainQ, float epsQ, float offsetQ, Storage? gainK, float epsK, float offsetK, Storage? cos, Storage? sin, Storage? positions,
+        int half, bool interleaved, Storage yq, Storage yk, Storage yv, Storage? position, int capacity, int stride, bool bfloat16)
+    {
+        int rot = cos is null ? 0 : half;
+        long rows1 = (long)batch * steps * heads, rows2 = (long)batch * steps * kvHeads;
+        if (cols <= 0 || batch <= 0 || steps <= 0 || heads <= 0 || kvHeads <= 0 || capacity <= 0 || stride <= 0 || (gainQ is null) != (gainK is null)
+            || (cos is null) != (sin is null) || cos is not null && positions is null || rot < 0 || 2L * rot > cols || bfloat16 && (stride & 1) != 0
+            || rows1 + 2 * rows2 > int.MaxValue || !ShapeFits(rows1 * cols, rows2 * cols, (long)batch * kvHeads * capacity * stride)
+            || RowKernel("norm_rope_heads_f32", cols) is not { } f)
+        {
+            return false;
+        }
+
+        static ulong Optional(Storage? s) => s is null ? 0UL : P(s);
+        int flags = (gainQ is not null ? 1 : 0) | (bfloat16 ? 2 : 0) | (position is not null ? 4 : 0);
+        LaunchRows(f, (int)(rows1 + 2 * rows2), cols, Cost(f.Name).Flops, P(q), Optional(gainQ), P(k), Optional(gainK), P(v), Optional(cos), Optional(sin),
+            Optional(positions), Optional(position), P(yq), P(yk), P(yv), U(cols), F(epsQ), F(offsetQ), U(heads), F(epsK), F(offsetK), U(kvHeads), U(steps), U(rot),
+            U(interleaved ? 1 : 0), U((int)rows1), U((int)rows2), U(flags), U(capacity), U(stride), U((int)(rows1 + 2 * rows2)));
+        return true;
+    }
+
     public override void RopeKernel(Storage x, Storage y, Storage cos, Storage sin, Storage positions, int rows, int heads, int steps, int dim, int half, bool interleaved,
         float sign)
     {
@@ -402,5 +449,111 @@ internal sealed unsafe partial class HipBackend : IFusedPackedKernels, IRowAtten
 
         LaunchRows(f, rows, vocabulary, 0, P(logits), P(work), P(history), P(length), U(vocabulary), U(rowStride), U(rowOffset), U(capacity),
             U(Math.Min(lastN, capacity)), F(repeat), F(presence), F(frequency), U(rows), U(rows));
+    }
+
+    // ---- The sampler -------------------------------------------------------------------------------------------------
+
+    /// <summary>Tests and benchmarks: false samples greedy rows through the two candidate kernels alone, as CUDA's GreedyRows.</summary>
+    internal static bool GreedyRows { get; set; } = true;
+
+    // CUDA's paths: the whole row on sample_rows_f32; top-k ≤ 64 over a vocabulary past four candidate slices on the
+    // candidates (topk_candidates_f32, then sample_candidates_f32), and greedy rows (top-k 1, min-p at most 0.5, which can
+    // never raise the cut-off past the best score) on topk_greedy_f32 then sample_candidates_greedy_f32, which finishes a
+    // row of one best score from its blocks' parts. The host's sampler past the kernels' limits.
+    public override void SampleRowsKernel(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary,
+        int rowStride, int rowOffset, float temperature, int topK, float topP, float minP, uint seed)
+    {
+        if (rows <= 0)
+        {
+            return;
+        }
+
+        var settings = GcnKernels.SamplerSettings.Of(vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed, rows);
+        bool candidates = topK > 0 && topK <= GcnKernels.CandidateSlots && vocabulary > 4 * GcnKernels.CandidateSlice;
+        bool fits = vocabulary > 0 && rowStride >= 0 && rowOffset >= 0 && ShapeFits((long)(rows - 1) * rowStride + rowOffset + vocabulary);
+        if (!fits || !(candidates ? SampleCandidates(logits, ids, stats, step, rows, vocabulary, topK, minP, settings) : SampleWhole(logits, ids, stats, step, rows, vocabulary, settings)))
+        {
+            base.SampleRowsKernel(logits, ids, stats, step, rows, vocabulary, rowStride, rowOffset, temperature, topK, topP, minP, seed);
+        }
+    }
+
+    // The settings' values after the pointers, as the sampler kernels take them (ln(min-p) where CUDA has min-p).
+    private static void SamplerValues(Span<ulong> values, in GcnKernels.SamplerSettings s) =>
+        (values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7], values[8]) =
+        (s.Vocabulary, s.RowStride, s.RowOffset, F(s.InverseTemperature), s.TopK, F(s.TopP), F(s.LogMinP), s.Seed, s.Rows);
+
+    private bool SampleWhole(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, in GcnKernels.SamplerSettings settings)
+    {
+        if (RowKernel(GcnKernels.SamplerKernel(GcnKernels.SamplerForm.Rows), vocabulary) is not { } f)
+        {
+            return false;
+        }
+
+        Span<ulong> values = stackalloc ulong[14];
+        (values[0], values[1], values[2], values[3]) = (P(logits), P(ids), P(stats), P(step));
+        SamplerValues(values[4..], settings);
+        values[13] = U(rows);
+        LaunchRows(f, rows, vocabulary, Cost(f.Name).Flops, values);
+        return true;
+    }
+
+    private bool SampleCandidates(Storage logits, Storage ids, Storage stats, Storage step, int rows, int vocabulary, int topK, float minP,
+        in GcnKernels.SamplerSettings settings)
+    {
+        int blocks = (vocabulary + GcnKernels.CandidateSlice - 1) / GcnKernels.CandidateSlice, slots = blocks * GcnKernels.CandidateSlots;
+        bool greedy = GreedyRows && topK == 1 && minP <= 0.5f;
+        var form = greedy ? GcnKernels.SamplerForm.Greedy : GcnKernels.SamplerForm.Candidates;
+        if (!ShapeFits((long)rows * slots, (long)rows * blocks * 3) || Gcn(greedy ? "topk_greedy_f32" : "topk_candidates_f32") is not { } stage
+            || Gcn(GcnKernels.SamplerKernel(form)) is not { } sampler)
+        {
+            return false;
+        }
+
+        var candidateScores = Allocate(rows * slots, zeroed: false);
+        var candidateIds = Allocate(rows * slots, zeroed: false);
+        var flags = Allocate(rows * blocks, zeroed: false);                       // every block writes its own
+        var parts = greedy ? Allocate(rows * blocks * 3, zeroed: false) : null;
+        try
+        {
+            Span<ulong> first = stackalloc ulong[12];
+            int at = 0;
+            first[at++] = P(logits);
+            first[at++] = P(candidateScores);
+            first[at++] = P(candidateIds);
+            first[at++] = P(flags);
+            if (parts is not null)
+            {
+                first[at++] = P(parts);
+            }
+
+            (first[at], first[at + 1], first[at + 2], first[at + 3], first[at + 4], first[at + 5], first[at + 6]) =
+                (settings.Vocabulary, settings.RowStride, settings.RowOffset, F(settings.InverseTemperature), settings.TopK, U(blocks), U(rows * blocks));
+            LaunchRows(stage, rows * blocks, GcnKernels.CandidateSlice, Cost(stage.Name, topK).Flops, first[..(at + 7)]);
+
+            Span<ulong> second = stackalloc ulong[19];
+            at = 0;
+            (second[0], second[1], second[2], second[3], second[4], second[5], second[6]) =
+                (P(logits), P(ids), P(stats), P(step), P(candidateScores), P(candidateIds), P(flags));
+            at = 7;
+            if (parts is not null)
+            {
+                second[at++] = P(parts);
+            }
+
+            SamplerValues(second[at..], settings);
+            at += 9;
+            second[at++] = U(slots);
+            second[at++] = U(rows);
+            LaunchRows(sampler, rows, slots, Cost(sampler.Name).Flops, second[..at]);
+        }
+        finally
+        {
+            candidateScores.Release();                                       // reused in stream order
+            candidateIds.Release();
+            flags.Release();
+            parts?.Release();
+        }
+
+        return true;
     }
 }

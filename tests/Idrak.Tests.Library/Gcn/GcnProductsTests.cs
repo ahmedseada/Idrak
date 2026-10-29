@@ -110,7 +110,7 @@ internal abstract partial class Tests
     {
         _ = device;
         var names = GcnKernels.Products.Select(k => k.Name).ToArray();
-        Check(names.Length == 26 && names.Distinct().Count() == names.Length, $"26 product kernels, each once: {string.Join(", ", names)}");
+        Check(names.Length == 27 && names.Distinct().Count() == names.Length, $"27 product kernels, each once: {string.Join(", ", names)}");
         foreach (var format in (GcnWeights[])[GcnWeights.Int8, GcnWeights.Int4, GcnWeights.BFloat16, GcnWeights.Float16])
         {
             for (int m = 1; m <= GcnKernels.GemvRows; m++)
@@ -143,6 +143,7 @@ internal abstract partial class Tests
     {
         "matmul_f32" => (GcnKernels.MatMulArguments, GcnKernels.MatMulThreads),
         "gemv_nn_f32" or "gemv_nt_f32" => (GcnKernels.GemvArguments, GcnKernels.GemvThreads),
+        "gemv_multi_f32" => (GcnKernels.GemvMultiArguments, GcnKernels.GemvThreads),
         "int8_gemv_finish_f32" => (GcnKernels.GemvFinishArguments, GcnKernels.ExpansionBlock),
         "int8_matmul_f32" => (GcnKernels.Int8MatMulArguments, GcnKernels.ExpansionBlock),
         "int8_dequant_f32" or "int4_dequant_f32" => (GcnKernels.ScaledDequantArguments, GcnKernels.ExpansionBlock),

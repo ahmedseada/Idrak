@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.InteropServices;
 using System.Text;
 using Idrak.Gpu.Abstractions;
 using Idrak.Gpu.Hip;
@@ -9,7 +10,8 @@ using GcnWeights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
 using Variant = Idrak.Gpu.Hip.GcnKernels.PackedGemvVariant;
 
 // HIP's decoding kernels in GCN (GcnKernels.Decoding, and the element-wise kernels G5a added to GcnKernels.Pointwise),
-// each run by the GCN interpreter and proven against the CPU (plan 35, G5a). Every kernel is assembled for gfx90c and
+// each run by the GCN interpreter and proven against the CPU (plan 35, G5a; its rest: the sampler, the heads' norm and
+// rotation, gemv_multi_f32). Every kernel is assembled for gfx90c and
 // gfx906 (its printed text reading back to its bytes; with IDRAK_GCN_PRINTED naming a folder, written there for the
 // development check against llvm-mc), run over shapes that are not multiples of anything (fewer rows than a kernel's,
 // k in one split and in several, widths over more than one block, special values), compared to the CPU backend within
@@ -28,6 +30,9 @@ internal abstract partial class Tests
         ("gcn kernels: decoding: pow_f32 (every exponent kind, negative bases, zeros, infinities, NaN), clamp_f32, leaky_relu_f32, where_f32 (±0 and NaN conditions), inv_sqrt_f32, bias_gelu_f32, add_scalar_f32 and the four gated activations equal the CPU's; the same bits on two grids", GcnDecodingPointwise),
         ("gcn kernels: decoding: argmax_f32 (ties, all -inf, a NaN first), class_match_f32 (one column and many), add_rms_norm_affine_f32, rms_norm_rope_f32 (interleaved or not, dimensions past the rotated ones) and penalize_rows_f32 (repeated ids, ids out of the vocabulary, a wrapped history) equal the CPU's over rows of 1 to 2,333 columns; the same bits on two grids", GcnDecodingRows),
         ("gcn kernels: decoding: rope_f32 (interleaved or not, either sign), one_hot_f32 and history_push_f32 equal the CPU's, the same bits on two grids", GcnDecodingShapes),
+        ("gcn kernels: decoding: rms_norm_rope2_f32 (queries and keys, interleaved or not, every dimension rotated or some) and norm_rope_heads_f32 (norms or none, rotation or none, values copied; no cache, a float32 cache with padded rows and a bfloat16 cache at a position) equal the CPU's composed operations; the same bits on two grids", GcnDecodingNormRope),
+        ("gcn kernels: decoding: gemv_multi_f32 equals the CPU's float32 products of one input (MatMulMany: biases on some) for one and three products of different widths and 1 and 5 rows; the same bits on a second run", GcnDecodingFloatMulti),
+        ("gcn kernels: decoding: the sampler (sample_rows_f32; topk_candidates_f32 then sample_candidates_f32; topk_greedy_f32 then sample_candidates_greedy_f32) draws the CPU's tokens from its seeded stream over two steps (temperature, top-k, top-p, min-p; tied scores, +∞, NaN and all -∞ rows; ties overflowing a candidate block): the same tokens and alternatives, probabilities and entropy within the tolerance; the same bits on two grids", GcnDecodingSampler),
     ];
 
     private static readonly Dictionary<(string, GcnIsaVersion), (GcnKernelCode Code, GcnKernelImage Image)> decodingKernels = [];
@@ -88,7 +93,7 @@ internal abstract partial class Tests
         _ = device;
         var names = GcnKernels.Decoding.Select(k => k.Name).ToArray();
         int fused = GcnKernels.FusedGemvFormats.Count * 3 * GcnKernels.PackedGemvRowCounts.Length;
-        Check(names.Length == fused + 13 && names.Distinct().Count() == names.Length, $"{fused + 13} decoding kernels, each once: {string.Join(", ", names)}");
+        Check(names.Length == fused + 20 && names.Distinct().Count() == names.Length, $"{fused + 20} decoding kernels, each once: {string.Join(", ", names)}");
         foreach (var format in GcnKernels.FusedGemvFormats)
         {
             foreach (var variant in (Variant[])[Variant.Silu, Variant.Gelu, Variant.Multi])
@@ -132,10 +137,28 @@ internal abstract partial class Tests
                  {
                      ("gemv_multi_finish_f32", GcnKernels.MultiFinishArguments), ("segment_spans_f32", GcnKernels.SegmentSpansArguments), ("rope_f32", GcnKernels.RopeArguments),
                      ("one_hot_f32", GcnKernels.OneHotArguments), ("history_push_f32", GcnKernels.HistoryPushArguments),
+                     ("rms_norm_rope_f32", GcnKernels.NormRopeArguments(GcnKernels.NormRopeForm.Single)), ("rms_norm_rope2_f32", GcnKernels.NormRopeArguments(GcnKernels.NormRopeForm.Pair)),
+                     ("norm_rope_heads_f32", GcnKernels.NormRopeArguments(GcnKernels.NormRopeForm.Heads)), ("topk_candidates_f32", GcnKernels.CandidateArguments(greedy: false)),
+                     ("topk_greedy_f32", GcnKernels.CandidateArguments(greedy: true)), ("sample_rows_f32", GcnKernels.SamplerArguments(GcnKernels.SamplerForm.Rows)),
+                     ("sample_candidates_f32", GcnKernels.SamplerArguments(GcnKernels.SamplerForm.Candidates)),
+                     ("sample_candidates_greedy_f32", GcnKernels.SamplerArguments(GcnKernels.SamplerForm.Greedy)), ("gemv_multi_f32", GcnKernels.GemvMultiArguments),
                  })
         {
-            Check(DecodingKernel(name, ProductIsas[0]).Code.Arguments.SequenceEqual(list), $"{name}: its arguments as listed");
+            var code = DecodingKernel(name, ProductIsas[0]).Code;
+            Check(code.Arguments.SequenceEqual(list) && GcnCodeObject.KernargBytes(code) >= list[^1].Offset + list[^1].Size, $"{name}: its arguments as listed ({string.Join(", ", code.Arguments)})");
         }
+
+        // The kernels' names and their CUDA counterparts' argument names, in order.
+        Check(GcnKernels.SamplerArguments(GcnKernels.SamplerForm.Rows).Select(a => a.Name).SequenceEqual(
+                  ["logits", "ids", "stats", "step", "vocab", "rowstride", "rowoffset", "invt", "topk", "topp", "logminp", "seed", "rows", "n"]),
+            "sample_rows_f32: CUDA's arguments, ln(min-p) where CUDA has min-p");
+        Check(GcnKernels.NormRopeArguments(GcnKernels.NormRopeForm.Heads).Count == 28 && GcnKernels.NormRopeArguments(GcnKernels.NormRopeForm.Pair).Count == 21,
+            "norm_rope_heads_f32 and rms_norm_rope2_f32 take CUDA's 28 and 21 arguments");
+        var settings = GcnKernels.SamplerSettings.Of(5, 5, 0, 0f, -3, 0.9f, 0.05f, 9u, 2);
+        Check(settings.InverseTemperature == 1f / 1e-3f && settings.TopK == 0 && settings.LogMinP == MathF.Log(0.05f)
+              && float.IsNegativeInfinity(GcnKernels.SamplerSettings.Of(5, 5, 0, 1f, 1, 1f, 0f, 9u, 2).LogMinP)
+              && float.IsNegativeInfinity(GcnKernels.SamplerSettings.Of(5, 5, 0, 1f, 1, 1f, float.NaN, 9u, 2).LogMinP),
+            "the sampler's settings: the CPU's inverse temperature, a negative top-k as none, the CPU's ln(min-p) (-inf without min-p)");
     }
 
     // The CPU's product of `format`'s weights (int8: scales per column; int4: per group; bfloat16: none).
@@ -697,6 +720,346 @@ internal abstract partial class Tests
                 ProductsCase($"history_push_f32 {HRows} rows of {Capacity} ({isa})", [ids, (float[])history.Clone(), [12f]], [1], [ids, expected, [12f]],
                     (memory, at, second, seed) => DecodingDispatch("history_push_f32", isa, memory, (1, 1, 1), seed, at[0], at[1], at[2], Capacity, HRows, HRows),
                     worst, "history_push_f32", exact: true);
+            }
+        }
+
+        RowsReport(worst);
+    }
+
+    // One dispatch of any kernel of the set, its arguments packed by `pack` (a Pack* helper, given exactly the declared
+    // arguments' bytes; the kernel argument segment after them stays zero).
+    private static void DecodingPacked(string name, GcnIsaVersion isa, GcnMemory memory, (int X, int Y, int Z) grid, ulong seed, Action<byte[]> pack)
+    {
+        var (code, image) = DecodingKernel(name, isa);
+        var arguments = new byte[GcnCodeObject.KernargBytes(code)];
+        var exact = new byte[code.Arguments[^1].Offset + code.Arguments[^1].Size];
+        pack(exact);
+        exact.CopyTo(arguments, 0);
+        int block = code.RequiredWorkgroupSize?.X ?? code.MaxFlatWorkgroupSize;
+        GcnInterpreter.Run(image, memory, new GcnDispatch { Workgroups = grid, WorkgroupSize = (block, 1, 1), Arguments = arguments, Seed = seed });
+    }
+
+    internal static void GcnDecodingNormRope(Device device)
+    {
+        _ = device;
+        var worst = new Dictionary<string, float>();
+        var random = new Random(58);
+
+        // rms_norm_rope2_f32: 2 steps of 4 query heads and 2 key heads of 40, 16 pairs rotated (8 dimensions normalized
+        // alone) or all 20, interleaved or not.
+        {
+            const int Steps = 2, Heads = 4, KvHeads = 2, Cols = 40, Rows1 = Steps * Heads, Rows2 = Steps * KvHeads;
+            float[] x = RowsRandom(random, Rows1 * Cols, 2f), x2 = RowsRandom(random, Rows2 * Cols, 3f), gain = RowsRandom(random, Cols, 0.5f), gain2 = RowsRandom(random, Cols, 0.5f);
+            float[] positions = [5f, 7f];
+            foreach (int half in (int[])[16, 20])
+            {
+                float[] cos = RowsRandom(random, 10 * half, 1f), sin = RowsRandom(random, 10 * half, 1f);
+                foreach (bool interleaved in (bool[])[false, true])
+                {
+                    foreach (var isa in RowsIsas)
+                    {
+                        RowsCase($"rms_norm_rope2_f32 {Rows1}+{Rows2}x{Cols}, {half} pairs{(interleaved ? ", interleaved" : "")} ({isa})",
+                            [x, gain, cos, sin, positions, new float[Rows1 * Cols], x2, gain2, new float[Rows2 * Cols]], Rows1 + Rows2, [5, 8],
+                            (cpu, s) => cpu.RmsNormRopePairKernel(s[0], s[1], s[5], Rows1, 1e-6f, 0f, Heads, s[6], s[7], s[8], Rows2, 1e-5f, 1f, KvHeads, s[2], s[3], s[4], Cols,
+                                Steps, half, interleaved),
+                            (m, at, grid, seed) => DecodingPacked("rms_norm_rope2_f32", isa, m, (grid.X, grid.Y, 1), seed, bytes => GcnKernels.PackRmsNormRopePair(bytes, at[0], at[1],
+                                at[5], Rows1, 1e-6f, 0f, Heads, at[6], at[7], at[8], Rows2, 1e-5f, 1f, KvHeads, at[2], at[3], at[4], Cols, Steps, (uint)half, interleaved)),
+                            worst, "rms_norm_rope2_f32");
+                    }
+                }
+            }
+        }
+
+        // norm_rope_heads_f32: 2 sequences of 3 steps, 4 query heads over 2 key/value heads of 40.
+        {
+            const int Batch = 2, Steps = 3, Heads = 4, KvHeads = 2, Cols = 40, Start = 5, Capacity = 12;
+            const float EpsQ = 1e-5f, OffsetQ = 0.5f, EpsK = 1e-6f, OffsetK = 0f;
+            int rows1 = Batch * Steps * Heads, rows2 = Batch * Steps * KvHeads;
+            float[] q = RowsRandom(random, rows1 * Cols, 2f), k = RowsRandom(random, rows2 * Cols, 3f), v = RowsRandom(random, rows2 * Cols, 1f);
+            float[] gainQ = RowsRandom(random, Cols, 0.5f), gainK = RowsRandom(random, Cols, 0.5f), positions = [4f, 6f, 9f];
+            foreach (var (norm, half, interleaved) in ((bool, int, bool)[])[(true, 16, false), (true, 20, true), (false, 16, true), (true, 0, false), (false, 0, false)])
+            {
+                float[] cos = RowsRandom(random, 10 * Math.Max(1, half), 1f), sin = RowsRandom(random, 10 * Math.Max(1, half), 1f);
+                foreach (var (cache, bf16, stride) in ((bool, bool, int)[])[(false, false, Cols), (true, false, Cols + 4), (true, true, Cols)])
+                {
+                    int capacity = cache ? Capacity : Steps, cacheWords = bf16 ? stride / 2 : stride;
+                    float[] yq = RowsRandom(random, rows1 * Cols, 1f), yk = RowsRandom(random, Batch * KvHeads * capacity * cacheWords, 1f), yv = RowsRandom(random, yk.Length, 1f);
+
+                    // The CPU's steps: each tensor normalized and rotated (or one of them, or neither), then placed.
+                    float[] Transformed(float[] x, float[] gain, int heads, bool normalized, bool rotated, float eps, float offset)
+                    {
+                        int rows = x.Length / Cols;
+                        return RowsOnCpu([x, gain, cos, sin, positions, (float[])x.Clone()], (cpu, s) =>
+                        {
+                            if (normalized && rotated)
+                            {
+                                cpu.RmsNormRopeKernel(s[0], s[1], s[2], s[3], s[4], s[5], rows, Cols, eps, offset, heads, Steps, half, interleaved);
+                            }
+                            else if (normalized)
+                            {
+                                cpu.RmsNormAffineKernel(s[0], s[1], s[5], rows, Cols, eps, offset);
+                            }
+                            else if (rotated)
+                            {
+                                cpu.RopeKernel(s[0], s[5], s[2], s[3], s[4], rows, heads, Steps, Cols, half, interleaved, 1f);
+                            }
+                        })[5];
+                    }
+
+                    float[] tq = Transformed(q, gainQ, Heads, norm, half > 0, EpsQ, OffsetQ), tk = Transformed(k, gainK, KvHeads, norm, half > 0, EpsK, OffsetK);
+                    float[] wantQ = (float[])yq.Clone(), wantK = (float[])yk.Clone(), wantV = (float[])yv.Clone();
+                    var halvesK = MemoryMarshal.Cast<float, ushort>(wantK.AsSpan());
+                    for (int b = 0; b < Batch; b++)
+                    {
+                        for (int s = 0; s < Steps; s++)
+                        {
+                            for (int h = 0; h < Heads; h++)
+                            {
+                                Array.Copy(tq, ((b * Steps + s) * Heads + h) * Cols, wantQ, ((b * Heads + h) * Steps + s) * Cols, Cols);
+                            }
+
+                            for (int h = 0; h < KvHeads; h++)
+                            {
+                                int from = ((b * Steps + s) * KvHeads + h) * Cols, row = (b * KvHeads + h) * capacity + (cache ? Start : 0) + s;
+                                for (int c = 0; c < Cols; c++)
+                                {
+                                    if (bf16)
+                                    {
+                                        halvesK[row * stride + c] = Idrak.Abstraction.Devices.BFloat16Bits.Round(tk[from + c]);
+                                        MemoryMarshal.Cast<float, ushort>(wantV.AsSpan())[row * stride + c] = Idrak.Abstraction.Devices.BFloat16Bits.Round(v[from + c]);
+                                    }
+                                    else
+                                    {
+                                        wantK[row * stride + c] = tk[from + c];
+                                        wantV[row * stride + c] = v[from + c];
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Inputs: q, gain q, k, gain k, v, cos, sin, positions, position, yq, yk, yv.
+                    string what = $"norm_rope_heads_f32, {(norm ? "norms" : "no norm")}, {half} pairs{(interleaved ? " interleaved" : "")}, "
+                                  + (cache ? $"a {(bf16 ? "bfloat16" : "float32")} cache of rows of {stride} at {Start}" : "no cache");
+                    foreach (var isa in RowsIsas)
+                    {
+                        float[][] inputs = [q, gainQ, k, gainK, v, cos, sin, positions, [Start], yq, yk, yv];
+                        void Run(GcnMemory memory, ulong[] at, bool second, ulong seed) =>
+                            DecodingPacked("norm_rope_heads_f32", isa, memory, (second ? rows1 + 2 * rows2 : 2, 1, 1), seed, bytes => GcnKernels.PackNormRopeHeads(bytes, at[0],
+                                norm ? at[1] : 0UL, at[2], norm ? at[3] : 0UL, at[4], half > 0 ? at[5] : 0UL, half > 0 ? at[6] : 0UL, half > 0 ? at[7] : 0UL, cache ? at[8] : 0UL,
+                                at[9], at[10], at[11], Cols, EpsQ, OffsetQ, Heads, EpsK, OffsetK, KvHeads, Steps, (uint)half, interleaved, (uint)rows1, (uint)rows2,
+                                (norm ? 1u : 0u) | (bf16 ? 2u : 0u) | (cache ? 4u : 0u), (uint)capacity, (uint)stride));
+                        float[][] first = RowsOnGcn(inputs, (m, a) => Run(m, a, false, 1));
+                        float[][] again = RowsOnGcn(inputs, (m, a) => Run(m, a, true, 7));
+                        RowsSameBits(first, again, $"{what} ({isa})");
+                        float error = RowsCompare(wantQ, first[9], $"{what} ({isa}): queries");
+                        if (bf16)
+                        {
+                            // bfloat16 halves as floats: a value rounded on either side of a tie may differ by one bfloat16 step.
+                            foreach (var (want, have, part) in new[] { (wantK, first[10], "keys"), (wantV, first[11], "values") })
+                            {
+                                var w = MemoryMarshal.Cast<float, ushort>(want.AsSpan());
+                                var h = MemoryMarshal.Cast<float, ushort>(have.AsSpan());
+                                for (int i = 0; i < w.Length; i++)
+                                {
+                                    float e = BitConverter.UInt32BitsToSingle((uint)w[i] << 16), g = BitConverter.UInt32BitsToSingle((uint)h[i] << 16);
+                                    Check(w[i] == h[i] || MathF.Abs(e - g) <= 1e-2f * MathF.Max(1f, MathF.Abs(e)), $"{what} ({isa}): {part}' half {i} is {g}, the CPU's {e}");
+                                }
+                            }
+                        }
+                        else
+                        {
+                            error = MathF.Max(error, RowsCompare(wantK, first[10], $"{what} ({isa}): keys"));
+                            Check(MemoryMarshal.AsBytes(wantV.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(first[11].AsSpan())), $"{what} ({isa}): the values copied as they are");
+                        }
+
+                        worst["norm_rope_heads_f32"] = MathF.Max(worst.GetValueOrDefault("norm_rope_heads_f32"), error);
+                    }
+                }
+            }
+        }
+
+        RowsReport(worst);
+    }
+
+    internal static void GcnDecodingFloatMulti(Device device)
+    {
+        _ = device;
+        var worst = new Dictionary<string, float>();
+        var random = new Random(59);
+        const int K = 70;
+        int[] widths = [130, 67, 200];
+        float[][] weights = [.. widths.Select(w => RowsRandom(random, K * w, 0.5f))];
+        float[] bias0 = RowsRandom(random, widths[0], 1f), bias2 = RowsRandom(random, widths[2], 1f);
+        foreach (int m in (int[])[1, 5])
+        {
+            float[] x = RowsRandom(random, m * K, 1f);
+            foreach (int count in (int[])[3, 1])
+            {
+                // Inputs: x, w0, w1, w2, bias0, bias2, y0, y1, y2.
+                float[][] inputs = [x, weights[0], weights[1], weights[2], bias0, bias2, new float[m * widths[0]], new float[m * widths[1]], new float[m * widths[2]]];
+                float[][] expected = RowsOnCpu(inputs, (cpu, s) =>
+                {
+                    (Storage Weight, Storage? Bias, Storage Output, int Columns)[] products = [(s[1], s[4], s[6], widths[0]), (s[2], null, s[7], widths[1]), (s[3], s[5], s[8], widths[2])];
+                    cpu.MatMulManyKernel(s[0], m, K, products.AsSpan(0, count));
+                });
+                int widest = widths.Take(count).Max();
+                foreach (var isa in ProductIsas)
+                {
+                    void Run(GcnMemory memory, ulong[] at, bool second, ulong seed) =>
+                        DecodingPacked("gemv_multi_f32", isa, memory, ((widest + GcnKernels.GemvNnColumns - 1) / GcnKernels.GemvNnColumns, count, 1), seed,
+                            bytes => GcnKernels.PackGemvMulti(bytes, at[0], (uint)m, K,
+                                new GcnKernels.FloatProduct[] { new(at[1], at[4], at[6], (uint)widths[0]), new(at[2], 0UL, at[7], (uint)widths[1]), new(at[3], at[5], at[8], (uint)widths[2]) }
+                                    .AsSpan(0, count)));
+                    ProductsCase($"gemv_multi_f32, {count} product(s), {m} rows, k {K} ({isa})", inputs, [.. Enumerable.Range(6, count)], expected, Run, worst, "gemv_multi_f32");
+                }
+            }
+        }
+
+        RowsReport(worst);
+    }
+
+    // The sampler's statistics against the CPU's: every token id (the drawn one and the five alternatives) and the ids
+    // equal, the probabilities and entropy within the tolerance; the largest error.
+    private static float SamplerCompare(float[] expectedIds, float[] ids, float[] expected, float[] actual, string what)
+    {
+        Check(expectedIds.AsSpan().SequenceEqual(ids), $"{what}: tokens {string.Join(' ', ids)}, the CPU's {string.Join(' ', expectedIds)}");
+        float worst = 0f;
+        for (int i = 0; i < expected.Length; i++)
+        {
+            int field = i % 13;
+            if (field is 0 or 3 or 5 or 7 or 9 or 11)
+            {
+                Check(expected[i] == actual[i], $"{what}: step {i / 13 / ids.Length}, row {i / 13 % ids.Length}: statistic {field} (an id) is {actual[i]}, the CPU's {expected[i]}"
+                    + $" (statistics [{string.Join(", ", actual.Skip(i - field).Take(13))}], the CPU's [{string.Join(", ", expected.Skip(i - field).Take(13))}])");
+                continue;
+            }
+
+            float error = MathF.Abs(expected[i] - actual[i]) / MathF.Max(1f, MathF.Abs(expected[i]));
+            Check(error <= RowsTolerance, $"{what}: step {i / 13 / ids.Length}, row {i / 13 % ids.Length}: statistic {field} is {actual[i]:R}, the CPU's {expected[i]:R}");
+            worst = MathF.Max(worst, error);
+        }
+
+        return worst;
+    }
+
+    internal static void GcnDecodingSampler(Device device)
+    {
+        _ = device;
+        var worst = new Dictionary<string, float>();
+        var random = new Random(60);
+        const int Rows = 5, Steps = 2;
+        const uint Seed = 1234;
+
+        // Logits of `vocabulary` tokens a row: random, or in quarter steps (tied scores); then the special rows: +∞ (two of
+        // them), all NaN, all -∞, NaN beside a best score.
+        float[] Logits(int vocabulary, bool ties)
+        {
+            var logits = new float[Rows * vocabulary];
+            for (int i = 0; i < logits.Length; i++)
+            {
+                float value = (random.NextSingle() * 2 - 1) * 6;
+                logits[i] = ties ? MathF.Round(value * 4) / 4 : value;
+            }
+
+            return logits;
+        }
+
+        void Special(float[] logits, int vocabulary)
+        {
+            logits[vocabulary + 17] = float.PositiveInfinity;
+            logits[vocabulary + vocabulary / 2] = float.PositiveInfinity;
+            Array.Fill(logits, float.NaN, 2 * vocabulary, vocabulary);
+            Array.Fill(logits, float.NegativeInfinity, 3 * vocabulary, vocabulary);
+            for (int j = 0; j < vocabulary; j += 3)
+            {
+                logits[4 * vocabulary + j] = float.NaN;
+            }
+
+            logits[4 * vocabulary + 4] = 30f;
+        }
+
+        // The CPU's draws over two steps (ids, statistics), then the kernels' on the interpreter twice (another grid and wave
+        // order), the same bits, compared.
+        void Case(string what, float[] logits, int vocabulary, float temperature, int topK, float topP, float minP, bool candidates, bool greedy)
+        {
+            int blocks = (vocabulary + GcnKernels.CandidateSlice - 1) / GcnKernels.CandidateSlice, slots = blocks * GcnKernels.CandidateSlots;
+            var settings = GcnKernels.SamplerSettings.Of(vocabulary, vocabulary, 0, temperature, topK, topP, minP, Seed, Rows);
+
+            // Inputs: logits, ids, stats, step 0, step 1, candidate scores, candidate ids, flags, parts.
+            float[][] inputs =
+            [
+                logits, new float[Rows], new float[Steps * Rows * 13], [0f], [1f], new float[Rows * slots], new float[Rows * slots], new float[Rows * blocks],
+                new float[Rows * blocks * 3],
+            ];
+            float[][] expected = RowsOnCpu(inputs, (cpu, s) =>
+            {
+                for (int step = 0; step < Steps; step++)
+                {
+                    cpu.SampleRowsKernel(s[0], s[1], s[2], s[3 + step], Rows, vocabulary, vocabulary, 0, temperature, topK, topP, minP, Seed);
+                }
+            });
+            var form = !candidates ? GcnKernels.SamplerForm.Rows : greedy ? GcnKernels.SamplerForm.Greedy : GcnKernels.SamplerForm.Candidates;
+            string kernel = candidates ? $"{(greedy ? "topk_greedy_f32" : "topk_candidates_f32")} + {GcnKernels.SamplerKernel(form)}" : GcnKernels.SamplerKernel(form);
+            foreach (var isa in ProductIsas)
+            {
+                void Run(GcnMemory memory, ulong[] at, bool second, ulong seed)
+                {
+                    for (int step = 0; step < Steps; step++)
+                    {
+                        if (candidates)
+                        {
+                            DecodingPacked(greedy ? "topk_greedy_f32" : "topk_candidates_f32", isa, memory, (second ? Rows * blocks : 3, 1, 1), seed,
+                                bytes => GcnKernels.PackCandidates(bytes, greedy, at[0], at[5], at[6], at[7], at[8], settings, (uint)blocks));
+                        }
+
+                        DecodingPacked(GcnKernels.SamplerKernel(form), isa, memory, (second ? Rows : 2, 1, 1), seed,
+                            bytes => GcnKernels.PackSampler(bytes, form, at[0], at[1], at[2], at[3 + step], settings, at[5], at[6], at[7], at[8], (uint)slots));
+                    }
+                }
+
+                float[][] first = RowsOnGcn(inputs, (m, a) => Run(m, a, false, 1));
+                float[][] again = RowsOnGcn(inputs, (m, a) => Run(m, a, true, 7));
+                RowsSameBits([first[1], first[2]], [again[1], again[2]], $"{what} ({isa})");
+                float error = SamplerCompare(expected[1], first[1], expected[2], first[2], $"{what} ({isa})");
+                worst[kernel] = MathF.Max(worst.GetValueOrDefault(kernel), error);
+            }
+        }
+
+        // The whole row: 700 tokens (random) and 3,000 (tied scores), the settings Vulkan's sampler test takes.
+        foreach (var (vocabulary, ties) in ((int, bool)[])[(700, false), (3000, true)])
+        {
+            float[] logits = Logits(vocabulary, ties);
+            Special(logits, vocabulary);
+            foreach (var (temperature, topK, topP, minP) in SamplerSettings)
+            {
+                Case($"sample_rows_f32, {vocabulary} tokens{(ties ? " (tied scores)" : "")}, temperature {temperature}, top-k {topK}, top-p {topP}, min-p {minP}", logits, vocabulary,
+                    temperature, topK, topP, minP, candidates: false, greedy: false);
+            }
+        }
+
+        // The candidates: 9,000 tokens (5 blocks of 2,048), random and tied; a row whose block holds 100 tied best scores
+        // (more than its slots: the whole row) and one whose cut-off ties overflow on the first count only.
+        foreach (bool ties in (bool[])[false, true])
+        {
+            const int Vocabulary = 9000;
+            float[] logits = Logits(Vocabulary, ties);
+            Special(logits, Vocabulary);
+            if (!ties)
+            {
+                Array.Fill(logits, 7f, 3 * Vocabulary + 2048, 100);                    // replaces the all -∞ row: 100 ties in a block
+                Array.Fill(logits, 6.5f, 2 * Vocabulary + 4100, 70);                   // replaces the all-NaN row: 70 ties at the cut-off
+                logits[2 * Vocabulary + 4000] = 9f;
+            }
+
+            foreach (var (temperature, topK, topP, minP) in ((float, int, float, float)[])[(1f, 1, 1f, 0f), (0.7f, 40, 1f, 0f), (0.9f, 20, 0.95f, 0.02f), (1f, 64, 0.8f, 0f), (0.5f, 3, 0.5f, 0.1f)])
+            {
+                string what = $"{Vocabulary} tokens{(ties ? " (tied scores)" : "")}, temperature {temperature}, top-k {topK}, top-p {topP}, min-p {minP}";
+                Case($"the candidates, {what}", logits, Vocabulary, temperature, topK, topP, minP, candidates: true, greedy: false);
+                if (topK == 1)
+                {
+                    Case($"the greedy rows, {what}", logits, Vocabulary, temperature, topK, topP, minP, candidates: true, greedy: true);
+                }
             }
         }
 

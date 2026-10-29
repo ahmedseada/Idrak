@@ -11,9 +11,11 @@ weights; their expansions and bfloat16 packing), attention (decoding and the til
 key/value caches, attention over key ranges with grouped heads and its strided form, the int8 cache's scores and
 weighted values), the shape operations (the cache writes, the decoder mask, the gathers, permutes, the adding
 strided copy) and decoding's (the fused packed products: gated, of one input, a gate/up pair, with the residual addition
-and norms; attention over rows of different lengths and over packed sequences; the arg-max, class matches, rotary
-embeddings, repetition penalties, one-hot rows, the token history; powers, clamps, selection, leaky ReLU, inverse square
-roots, GELU after a bias, the gated activations) on Idrak's GCN kernels; every other operation (training's other kernels, ...) still runs on the CPU
+and norms; float32 products of one input; attention over rows of different lengths and over packed sequences; the
+arg-max, class matches, rotary embeddings, the norm and rotation of queries and keys and of the attention heads into
+their layouts and cache, the sampler with the CPU's seeded draws, repetition penalties, one-hot rows, the token history;
+powers, clamps, selection, leaky ReLU, inverse square roots, GELU after a bias, the gated activations) on Idrak's GCN
+kernels; every other operation (training's other kernels, ...) still runs on the CPU
 through the host fallback until its kernel lands. On a machine without HIP nothing changes: the device list shows `hip:-` with the
 reason, and every other backend works as before.
 
@@ -171,9 +173,10 @@ failure, send the failures file and the run again with `IDRAK_TRACE=1`.
   fill), the kernel set (assembled cold, then read from a cache warm), each row and element-wise kernel, the products
   (float32, few-row, packed few-row with the k splits each took, the expansions and bfloat16 packing), attention
   (decoding over each cache format, the tiled form, key ranges, the int8 cache's products), the shape operations and
-  decoding's (the fused packed products, attention over rows and packed sequences, the rows of decoding, the element-wise
-  operations with parameters) and training's (the backward passes, SGD, Adam, fused AdamW, dropout, the sums and the
-  attention gradients) (its first call, then warm: GB/s and GFLOP/s), each first call apart from the warm ones, each section ending with the host
+  decoding's (the fused packed products, float32 products of one input, attention over rows and packed sequences, the
+  rows of decoding with the heads' norm and rotation and the sampler's three paths, the element-wise operations with
+  parameters) and training's (the backward passes, SGD, Adam, fused AdamW, dropout, the sums and the attention
+  gradients) (its first call, then warm: GB/s and GFLOP/s), each first call apart from the warm ones, each section ending with the host
   fallbacks it took (none expected). The large buffer is a sixteenth of the memory the GPU has free (at most 256 MB), or
   `IDRAK_BENCH_HIP_MB`; `IDRAK_BENCH_HIP_REPEATS` sets the warm calls (default 20). Without a HIP device it prints one
   line saying why. `idrak bench -d hip:0` and `idrak report --bench -d hip:0` run their benchmarks on `hip:0` as on any

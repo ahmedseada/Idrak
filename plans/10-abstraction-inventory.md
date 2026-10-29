@@ -602,7 +602,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `CpuBackend` | 128 of 144 |
 | `CudaBackend` | 136 of 144 |
 | `DeferredBackend` | 11 of 144 |
-| `HipBackend` | 106 of 144 |
+| `HipBackend` | 110 of 144 |
 | `VulkanBackend` | 124 of 144 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
@@ -698,14 +698,14 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `LiveStorages(1)` | virtual |  |  |  |  |  |
 | `LogSoftmaxTopKKernel(6)` | virtual | ✓ | ✓ |  | ✓ |  |
 | `MatMulBiasKernel(7)` | virtual |  | ✓ |  | ✓ | ✓ |
-| `MatMulManyKernel(4)` | virtual |  | ✓ |  |  |  |
+| `MatMulManyKernel(4)` | virtual |  | ✓ |  | ✓ |  |
 | `MaxPoolBackwardKernel(4)` | virtual | ✓ | ✓ |  |  |  |
 | `MaxPoolBackwardKernel(4)` | virtual |  | ✓ |  |  | ✓ |
 | `MaxPoolKernel(4)` | virtual | ✓ | ✓ |  |  | ✓ |
 | `MulAddKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `NormApplyKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `NormBackwardKernel(9)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `NormRopeHeadsKernel(26)` | virtual |  | ✓ |  |  | ✓ |
+| `NormRopeHeadsKernel(26)` | virtual |  | ✓ |  | ✓ | ✓ |
 | `NormStatsKernel(8)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `OneHotKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `PackBFloat16Kernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
@@ -725,9 +725,9 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `RmsNormBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `RmsNormKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `RmsNormRopeKernel(14)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `RmsNormRopePairKernel(21)` | virtual |  | ✓ |  |  | ✓ |
+| `RmsNormRopePairKernel(21)` | virtual |  | ✓ |  | ✓ | ✓ |
 | `RopeKernel(12)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `SampleRowsKernel(13)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `SampleRowsKernel(13)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ScaleMaskSoftmaxKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ScatterAddKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `SgdStepKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |

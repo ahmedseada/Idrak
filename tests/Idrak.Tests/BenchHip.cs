@@ -40,7 +40,9 @@ using GcnWeights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
 //   decoding the fused packed products (gated, of one input, a gate/up pair, with the residual addition and norms; int8,
 //            int4, bfloat16; 1 and 8 rows), attention over rows of different lengths and over packed sequences, the rows
 //            of decoding (arg-max, class match, the residual add with its norm, rotary embedding alone and after the norm,
-//            penalties, one-hot, the history) and the element-wise operations with parameters (BenchHip.Decoding.cs):
+//            of queries and keys together and of the attention heads into a cache, penalties, one-hot, the history, the
+//            sampler's three paths), float32 products of one input and the element-wise operations with parameters
+//            (BenchHip.Decoding.cs):
 //            cold apart from warm, GB/s and GFLOP/s from GcnKernels.Decoding.cs's and .Pointwise.cs's tables, ending with
 //            the host fallbacks the section took (none expected)
 //   training the backward passes (unary, gated, extremes, softmax, RMS norm), SGD, Adam, fused AdamW, dropout, the sums and
@@ -120,7 +122,7 @@ internal abstract partial class DesktopTests
         new("products", "the float32, few-row and packed few-row products, the expansions and bfloat16 packing on their GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipProducts),
         new("attention", "decoding over float32, bfloat16 and int8 caches, the tiled form and attention over key ranges on the GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipAttention),
         new("shapes", "the cache writes, the decoder mask, the gathers, a permute and the adding strided copy on the GCN kernels (cold and warm, GB/s)", BenchHipShapes),
-        new("decoding", "the fused packed products, attention over rows and packed sequences, the rows of decoding and the element-wise operations with parameters on the GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipDecoding),
+        new("decoding", "the fused packed products, the float32 products of one input, attention over rows and packed sequences, the rows of decoding (the norm and rotation of the heads, the sampler) and the element-wise operations with parameters on the GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipDecoding),
         new("training", "the backward passes, the optimizers, the sums and the attention gradients on the GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipTraining),
     ];
 

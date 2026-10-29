@@ -27,6 +27,10 @@ namespace Idrak.Gpu.Hip;
 // - gemv_nt_f32: few rows through b stored [n, k] (a product with a transposed matrix): a wave per column, lanes
 //   striding over k (coalesced, 4 · 64 k a step, 36 loads in flight), then each row's 64 lane sums by one tree of a fixed
 //   shape in the wave's LDS. Grid: x = ⌈n / 4⌉, y = ⌈m / 8⌉, z = batch.
+// - gemv_multi_f32: CUDA's float32 multi-product (Backend.MatMulMany: the query, key and value projections, or gate
+//   and up, of one input): up to three products y_j = a · w_j (+ bias_j) of a [m ≤ 8, k], gemv_nn_f32's body with grid
+//   y picking the product (its arguments selected once) and grid x the widest product's columns. Grid: x = ⌈max n_j / 64⌉,
+//   y = the products.
 // - {int8,int4,bf16,f16}_gemv[_rR]_f32: the packed few-row products (Backend.Int8MatMul, Int4MatMul, BFloat16MatMul,
 //   Float16MatMul for m ≤ R; R = 1, 2, 4, 8, the last without a suffix as CUDA's int8_gemv_f32): one wave of 64 packed
 //   words (4, 8, 2, 2 columns each), every weight word read once a split; k in splits of `chunk` rows (grid y, leftover
@@ -53,6 +57,7 @@ namespace Idrak.Gpu.Hip;
 // | matmul_f32             | a, b, c, m, n, k, ta, tb, beta, sa, sb, sc, alpha, bias          | ⌈n/64⌉ × ⌈m/64⌉ × b (256)       | 2·m·n·k·b        | 4·b·(m·k + k·n + m·n·(beta ≠ 0 ? 2 : 1)) + 4n |
 // | gemv_nn_f32            | a, b, c, m, n, k, beta, sa, sb, sc                               | ⌈n/64⌉ × ⌈m/8⌉ × b (256)        | 2·m·n·k·b        | 4·b·(m·k + ⌈m/8⌉·k·n + m·n)                   |
 // | gemv_nt_f32            | a, b, c, m, n, k, beta, sa, sb, sc                               | ⌈n/4⌉ × ⌈m/8⌉ × b (256)         | 2·m·n·k·b        | 4·b·(m·k + ⌈m/8⌉·k·n + m·n)                   |
+// | gemv_multi_f32         | a, m, k; 3 × (w, bias, y, n)                                     | ⌈max n/64⌉ × products (256)     | 2·m·n·k          | 4·(m·k + k·n + m·n + n)                       |
 // | int8_gemv[_rR]_f32     | x, q, s, y, part, m, n, k, n4, chunk, splits, counters           | ⌈w/64⌉ × s (64)                 | 2·m·n·k          | 4·k·w + 4·m·k + 4n + 4·m·n·(s > 1 ? s : 1)    |
 // | int4_gemv[_rR]_f32     | (the same)                                                       | ⌈w/64⌉ × s (64)                 | 2·m·n·k + k·n    | 4·k·w + 32·g·w + 4·m·k + 4·m·n·(s > 1 ? s : 1)|
 // | bf16_gemv[_rR]_f32     | (the same; s unused)                                             | ⌈w/64⌉ × s (64)                 | 2·m·n·k          | 4·k·w + 4·m·k + 4·m·n·(s > 1 ? s : 1)         |
@@ -65,7 +70,8 @@ namespace Idrak.Gpu.Hip;
 // | f16_dequant_f32        | q, w, words, cols, n (n = k·words)                               | ⌈n/256⌉ or fewer (256)          | 0                | 4·k·w + 4·k·n                                 |
 // | bf16_pack_f32          | x, y, count, n (n = ⌈count/2⌉)                                   | ⌈n/256⌉ or fewer (256)          | 0                | 4·count + 4n                                  |
 //
-// (n in a row's Bytes is that kernel's own argument: the output columns for the products, the words for the expansions.)
+// (n in a row's Bytes is that kernel's own argument: the output columns for the products, the words for the expansions;
+// for gemv_multi_f32, the products' columns together.)
 internal static partial class GcnKernels
 {
     /// <summary>The products, the packed few-row products and the expansions, in the order they join <see cref="All"/>.</summary>
@@ -175,6 +181,50 @@ internal static partial class GcnKernels
 
     /// <summary>Bytes of a few-row float32 product's arguments.</summary>
     internal const int GemvArgumentBytes = 64;
+
+    /// <summary>The most products <c>gemv_multi_f32</c> takes (grid y), as CUDA's.</summary>
+    internal const int GemvMultiProducts = 3;
+
+    /// <summary>
+    /// gemv_multi_f32's arguments, CUDA's: a; m, k; then for products 0 to 2 the weights w [k, n], the bias (0: none),
+    /// the output y and the columns n, from 16 + 32j.
+    /// </summary>
+    internal static IReadOnlyList<GcnArgument> GemvMultiArguments { get; } =
+    [
+        GcnArgument.Buffer(0, "a"), GcnArgument.Value(8, 4, "m"), GcnArgument.Value(12, 4, "k"),
+        GcnArgument.Buffer(16, "w0"), GcnArgument.Buffer(24, "bias0"), GcnArgument.Buffer(32, "y0"), GcnArgument.Value(40, 4, "n0"),
+        GcnArgument.Buffer(48, "w1"), GcnArgument.Buffer(56, "bias1"), GcnArgument.Buffer(64, "y1"), GcnArgument.Value(72, 4, "n1"),
+        GcnArgument.Buffer(80, "w2"), GcnArgument.Buffer(88, "bias2"), GcnArgument.Buffer(96, "y2"), GcnArgument.Value(104, 4, "n2"),
+    ];
+
+    /// <summary>Bytes of gemv_multi_f32's arguments (the last product's columns end them).</summary>
+    internal const int GemvMultiArgumentBytes = 108;
+
+    /// <summary>One product of <c>gemv_multi_f32</c>: the weights [k, n], the bias (0: none), the output and the columns.</summary>
+    internal readonly record struct FloatProduct(ulong Weights, ulong Bias, ulong Output, uint Columns);
+
+    /// <summary>
+    /// gemv_multi_f32's arguments (<see cref="GemvMultiArguments"/>) into <paramref name="arguments"/>, <see cref="GemvMultiArgumentBytes"/>
+    /// long; products past those given are the last again with 0 columns (their blocks return at once), as CUDA's launch.
+    /// </summary>
+    internal static void PackGemvMulti(Span<byte> arguments, ulong a, uint m, uint k, ReadOnlySpan<FloatProduct> products)
+    {
+        ArgumentOutOfRangeException.ThrowIfNotEqual(arguments.Length, GemvMultiArgumentBytes);
+        ArgumentOutOfRangeException.ThrowIfLessThan(products.Length, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(products.Length, GemvMultiProducts);
+        Span<ulong> values = stackalloc ulong[3 + 4 * GemvMultiProducts];
+        (values[0], values[1], values[2]) = (a, m, k);
+        for (int j = 0; j < GemvMultiProducts; j++)
+        {
+            var p = products[Math.Min(j, products.Length - 1)];
+            values[3 + 4 * j] = p.Weights;
+            values[4 + 4 * j] = p.Bias;
+            values[5 + 4 * j] = p.Output;
+            values[6 + 4 * j] = j < products.Length ? p.Columns : 0u;
+        }
+
+        PackArguments(GemvMultiArguments, arguments, values);
+    }
 
     /// <summary>
     /// A packed few-row product's arguments, CUDA's: x, q, s, y, part; m, n, k, n4 (words per weight row), chunk (rows of
@@ -318,7 +368,7 @@ internal static partial class GcnKernels
 
     private static GcnKernelSource[] BuildProducts()
     {
-        var kernels = new List<GcnKernelSource> { MatMul(), GemvNN(), GemvNT() };
+        var kernels = new List<GcnKernelSource> { MatMul(), GemvNN(), GemvNT(), GemvNN(multi: true) };
         foreach (var format in (PackedWeights[])[PackedWeights.Int8, PackedWeights.Int4, PackedWeights.BFloat16, PackedWeights.Float16])
         {
             foreach (int rows in PackedGemvRowCounts)
@@ -589,14 +639,42 @@ internal static partial class GcnKernels
 
     // ---- gemv_nn_f32 -----------------------------------------------------------------------------------------------
 
-    private static GcnKernelSource GemvNN()
+    // gemv_nn_f32; with multi, gemv_multi_f32 (CUDA's MatMulManyKernel): up to three products of the input a [m ≤ 8, k],
+    // y_j = a · w_j (+ bias_j, after the sum, as the CPU's product then AddRowVector) with w_j [k, n_j], grid y picking j
+    // (its weights, bias, output and width selected once at the start) and grid x the widest product's columns (the
+    // blocks past n_j end at once), one row group; otherwise gemv_nn_f32's body, its order of summation the same.
+    private static GcnKernelSource GemvNN(bool multi = false)
     {
-        var w = new ProductWriter("gemv_nn_f32");
-        w.Head(GemvArguments, GemvThreads, lds: 4 * GemvRows * GemvNnColumns * 4, workgroupIds: 3);
-        string m = w.Scalar("m"), n = w.Scalar("n"), k = w.Scalar("k"), beta = w.Scalar("beta");
-        string aBase = w.Strided64(w.Pointer("a"), w.GroupZ, w.Pointer("sa"));
-        string bBase = w.Strided64(w.Pointer("b"), w.GroupZ, w.Pointer("sb"));
-        string cBase = w.Strided64(w.Pointer("c"), w.GroupZ, w.Pointer("sc"));
+        var w = new ProductWriter(multi ? "gemv_multi_f32" : "gemv_nn_f32");
+        w.Head(multi ? GemvMultiArguments : GemvArguments, GemvThreads, lds: 4 * GemvRows * GemvNnColumns * 4, workgroupIds: multi ? 2 : 3);
+        string m = w.Scalar("m"), k = w.Scalar("k"), n, beta, aBase, bBase, cBase, bias = "";
+        if (multi)
+        {
+            (n, beta, aBase, bBase, cBase, bias) = (w.S(), w.S(), w.Pointer("a"), w.SPair(), w.SPair(), w.SPair());
+            w.L($"s_cmp_eq_u32 {w.GroupY}, 1                       ; this row of blocks' product");
+            w.L($"s_cselect_b64 {bBase}, {w.Pointer("w1")}, {w.Pointer("w0")}");
+            w.L($"s_cselect_b64 {bias}, {w.Pointer("bias1")}, {w.Pointer("bias0")}");
+            w.L($"s_cselect_b64 {cBase}, {w.Pointer("y1")}, {w.Pointer("y0")}");
+            w.L($"s_cselect_b32 {n}, {w.Scalar("n1")}, {w.Scalar("n0")}");
+            w.L($"s_cmp_eq_u32 {w.GroupY}, 2");
+            w.L($"s_cselect_b64 {bBase}, {w.Pointer("w2")}, {bBase}");
+            w.L($"s_cselect_b64 {bias}, {w.Pointer("bias2")}, {bias}");
+            w.L($"s_cselect_b64 {cBase}, {w.Pointer("y2")}, {cBase}");
+            w.L($"s_cselect_b32 {n}, {w.Scalar("n2")}, {n}");
+            w.L($"s_mov_b32 {beta}, 0                              ; no beta: y written whole");
+            string first = w.S();
+            w.L($"s_lshl_b32 {first}, {w.GroupX}, 6");
+            w.L($"s_cmp_ge_u32 {first}, {n}                         ; a block past this product's columns: nothing to do");
+            w.L($"s_cbranch_scc1 .Ldone");
+        }
+        else
+        {
+            (n, beta) = (w.Scalar("n"), w.Scalar("beta"));
+            aBase = w.Strided64(w.Pointer("a"), w.GroupZ, w.Pointer("sa"));
+            bBase = w.Strided64(w.Pointer("b"), w.GroupZ, w.Pointer("sb"));
+            cBase = w.Strided64(w.Pointer("c"), w.GroupZ, w.Pointer("sc"));
+        }
+
         string lane = w.V(), col = w.V(), colc = w.V(), wave = w.S(), t = w.S(), last = w.S(), rg = w.S(), lastRow = w.S();
         w.L($"v_and_b32_e32 {lane}, 63, {w.Tid}");
         w.L($"v_readfirstlane_b32 {t}, {w.Tid}");
@@ -605,7 +683,15 @@ internal static partial class GcnKernels
         w.L($"v_add_u32_e32 {col}, {t}, {lane}                ; this lane's column");
         w.L($"s_sub_u32 {last}, {n}, 1");
         w.L($"v_min_u32_e32 {colc}, {last}, {col}             ; read within the matrix");
-        w.L($"s_lshl_b32 {rg}, {w.GroupY}, 3                    ; the block's first row");
+        if (multi)
+        {
+            w.L($"s_mov_b32 {rg}, 0                                ; one row group (m ≤ 8)");
+        }
+        else
+        {
+            w.L($"s_lshl_b32 {rg}, {w.GroupY}, 3                    ; the block's first row");
+        }
+
         w.L($"s_sub_u32 {lastRow}, {m}, 1");
         string[] rowOffsets = new string[GemvRows];
         for (int i = 0; i < GemvRows; i++)
@@ -726,6 +812,22 @@ internal static partial class GcnKernels
             {
                 w.L($"v_add_f32_e32 {acc[i]}, {acc[i]}, {parts[p, i]}");
             }
+        }
+
+        if (multi)
+        {
+            // The bias after the sum, as the CPU adds it to the product's rows.
+            string columnBytes = w.V(), value = w.V();
+            w.L($"s_cmp_eq_u64 {bias}, 0");
+            w.L($"s_cbranch_scc1 .Lbiased");
+            w.L($"v_lshlrev_b32_e32 {columnBytes}, 2, {colc}");
+            w.L($"global_load_dword {value}, {columnBytes}, {bias}");
+            for (int i = 0; i < GemvRows; i++)
+            {
+                w.L($"v_add_f32_e32 {acc[i]}, {acc[i]}, {value}");
+            }
+
+            w.Label(".Lbiased");
         }
 
         StoreRows(w, acc, rg, m, n, beta, cBase, col, colc, lanes: true);

@@ -14,7 +14,8 @@ namespace Idrak.Gpu.Hip;
 // compute unit the device reports, a power of two, at most 64 and chunks of 64 rows or more, as CUDA's formula, or
 // IDRAK_HIP_GEMV_SPLITS), the splits' sums added in split order by int8_gemv_finish_f32 (rule 86, no atomics); more int8
 // rows on int8_matmul_f32; more int4 and bfloat16 rows expanded to float32 and multiplied (as CUDA without tensor cores);
-// the expansions and bfloat16 packing. Batches run in grid z up to the device's reported limit (rule 84), each launch
+// the expansions and bfloat16 packing; up to three float32 products of one input of few rows in one launch
+// (MatMulManyKernel, gemv_multi_f32, as CUDA's). Batches run in grid z up to the device's reported limit (rule 84), each launch
 // labelled for --profile as CUDA's ("matmul_nn m x n x k" with 2·m·n·k operations). Unavailable kernels, matrices of 2^30
 // elements or more (the kernels' 32-bit byte offsets) and grids past the device's limits take the host fallback.
 internal sealed unsafe partial class HipBackend
@@ -65,6 +66,7 @@ internal sealed unsafe partial class HipBackend
         {
             "matmul_f32" => (mnk * batch, 4.0 * batch * (m * k + k * n + m * n * (beta ? 2 : 1))),
             "gemv_nn_f32" or "gemv_nt_f32" => (mnk * batch, 4.0 * batch * (m * k + (m + 7) / 8 * k * n + m * n)),
+            "gemv_multi_f32" => (mnk, 4.0 * (m * k + k * n + m * n + n)),                       // n: the products' columns together
             _ when kernel.StartsWith("int8_gemv", StringComparison.Ordinal) && kernel != "int8_gemv_finish_f32" => (mnk, 4.0 * k * WordsOf(4) + 4.0 * m * k + 4.0 * n + outputs),
             _ when kernel.StartsWith("int4_gemv", StringComparison.Ordinal) => (mnk + (double)k * n, 4.0 * k * WordsOf(8) + 32.0 * ((k + 31) / 32) * WordsOf(8) + 4.0 * m * k + outputs),
             _ when kernel.StartsWith("bf16_gemv", StringComparison.Ordinal) || kernel.StartsWith("f16_gemv", StringComparison.Ordinal) => (mnk, 4.0 * k * WordsOf(2) + 4.0 * m * k + outputs),
@@ -104,6 +106,48 @@ internal sealed unsafe partial class HipBackend
 
     public override bool MatMulBiasKernel(Storage a, Storage b, Storage bias, Storage c, int m, int n, int k) =>
         m > 0 && n > 0 && FloatProduct(a, b, c, 1, m, n, k, false, false, 0f, bias);
+
+    // Up to three products of one input of at most 8 rows in one launch (gemv_multi_f32, CUDA's): grid y picks the
+    // product, x covers the widest; the host's composed products past the kernel's limits (more products or rows, a matrix
+    // of 2^30 elements or more, a grid past the device's), as CUDA's base path.
+    public override void MatMulManyKernel(Storage a, int m, int k, ReadOnlySpan<(Storage Weight, Storage? Bias, Storage Output, int Columns)> products)
+    {
+        int widest = 0;
+        long columns = 0;
+        bool fits = products.Length is >= 1 and <= GcnKernels.GemvMultiProducts && m is >= 1 and <= GcnKernels.GemvRows && k > 0
+                    && (long)m * k < MostProductElements;
+        foreach (var product in products)
+        {
+            fits &= product.Columns >= 0 && (long)k * product.Columns < MostProductElements && (long)m * product.Columns < MostProductElements;
+            widest = Math.Max(widest, product.Columns);
+            columns += product.Columns;
+        }
+
+        int blocks = (widest + GcnKernels.GemvNnColumns - 1) / GcnKernels.GemvNnColumns;
+        if (!fits || widest == 0 || blocks > DeviceLimits.MaxGridDimX || products.Length > DeviceLimits.MaxGridDimY || Gcn("gemv_multi_f32") is not { } function)
+        {
+            base.MatMulManyKernel(a, m, k, products);
+            return;
+        }
+
+        Span<ulong> values = stackalloc ulong[3 + 4 * GcnKernels.GemvMultiProducts];
+        (values[0], values[1], values[2]) = (P(a), U(m), U(k));
+        for (int j = 0; j < GcnKernels.GemvMultiProducts; j++)
+        {
+            var (weight, bias, output, width) = products[Math.Min(j, products.Length - 1)];
+            values[3 + 4 * j] = P(weight);
+            values[4 + 4 * j] = bias is null ? 0UL : P(bias);
+            values[5 + 4 * j] = P(output);
+            values[6 + 4 * j] = j < products.Length ? U(width) : 0UL;
+        }
+
+        if (Profiling)
+        {
+            LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"gemv_multi_f32 {m}x{columns}x{k} ({products.Length} products)"), 2.0 * m * columns * k);
+        }
+
+        LaunchProduct(function, blocks, products.Length, 1, values);
+    }
 
     // c[i] = op(a[i]) · op(b[i]) + beta · c[i] (+ bias) for each batch entry on the GCN kernels: false when they cannot
     // take it (unavailable, a matrix too large, a grid past the device's limits).

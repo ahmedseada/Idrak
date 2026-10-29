@@ -9,7 +9,9 @@ using Idrak.Gpu.Hip;
 // .Pointwise.cs (HipBackend.Cost, HipBackend.ProductCost), ending with the host fallbacks the section took (none expected).
 // Sizes follow the large buffer (from the memory the device reports), never a card's: a layer of k ≤ 4,096 inputs and
 // 4,096 outputs for the fused products (1 and 8 rows, int8, int4 and bfloat16), a cache of up to 4,096 positions of 32
-// heads of 128 for the rows' attention, packed sequences of up to 512 positions, a vocabulary within a quarter of it.
+// heads of 128 for the rows' attention, packed sequences of up to 512 positions, a vocabulary within a quarter of it
+// (the sampler's three paths over it: greedy rows, top-k 40 through the candidates, top-p over the whole row), float32
+// products of one input within a third of it.
 internal abstract partial class DesktopTests
 {
     private static void BenchHipDecoding(HipBench b)
@@ -112,6 +114,42 @@ internal abstract partial class DesktopTests
                 () => hip.Rope(heads, rotated, cos, sin, positions, ropeRows, ropeHeads, 8, Dim, half, false, 1f));
             BenchOperation(b, $"RMS norm and rotary embedding, {ropeShape}", (long)ropeRows * Dim, HipBackend.Cost("rms_norm_rope_f32"),
                 () => hip.RmsNormRope(heads, headGain, cos, sin, positions, rotated, ropeRows, Dim, 1e-6f, 0f, ropeHeads, 8, half, false));
+
+            // G5a's rest: queries and keys normalized and rotated in one launch, the attention heads into a bfloat16 cache.
+            const int KvHeads = 8;
+            int keyRows = 8 * KvHeads;
+            Storage keyHeads = on.Random(keyRows * Dim), keyRotated = on.Random(keyRows * Dim), values8 = on.Random(keyRows * Dim);
+            BenchOperation(b, $"RMS norm and rotary embedding of queries and keys, 8 steps x {ropeHeads} + {KvHeads} heads, head {Dim}", (long)(ropeRows + keyRows) * Dim,
+                HipBackend.Cost("rms_norm_rope2_f32"),
+                () => hip.RmsNormRopePair(heads, headGain, rotated, ropeRows, 1e-6f, 0f, ropeHeads, keyHeads, headGain, keyRotated, keyRows, 1e-6f, 0f, KvHeads, cos, sin, positions,
+                    Dim, 8, half, false));
+            Storage cacheKeys = on.Random(KvHeads * capacity * Dim / 2), cacheValues = on.Random(KvHeads * capacity * Dim / 2), cacheStart = on.Of([capacity - 8]);
+            BenchOperation(b, $"queries, keys and values into the attention layouts and a bfloat16 cache, 8 steps x {ropeHeads} + 2 x {KvHeads} heads, head {Dim}",
+                (long)(ropeRows + 2 * keyRows) * Dim, HipBackend.Cost("norm_rope_heads_f32"),
+                () => hip.NormRopeHeads(heads, keyHeads, values8, 1, 8, ropeHeads, KvHeads, Dim, headGain, 1e-6f, 0f, headGain, 1e-6f, 0f, cos, sin, positions, half, false,
+                    rotated, cacheKeys, cacheValues, cacheStart, capacity, Dim, true));
+
+            // Float32 products of one input (MatMulMany: gemv_multi_f32), 1 and 8 rows.
+            int floatColumns = (int)Math.Clamp(b.LargeElements / (3L * k), 256, 4096);
+            Storage f1 = on.Random(k * floatColumns), f2 = on.Random(k * floatColumns), f3 = on.Random(k * floatColumns);
+            foreach (int m in new[] { 1, 8 })
+            {
+                BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"float32 three products of one input {m}x{k}->3x{floatColumns}"),
+                    HipBackend.ProductCost("gemv_multi_f32", m, 3 * floatColumns, k),
+                    () => hip.MatMulMany(x, m, k, [(f1, bias, y, floatColumns), (f2, null, y2, floatColumns), (f3, null, y3, floatColumns)]));
+            }
+
+            // The sampler over the vocabulary: greedy rows, top-k 40 through the candidates, top-p 0.9 over the whole row.
+            Storage sampled = on.Random(rows), samplerStats = on.Random(rows * 13), samplerStep = on.Of([0f]);
+            foreach (var (label, topK, topP, kernel) in new[]
+                     {
+                         ("greedy (top-k 1)", 1, 1f, "sample_candidates_greedy_f32"), ("top-k 40 (the candidates)", 40, 1f, "sample_candidates_f32"),
+                         ("top-p 0.9 (the whole row)", 0, 0.9f, "sample_rows_f32"),
+                     })
+            {
+                BenchOperation(b, $"sampler, {label}, {vocab}", (long)rows * vocabulary, HipBackend.Cost(kernel),
+                    () => hip.SampleRows(logits, sampled, samplerStats, samplerStep, rows, vocabulary, vocabulary, 0, 0.8f, topK, topP, 0f, 7u));
+            }
 
             // The element-wise operations with parameters over the large buffer.
             int count = b.LargeElements / 4;
