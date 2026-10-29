@@ -59,6 +59,7 @@ namespace Idrak.Gpu.Hip;
 // | leaky_relu_bwd_f32     | x, dy, dx; slope, n                                                         | element-wise                        | element               | 2     | 16    |
 // | where_bwd_f32          | condition, dy, da, db; flags, n                                             | element-wise                        | element               | 2     | 24    |
 // | gated_act_bwd_f32      | gate, up, dy, dgate, dup; kind, flags, n                                    | element-wise                        | element               | 40    | 28    |
+// | gated_act_bwd_bf16_f32 | pg, pu, dy, dgate, dup; kind, flags, count, n (n = ⌈count / 2⌉ words)        | single, a work-item a word          | element               | 40    | 24    |
 // | softmax_bwd_f32        | y, dy, dx; cols, log, n                                                     | rows (or fewer)                     | element               | 5     | 20    |
 // | rms_norm_backward_f32  | dy, y, inv, dx; cols, n                                                     | rows (or fewer)                     | element               | 6     | 24    |
 // | norm_bwd_f32           | dxhat, xhat, s1, s2, invstd, dx; groups, inner, m, n                        | element-wise                        | element               | 30    | 28    |
@@ -155,6 +156,7 @@ internal static partial class GcnKernels
         LeakyReluBackward(),
         WhereBackward(),
         GatedBackward(),
+        GatedBackwardPacked(),
         SoftmaxBackward(),
         RmsNormBackward(),
         NormBackward(),
@@ -860,94 +862,141 @@ internal static partial class GcnKernels
         {
             LoadIf = [(3, 1, 0), (4, 1, 1)],
             StoreIf = [(3, 1, 0), (4, 1, 1)],
+        }, (w, e) => GatedBackwardBody(w, e.Label, e.In[0], e.In[1], e.In[2], e.In[3], e.In[4], e.Values[0], e.Values[1], e.Out[3], e.Out[4]));
+
+    // One element of the gated activation's gradient (gated_act_bwd_f32 and its packed form): from gate g, up u and dy, with
+    // dgate's and dup's old values (0 where not given), into the written registers; `label` a prefix unique to the element.
+    private static void GatedBackwardBody(PointwiseWriter w, string label, string g, string u, string dy, string oldGate, string oldUp, string kind, string flags,
+        string newGate, string newUp)
+    {
+        const float K = 0.7978845608f, C = 0.044715f;
+        string value = w.V(), slope = w.V(), upValue = w.V(), upSlope = w.V();
+        string silu = label + "_silu", gelu = label + "_gelu", tanh = label + "_tanh", done = label + "_done";
+        w.I(TrainingText($"""
+            s_cmp_eq_u32 {kind}, 0
+            s_cbranch_scc1 {silu}
+            s_cmp_eq_u32 {kind}, 1
+            s_cbranch_scc1 {gelu}
+            s_cmp_eq_u32 {kind}, 3
+            s_cbranch_scc1 {tanh}
+            v_cmp_lt_f32_e32 vcc, 0, {g}
+            v_cndmask_b32_e32 {value}, 0, {g}, vcc
+            v_cndmask_b32_e64 {slope}, 0, 1.0, vcc
+            v_mov_b32_e32 {upValue}, {u}
+            v_mov_b32_e32 {upSlope}, 1.0
+            s_branch {done}
+            {silu}:
+            """));
+        string s = w.V(), t = w.V();
+        w.Sigmoid(s, g);
+        w.I(TrainingText($"""
+            v_mul_f32_e32 {value}, {g}, {s}
+            v_sub_f32_e32 {t}, 1.0, {s}
+            v_mul_f32_e32 {t}, {g}, {t}
+            v_add_f32_e32 {t}, 1.0, {t}
+            v_mul_f32_e32 {slope}, {s}, {t}
+            v_mov_b32_e32 {upValue}, {u}
+            v_mov_b32_e32 {upSlope}, 1.0
+            s_branch {done}
+            {gelu}:
+            """));
+        string a = w.V(), th = w.V(), o = w.V(), h = w.V(), om = w.V(), b = w.V(), f = w.V();
+        w.I(TrainingText($"""
+            v_mul_f32_e32 {a}, {PointwiseWriter.Literal(C)}, {g}
+            v_mul_f32_e32 {a}, {a}, {g}
+            v_mul_f32_e32 {a}, {a}, {g}
+            v_add_f32_e32 {a}, {g}, {a}
+            v_mul_f32_e32 {a}, {PointwiseWriter.Literal(K)}, {a}
+            """));
+        w.Tanh(th, a);
+        w.I(TrainingText($"""
+            v_add_f32_e32 {o}, 1.0, {th}
+            v_mul_f32_e32 {h}, 0.5, {g}
+            v_mul_f32_e32 {value}, {h}, {o}
+            v_mul_f32_e32 {o}, 0.5, {o}
+            v_mul_f32_e32 {om}, {th}, {th}
+            v_sub_f32_e32 {om}, 1.0, {om}
+            v_mul_f32_e32 {b}, {h}, {om}
+            v_mul_f32_e32 {b}, {PointwiseWriter.Literal(K)}, {b}
+            v_mul_f32_e32 {f}, {PointwiseWriter.Literal(3f * C)}, {g}
+            v_mul_f32_e32 {f}, {f}, {g}
+            v_add_f32_e32 {f}, 1.0, {f}
+            v_mul_f32_e32 {b}, {b}, {f}
+            v_add_f32_e32 {slope}, {o}, {b}
+            v_mov_b32_e32 {upValue}, {u}
+            v_mov_b32_e32 {upSlope}, 1.0
+            s_branch {done}
+            {tanh}:
+            """));
+        string tg = w.V(), sg = w.V(), q = w.V();
+        w.Tanh(tg, g);
+        w.Sigmoid(sg, u);
+        w.I(TrainingText($"""
+            v_mov_b32_e32 {value}, {tg}
+            v_mul_f32_e32 {q}, {tg}, {tg}
+            v_sub_f32_e32 {slope}, 1.0, {q}
+            v_mov_b32_e32 {upValue}, {sg}
+            v_sub_f32_e32 {q}, 1.0, {sg}
+            v_mul_f32_e32 {upSlope}, {sg}, {q}
+            {done}:
+            """));
+        string written = TrainingFlagMask(w, flags, 2), dgate = w.V(), dup = w.V(), base1 = w.V(), base2 = w.V();
+        w.I(TrainingText($"""
+            v_cndmask_b32_e64 {base1}, {oldGate}, 0, {written}
+            v_mul_f32_e32 {dgate}, {dy}, {upValue}
+            v_mul_f32_e32 {dgate}, {dgate}, {slope}
+            v_add_f32_e32 {newGate}, {base1}, {dgate}
+            """));
+        string written2 = TrainingFlagMask(w, flags, 3);
+        w.I(TrainingText($"""
+            v_cndmask_b32_e64 {base2}, {oldUp}, 0, {written2}
+            v_mul_f32_e32 {dup}, {value}, {upSlope}
+            v_mul_f32_e32 {dup}, {dy}, {dup}
+            v_add_f32_e32 {newUp}, {base2}, {dup}
+            """));
+    }
+
+    // gated_act_bwd_f32 with gate and up read as packed bfloat16 words (pg, pu: element 2p in word p's low half, 2p + 1 in
+    // its high half), CUDA's gated_act_bwd_bf16_f32: a work-item a word (n = ⌈count / 2⌉ words), its two elements in turn
+    // (the second while below count), dgate and dup read and written as gated_act_bwd_f32 reads and writes them.
+    private static GcnKernelSource GatedBackwardPacked() =>
+        TrainingElementwise("gated_act_bwd_bf16_f32", new(["pg", "pu", "dy", "dgate", "dup"], ["kind", "flags", "count"], [0, 1], [])
+        {
+            Index = true,
+            Single = true,
         }, (w, e) =>
         {
-            const float K = 0.7978845608f, C = 0.044715f;
-            string g = e.In[0], u = e.In[1], kind = e.Values[0], flags = e.Values[1];
-            string value = w.V(), slope = w.V(), upValue = w.V(), upSlope = w.V();
-            string silu = e.Label + "_silu", gelu = e.Label + "_gelu", tanh = e.Label + "_tanh", done = e.Label + "_done";
-            w.I(TrainingText($"""
-                s_cmp_eq_u32 {kind}, 0
-                s_cbranch_scc1 {silu}
-                s_cmp_eq_u32 {kind}, 1
-                s_cbranch_scc1 {gelu}
-                s_cmp_eq_u32 {kind}, 3
-                s_cbranch_scc1 {tanh}
-                v_cmp_lt_f32_e32 vcc, 0, {g}
-                v_cndmask_b32_e32 {value}, 0, {g}, vcc
-                v_cndmask_b32_e64 {slope}, 0, 1.0, vcc
-                v_mov_b32_e32 {upValue}, {u}
-                v_mov_b32_e32 {upSlope}, 1.0
-                s_branch {done}
-                {silu}:
-                """));
-            string s = w.V(), t = w.V();
-            w.Sigmoid(s, g);
-            w.I(TrainingText($"""
-                v_mul_f32_e32 {value}, {g}, {s}
-                v_sub_f32_e32 {t}, 1.0, {s}
-                v_mul_f32_e32 {t}, {g}, {t}
-                v_add_f32_e32 {t}, 1.0, {t}
-                v_mul_f32_e32 {slope}, {s}, {t}
-                v_mov_b32_e32 {upValue}, {u}
-                v_mov_b32_e32 {upSlope}, 1.0
-                s_branch {done}
-                {gelu}:
-                """));
-            string a = w.V(), th = w.V(), o = w.V(), h = w.V(), om = w.V(), b = w.V(), f = w.V();
-            w.I(TrainingText($"""
-                v_mul_f32_e32 {a}, {PointwiseWriter.Literal(C)}, {g}
-                v_mul_f32_e32 {a}, {a}, {g}
-                v_mul_f32_e32 {a}, {a}, {g}
-                v_add_f32_e32 {a}, {g}, {a}
-                v_mul_f32_e32 {a}, {PointwiseWriter.Literal(K)}, {a}
-                """));
-            w.Tanh(th, a);
-            w.I(TrainingText($"""
-                v_add_f32_e32 {o}, 1.0, {th}
-                v_mul_f32_e32 {h}, 0.5, {g}
-                v_mul_f32_e32 {value}, {h}, {o}
-                v_mul_f32_e32 {o}, 0.5, {o}
-                v_mul_f32_e32 {om}, {th}, {th}
-                v_sub_f32_e32 {om}, 1.0, {om}
-                v_mul_f32_e32 {b}, {h}, {om}
-                v_mul_f32_e32 {b}, {PointwiseWriter.Literal(K)}, {b}
-                v_mul_f32_e32 {f}, {PointwiseWriter.Literal(3f * C)}, {g}
-                v_mul_f32_e32 {f}, {f}, {g}
-                v_add_f32_e32 {f}, 1.0, {f}
-                v_mul_f32_e32 {b}, {b}, {f}
-                v_add_f32_e32 {slope}, {o}, {b}
-                v_mov_b32_e32 {upValue}, {u}
-                v_mov_b32_e32 {upSlope}, 1.0
-                s_branch {done}
-                {tanh}:
-                """));
-            string tg = w.V(), sg = w.V(), q = w.V();
-            w.Tanh(tg, g);
-            w.Sigmoid(sg, u);
-            w.I(TrainingText($"""
-                v_mov_b32_e32 {value}, {tg}
-                v_mul_f32_e32 {q}, {tg}, {tg}
-                v_sub_f32_e32 {slope}, 1.0, {q}
-                v_mov_b32_e32 {upValue}, {sg}
-                v_sub_f32_e32 {q}, 1.0, {sg}
-                v_mul_f32_e32 {upSlope}, {sg}, {q}
-                {done}:
-                """));
-            string written = TrainingFlagMask(w, flags, 2), dgate = w.V(), dup = w.V(), base1 = w.V(), base2 = w.V();
-            w.I(TrainingText($"""
-                v_cndmask_b32_e64 {base1}, {e.In[3]}, 0, {written}
-                v_mul_f32_e32 {dgate}, {e.In[2]}, {upValue}
-                v_mul_f32_e32 {dgate}, {dgate}, {slope}
-                v_add_f32_e32 {e.Out[3]}, {base1}, {dgate}
-                """));
-            string written2 = TrainingFlagMask(w, flags, 3);
-            w.I(TrainingText($"""
-                v_cndmask_b32_e64 {base2}, {e.In[4]}, 0, {written2}
-                v_mul_f32_e32 {dup}, {value}, {upSlope}
-                v_mul_f32_e32 {dup}, {e.In[2]}, {dup}
-                v_add_f32_e32 {e.Out[4]}, {base2}, {dup}
-                """));
+            string kind = e.Values[0], flags = e.Values[1], count = e.Values[2];
+            for (int half = 0; half < 2; half++)
+            {
+                string element = w.V(), at = w.V(), g = w.V(), u = w.V(), dy = w.V(), oldGate = w.V(), oldUp = w.V(), newGate = w.V(), newUp = w.V();
+                string label = TrainingText($"{e.Label}_h{half}"), saved = w.Mask();
+                w.I(TrainingText($"v_lshl_add_u32 {element}, {e.Index}, 1, {half}"));
+                w.I(TrainingText($"v_cmp_gt_u32_e32 vcc, {count}, {element}"));
+                w.I(TrainingText($"s_and_saveexec_b64 {saved}, vcc"));
+                w.I(TrainingText($"s_cbranch_execz {label}_out"));
+                w.I(TrainingText($"v_lshlrev_b32_e32 {at}, 2, {element}"));
+                w.I(half == 0 ? TrainingText($"v_lshlrev_b32_e32 {g}, 16, {e.In[0]}") : TrainingText($"v_and_b32_e32 {g}, 0xffff0000, {e.In[0]}"));
+                w.I(half == 0 ? TrainingText($"v_lshlrev_b32_e32 {u}, 16, {e.In[1]}") : TrainingText($"v_and_b32_e32 {u}, 0xffff0000, {e.In[1]}"));
+                w.I(TrainingText($"global_load_dword {dy}, {at}, {e.Pointers[2]}"));
+                w.I(TrainingText($"v_mov_b32_e32 {oldGate}, 0"));
+                w.I(TrainingText($"v_mov_b32_e32 {oldUp}, 0"));
+                TrainingGate(w, flags, 0, label + "_no_gate_in");
+                w.I(TrainingText($"global_load_dword {oldGate}, {at}, {e.Pointers[3]}"));
+                w.I(TrainingText($"{label}_no_gate_in:"));
+                TrainingGate(w, flags, 1, label + "_no_up_in");
+                w.I(TrainingText($"global_load_dword {oldUp}, {at}, {e.Pointers[4]}"));
+                w.I(TrainingText($"{label}_no_up_in:"));
+                GatedBackwardBody(w, label, g, u, dy, oldGate, oldUp, kind, flags, newGate, newUp);
+                TrainingGate(w, flags, 0, label + "_no_gate_out");
+                w.I(TrainingText($"global_store_dword {at}, {newGate}, {e.Pointers[3]}"));
+                w.I(TrainingText($"{label}_no_gate_out:"));
+                TrainingGate(w, flags, 1, label + "_no_up_out");
+                w.I(TrainingText($"global_store_dword {at}, {newUp}, {e.Pointers[4]}"));
+                w.I(TrainingText($"{label}_no_up_out:"));
+                w.I(TrainingText($"{label}_out:"));
+                w.I(TrainingText($"s_mov_b64 exec, {saved}"));
+            }
         });
 
     // dx += invstd/m · (m · dxhat - s1 - xhat · s2) per group (g = i / inner mod groups) as the CPU's two affine passes:

@@ -167,7 +167,7 @@ failure, send the failures file and the run again with `IDRAK_TRACE=1`.
   (each format tried with its error), a launch it refused (the kernel and its grid), a profile that cannot time.
 - **Telemetry.** The same events reach every hook at `TelemetryLevel.Devices` (`KernelsLoaded`, `DeviceFailed`,
   `HostFallback`), as on Vulkan.
-- **Bench.** `--bench-hip [launch|copies|fill|rows|pointwise|products|attention|shapes|decoding|training]` in the test runner times the launch cost of `fill_f32`
+- **Bench.** `--bench-hip [launch|copies|fill|rows|pointwise|products|attention|shapes|decoding|training|convolution]` in the test runner times the launch cost of `fill_f32`
   (its code object loaded, cold and again; a launch over one float, queued, with a wait, and on the device; a launch
   over a large buffer), uploads, downloads and copies on the device, fill bandwidth (`fill_f32` beside the runtime's own
   fill), the kernel set (assembled cold, then read from a cache warm), each row and element-wise kernel, the products
@@ -175,8 +175,9 @@ failure, send the failures file and the run again with `IDRAK_TRACE=1`.
   (decoding over each cache format, the tiled form, key ranges, the int8 cache's products), the shape operations and
   decoding's (the fused packed products, float32 products of one input, attention over rows and packed sequences, the
   rows of decoding with the heads' norm and rotation and the sampler's three paths, the element-wise operations with
-  parameters) and training's (the backward passes, SGD, Adam, fused AdamW, dropout, the sums and the attention
-  gradients) (its first call, then warm: GB/s and GFLOP/s), each first call apart from the warm ones, each section ending with the host
+  parameters), training's (the backward passes, SGD, Adam, fused AdamW, dropout, the sums and the attention gradients)
+  and convolution's (the patches, the composed and depthwise convolutions, pooling, interpolation, CTC and the recurrent
+  steps) (its first call, then warm: GB/s and GFLOP/s), each first call apart from the warm ones, each section ending with the host
   fallbacks it took (none expected). The large buffer is a sixteenth of the memory the GPU has free (at most 256 MB), or
   `IDRAK_BENCH_HIP_MB`; `IDRAK_BENCH_HIP_REPEATS` sets the warm calls (default 20). Without a HIP device it prints one
   line saying why. `idrak bench -d hip:0` and `idrak report --bench -d hip:0` run their benchmarks on `hip:0` as on any

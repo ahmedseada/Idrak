@@ -22,12 +22,12 @@ internal abstract partial class Tests
         ("hip limits: the block size and the limits' plausibility come from what the device reports", HipBlockSize),
         ("hip architecture: the target string is read from the device properties by content; runtime versions read as major.minor.patch", HipArchitecture),
         ("hip kernel cache: the key changes with every input (a kernel set's with any kernel's text, the target, the device, the format and the versions); a stored code object comes back; IDRAK_HIP_KERNEL_CACHE moves or disables it", HipKernelCacheKeys),
-        ("hip kernels: GcnKernels.All (fill_f32, the element-wise, row, product, attention, shape and decoding kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c (formats 5 and 4), whose metadata, read back by the library, declares every kernel once with the arguments, kernel argument bytes and block it was written with; malformed objects are refused", HipKernelSet),
+        ("hip kernels: GcnKernels.All (fill_f32, the element-wise, row, product, attention, shape, decoding, training, convolution, CTC and recurrent kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c (formats 5 and 4), whose metadata, read back by the library, declares every kernel once with the arguments, kernel argument bytes and block it was written with; malformed objects are refused", HipKernelSet),
         ("hip kernels: IDRAK_HIP_KERNELS=0 turns the kernels off with that reason; a target Idrak does not read or no family handles gives a reason naming it (not registered); every kernel has its profile cost; IDRAK_HIP_ATTENTION_SPLIT and attention's splits; IDRAK_HIP_GEMV_SPLITS and the k splits of the packed few-row products; the element-wise grid's blocks per compute unit come from IDRAK_HIP_POINTWISE_BLOCKS", HipKernelSettings),
         ("hip telemetry: KernelsLoaded (a device's kernel set, from the cache or assembled, its time, kernels and bytes) reaches the hooks at the Devices level, the console logger's line and the JSON lines' kernels_loaded", HipKernelsLoadedEvent),
         ("hip: no vendor ids or card names in the code of src/Idrak.Gpu/Hip, and GPU targets (gfx names) only in its instruction-set tables, GcnTargets*.cs (comments may name them)", HipNoVendorNames),
         ("hip profiler and telemetry: HipBackend times its kernels (IKernelProfiler) as CUDA does; a runtime without the event functions times nothing and says why; on HIP devices fill_f32's launches are timed under its name or a label with its floating-point operations, a refused code object reaches the telemetry, and a host fallback carries why the kernels are unavailable", HipProfilerAndTelemetry),
-        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row, element-wise, attention, shape and product operations (float32, few-row, packed int8, int4, bfloat16 and float16, the expansions and bfloat16 packing) and the decoding ones (the fused packed products, attention over rows and packed sequences, penalties, rotary embeddings, the element-wise operations with parameters, the float32 products of one input, the norm and rotation of queries and keys and of the attention heads into a cache with NormRopeHeads true, the sampler's three paths with the CPU's tokens) on the GCN kernels (kernels loaded: none of them through the host fallback; on HIP devices)", HipDeviceMatchesCpu),
+        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row, element-wise, attention, shape and product operations (float32, few-row, packed int8, int4, bfloat16 and float16, the expansions and bfloat16 packing) and the decoding ones (the fused packed products, attention over rows and packed sequences, penalties, rotary embeddings, the element-wise operations with parameters, the float32 products of one input, the norm and rotation of queries and keys and of the attention heads into a cache with NormRopeHeads true, the sampler's three paths with the CPU's tokens), the training ones, and the convolutions (composed and depthwise), pooling, resampling, CTC and recurrent steps on the GCN kernels (kernels loaded: none of them through the host fallback; on HIP devices)", HipDeviceMatchesCpu),
     ];
 
     internal static void HipMissingRuntime(Device device)
@@ -250,9 +250,9 @@ internal abstract partial class Tests
         var all = GcnKernels.All;
         Check(all.Select(k => k.Name).Distinct().Count() == all.Count
               && all.Count == 1 + GcnKernels.Pointwise.Count + GcnKernels.Rows.Count + GcnKernels.Products.Count + GcnKernels.Attention.Count + GcnKernels.Shapes.Count
-                 + GcnKernels.Decoding.Count + GcnKernels.Training.Count
+                 + GcnKernels.Decoding.Count + GcnKernels.Training.Count + GcnKernels.Convolution.Count + GcnKernels.Ctc.Count + GcnKernels.Recurrent.Count
               && all[0].Name == "fill_f32",
-            $"GcnKernels.All: fill_f32, then the element-wise, row, product, attention, shape, decoding and training kernels, each once ({all.Count})");
+            $"GcnKernels.All: fill_f32, then the element-wise, row, product, attention, shape, decoding, training, convolution, CTC and recurrent kernels, each once ({all.Count})");
         foreach (string processor in new[] { "gfx900", "gfx906", "gfx908", "gfx90c" })
         {
             var isa = GcnIsaVersion.Parse(processor);
@@ -1055,8 +1055,110 @@ internal abstract partial class Tests
                 }
             }
 
+            // Convolution, pooling, resampling, CTC and the recurrent kernels (plan 35, G5c): the composed convolution runs on
+            // HIP's patches, products and permutations; the depthwise one on its own kernels.
+            var pg = new ConvGeometry(2, 3, 9, 8, 3, 2, 2, 1, 1, 1);
+            var dg = pg with { DW = 2 };
+            int pin = pg.N * pg.C * pg.H * pg.W, pout = pg.N * pg.C * pg.OH * pg.OW, patchCols = dg.Positions * dg.PatchSize;
+            float[] px = Values(pin);
+            Both("unfolded patches", [px], [patchCols], (k, s) => k.Im2Col(s[0], s[1], dg), 0f, wired: true);
+            Both("folded patches", [Values(patchCols)], [pin], (k, s) => k.Col2Im(s[0], s[1], dg), 1e-4f, wired: true);
+            Both("max pooling", [px], [pout, pout], (k, s) => k.MaxPool(s[0], s[1], s[2], pg), 0f, wired: true);
+            var poolArg = Keep(cpu.Allocate(pout, zeroed: true));
+            cpu.MaxPool(On(cpu, px), Keep(cpu.Allocate(pout, zeroed: true)), poolArg, pg);
+            Both("max pooling gradient", [Values(pout), Read(cpu, poolArg, pout)], [pin], (k, s) => k.MaxPoolBackward(s[0], s[1], s[2], pg), 1e-5f, wired: true);
+            foreach (bool countPad in new[] { true, false })
+            {
+                Both($"average pooling, padding counted {countPad}", [px], [pout], (k, s) => k.AvgPool(s[0], s[1], pg, countPad, pg.PadBottom, pg.PadRight), 1e-5f, wired: true);
+                Both($"average pooling gradient, padding counted {countPad}", [Values(pout)], [pin], (k, s) => k.AvgPoolBackward(s[0], s[1], pg, countPad, pg.PadBottom, pg.PadRight),
+                    1e-5f, wired: true);
+            }
+
+            Both("adaptive average pooling", [Values(3 * 7 * 5)], [3 * 3 * 4], (k, s) => k.AdaptiveAvgPool(s[0], s[1], 3, 7, 5, 3, 4), 1e-5f, wired: true);
+            Both("adaptive average pooling gradient", [Values(3 * 3 * 4)], [3 * 7 * 5], (k, s) => k.AdaptiveAvgPoolBackward(s[0], s[1], 3, 7, 5, 3, 4), 1e-5f, wired: true);
+            float[] ax = Values(3 * 7 * 5);
+            Both("adaptive max pooling", [ax], [3 * 3 * 4, 3 * 3 * 4], (k, s) => k.AdaptiveMaxPool(s[0], s[1], s[2], 3, 7, 5, 3, 4), 0f, wired: true);
+            var adaptiveArg = Keep(cpu.Allocate(3 * 3 * 4, zeroed: true));
+            cpu.AdaptiveMaxPool(On(cpu, ax), Keep(cpu.Allocate(3 * 3 * 4, zeroed: true)), adaptiveArg, 3, 7, 5, 3, 4);
+            Both("adaptive max pooling gradient", [Values(3 * 3 * 4), Read(cpu, adaptiveArg, 3 * 3 * 4)], [3 * 7 * 5],
+                (k, s) => k.AdaptiveMaxPoolBackward(s[0], s[1], s[2], 3, 7, 5, 3, 4), 1e-5f, wired: true);
+            foreach (var (mode, align) in new[] { (InterpolationMode.Nearest, false), (InterpolationMode.Bilinear, false), (InterpolationMode.Bilinear, true) })
+            {
+                float scaleH = align ? 4f / 8f : 5f / 9f, scaleW = align ? 6f / 3f : 7f / 4f;
+                Both($"interpolation, {mode}{(align ? ", aligned" : "")}", [Values(2 * 5 * 7)], [2 * 9 * 4],
+                    (k, s) => k.Interpolate2d(s[0], s[1], 2, 5, 7, 9, 4, mode, align, scaleH, scaleW), 1e-5f, wired: true);
+                Both($"interpolation gradient, {mode}{(align ? ", aligned" : "")}", [Values(2 * 9 * 4)], [2 * 5 * 7],
+                    (k, s) => k.Interpolate2dBackward(s[0], s[1], 2, 5, 7, 9, 4, mode, align, scaleH, scaleW), 1e-4f, wired: true);
+            }
+
+            float[] resizeCoefficients = [.. ResizeCoefficients(random, 7, 4, 3, false), .. ResizeCoefficients(random, 5, 3, 2, false)];
+            Both("resampling with normalization", [Values(4 * 5 * 7, 0f, 1f), resizeCoefficients, [2f, -0.5f, 3f, 0.25f]], [4 * 3 * 4],
+                (k, s) => k.ResizeNormalize(s[0], s[1], s[2], s[3], 4, 2, 5, 7, 3, 4, 3, 2, false), 1e-5f, wired: true);
+            var cg = new ConvGeometry(2, 4, 9, 8, 3, 3, 1, 2, 1, 1) { DH = 2 };
+            int cin = cg.N * cg.C * cg.H * cg.W;
+            foreach (var (filters, groups) in new[] { (6, 1), (8, 2), (8, 4) })
+            {
+                int cout = cg.N * filters * cg.OH * cg.OW, cw = filters * (cg.C / groups) * cg.KH * cg.KW;
+                string what = groups == cg.C ? "depthwise convolution" : $"convolution, {groups} group(s)";
+                Both(what, [Values(cin), Values(cw), Values(filters)], [cout], (k, s) => k.Convolution(s[0], s[1], s[2], s[3], cg, filters, groups, ConvActivation.Silu), 1e-3f,
+                    wired: true);
+                Both($"{what}, input gradient", [Values(cout), Values(cw)], [cin], (k, s) => k.ConvolutionBackwardInput(s[0], s[1], s[2], cg, filters, groups), 1e-3f, wired: true);
+                Both($"{what}, weight gradient", [Values(cin), Values(cout)], [cw], (k, s) => k.ConvolutionBackwardWeight(s[0], s[1], s[2], cg, filters, groups), 1e-3f, wired: true);
+            }
+
+            int[] ctcInputs = [9, 5, 9], ctcLengths = [3, 0, 4], ctcOffsets = [0, 3, 3];
+            float[] ctcTargets = [1, 1, 2, 4, 2, 1, 2], ctcLogProbs = CtcLogProbs(random, 9 * 3, 5);
+            Both("CTC loss", [ctcLogProbs, ctcTargets], [3], (k, s) => k.CtcLoss(s[0], s[1], s[2], ctcInputs, ctcLengths, ctcOffsets, 9, 3, 5, 0, false, true), 1e-3f, wired: true);
+            Both("CTC gradient", [ctcLogProbs, ctcTargets, [0.5f, 1f, 2f]], [9 * 3 * 5],
+                (k, s) => k.CtcLossBackward(s[0], s[1], s[2], s[3], ctcInputs, ctcLengths, ctcOffsets, 9, 3, 5, 0, false, true), 1e-3f, wired: true);
+            const int Rb = 2, Rs = 3, Rh = 70;
+            Both("LSTM cell", [Values(Rb * Rs * 4 * Rh), Values(Rb * 4 * Rh)], [Rb * Rh, Rb * Rh, Rb * Rs * Rh, Rb * Rs * 4 * Rh, Rb * Rs * Rh],
+                (k, s) => k.LstmCell(s[0], s[1], s[2], s[3], s[4], s[5], s[6], 1, Rs, Rb, Rh), 1e-3f, wired: true);
+            Both("GRU cell", [Values(Rb * Rs * 3 * Rh), Values(Rb * 3 * Rh), Values(Rh)], [Rb * Rh, Rb * Rs * Rh, Rb * Rs * 4 * Rh],
+                (k, s) => k.GruCell(s[0], s[1], s[2], s[3], s[4], s[5], 1, Rs, Rb, Rh), 1e-3f, wired: true);
+            Both("LSTM cell gradient", [Values(Rb * Rs * 4 * Rh, 0.05f, 0.95f), Values(Rb * Rs * Rh), Values(Rb * Rs * Rh), Values(Rb * Rh)], [Rb * Rh, Rb * Rs * 4 * Rh, Rb * 4 * Rh],
+                (k, s) => k.LstmCellBackward(s[0], s[1], s[2], s[3], s[4], s[5], s[6], 1, 0, Rs, Rb, Rh), 1e-3f, wired: true);
+            Both("GRU cell gradient", [Values(Rb * Rs * 4 * Rh, 0.05f, 0.95f), Values(Rb * Rs * Rh), Values(Rb * Rs * Rh)], [Rb * Rh, Rb * Rs * 3 * Rh, Rb * Rs * 3 * Rh, Rb * 3 * Rh],
+                (k, s) => k.GruCellBackward(s[0], s[1], s[2], s[3], s[4], s[5], s[6], 1, 0, Rs, Rb, Rh), 1e-3f, wired: true);
+            Both("LSTM step", [Values(Rb * Rs * 4 * Rh), Values(Rh * 4 * Rh, -0.2f, 0.2f)], [Rb * Rh, Rb * Rs * Rh, Rb * Rs * 4 * Rh, Rb * Rs * Rh], (k, s) =>
+            {
+                if (ReferenceEquals(k, hip))
+                {
+                    Check(k.LstmStep(s[0], s[1], s[2], s[3], s[4], s[5], 1, 0, Rs, Rb, Rh), "HIP runs the LSTM step on its kernel");
+                    return;
+                }
+
+                var rows = StepRows(k, s[3], 0, Rs, Rb, Rh);
+                var recurrent = k.Allocate(Rb * 4 * Rh, zeroed: true);
+                var hidden = k.Allocate(Rb * Rh, zeroed: true);
+                k.MatMul(rows, s[1], recurrent, Rb, 4 * Rh, Rh, false, false, 0f);
+                k.LstmCell(s[0], recurrent, s[2], hidden, s[3], s[4], s[5], 1, Rs, Rb, Rh);
+                rows.Release();
+                recurrent.Release();
+                hidden.Release();
+            }, 1e-3f, wired: true);
+            Both("GRU step gradient", [Values(Rb * Rs * 4 * Rh, 0.05f, 0.95f), Values(Rb * Rs * Rh), Values(Rb * Rs * Rh), Values(3 * Rh * Rh, -0.2f, 0.2f)],
+                [Rb * Rh, Rb * Rs * 3 * Rh, Rb * Rs * 3 * Rh], (k, s) =>
+                {
+                    if (ReferenceEquals(k, hip))
+                    {
+                        Check(k.GruStepBackward(s[0], s[1], s[2], s[3], s[4], s[5], s[6], 1, 2, 0, Rs, Rb, Rh), "HIP runs the GRU step's gradient on its kernel");
+                        return;
+                    }
+
+                    var rows = StepRows(k, s[6], 2, Rs, Rb, 3 * Rh);
+                    var dStep = k.Allocate(Rb * 3 * Rh, zeroed: true);
+                    k.MatMul(rows, s[3], s[4], Rb, Rh, 3 * Rh, false, false, 1f);
+                    k.GruCellBackward(s[0], s[1], s[2], s[4], s[5], s[6], dStep, 1, 0, Rs, Rb, Rh);
+                    rows.Release();
+                    dStep.Release();
+                }, 1e-3f, wired: true);
+            float[] packedGate = Values(1501), packedUp = Values(1501);
+            Both("packed gated activation gradient", [packedGate, packedUp, Values(3001)], [3001, 3001], (k, s) => k.GatedActivationBackwardPacked(s[0], s[1], s[2], s[3], s[4], 3001, 0, 3),
+                1e-3f, wired: true);
+
             Check(!kernels || wiredFallbacks == 0,
-                $"with kernels, no row, element-wise, product, attention, shape or training operation took the host fallback ({wiredFallbacks} calls did: {string.Join(", ", wiredNames)})");
+                $"with kernels, no row, element-wise, product, attention, shape, training, convolution, pooling, resampling, CTC or recurrent operation took the host fallback ({wiredFallbacks} calls did: {string.Join(", ", wiredNames)})");
             hip.Synchronize();
             if (!kernels)
             {

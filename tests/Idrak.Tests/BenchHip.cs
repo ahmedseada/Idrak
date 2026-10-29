@@ -7,7 +7,7 @@ using Idrak.Diagnostics;
 using Idrak.Gpu.Hip;
 using GcnWeights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
 
-// dotnet run -c Release --project tests/Idrak.Tests -- --bench-hip [launch|copies|fill|rows|pointwise|products|attention|shapes|decoding|training …]
+// dotnet run -c Release --project tests/Idrak.Tests -- --bench-hip [launch|copies|fill|rows|pointwise|products|attention|shapes|decoding|training|convolution …]
 //
 // Every HIP device found, or those IDRAK_DEVICES names (hip:0, …), section by section (all of them, or those named), as
 // --bench-vulkan is for Vulkan. Each time is the first call (cold: the code object written and loaded, the first launch,
@@ -48,6 +48,10 @@ using GcnWeights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
 //   training the backward passes (unary, gated, extremes, softmax, RMS norm), SGD, Adam, fused AdamW, dropout, the sums and
 //            the tiled attention gradients (BenchHip.Training.cs): cold apart from warm, GB/s and GFLOP/s from
 //            GcnKernels.Training.cs's table, none through the host fallback
+//   convolution the unfolded and folded patches, the composed and depthwise convolutions (and the depthwise gradients),
+//            maximum, average and adaptive pooling with their gradients, interpolation and its gradient, CTC's loss and
+//            gradient and the recurrent steps (BenchHip.Convolution.cs): cold apart from warm, GB/s and GFLOP/s from
+//            GcnKernels.Convolution.cs's, .Ctc.cs's and .Recurrent.cs's tables, ending with the host fallbacks it took
 // Each later phase of plan 35 adds the sections of its kernels to HipBenchSections (rule 78).
 // Settings (environment variables):
 //   IDRAK_BENCH_HIP_MB        the large buffer in MB (default: a sixteenth of the memory the device has free, at most
@@ -57,7 +61,7 @@ internal abstract partial class DesktopTests
 {
     private static readonly (string Name, Action<Device> Run)[] HipBenchGroup =
     [
-        ("hip bench: --bench-hip [launch|copies|fill|rows|pointwise|products|attention|shapes|decoding|training] without a HIP device (or with IDRAK_DEVICES naming none) prints why in one line and exits cleanly; an unknown section is refused naming the sections", HipBenchWithoutDevice),
+        ("hip bench: --bench-hip [launch|copies|fill|rows|pointwise|products|attention|shapes|decoding|training|convolution] without a HIP device (or with IDRAK_DEVICES naming none) prints why in one line and exits cleanly; an unknown section is refused naming the sections", HipBenchWithoutDevice),
     ];
 
     private static void HipBenchWithoutDevice(Device device)
@@ -68,8 +72,8 @@ internal abstract partial class DesktopTests
             return;
         }
 
-        Check(HipBenchSections.Select(s => s.Name).SequenceEqual(["launch", "copies", "fill", "rows", "pointwise", "products", "attention", "shapes", "decoding", "training"]),
-            "the sections: launch cost, copies, fill, rows, element-wise, products, attention, shapes, decoding, training");
+        Check(HipBenchSections.Select(s => s.Name).SequenceEqual(["launch", "copies", "fill", "rows", "pointwise", "products", "attention", "shapes", "decoding", "training", "convolution"]),
+            "the sections: launch cost, copies, fill, rows, element-wise, products, attention, shapes, decoding, training, convolution");
         (int Exit, string Out, string Err) Bench(string[] sections, string? devices)
         {
             var (savedOut, savedError) = (Console.Out, Console.Error);
@@ -104,7 +108,7 @@ internal abstract partial class DesktopTests
         }
 
         var unknown = Bench(["launch", "nope"], "cpu");
-        Check(unknown.Exit == 2 && unknown.Out.Length == 0 && unknown.Err.Contains("unknown section 'nope' (sections: launch, copies, fill, rows, pointwise, products, attention, shapes, decoding, training)", StringComparison.Ordinal),
+        Check(unknown.Exit == 2 && unknown.Out.Length == 0 && unknown.Err.Contains("unknown section 'nope' (sections: launch, copies, fill, rows, pointwise, products, attention, shapes, decoding, training, convolution)", StringComparison.Ordinal),
             $"an unknown section refused before anything runs: {unknown.Exit} '{unknown.Err}'");
     }
 
@@ -124,6 +128,8 @@ internal abstract partial class DesktopTests
         new("shapes", "the cache writes, the decoder mask, the gathers, a permute and the adding strided copy on the GCN kernels (cold and warm, GB/s)", BenchHipShapes),
         new("decoding", "the fused packed products, the float32 products of one input, attention over rows and packed sequences, the rows of decoding (the norm and rotation of the heads, the sampler) and the element-wise operations with parameters on the GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipDecoding),
         new("training", "the backward passes, the optimizers, the sums and the attention gradients on the GCN kernels (cold and warm, GB/s, GFLOP/s)", BenchHipTraining),
+        new("convolution", "the patches, the composed and depthwise convolutions, pooling, interpolation, CTC and the recurrent steps on the GCN kernels (cold and warm, GB/s, GFLOP/s)",
+            BenchHipConvolution),
     ];
 
     internal static int BenchHip(string[] sections)

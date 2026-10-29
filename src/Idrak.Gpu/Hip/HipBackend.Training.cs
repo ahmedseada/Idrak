@@ -44,6 +44,7 @@ internal sealed unsafe partial class HipBackend
         "leaky_relu_bwd_f32" => (2, 16),
         "where_bwd_f32" => (2, 24),
         "gated_act_bwd_f32" => (40, 28),
+        "gated_act_bwd_bf16_f32" => (40, 24),
         "softmax_bwd_f32" => (5, 20),
         "rms_norm_backward_f32" => (6, 24),
         "norm_bwd_f32" => (30, 28),
@@ -70,7 +71,7 @@ internal sealed unsafe partial class HipBackend
         "attn_bwd_d_f32" => (2, 8),
         "attn_bwd_q_f32" or "attn_spans_bwd_q_f32" => (6, 8),
         "attn_bwd_kv_f32" or "attn_spans_bwd_kv_f32" => (8, 8),
-        _ => (0, 0),
+        _ => ConvolutionCost(kernel),                                       // G5c's tables (convolution, CTC, recurrent)
     };
 
     /// <summary>The backward kernel of a unary operation, or null for one without (CUDA's set; sign's gradient is zero).</summary>
@@ -204,6 +205,28 @@ internal sealed unsafe partial class HipBackend
         if ((flags & 3) != 0)
         {
             LaunchPointwise(f, n, P(gate), P(up), P(dy), P(dgate), P(dup), U(kind), U(flags), U(n));
+        }
+    }
+
+    // The gated activation's gradient with gate and up packed as bfloat16 (two to a word): a work-item a word, its two
+    // elements in turn (gated_act_bwd_bf16_f32, CUDA's), no unpacked copy of either.
+    public override void GatedActivationBackwardPackedKernel(Storage packedGate, Storage packedUp, Storage dy, Storage dgate, Storage dup, int n, int kind, int flags)
+    {
+        if (PointwiseKernel("gated_act_bwd_bf16_f32", n) is not { } f)
+        {
+            base.GatedActivationBackwardPackedKernel(packedGate, packedUp, dy, dgate, dup, n, kind, flags);
+            return;
+        }
+
+        if ((flags & 3) != 0 && n > 0)
+        {
+            int words = (n + 1) / 2;
+            if (Profiling)
+            {
+                LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"{f.Name} {n}"), Cost(f.Name).Flops * n);
+            }
+
+            LaunchKernel(f, PointwiseBlocks(words), 1, P(packedGate), P(packedUp), P(dy), P(dgate), P(dup), U(kind), U(flags), U(n), U(words));
         }
     }
 
