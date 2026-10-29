@@ -64,11 +64,25 @@ namespace Idrak.Gpu.Hip;
 //   sin_f32              32      8   x, y, n
 //   cos_f32              32      8   x, y, n
 //   sign_f32              1      8   x, y, n
+//   pow_f32              12      8   x, y, p, flags, n (flags: PtxKernels.PowFlags(p))
+//   clamp_f32             4      8   x, y, lo, hi, n
+//   leaky_relu_f32        1      8   x, y, slope, n
+//   where_f32             1     16   condition, a, b, y, n
+//   inv_sqrt_f32         25      8   x, y, eps, n
+//   bias_gelu_f32        47     12   x, bias, y, cols, n (the row vector's add_rowvec_f32 shape)
+//   add_scalar_f32        1      8   s, y, scale, n (y += s[0] · scale; s[0] read once)
+//   gated_silu_f32       30     12   gate, up, y, n (y = act(gate) · up; CUDA's gated_act_f32 takes the kind,
+//   gated_gelu_f32       47     12   gate, up, y, n  here one kernel a kind, so no element branches on it)
+//   gated_relu_f32        2     12   gate, up, y, n
+//   gated_tanh_f32       67     12   gate, up, y, n
 //   (fill_f32, the gate kernel in GcnKernels.cs, one element a work-item: 0 flops, 4 bytes; out, value, count)
 internal static partial class GcnKernels
 {
     /// <summary>The element-wise kernels, in the order they join <see cref="All"/>.</summary>
-    internal static IReadOnlyList<GcnKernelSource> Pointwise { get; } = BuildPointwise();
+    internal static IReadOnlyList<GcnKernelSource> Pointwise => _pointwise ??= BuildPointwise();
+
+    // Built on first use: the text reads this file's lists (GatedKinds), whose static initializers come later.
+    private static GcnKernelSource[]? _pointwise;
 
     /// <summary>The block every element-wise kernel is written for (its required workgroup size): four waves of 64.</summary>
     internal const int PointwiseBlock = 256;
@@ -225,8 +239,47 @@ internal static partial class GcnKernels
                 w.I($"v_cmp_gt_f32_e32 vcc, 0, {i[0]}               ; x < 0: -1; else x (±0, NaN)");
                 w.I($"v_cndmask_b32_e64 {o}, {t}, -1.0, vcc");
             }),
+
+            // G5a: the element-wise operations with parameters (PtxKernels.Pointwise.cs, PtxKernels.Advanced.cs).
+            Kernel("pow_f32", new(["x", "y"], ["p", "flags"], [0], 1), (w, i, v, o) => w.Pow(o, i[0], v[0], v[1])),
+            Kernel("clamp_f32", new(["x", "y"], ["lo", "hi"], [0], 1), (w, i, v, o) =>
+            {
+                string t = w.V();
+                w.Extreme(t, i[0], w.VFrom(v[0]), minimum: false);
+                w.Extreme(o, t, w.VFrom(v[1]), minimum: true);
+            }),
+            Kernel("leaky_relu_f32", new(["x", "y"], ["slope"], [0], 1), (w, i, v, o) =>
+            {
+                string t = w.V();
+                w.I($"v_mul_f32_e32 {t}, {v[0]}, {i[0]}");
+                w.I($"v_cmp_lt_f32_e32 vcc, 0, {i[0]}               ; x > 0: x (NaN: slope · NaN)");
+                w.I($"v_cndmask_b32_e32 {o}, {t}, {i[0]}, vcc");
+            }),
+            Kernel("where_f32", new(["condition", "a", "b", "y"], [], [0, 1, 2], 3), (w, i, _, o) =>
+            {
+                w.I($"v_cmp_neq_f32_e32 vcc, 0, {i[0]}              ; condition ≠ 0 (NaN too): a");
+                w.I($"v_cndmask_b32_e32 {o}, {i[2]}, {i[1]}, vcc");
+            }),
+            Kernel("inv_sqrt_f32", new(["x", "y"], ["eps"], [0], 1), (w, i, v, o) =>
+            {
+                string sum = w.V(), root = w.V();
+                w.I($"v_add_f32_e32 {sum}, {v[0]}, {i[0]}");
+                w.Sqrt(root, sum);
+                w.Div(o, "1.0", root);
+            }),
+            Kernel("bias_gelu_f32", new(["x", "bias", "y"], ["cols"], [0], 2, RowVector: true), (w, i, _, o) =>
+            {
+                string sum = w.V();
+                w.I($"v_add_f32_e32 {sum}, {i[0]}, {i[1]}");
+                w.GeluTanh(o, sum);
+            }),
+            Kernel("add_scalar_f32", new(["s", "y"], ["scale"], [1], 1), (w, i, v, o) => w.I($"v_add_f32_e32 {o}, {w.HeldProduct("%s[0:1]", v[0])}, {i[0]}")),
+            .. GatedKinds.Select((kind, k) => Kernel(kind, new(["gate", "up", "y"], [], [0, 1], 2), (w, i, _, o) => w.Gated(o, i[0], i[1], k))),
         ];
     }
+
+    /// <summary>The gated activations' kernels by kind (0 SiLU, 1 GELU, 2 ReLU, 3 tanh · sigmoid): one a kind, no branch per element.</summary>
+    internal static readonly string[] GatedKinds = ["gated_silu_f32", "gated_gelu_f32", "gated_relu_f32", "gated_tanh_f32"];
 
     // Scalar registers of the frame (the arguments take %s0 up, a dword each, in argument order; the writer's constants
     // and masks %s64 up).
@@ -441,12 +494,12 @@ internal static partial class GcnKernels
     /// the kernel's start, in a scalar register, or in a vector one where the instruction already reads a scalar or
     /// VCC), and the math sequences (see the file's remarks).
     /// </summary>
-    private sealed class PointwiseWriter
+    private sealed class PointwiseWriter(int firstVector = 16, int firstScalar = 64)
     {
         private readonly Dictionary<(bool Vector, uint Bits), string> _held = [];
         private readonly Dictionary<string, string> _copies = [];
         private StringBuilder _text = new();
-        private int _v = 16, _s = 64;
+        private int _v = firstVector, _s = firstScalar;
 
         /// <summary>The lines that set the held constants and copies.</summary>
         public StringBuilder Held { get; } = new();
@@ -494,6 +547,46 @@ internal static partial class GcnKernels
                 register = V();
                 Held.Append(CultureInfo.InvariantCulture, $"  v_mov_b32_e32 {register}, {scalar}\n");
                 _copies[scalar] = register;
+            }
+
+            return register;
+        }
+
+        /// <summary>
+        /// A lane mask (all lanes or none) that is set when scalar register <paramref name="flags"/> (an argument) has any
+        /// of <paramref name="bits"/>, made once at the kernel's start.
+        /// </summary>
+        public string FlagMask(string flags, uint bits)
+        {
+            string key = $"flag {flags} {bits}";
+            if (!_copies.TryGetValue(key, out string? mask))
+            {
+                mask = Mask();
+                string t = string.Create(CultureInfo.InvariantCulture, $"%s{_s++}");
+                Held.Append(CultureInfo.InvariantCulture, $"  s_and_b32 {t}, {flags}, {Literal(bits)}\n");
+                Held.Append(CultureInfo.InvariantCulture, $"  s_cmp_lg_u32 {t}, 0\n");
+                Held.Append(CultureInfo.InvariantCulture, $"  s_cselect_b64 {mask}, -1, 0\n");
+                _copies[key] = mask;
+            }
+
+            return mask;
+        }
+
+        /// <summary>
+        /// A vector register holding <paramref name="pointer"/>[0] · <paramref name="scale"/> (a buffer's first float and
+        /// a scalar argument), read and multiplied once at the kernel's start.
+        /// </summary>
+        public string HeldProduct(string pointer, string scale)
+        {
+            string key = $"product {pointer} {scale}";
+            if (!_copies.TryGetValue(key, out string? register))
+            {
+                register = V();
+                string t = string.Create(CultureInfo.InvariantCulture, $"%s{_s++}");
+                Held.Append(CultureInfo.InvariantCulture, $"  s_load_dword {t}, {pointer}, 0x0\n");
+                Held.Append(CultureInfo.InvariantCulture, $"  v_mov_b32_e32 {register}, {scale}\n");
+                Held.Append(CultureInfo.InvariantCulture, $"  v_mul_f32_e32 {register}, {t}, {register}\n");
+                _copies[key] = register;
             }
 
             return register;
@@ -654,6 +747,90 @@ internal static partial class GcnKernels
             Exp(e, negated);
             I($"v_add_f32_e32 {d}, 1.0, {e}");
             Div(target, "1.0", d);
+        }
+
+        /// <summary>target = x / (1 + e^-x), SiLU as CpuMath.Gated computes it (one division).</summary>
+        public void Silu(string target, string x)
+        {
+            string negated = V(), e = V(), d = V();
+            I($"v_xor_b32_e32 {negated}, 0x80000000, {x}");
+            Exp(e, negated);
+            I($"v_add_f32_e32 {d}, 1.0, {e}");
+            Div(target, x, d);
+        }
+
+        /// <summary>
+        /// target = act(g) · u as CpuMath.Gated computes it: kind 0 SiLU, 1 GELU (tanh), 2 ReLU, 3 tanh(g) · sigmoid(u).
+        /// </summary>
+        public void Gated(string target, string g, string u, int kind)
+        {
+            string a = V();
+            switch (kind)
+            {
+                case 0:
+                    Silu(a, g);
+                    break;
+                case 1:
+                    GeluTanh(a, g);
+                    break;
+                case 3:
+                    string s = V();
+                    Tanh(a, g);
+                    Sigmoid(s, u);
+                    I($"v_mul_f32_e32 {target}, {a}, {s}");
+                    return;
+                default:
+                    I($"v_cmp_ge_f32_e32 vcc, 0, {g}                    ; g <= 0: +0");
+                    I($"v_cndmask_b32_e64 {a}, {g}, 0, vcc");
+                    break;
+            }
+
+            I($"v_mul_f32_e32 {target}, {a}, {u}");
+        }
+
+        /// <summary>
+        /// target = MathF.Pow(x, p) as CUDA's pow_f32 computes it (PowOf, with PtxKernels.PowFlags' bits in the scalar
+        /// <paramref name="flags"/>): 2^(p · log2 |x|) with the product's rounding error taken back by a fused step, then the
+        /// sign, NaN and the exponents 0, 1 and 2 as MathF.Pow has them.
+        /// </summary>
+        public void Pow(string target, string x, string p, string flags)
+        {
+            string a = V(), scaled = V(), l = V(), shift = V(), hi = V(), lo = V(), r = V(), t = V(), negated = V(), xx = V();
+            string finite = Mask(), one = Mask(), unit = Mask(), xIsOne = Mask(), chosen = Mask();
+            I($"v_and_b32_e32 {a}, 0x7fffffff, {x}");
+            I($"v_cmp_gt_f32_e32 vcc, {S(0x00800000u)}, {a}               ; below the smallest normal: scaled by 2^32");
+            I($"v_cndmask_b32_e32 {scaled}, 1.0, {VC(0x4f800000u)}, vcc");
+            I($"v_mul_f32_e32 {scaled}, {a}, {scaled}");
+            I($"v_log_f32_e32 {l}, {scaled}");
+            I($"v_cndmask_b32_e32 {shift}, 0, {VC(32f)}, vcc");
+            I($"v_sub_f32_e32 {l}, {l}, {shift}                          ; log2 |x|");
+            I($"v_mul_f32_e32 {hi}, {p}, {l}");
+            I($"v_fma_f32 {lo}, {l}, {p}, -{hi}                          ; the product's rounding error");
+            I($"v_mul_f32_e32 {lo}, {Literal(0x3f317218u)}, {lo}");
+            I($"v_exp_f32_e32 {r}, {hi}");
+            I($"v_fma_f32 {t}, {r}, {lo}, {r}");
+            I($"v_cmp_class_f32_e64 {finite}, {hi}, {S(0x1f8u)}          ; a finite product: corrected");
+            I($"v_cndmask_b32_e64 {r}, {r}, {t}, {finite}");
+            I($"v_cmp_eq_f32_e64 {unit}, 1.0, {a}");
+            I($"v_cmp_eq_f32_e64 {xIsOne}, 1.0, {x}");
+            string nanExponent = FlagMask(flags, 4);
+            I($"s_and_b64 {chosen}, {nanExponent}, {xIsOne}              ; |x| = 1 gives 1 (x = 1 alone for a NaN exponent)");
+            I($"s_andn2_b64 {one}, {unit}, {nanExponent}");
+            I($"s_or_b64 {one}, {one}, {chosen}");
+            I($"v_cndmask_b32_e64 {r}, {r}, 1.0, {one}");
+            I($"v_xor_b32_e32 {negated}, 0x80000000, {r}");
+            I($"v_cmp_gt_i32_e32 vcc, 0, {x}                              ; a negative base (its sign bit), an odd exponent: negated");
+            I($"s_and_b64 vcc, vcc, {FlagMask(flags, 1)}");
+            I($"v_cndmask_b32_e32 {r}, {r}, {negated}, vcc");
+            I($"v_cmp_gt_f32_e32 vcc, 0, {x}                              ; a finite negative base, a fractional exponent: NaN");
+            I($"v_cmp_class_f32_e64 {finite}, {x}, {S(0x1f8u)}");
+            I($"s_and_b64 vcc, vcc, {finite}");
+            I($"s_and_b64 vcc, vcc, {FlagMask(flags, 2)}");
+            I($"v_cndmask_b32_e32 {r}, {r}, {VC(0xffc00000u)}, vcc");
+            I($"v_cndmask_b32_e64 {r}, {r}, 1.0, {FlagMask(flags, 8)}     ; the exponent 0: 1, NaN too");
+            I($"v_cndmask_b32_e64 {r}, {r}, {x}, {FlagMask(flags, 16)}    ; 1: x");
+            I($"v_mul_f32_e32 {xx}, {x}, {x}");
+            I($"v_cndmask_b32_e64 {target}, {r}, {xx}, {FlagMask(flags, 32)}   ; 2: x · x");
         }
 
         /// <summary>target = tanh x as the CPU computes it (CpuMath.Tanh, TanhRational's coefficients).</summary>

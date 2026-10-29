@@ -22,12 +22,12 @@ internal abstract partial class Tests
         ("hip limits: the block size and the limits' plausibility come from what the device reports", HipBlockSize),
         ("hip architecture: the target string is read from the device properties by content; runtime versions read as major.minor.patch", HipArchitecture),
         ("hip kernel cache: the key changes with every input (a kernel set's with any kernel's text, the target, the device, the format and the versions); a stored code object comes back; IDRAK_HIP_KERNEL_CACHE moves or disables it", HipKernelCacheKeys),
-        ("hip kernels: GcnKernels.All (fill_f32, the element-wise, row, product, attention and shape kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c (formats 5 and 4), whose metadata, read back by the library, declares every kernel once with the arguments, kernel argument bytes and block it was written with; malformed objects are refused", HipKernelSet),
+        ("hip kernels: GcnKernels.All (fill_f32, the element-wise, row, product, attention, shape and decoding kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c (formats 5 and 4), whose metadata, read back by the library, declares every kernel once with the arguments, kernel argument bytes and block it was written with; malformed objects are refused", HipKernelSet),
         ("hip kernels: IDRAK_HIP_KERNELS=0 turns the kernels off with that reason; a target Idrak does not read or no family handles gives a reason naming it (not registered); every kernel has its profile cost; IDRAK_HIP_ATTENTION_SPLIT and attention's splits; IDRAK_HIP_GEMV_SPLITS and the k splits of the packed few-row products; the element-wise grid's blocks per compute unit come from IDRAK_HIP_POINTWISE_BLOCKS", HipKernelSettings),
         ("hip telemetry: KernelsLoaded (a device's kernel set, from the cache or assembled, its time, kernels and bytes) reaches the hooks at the Devices level, the console logger's line and the JSON lines' kernels_loaded", HipKernelsLoadedEvent),
         ("hip: no vendor ids or card names in the code of src/Idrak.Gpu/Hip, and GPU targets (gfx names) only in its instruction-set tables, GcnTargets*.cs (comments may name them)", HipNoVendorNames),
         ("hip profiler and telemetry: HipBackend times its kernels (IKernelProfiler) as CUDA does; a runtime without the event functions times nothing and says why; on HIP devices fill_f32's launches are timed under its name or a label with its floating-point operations, a refused code object reaches the telemetry, and a host fallback carries why the kernels are unavailable", HipProfilerAndTelemetry),
-        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row, element-wise, attention, shape and product operations (float32, few-row, packed int8, int4, bfloat16 and float16, the expansions and bfloat16 packing) on the GCN kernels (kernels loaded: none of them through the host fallback; on HIP devices)", HipDeviceMatchesCpu),
+        ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row, element-wise, attention, shape and product operations (float32, few-row, packed int8, int4, bfloat16 and float16, the expansions and bfloat16 packing) and the decoding ones (the fused packed products, attention over rows and packed sequences, penalties, rotary embeddings, the element-wise operations with parameters) on the GCN kernels (kernels loaded: none of them through the host fallback; on HIP devices)", HipDeviceMatchesCpu),
     ];
 
     internal static void HipMissingRuntime(Device device)
@@ -250,8 +250,9 @@ internal abstract partial class Tests
         var all = GcnKernels.All;
         Check(all.Select(k => k.Name).Distinct().Count() == all.Count
               && all.Count == 1 + GcnKernels.Pointwise.Count + GcnKernels.Rows.Count + GcnKernels.Products.Count + GcnKernels.Attention.Count + GcnKernels.Shapes.Count
+                 + GcnKernels.Decoding.Count
               && all[0].Name == "fill_f32",
-            $"GcnKernels.All: fill_f32, then the element-wise, row, product, attention and shape kernels, each once ({all.Count})");
+            $"GcnKernels.All: fill_f32, then the element-wise, row, product, attention, shape and decoding kernels, each once ({all.Count})");
         foreach (string processor in new[] { "gfx900", "gfx906", "gfx908", "gfx90c" })
         {
             var isa = GcnIsaVersion.Parse(processor);
@@ -661,7 +662,7 @@ internal abstract partial class Tests
                     (k, s) => k.LayerNormBackward(s[0], s[1], s[2], s[3], null, s[4], null, lr, lc), 1e-3f, wired: true);
             }
 
-            Both("GELU after a bias", [logits, Values(sc)], [sr * sc], (k, s) => k.BiasGelu(s[0], s[1], s[2], sr * sc, sc));
+            Both("GELU after a bias", [logits, Values(sc)], [sr * sc], (k, s) => k.BiasGelu(s[0], s[1], s[2], sr * sc, sc), wired: true);
             Both("best k log-probabilities", [logits], [sr * 8, sr * 8], (k, s) => k.LogSoftmaxTopK(s[0], s[1], s[2], sr, sc, 8), wired: true);
             foreach (var op in new[] { UnaryOp.Gelu, UnaryOp.GeluErf, UnaryOp.Silu, UnaryOp.Sqrt, UnaryOp.Sin, UnaryOp.Cos, UnaryOp.Sign, UnaryOp.Log })
             {
@@ -734,6 +735,140 @@ internal abstract partial class Tests
             Both("permute", [Values(2 * 3 * 4 * 5)], [120], (k, s) => k.Permute(s[0], s[1], [2, 4, 5, 3], [60, 5, 1, 20], accumulate: false), 0f, wired: true);
             Both("permute, adding", [Values(2 * 3 * 4 * 5)], [120], (k, s) => k.Permute(s[0], s[1], [2, 4, 5, 3], [60, 5, 1, 20], accumulate: true), wired: true);
             Both("strided copy, adding", [Values(200)], [200], (k, s) => k.Copy2D(s[0], 5, 13, s[1], 3, 20, 6, 9, accumulate: true), wired: true);
+
+            // G5a: the element-wise operations with parameters, the rows of decoding and the decoding contracts.
+            float[] mixed = Values(1000, -3f, 3f), condition = [.. Values(1000).Select((v, i) => i % 3 == 0 ? 0f : v)];
+            Both("power", [Values(1000, 0.1f, 3f)], [1000], (k, s) => k.Pow(s[0], s[1], 1000, 1.5f), 1e-3f, wired: true);
+            Both("cube of negative bases", [mixed], [1000], (k, s) => k.Pow(s[0], s[1], 1000, 3f), 1e-3f, wired: true);
+            Both("clamp", [mixed], [1000], (k, s) => k.Clamp(s[0], s[1], 1000, -0.5f, 0.75f), 0f, wired: true);
+            Both("leaky ReLU", [mixed], [1000], (k, s) => k.LeakyRelu(s[0], s[1], 1000, 0.1f), 0f, wired: true);
+            Both("selection", [condition, mixed, Values(1000)], [1000], (k, s) => k.Where(s[0], s[1], s[2], s[3], 1000), 0f, wired: true);
+            Both("inverse square root", [Values(1000, 0.1f, 4f)], [1000], (k, s) => k.InvSqrt(s[0], s[1], 1000, 1e-5f), wired: true);
+            Both("a scalar added to every element", [[0.3f]], [1000], (k, s) => k.AddBroadcastScalar(s[0], s[1], 1000, -2f), wired: true);
+            Both("a scalar added to one element", [[0.3f]], [1000], (k, s) => k.AxpyAt(s[0], s[1], 17, 0.5f), wired: true);
+            for (int kind = 0; kind < 4; kind++)
+            {
+                int activation = kind;
+                Both($"gated activation {kind}", [mixed, Values(1000)], [1000], (k, s) => k.GatedActivation(s[0], s[1], s[2], 1000, activation), wired: true);
+            }
+
+            float[] rowsX = Values(5 * 513, -4f, 4f);
+            rowsX[513 + 7] = rowsX[513 + 9] = 50f;                                        // a tie: the first column
+            Both("arg-max", [rowsX], [5], (k, s) => k.ArgMax(s[0], s[1], 5, 513), 0f, wired: true);
+            Both("class match", [rowsX, Values(5 * 513)], [5], (k, s) => k.ClassMatch(s[0], s[1], s[2], 5, 513, 0.5f), 0f, wired: true);
+            Both("residual addition and RMS norm", [rowsX, Values(5 * 513), Values(513)], [5 * 513, 5 * 513],
+                (k, s) => k.AddRmsNormAffine(s[0], s[1], s[3], s[2], s[4], 5, 513, 1e-6f, 1f), wired: true);
+            float[] ropeX = Values(6 * 40), ropeCos = Values(10 * 16), ropeSin = Values(10 * 16);
+            Both("rotary embedding", [ropeX, ropeCos, ropeSin, [5f, 7f]], [6 * 40], (k, s) => k.Rope(s[0], s[4], s[1], s[2], s[3], 6, 3, 2, 40, 16, false, -1f), wired: true);
+            Both("RMS norm and rotary embedding", [ropeX, Values(40), ropeCos, ropeSin, [5f, 7f]], [6 * 40],
+                (k, s) => k.RmsNormRope(s[0], s[1], s[2], s[3], s[4], s[5], 6, 40, 1e-6f, 0f, 3, 2, 16, true), wired: true);
+            Both("one-hot", [[0f, 12f, 5f, 3f]], [4 * 13], (k, s) => k.OneHot(s[0], s[1], 4, 13), 0f, wired: true);
+            Both("history push", [[17f, 4f], [12f]], [2 * 5], (k, s) => k.HistoryPush(s[0], s[2], s[1], 2, 5), 0f, wired: true);
+            Both("repetition penalties", [Values(2 * 310, -4f, 4f), [12, 40, 299, 12, 350, 7, 40, 12, 3, -1, 3, 3, 250, 0, 9, 3], [11f]], [2 * 300],
+                (k, s) => k.PenalizeRows(s[0], s[3], s[1], s[2], 2, 300, 310, 5, 8, 6, 1.3f, 0.2f, 0.1f), wired: true);
+
+            // Rows of different lengths over float32 and bfloat16 caches, and packed sequences (IRowAttentionBackend,
+            // ISegmentedAttentionBackend): on the kernels, never the host.
+            float[] rowStarts = [0f, 5f, 40f, 2f, 31f, 33f];
+            Both("attention over rows of different lengths", [Values(heads * 3 * dimP), Values(heads * capP * dimP), Values(heads * capP * dimP), [30f], rowStarts],
+                [heads * 3 * dimP], (k, s) => k.AttentionRows(s[0], s[1], s[2], s[3], s[5], s[4], heads, 2, 3, 3, capP, dimP, 0.15f, new AttentionVariant(9, 4f)), wired: true);
+            Both("attention over rows of different lengths, a bfloat16 cache", [Values(heads * 3 * dimP), bf16Keys, bf16Keys, [30f], rowStarts], [heads * 3 * dimP],
+                (k, s) => k.AttentionRowsBFloat16(s[0], s[1], s[2], s[3], s[5], s[4], heads, 2, 3, 3, capP, dimP, 0.15f), wired: true);
+            float[] packedStarts = [0, 0, 0, 3, 3, 3, 3, 7, 7, 0, 0, 2, 2, 2, 2, 2, 2, 2], packedEnds = [3, 3, 3, 7, 7, 7, 7, 9, 9, 2, 2, 9, 9, 9, 9, 9, 9, 9];
+            Both("attention over packed sequences", [Values(heads * 9 * 24), Values(heads * 9 * 24), Values(heads * 9 * 24), packedStarts, packedEnds], [heads * 9 * 24, heads * 9],
+                (k, s) => k.AttentionSegmented(s[0], s[1], s[2], s[5], s[6], s[3], s[4], heads, 2, 9, 9, 24, 0.2f, new AttentionVariant(3, 5f)), wired: true);
+            Check(hip.SupportsAttentionRows(dimP) && hip.SupportsSegmentedAttention(dimP), "HIP answers for rows and packed sequences as the CPU does");
+
+            // The fused packed products (IFusedPackedKernels) against the CPU's composed operations: on HIP's kernels they run
+            // (true) and take no host fallback.
+            Check(hip.FusedKernels, "HIP implements the fused packed products");
+            void PackedProduct(Backend b, PackedFormat f, Storage x, Storage w, Storage? sc, Storage y, int rows, int cols, int depth)
+            {
+                switch (f)
+                {
+                    case PackedFormat.Int8:
+                        b.Int8MatMul(x, w, sc!, y, rows, cols, depth);
+                        break;
+                    case PackedFormat.Int4:
+                        b.Int4MatMul(x, w, sc!, y, rows, cols, depth);
+                        break;
+                    default:
+                        b.BFloat16MatMul(x, w, y, rows, cols, depth);
+                        break;
+                }
+            }
+
+            foreach (var (format, weightsOf, scalesOf, depth, width) in new (PackedFormat, float[], float[]?, int, int)[]
+                     {
+                         (PackedFormat.Int8, packed, scales, k8, cols8), (PackedFormat.Int4, int4, int4Scales, pdepth, pcols), (PackedFormat.BFloat16, packedRows, null, pdepth, pcols),
+                     })
+            {
+                const int Rows = 3;
+                float[] fx = Values(Rows * depth), fup = Values(Rows * depth), residual = Values(Rows * width), fgain = Values(width), bias = Values(width);
+                float[][] Inputs() => scalesOf is null ? [fx, fup, weightsOf, [0f], residual, fgain, bias] : [fx, fup, weightsOf, scalesOf, residual, fgain, bias];
+                Storage? Scales(Storage[] s) => scalesOf is null ? null : s[3];
+                bool fused = true;
+                void Fused(Backend b, bool done)
+                {
+                    if (ReferenceEquals(b, hip))
+                    {
+                        fused &= done || !kernels;
+                    }
+                }
+
+                Both($"{format} gated product", Inputs(), [Rows * width], (k, s) =>
+                {
+                    if (ReferenceEquals(k, hip))
+                    {
+                        Fused(k, k.PackedMatMulGated(format, 0, s[0], s[1], s[2], Scales(s), s[7], Rows, width, depth));
+                        return;
+                    }
+
+                    var hidden = k.Allocate(Rows * depth, zeroed: false);
+                    k.GatedActivation(s[0], s[1], hidden, Rows * depth, 0);
+                    PackedProduct(k, format, hidden, s[2], Scales(s), s[7], Rows, width, depth);
+                    hidden.Release();
+                }, 1e-3f, wired: true);
+                Both($"{format} product, residual addition and norm", Inputs(), [Rows * width, Rows * width, Rows * width], (k, s) =>
+                {
+                    if (ReferenceEquals(k, hip))
+                    {
+                        Fused(k, k.PackedMatMulAddRmsNorm(format, s[0], s[2], Scales(s), s[7], Rows, width, depth, s[4], s[8], s[5], s[9], 1e-6f, 1f));
+                        return;
+                    }
+
+                    PackedProduct(k, format, s[0], s[2], Scales(s), s[7], Rows, width, depth);
+                    k.AddRmsNormAffine(s[4], s[7], s[8], s[5], s[9], Rows, width, 1e-6f, 1f);
+                }, 1e-3f, wired: true);
+                Both($"{format} product, its norm, residual addition and norm", Inputs(), [Rows * width, Rows * width, Rows * width],
+                    (k, s) => Fused(k, k.PackedMatMulNormAddRmsNorm(format, s[0], s[2], Scales(s), s[7], Rows, width, depth, s[6], 1e-6f, 0f, s[4], s[8], s[5], s[9], 1e-6f, 1f)),
+                    1e-3f, wired: true);
+                Both($"{format} two products of one input, one with a bias", Inputs(), [Rows * width, Rows * width], (k, s) =>
+                {
+                    if (ReferenceEquals(k, hip))
+                    {
+                        Fused(k, k.PackedMatMulMany(format, s[0], Rows, depth, [(s[2], Scales(s), s[6], s[7], width), (s[2], Scales(s), null, s[8], width)]));
+                        return;
+                    }
+
+                    PackedProduct(k, format, s[0], s[2], Scales(s), s[7], Rows, width, depth);
+                    k.AddRowVector(s[7], s[6], s[7], Rows, width);
+                    PackedProduct(k, format, s[0], s[2], Scales(s), s[8], Rows, width, depth);
+                }, 1e-3f, wired: true);
+                Both($"{format} gate/up pair with GELU", Inputs(), [Rows * width, Rows * width, Rows * width], (k, s) =>
+                {
+                    if (ReferenceEquals(k, hip))
+                    {
+                        Fused(k, k.PackedMatMulGatedPair(format, 1, s[0], Rows, depth, [(s[2], Scales(s), null, s[7], width), (s[2], Scales(s), null, s[8], width)], s[9]));
+                        return;
+                    }
+
+                    PackedProduct(k, format, s[0], s[2], Scales(s), s[7], Rows, width, depth);
+                    PackedProduct(k, format, s[0], s[2], Scales(s), s[8], Rows, width, depth);
+                    k.GatedActivation(s[7], s[8], s[9], Rows * width, 1);
+                }, 1e-3f, wired: true);
+                Check(fused, $"{format}: with kernels, every fused packed product ran on HIP's kernels (none declined)");
+            }
 
             Check(!kernels || wiredFallbacks == 0,
                 $"with kernels, no row, element-wise, product, attention or shape operation took the host fallback ({wiredFallbacks} calls did: {string.Join(", ", wiredNames)})");

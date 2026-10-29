@@ -163,7 +163,9 @@ internal static partial class GcnKernels
     };
 
     // Attention of one query row a block over its range of keys (see the file's remarks).
-    private static GcnKernelSource AttentionRows(string name, AttentionCache cache, bool spans)
+    // With `rows` (attention_rows_*, GcnKernels.Decoding.cs), each row of a cache also starts no earlier than its
+    // sequence's start, starts[(head / hpr) · steps + step] (Backend.AttentionRows); a row whose range is empty gets zeros.
+    private static GcnKernelSource AttentionRows(string name, AttentionCache cache, bool spans, bool rows = false)
     {
         bool int8 = cache == AttentionCache.Int8, packed = cache != AttentionCache.Float32;
         var w = new RowWriter(name, arrays: 1, workgroupY: true, extraLds: 4 * AttentionTile + 4 * AttentionMaxDim);
@@ -172,9 +174,10 @@ internal static partial class GcnKernels
             ? w.Arguments(["q", "keys", "values", "starts", "ends", "y", "lse", "part"],
                 ["heads", "group", "hpt", "rows", "keyrows", "dim", "scale", "softcap", "chunk", "splits", "qbatch", "qhead", "qrow", "kbatch", "khead", "krow",
                     "ybatch", "yhead", "yrow", "n"])
-            : w.Arguments(int8 ? ["q", "keys", "values", "kscales", "vscales", "pos", "y", "lse", "part"] : ["q", "keys", "values", "pos", "y", "lse", "part"],
-                packed ? ["rph", "steps", "cap", "dim", "scale", "words", "window", "softcap", "chunk", "splits", "n"]
-                    : ["rph", "steps", "cap", "dim", "scale", "window", "softcap", "chunk", "splits", "n"]);
+            : w.Arguments(int8 ? ["q", "keys", "values", "kscales", "vscales", "pos", "y", "lse", "part"]
+                    : rows ? ["q", "keys", "values", "pos", "y", "lse", "part", "starts"] : ["q", "keys", "values", "pos", "y", "lse", "part"],
+                [.. (packed ? (string[])["rph", "steps", "cap", "dim", "scale", "words", "window", "softcap", "chunk", "splits"]
+                    : ["rph", "steps", "cap", "dim", "scale", "window", "softcap", "chunk", "splits"]), .. (rows ? (string[])["hpr", "n"] : ["n"])]);
         string dim = a.Scalar("dim"), scale = a.Scalar("scale"), softcap = a.Scalar("softcap"), chunk = a.Scalar("chunk"), splits = a.Scalar("splits");
         string q = a.Pointer("q"), keys = a.Pointer("keys"), values = a.Pointer("values"), y = a.Pointer("y"), lse = a.Pointer("lse"), part = a.Pointer("part");
 
@@ -250,6 +253,7 @@ internal static partial class GcnKernels
                 s_mul_i32 {capRow}, {a.Scalar("cap")}, {(packed ? a.Scalar("words") : dim)}
                 """);
             (byRph, bySteps) = (AttentionReciprocal(w, a.Scalar("rph")), AttentionReciprocal(w, a.Scalar("steps")));
+            byTables = rows ? AttentionReciprocal(w, a.Scalar("hpr")) : "";
         }
 
         w.BeginRows(a.Scalar("n"));
@@ -297,6 +301,22 @@ internal static partial class GcnKernels
                 s_cmp_eq_u32 {window}, 0
                 s_cselect_b32 {begin}, 0, {begin}
                 """);
+            if (rows)
+            {
+                // The row's sequence starts at starts[(head / hpr) · steps + step] (a float; negative counts as 0).
+                var (table, _) = AttentionDivMod(w, head, a.Scalar("hpr"), byTables);
+                string at = AttentionIndex(w, (table, a.Scalar("steps")));
+                w.L($"s_add_u32 {at}, {at}, {step}");
+                string startAt = w.ElementAddress(a.Pointer("starts"), at), first = w.V(), start = w.S();
+                w.L($"""
+                    global_load_dword {first}, {w.Zero}, {startAt}
+                    v_cvt_i32_f32_e32 {first}, {first}
+                    v_readfirstlane_b32 {start}, {first}
+                    s_max_i32 {start}, {start}, 0
+                    s_max_u32 {begin}, {begin}, {start}
+                    """);
+            }
+
             queryOffset = AttentionIndex(w, (w.Row, dim));
             outputOffset = queryOffset;
             cacheOffset = AttentionIndex(w, (head, capRow));

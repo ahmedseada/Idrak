@@ -90,8 +90,8 @@ internal abstract partial class Tests
         _ = device;
         var all = GcnKernels.All;
         Check(all.Select(k => k.Name).Distinct().Count() == all.Count, $"kernel names are unique: {string.Join(", ", all.Select(k => k.Name))}");
-        Check(GcnKernels.Pointwise.Count == 23 && all.Skip(1).Take(GcnKernels.Pointwise.Count).SequenceEqual(GcnKernels.Pointwise),
-            $"the 23 element-wise kernels follow fill_f32: {string.Join(", ", GcnKernels.Pointwise.Select(k => k.Name))}");
+        Check(GcnKernels.Pointwise.Count == 34 && all.Skip(1).Take(GcnKernels.Pointwise.Count).SequenceEqual(GcnKernels.Pointwise),
+            $"the 34 element-wise kernels (G3a's 23, G5a's 11) follow fill_f32: {string.Join(", ", GcnKernels.Pointwise.Select(k => k.Name))}");
         foreach (string processor in new[] { "gfx900", "gfx906", "gfx908", "gfx90c" })
         {
             var isa = GcnIsaVersion.Parse(processor);
@@ -133,6 +133,15 @@ internal abstract partial class Tests
         "axpy_f32" => GcnKernels.AxpyArguments,
         "add_f32" or "sub_f32" or "mul_f32" or "max_f32" or "min_f32" or "muladd_f32" => GcnKernels.BinaryArguments,
         "add_rowvec_f32" => GcnKernels.RowVectorArguments,
+        "pow_f32" => [GcnArgument.Buffer(0, "x"), GcnArgument.Buffer(8, "y"), GcnArgument.Value(16, 4, "p"), GcnArgument.Value(20, 4, "flags"), GcnArgument.Value(24, 4, "n")],
+        "clamp_f32" => [GcnArgument.Buffer(0, "x"), GcnArgument.Buffer(8, "y"), GcnArgument.Value(16, 4, "lo"), GcnArgument.Value(20, 4, "hi"), GcnArgument.Value(24, 4, "n")],
+        "leaky_relu_f32" => [GcnArgument.Buffer(0, "x"), GcnArgument.Buffer(8, "y"), GcnArgument.Value(16, 4, "slope"), GcnArgument.Value(20, 4, "n")],
+        "where_f32" => [GcnArgument.Buffer(0, "condition"), GcnArgument.Buffer(8, "a"), GcnArgument.Buffer(16, "b"), GcnArgument.Buffer(24, "y"), GcnArgument.Value(32, 4, "n")],
+        "inv_sqrt_f32" => [GcnArgument.Buffer(0, "x"), GcnArgument.Buffer(8, "y"), GcnArgument.Value(16, 4, "eps"), GcnArgument.Value(20, 4, "n")],
+        "bias_gelu_f32" => [GcnArgument.Buffer(0, "x"), GcnArgument.Buffer(8, "bias"), GcnArgument.Buffer(16, "y"), GcnArgument.Value(24, 4, "cols"), GcnArgument.Value(28, 4, "n")],
+        "add_scalar_f32" => [GcnArgument.Buffer(0, "s"), GcnArgument.Buffer(8, "y"), GcnArgument.Value(16, 4, "scale"), GcnArgument.Value(20, 4, "n")],
+        _ when kernel.StartsWith("gated_", StringComparison.Ordinal) =>
+            [GcnArgument.Buffer(0, "gate"), GcnArgument.Buffer(8, "up"), GcnArgument.Buffer(16, "y"), GcnArgument.Value(24, 4, "n")],
         _ => GcnKernels.UnaryArguments,
     };
 

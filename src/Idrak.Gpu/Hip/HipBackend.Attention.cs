@@ -138,8 +138,11 @@ internal sealed unsafe partial class HipBackend
     }
 
     // Attention over a cache up to the device position (attention_decode_*): false when it cannot run here (the host's).
+    // With `starts` (attention_rows_*, HipBackend.Decoding.cs), each row also from its sequence's start, headsPerRow heads a
+    // packed row of the table.
     private bool CacheAttention(string kernel, Storage q, Storage keys, Storage values, Storage? keyScales, Storage? valueScales, Storage position, Storage y,
-        Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, int words, AttentionVariant variant)
+        Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, int words, AttentionVariant variant, Storage? starts = null,
+        int headsPerRow = 0)
     {
         long rows = (long)heads * rowsPerHead;
         int rowWords = words > 0 ? words : dim;
@@ -155,7 +158,7 @@ internal sealed unsafe partial class HipBackend
         }
 
         bool int8 = keyScales is not null;
-        Span<ulong> arguments = stackalloc ulong[21];
+        Span<ulong> arguments = stackalloc ulong[23];
         int at = 0;
         arguments[at++] = P(q);
         arguments[at++] = P(keys);
@@ -170,6 +173,11 @@ internal sealed unsafe partial class HipBackend
         arguments[at++] = P(y);
         arguments[at++] = logSumExp is null ? 0UL : P(logSumExp);
         int partArgument = at++;
+        if (starts is not null)
+        {
+            arguments[at++] = P(starts);
+        }
+
         arguments[at++] = U(rowsPerHead);
         arguments[at++] = U(steps);
         arguments[at++] = U(capacity);
@@ -184,6 +192,11 @@ internal sealed unsafe partial class HipBackend
         arguments[at++] = F(variant.Softcap);
         arguments[at++] = U(split.Chunk);
         arguments[at++] = U(split.Splits);
+        if (starts is not null)
+        {
+            arguments[at++] = U(headsPerRow);
+        }
+
         arguments[at++] = U((int)rows);
         LaunchAttention(function, merge, (int)rows, capacity, dim, split, arguments[..at], partArgument, P(y), logSumExp is null ? 0UL : P(logSumExp),
             (1, (int)rows, 0, 0, dim));

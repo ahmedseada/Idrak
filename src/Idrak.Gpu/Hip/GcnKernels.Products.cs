@@ -918,16 +918,55 @@ internal static partial class GcnKernels
 
     // ---- The packed few-row products -------------------------------------------------------------------------------
 
-    private static GcnKernelSource PackedGemv(PackedWeights format, int rows)
+    // A packed few-row product (see the file's remarks), or one of its fused forms (GcnKernels.Decoding.cs): the gated
+    // products, whose input row is act(gate) · up made as it is read, and the multi-output products, a product of grid z
+    // each with its own weights, width, output and bias.
+    private static GcnKernelSource PackedGemv(PackedWeights format, int rows, PackedGemvVariant variant = PackedGemvVariant.Plain)
     {
         int cpw = ColumnsPerWord(format);
         var counts = PackedGemvRowCounts;
-        string name = PackedGemvNames[(int)format * 4 + counts.IndexOf(rows)];
+        bool gated = variant is PackedGemvVariant.Silu or PackedGemvVariant.Gelu, multi = variant == PackedGemvVariant.Multi;
+        string name = variant == PackedGemvVariant.Plain ? PackedGemvNames[(int)format * 4 + counts.IndexOf(rows)] : FusedGemvKernel(format, variant, rows);
         var w = new ProductWriter(name);
-        w.Head(PackedGemvArguments, PackedGemvWords, workgroupIds: 2);
-        string x = w.Pointer("x"), qp = w.Pointer("q"), sp = w.Pointer("s"), y = w.Pointer("y"), part = w.Pointer("part");
-        string m = w.Scalar("m"), n = w.Scalar("n"), k = w.Scalar("k"), words = w.Scalar("n4"), chunk = w.Scalar("chunk"), splits = w.Scalar("splits");
+        if (multi)
+        {
+            // The shared arguments alone (12 dwords); each product's 10 are read for this block's product (grid z) below.
+            w.Head(MultiGemvArguments, PackedGemvWords, workgroupIds: 3, loadDwords: MultiGemvSharedBytes / 4);
+        }
+        else
+        {
+            w.Head(gated ? GatedGemvArguments : PackedGemvArguments, PackedGemvWords, workgroupIds: 2);
+        }
+
+        string x = w.Pointer("x"), part = w.Pointer("part");
+        string m = w.Scalar("m"), k = w.Scalar("k"), chunk = w.Scalar("chunk"), splits = w.Scalar("splits");
+        string qp, sp, y, n, words, bias = "", rowStride;
         string word = w.V(), wordc = w.V(), t = w.S(), last = w.S(), kStart = w.S(), kEnd = w.S(), lastRow = w.S();
+        if (multi)
+        {
+            // Product z's packed weights, scales, output, bias and width: 40 bytes from 48 + 40z.
+            int pz = w.SRange(9);
+            string offset = w.S(), offset2 = w.S();
+            w.L($"s_mul_i32 {offset}, {w.GroupZ}, {MultiGemvProductBytes}");
+            w.L($"s_add_u32 {offset}, {offset}, {MultiGemvSharedBytes}          ; this block's product's arguments");
+            w.L($"s_add_u32 {offset2}, {offset}, 32");
+            w.L($"s_load_dwordx8 %s[{pz}:{pz + 7}], s[0:1], {offset}");
+            w.L($"s_load_dword %s{pz + 8}, s[0:1], {offset2}                ; its width (the last product's ends the arguments)");
+            (qp, sp, y, bias, n) = ($"%s[{pz}:{pz + 1}]", $"%s[{pz + 2}:{pz + 3}]", $"%s[{pz + 4}:{pz + 5}]", $"%s[{pz + 6}:{pz + 7}]", $"%s{pz + 8}");
+            words = w.S();
+            w.L($"s_add_u32 {words}, {n}, {cpw - 1}");
+            w.L($"s_lshr_b32 {words}, {words}, {int.Log2(cpw)}              ; this product's words a row");
+            w.L($"s_lshl_b32 {t}, {w.GroupX}, 6");
+            w.L($"s_cmp_ge_u32 {t}, {words}");
+            w.L($"s_cbranch_scc1 .Ldone                                 ; a block past this product's words");
+            rowStride = w.Scalar("nmax");
+        }
+        else
+        {
+            (qp, sp, y, n, words) = (w.Pointer("q"), w.Pointer("s"), w.Pointer("y"), w.Scalar("n"), w.Scalar("n4"));
+            rowStride = n;
+        }
+
         w.L($"s_lshl_b32 {t}, {w.GroupX}, 6");
         w.L($"v_add_u32_e32 {word}, {t}, {w.Tid}                 ; this lane's packed word of a row");
         w.L($"s_sub_u32 {last}, {words}, 1");
@@ -946,6 +985,7 @@ internal static partial class GcnKernels
         }
 
         string xPtr = w.Offset64(x, kStart);
+        GatedInputs? inputs = gated ? GatedInputs.Begin(w, variant, rows, xPtr, w.Offset64(w.Pointer("up"), kStart), k, lastRow) : null;
         string rowBytes = w.S(), stepBytes = w.S(), qOffset = w.V();
         w.L($"s_lshl_b32 {rowBytes}, {words}, 2");
         w.L($"s_lshl_b32 {stepBytes}, {words}, 4");
@@ -1006,9 +1046,13 @@ internal static partial class GcnKernels
         for (int r = 0; r < rows; r++)
         {
             xs[r] = w.SRange(4);
-            w.L($"s_load_dwordx4 %s[{xs[r]}:{xs[r] + 3}], {xPtr}, {rowOffsets[r]}");
+            if (inputs is null)
+            {
+                w.L($"s_load_dwordx4 %s[{xs[r]}:{xs[r] + 3}], {xPtr}, {rowOffsets[r]}");
+            }
         }
 
+        inputs?.Step(xs);
         for (int u = 0; u < 4; u++)
         {
             string[] decoded = Decode(w, format, packed[u], scales);
@@ -1023,6 +1067,7 @@ internal static partial class GcnKernels
 
         w.L($"v_add_u32_e32 {qOffset}, {stepBytes}, {qOffset}");
         w.Add64(xPtr, "16");
+        inputs?.Advance("16");
         w.L($"s_mov_b32 {kk}, {end}");
         w.L($"s_branch .Lmain");
 
@@ -1036,9 +1081,13 @@ internal static partial class GcnKernels
         for (int r = 0; r < rows; r++)
         {
             x1[r] = w.S();
-            w.L($"s_load_dword {x1[r]}, {xPtr}, {rowOffsets[r]}");
+            if (inputs is null)
+            {
+                w.L($"s_load_dword {x1[r]}, {xPtr}, {rowOffsets[r]}");
+            }
         }
 
+        inputs?.Single(x1);
         string[] one = Decode(w, format, single, scales);
         for (int r = 0; r < rows; r++)
         {
@@ -1050,10 +1099,13 @@ internal static partial class GcnKernels
 
         w.L($"v_add_u32_e32 {qOffset}, {rowBytes}, {qOffset}");
         w.Add64(xPtr, "4");
+        inputs?.Advance("4");
         w.L($"s_add_u32 {kk}, {kk}, 1");
         w.L($"s_branch .Ltail");
 
-        // One split: y (int8 scaled per column); several: this split's sums at part[(split · m + r) · n + column].
+        // One split: y (int8 scaled per column); several: this split's sums at part[(split · m + r) · n + column]. The
+        // multi-output products: y (scaled, then plus the bias) when part is 0, else part[((z · splits + split) · m + r) ·
+        // nmax + column] for gemv_multi_finish_f32.
         w.Label(".Lsummed");
         string firstColumn = w.V(), saved = w.SPair();
         w.L($"v_lshlrev_b32_e32 {firstColumn}, {int.Log2(cpw)}, {word}");
@@ -1066,7 +1118,7 @@ internal static partial class GcnKernels
             w.L($"v_cmp_gt_u32_e64 {masks[c]}, {n}, {columns[c]}");
         }
 
-        w.L($"s_cmp_eq_u32 {splits}, 1");
+        w.L(multi ? (FormattableString)$"s_cmp_eq_u64 {part}, 0" : $"s_cmp_eq_u32 {splits}, 1");
         w.L($"s_cbranch_scc0 .Lpartial");
         string[] scaleOf = new string[cpw];
         if (format == PackedWeights.Int8)
@@ -1081,21 +1133,53 @@ internal static partial class GcnKernels
             }
         }
 
-        StorePacked(w, acc, rows, cpw, m, n, columns, masks, saved, y, rowStart: null, scaleOf: format == PackedWeights.Int8 ? scaleOf : null, label: "y");
+        string[]? biasOf = null;
+        if (multi)
+        {
+            // The bias (a pointer of 0: none) read as zeros for a product without one.
+            string none = w.SPair();
+            biasOf = new string[cpw];
+            w.L($"s_cmp_eq_u64 {bias}, 0");
+            w.L($"s_cselect_b64 {none}, 0, -1                         ; the lanes that read a bias");
+            for (int c = 0; c < cpw; c++)
+            {
+                string address = w.V(), mask = w.SPair();
+                biasOf[c] = w.V();
+                w.L($"v_mov_b32_e32 {biasOf[c]}, 0");
+                w.L($"s_and_b64 {mask}, {masks[c]}, {none}");
+                w.L($"s_and_saveexec_b64 {saved}, {mask}");
+                w.L($"v_lshlrev_b32_e32 {address}, 2, {columns[c]}");
+                w.L($"global_load_dword {biasOf[c]}, {address}, {bias}");
+                w.L($"s_or_b64 exec, exec, {saved}");
+            }
+        }
+
+        StorePacked(w, acc, rows, cpw, m, n, columns, masks, saved, y, rowStart: null, scaleOf: format == PackedWeights.Int8 ? scaleOf : null, label: "y",
+            biasOf: biasOf);
         w.L($"s_branch .Ldone");
         w.Label(".Lpartial");
         string first = w.S();
-        w.L($"s_mul_i32 {first}, {w.GroupY}, {m}                 ; this split's first row of part");
-        StorePacked(w, acc, rows, cpw, m, n, columns, masks, saved, part, rowStart: first, scaleOf: null, label: "part");
+        if (multi)
+        {
+            w.L($"s_mul_i32 {first}, {w.GroupZ}, {splits}");
+            w.L($"s_add_u32 {first}, {first}, {w.GroupY}");
+            w.L($"s_mul_i32 {first}, {first}, {m}                 ; this product's split's first row of part");
+        }
+        else
+        {
+            w.L($"s_mul_i32 {first}, {w.GroupY}, {m}                 ; this split's first row of part");
+        }
+
+        StorePacked(w, acc, rows, cpw, m, rowStride, columns, masks, saved, part, rowStart: first, scaleOf: null, label: "part");
         w.Label(".Ldone");
         w.L($"s_endpgm");
         return w.Source();
     }
 
-    // Stores the rows below m of `acc` (times the column's scale when given) at target[(rowStart + r) · n + column], the
-    // columns at or past n left out.
-    private static void StorePacked(ProductWriter w, string[,] acc, int rows, int cpw, string m, string n, string[] columns, string[] masks, string saved,
-        string target, string? rowStart, string[]? scaleOf, string label)
+    // Stores the rows below m of `acc` (times the column's scale when given, then plus the column's bias when given) at
+    // target[(rowStart + r) · stride + column], the columns masked off (at or past n) left out.
+    private static void StorePacked(ProductWriter w, string[,] acc, int rows, int cpw, string m, string stride, string[] columns, string[] masks, string saved,
+        string target, string? rowStart, string[]? scaleOf, string label, string[]? biasOf = null)
     {
         string row = w.S(), t = w.S();
         for (int r = 0; r < rows; r++)
@@ -1108,12 +1192,12 @@ internal static partial class GcnKernels
 
             if (rowStart is null)
             {
-                w.L($"s_mul_i32 {t}, {r}, {n}");
+                w.L($"s_mul_i32 {t}, {r}, {stride}");
             }
             else
             {
                 w.L($"s_add_u32 {row}, {rowStart}, {r}");
-                w.L($"s_mul_i32 {t}, {row}, {n}");
+                w.L($"s_mul_i32 {t}, {row}, {stride}");
             }
 
             for (int c = 0; c < cpw; c++)
@@ -1125,6 +1209,13 @@ internal static partial class GcnKernels
                 {
                     value = w.V();
                     w.L($"v_mul_f32_e32 {value}, {acc[r, c]}, {scaleOf[c]}");
+                }
+
+                if (biasOf is not null)
+                {
+                    string biased = w.V();
+                    w.L($"v_add_f32_e32 {biased}, {value}, {biasOf[c]}");
+                    value = biased;
                 }
 
                 w.L($"s_and_saveexec_b64 {saved}, {masks[c]}");
@@ -1519,6 +1610,9 @@ internal static partial class GcnKernels
 
         public void Label(string label) => _text.Append(label).Append(":\n");
 
+        /// <summary>Lines another writer made (each indented already), as they are.</summary>
+        public void Lines(StringBuilder lines) => _text.Append(lines);
+
         private void Raw(FormattableString line) => _text.Append(line.ToString(CultureInfo.InvariantCulture)).Append('\n');
 
         private static string F(FormattableString text) => text.ToString(CultureInfo.InvariantCulture);
@@ -1537,7 +1631,7 @@ internal static partial class GcnKernels
         /// Declares the arguments, the block, LDS and the system registers, and loads every argument dword once into one
         /// scalar range (in pieces of 8, 4, 2 and 1 dwords from the start, so a pointer never straddles two).
         /// </summary>
-        public void Head(IReadOnlyList<GcnArgument> arguments, int block, int lds = 0, bool dispatch = false, int workgroupIds = 1)
+        public void Head(IReadOnlyList<GcnArgument> arguments, int block, int lds = 0, bool dispatch = false, int workgroupIds = 1, int loadDwords = -1)
         {
             int end = 0;
             foreach (var a in arguments)
@@ -1566,7 +1660,7 @@ internal static partial class GcnKernels
             GroupY = F($"s{user + 1}");
             GroupZ = F($"s{user + 2}");
             string kernarg = dispatch ? "s[2:3]" : "s[0:1]";
-            int dwords = (end + 3) / 4;
+            int dwords = loadDwords >= 0 ? loadDwords : (end + 3) / 4;
             _first = SRange(dwords);
             for (int at = 0; at < dwords;)
             {

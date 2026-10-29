@@ -217,8 +217,11 @@ internal sealed unsafe partial class HipBackend
     }
 
     // Few rows through packed weights on the kernel written for the fewest rows holding m, k split over grid y, the splits'
-    // sums added in split order by int8_gemv_finish_f32: false when the kernels cannot take it.
-    private bool PackedFewRows(Weights format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
+    // sums added in split order by int8_gemv_finish_f32: false when the kernels cannot take it. A gated variant reads its
+    // input row as act(x) · up (x the gate, HipBackend.Decoding.cs); with `tail`, the splits' sums (or y itself) are
+    // finished by gemv_addnorm_f32, which also adds the residual and normalizes (and normalizes y first, with a y gain).
+    private bool PackedFewRows(Weights format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
+        GcnKernels.PackedGemvVariant variant = GcnKernels.PackedGemvVariant.Plain, Storage? up = null, in AddNormTail tail = default)
     {
         int perWord = GcnKernels.ColumnsPerWord(format);
         long words = (n + perWord - 1) / perWord;
@@ -227,7 +230,8 @@ internal sealed unsafe partial class HipBackend
             return false;
         }
 
-        string name = GcnKernels.PackedGemvKernel(format, m);
+        bool addNorm = tail.Residual is not null;
+        string name = variant == GcnKernels.PackedGemvVariant.Plain ? GcnKernels.PackedGemvKernel(format, m) : GcnKernels.FusedGemvKernel(format, variant, m);
         int columnBlocks = (int)((words + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords);
         if (Gcn(name) is not { } function || columnBlocks > DeviceLimits.MaxGridDimX)
         {
@@ -239,8 +243,9 @@ internal sealed unsafe partial class HipBackend
         int wanted = GemvSplitCount(DeviceLimits.ComputeUnits, columnBlocks, k, ForcedGemvSplits);
         int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
         int count = (k + chunk - 1) / chunk;
-        var finish = count > 1 ? Gcn("int8_gemv_finish_f32") : null;
-        if (count > DeviceLimits.MaxGridDimY || count > 1 && finish is null)
+        var finish = count > 1 && !addNorm ? Gcn("int8_gemv_finish_f32") : null;
+        var normalizing = addNorm ? Gcn("gemv_addnorm_f32") : null;
+        if (count > DeviceLimits.MaxGridDimY || count > 1 && !addNorm && finish is null || addNorm && normalizing is null)
         {
             return false;
         }
@@ -255,9 +260,31 @@ internal sealed unsafe partial class HipBackend
             }
 
             ulong scaleAddress = format is Weights.Int8 or Weights.Int4 ? P(scales!) : 0UL;
-            LaunchProduct(function, columnBlocks, count, 1, P(x), P(packed), scaleAddress, P(y), part is null ? P(y) : P(part), U(m), U(n), U(k), (ulong)words,
-                U(chunk), U(count), 0UL);
-            if (part is not null)
+            if (up is null)
+            {
+                LaunchProduct(function, columnBlocks, count, 1, P(x), P(packed), scaleAddress, P(y), part is null ? P(y) : P(part), U(m), U(n), U(k), (ulong)words,
+                    U(chunk), U(count), 0UL);
+            }
+            else
+            {
+                LaunchProduct(function, columnBlocks, count, 1, P(x), P(packed), scaleAddress, P(y), part is null ? P(y) : P(part), U(m), U(n), U(k), (ulong)words,
+                    U(chunk), U(count), 0UL, P(up));
+            }
+
+            if (normalizing is not null)
+            {
+                // The splits' sums in split order (int8 scaled), or y itself, then the residual and the norms, a block a row.
+                if (Profiling)
+                {
+                    LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"gemv_addnorm_f32 {m}x{n}{(count > 1 ? $" split {count}" : "")}"),
+                        Cost("gemv_addnorm_f32", count).Flops * m * n);
+                }
+
+                LaunchKernel(normalizing, (uint)Math.Min(m, DeviceLimits.MaxGridDimX), 1, part is null ? P(y) : P(part), part is not null && scaled ? P(scales!) : 0UL, P(y),
+                    P(tail.Residual!), P(tail.Sum!), P(tail.Gain!), P(tail.Normalized!), tail.YGain is null ? 0UL : P(tail.YGain), U(n), U(count), U(m * n),
+                    F(tail.Eps), F(tail.Offset), F(tail.YEps), F(tail.YOffset), tail.YGain is null ? 0UL : 1UL, U(m));
+            }
+            else if (part is not null)
             {
                 int size = m * n;
                 if (Profiling)

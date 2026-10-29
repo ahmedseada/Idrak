@@ -9,8 +9,11 @@ ones (the activations, add, sub, mul, max, min, affine, axpy, multiply-add, the 
 (float32 in every transposition with beta, batches and a bias; few rows for decoding; int8, int4, bfloat16 and float16
 weights; their expansions and bfloat16 packing), attention (decoding and the tiled form over float32, bfloat16 and int8
 key/value caches, attention over key ranges with grouped heads and its strided form, the int8 cache's scores and
-weighted values) and the shape operations (the cache writes, the decoder mask, the gathers, permutes, the adding
-strided copy) on Idrak's GCN kernels; every other operation (training's other kernels, ...) still runs on the CPU
+weighted values), the shape operations (the cache writes, the decoder mask, the gathers, permutes, the adding
+strided copy) and decoding's (the fused packed products: gated, of one input, a gate/up pair, with the residual addition
+and norms; attention over rows of different lengths and over packed sequences; the arg-max, class matches, rotary
+embeddings, repetition penalties, one-hot rows, the token history; powers, clamps, selection, leaky ReLU, inverse square
+roots, GELU after a bias, the gated activations) on Idrak's GCN kernels; every other operation (training's other kernels, ...) still runs on the CPU
 through the host fallback until its kernel lands. On a machine without HIP nothing changes: the device list shows `hip:-` with the
 reason, and every other backend works as before.
 
@@ -162,13 +165,14 @@ failure, send the failures file and the run again with `IDRAK_TRACE=1`.
   (each format tried with its error), a launch it refused (the kernel and its grid), a profile that cannot time.
 - **Telemetry.** The same events reach every hook at `TelemetryLevel.Devices` (`KernelsLoaded`, `DeviceFailed`,
   `HostFallback`), as on Vulkan.
-- **Bench.** `--bench-hip [launch|copies|fill|rows|pointwise|products|attention|shapes]` in the test runner times the launch cost of `fill_f32`
+- **Bench.** `--bench-hip [launch|copies|fill|rows|pointwise|products|attention|shapes|decoding]` in the test runner times the launch cost of `fill_f32`
   (its code object loaded, cold and again; a launch over one float, queued, with a wait, and on the device; a launch
   over a large buffer), uploads, downloads and copies on the device, fill bandwidth (`fill_f32` beside the runtime's own
   fill), the kernel set (assembled cold, then read from a cache warm), each row and element-wise kernel, the products
   (float32, few-row, packed few-row with the k splits each took, the expansions and bfloat16 packing), attention
-  (decoding over each cache format, the tiled form, key ranges, the int8 cache's products) and the shape operations (its
-  first call, then warm: GB/s and GFLOP/s), each first call apart from the warm ones, each section ending with the host
+  (decoding over each cache format, the tiled form, key ranges, the int8 cache's products), the shape operations and
+  decoding's (the fused packed products, attention over rows and packed sequences, the rows of decoding, the element-wise
+  operations with parameters) (its first call, then warm: GB/s and GFLOP/s), each first call apart from the warm ones, each section ending with the host
   fallbacks it took (none expected). The large buffer is a sixteenth of the memory the GPU has free (at most 256 MB), or
   `IDRAK_BENCH_HIP_MB`; `IDRAK_BENCH_HIP_REPEATS` sets the warm calls (default 20). Without a HIP device it prints one
   line saying why. `idrak bench -d hip:0` and `idrak report --bench -d hip:0` run their benchmarks on `hip:0` as on any

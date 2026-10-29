@@ -7,7 +7,8 @@ namespace Idrak.Gpu.Hip;
 
 // HIP's element-wise operations on its own GCN kernels (GcnKernels.Pointwise.cs), where CUDA overrides them and with
 // CUDA's arguments: the activations (UnaryOp), add, sub, mul, max and min (BinaryOp), affine, axpy, multiply-add and the
-// row-vector add. Each kernel walks its elements grid-stride, so the grid is sized to fill the device rather than to the
+// row-vector add; and (G5a) powers, clamps, leaky ReLU, selection, inverse square roots, GELU after a bias, the gated
+// activations (a kernel a kind) and the scalar adds (AddBroadcastScalar, AxpyAt). Each kernel walks its elements grid-stride, so the grid is sized to fill the device rather than to the
 // work (rule 81): blocks of the kernel's declared 256, about one per 1,024 elements, at most PointwiseBlocksPerUnit
 // blocks a compute unit the device reports (IDRAK_HIP_POINTWISE_BLOCKS), within its grid and the kernels' 2^29
 // work-items. A count of 2^30 or more (the kernels' 32-bit byte offsets), an operation without a kernel and unavailable
@@ -154,5 +155,105 @@ internal sealed unsafe partial class HipBackend
         }
 
         LaunchPointwise(f, (int)n, P(a), P(v), P(c), U(cols), U((int)n));
+    }
+
+    public override void PowKernel(Storage x, Storage y, int n, float exponent)
+    {
+        if (PointwiseKernel("pow_f32", n) is not { } f)
+        {
+            base.PowKernel(x, y, n, exponent);
+            return;
+        }
+
+        LaunchPointwise(f, n, P(x), P(y), F(exponent), GcnKernels.PowFlags(exponent), U(n));
+    }
+
+    public override void ClampKernel(Storage x, Storage y, int n, float min, float max)
+    {
+        if (PointwiseKernel("clamp_f32", n) is not { } f)
+        {
+            base.ClampKernel(x, y, n, min, max);
+            return;
+        }
+
+        LaunchPointwise(f, n, P(x), P(y), F(min), F(max), U(n));
+    }
+
+    public override void LeakyReluKernel(Storage x, Storage y, int n, float slope)
+    {
+        if (PointwiseKernel("leaky_relu_f32", n) is not { } f)
+        {
+            base.LeakyReluKernel(x, y, n, slope);
+            return;
+        }
+
+        LaunchPointwise(f, n, P(x), P(y), F(slope), U(n));
+    }
+
+    public override void WhereKernel(Storage condition, Storage a, Storage b, Storage y, int n)
+    {
+        if (PointwiseKernel("where_f32", n) is not { } f)
+        {
+            base.WhereKernel(condition, a, b, y, n);
+            return;
+        }
+
+        LaunchPointwise(f, n, P(condition), P(a), P(b), P(y), U(n));
+    }
+
+    public override void InvSqrtKernel(Storage x, Storage y, int n, float eps)
+    {
+        if (PointwiseKernel("inv_sqrt_f32", n) is not { } f)
+        {
+            base.InvSqrtKernel(x, y, n, eps);
+            return;
+        }
+
+        LaunchPointwise(f, n, P(x), P(y), F(eps), U(n));
+    }
+
+    public override void BiasGeluKernel(Storage x, Storage bias, Storage y, int n, int cols)
+    {
+        if (cols <= 0 || PointwiseKernel("bias_gelu_f32", n) is not { } f)
+        {
+            base.BiasGeluKernel(x, bias, y, n, cols);
+            return;
+        }
+
+        LaunchPointwise(f, n, P(x), P(bias), P(y), U(cols), U(n));
+    }
+
+    public override void AddBroadcastScalarKernel(Storage s, Storage y, int n, float scale)
+    {
+        if (PointwiseKernel("add_scalar_f32", n) is not { } f)
+        {
+            base.AddBroadcastScalarKernel(s, y, n, scale);
+            return;
+        }
+
+        LaunchPointwise(f, n, P(s), P(y), F(scale), U(n));
+    }
+
+    // y[offset] += alpha · x[0]: add_scalar_f32 over the one element (CUDA's).
+    public override void AxpyAtKernel(Storage x, Storage y, int offset, float alpha)
+    {
+        if (offset < 0 || PointwiseKernel("add_scalar_f32", 1) is not { } f)
+        {
+            base.AxpyAtKernel(x, y, offset, alpha);
+            return;
+        }
+
+        LaunchPointwise(f, 1, P(x), P(y) + (ulong)offset * sizeof(float), F(alpha), U(1));
+    }
+
+    public override void GatedActivationKernel(Storage gate, Storage up, Storage y, int n, int kind)
+    {
+        if (kind is < 0 or > 3 || PointwiseKernel(GcnKernels.GatedKinds[kind], n) is not { } f)
+        {
+            base.GatedActivationKernel(gate, up, y, n, kind);
+            return;
+        }
+
+        LaunchPointwise(f, n, P(gate), P(up), P(y), U(n));
     }
 }

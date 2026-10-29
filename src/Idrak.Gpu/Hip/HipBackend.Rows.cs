@@ -20,7 +20,7 @@ internal sealed unsafe partial class HipBackend
 
     /// <summary>
     /// A kernel's floating-point operations and global-memory bytes per element, from the tables at the top of
-    /// <c>GcnKernels.Rows.cs</c>, <c>.Pointwise.cs</c>, <c>.Attention.cs</c> and <c>.Shapes.cs</c>, and the expansions' of
+    /// <c>GcnKernels.Rows.cs</c>, <c>.Pointwise.cs</c>, <c>.Attention.cs</c>, <c>.Shapes.cs</c> and <c>.Decoding.cs</c>, and the expansions' of
     /// <c>GcnKernels.Products.cs</c> (<paramref name="k"/>: the top-k's picks, int8_gemv_finish_f32's splits; masked softmax and
     /// log-softmax with their own byte counts, the adding permute and strided copy too; an attention kernel's per row, position
     /// and dimension); (0, 0) for a kernel the tables do not list (the products: <see cref="ProductCost"/>). The profile's
@@ -57,7 +57,7 @@ internal sealed unsafe partial class HipBackend
         "bf16_dequant_f32" or "f16_dequant_f32" => (0, 6),
         "bf16_pack_f32" => (0, 6),                                              // per float
         "int8_gemv_finish_f32" => (k, 4.0 * (k + 1)),                            // per output; k: the splits
-        _ => AttentionShapeCost(kernel, variant),
+        _ => AttentionShapeCost(kernel, variant) is { Bytes: > 0 } cost ? cost : DecodingCost(kernel, k),
     };
 
     // A row kernel for `rows` × `cols`, or null: the kernels unavailable, or rows of no columns.
