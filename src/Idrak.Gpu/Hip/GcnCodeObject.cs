@@ -59,6 +59,13 @@ internal enum GcnUserSgprs : ushort
 }
 
 /// <summary>
+/// One kernel's GCN text as a kernel file lists it (<see cref="GcnKernels.All"/>): its name (the <c>.kernel</c> line's)
+/// and its text, UTF-8, with virtual registers, which <see cref="GcnAssembler.AssembleKernel"/> turns into a
+/// <see cref="GcnKernelCode"/> for the device's target.
+/// </summary>
+internal sealed record GcnKernelSource(string Name, byte[] Text);
+
+/// <summary>
 /// One kernel for <see cref="GcnCodeObject.Write(IGcnTarget, GcnIsaVersion, int, ReadOnlySpan{GcnKernelCode})"/>: its
 /// machine code and what the kernel descriptor and the metadata say about it. The defaults are those of LLVM's
 /// <c>.amdhsa_kernel</c> directives, except float32 denormals, kept as clang keeps them (the CPU's results).

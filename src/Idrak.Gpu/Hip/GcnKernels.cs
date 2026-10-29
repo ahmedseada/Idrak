@@ -15,6 +15,15 @@ namespace Idrak.Gpu.Hip;
 /// </summary>
 internal static partial class GcnKernels
 {
+    // Every kernel, built once on first use (after every file's list is set).
+    private static GcnKernelSource[]? _all;
+
+    /// <summary>
+    /// Every kernel of HIP's code object, in the order it is assembled: the gate kernel, then each kernel file's list
+    /// (<see cref="Pointwise"/>, <see cref="Rows"/>; later phases add theirs here).
+    /// </summary>
+    internal static IReadOnlyList<GcnKernelSource> All => _all ??= [new("fill_f32", FillText.ToArray()), .. Pointwise, .. Rows];
+
     /// <summary>The block <c>fill_f32</c> is written for (its required workgroup size): one element a work-item.</summary>
     internal const int FillBlock = 256;
 
