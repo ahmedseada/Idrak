@@ -388,6 +388,7 @@ internal abstract partial class Tests
         [
             (1, 3), (2, 7), (-5, 0.1f), (1e30f, 1e-10f), (1e-30f, 1e10f), (3e38f, 1e-3f), (1e-38f, 3), (0, 5), (5, 0), (float.PositiveInfinity, 2), (2, float.PositiveInfinity),
             (0, 0), (float.NaN, 1), (-0f, 4), (1.5f, -0f), (7, 7), (2.5f, 0.75f), (-2.5f, -8), (1e-40f, 1), (6e-39f, 2.5e-39f),
+            (1, 2.72e38f), (-3, 3e38f),
         ];
         var random = new Random(35);
         for (int lane = 0; lane < 64; lane++)

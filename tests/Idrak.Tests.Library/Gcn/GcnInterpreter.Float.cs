@@ -187,8 +187,11 @@ internal static class GcnFloat
 
         if (float.IsSubnormal((float)(1.0 / s1)) && float.IsSubnormal(s2 / s1))
         {
+            // The reference's pseudocode reads ldexp(S0, 64) here, which overflows every such denominator (1/S1 is a
+            // denormal only past 2^126) and would make LLVM's 1 / 2.7e38 infinite; its comment ("only scale the
+            // denominator") and v_div_fmas's 2^-64 for a small quotient mean the denominator scaled down.
             flag = true;
-            return s0 == s1 ? MathF.ScaleB(s0, 64) : s0;
+            return s0 == s1 ? MathF.ScaleB(s0, -64) : s0;
         }
 
         if (float.IsSubnormal((float)(1.0 / s1)))
