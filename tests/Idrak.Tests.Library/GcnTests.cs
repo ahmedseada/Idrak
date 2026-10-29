@@ -7,6 +7,15 @@ using System.Text;
 using Idrak;
 using Idrak.Gpu.Abstractions;
 using Idrak.Gpu.Hip;
+using GcnCodeObjectReader = Idrak.Tests.Gcn.GcnCodeObjectReader;
+using GcnCpu = Idrak.Tests.Gcn.GcnCpu;
+using GcnDecoder = Idrak.Tests.Gcn.GcnDecoder;
+using GcnDispatch = Idrak.Tests.Gcn.GcnDispatch;
+using GcnFailure = Idrak.Tests.Gcn.GcnFailure;
+using GcnInterpreter = Idrak.Tests.Gcn.GcnInterpreter;
+using GcnInterpreterException = Idrak.Tests.Gcn.GcnInterpreterException;
+using GcnKernelImage = Idrak.Tests.Gcn.GcnKernelImage;
+using GcnMemory = Idrak.Tests.Gcn.GcnMemory;
 
 // GCN code objects written by Idrak (plan 35, G0a): the target families chosen by the version a device reports, and the
 // ELF code object the HIP runtime loads, read back here by a reader of its own (the ELF, its tables, the metadata's
@@ -28,6 +37,15 @@ internal abstract partial class Tests
         ("gcn assembler: every line forms.golden lists as rejected for a registered CPU is refused for that CPU's version, naming the instruction, feature or operand (features decided by the reported version: v_fmac_f32 on 9.0.6, not 9.0.0 or 9.0.12; without a version, none)", GcnAssemblerRejected),
         ("gcn assembler: malformed or impossible text (unknown mnemonics, operands and modifiers, missing operands, bad ranges, virtual registers, directives, literals in VOP3, two scalar reads, labels defined twice or never) is refused with its line and column", GcnAssemblerMalformed),
         ("gcn assembler: assembling a whole forms block (gfx90c's 759 forms, labels and branches) allocates nothing once warm, and its code array alone after; fill_f32 written as text equals the typed fill_f32", GcnAssemblerAllocations),
+        ("gcn assembler: fill_f32 written with virtual registers allocates to the golden's registers (s[4:7] for its arguments, s2 and v0 rewritten in place, s[0:1] for the saved EXEC) with its one wait: llvm-mc's code byte for byte, the golden's instruction lines printed, read back to the same bytes, and it fills in the interpreter", GcnAssemblerFillVirtual),
+        ("gcn assembler: allocation of a straight-line kernel and a branching one (a bounds check, a nested if restored by s_or_b64, a loop): registers within their counts, the printed text reads back to the same bytes, and both run in the interpreter as the CPU computes them", GcnAssemblerAllocation),
+        ("gcn assembler: a vector register written under a narrowed EXEC keeps its other lanes: where a value reaches the write it is live from before (a value set after it on the path there, laid out later, takes another register, and the lanes left out keep theirs in the interpreter); where none reaches, the write starts it", GcnAssemblerPartialDefinition),
+        ("gcn assembler: ranges are placed as the hardware takes them (scalar pairs even, quads and more 4-aligned, vector ranges adjacent, a register named alone is its range's, overlapping ranges one run); impossible alignments, registers read but never written, physical registers holding no system value or written, misplaced directives and flows that run off the end are refused with line and column", GcnAssemblerRanges),
+        ("gcn assembler: running out of registers fails naming the kernel and the count (65 vector registers live in a block of 1024, where 64 fit; 103 scalar ones, where 102 fit; 40 at 8 waves a SIMD, where 32 fit), with no spilling; the same kernels fit a block of 256 and 102 scalar registers", GcnAssemblerBudget),
+        ("gcn assembler: waits, each proved in the interpreter (the kernel runs right; each wait taken out, the interpreter reports the missing wait or the race): vmcnt in order (vmcnt(1) for the first of two loads), SMEM's lgkmcnt(0), LDS in order (lgkmcnt(1)), FLAT on both counters, lgkmcnt(0) before s_barrier (without it the other wave reads an unretired LDS store), a block's start waiting for a predecessor's load and a loop's back edge; a written wait kept and counted; GDS's expcnt(0) before its data is overwritten", GcnAssemblerWaits),
+        ("gcn assembler: gfx9's hazards get the s_nop counts LLVM 18 inserts (its post-RA hazard recognizer): VMEM after a VALU's SGPR or EXEC 4, readlane and writelane lane selects 3, v_div_fmas after VCC 3, DPP after a VGPR 1 and after EXEC 4, s_getreg and s_setreg after s_setreg 1, a wide store's data 0, GDS after M0 0, soft clauses 0 with xnack; a wait counts as a wait state and the nearest write on any path counts; the cases LLVM leaves alone, and the clauses with xnack off, get none", GcnAssemblerHazards),
+        ("gcn assembler: the printer: every forms.golden record of each registered CPU (gfx900, gfx906, gfx908, gfx90c), printed as Assemble encoded it, reads back to the same bytes", GcnAssemblerPrinter),
+        ("gcn assembler: a kernel with virtual registers allocates nothing per instruction once warm: four times the instructions allocate only the longer code", GcnAssemblerKernelAllocations),
         ("gcn gate: Idrak's fill_f32, written through the encoder, is the golden's code byte for byte, and its code object for gfx90c (formats 5 and 4) equals the golden's where the loader reads: the ELF header and flags, the code, the metadata note, the kernel descriptor (its code's offset aside), the kernel's symbols and segments", GcnGateGolden),
         ("gcn gate: on a HIP device, the graphics driver's runtime alone loads Idrak's own code object for the target the device reports, and fill_f32 fills 1,000,003 floats with 2.5, the memory past them untouched; a refused object fails with the runtime's reason, never a skip (on HIP devices)", GcnGateDevice),
     ];
@@ -973,6 +991,812 @@ internal abstract partial class Tests
 
             return -1;
         }
+    }
+
+    // ---- The register allocator, waits and hazards (G2a) --------------------------------------------------------
+
+    private static readonly GcnIsaVersion KernelIsa = GcnIsaVersion.Parse("gfx90c");
+
+    // A kernel's text assembled for gfx90c (or isa): its code and its printed text.
+    private static (GcnKernelCode Code, string Printed) KernelOf(string text, GcnIsaVersion? isa = null, int? waves = null)
+    {
+        var version = isa ?? KernelIsa;
+        using var asm = new GcnAssembler(GcnTargets.For(version), version);
+        var code = asm.AssembleKernel(Encoding.UTF8.GetBytes(text), waves);
+        return (code, asm.PrintedText);
+    }
+
+    // The printed text, read back by Assemble, gives the kernel's bytes.
+    private static void CheckReadsBack(string what, GcnKernelCode code, string printed)
+    {
+        byte[] again = AssembleGcn(GcnTargets.For(KernelIsa), KernelIsa, printed);
+        Check(again.AsSpan().SequenceEqual(code.Code.Span), $"{what}: its printed text reads back to {Convert.ToHexStringLower(again)}, not {Convert.ToHexStringLower(code.Code.Span)}:\n{printed}");
+    }
+
+    private static GcnKernelImage ImageOf(GcnKernelCode code) =>
+        GcnCodeObjectReader.Read(GcnCodeObject.Write(GcnTargets.For(KernelIsa), KernelIsa, 5, [code]), code.Name);
+
+    private static string[] PrintedLines(string printed) => [.. printed.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0)];
+
+    // The printed line before the `occurrence`-th line (from 0) that starts with `prefix` and ends with `suffix`.
+    private static string Before(string printed, string prefix, string suffix = "", int occurrence = 0)
+    {
+        var lines = PrintedLines(printed);
+        for (int at = 0, seen = 0; at < lines.Length; at++)
+        {
+            if (lines[at].StartsWith(prefix, StringComparison.Ordinal) && lines[at].EndsWith(suffix, StringComparison.Ordinal) && seen++ == occurrence)
+            {
+                return at > 0 ? lines[at - 1] : "(the first line)";
+            }
+        }
+
+        return $"(no line '{prefix}...{suffix}')";
+    }
+
+    // The kernel with its n-th s_waitcnt (as the interpreter's decoder reads the code) made s_nop 0; null past the last.
+    private static GcnKernelCode? WithoutWait(GcnKernelCode code, int n)
+    {
+        byte[] bytes = code.Code.ToArray();
+        var decoder = new GcnDecoder(GcnCpu.Gfx90c);
+        for (int at = 0, seen = 0; at < bytes.Length;)
+        {
+            var instruction = decoder.Decode(bytes, at);
+            if (instruction.Text.StartsWith("s_waitcnt", StringComparison.Ordinal) && seen++ == n)
+            {
+                BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(at), 0xBF800000);
+                return code with { Code = bytes };
+            }
+
+            at += instruction.Size;
+        }
+
+        return null;
+    }
+
+    private static byte[] KernelArguments(int bytes, params (int Offset, ulong Value, int Size)[] values)
+    {
+        var arguments = new byte[bytes];
+        foreach (var (offset, value, size) in values)
+        {
+            if (size == 8)
+            {
+                BinaryPrimitives.WriteUInt64LittleEndian(arguments.AsSpan(offset), value);
+            }
+            else
+            {
+                BinaryPrimitives.WriteUInt32LittleEndian(arguments.AsSpan(offset), (uint)value);
+            }
+        }
+
+        return arguments;
+    }
+
+    private static ulong FloatBits(float value) => BitConverter.SingleToUInt32Bits(value);
+
+    private static int FirstDifferent(float[] got, Func<int, float> expected, int count)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            if (BitConverter.SingleToInt32Bits(got[i]) != BitConverter.SingleToInt32Bits(expected(i)))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    // Runs the kernel, then each of its waits taken out in turn: every one must be missed (a missing wait, or a race).
+    // What the interpreter reported, in order.
+    private static List<(GcnFailure Kind, string Message)> RunWithoutEachWait(string what, GcnKernelCode code, Func<GcnMemory> memory, GcnDispatch dispatch)
+    {
+        GcnInterpreter.Run(ImageOf(code), memory(), dispatch);
+        var kinds = new List<(GcnFailure, string)>();
+        for (int n = 0; WithoutWait(code, n) is { } without; n++)
+        {
+            try
+            {
+                GcnInterpreter.Run(ImageOf(without), memory(), dispatch);
+                Check(false, $"{what}: without its wait {n}, the interpreter reports nothing");
+            }
+            catch (GcnInterpreterException e)
+            {
+                Check(e.Kind is GcnFailure.MissingWait or GcnFailure.Race, $"{what}: without its wait {n}: {e.Kind}: {e.Message}");
+                kinds.Add((e.Kind, e.Message));
+            }
+        }
+
+        Check(kinds.Count > 0, $"{what}: it has no s_waitcnt to take out");
+        return kinds;
+    }
+
+    // out[i] = x[i] * a + y[i]: two global loads in flight (vmcnt(1), then vmcnt(0)), three SMEM loads in one clause.
+    private const string AxpyText = """
+        .kernel axpy
+        .arg x, 8, global
+        .arg y, 8, global
+        .arg out, 8, global
+        .arg a, 4, value
+        .reqd_workgroup_size 64, 1, 1
+        .user_sgpr kernarg_segment_ptr
+        .system_sgpr workgroup_id_x
+          s_load_dwordx4 %s[0:3], s[0:1], 0x0      ; x, y
+          s_load_dwordx2 %s[4:5], s[0:1], 0x10     ; out
+          s_load_dword %s6, s[0:1], 0x18           ; a
+          s_lshl_b32 %s7, s2, 6
+          v_add_u32_e32 %v0, %s7, v0
+          v_lshlrev_b32_e32 %v1, 2, %v0
+          global_load_dword %v2, %v1, %s[0:1]
+          global_load_dword %v3, %v1, %s[2:3]
+          v_mul_f32_e32 %v4, %s6, %v2
+          v_add_f32_e32 %v5, %v4, %v3
+          global_store_dword %v1, %v5, %s[4:5]
+          s_endpgm
+        """;
+
+    // For i < n: out[i] = x[i] > 0 ? x[i] added k times : x[i]. A bounds check, a nested if restored by s_or_b64, a loop.
+    private const string BranchyText = """
+        .kernel branchy
+        .arg x, 8, global
+        .arg out, 8, global
+        .arg n, 4, value
+        .arg k, 4, value
+        .max_flat_workgroup_size 128
+        .user_sgpr kernarg_segment_ptr
+        .system_sgpr workgroup_id_x
+          s_load_dwordx4 %s[0:3], s[0:1], 0x0
+          s_load_dwordx2 %s[4:5], s[0:1], 0x10
+          s_lshl_b32 %s6, s2, 7
+          v_add_u32_e32 %v0, %s6, v0
+          v_cmp_gt_u32_e32 vcc, %s4, %v0
+          s_and_saveexec_b64 %s[8:9], vcc
+          s_cbranch_execz .Lend
+          v_lshlrev_b32_e32 %v1, 2, %v0
+          global_load_dword %v2, %v1, %s[0:1]
+          v_mov_b32_e32 %v3, %v2
+          v_cmp_lt_f32_e32 vcc, 0, %v2
+          s_and_saveexec_b64 %s[10:11], vcc
+          s_cbranch_execz .Ljoin
+          s_mov_b32 %s12, %s5
+          v_mov_b32_e32 %v3, 0
+        .Lloop:
+          v_add_f32_e32 %v3, %v3, %v2
+          s_add_u32 %s12, %s12, -1
+          s_cmp_lg_u32 %s12, 0
+          s_cbranch_scc1 .Lloop
+        .Ljoin:
+          s_or_b64 exec, exec, %s[10:11]
+          global_store_dword %v1, %v3, %s[2:3]
+        .Lend:
+          s_endpgm
+        """;
+
+    internal static void GcnAssemblerFillVirtual(Device device)
+    {
+        _ = device;
+        using var asm = new GcnAssembler(GcnTargets.For(KernelIsa), KernelIsa);
+        var fill = asm.AssembleKernel(GcnKernels.FillText);
+        string printed = asm.PrintedText;
+        byte[] golden = new ElfReader(File.ReadAllBytes(GoldenPath("fill_f32.gfx90c.v5.co"))).SectionBytes(".text");
+        Check(fill.Code.Span.SequenceEqual(golden), $"fill_f32 through virtual registers: {Convert.ToHexStringLower(fill.Code.Span)}, llvm-mc's {Convert.ToHexStringLower(golden)}:\n{printed}");
+
+        // The golden's instruction lines (fill_f32.s, comments and indentation aside) are the printed text's.
+        string[] source = [.. File.ReadAllLines(GoldenPath("fill_f32.s")).Select(l => (l.IndexOf(';', StringComparison.Ordinal) is >= 0 and var c ? l[..c] : l).Trim())];
+        string[] expected = [.. source[(Array.IndexOf(source, "fill_f32:") + 1)..Array.IndexOf(source, ".Lfill_f32_end:")].Where(l => l.Length > 0)];
+        Check(PrintedLines(printed).SequenceEqual(expected), $"the printed text is the golden's:\n{printed}\nexpected:\n{string.Join('\n', expected)}");
+        Check(fill is { Name: "fill_f32", Vgprs: 2, Sgprs: 8, UsesVcc: true, LdsBytes: 0, UserSgprs: GcnUserSgprs.KernargSegmentPtr, WorkgroupIds: 1, WorkitemIds: 1, MaxFlatWorkgroupSize: 256 }
+              && fill.RequiredWorkgroupSize == (256, 1, 1) && fill.Arguments.SequenceEqual(GcnKernels.FillArguments) && GcnCodeObject.KernargBytes(fill) == 16,
+            $"from use and the directives: {fill.Vgprs} VGPRs, {fill.Sgprs} SGPRs, VCC {fill.UsesVcc}, {fill.UserSgprs}, {fill.WorkgroupIds} workgroup ids, block {fill.MaxFlatWorkgroupSize}");
+        Check(asm.PhysicalRegister('s', 0) == 4 && asm.PhysicalRegister('s', 3) == 7 && asm.PhysicalRegister('s', 4) == 2 && asm.PhysicalRegister('s', 6) == 0
+              && asm.PhysicalRegister('v', 0) == 0 && asm.PhysicalRegister('v', 1) == 0 && asm.PhysicalRegister('v', 2) == 1,
+            $"%s[0:3] in s[4:7], %s4 in s2 and %v0 in v0 in place, %s[6:7] in s[0:1], %v1 in v0 (written under the narrowed EXEC with no value reaching it), %v2 in v1: %s0 s{asm.PhysicalRegister('s', 0)}, %s4 s{asm.PhysicalRegister('s', 4)}, %s6 s{asm.PhysicalRegister('s', 6)}, %v1 v{asm.PhysicalRegister('v', 1)}, %v2 v{asm.PhysicalRegister('v', 2)}");
+        CheckReadsBack("fill_f32", fill, printed);
+
+        // 300 elements in two blocks of 256: the second block's last 212 lanes are past the count.
+        var memory = new GcnMemory();
+        ulong output = memory.Map<float>("out", Enumerable.Repeat(-7.25f, 512).ToArray());
+        GcnInterpreter.Run(ImageOf(fill), memory, new GcnDispatch
+        {
+            Workgroups = (2, 1, 1), WorkgroupSize = (256, 1, 1), Arguments = KernelArguments(16, (0, output, 8), (8, FloatBits(2.5f), 4), (12, 300, 4)),
+        });
+        float[] result = memory.Read<float>(output, 512);
+        Check(result.AsSpan(0, 300).IndexOfAnyExcept(2.5f) < 0 && result.AsSpan(300).IndexOfAnyExcept(-7.25f) < 0,
+            $"filled: out[{result.AsSpan(0, 300).IndexOfAnyExcept(2.5f)}] not 2.5, or out[{300 + result.AsSpan(300).IndexOfAnyExcept(-7.25f)}] past the count written");
+    }
+
+    internal static void GcnAssemblerAllocation(Device device)
+    {
+        _ = device;
+
+        // Straight-line: out = x * a + y over two workgroups of 64.
+        var (axpy, printed) = KernelOf(AxpyText);
+        CheckReadsBack("axpy", axpy, printed);
+        Check(axpy is { Vgprs: 3, Sgprs: 10, UsesVcc: false, Arguments.Count: 4 } && GcnCodeObject.KernargBytes(axpy) == 28,
+            $"axpy: 3 VGPRs and 10 SGPRs (v0 and s2 reused in place, each value's register freed at its last use), 28 bytes of arguments: {axpy.Vgprs}, {axpy.Sgprs}, {GcnCodeObject.KernargBytes(axpy)}:\n{printed}");
+        const int N = 128;
+        float[] x = [.. Enumerable.Range(0, N).Select(i => 0.25f * i - 3)], y = [.. Enumerable.Range(0, N).Select(i => 100f - i)];
+        var memory = new GcnMemory();
+        ulong xs = memory.Map<float>("x", x), ys = memory.Map<float>("y", y), output = memory.Map("out", 4 * N);
+        GcnInterpreter.Run(ImageOf(axpy), memory, new GcnDispatch
+        {
+            Workgroups = (2, 1, 1), WorkgroupSize = (64, 1, 1), Arguments = KernelArguments(28, (0, xs, 8), (8, ys, 8), (16, output, 8), (24, FloatBits(1.5f), 4)),
+        });
+        float[] got = memory.Read<float>(output, N);
+        int wrong = FirstDifferent(got, i => x[i] * 1.5f + y[i], N);
+        Check(wrong < 0, $"axpy: out[{wrong}] is {(wrong < 0 ? 0 : got[wrong])}, the CPU's {(wrong < 0 ? 0 : x[wrong] * 1.5f + y[wrong])}");
+
+        // Branching: a bounds check, a nested if and a loop, 200 elements in workgroups of 128, k = 3.
+        var (branchy, branchyText) = KernelOf(BranchyText);
+        CheckReadsBack("branchy", branchy, branchyText);
+        Check(branchy.Vgprs <= 4 && branchy.Sgprs <= 14 && branchy.UsesVcc, $"branchy: {branchy.Vgprs} VGPRs (at most 4), {branchy.Sgprs} SGPRs (at most 14), VCC used:\n{branchyText}");
+        const int Count = 200, K = 3;
+        float[] values = [.. Enumerable.Range(0, 256).Select(i => (i * 37 % 11) - 5.25f)];
+        memory = new GcnMemory();
+        xs = memory.Map<float>("x", values);
+        output = memory.Map<float>("out", Enumerable.Repeat(-7f, 256).ToArray());
+        GcnInterpreter.Run(ImageOf(branchy), memory, new GcnDispatch
+        {
+            Workgroups = (2, 1, 1), WorkgroupSize = (128, 1, 1), Arguments = KernelArguments(24, (0, xs, 8), (8, output, 8), (16, Count, 4), (20, K, 4)),
+        });
+        got = memory.Read<float>(output, 256);
+        float Expected(int i)
+        {
+            if (i >= Count)
+            {
+                return -7f;
+            }
+
+            float sum = 0;
+            for (int t = 0; t < K; t++)
+            {
+                sum += values[i];
+            }
+
+            return values[i] > 0 ? sum : values[i];
+        }
+
+        wrong = FirstDifferent(got, Expected, 256);
+        Check(wrong < 0, $"branchy: out[{wrong}] is {(wrong < 0 ? 0 : got[wrong])}, the CPU's {(wrong < 0 ? 0 : Expected(wrong))}:\n{branchyText}");
+    }
+
+    // %v1 is 1.0 in every lane, then 2.0 in lanes 0-31 under a narrowed EXEC, in a block laid out before the one that
+    // sets it: %v1 is live out of that block, so %v9, written after %v1 there, takes another register.
+    private const string PartialText = """
+        .kernel partial
+        .arg out, 8, global
+        .reqd_workgroup_size 64, 1, 1
+        .user_sgpr kernarg_segment_ptr
+          s_branch .Lsetup
+        .Lnarrowed:
+          v_mov_b32_e32 %v1, 2.0                 ; lanes 0-31: 2.0; the others keep 1.0
+          s_or_b64 exec, exec, %s[4:5]
+          v_lshlrev_b32_e32 %v3, 2, v0
+          global_store_dword %v3, %v1, %s[0:1]
+          s_endpgm
+        .Lsetup:
+          s_load_dwordx2 %s[0:1], s[0:1], 0x0
+          v_mov_b32_e32 %v1, 1.0
+          v_add_u32_e32 %v9, 100, v0
+          v_cmp_gt_u32_e32 vcc, 0x84, %v9        ; lanes 0-31
+          s_and_saveexec_b64 %s[4:5], vcc
+          s_branch .Lnarrowed
+        """;
+
+    internal static void GcnAssemblerPartialDefinition(Device device)
+    {
+        _ = device;
+        using var asm = new GcnAssembler(GcnTargets.For(KernelIsa), KernelIsa);
+        var partial = asm.AssembleKernel(Encoding.UTF8.GetBytes(PartialText));
+        string printed = asm.PrintedText;
+        CheckReadsBack("partial", partial, printed);
+        int v1 = asm.PhysicalRegister('v', 1), v9 = asm.PhysicalRegister('v', 9);
+        Check(v1 != v9, $"%v1, written under the narrowed EXEC with its value reaching there, is live through %v9's life: v{v1} and v{v9}:\n{printed}");
+        var memory = new GcnMemory();
+        ulong output = memory.Map("out", 4 * 64);
+        GcnInterpreter.Run(ImageOf(partial), memory, new GcnDispatch { WorkgroupSize = (64, 1, 1), Arguments = KernelArguments(8, (0, output, 8)) });
+        float[] got = memory.Read<float>(output, 64);
+        int wrong = FirstDifferent(got, lane => lane < 32 ? 2f : 1f, 64);
+        Check(wrong < 0, $"lane {wrong} holds {(wrong < 0 ? 0 : got[wrong])}: lanes 0-31 take 2.0, the others keep 1.0:\n{printed}");
+
+        // Where no value reaches the narrowed write, it starts the register: %v6 takes the register %v5 left.
+        var (fresh, freshText) = KernelOf("""
+            .kernel fresh
+            .arg out, 8, global
+            .reqd_workgroup_size 64, 1, 1
+            .user_sgpr kernarg_segment_ptr
+              s_load_dwordx2 %s[0:1], s[0:1], 0x0
+              v_lshlrev_b32_e32 %v0, 2, v0
+              v_mov_b32_e32 %v5, 2.0
+              global_store_dword %v0, %v5, %s[0:1]
+              v_cmp_gt_u32_e32 vcc, 32, v0
+              s_and_saveexec_b64 %s[2:3], vcc
+              v_mov_b32_e32 %v6, 4.0
+              global_store_dword %v0, %v6, %s[0:1] offset:256
+              s_endpgm
+            """);
+        Check(fresh.Vgprs == 3 && PrintedLines(freshText).Any(l => l.StartsWith("v_mov_b32_e32 v0, 4.0", StringComparison.Ordinal)),
+            $"%v6 starts in v0, the work-item id's register, free once the compare read it: 3 VGPRs, not a fourth for a %v6 live from the start ({fresh.Vgprs}):\n{freshText}");
+    }
+
+    internal static void GcnAssemblerRanges(Device device)
+    {
+        _ = device;
+        using var asm = new GcnAssembler(GcnTargets.For(KernelIsa), KernelIsa);
+        asm.AssembleKernel("""
+            .kernel ranges
+            .arg p, 8, global
+            .reqd_workgroup_size 64, 1, 1
+            .user_sgpr kernarg_segment_ptr
+              s_mov_b32 %s1, 7
+              s_load_dwordx2 %s[2:3], s[0:1], 0x0
+              s_load_dwordx8 %s[8:15], s[0:1], 0x20
+              v_mov_b32_e32 %v1, %s9
+              v_mov_b32_e32 %v2, %s15
+              v_add_u32_e32 %v3, %s1, %v1
+              v_mov_b32_e32 %v4, 0
+              v_mov_b32_e32 %v5, 1
+              v_mov_b32_e32 %v6, 2
+              v_add_f64 %v[8:9], %v[4:5], %v[5:6]
+              global_load_dwordx4 %v[10:13], %v3, %s[2:3]
+              v_add_u32_e32 %v14, %v10, %v13
+              v_add_u32_e32 %v14, %v14, %v2
+              global_store_dwordx2 %v3, %v[8:9], %s[2:3]
+              global_store_dword %v3, %v14, %s[2:3]
+              s_endpgm
+            """u8);
+        int P(char file, int id) => asm.PhysicalRegister(file, id);
+        Check(P('s', 2) % 2 == 0 && P('s', 3) == P('s', 2) + 1, $"%s[2:3] is an even pair: s{P('s', 2)}");
+        Check(P('s', 8) % 4 == 0 && P('s', 9) == P('s', 8) + 1 && P('s', 15) == P('s', 8) + 7, $"%s[8:15] is 4-aligned and %s9, %s15 are its registers: s{P('s', 8)}, s{P('s', 9)}, s{P('s', 15)}");
+        Check(P('v', 5) == P('v', 4) + 1 && P('v', 6) == P('v', 4) + 2 && P('v', 9) == P('v', 8) + 1, $"%v[4:5] and %v[5:6] are one run: v{P('v', 4)}, v{P('v', 5)}, v{P('v', 6)}");
+        Check(P('v', 11) == P('v', 10) + 1 && P('v', 13) == P('v', 10) + 3, $"%v[10:13] is adjacent: v{P('v', 10)}..v{P('v', 13)}");
+        Check(P('s', 1) != P('s', 2) && P('s', 1) != P('s', 3), $"%s1, live across the pair's load, is not in it: s{P('s', 1)}");
+
+        // Refusals, each with its line, the column of what it names and its reason.
+        const string Head = ".kernel bad\n.arg p, 8, global\n.user_sgpr kernarg_segment_ptr\n";
+        (string Text, int Line, string At, string Reason)[] cases =
+        [
+            (Head + "  s_load_dwordx4 %s[0:3], s[0:1], 0x0\n  s_load_dwordx2 %s[4:5], %s[1:2], 0x0\n  s_endpgm", 5, "%s[1:2]", "cannot be aligned"),
+            (Head + "  v_mov_b32_e32 %v1, %v7\n  s_endpgm", 4, "%v7", "%v7 is read but never written"),
+            (Head + "  v_mov_b32_e32 %v1, s5\n  s_endpgm", 4, "s5", "holds no system value"),
+            (Head + "  s_mov_b32 s0, 1\n  s_endpgm", 4, "s0", "reads only"),
+            (Head + "  s_nop 0\n.lds 16\n  s_endpgm", 5, ".lds", "directives come before"),
+            (Head + ".bogus 1\n  s_endpgm", 4, ".bogus", "not a directive"),
+            (Head + "  s_mov_b32 %s0, ttmp0\n  s_endpgm", 4, "ttmp0", "not allocated"),
+            ("  s_endpgm", 1, "", "starts with .kernel"),
+            (Head + "  s_branch .Lx\n.Lx:", 4, "", "ends the kernel"),
+            (Head + "  v_mov_b32_e32 %v0, 1", 4, "", "runs past its last instruction"),
+            (Head + "  s_movrels_b32 %s0, %s1\n  s_endpgm", 4, "s_movrels_b32", "not taken in a kernel's text"),
+            (Head + "  s_branch .Lnowhere\n  s_endpgm", 4, ".Lnowhere", "never defined"),
+            (Head + "  s_branch 1\n  s_endpgm", 4, "1", "names a label"),
+            (Head + "  v_mov_b32_e32 %s0, 1\n  s_endpgm", 4, "%s0", "vector register"),
+            (Head + ".arg q, 4, global\n  s_endpgm", 4, "4", "8 bytes"),
+            (Head + "  v_mov_b32_e32 %v[0:16], 0\n  s_endpgm", 4, "%v[0:16]", "1 to 16 virtual registers"),
+        ];
+        foreach (var (text, line, at, reason) in cases)
+        {
+            string[] lines = text.Split('\n');
+            int column = at.Length == 0 ? 1 : lines[line - 1].IndexOf(at, StringComparison.Ordinal) + 1;
+            try
+            {
+                _ = KernelOf(text);
+                Check(false, $"'{text.ReplaceLineEndings(" | ")}' is refused");
+            }
+            catch (GcnSyntaxException e)
+            {
+                Check(e.Line == line && e.Column == column && e.Reason.Contains(reason, StringComparison.Ordinal),
+                    $"'{text.ReplaceLineEndings(" | ")}': line {e.Line}, column {e.Column} ({line}, {column} expected), naming '{reason}': {e.Message}");
+            }
+        }
+    }
+
+    // `count` registers of one file set, then summed: all of them live at once before the sum.
+    private static string ManyRegisters(int count, int block, bool scalar)
+    {
+        char file = scalar ? 's' : 'v';
+        string move = scalar ? "s_mov_b32" : "v_mov_b32_e32", add = scalar ? "s_add_u32" : "v_add_u32_e32";
+        var text = new StringBuilder();
+        text.Append(CultureInfo.InvariantCulture, $".kernel many\n.max_flat_workgroup_size {block}\n");
+        for (int i = 0; i < count; i++)
+        {
+            text.Append(CultureInfo.InvariantCulture, $"  {move} %{file}{i}, {i}\n");
+        }
+
+        text.Append(CultureInfo.InvariantCulture, $"  {add} %{file}1000, %{file}0, %{file}1\n");
+        for (int i = 2; i < count; i++)
+        {
+            text.Append(CultureInfo.InvariantCulture, $"  {add} %{file}1000, %{file}1000, %{file}{i}\n");
+        }
+
+        return text.Append(scalar ? "  v_mov_b32_e32 %v0, %s1000\n  s_endpgm\n" : "  s_endpgm\n").ToString();
+    }
+
+    internal static void GcnAssemblerBudget(Device device)
+    {
+        _ = device;
+        foreach (var (scalar, count, block, budget) in (ReadOnlySpan<(bool, int, int, int)>)[(false, 65, 1024, 64), (true, 103, 1024, 102), (true, 103, 64, 102)])
+        {
+            try
+            {
+                _ = KernelOf(ManyRegisters(count, block, scalar));
+                Check(false, $"{count} {(scalar ? "scalar" : "vector")} registers live in a block of {block} are refused");
+            }
+            catch (GcnAllocationException e)
+            {
+                string what = scalar ? "scalar" : "vector";
+                Check(e is { Kernel: "many" } && e.File == (scalar ? 's' : 'v') && e.Needed == count && e.Budget == budget
+                      && e.Message.Contains("'many'", StringComparison.Ordinal) && e.Message.Contains($"needs {count} {what} registers at once", StringComparison.Ordinal)
+                      && e.Message.Contains($"{budget} fit", StringComparison.Ordinal) && e.Message.Contains("spill", StringComparison.Ordinal),
+                    $"{count} {what} registers in a block of {block}: {e.File} {e.Needed} of {e.Budget}: {e.Message}");
+            }
+        }
+
+        var (fits, _) = KernelOf(ManyRegisters(65, 256, scalar: false));
+        Check(fits.Vgprs == 65, $"65 vector registers fit a block of 256 (256 a lane): {fits.Vgprs}");
+        var (scalars, _) = KernelOf(ManyRegisters(102, 1024, scalar: true));
+        Check(scalars.Sgprs == 102, $"102 scalar registers fit: {scalars.Sgprs}");
+
+        // The occupancy aimed for, when given, sets the budget: 8 waves a SIMD leave a lane 32 vector registers.
+        ThrowsNaming<GcnAllocationException>(() => KernelOf(ManyRegisters(40, 256, scalar: false), waves: 8), "40 live registers at 8 waves a SIMD", "needs 40 vector registers", "32 fit");
+        Check(KernelOf(ManyRegisters(32, 256, scalar: false), waves: 8).Code.Vgprs == 32, "32 fit at 8 waves a SIMD");
+    }
+
+    // A fresh interpreter memory with copies of these storages mapped in order: the same addresses every time.
+    private static GcnMemory Storages(out ulong[] addresses, params byte[][] storages)
+    {
+        var memory = new GcnMemory();
+        addresses = new ulong[storages.Length];
+        for (int i = 0; i < storages.Length; i++)
+        {
+            addresses[i] = memory.Map($"storage {i}", (byte[])storages[i].Clone());
+        }
+
+        return memory;
+    }
+
+    private static byte[] FloatBytes(float[] values)
+    {
+        var bytes = new byte[4 * values.Length];
+        Buffer.BlockCopy(values, 0, bytes, 0, bytes.Length);
+        return bytes;
+    }
+
+    internal static void GcnAssemblerWaits(Device device)
+    {
+        _ = device;
+        float[] x = [.. Enumerable.Range(0, 64).Select(i => 0.5f * i - 7)];
+        byte[] xBytes = FloatBytes(x), outBytes = new byte[512];
+
+        // vmcnt in order: the first of two global loads used with vmcnt(1), the second with vmcnt(0); SMEM with lgkmcnt(0).
+        var (axpy, axpyText) = KernelOf(AxpyText);
+        Check(Before(axpyText, "v_mul_f32") == "s_waitcnt vmcnt(1)" && Before(axpyText, "v_add_f32") == "s_waitcnt vmcnt(0)" && Before(axpyText, "global_load_dword") == "s_waitcnt lgkmcnt(0)",
+            $"axpy's waits: vmcnt(1) before the first load's use, vmcnt(0) before the second's, lgkmcnt(0) before the scalar loads' first use:\n{axpyText}");
+        _ = Storages(out ulong[] three, xBytes, xBytes, outBytes);
+        var axpyKinds = RunWithoutEachWait("axpy", axpy, () => Storages(out _, xBytes, xBytes, outBytes), new GcnDispatch
+        {
+            WorkgroupSize = (64, 1, 1), Arguments = KernelArguments(28, (0, three[0], 8), (8, three[1], 8), (16, three[2], 8), (24, FloatBits(2f), 4)),
+        });
+        Check(axpyKinds.Count == 3 && axpyKinds.TrueForAll(k => k.Kind == GcnFailure.MissingWait), $"axpy: each of its 3 waits missed: {string.Join(", ", axpyKinds.Select(k => k.Kind))}");
+
+        // LDS in order: two writes, two reads, the first read used with lgkmcnt(1).
+        var (lds, ldsText) = KernelOf("""
+            .kernel lds_order
+            .arg out, 8, global
+            .lds 512
+            .reqd_workgroup_size 64, 1, 1
+            .user_sgpr kernarg_segment_ptr
+              s_load_dwordx2 %s[0:1], s[0:1], 0x0
+              v_mov_b32_e32 %v7, %s0
+              v_lshlrev_b32_e32 %v0, 2, v0
+              v_cvt_f32_u32_e32 %v1, v0
+              v_add_f32_e32 %v2, 1.0, %v1
+              ds_write_b32 %v0, %v1
+              ds_write_b32 %v0, %v2 offset:256
+              ds_read_b32 %v3, %v0
+              ds_read_b32 %v4, %v0 offset:256
+              v_mul_f32_e32 %v5, %v3, %v3
+              v_add_f32_e32 %v6, %v5, %v4
+              global_store_dword %v0, %v6, %s[0:1]
+              s_endpgm
+            """);
+        Check(Before(ldsText, "v_mul_f32") == "s_waitcnt lgkmcnt(1)" && Before(ldsText, "v_add_f32", "", 1) == "s_waitcnt lgkmcnt(0)",
+            $"LDS completes in order: lgkmcnt(1) for the first of two reads, lgkmcnt(0) for the second:\n{ldsText}");
+        var memory = Storages(out ulong[] one, outBytes);
+        var ldsDispatch = new GcnDispatch { WorkgroupSize = (64, 1, 1), Arguments = KernelArguments(8, (0, one[0], 8)) };
+        GcnInterpreter.Run(ImageOf(lds), memory, ldsDispatch);
+        float[] got = memory.Read<float>(one[0], 64);
+        int wrong = FirstDifferent(got, i => (float)i * i + (i + 1f), 64);
+        Check(wrong < 0, $"lds_order: out[{wrong}] is {(wrong < 0 ? 0 : got[wrong])}");
+        var ldsKinds = RunWithoutEachWait("lds_order", lds, () => Storages(out _, outBytes), ldsDispatch);
+        Check(ldsKinds.Count == 3 && ldsKinds.TrueForAll(k => k.Kind == GcnFailure.MissingWait), $"lds_order: each of its 3 waits missed: {string.Join(", ", ldsKinds.Select(k => k.Kind))}");
+
+        // FLAT: counted on both counters, it may complete through either: its use waits both to 0.
+        var (flat, flatText) = KernelOf("""
+            .kernel flat_load
+            .arg x, 8, global
+            .arg out, 8, global
+            .reqd_workgroup_size 64, 1, 1
+            .user_sgpr kernarg_segment_ptr
+              s_load_dwordx4 %s[0:3], s[0:1], 0x0
+              v_lshlrev_b32_e32 %v0, 2, v0
+              v_mov_b32_e32 %v2, %s1
+              v_add_co_u32_e32 %v1, vcc, %s0, %v0
+              v_addc_co_u32_e32 %v2, vcc, 0, %v2, vcc
+              flat_load_dword %v3, %v[1:2]
+              v_add_f32_e32 %v4, 1.0, %v3
+              global_store_dword %v0, %v4, %s[2:3]
+              s_endpgm
+            """);
+        Check(Before(flatText, "v_add_f32") == "s_waitcnt vmcnt(0) lgkmcnt(0)", $"a FLAT load's use waits vmcnt(0) and lgkmcnt(0):\n{flatText}");
+        memory = Storages(out ulong[] two, xBytes, outBytes);
+        var twoDispatch = new GcnDispatch { WorkgroupSize = (64, 1, 1), Arguments = KernelArguments(16, (0, two[0], 8), (8, two[1], 8)) };
+        GcnInterpreter.Run(ImageOf(flat), memory, twoDispatch);
+        got = memory.Read<float>(two[1], 64);
+        wrong = FirstDifferent(got, i => x[i] + 1f, 64);
+        Check(wrong < 0, $"flat_load: out[{wrong}] is {(wrong < 0 ? 0 : got[wrong])}");
+        var flatKinds = RunWithoutEachWait("flat_load", flat, () => Storages(out _, xBytes, outBytes), twoDispatch);
+        Check(flatKinds.TrueForAll(k => k.Kind == GcnFailure.MissingWait), $"flat_load: each wait missed: {string.Join(", ", flatKinds.Select(k => k.Kind))}");
+
+        // s_barrier: gfx9 does not wait for the wave's LDS writes itself, so lgkmcnt(0) goes first; without it, a race.
+        var (barrier, barrierText) = KernelOf("""
+            .kernel barrier
+            .arg out, 8, global
+            .lds 512
+            .reqd_workgroup_size 128, 1, 1
+            .user_sgpr kernarg_segment_ptr
+              s_load_dwordx2 %s[0:1], s[0:1], 0x0
+              v_lshlrev_b32_e32 %v0, 2, v0
+              v_cvt_f32_u32_e32 %v1, v0
+              ds_write_b32 %v0, %v1
+              v_xor_b32_e32 %v2, 0x100, %v0
+              s_barrier
+              ds_read_b32 %v3, %v2
+              global_store_dword %v0, %v3, %s[0:1]
+              s_endpgm
+            """);
+        Check(Before(barrierText, "s_barrier") == "s_waitcnt lgkmcnt(0)", $"lgkmcnt(0) before s_barrier:\n{barrierText}");
+        memory = Storages(out one, outBytes);
+        var barrierDispatch = new GcnDispatch { WorkgroupSize = (128, 1, 1), Arguments = KernelArguments(8, (0, one[0], 8)) };
+        GcnInterpreter.Run(ImageOf(barrier), memory, barrierDispatch);
+        got = memory.Read<float>(one[0], 128);
+        wrong = FirstDifferent(got, i => i ^ 64, 128);
+        Check(wrong < 0, $"barrier: out[{wrong}] is {(wrong < 0 ? 0 : got[wrong])}, not {wrong ^ 64}");
+        var barrierKinds = RunWithoutEachWait("barrier", barrier, () => Storages(out _, outBytes), barrierDispatch);
+        Check(barrierKinds is [{ Kind: GcnFailure.MissingWait } first, { Kind: GcnFailure.MissingWait }] && first.Message.Contains("before the s_barrier", StringComparison.Ordinal),
+            $"barrier: without the barrier's wait, the other wave reads an LDS store no wait retired before the s_barrier; without the store's, a missing wait: {string.Join("; ", barrierKinds.Select(k => k.Message))}");
+
+        // Across blocks: a scalar load of a block laid out later, used after the branch (the partial kernel), and a load
+        // at a loop's end used at its top on the next turn: one wait at the loop's start serves both ways in.
+        var (partial, partialText) = KernelOf(PartialText);
+        Check(Before(partialText, "global_store_dword") == "s_waitcnt lgkmcnt(0)", $"the store waits for its predecessor's scalar load:\n{partialText}");
+        var partialKinds = RunWithoutEachWait("partial", partial, () => Storages(out _, outBytes), ldsDispatch);
+        Check(partialKinds is [{ Kind: GcnFailure.MissingWait }], $"partial: its wait missed: {string.Join(", ", partialKinds.Select(k => k.Kind))}");
+        var (loop, loopText) = KernelOf("""
+            .kernel loop_carry
+            .arg x, 8, global
+            .arg out, 8, global
+            .arg k, 4, value
+            .reqd_workgroup_size 64, 1, 1
+            .user_sgpr kernarg_segment_ptr
+              s_load_dwordx4 %s[0:3], s[0:1], 0x0
+              s_load_dword %s4, s[0:1], 0x10
+              v_lshlrev_b32_e32 %v0, 2, v0
+              v_mov_b32_e32 %v1, 0
+              global_load_dword %v2, %v0, %s[0:1]
+              s_mov_b32 %s5, %s4
+            .Lloop:
+              v_add_f32_e32 %v1, %v1, %v2
+              global_load_dword %v2, %v0, %s[0:1]
+              s_add_u32 %s5, %s5, -1
+              s_cmp_lg_u32 %s5, 0
+              s_cbranch_scc1 .Lloop
+              global_store_dword %v0, %v1, %s[2:3]
+              s_endpgm
+            """);
+        var loopLines = PrintedLines(loopText);
+        Check(loopLines.Count(l => l == "s_waitcnt vmcnt(0)") == 1 && loopLines[Array.IndexOf(loopLines, ".Lloop:") + 1] == "s_waitcnt vmcnt(0)",
+            $"one vmcnt(0) at the loop's top, for the load before it and the one at its end:\n{loopText}");
+        memory = Storages(out two, xBytes, outBytes);
+        var loopDispatch = new GcnDispatch { WorkgroupSize = (64, 1, 1), Arguments = KernelArguments(20, (0, two[0], 8), (8, two[1], 8), (16, 5, 4)) };
+        GcnInterpreter.Run(ImageOf(loop), memory, loopDispatch);
+        got = memory.Read<float>(two[1], 64);
+        wrong = FirstDifferent(got, i => 0 + x[i] + x[i] + x[i] + x[i] + x[i], 64);
+        Check(wrong < 0, $"loop_carry: out[{wrong}] is {(wrong < 0 ? 0 : got[wrong])}");
+        var loopKinds = RunWithoutEachWait("loop_carry", loop, () => Storages(out _, xBytes, outBytes), loopDispatch);
+        Check(loopKinds.TrueForAll(k => k.Kind == GcnFailure.MissingWait), $"loop_carry: each wait missed: {string.Join(", ", loopKinds.Select(k => k.Kind))}");
+
+        // A wait the text writes is kept and counted: no second one is placed.
+        var (_, writtenText) = KernelOf("""
+            .kernel written
+            .arg x, 8, global
+            .reqd_workgroup_size 64, 1, 1
+            .user_sgpr kernarg_segment_ptr
+              s_load_dwordx2 %s[0:1], s[0:1], 0x0
+              s_waitcnt lgkmcnt(0)
+              v_lshlrev_b32_e32 %v0, 2, v0
+              global_load_dword %v1, %v0, %s[0:1]
+              s_waitcnt vmcnt(0)
+              v_add_f32_e32 %v2, 1.0, %v1
+              global_store_dword %v0, %v2, %s[0:1]
+              s_endpgm
+            """);
+        Check(PrintedLines(writtenText).Count(l => l.StartsWith("s_waitcnt", StringComparison.Ordinal)) == 2, $"the text's two waits, no more:\n{writtenText}");
+
+        // GDS holds its data registers on expcnt: overwriting one waits expcnt(0) (the interpreter models no GDS).
+        var (_, gdsText) = KernelOf("""
+            .kernel gds
+            .reqd_workgroup_size 64, 1, 1
+              s_mov_b32 m0, -1
+              v_mov_b32_e32 %v0, 0
+              v_mov_b32_e32 %v1, 1
+              ds_add_u32 %v0, %v1 gds
+              v_mov_b32_e32 %v1, 2
+              ds_add_u32 %v0, %v1 gds
+              s_endpgm
+            """);
+        Check(Before(gdsText, "v_mov_b32_e32", ", 2") == "s_waitcnt expcnt(0)", $"expcnt(0) before a GDS operation's data register is written:\n{gdsText}");
+    }
+
+    // A kernel around `body`: block 64, the arguments' pointer in s[0:1], the work-item id in v0.
+    private static string HazardKernel(string body) => $".kernel h\n.reqd_workgroup_size 64, 1, 1\n.user_sgpr kernarg_segment_ptr\n{body}\n  s_endpgm\n";
+
+    internal static void GcnAssemblerHazards(Device device)
+    {
+        _ = device;
+        var xnackOff = GcnIsaVersion.Parse("gfx90c:xnack-");
+        (string Case, string Body, string Line, string Suffix, int Occurrence, string Expected, GcnIsaVersion? Isa)[] cases =
+        [
+            ("VMEM reads an SGPR a VALU wrote", "  v_readfirstlane_b32 %s4, v0\n  v_readfirstlane_b32 %s5, v0\n  global_load_dword %v1, v0, %s[4:5]", "global_load_dword", "", 0, "s_nop 4", null),
+            ("VMEM after v_cmpx wrote EXEC", "  v_cmpx_gt_u32_e32 vcc, 32, v0\n  global_store_dword v0, v0, s[0:1]", "global_store_dword", "", 0, "s_nop 4", null),
+            ("v_readlane's lane select a VALU wrote", "  v_mov_b32_e32 %v1, 1.0\n  v_readfirstlane_b32 %s0, v0\n  v_readlane_b32 %s1, %v1, %s0", "v_readlane_b32", "", 0, "s_nop 3", null),
+            ("v_writelane's lane select a VALU wrote", "  v_mov_b32_e32 %v1, 1.0\n  v_readfirstlane_b32 %s0, v0\n  v_writelane_b32 %v1, 7, %s0", "v_writelane_b32", "", 0, "s_nop 3", null),
+            ("v_div_fmas after a VALU wrote VCC", "  v_mov_b32_e32 %v1, 1.0\n  v_mov_b32_e32 %v2, 2.0\n  v_div_scale_f32 %v3, vcc, %v1, %v2, %v1\n  v_div_fmas_f32 %v4, %v1, %v2, %v3", "v_div_fmas_f32", "", 0, "s_nop 3", null),
+            ("DPP reads a VGPR a VALU wrote", "  v_add_u32_e32 %v1, 1, v0\n  v_mov_b32_dpp %v2, %v1 row_shr:1 bound_ctrl:0", "v_mov_b32_dpp", "", 0, "s_nop 1", null),
+            ("DPP after v_cmpx wrote EXEC", "  v_add_u32_e32 %v1, 1, v0\n  s_nop 4\n  v_cmpx_gt_u32_e32 vcc, 32, v0\n  v_mov_b32_dpp %v2, %v1 row_shr:1 bound_ctrl:0", "v_mov_b32_dpp", "", 0, "s_nop 4", null),
+            ("s_getreg after s_setreg of its register", "  s_mov_b32 %s0, 0\n  s_setreg_b32 hwreg(HW_REG_MODE), %s0\n  s_getreg_b32 %s1, hwreg(HW_REG_MODE)", "s_getreg_b32", "", 0, "s_nop 1", null),
+            ("s_setreg after s_setreg of its register", "  s_mov_b32 %s0, 0\n  s_setreg_b32 hwreg(HW_REG_MODE), %s0\n  s_setreg_b32 hwreg(HW_REG_MODE), %s0", "s_setreg_b32", "", 1, "s_nop 1", null),
+            ("s_getreg after s_setreg_imm32", "  s_setreg_imm32_b32 hwreg(HW_REG_MODE), 0\n  s_getreg_b32 %s1, hwreg(HW_REG_MODE)", "s_getreg_b32", "", 0, "s_nop 1", null),
+            ("a VALU writes a wide store's data", "  v_mov_b32_e32 %v4, 1.0\n  v_mov_b32_e32 %v5, 1.0\n  v_mov_b32_e32 %v6, 1.0\n  v_mov_b32_e32 %v7, 1.0\n  global_store_dwordx4 v0, %v[4:7], s[0:1]\n  v_mov_b32_e32 %v5, 2.0\n  global_store_dwordx4 v0, %v[4:7], s[0:1] offset:16", "v_mov_b32_e32", ", 2.0", 0, "s_nop 0", null),
+            ("GDS after an SALU wrote M0", "  v_mov_b32_e32 %v0, 0\n  v_mov_b32_e32 %v1, 1\n  s_mov_b32 m0, -1\n  ds_add_u32 %v0, %v1 gds", "ds_add_u32", "", 0, "s_nop 0", null),
+            ("an SMEM clause's write meets its read (xnack any)", "  s_load_dwordx2 %s[2:3], s[0:1], 0x0\n  s_load_dwordx2 %s[4:5], s[0:1], 0x8\n  v_mov_b32_e32 %v1, %s2\n  v_mov_b32_e32 %v2, %s4", "s_load_dwordx2", "", 1, "s_nop 0", null),
+            ("a vector memory clause's write meets its read (xnack any)", "  v_mov_b32_e32 %v0, 0\n  v_mov_b32_e32 %v1, 0\n  global_load_dword %v2, %v[0:1], off\n  global_load_dword %v3, %v[0:1], off offset:4\n  v_add_f32_e32 %v4, %v2, %v3", "global_load_dword", "", 1, "s_nop 0", null),
+            ("a store after a load in a clause (xnack any)", "  global_load_dword %v2, v0, s[0:1]\n  global_store_dword v0, v0, s[0:1] offset:4", "global_store_dword", "", 0, "s_nop 0", null),
+            ("a wait is a wait state", "  global_load_dword %v2, v0, s[0:1]\n  v_readfirstlane_b32 %s4, v0\n  v_readfirstlane_b32 %s5, v0\n  global_store_dword v0, %v2, %s[4:5]", "global_store_dword", "", 0, "s_nop 3", null),
+            ("the nearest write on any path", "  v_readfirstlane_b32 %s4, v0\n  v_readfirstlane_b32 %s5, v0\n  s_cmp_eq_u32 %s4, 0\n  s_cbranch_scc1 .Lskip\n  s_mov_b32 %s6, 1\n.Lskip:\n  global_load_dword %v1, v0, %s[4:5]", "global_load_dword", "", 0, "s_nop 2", null),
+        ];
+        foreach (var (what, body, line, suffix, occurrence, expected, isa) in cases)
+        {
+            var (_, printed) = KernelOf(HazardKernel(body), isa);
+            Check(Before(printed, line, suffix, occurrence) == expected, $"{what}: '{expected}' before {line}, as LLVM inserts it; printed:\n{printed}");
+        }
+
+        var (_, waited) = KernelOf(HazardKernel(cases[^2].Body));
+        Check(Before(waited, "s_nop 3") == "s_waitcnt vmcnt(0)", $"the wait comes first and counts as one of the 5 wait states:\n{waited}");
+
+        // Where LLVM inserts nothing on gfx9: an SALU's SGPR read by VMEM, an SALU's lane select, an SALU's EXEC before DPP,
+        // a VALU's VGPR read by v_readfirstlane, a VALU's SGPR read by an SALU, another hardware register, a 64-bit store's
+        // data, and the soft clauses with xnack off.
+        (string Case, string Body, string Line, int Occurrence, GcnIsaVersion? Isa)[] none =
+        [
+            ("VMEM reads an SGPR an SALU wrote", "  s_mov_b32 %s4, 0\n  s_mov_b32 %s5, 0\n  global_load_dword %v1, v0, %s[4:5]", "global_load_dword", 0, null),
+            ("v_readlane's lane select an SALU wrote", "  v_mov_b32_e32 %v1, 1.0\n  s_mov_b32 %s0, 3\n  v_readlane_b32 %s1, %v1, %s0", "v_readlane_b32", 0, null),
+            ("DPP after an SALU wrote EXEC", "  v_add_u32_e32 %v1, 1, v0\n  s_nop 4\n  s_mov_b64 exec, -1\n  v_mov_b32_dpp %v2, %v1 row_shr:1 bound_ctrl:0", "v_mov_b32_dpp", 0, null),
+            ("v_readfirstlane reads a VGPR a VALU wrote", "  v_add_u32_e32 %v1, 1, v0\n  v_readfirstlane_b32 %s0, %v1", "v_readfirstlane_b32", 0, null),
+            ("an SALU reads an SGPR a VALU wrote", "  v_readfirstlane_b32 %s0, v0\n  s_add_u32 %s1, %s0, 1", "s_add_u32", 0, null),
+            ("s_getreg of another register", "  s_mov_b32 %s0, 0\n  s_setreg_b32 hwreg(HW_REG_MODE), %s0\n  s_getreg_b32 %s1, hwreg(HW_REG_STATUS)", "s_getreg_b32", 0, null),
+            ("a VALU writes a 64-bit store's data", "  v_mov_b32_e32 %v4, 1.0\n  v_mov_b32_e32 %v5, 1.0\n  global_store_dwordx2 v0, %v[4:5], s[0:1]\n  v_mov_b32_e32 %v5, 2.0\n  global_store_dwordx2 v0, %v[4:5], s[0:1] offset:8", "v_mov_b32_e32", 2, null),
+            ("an SMEM clause, xnack off", "  s_load_dwordx2 %s[2:3], s[0:1], 0x0\n  s_load_dwordx2 %s[4:5], s[0:1], 0x8\n  v_mov_b32_e32 %v1, %s2\n  v_mov_b32_e32 %v2, %s4", "s_load_dwordx2", 1, xnackOff),
+            ("a vector memory clause, xnack off", "  v_mov_b32_e32 %v0, 0\n  v_mov_b32_e32 %v1, 0\n  global_load_dword %v2, %v[0:1], off\n  global_load_dword %v3, %v[0:1], off offset:4\n  v_add_f32_e32 %v4, %v2, %v3", "global_load_dword", 1, xnackOff),
+        ];
+        foreach (var (what, body, line, occurrence, isa) in none)
+        {
+            var (_, printed) = KernelOf(HazardKernel(body), isa);
+            string before = Before(printed, line, "", occurrence);
+            Check(!before.StartsWith("s_nop", StringComparison.Ordinal) && !before.StartsWith("(no line", StringComparison.Ordinal), $"{what}: no s_nop before {line} ({before}); printed:\n{printed}");
+        }
+    }
+
+    internal static void GcnAssemblerPrinter(Device device)
+    {
+        _ = device;
+        var golden = ReadFormsGolden();
+        var counts = new List<string>();
+        foreach (string cpu in GcnRegisteredCpus)
+        {
+            var isa = GcnIsaVersion.Parse(cpu);
+            var target = GcnTargets.For(isa);
+            var block = golden[cpu];
+            byte[] expected = [.. block.Records.SelectMany(r => r.Bytes)];
+            using var asm = new GcnAssembler(target, isa, 2 * expected.Length) { Printing = true };
+            asm.Assemble(Encoding.UTF8.GetBytes(string.Join('\n', block.Records.Select(r => r.Text))));
+            byte[] first = asm.ToArray();
+            string printed = asm.PrintedText;
+            Check(first.AsSpan().SequenceEqual(expected), $"{cpu}: the block assembles to llvm-mc's bytes");
+            using var again = new GcnAssembler(target, isa, 2 * expected.Length);
+            again.Assemble(Encoding.UTF8.GetBytes(printed));
+            byte[] second = again.ToArray();
+            int differs = first.AsSpan().CommonPrefixLength(second);
+            Check(second.AsSpan().SequenceEqual(first), $"{cpu}: the printed forms read back to other bytes from byte {differs}: {PrintedNear(printed, block.Records, differs)}");
+            counts.Add($"{cpu} {block.Records.Count(r => r.Bytes.Length > 0)}");
+        }
+
+        Console.WriteLine($"    forms printed and read back: {string.Join(", ", counts)}");
+    }
+
+    // The golden record whose bytes hold offset `at`, and the printed line for it.
+    private static string PrintedNear(string printed, List<(string Text, byte[] Bytes)> records, int at)
+    {
+        int offset = 0, index = 0;
+        var lines = PrintedLines(printed);
+        foreach (var (text, bytes) in records)
+        {
+            if (offset + bytes.Length > at && bytes.Length > 0)
+            {
+                return $"'{text}' printed as '{(index < lines.Length ? lines[index] : "?")}'";
+            }
+
+            offset += bytes.Length;
+            index++;
+        }
+
+        return "(past the end)";
+    }
+
+    // A kernel of `parts` repeated parts: a load, a compare and a narrowed add, a restore, a store.
+    private static byte[] RepeatedKernel(int parts)
+    {
+        var text = new StringBuilder("""
+            .kernel repeated
+            .arg x, 8, global
+            .arg out, 8, global
+            .reqd_workgroup_size 64, 1, 1
+            .user_sgpr kernarg_segment_ptr
+              s_load_dwordx4 %s[0:3], s[0:1], 0x0
+              v_lshlrev_b32_e32 %v0, 2, v0
+
+            """);
+        for (int p = 0; p < parts; p++)
+        {
+            int v = 10 + 3 * p, s = 10 + 2 * p;
+            text.Append(CultureInfo.InvariantCulture, $"""
+                  global_load_dword %v{v}, %v0, %s[0:1] offset:{4 * p}
+                  v_mul_f32_e32 %v{v + 1}, 2.0, %v{v}
+                  v_cmp_lt_f32_e32 vcc, 0, %v{v + 1}
+                  s_and_saveexec_b64 %s[{s}:{s + 1}], vcc
+                  s_cbranch_execz .Lskip{p}
+                  v_add_f32_e32 %v{v + 1}, 1.0, %v{v + 1}
+                .Lskip{p}:
+                  s_or_b64 exec, exec, %s[{s}:{s + 1}]
+                  global_store_dword %v0, %v{v + 1}, %s[2:3] offset:{4 * p}
+
+                """);
+        }
+
+        return Encoding.UTF8.GetBytes(text.Append("  s_endpgm\n").ToString());
+    }
+
+    internal static void GcnAssemblerKernelAllocations(Device device)
+    {
+        _ = device;
+        byte[] small = RepeatedKernel(8), large = RepeatedKernel(32);
+        using var asm = new GcnAssembler(GcnTargets.For(KernelIsa), KernelIsa);
+        int smallCode = 0, largeCode = 0;
+        void Small() => smallCode = asm.AssembleKernel(small).Code.Length;
+        void Large() => largeCode = asm.AssembleKernel(large).Code.Length;
+        for (int warm = 0; warm < 40; warm++)
+        {
+            Large();
+            Small();
+        }
+
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        Small();
+        long smallBytes = GC.GetAllocatedBytesForCurrentThread() - before;
+        before = GC.GetAllocatedBytesForCurrentThread();
+        Large();
+        long largeBytes = GC.GetAllocatedBytesForCurrentThread() - before;
+        Check(largeBytes - smallBytes <= largeCode - smallCode + 64,
+            $"four times the instructions ({largeCode} bytes of code, not {smallCode}) allocated {largeBytes} bytes, not {smallBytes}: more than the code's {largeCode - smallCode}{(largeBytes - smallBytes > largeCode - smallCode + 64 ? $" ({AllocatedTypes(Large)})" : "")}");
+        Check(smallBytes <= smallCode + 2048, $"a kernel allocates its code, name, arguments and record: {smallBytes} bytes for {smallCode} bytes of code{(smallBytes > smallCode + 2048 ? $" ({AllocatedTypes(Small)})" : "")}");
     }
 
     private static object Value(List<KeyValuePair<string, object>> map, string key) => map.First(e => e.Key == key).Value;

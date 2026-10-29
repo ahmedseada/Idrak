@@ -999,15 +999,126 @@ internal enum GcnSpecial : byte
     LdsDirect,
 }
 
+/// <summary>A memory operation as a family's wait counters count it (<see cref="IGcnInstructionSet.Counting"/>).</summary>
+internal enum GcnMemoryClass : byte
+{
+    /// <summary>Not a memory operation.</summary>
+    None,
+
+    /// <summary>Global memory through the vector memory unit (GLOBAL): loads, stores and atomics.</summary>
+    Vector,
+
+    /// <summary>FLAT: global memory or LDS through one address, which a lane decides at run time.</summary>
+    Flat,
+
+    /// <summary>The workgroup's shared memory (DS without gds), and the lane exchanges through it.</summary>
+    Lds,
+
+    /// <summary>The global data share (DS with gds).</summary>
+    Gds,
+
+    /// <summary>Scalar memory (SMEM): loads, stores, cache operations, the clocks.</summary>
+    Scalar,
+}
+
+/// <summary>A family's wait counters (s_waitcnt's fields).</summary>
+[Flags]
+internal enum GcnCounter : byte
+{
+    /// <summary>No counter.</summary>
+    None = 0,
+
+    /// <summary>vmcnt: vector memory operations.</summary>
+    Vm = 1,
+
+    /// <summary>lgkmcnt: LDS, GDS, scalar memory and messages.</summary>
+    Lgkm = 2,
+
+    /// <summary>expcnt: exports, and the data registers of GDS operations until they are read.</summary>
+    Exp = 4,
+}
+
+/// <summary>
+/// How a family counts one class of memory operation: the counters it increments, whether they complete in the order
+/// they were issued (else a wait for one of them waits for the counter to reach 0), and the counter that holds the
+/// operation's data registers until they have been read (overwriting them waits for it).
+/// </summary>
+internal readonly record struct GcnCounting(GcnCounter Counters, bool InOrder, GcnCounter DataLock = GcnCounter.None);
+
+/// <summary>
+/// The cases where the hardware does not check a dependency itself and needs wait states (s_nop) between two
+/// instructions; a family gives each its count (<see cref="IGcnInstructionSet.HazardWaitStates"/>), 0 where it has none.
+/// Each case is named as LLVM's GCNHazardRecognizer checks it.
+/// </summary>
+internal enum GcnHazard : byte
+{
+    /// <summary>A VALU writes an SGPR (or VCC, EXEC), then a vector memory instruction reads it (its scalar address, or EXEC).</summary>
+    VmemSgprAfterValu,
+
+    /// <summary>A VALU writes an SGPR, then v_readlane_b32 or v_writelane_b32 reads it as its lane select.</summary>
+    LaneSelectAfterValu,
+
+    /// <summary>A VALU writes VCC, then v_div_fmas reads it.</summary>
+    DivFmasVccAfterValu,
+
+    /// <summary>A VALU writes a VGPR, then a DPP instruction reads it (a source, or the destination it partly keeps).</summary>
+    DppVgprAfterValu,
+
+    /// <summary>A VALU writes EXEC (v_cmpx), then a DPP instruction runs.</summary>
+    DppAfterValuExec,
+
+    /// <summary>s_setreg writes a hardware register, then s_getreg reads it.</summary>
+    GetregAfterSetreg,
+
+    /// <summary>s_setreg writes a hardware register, then another s_setreg writes it.</summary>
+    SetregAfterSetreg,
+
+    /// <summary>A FLAT or GLOBAL store of more than 64 bits, then a VALU writes one of its data VGPRs.</summary>
+    WideStoreDataAfterValu,
+
+    /// <summary>An SALU writes M0, then a GDS instruction or s_movrel reads it.</summary>
+    M0AfterSalu,
+
+    /// <summary>An SALU writes an SGPR, then an SMEM instruction reads it (its address or offset).</summary>
+    SmemSgprAfterSalu,
+
+    /// <summary>
+    /// With xnack, consecutive memory instructions of one kind (SMEM, or vector memory) form a soft clause the hardware
+    /// may replay: one that writes a register another of the clause reads, or a store after a load, breaks it.
+    /// </summary>
+    SoftClause,
+}
+
 /// <summary>
 /// What Idrak's GCN assembler asks of a family (<see cref="IGcnTarget"/>) to encode its instructions: the word layouts
 /// it follows, its instructions (by meaning and by mnemonic), the features each version has, and the operand codes of
-/// its special registers. A family without it is described by the code object writer but not assembled for. Internal:
-/// only the library's assembler reads it, and an app's family (<see cref="GcnTargets.Register"/>) describes code
-/// objects without encoding instructions.
+/// its special registers; and, for kernels written with virtual registers, its wait counters and hazards. A family
+/// without it is described by the code object writer but not assembled for. Internal: only the library's assembler
+/// reads it, and an app's family (<see cref="GcnTargets.Register"/>) describes code objects without encoding instructions.
 /// </summary>
 internal interface IGcnInstructionSet
 {
+    /// <summary>The counters <paramref name="memory"/> increments, whether they complete in order, and its data lock.</summary>
+    GcnCounting Counting(GcnMemoryClass memory);
+
+    /// <summary>The most a counter holds (s_waitcnt's field for it, and the operations the hardware keeps in flight).</summary>
+    int CounterLimit(GcnCounter counter);
+
+    /// <summary>s_waitcnt's 16 bits for the counts (a counter at its limit is not waited on).</summary>
+    ushort WaitBits(int vmcnt, int expcnt, int lgkmcnt);
+
+    /// <summary>The counts s_waitcnt's 16 bits wait for.</summary>
+    (int Vmcnt, int Expcnt, int Lgkmcnt) WaitCounts(ushort bits);
+
+    /// <summary>Whether s_barrier waits for the wave's memory operations itself; when not, a wait for every counter goes before it.</summary>
+    bool BarrierWaitsForMemory { get; }
+
+    /// <summary>The wait states <paramref name="hazard"/> needs on this family (0: none), with xnack as <paramref name="xnack"/> sets it.</summary>
+    int HazardWaitStates(GcnHazard hazard, GcnFeatureSetting xnack);
+
+    /// <summary>The SIMDs of a compute unit, over which a workgroup's waves are spread (what bounds a block's registers).</summary>
+    int SimdsPerComputeUnit { get; }
+
     /// <summary>The word layouts the family's formats follow.</summary>
     GcnEncoding Encoding { get; }
 

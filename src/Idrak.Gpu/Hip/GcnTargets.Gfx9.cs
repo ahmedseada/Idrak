@@ -129,6 +129,61 @@ public static partial class GcnTargets
 
         public int Ttmp(int index) => (uint)index < 16 ? 108 + index : throw new ArgumentOutOfRangeException(nameof(index), index, "gfx9 has ttmp0 to ttmp15.");
 
+        // The wait counters (ISA 9; LLVM 18's SIInsertWaitcnts, checked with llc -run-pass=si-insert-waitcnts on gfx90c,
+        // 2026-10-29): vmcnt counts global loads, stores and atomics alike, in order (a load, a store, then the load's use
+        // waits vmcnt(1)); lgkmcnt counts LDS in order (an LDS read, an LDS write, then the read's use: lgkmcnt(1)) and
+        // scalar memory out of order (its use waits lgkmcnt(0)); FLAT counts on both and may complete through either, so
+        // its use waits both to 0; GDS counts on lgkmcnt and holds its data registers on expcnt (overwriting them waits
+        // expcnt(0)). Stores need no wait before their data registers are written again (ISA 9 reads them at issue).
+        public GcnCounting Counting(GcnMemoryClass memory) => memory switch
+        {
+            GcnMemoryClass.Vector => new(GcnCounter.Vm, InOrder: true),
+            GcnMemoryClass.Flat => new(GcnCounter.Vm | GcnCounter.Lgkm, InOrder: false),
+            GcnMemoryClass.Lds => new(GcnCounter.Lgkm, InOrder: true),
+            GcnMemoryClass.Gds => new(GcnCounter.Lgkm, InOrder: true, DataLock: GcnCounter.Exp),
+            GcnMemoryClass.Scalar => new(GcnCounter.Lgkm, InOrder: false),
+            _ => default,
+        };
+
+        public int CounterLimit(GcnCounter counter) => counter switch
+        {
+            GcnCounter.Vm => 63,
+            GcnCounter.Lgkm => 15,
+            GcnCounter.Exp => 7,
+            _ => throw new ArgumentOutOfRangeException(nameof(counter), counter, "One counter: vmcnt, lgkmcnt or expcnt."),
+        };
+
+        // vmcnt's low four bits at 3:0 and its high two at 15:14, expcnt at 6:4, lgkmcnt at 11:8.
+        public ushort WaitBits(int vmcnt, int expcnt, int lgkmcnt) => (ushort)((vmcnt & 0xF) | (expcnt & 7) << 4 | (lgkmcnt & 0xF) << 8 | (vmcnt >> 4 & 3) << 14);
+
+        public (int Vmcnt, int Expcnt, int Lgkmcnt) WaitCounts(ushort bits) => ((bits & 0xF) | (bits >> 14 & 3) << 4, bits >> 4 & 7, bits >> 8 & 0xF);
+
+        // gfx9 has no automatic wait before a barrier (LLVM's hasAutoWaitcntBeforeBarrier and back-off barriers come with
+        // gfx90a and gfx10): s_barrier after an LDS write takes lgkmcnt(0) first, after a store vmcnt(0).
+        public bool BarrierWaitsForMemory => false;
+
+        // The hazards, as LLVM 18's GCNHazardRecognizer inserts s_nop for them on gfx900, gfx906, gfx908 and gfx90c (llc
+        // -run-pass=post-RA-hazard-rec on two-instruction MIR cases, 2026-10-29; the counts in wait states, s_nop n being
+        // n + 1). The cases LLVM leaves alone on gfx9 are 0: a VALU's SGPR read by a VALU or an SALU, an SALU's SGPR read
+        // by SMEM (Southern Islands only), an SALU's EXEC before DPP, a VALU's VGPR read by v_readlane.
+        public int HazardWaitStates(GcnHazard hazard, GcnFeatureSetting xnack) => hazard switch
+        {
+            GcnHazard.VmemSgprAfterValu => 5,       // checkVMEMHazards: v_readfirstlane s2 or v_cmpx (EXEC), then global_load ... s[2:3]: s_nop 4
+            GcnHazard.LaneSelectAfterValu => 4,     // checkRWLaneHazards: v_readfirstlane s4 (or v_cmp vcc), then v_readlane/v_writelane lane s4 (vcc_lo): s_nop 3
+            GcnHazard.DivFmasVccAfterValu => 4,     // checkDivFMasHazards: v_div_scale ... vcc, then v_div_fmas: s_nop 3
+            GcnHazard.DppVgprAfterValu => 2,        // checkDPPHazards: v_add v1, then v_mov_b32_dpp ..., v1: s_nop 1
+            GcnHazard.DppAfterValuExec => 5,        // checkDPPHazards: v_cmpx (EXEC), then any DPP: s_nop 4
+            GcnHazard.GetregAfterSetreg => 2,       // checkGetRegHazards: s_setreg(_imm32) hwreg(n), then s_getreg hwreg(n): s_nop 1
+            GcnHazard.SetregAfterSetreg => 2,       // checkSetRegHazards: s_setreg hwreg(n) twice: s_nop 1
+            GcnHazard.WideStoreDataAfterValu => 1,  // checkVALUHazards (has12DWordStoreHazard): global_store_dwordx3/x4, then a VALU writes a data VGPR: s_nop 0
+            GcnHazard.M0AfterSalu => 1,             // checkReadM0Hazards: s_mov m0, then a GDS DS instruction or s_movrels: s_nop 0
+            GcnHazard.SmemSgprAfterSalu => 0,       // checkSMRDHazards: Southern Islands only
+            GcnHazard.SoftClause => xnack == GcnFeatureSetting.Off ? 0 : 1,   // checkSoftClauseHazards: with xnack on or any, s_nop 0 breaks the clause
+            _ => 0,
+        };
+
+        public int SimdsPerComputeUnit => 4;
+
         private static void CheckWave(int waveSize)
         {
             if (waveSize != 64)

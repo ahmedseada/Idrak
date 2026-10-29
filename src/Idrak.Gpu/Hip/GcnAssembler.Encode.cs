@@ -34,11 +34,17 @@ internal enum GcnOperandKind : byte
 
     /// <summary>A field's value written into the instruction's own bits (an offset, a simm16, a hwreg or gpr_idx field).</summary>
     Immediate,
+
+    /// <summary>Virtual scalar registers (<c>%s3</c>, <c>%s[4:7]</c>) of a kernel's text, before the allocator gives them physical ones.</summary>
+    VirtualSgpr,
+
+    /// <summary>Virtual vector registers (<c>%v12</c>, <c>%v[0:3]</c>) of a kernel's text, before the allocator gives them physical ones.</summary>
+    VirtualVgpr,
 }
 
 /// <summary>
-/// One operand of a GCN instruction with physical registers (virtual ones come with the register allocator): a run of
-/// scalar, vector or accumulation registers, a special register (VCC, EXEC, M0, off), a label, or a value: an inline
+/// One operand of a GCN instruction: a run of scalar, vector or accumulation registers (or, in a kernel's text, of
+/// virtual ones the allocator places), a special register (VCC, EXEC, M0, off), a label, or a value: an inline
 /// constant when the hardware holds it (the integers -16 to 64 and the floats ±0.5, ±1, ±2, ±4 and 1/(2π), by their
 /// bits, as LLVM chooses), a literal otherwise, or an immediate written into the instruction's own field.
 /// </summary>
@@ -105,6 +111,9 @@ internal readonly record struct GcnOperand
 
     /// <summary>A value written into the instruction's own field (an offset, a simm16, a hwreg or gpr_idx field).</summary>
     public static GcnOperand Immediate(int value) => new(GcnOperandKind.Immediate, 0, 1, unchecked((uint)value));
+
+    /// <summary>Virtual registers <paramref name="id"/> to id + count - 1 of a file (<see cref="GcnOperandKind.VirtualSgpr"/> or <see cref="GcnOperandKind.VirtualVgpr"/>).</summary>
+    internal static GcnOperand Virtual(GcnOperandKind kind, int id, int count) => new(kind, id, count, 0);
 
     /// <summary>A 32-bit integer: inline from -16 to 64, a literal otherwise.</summary>
     public static GcnOperand Int(int value) => Bits(unchecked((uint)value));
@@ -175,6 +184,8 @@ internal readonly record struct GcnOperand
         GcnOperandKind.Literal => string.Create(CultureInfo.InvariantCulture, $"0x{Value:x}"),
         GcnOperandKind.Label => string.Create(CultureInfo.InvariantCulture, $"label {Index}"),
         GcnOperandKind.Immediate => unchecked((int)Value).ToString(CultureInfo.InvariantCulture),
+        GcnOperandKind.VirtualSgpr or GcnOperandKind.VirtualVgpr when Count == 1 => $"%{(Kind == GcnOperandKind.VirtualSgpr ? 's' : 'v')}{Index}",
+        GcnOperandKind.VirtualSgpr or GcnOperandKind.VirtualVgpr => $"%{(Kind == GcnOperandKind.VirtualSgpr ? 's' : 'v')}[{Index}:{Index + Count - 1}]",
         _ => "(none)",
     };
 
@@ -267,6 +278,8 @@ internal sealed class GcnSyntaxException(int line, int column, string reason)
 internal sealed partial class GcnAssembler : IDisposable
 {
     private readonly IGcnInstructionSet _set;
+    private readonly IGcnTarget _target;
+    private readonly GcnIsaVersion? _isa;
     private readonly string _family;
     private readonly GcnFeatures _features;
     private readonly string _version;
@@ -283,6 +296,9 @@ internal sealed partial class GcnAssembler : IDisposable
     // The instruction being encoded: its definition, its form, its operands and modifiers (reused, nothing allocated).
     private GcnInstruction _ins = null!;
     private GcnVariant _variant;
+
+    // The form the encoder chose (the suffix a printed instruction carries).
+    private GcnVariant _encoded;
     private Operands _ops;
     private int _count;
     private int _negMask, _absMask, _sextMask;
@@ -316,6 +332,8 @@ internal sealed partial class GcnAssembler : IDisposable
     private GcnAssembler(IGcnTarget target, GcnIsaVersion? isa, int bytes)
     {
         ArgumentNullException.ThrowIfNull(target);
+        _target = target;
+        _isa = isa;
         _family = target.Family;
         _set = target as IGcnInstructionSet
                ?? throw new NotSupportedException($"The GCN family {target.Family} has no instruction encodings (IGcnInstructionSet): Idrak's assembler cannot write code for it.");
@@ -344,6 +362,7 @@ internal sealed partial class GcnAssembler : IDisposable
         _branches = ArrayPool<int>.Shared.Rent(48);
         _names = ArrayPool<byte>.Shared.Rent(256);
         _chars = ArrayPool<char>.Shared.Rent(CharBuffer);
+        RentKernelBuffers();
     }
 
     /// <summary>Bytes of code written so far.</summary>
@@ -360,6 +379,8 @@ internal sealed partial class GcnAssembler : IDisposable
         _branchCount = 0;
         _namesLength = 0;
         _line = 0;
+        _printLength = 0;
+        ResetKernel();
     }
 
     /// <summary>A new label, placed later with <see cref="Bind"/>.</summary>
@@ -497,6 +518,7 @@ internal sealed partial class GcnAssembler : IDisposable
         Return(ref _branches);
         Return(ref _names);
         Return(ref _chars);
+        ReturnKernelBuffers();
 
         static void Return<T>(ref T[] array)
         {
@@ -537,6 +559,7 @@ internal sealed partial class GcnAssembler : IDisposable
     {
         _ins = instruction;
         _variant = variant;
+        _encoded = variant;
         _count = 0;
         _negMask = _absMask = _sextMask = 0;
         _m = Modifiers.Default;
@@ -868,6 +891,7 @@ internal sealed partial class GcnAssembler : IDisposable
                 : GcnVariant.E32;
         }
 
+        _encoded = variant;
         switch (variant)
         {
             case GcnVariant.E32:
@@ -1595,7 +1619,7 @@ internal sealed partial class GcnAssembler : IDisposable
     // A refusal naming the operand (or the instruction): with the line and column when assembling text.
     private Exception Refuse(int operand, string rule)
     {
-        string reason = operand >= 0 ? $"{_ins.Mnemonic} cannot take {_ops[operand]}: {rule}." : $"{_ins.Mnemonic}: {rule}.";
+        string reason = operand >= 0 ? $"{_ins.Mnemonic} cannot take {(_standIns ? _written[operand] : _ops[operand])}: {rule}." : $"{_ins.Mnemonic}: {rule}.";
         return _parsing ? new GcnSyntaxException(_line, operand >= 0 ? _columns[operand] : _column, reason) : new ArgumentException(reason, "operand");
     }
 

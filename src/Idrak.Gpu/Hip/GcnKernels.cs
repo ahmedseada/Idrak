@@ -2,18 +2,16 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers.Binary;
-using System.Numerics;
 using Idrak.Gpu.Abstractions;
-using static Idrak.Gpu.Hip.GcnOperand;
 
 namespace Idrak.Gpu.Hip;
 
 /// <summary>
-/// HIP's kernels in GCN, AMD's own instruction set, written in C# as <c>Cuda/PtxKernels.cs</c> writes CUDA's in PTX, and
-/// turned into machine code by Idrak's assembler (<see cref="GcnAssembler"/>) for the family of the target a device
-/// reports, then into the code object the HIP runtime loads (<see cref="GcnCodeObject"/>). No SDK, no compiler: the
-/// driver's runtime alone loads them (plan 35). So far the gate kernel, <c>fill_f32</c>, with physical registers; the
-/// register allocator (virtual registers, waits and hazards from use) comes next.
+/// HIP's kernels in GCN, AMD's own instruction set, written in C# as <c>Cuda/PtxKernels.cs</c> writes CUDA's in PTX:
+/// with virtual registers, which Idrak's assembler (<see cref="GcnAssembler.AssembleKernel"/>) allocates, adding the
+/// waits and wait states, for the family of the target a device reports, then into the code object the HIP runtime
+/// loads (<see cref="GcnCodeObject"/>). No SDK, no compiler: the driver's runtime alone loads them (plan 35). So far
+/// the gate kernel, <c>fill_f32</c>.
 /// </summary>
 internal static partial class GcnKernels
 {
@@ -33,38 +31,37 @@ internal static partial class GcnKernels
     internal const int FillArgumentBytes = 16;
 
     /// <summary>
-    /// <c>fill_f32</c>: out[i] = value for every i &lt; count, one element a work-item in blocks of <see cref="FillBlock"/>
-    /// (ceil(count / 256) blocks), for <paramref name="target"/>'s family. On entry s[0:1] holds the kernel arguments'
-    /// address (the only user SGPRs) and s2 the workgroup id x (the first system SGPR); v0 holds the work-item id x.
-    /// The same kernel as tests/Idrak.Tests/data/gcn/kernels/fill_f32.s, whose code object llvm-mc and ld.lld made.
+    /// <c>fill_f32</c>'s text: out[i] = value for every i &lt; count, one element a work-item in blocks of
+    /// <see cref="FillBlock"/> (ceil(count / 256) blocks). The kernel arguments' address arrives in s[0:1], the workgroup
+    /// id x in s2, the work-item id x in v0. Its allocation is the code of tests/Idrak.Tests/data/gcn/kernels/fill_f32.s,
+    /// whose code object llvm-mc and ld.lld made, byte for byte.
     /// </summary>
+    internal static ReadOnlySpan<byte> FillText => """
+        .kernel fill_f32
+        .arg out, 8, global
+        .arg value, 4, value
+        .arg count, 4, value
+        .reqd_workgroup_size 256, 1, 1
+        .user_sgpr kernarg_segment_ptr
+        .system_sgpr workgroup_id_x
+          s_load_dwordx4 %s[0:3], s[0:1], 0x0      ; %s[0:1] out, %s2 value, %s3 count
+          s_lshl_b32 %s4, s2, 8                    ; the block's first element: workgroup id x * 256
+          v_add_u32_e32 %v0, %s4, v0               ; this work-item's element
+          v_cmp_gt_u32_e32 vcc, %s3, %v0           ; element < count
+          s_and_saveexec_b64 %s[6:7], vcc          ; only those lanes
+          s_cbranch_execz .Lfill_f32_done
+          v_lshlrev_b32_e32 %v1, 2, %v0            ; the byte offset
+          v_mov_b32_e32 %v2, %s2
+          global_store_dword %v1, %v2, %s[0:1]
+        .Lfill_f32_done:
+          s_endpgm
+        """u8;
+
+    /// <summary><c>fill_f32</c> (<see cref="FillText"/>) for <paramref name="target"/>'s family.</summary>
     internal static GcnKernelCode Fill(IGcnTarget target)
     {
         using var asm = new GcnAssembler(target, bytes: 64);
-        var done = asm.NewLabel();
-        asm.Smem(GcnOp.SLoadDwordx4, S(4, 4), S(0, 2), 0);                    // s[4:5] out, s6 value, s7 count
-        asm.Sop2(GcnOp.SLshlB32, S(2), S(2), Int(BitOperations.Log2(FillBlock)));   // the block's first element
-        asm.Vop2(GcnOp.VAddU32, V(0), S(2), V(0));                              // this work-item's element
-        asm.Waitcnt(lgkmcnt: 0);                                                // the arguments have arrived
-        asm.Vopc(GcnOp.VCmpGtU32, S(7), V(0));                                  // element < count
-        asm.Sop1(GcnOp.SAndSaveexecB64, S(0, 2), Vcc);                          // only those lanes
-        asm.Branch(GcnOp.SCbranchExecz, done);
-        asm.Vop2(GcnOp.VLshlrevB32, V(0), Int(2), V(0));                        // the byte offset
-        asm.Vop1(GcnOp.VMovB32, V(1), S(6));
-        asm.GlobalStore(GcnOp.GlobalStoreDword, V(0), V(1), S(4, 2));
-        asm.Bind(done);
-        asm.Sopp(GcnOp.SEndpgm);
-        return new GcnKernelCode
-        {
-            Name = "fill_f32",
-            Code = asm.ToArray(),
-            Vgprs = 2,
-            Sgprs = 8,
-            UsesVcc = true,
-            Arguments = FillArguments,
-            MaxFlatWorkgroupSize = FillBlock,
-            RequiredWorkgroupSize = (FillBlock, 1, 1),
-        };
+        return asm.AssembleKernel(FillText);
     }
 
     /// <summary>The code object of <c>fill_f32</c> for <paramref name="isa"/> in code object format <paramref name="format"/>.</summary>

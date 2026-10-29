@@ -32,9 +32,10 @@ namespace Idrak.Gpu.Hip;
 /// <c>row_bcast:15</c>, <c>row_bcast:31</c>, <c>row_mask:n</c>, <c>bank_mask:n</c>, <c>bound_ctrl:0</c> (or 1);
 /// SDWA's <c>dst_sel:</c>, <c>dst_unused:</c>, <c>src0_sel:</c>, <c>src1_sel:</c>.</item>
 /// </list>
-/// Reserved for the register allocator: a <c>%</c> operand is a virtual register (<c>%v12</c>, <c>%s3</c>, a range
-/// <c>%v[4:7]</c> of virtual registers kept adjacent), and a line starting with <c>.</c> is a directive; both are
-/// refused here, by line and column, until the allocator takes them. Anything unknown is refused the same way.
+/// A kernel's text (<see cref="AssembleKernel"/>, in <c>GcnAssembler.Kernel.cs</c>) adds virtual registers (a
+/// <c>%</c> operand: <c>%v12</c>, <c>%s3</c>, a range <c>%v[4:7]</c> of adjacent ones) and directives (a line starting
+/// with <c>.</c>); <see cref="Assemble"/>, which encodes physical registers as written, refuses both by line and
+/// column. Anything unknown is refused the same way.
 /// </summary>
 internal sealed partial class GcnAssembler
 {
@@ -117,7 +118,13 @@ internal sealed partial class GcnAssembler
 
         if (line[at] == (byte)'.')
         {
-            throw Syntax(at, "directives (a line starting with '.') are not taken yet: the register allocator brings them");
+            if (!_kernel)
+            {
+                throw Syntax(at, "directives (a line starting with '.') are taken in a kernel's text (AssembleKernel), where the register allocator reads them");
+            }
+
+            Directive(line, at);
+            return;
         }
 
         if (end == at)
@@ -135,7 +142,18 @@ internal sealed partial class GcnAssembler
 
         at = ParseOperands(line, end);
         ParseModifiers(line, at);
-        Encode();
+        if (_kernel)
+        {
+            Record();
+        }
+        else
+        {
+            Encode();
+            if (Printing)
+            {
+                PrintInstruction();
+            }
+        }
     }
 
     // The family's instruction for a mnemonic, its encoding suffix taken off.
@@ -342,7 +360,12 @@ internal sealed partial class GcnAssembler
 
         if (line[at] == (byte)'%')
         {
-            throw Syntax(at, $"'{Text(line[at..NameEnd(line, at + 1)])}' is a virtual register: this assembler takes physical registers (the register allocator assigns them)");
+            if (!_kernel)
+            {
+                throw Syntax(at, $"'{Text(line[at..NameEnd(line, at + 1)])}' is a virtual register: Assemble takes physical registers (a kernel's text, AssembleKernel, takes virtual ones)");
+            }
+
+            return ParseVirtual(line, at);
         }
 
         int nameEnd = NameEnd(line, at);
@@ -1264,7 +1287,16 @@ internal sealed partial class GcnAssembler
             throw Syntax(at, $"label '{Text(name)}' is defined twice");
         }
 
-        _labels[LabelSlot * id] = _length;
+        _labels[LabelSlot * id] = _kernel ? _itemCount : _length;
+        if (_kernel)
+        {
+            Grow(ref _labelOrder, _labelOrderCount + 1);
+            _labelOrder[_labelOrderCount++] = id;
+        }
+        else if (Printing)
+        {
+            PrintLabel(id);
+        }
     }
 
     private string LabelName(int id) => Encoding.UTF8.GetString(_names, _labels[LabelSlot * id + 1], _labels[LabelSlot * id + 2]);
