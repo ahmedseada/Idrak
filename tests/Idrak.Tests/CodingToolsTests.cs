@@ -21,7 +21,42 @@ internal abstract partial class DesktopTests : Tests
         ("coding agent: a call repeated right after itself is not run again, and the model is told to use its result", AgentSkipsRepeatedCalls),
         ("coding agent: a steering note given while it runs is read before its next request and stays in the conversation", AgentReadsSteeringNotes),
         ("coding agent: extra tools are offered after the coding tools and called; one with a coding tool's name is refused", AgentOffersExtraTools),
+        ("coding agent: ContinueAsync keeps the earlier run's conversation (its task, replies and tool results) and adds the next message after it", AgentContinuesConversation),
     ];
+
+    private static void AgentContinuesConversation(Device device)
+    {
+        _ = device;
+        string root = Path.Combine(Path.GetTempPath(), "idrak-continue-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "a.txt"), "alpha");
+        try
+        {
+            var fake = FakeChatModel.Script(
+                FakeChatModel.ToolCall("read_file", new JsonObject { ["path"] = "a.txt" }),
+                FakeChatModel.Answer("It says alpha."),
+                FakeChatModel.Answer("You asked what a.txt says; it says alpha."));
+            var agent = new CodingAgent(fake);
+            var tools = new CodingTools(root);
+            var first = agent.RunAsync("What does a.txt say?", tools).GetAwaiter().GetResult();
+            var second = agent.ContinueAsync(first, "What did I ask you?", tools).GetAwaiter().GetResult();
+            var sent = fake.Requests[2].Messages;
+            Check(sent.Count == first.Messages.Count + 1 && sent.Take(first.Messages.Count).SequenceEqual(first.Messages),
+                $"the next request carries the whole earlier conversation ({first.Messages.Count} messages) then the new one; it sent {sent.Count}");
+            Check(sent[0].Role == "system" && sent.Count(m => m.Role == "system") == 1, "one system prompt, the earlier run's");
+            Check(sent[^1] is { Role: "user", Content: "What did I ask you?" } && sent.Any(m => m is { Role: "tool" } && m.Content.Contains("alpha", StringComparison.Ordinal)),
+                "the new message last, the earlier tool result kept");
+            Check(second is { End: CodingAgentEnd.Answered, Rounds: 1 } && second.Messages.Count == sent.Count + 1 && second.Messages[^1].Content.StartsWith("You asked", StringComparison.Ordinal),
+                $"the continued run holds the whole conversation and counts its own rounds ({second.End}, {second.Rounds} rounds, {second.Messages.Count} messages)");
+            var third = new CodingAgent(FakeChatModel.Script(FakeChatModel.Answer("ok")))
+                .ContinueAsync(first with { Messages = [.. first.Messages.Skip(1)] }, "again", tools).GetAwaiter().GetResult();
+            Check(third.Messages[0].Role == "system" && third.Messages.Count(m => m.Role == "system") == 1, "a conversation without its system prompt gets one first");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
 
     // CodingTools cuts lines as places in the text and matches spans; the reference splits the text into strings.
     private static void CodingToolsLinesMatchReference()

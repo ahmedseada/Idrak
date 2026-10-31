@@ -244,13 +244,40 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
     /// calls run (a call repeated right after itself is not run again), until it answers without a call, uses its rounds
     /// (<see cref="AgentOptions.MaxRounds"/>) or its time (<see cref="AgentOptions.TimeLimit"/>), or fails.
     /// </summary>
-    public async Task<CodingAgentRun> RunAsync(string prompt, CodingTools tools, CancellationToken cancellationToken = default)
+    public Task<CodingAgentRun> RunAsync(string prompt, CodingTools tools, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(tools);
+        return LoopAsync([new("system", _options.SystemPrompt ?? SystemPrompt(tools.Languages)), new("user", prompt)], tools, cancellationToken);
+    }
+
+    /// <summary>
+    /// Continues the conversation of <paramref name="earlier"/> (a run of this agent or another, on the same workspace):
+    /// its messages are kept as they are (the system prompt, the tasks, the replies and the tool results), and
+    /// <paramref name="prompt"/> follows as the next user message; then the loop runs as <see cref="RunAsync"/>'s, with its
+    /// own rounds and time. The returned run holds the whole conversation, so it can be continued again. An earlier run
+    /// whose messages do not start with a system message gets this agent's system prompt first.
+    /// </summary>
+    public Task<CodingAgentRun> ContinueAsync(CodingAgentRun earlier, string prompt, CodingTools tools, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(earlier);
+        ArgumentNullException.ThrowIfNull(prompt);
+        ArgumentNullException.ThrowIfNull(tools);
+        var messages = new List<ChatMessage>(earlier.Messages.Count + 2);
+        if (earlier.Messages.Count == 0 || earlier.Messages[0].Role != "system")
+        {
+            messages.Add(new("system", _options.SystemPrompt ?? SystemPrompt(tools.Languages)));
+        }
+
+        messages.AddRange(earlier.Messages);
+        messages.Add(new("user", prompt));
+        return LoopAsync(messages, tools, cancellationToken);
+    }
+
+    private async Task<CodingAgentRun> LoopAsync(List<ChatMessage> messages, CodingTools tools, CancellationToken cancellationToken)
+    {
         var registry = Registry(tools, _options.ExtraTools);
         var definitions = ToolDefinitions(tools, _options.ExtraTools);
-        var messages = new List<ChatMessage> { new("system", _options.SystemPrompt ?? SystemPrompt(tools.Languages)), new("user", prompt) };
         int rounds = 0, calls = 0, errors = 0, generated = 0;
         var modelTime = TimeSpan.Zero;
         var toolTime = TimeSpan.Zero;
