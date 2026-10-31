@@ -683,6 +683,7 @@ public sealed record Idrak.Text.Generation.AgentOptions : System.IEquatable<Idra
   public AgentOptions()
   public Idrak.Abstraction.Generation.GenerationOptions? Sampling { get; init; }
   public Idrak.Text.Generation.CodingToolOptions Tools { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ITool> ExtraTools { get; init; }
   public System.TimeSpan TimeLimit { get; init; }
   public bool? Think { get; init; }
   public int MaxRounds { get; init; }

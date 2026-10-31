@@ -31,6 +31,13 @@ public sealed record AgentOptions
 
     /// <summary>What the tools may do, and the coding languages they and the prompt work with (<see cref="CodingToolOptions.Languages"/>).</summary>
     public CodingToolOptions Tools { get; init; } = new();
+
+    /// <summary>
+    /// Tools offered beside the coding tools (an editor's code search, a project's own lookups), after them, in order: none
+    /// by default. A name a coding tool already has, or one given twice, is refused when the run starts (no tool shadows
+    /// another silently).
+    /// </summary>
+    public IReadOnlyList<ITool> ExtraTools { get; init; } = [];
 }
 
 /// <summary>How the agent's loop ended (<see cref="CodingAgentRun.End"/>).</summary>
@@ -241,8 +248,8 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(tools);
-        var registry = tools.Registry();
-        var definitions = ToolDefinitions(tools);
+        var registry = Registry(tools, _options.ExtraTools);
+        var definitions = ToolDefinitions(tools, _options.ExtraTools);
         var messages = new List<ChatMessage> { new("system", _options.SystemPrompt ?? SystemPrompt(tools.Languages)), new("user", prompt) };
         int rounds = 0, calls = 0, errors = 0, generated = 0;
         var modelTime = TimeSpan.Zero;
@@ -350,5 +357,29 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
         return new CodingToolTurn(results, messages, errors, key);
     }
 
-    private static IReadOnlyList<ToolDefinition> ToolDefinitions(CodingTools tools) => [.. tools.All.Select(t => t.Definition)];
+    private static IReadOnlyList<ToolDefinition> ToolDefinitions(CodingTools tools, IReadOnlyList<ITool> extra) =>
+        [.. tools.All.Select(t => t.Definition), .. extra.Select(t => t.Definition)];
+
+    // The coding tools, then the extra ones; a name given twice is refused by the builder, naming the tool.
+    private static IToolRegistry Registry(CodingTools tools, IReadOnlyList<ITool> extra)
+    {
+        if (extra.Count == 0)
+        {
+            return tools.Registry();
+        }
+
+        var builder = ToolRegistry.Create().Add(tools.All);
+        foreach (var tool in extra)
+        {
+            ArgumentNullException.ThrowIfNull(tool, nameof(AgentOptions.ExtraTools));
+            if (tools.All.Any(t => t.Definition.Name == tool.Definition.Name))
+            {
+                throw new ArgumentException($"The extra tool '{tool.Definition.Name}' has the name of a coding tool; give it another name.", nameof(AgentOptions.ExtraTools));
+            }
+
+            builder.Add(tool);
+        }
+
+        return builder.Build();
+    }
 }

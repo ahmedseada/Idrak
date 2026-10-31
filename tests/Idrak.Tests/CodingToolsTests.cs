@@ -20,6 +20,7 @@ internal abstract partial class DesktopTests : Tests
         ("coding agent: a task is copied, run, verified by its commands and recorded", AgentRunsTask),
         ("coding agent: a call repeated right after itself is not run again, and the model is told to use its result", AgentSkipsRepeatedCalls),
         ("coding agent: a steering note given while it runs is read before its next request and stays in the conversation", AgentReadsSteeringNotes),
+        ("coding agent: extra tools are offered after the coding tools and called; one with a coding tool's name is refused", AgentOffersExtraTools),
     ];
 
     // CodingTools cuts lines as places in the text and matches spans; the reference splits the text into strings.
@@ -183,6 +184,42 @@ internal abstract partial class DesktopTests : Tests
             }
 
             Check(refused, "an empty note is refused");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static void AgentOffersExtraTools(Device device)
+    {
+        _ = device;
+        string root = Path.Combine(Path.GetTempPath(), "idrak-extra-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var search = Tool.Create("search_code", "Searches the code by meaning.", new JsonObject { ["type"] = "object", ["properties"] = new JsonObject() },
+                (_, _) => Task.FromResult("Shapes.cs:4 class Circle"));
+            var fake = FakeChatModel.Script(FakeChatModel.ToolCall("search_code", new JsonObject { ["query"] = "circle" }), FakeChatModel.Answer("In Shapes.cs."));
+            var agent = new CodingAgent(fake, new AgentOptions { ExtraTools = [search] });
+            var run = agent.RunAsync("Where is the circle?", new CodingTools(root)).GetAwaiter().GetResult();
+            var offered = fake.Requests[0].Tools!.Select(t => t.Name).ToList();
+            Check(offered[^1] == "search_code" && offered.Contains("read_file"), $"the extra tool is offered after the coding tools ({string.Join(", ", offered)})");
+            Check(run is { End: CodingAgentEnd.Answered, ToolCalls: 1, ToolErrors: 0 }, $"the call ran ({run.End}, {run.ToolCalls} calls, {run.ToolErrors} errors)");
+            Check(fake.Requests[1].Messages[^1] is { Role: "tool", Content: "Shapes.cs:4 class Circle" }, $"its result reached the model ({fake.Requests[1].Messages[^1].Content})");
+            var clash = Tool.Create("read_file", "another read", new JsonObject { ["type"] = "object" }, (_, _) => Task.FromResult(""));
+            string? refusal = null;
+            try
+            {
+                new CodingAgent(FakeChatModel.Script(FakeChatModel.Answer("x")), new AgentOptions { ExtraTools = [clash] })
+                    .RunAsync("x", new CodingTools(root)).GetAwaiter().GetResult();
+            }
+            catch (ArgumentException e)
+            {
+                refusal = e.Message;
+            }
+
+            Check(refusal is not null && refusal.Contains("read_file", StringComparison.Ordinal), $"a coding tool's name is refused, naming it ({refusal})");
         }
         finally
         {
