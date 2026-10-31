@@ -48,14 +48,36 @@ public sealed class Device
     /// <summary>The host CPU.</summary>
     public static Device Cpu { get; } = new(DeviceType.Cpu, 0, null);
 
+    // The default a host set, or null; the best device found, kept with the providers it was chosen among.
+    private static Device? s_setDefault;
+    private static BestDevice? s_best;
+
     /// <summary>
     /// The device new tensors and layers use when none is given. Defaults to the best GPU found (a CUDA GPU first, then
-    /// a Vulkan one), otherwise the CPU. Set it to change the default for the process.
+    /// a Vulkan one), otherwise the CPU; chosen again when the registered providers change (a host that loads Idrak.Gpu
+    /// from a plug-in's folder after something read the default gets its GPU, not the CPU chosen before the GPU's
+    /// providers were there), else kept: one reference comparison a read. Set it to change the default for the process.
     /// </summary>
     public static Device Default
     {
-        get => field ??= Best();
-        set => field = value ?? throw new ArgumentNullException(nameof(value));
+        get
+        {
+            if (s_setDefault is { } set)
+            {
+                return set;
+            }
+
+            var providers = DeviceProviders.All;
+            var best = s_best;
+            if (best is null || !ReferenceEquals(best.Providers, providers))
+            {
+                best = new BestDevice(providers, Best(providers));
+                s_best = best;
+            }
+
+            return best.Device;
+        }
+        set => s_setDefault = value ?? throw new ArgumentNullException(nameof(value));
     }
 
     /// <summary>True when an NVIDIA driver is installed and at least one CUDA GPU was found.</summary>
@@ -183,11 +205,11 @@ public sealed class Device
         _text ??= _provider is null ? "cpu" : string.Create(System.Globalization.CultureInfo.InvariantCulture, $"{_provider.Name}:{Ordinal}");   // made once: telemetry events name it each time
 
     // The listed device ranked highest by its backend (CUDA before Vulkan), else the CPU.
-    private static Device Best()
+    private static Device Best(IReadOnlyList<IDeviceProvider> providers)
     {
         Device best = Cpu;
         int bestRank = 0;
-        foreach (var provider in DeviceProviders.All)
+        foreach (var provider in providers)
         {
             for (int i = 0; i < provider.Count; i++)
             {
@@ -200,4 +222,6 @@ public sealed class Device
 
         return best;
     }
+
+    private sealed record BestDevice(IReadOnlyList<IDeviceProvider> Providers, Device Device);
 }

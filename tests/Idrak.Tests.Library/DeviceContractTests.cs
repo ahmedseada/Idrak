@@ -19,6 +19,7 @@ internal abstract partial class Tests
         ("device contracts: the capability interfaces a backend implements are read once when it starts (the CPU's own attention, recurrent kernels and memory report; no graphs, profiler, FP8, fused products, matrix units, offloading or peer copies), and its own kernels are the operations it overrides as reflection over its methods names them, or a capability's", DeviceCapabilitiesRead),
         ("device contracts: a host fallback takes a storage in host memory (IHostStorage) from its values in place, with no copy from its device; a copy to another backend goes straight there only where the device's IPeerCopyBackend reaches it, else through host memory", HostStorageAndPeerCopies),
         ("device contracts: every device kind is registered by its name with a summary; a kind without ISeparableDeviceProvider carves no separate backend; the library's offloading hooks are registered (ITensorOffloadingHooks)", ProvidersAndOffloadingHooks),
+        ("device contracts: the default device is chosen again when the registered providers change (a GPU provider registered after the default was read, as a host loading Idrak.Gpu from a plug-in's folder does, becomes the default; taken away, the default before it comes back), and one read costs nothing more", DefaultFollowsProviders),
         ("device contracts: a plug-in's kernel runs on a backend that launches its type (IKernelLauncher, IVulkanKernelDispatcher), not on others; a Vulkan kernel in the common launch shape refuses shared memory and a storage at an offset", DeviceKernelsLaunch),
     ];
 
@@ -136,6 +137,55 @@ internal abstract partial class Tests
 
         Check(refused, "a kind that cannot carve says so");
         Check(TensorOffloading.Hooks is { } hooks && hooks.GetType().Assembly == typeof(Idrak.Layers.Linear).Assembly, "Idrak's offloading hooks");
+    }
+
+    internal static void DefaultFollowsProviders(Device device)
+    {
+        _ = device;
+        if (!FirstRun(nameof(DefaultFollowsProviders)))
+        {
+            return;
+        }
+
+        var before = Device.Default;
+        Check(ReferenceEquals(Device.Default, before), "read twice with nothing registered between, the same device");
+        var late = new LateGpuProvider();
+        DeviceProviders.Register(late);
+        try
+        {
+            Check(Device.Default.ToString() == "late-gpu:0", $"a provider ranked above every other, registered after the default was read, is the default now (got {Device.Default})");
+        }
+        finally
+        {
+            DeviceProviders.Unregister(late.Name);
+        }
+
+        Check(Device.Default == before, $"taken away, the default is {before} again (got {Device.Default})");
+        Check(late.Started == 0, "choosing the default starts no backend");
+    }
+
+    // A listed device ranked above any GPU, never started (the default is only chosen, not used, by the test).
+    private sealed class LateGpuProvider : IDeviceProvider
+    {
+        public int Started { get; private set; }
+
+        public string Name => "late-gpu";
+
+        public string Summary => "a test GPU registered after the default device was read";
+
+        public DeviceType Type => DeviceType.Other;
+
+        public int Count => 1;
+
+        public Backend Create(int ordinal)
+        {
+            Started++;
+            throw new NotSupportedException("the test's late GPU is never started");
+        }
+
+        public bool IsStarted(int ordinal) => false;
+
+        public int? DefaultRank(int ordinal) => int.MaxValue;
     }
 
     internal static void DeviceKernelsLaunch(Device device)
