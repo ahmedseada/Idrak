@@ -5682,6 +5682,14 @@ public interface Idrak.Abstraction.Reinforcement.IPolicy<TObservation, TAction> 
   public void Load(string path)
   public void Save(string path)
 
+public interface Idrak.Abstraction.Reinforcement.IPreferencePairSource : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IOptionSchema
+  public bool NeedsGroups { get; }
+  public int Choose<TObservation, TAction>(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.Trajectory<TObservation, TAction>> episodes, System.Collections.Generic.List<Idrak.Abstraction.Reinforcement.PreferenceChoice> into, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+
+public interface Idrak.Abstraction.Reinforcement.IPreferencePolicy<TObservation, TAction> : Idrak.Abstraction.Reinforcement.IPolicy<TObservation, TAction>, System.IDisposable
+  public Idrak.Abstraction.Reinforcement.UpdateStats UpdatePreferences(Idrak.Abstraction.Reinforcement.RolloutBatch<TObservation, TAction> batch, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.PreferenceChoice> pairs, string loss, System.Collections.Generic.IReadOnlyDictionary<string, string>? lossOptions = null, string reference = "previous")
+  public void CheckPreferences(string loss, System.Collections.Generic.IReadOnlyDictionary<string, string>? lossOptions = null, string reference = "previous")
+
 public interface Idrak.Abstraction.Reinforcement.IRewardFunction : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind
   public System.Threading.Tasks.ValueTask<float[]> ScoreAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.RewardInput> inputs, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, System.Threading.CancellationToken cancellationToken = default)
 
@@ -5726,6 +5734,51 @@ public static class Idrak.Abstraction.Reinforcement.PolicyLosses
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.Reinforcement.IPolicyLoss loss)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public readonly record struct Idrak.Abstraction.Reinforcement.PreferenceAnswer : System.IEquatable<Idrak.Abstraction.Reinforcement.PreferenceAnswer>
+  public PreferenceAnswer(int Episode, int Step, string? Text)
+  public bool IsSampled { get; }
+  public const int WholeEpisode = -1
+  public int Episode { get; init; }
+  public int Step { get; init; }
+  public static Idrak.Abstraction.Reinforcement.PreferenceAnswer Kept(int episode, int step, string text)
+  public static Idrak.Abstraction.Reinforcement.PreferenceAnswer Sampled(int episode, int step = -1)
+  public string? Text { get; init; }
+
+public readonly record struct Idrak.Abstraction.Reinforcement.PreferenceChoice : System.IEquatable<Idrak.Abstraction.Reinforcement.PreferenceChoice>
+  public Idrak.Abstraction.Reinforcement.PreferenceAnswer Chosen { get; init; }
+  public Idrak.Abstraction.Reinforcement.PreferenceAnswer Rejected { get; init; }
+  public PreferenceChoice(Idrak.Abstraction.Reinforcement.PreferenceAnswer Chosen, Idrak.Abstraction.Reinforcement.PreferenceAnswer Rejected, float Margin, int Group)
+  public float Margin { get; init; }
+  public int Group { get; init; }
+
+public static class Idrak.Abstraction.Reinforcement.PreferenceInfoKeys
+  public const string Accepted = "accepted"
+  public const string Edited = "edited"
+  public const string Rejected = "rejected"
+  public const string Undone = "undone"
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<int> KeptStep { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<string> Kept { get; }
+  public static Idrak.Abstraction.Reinforcement.EpisodeInfoKey<string> Verdict { get; }
+
+public static class Idrak.Abstraction.Reinforcement.PreferencePairSources
+  public const string Group = "group"
+  public const string Verdict = "verdict"
+  public static Idrak.Abstraction.Reinforcement.IPreferencePairSource Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Reinforcement.IPreferencePairSource? Default(string name)
+  public static Idrak.Abstraction.Reinforcement.IPreferencePairSource? Find(System.ReadOnlySpan<char> name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Reinforcement.IPreferencePairSource source)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public static class Idrak.Abstraction.Reinforcement.PreferenceReferences
+  public const string Base = "base"
+  public const string Previous = "previous"
+  public static System.Collections.Generic.IReadOnlyList<string> Names { get; }
+  public static string Parse(string name)
 
 public static class Idrak.Abstraction.Reinforcement.RewardFunctions
   public static Idrak.Abstraction.Reinforcement.IRewardFunction Get(System.ReadOnlySpan<char> name)

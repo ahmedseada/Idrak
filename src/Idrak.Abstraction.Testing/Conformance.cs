@@ -526,6 +526,25 @@ public static class Conformance
     }
 
     /// <summary>
+    /// Checks a preference-pair source (<see cref="PreferencePairSourceSuite"/>) on drawn episodes in groups, some with a
+    /// verdict and a kept text: every choice names an episode and a step there are and two answers that differ, a group
+    /// source stays in its group, the choices are added after what the list held, the same choices again and from several
+    /// threads, an unknown option refused, and, given a <paramref name="reference"/> (by default the library's source of
+    /// that name, when there is one and it is not the one checked), the same choices.
+    /// </summary>
+    /// <param name="source">The source.</param>
+    /// <param name="sourceOptions">Its options for every call; null for its defaults.</param>
+    /// <param name="reference">The source to agree with; null for the library's of that name.</param>
+    /// <param name="options">The cases to run.</param>
+    public static ConformanceReport CheckPreferencePairSource(IPreferencePairSource source, IReadOnlyDictionary<string, string>? sourceOptions = null,
+        IPreferencePairSource? reference = null, ContractCheckOptions? options = null)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        reference ??= PreferencePairSources.Default(source.Name) is { } library && !ReferenceEquals(library, source) ? library : null;
+        return Check(source, new PreferencePairSourceSuite(sourceOptions, reference), options);
+    }
+
+    /// <summary>
     /// Checks a policy loss (<see cref="PolicyLossSuite"/>) on drawn mini-batches, on- and off-policy, with and without a
     /// reference and a value head: a finite one-element loss, the same every time, a gradient that reaches the
     /// log-probabilities and agrees with central differences where the loss is smooth, options refused, and, given a

@@ -128,6 +128,9 @@ public interface Idrak.Text.Abstractions.IPagePartFiller
   public string Summary { get; }
   public string? Fill(string? argument, Idrak.Text.Abstractions.PagePartContext context)
 
+public interface Idrak.Text.Abstractions.IPreferenceLoss : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IOptionSchema
+  public Idrak.Text.Abstractions.IFineTuningLoss Create(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+
 public interface Idrak.Text.Abstractions.IPretrainingReader : System.IDisposable
   public Idrak.Text.Abstractions.TrainingSequence? Read(long index)
   public long Count { get; }
@@ -242,6 +245,19 @@ public sealed class Idrak.Text.Abstractions.PendingConversations : System.IDispo
   public int Count { get; }
   public int Images { get; }
   public void Dispose()
+
+public static class Idrak.Text.Abstractions.PreferenceLosses
+  public const string Dpo = "dpo"
+  public const string Orpo = "orpo"
+  public const string SimPo = "simpo"
+  public static Idrak.Text.Abstractions.IPreferenceLoss Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Text.Abstractions.IPreferenceLoss? Default(string name)
+  public static Idrak.Text.Abstractions.IPreferenceLoss? Find(System.ReadOnlySpan<char> name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Text.Abstractions.IPreferenceLoss loss)
 
 public sealed record Idrak.Text.Abstractions.PretrainingContext : System.IEquatable<Idrak.Text.Abstractions.PretrainingContext>
   public Idrak.Models.PretrainedModel Model { get; init; }
@@ -566,6 +582,7 @@ public static class Idrak.Text.FineTuningLosses
   public static Idrak.Text.Abstractions.IFineTuningLoss OnPolicyDistillation(string divergence = "reverse", float temperature = 1f, float beta = 0.5f)
   public static Idrak.Text.Abstractions.IFineTuningLoss Orpo(float lambda = 0.1f)
   public static Idrak.Text.Abstractions.IFineTuningLoss Policy(Idrak.Abstraction.Reinforcement.IPolicyLoss loss, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public static Idrak.Text.Abstractions.IFineTuningLoss Preference(string name, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
   public static Idrak.Text.Abstractions.IFineTuningLoss SimPo(float beta = 2f, float gamma = 1f)
   public static Idrak.Text.Abstractions.IFineTuningLoss TokenCrossEntropy { get; }
 
@@ -637,6 +654,7 @@ public sealed class Idrak.Text.FineTuningSession : System.IDisposable
   public Idrak.Models.PretrainedModel Model { get; }
   public Idrak.Text.FineTuningOptions Options { get; }
   public Idrak.Text.FineTuningStepStats Step(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, Idrak.Text.Abstractions.IFineTuningLoss? loss = null, System.Threading.CancellationToken cancellationToken = default)
+  public Idrak.Text.FineTuningStepStats StepPairs(System.Collections.Generic.IReadOnlyList<Idrak.Text.PreferencePair> pairs, Idrak.Text.Abstractions.IFineTuningLoss loss, System.Threading.CancellationToken cancellationToken = default)
   public Idrak.Text.Generation.ChatGenerator Generator(Idrak.Abstraction.Generation.IKeyValueLayout cacheLayout, int? contextLength = null)
   public Idrak.Text.Generation.ChatGenerator Generator(int? contextLength = null, Idrak.Abstraction.Generation.KeyValueFormat cacheFormat = (Idrak.Abstraction.Generation.KeyValueFormat)0)
   public bool SaveOnce(string folder)
@@ -1137,9 +1155,10 @@ public sealed class Idrak.Text.Reinforcement.JudgeReward : Idrak.Abstraction.ICo
   public string Summary { get; }
   public void Release()
 
-public sealed class Idrak.Text.Reinforcement.LanguageModelPolicy : Idrak.Abstraction.Reinforcement.IPolicy<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>, Idrak.Abstraction.Reinforcement.IRolloutRanks<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>, System.IDisposable
+public sealed class Idrak.Text.Reinforcement.LanguageModelPolicy : Idrak.Abstraction.Reinforcement.IPolicy<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>, Idrak.Abstraction.Reinforcement.IPreferencePolicy<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>, Idrak.Abstraction.Reinforcement.IRolloutRanks<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>, System.IDisposable
   public Idrak.Abstraction.Cluster.IStopAgreement? StopAgreement { get; }
   public Idrak.Abstraction.Reinforcement.UpdateStats Update(Idrak.Abstraction.Reinforcement.RolloutBatch<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage> batch, Idrak.Abstraction.Reinforcement.IPolicyLoss loss, System.Collections.Generic.IReadOnlyList<int>? episodes = null, System.Collections.Generic.IReadOnlyDictionary<string, string>? lossOptions = null)
+  public Idrak.Abstraction.Reinforcement.UpdateStats UpdatePreferences(Idrak.Abstraction.Reinforcement.RolloutBatch<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage> batch, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.PreferenceChoice> pairs, string loss, System.Collections.Generic.IReadOnlyDictionary<string, string>? lossOptions = null, string reference = "previous")
   public Idrak.Text.FineTuningSession Session { get; }
   public Idrak.Text.Generation.ChatGenerator Chat { get; }
   public Idrak.Text.Reinforcement.LanguageModelPolicyOptions Options { get; }
@@ -1149,6 +1168,7 @@ public sealed class Idrak.Text.Reinforcement.LanguageModelPolicy : Idrak.Abstrac
   public System.Threading.Tasks.ValueTask<Idrak.Abstraction.Reinforcement.PolicyActions<Idrak.Abstraction.Generation.ChatMessage>> ActAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatObservation> observations, Idrak.Abstraction.Reinforcement.ActionSampling sampling, System.Threading.CancellationToken cancellationToken = default)
   public int Rank { get; }
   public int WorldSize { get; }
+  public void CheckPreferences(string loss, System.Collections.Generic.IReadOnlyDictionary<string, string>? lossOptions = null, string reference = "previous")
   public void Dispose()
   public void Load(string path)
   public void Save(string path)
@@ -1204,6 +1224,11 @@ public sealed record Idrak.Text.Reinforcement.OnPolicyDistillationProgress : Sys
 
 public static class Idrak.Text.Reinforcement.OnPolicyDistiller
   public static System.Collections.Generic.IReadOnlyList<float> Train(Idrak.Text.FineTuningSession session, System.Collections.Generic.IReadOnlyList<Idrak.Text.ChatTranscript> data, Idrak.Text.Reinforcement.OnPolicyDistillationOptions? options = null, System.IProgress<Idrak.Text.Reinforcement.OnPolicyDistillationProgress>? progress = null, System.Threading.CancellationToken cancellationToken = default)
+
+public static class Idrak.Text.Reinforcement.PreferencePairs
+  public static Idrak.Text.Abstractions.TrainingSequence Answer(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.Trajectory<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>> episodes, Idrak.Abstraction.Reinforcement.PreferenceAnswer answer, Idrak.Text.ChatTranscriptEncoder? encoder, int choice = 0)
+  public static System.Collections.Generic.List<Idrak.Text.PreferencePair> Build(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.Trajectory<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>> episodes, string source, Idrak.Text.ChatTranscriptEncoder? encoder = null, System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null)
+  public static int Encode(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.Trajectory<Idrak.Abstraction.Generation.ChatObservation, Idrak.Abstraction.Generation.ChatMessage>> episodes, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Reinforcement.PreferenceChoice> choices, Idrak.Text.ChatTranscriptEncoder? encoder, System.Collections.Generic.List<Idrak.Text.PreferencePair> into)
 
 public sealed record Idrak.Text.Reinforcement.PromptTask : System.IEquatable<Idrak.Text.Reinforcement.PromptTask>
   public PromptTask(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Prompt, string? Reference = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition>? Tools = null, bool? Think = null)

@@ -1190,7 +1190,7 @@ public static class FineTuner
     }
 
     // Pair k as sequences 2k (chosen) and 2k + 1 (rejected).
-    private static List<TrainingSequence> Flatten(IReadOnlyList<PreferencePair> pairs) =>
+    internal static List<TrainingSequence> Flatten(IReadOnlyList<PreferencePair> pairs) =>
         [.. pairs.SelectMany(p => new[] { p.Chosen ?? throw new ArgumentException("A pair has no chosen answer."), p.Rejected ?? throw new ArgumentException("A pair has no rejected answer.") })];
 
     // A run over a session (FineTuningSession): the session holds what the run keeps across its steps (the adapters, the
@@ -2269,7 +2269,7 @@ public static class FineTuner
     // Preference pairs (sequences 2k and 2k + 1) in padded batches of whole pairs, pairs of similar length together, at most
     // batchTokens padded positions each (one pair when a pair alone exceeds it); the batch order is shuffled when `random`
     // is given.
-    private static List<Batch> PairBatches(IReadOnlyList<TrainingSequence> sequences, int batchTokens, Random? random)
+    internal static List<Batch> PairBatches(IReadOnlyList<TrainingSequence> sequences, int batchTokens, Random? random)
     {
         int Length(int pair) => Math.Max(sequences[2 * pair].Tokens.Length, sequences[2 * pair + 1].Tokens.Length) - 1;
         var tie = TieOrder(sequences.Count / 2, random);

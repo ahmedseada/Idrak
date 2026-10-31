@@ -11,11 +11,11 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 179 | 18 | 57 | 254 | 0 |
+| `Idrak.Abstraction` | 181 | 18 | 58 | 257 | 0 |
 | `Idrak` | 54 | 5 | 20 | 79 | 0 |
 | `Idrak.Gpu` | 5 | 0 | 1 | 6 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Text` | 23 | 0 | 11 | 34 | 0 |
+| `Idrak.Text` | 24 | 0 | 12 | 36 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 13 | 0 | 6 | 19 | 0 |
 | `Idrak.Audio` | 52 | 2 | 21 | 75 | 0 |
@@ -240,11 +240,11 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | json, pythonic | Text, Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.TuningMetrics` | registry | public | — |  | cer, contains, exact, f1, number, wer | Abstraction, Audio, Text | Abstraction |
 | `Idrak.Abstraction.ICommandSandbox` | interface | public | — | ContainerSandbox, ProcessCommandSandbox |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
-| `Idrak.Abstraction.IConfigurableKind` | interface | public | — | AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, BandPassProcessor, +104 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Data, Idrak, Imaging, Mcp, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, +140 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.IConfigurableKind` | interface | public | — | AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, BandPassProcessor, +108 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Data, Idrak, Imaging, Mcp, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, +144 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.IKind<TRequest, T>` | interface | public | — | AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, BoxesScoresDecoder, ChatTemplates.GuardedReader, ClassicControlPlugin.ClassicKind, CodingEnvironmentKind, +38 |  | Abstraction, Audio, Audio.Plugins, Data, Idrak, Imaging, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.ILibraryRegistrations` | interface | public | — | LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, +6 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.IOptionSchema` | interface | public | — | CSharpRewards.BuildReward, CSharpRewards.TestsReward, ClassicControlPlugin.ClassicKind, ClippedRatioLoss, CodingRewards.RoundsReward, CodingRewards.TestsPassedReward, +14 |  | Reinforcement, Reinforcement.Plugins, Text | Abstraction |
+| `Idrak.Abstraction.IOptionSchema` | interface | public | — | CSharpRewards.BuildReward, CSharpRewards.TestsReward, ClassicControlPlugin.ClassicKind, ClippedRatioLoss, CodingRewards.RoundsReward, CodingRewards.TestsPassedReward, +18 |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.IRecordable` | interface | public | — | BFloat16Weight, Float16Weight, Int4Weight, Int8Weight, KeyValueLayouts.BFloat16Layout, KeyValueLayouts.Float32Layout, +1 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.ITiedWeights` | interface | public | Module | Linear |  | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +75 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
@@ -271,12 +271,15 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Reinforcement.IEnvironment` | interface | public | — | BanditEnvironment, CartPoleEnvironment, CodingEnvironment, MountainCarEnvironment, PendulumEnvironment, PromptsEnvironment |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.IEnvironment<TObservation, TAction>` | interface | public | — | BanditEnvironment, CartPoleEnvironment, CodingEnvironment, MountainCarEnvironment, PendulumEnvironment, PromptsEnvironment |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.IEnvironmentKind` | interface | public | — | ClassicControlPlugin.ClassicKind, CodingEnvironmentKind, PromptsEnvironmentKind |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
-| `Idrak.Abstraction.Reinforcement.IPolicy<TObservation, TAction>` | interface | public | — | LanguageModelPolicy, ModulePolicy<TAction> |  | Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Reinforcement.IPolicy<TObservation, TAction>` | interface | public | — | LanguageModelPolicy, ModulePolicy<TAction> |  | Abstraction, Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.IPolicyLoss` | interface | public | Tensor | ClippedRatioLoss, PolicyLosses.GuardedLoss, ReinforceLoss |  | Abstraction, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Reinforcement.IPreferencePairSource` | interface | public | — | PreferencePairSources.GroupSource, PreferencePairSources.GuardedSource, PreferencePairSources.VerdictSource |  | Abstraction, Reinforcement, Text | Abstraction |
+| `Idrak.Abstraction.Reinforcement.IPreferencePolicy<TObservation, TAction>` | interface | public | — | LanguageModelPolicy |  | Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.IRewardFunction` | interface | public | — | CSharpRewards.BuildReward, CSharpRewards.TestsReward, CodingRewards.RoundsReward, CodingRewards.TestsPassedReward, CodingRewards.ToolErrorsReward, CodingRewards.VerifyFractionReward, +7 |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.IRolloutRanks<TObservation, TAction>` | interface | public | — | LanguageModelPolicy |  | Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.ISuiteEnvironmentKind` | interface | public | — | CodingEnvironmentKind |  | Reinforcement.Plugins | Abstraction |
 | `Idrak.Abstraction.Reinforcement.PolicyLosses` | registry | public | — |  | grpo, ppo, reinforce | Reinforcement | Abstraction |
+| `Idrak.Abstraction.Reinforcement.PreferencePairSources` | registry | public | — |  | group, verdict | Reinforcement, Text | Abstraction |
 | `Idrak.Abstraction.Reinforcement.RewardFunctions` | registry | public | — |  | json, judge, length, metric, regex, sum | Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Retrieval.IEmbedder` | interface | public | — | TextEncoder |  | AspNetCore, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Retrieval.IVectorStore` | interface | public | — | InMemoryVectorStore |  | Text | Abstraction |
@@ -409,6 +412,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Text.Abstractions.IKeywordIndex` | interface | public | — | Bm25Index |  | Text | Text |
 | `Idrak.Text.Abstractions.IKeywordIndexKind` | interface | public | — | KeywordIndexes.Bm25Kind |  | Text | Text |
 | `Idrak.Text.Abstractions.IPagePartFiller` | interface | public | — | LibraryPagePartFillers.Filler |  | Text | Text |
+| `Idrak.Text.Abstractions.IPreferenceLoss` | interface | public | — | PreferenceLosses.Builtin |  | Text | Text |
 | `Idrak.Text.Abstractions.IPretrainingReader` | interface | public | — | RecordPretrainingSource.Reader, TokenPretrainingSource.Reader |  | Text | Text |
 | `Idrak.Text.Abstractions.IPretrainingSource` | interface | public | — | RecordPretrainingSource, TokenPretrainingSource |  | Text | Text |
 | `Idrak.Text.Abstractions.IPromptDataEnvironmentKind` | interface | public | — | PromptsEnvironmentKind |  | Text | Text |
@@ -422,6 +426,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Text.Abstractions.JsonRepairs` | registry | public | — |  | lenient | Text | Text |
 | `Idrak.Text.Abstractions.KeywordIndexes` | registry | public | — |  | bm25 | Text | Text |
 | `Idrak.Text.Abstractions.PagePartFillers` | registry | public | — |  | date, digits, field, hijri, line, number, pick | Text | Text |
+| `Idrak.Text.Abstractions.PreferenceLosses` | registry | public | — |  | dpo, orpo, simpo | Text | Text |
 | `Idrak.Text.Abstractions.PretrainingSources` | registry | public | — |  | records, tokens | Text | Text |
 | `Idrak.Text.Abstractions.RandomTextSources` | registry | public | — |  | ar, en | — | Text |
 | `Idrak.Text.Abstractions.SyntheticRecordFormats` | registry | public | — |  | messages, sharegpt, text | Text | Text |

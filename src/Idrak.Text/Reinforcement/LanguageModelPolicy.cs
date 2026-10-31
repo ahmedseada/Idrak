@@ -135,7 +135,7 @@ public sealed record LanguageModelPolicyOptions
 /// </para>
 /// Not thread-safe: one trainer drives it.
 /// </summary>
-public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>, IRolloutRanks<ChatObservation, ChatMessage>
+public sealed class LanguageModelPolicy : IPreferencePolicy<ChatObservation, ChatMessage>, IRolloutRanks<ChatObservation, ChatMessage>
 {
     private readonly bool _ownsSession;
     private readonly IFineTuningLoss? _teacher;
@@ -143,6 +143,13 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>,
     private List<TrainingSequence>[] _sequences = [];        // its episodes' sequences, with their values and log-probabilities
     private EpisodeLayout[] _layouts = [];
     private bool _hasReference;                              // its sequences carry the reference's log-probabilities
+    private object? _pairBatch;                              // the batch whose pairs are encoded (UpdatePreferences)
+    private IReadOnlyList<PreferenceChoice>? _pairChoices;
+    private string? _pairReference;                          // the reference its pairs carry, or null for none
+    private readonly List<PreferencePair> _pairs = [];       // reused from round to round: the memory stays flat
+    private double _pairMargin = double.NaN;                 // the mean log p(chosen) − log p(rejected) at the round's start
+    private ChatTranscriptEncoder? _encoder;
+    private (string Name, IReadOnlyDictionary<string, string>? Options, IFineTuningLoss Loss)? _preference;
     private bool _disposed;
 
     /// <summary>A policy over <paramref name="session"/>'s model and adapters.</summary>
@@ -455,6 +462,163 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>,
         return result;
     }
 
+    /// <inheritdoc/>
+    public void CheckPreferences(string loss, IReadOnlyDictionary<string, string>? lossOptions = null, string reference = PreferenceReferences.Previous)
+    {
+        _ = PreferenceReferences.Parse(reference);
+        _ = PreferenceLoss(loss, lossOptions);
+    }
+
+    /// <summary>
+    /// One optimizer step on the preference <paramref name="pairs"/> of <paramref name="batch"/> (<see cref="PreferencePairs"/>
+    /// turns them into token sequences, only the answers trained) with the preference loss <paramref name="loss"/> of
+    /// <see cref="PreferenceLosses"/> (<see cref="FineTuningSession.StepPairs"/>). The first update on a batch's pairs
+    /// computes, for a loss that reads a reference, its log-probabilities once before any weight moves: with the adapters
+    /// as they are then (<see cref="PreferenceReferences.Previous"/>: iterative preference training, each round against
+    /// the last round's adapter) or off (<see cref="PreferenceReferences.Base"/>); later epochs on the same pairs reuse
+    /// them. Metrics: "pairs", "reward-margin" (the choices' mean margin, when they have one) and, against the previous
+    /// adapter, "margin" (the mean log p(chosen) − log p(rejected) at the round's start, from the reference's own pass).
+    /// The teacher term (<see cref="LanguageModelPolicyOptions.TeacherWeight"/>) is not added to a preference step.
+    /// </summary>
+    public UpdateStats UpdatePreferences(RolloutBatch<ChatObservation, ChatMessage> batch, IReadOnlyList<PreferenceChoice> pairs, string loss,
+        IReadOnlyDictionary<string, string>? lossOptions = null, string reference = PreferenceReferences.Previous)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(batch);
+        ArgumentNullException.ThrowIfNull(pairs);
+        var objective = PreferenceLoss(loss, lossOptions);
+        reference = PreferenceReferences.Parse(reference);
+        PreparePairs(batch, pairs, objective.NeedsReference ? reference : null);
+        double rewardSum = 0;
+        int rewarded = 0;
+        foreach (var choice in pairs)
+        {
+            if (float.IsFinite(choice.Margin))
+            {
+                rewardSum += choice.Margin;
+                rewarded++;
+            }
+        }
+
+        var metrics = new Dictionary<string, double>(StringComparer.Ordinal) { ["pairs"] = _pairs.Count };
+        if (rewarded > 0)
+        {
+            metrics["reward-margin"] = rewardSum / rewarded;
+        }
+
+        if (double.IsFinite(_pairMargin))
+        {
+            metrics["margin"] = _pairMargin;
+        }
+
+        if (_pairs.Count == 0)
+        {
+            return new UpdateStats(0f, 0, 0, metrics);
+        }
+
+        var step = Session.StepPairs(_pairs, objective);
+        int units = 0;
+        foreach (var pair in _pairs)
+        {
+            units += pair.Chosen.TrainedTokens + pair.Rejected.TrainedTokens;
+        }
+
+        metrics["learning_rate"] = step.LearningRate;
+        metrics["tokens_per_second"] = step.TokensPerSecond;
+        int episodes = 0;
+        for (int e = 0; e < batch.Episodes; e++)
+        {
+            foreach (var choice in pairs)
+            {
+                if (choice.Chosen.Episode == e || choice.Rejected.Episode == e)
+                {
+                    episodes++;
+                    break;
+                }
+            }
+        }
+
+        return new UpdateStats(step.Loss, episodes, units, metrics);
+    }
+
+    // The preference loss by name, made once while the name and the options are the same (a run asks with the same each round).
+    private IFineTuningLoss PreferenceLoss(string name, IReadOnlyDictionary<string, string>? options)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        if (_preference is { } made && string.Equals(made.Name, name, StringComparison.OrdinalIgnoreCase) && ReferenceEquals(made.Options, options))
+        {
+            return made.Loss;
+        }
+
+        var loss = FineTuningLosses.Preference(name, options);
+        _preference = (name, options, loss);
+        return loss;
+    }
+
+    // Encodes a batch's pairs once (the first update on them) and, when the loss reads a reference, its log-probabilities
+    // with the adapters as they are now (previous) or off (base), before any step on them.
+    private void PreparePairs(RolloutBatch<ChatObservation, ChatMessage> batch, IReadOnlyList<PreferenceChoice> choices, string? reference)
+    {
+        if (ReferenceEquals(batch, _pairBatch) && ReferenceEquals(choices, _pairChoices) && (reference is null || reference == _pairReference))
+        {
+            return;
+        }
+
+        bool same = ReferenceEquals(batch, _pairBatch) && ReferenceEquals(choices, _pairChoices);
+        if (!same)
+        {
+            _pairs.Clear();
+            _pairMargin = double.NaN;
+            _pairReference = null;
+            bool kept = false;
+            foreach (var choice in choices)
+            {
+                kept |= !choice.Chosen.IsSampled || !choice.Rejected.IsSampled;
+            }
+
+            if (kept && _encoder is null)
+            {
+                var tokenizer = Session.Model.Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer: a kept text cannot be encoded.");
+                _encoder = new ChatTranscriptEncoder(Session.Model.JinjaTemplate ?? throw new InvalidOperationException("The model has no Jinja chat template: a kept text cannot be encoded."),
+                    tokenizer);
+            }
+
+            PreferencePairs.Encode(batch.Trajectories, choices, _encoder, _pairs);
+            (_pairBatch, _pairChoices) = (batch, choices);
+        }
+
+        if (reference is null || _pairs.Count == 0)
+        {
+            return;
+        }
+
+        var flat = FineTuner.Flatten(_pairs);
+        bool previous = reference == PreferenceReferences.Previous;
+        var values = Session.LogProbabilities(flat, adapters: previous);
+        double margin = 0;
+        for (int p = 0; p < _pairs.Count; p++)
+        {
+            float[] chosen = values[2 * p], rejected = values[2 * p + 1];
+            _pairs[p] = new PreferencePair(_pairs[p].Chosen with { ReferenceLogProbabilities = chosen }, _pairs[p].Rejected with { ReferenceLogProbabilities = rejected });
+            margin += Sum(chosen) - Sum(rejected);
+        }
+
+        _pairMargin = previous ? margin / _pairs.Count : double.NaN;
+        _pairReference = reference;
+    }
+
+    // In index order, in double precision.
+    private static double Sum(float[] values)
+    {
+        double sum = 0;
+        foreach (float v in values)
+        {
+            sum += v;
+        }
+
+        return sum;
+    }
+
     /// <summary>Writes the adapters, the optimizer's state and the steps done (<see cref="FineTuningSession.Checkpoint"/>).</summary>
     public void Save(string path)
     {
@@ -468,6 +632,7 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>,
         ObjectDisposedException.ThrowIf(_disposed, this);
         Session.Restore(path);
         _batch = null;
+        _pairBatch = null;
     }
 
     /// <summary>Releases the session when the policy owns it.</summary>
@@ -480,6 +645,8 @@ public sealed class LanguageModelPolicy : IPolicy<ChatObservation, ChatMessage>,
 
         _disposed = true;
         (_batch, _sequences, _layouts) = (null, [], []);
+        (_pairBatch, _pairChoices) = (null, null);
+        _pairs.Clear();
         if (_ownsSession)
         {
             Session.Dispose();

@@ -139,6 +139,7 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport CheckNetworkRecipe(string recipe, Idrak.Abstraction.Testing.NetworkRecipeUnderTest builder, Idrak.Abstraction.Testing.NetworkRecipeUnderTest? reference = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.NetworkRecipeSample>? samples = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckOptimizerKind(string name, Idrak.Abstraction.Training.IOptimizerKind? kind = null, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckPolicyLoss(Idrak.Abstraction.Reinforcement.IPolicyLoss loss, System.Collections.Generic.IReadOnlyDictionary<string, string>? lossOptions = null, Idrak.Abstraction.Reinforcement.IPolicyLoss? reference = null, bool needsReference = false, bool needsValues = false, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckPreferencePairSource(Idrak.Abstraction.Reinforcement.IPreferencePairSource source, System.Collections.Generic.IReadOnlyDictionary<string, string>? sourceOptions = null, Idrak.Abstraction.Reinforcement.IPreferencePairSource? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckPretrained(Idrak.Abstraction.Generation.IPretrainedTokenizer tokenizer, Idrak.Abstraction.Generation.IPretrainedTokenizer? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckProgressReporter(string name, Idrak.Abstraction.Diagnostics.IProgressReporterKind? kind = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckReadingOrder(string name, Idrak.Abstraction.Data.IReadingOrder? order = null, bool invertible = false, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
@@ -387,6 +388,13 @@ public readonly record struct Idrak.Abstraction.Testing.PowerSpectra : System.IE
   public float[] Power { get; init; }
   public int Bins { get; init; }
   public int Frames { get; init; }
+
+public sealed class Idrak.Abstraction.Testing.PreferencePairSourceSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Reinforcement.IPreferencePairSource>
+  public PreferencePairSourceSuite(System.Collections.Generic.IReadOnlyDictionary<string, string>? options = null, Idrak.Abstraction.Reinforcement.IPreferencePairSource? reference = null)
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Reinforcement.IPreferencePairSource implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
 public sealed class Idrak.Abstraction.Testing.PretrainedTokenizerSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Generation.IPretrainedTokenizer>
   public Idrak.Abstraction.Generation.IPretrainedTokenizer? Reference { get; }

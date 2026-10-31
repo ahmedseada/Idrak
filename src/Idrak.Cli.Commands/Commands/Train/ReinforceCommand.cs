@@ -54,11 +54,12 @@ internal sealed class ReinforceCommand : Command
         "--base", "--env", "--data", "--suite", "--reward", "--rounds", "--env-option", "--sandbox", "--algorithm", "--estimator", "--group", "--episodes", "--kl",
         "--clip", "--epochs", "--minibatch", "--iterations", "--environments", "--temperature", "--max-new", "--save-every", "--evaluate-every", "--teacher",
         "--teacher-device", "--teacher-weights", "--teacher-weight", "--divergence", "--beta", "--mix", "--out", "--weights", "--shards", "--spread", "--kv",
+        "--pairs", "--loss", "--pair-option", "--loss-option", "--reference",
     ];
 
     public override string Name => "reinforce";
 
-    public override string Summary => "Reinforcement learning of a model's adapters in an environment: GRPO, PPO, on-policy distillation";
+    public override string Summary => "Reinforcement learning of a model's adapters in an environment: GRPO, PPO, on-policy distillation, preference rounds (DPO, ORPO, SimPO)";
 
     public override string Usage => $$"""
         MODEL --env NAME [--data FILE | --suite DIR] -o DIR [options]
@@ -118,9 +119,20 @@ internal sealed class ReinforceCommand : Command
               --divergence NAME   forward, reverse (default) or jsd (TeacherDivergences; IDRAK_RL_DIVERGENCE)
               --beta B            jsd's weight, in (0, 1) (default 0.5)
               --mix L             with --algorithm distill: the share of a step's prompts trained on the data's answers
+              --pairs NAME        preference rounds instead of a policy loss: each iteration's episodes become pairs by
+                                  the source NAME (PreferencePairSources: group, the best and the worst answer of each
+                                  group by reward; verdict, an answer the episode records as rejected against the text
+                                  kept instead) and the adapters train on them with --loss (IDRAK_RL_PAIRS)
+              --loss NAME         the preference loss of --pairs: dpo (default), orpo, simpo or an app's
+                                  (PreferenceLosses; IDRAK_RL_PREFERENCE_LOSS)
+              --pair-option K=V   an option of the pair source (repeatable), e.g. margin=0.5 (IDRAK_RL_PAIR_OPTIONS)
+              --loss-option K=V   an option of the preference loss (repeatable), e.g. beta=0.2 (IDRAK_RL_PREFERENCE_LOSS_OPTIONS)
+              --reference NAME    what the preference loss trains against: previous (the adapter as the iteration began,
+                                  the default) or base (IDRAK_RL_PREFERENCE_REFERENCE)
               --resume            go on from the latest checkpoint in DIR/checkpoints (IDRAK_RL_RESUME: another one)
           -o, --out DIR           where the adapter and the checkpoints go
-              --list              the registered environments, rewards, algorithms, estimators, sandboxes and divergences
+              --list              the registered environments, rewards, algorithms, estimators, sandboxes, divergences,
+                                  pair sources and preference losses
           -w, --weights F         the model's base weights: int8, int4 (QLoRA) or bf16
               --shards N          the shards a rollout is cut into: a shard's episodes act together, and on a cluster each
                                   rank plays its shards' episodes; the same count gives the same episodes on any number
@@ -153,6 +165,7 @@ internal sealed class ReinforceCommand : Command
           idrak reinforce Qwen/Qwen3-0.6B --env coding --suite tasks --algorithm grpo --teacher Qwen/Qwen3-8B -w int4 -o runs/t
           idrak reinforce Qwen/Qwen3-0.6B --env prompts --data chats.jsonl --algorithm distill --teacher Qwen/Qwen3-8B -o runs/d
           idrak cluster sim --topology two.json -- reinforce Qwen/Qwen3-0.6B --data m.jsonl --algorithm grpo --shards 4 -o rl
+          idrak reinforce Qwen/Qwen3-0.6B --env prompts --data math.jsonl --reward exact --pairs group --loss dpo --group 4 -o runs/dpo
           idrak reinforce --list
         {{ReinforceNumeric.UsageExamples}}
         """;
@@ -219,6 +232,11 @@ internal sealed class ReinforceCommand : Command
         if (prompts && data.Count == 0)
         {
             throw new UsageException($"The {kind.Name} environment answers the prompts of --data FILE (conversations, as idrak tune reads them).");
+        }
+
+        if (distill && options.Pairs is not null)
+        {
+            throw new UsageException($"--algorithm {Distill} learns from a teacher, --pairs from preferences: give one of them.");
         }
 
         if (distill && !prompts)
@@ -318,6 +336,8 @@ internal sealed class ReinforceCommand : Command
                 ["model"] = choice.Model,
                 ["environment"] = kind.Name,
                 ["algorithm"] = options.Algorithm,
+                ["pairs"] = options.Pairs,
+                ["loss"] = options.Pairs is null ? null : options.PreferenceLoss,
                 ["out"] = Path.GetFullPath(output),
                 ["device"] = tool.Device.ToString(),
                 ["exitCode"] = exit,
@@ -371,11 +391,13 @@ internal sealed class ReinforceCommand : Command
             tasks = $" ({chats.Count:N0} prompts)";
         }
 
-        int epochs = options.Epochs > 0 ? options.Epochs : options.Algorithm.Equals(ReinforcementNames.Ppo, StringComparison.OrdinalIgnoreCase) ? 4 : 1;
+        bool pairs = options.Pairs is not null;
+        int epochs = options.Epochs > 0 ? options.Epochs : !pairs && options.Algorithm.Equals(ReinforcementNames.Ppo, StringComparison.OrdinalIgnoreCase) ? 4 : 1;
         int miniBatch = options.MiniBatch > 0 ? Math.Min(options.MiniBatch, options.EpisodesPerIteration) : options.EpisodesPerIteration;
-        int totalSteps = Math.Max(1, options.Iterations * epochs * ((options.EpisodesPerIteration + miniBatch - 1) / miniBatch));
+        int totalSteps = Math.Max(1, options.Iterations * epochs * (pairs ? 1 : (options.EpisodesPerIteration + miniBatch - 1) / miniBatch));
+        string algorithm = pairs ? $"{options.PreferenceLoss} on {options.Pairs} pairs against the {options.PreferenceReference} adapter" : options.Algorithm;
         console.Out.WriteLine(string.Create(CultureInfo.InvariantCulture,
-            $"reinforce: {options.Algorithm} in {kind.Name}{tasks}, {options.EpisodesPerIteration} episodes an iteration{(options.GroupSize > 0 ? $" in groups of {options.GroupSize}" : "")}, "
+            $"reinforce: {algorithm} in {kind.Name}{tasks}, {options.EpisodesPerIteration} episodes an iteration{(options.GroupSize > 0 ? $" in groups of {options.GroupSize}" : "")}, "
             + $"{options.Iterations} iterations, replies of at most {policyOptions.MaxNewTokens} tokens at temperature {options.Temperature}"
             + $"{(teacher is null ? "" : FormattableString.Invariant($"; teacher term {policyOptions.TeacherWeight} ({policyOptions.Divergence})"))}"
             + $"{(options.Resume is { } resume ? $"; resuming from {resume}" : "")}"));
@@ -405,7 +427,9 @@ internal sealed class ReinforceCommand : Command
                     progress.Erase();
                     console.Out.WriteLine(string.Create(CultureInfo.InvariantCulture,
                         $"iteration {s.Iteration}/{options.Iterations}: reward {s.RewardMean:0.###} ± {s.RewardSpread:0.###} ({s.RewardMin:0.###} to {s.RewardMax:0.###}), "
-                        + $"loss {s.Loss:0.####}, {s.Updates} update{(s.Updates == 1 ? "" : "s")}{(s.EvaluationReward is { } e ? FormattableString.Invariant($", evaluation {e:0.###}") : "")}, "
+                        + $"loss {s.Loss:0.####}, {s.Updates} update{(s.Updates == 1 ? "" : "s")}"
+                        + $"{(s.Metrics.TryGetValue("pairs", out double made) ? FormattableString.Invariant($" on {made:0} pairs") : "")}"
+                        + $"{(s.Metrics.TryGetValue("margin", out double margin) ? FormattableString.Invariant($" (margin {margin:0.###})") : "")}{(s.EvaluationReward is { } e ? FormattableString.Invariant($", evaluation {e:0.###}") : "")}, "
                         + $"rollout {s.RolloutTime.TotalSeconds:0.0} s, update {s.UpdateTime.TotalSeconds:0.0} s"));
                 },
             };
@@ -472,9 +496,35 @@ internal sealed class ReinforceCommand : Command
         o = context.Option("--spread") is { } spread ? o with { Spread = Spread(spread) } : o;
         o = o with { CheckpointFolder = o.CheckpointFolder ?? Path.Combine(output, "checkpoints"), Log = o.Log ?? Path.Combine(output, LogFile) };
         o = context.Flag("--resume") ? o with { Resume = o.CheckpointFolder } : o;
+        o = context.Option("--pairs") is { } pairs ? o with { Pairs = pairs } : o;
+        o = context.Option("--loss") is { } preferenceLoss ? o with { PreferenceLoss = preferenceLoss } : o;
+        o = context.Option("--reference") is { } reference ? o with { PreferenceReference = Reference(reference) } : o;
+        o = KeyValues(context, "--pair-option") is { } pairOptions ? o with { PairOptions = pairOptions } : o;
+        o = KeyValues(context, "--loss-option") is { } lossOptions ? o with { PreferenceLossOptions = lossOptions } : o;
+        if (o.Pairs is null && (context.Option("--loss") ?? context.Option("--reference")) is not null || o.Pairs is null && context.Options("--loss-option").Count + context.Options("--pair-option").Count > 0)
+        {
+            throw new UsageException("--loss, --reference, --pair-option and --loss-option set the preference rounds of --pairs NAME: give --pairs (group, verdict).");
+        }
+
+        if (o.Pairs is { } source)
+        {
+            var sourceKind = PreferencePairSources.Find(source) ?? throw new UsageException(
+                $"{(context.Option("--pairs") is null ? "IDRAK_RL_PAIRS=" : "--pairs ")}{source}: use {string.Join(", ", PreferencePairSources.Names)} (PreferencePairSources).");
+            var loss = PreferenceLosses.Find(o.PreferenceLoss) ?? throw new UsageException(
+                $"{(context.Option("--loss") is null ? "IDRAK_RL_PREFERENCE_LOSS=" : "--loss ")}{o.PreferenceLoss}: use {string.Join(", ", PreferenceLosses.Names)} (PreferenceLosses).");
+            try
+            {
+                _ = sourceKind.Options.Parse(o.PairOptions);
+                _ = loss.Options.Parse(o.PreferenceLossOptions);
+            }
+            catch (ArgumentException e)
+            {
+                throw new UsageException(e.Message);
+            }
+        }
 
         // The names, checked by their registries before anything loads.
-        if (!o.Algorithm.Equals(Distill, StringComparison.OrdinalIgnoreCase) && PolicyLosses.Find(o.Algorithm) is null)
+        if (o.Pairs is null && !o.Algorithm.Equals(Distill, StringComparison.OrdinalIgnoreCase) && PolicyLosses.Find(o.Algorithm) is null)
         {
             throw new UsageException($"{(context.Option("--algorithm") is null ? "IDRAK_RL_ALGORITHM=" : "--algorithm ")}{o.Algorithm}: use {string.Join(", ", PolicyLosses.Names)} (PolicyLosses), or {Distill} (on-policy distillation alone).");
         }
@@ -659,6 +709,8 @@ internal sealed class ReinforceCommand : Command
             ("estimators", nameof(AdvantageEstimators), [.. AdvantageEstimators.Names.Select(n => AdvantageEstimators.Get(n)).Select(e => (e.Name, e.Summary, e.Keys))]),
             ("sandboxes", nameof(CommandSandboxes), [.. CommandSandboxes.Names.Select(n => CommandSandboxes.Get(n)).Select(s => (s.Name, s.Summary, (IReadOnlyCollection<string>)[]))]),
             ("divergences", nameof(TeacherDivergences), [.. TeacherDivergences.Names.Select(n => TeacherDivergences.Get(n)).Select(d => (d.Name, d.Summary, (IReadOnlyCollection<string>)[]))]),
+            ("pairs", nameof(PreferencePairSources), [.. PreferencePairSources.Names.Select(n => PreferencePairSources.Get(n)).Select(p => (p.Name, p.Summary, p.Keys))]),
+            ("preference-losses", nameof(PreferenceLosses), [.. PreferenceLosses.Names.Select(n => PreferenceLosses.Get(n)).Select(l => (l.Name, l.Summary, l.Keys))]),
         };
         if (context.Json)
         {
@@ -690,6 +742,43 @@ internal sealed class ReinforceCommand : Command
         }
 
         return ExitCodes.Ok;
+    }
+
+    // --reference: a PreferenceReferences name.
+    private static string Reference(string text)
+    {
+        try
+        {
+            return PreferenceReferences.Parse(text);
+        }
+        catch (ArgumentException)
+        {
+            throw new UsageException($"--reference {text}: use {string.Join(" or ", PreferenceReferences.Names)}.");
+        }
+    }
+
+    // A repeatable K=V option as a dictionary; null when not given.
+    private static Dictionary<string, string>? KeyValues(CommandContext context, string option)
+    {
+        var items = context.Options(option);
+        if (items.Count == 0)
+        {
+            return null;
+        }
+
+        var values = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string item in items)
+        {
+            int equals = item.IndexOf('=', StringComparison.Ordinal);
+            if (equals <= 0)
+            {
+                throw new UsageException($"{option} {item}: give KEY=VALUE.");
+            }
+
+            values[item[..equals].Trim()] = item[(equals + 1)..].Trim();
+        }
+
+        return values;
     }
 
     // --spread: a RolloutSpread name.

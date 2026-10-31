@@ -138,6 +138,27 @@ public sealed record ReinforcementOptions
     /// </summary>
     public float? PassReturn { get; init; } = 1f;
 
+    /// <summary>
+    /// Preference training instead of a policy loss: the <c>PreferencePairSources</c> name ("group", "verdict", or an app's)
+    /// whose pairs each round's update trains on, with <see cref="PreferenceLoss"/> against <see cref="PreferenceReference"/>
+    /// (iterative preference training: collect a rollout, choose its pairs, update; <see cref="Epochs"/> updates a round,
+    /// 1 by default). The policy is an <c>IPreferencePolicy</c>. Null (the default): <see cref="Algorithm"/>'s policy loss.
+    /// <c>IDRAK_RL_PAIRS</c>.
+    /// </summary>
+    public string? Pairs { get; init; }
+
+    /// <summary>The preference loss of <see cref="Pairs"/>, by the policy's name for it (Idrak.Text: dpo, orpo, simpo). <c>IDRAK_RL_PREFERENCE_LOSS</c>.</summary>
+    public string PreferenceLoss { get; init; } = "dpo";
+
+    /// <summary>What the preference loss trains against: "previous" (the policy as the round began) or "base". <c>IDRAK_RL_PREFERENCE_REFERENCE</c>.</summary>
+    public string PreferenceReference { get; init; } = PreferenceReferences.Previous;
+
+    /// <summary>The pair source's options (group's margin, verdict's verdicts). <c>IDRAK_RL_PAIR_OPTIONS</c> (key=value pairs separated by commas).</summary>
+    public IReadOnlyDictionary<string, string>? PairOptions { get; init; }
+
+    /// <summary>The preference loss's options (dpo's beta and label-smoothing, orpo's lambda, simpo's beta and gamma). <c>IDRAK_RL_PREFERENCE_LOSS_OPTIONS</c> (key=value pairs separated by commas).</summary>
+    public IReadOnlyDictionary<string, string>? PreferenceLossOptions { get; init; }
+
     /// <summary>The environment kind's options.</summary>
     public IReadOnlyDictionary<string, string>? EnvironmentOptions { get; init; }
 
@@ -153,7 +174,7 @@ public sealed record ReinforcementOptions
     /// _ENVIRONMENTS, _PARALLEL_STEPS, _SHARDS, _SPREAD, _ITERATIONS, _EPOCHS, _MINIBATCH, _GAMMA, _LAMBDA, _GROUP_SCALE,
     /// _NORMALIZE_ADVANTAGES, _CLIP, _KL, _KL_ESTIMATOR, _ENTROPY, _VALUE, _NORMALIZE, _MAX_GRAD_NORM, _SCHEDULE, _WARMUP,
     /// _TEMPERATURE, _MAX_STEPS, _SEED, _EVALUATE_EVERY, _EVALUATION_EPISODES, _SAVE_EVERY, _CHECKPOINTS, _RESUME, _LOG,
-    /// _PASS_RETURN.
+    /// _PASS_RETURN, _PAIRS, _PREFERENCE_LOSS, _PREFERENCE_REFERENCE, _PAIR_OPTIONS, _PREFERENCE_LOSS_OPTIONS.
     /// </summary>
     /// <exception cref="ArgumentException">A variable's value is not one its option takes (the message names the variable).</exception>
     public static ReinforcementOptions FromEnvironment(ReinforcementOptions? start = null)
@@ -193,6 +214,11 @@ public sealed record ReinforcementOptions
         o = Variables.Text("IDRAK_RL_RESUME") is { } resume ? o with { Resume = resume } : o;
         o = Variables.Text("IDRAK_RL_LOG") is { } log ? o with { Log = log } : o;
         o = Variables.Text(PassReturnVariable) is { } pass ? o with { PassReturn = ParsePassReturn(pass) } : o;
+        o = Variables.Text("IDRAK_RL_PAIRS") is { } pairs ? o with { Pairs = pairs } : o;
+        o = Variables.Text("IDRAK_RL_PREFERENCE_LOSS") is { } preferenceLoss ? o with { PreferenceLoss = preferenceLoss } : o;
+        o = Variables.Text("IDRAK_RL_PREFERENCE_REFERENCE") is { } reference ? o with { PreferenceReference = ParseReference(reference) } : o;
+        o = Variables.Pairs("IDRAK_RL_PAIR_OPTIONS") is { } pairOptions ? o with { PairOptions = pairOptions } : o;
+        o = Variables.Pairs("IDRAK_RL_PREFERENCE_LOSS_OPTIONS") is { } lossOptions ? o with { PreferenceLossOptions = lossOptions } : o;
         return o;
     }
 
@@ -204,6 +230,19 @@ public sealed record ReinforcementOptions
         text.Equals("none", StringComparison.OrdinalIgnoreCase) ? null
         : float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value) && float.IsFinite(value) ? value
         : throw new ArgumentException($"{PassReturnVariable}={text} is not a number (the return an episode passes at) or none.");
+
+    // A preference reference named by its variable, refused naming the variable.
+    private static string ParseReference(string text)
+    {
+        try
+        {
+            return PreferenceReferences.Parse(text);
+        }
+        catch (ArgumentException)
+        {
+            throw new ArgumentException($"IDRAK_RL_PREFERENCE_REFERENCE={text} is not {string.Join(" or ", PreferenceReferences.Names)}.");
+        }
+    }
 
     // A split named by its variable, refused naming the variable.
     private static string ParseSpread(string text)
@@ -238,6 +277,8 @@ public sealed record ReinforcementOptions
         }
 
         ArgumentException.ThrowIfNullOrWhiteSpace(Algorithm);
+        ArgumentException.ThrowIfNullOrWhiteSpace(PreferenceLoss);
+        _ = PreferenceReferences.Parse(PreferenceReference);
         Positive(EpisodesPerIteration, nameof(EpisodesPerIteration));
         Positive(EvaluationEpisodes, nameof(EvaluationEpisodes));
         NotNegative(Iterations, nameof(Iterations));
@@ -294,6 +335,29 @@ internal static class Variables
         return float.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out float value) && float.IsFinite(value) && value >= min && value <= max
             ? value
             : throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"{name}={text} is not a number from {min} to {max}."));
+    }
+
+    // key=value pairs separated by commas (a value holds no comma), each trimmed.
+    public static Dictionary<string, string>? Pairs(string name)
+    {
+        if (Text(name) is not { } text)
+        {
+            return null;
+        }
+
+        var pairs = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string item in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            int equals = item.IndexOf('=', StringComparison.Ordinal);
+            if (equals <= 0)
+            {
+                throw new ArgumentException($"{name}={text}: '{item}' is not key=value.");
+            }
+
+            pairs[item[..equals].Trim()] = item[(equals + 1)..].Trim();
+        }
+
+        return pairs;
     }
 
     // on / off / auto (and true, false, 1, 0): (set, value) with value null for auto.

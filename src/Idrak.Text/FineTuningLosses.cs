@@ -640,6 +640,18 @@ public static class FineTuningLosses
         { NeedsPairs = true };
     }
 
+    /// <summary>
+    /// The preference loss registered as <paramref name="name"/> in <see cref="PreferenceLosses"/> ("dpo", "orpo",
+    /// "simpo", or an app's) with <paramref name="options"/>: the factories above, chosen by name.
+    /// </summary>
+    /// <exception cref="NotRegisteredException">No preference loss of that name is registered.</exception>
+    /// <exception cref="ArgumentException">An option the loss does not take, or a bad value.</exception>
+    public static IFineTuningLoss Preference(string name, IReadOnlyDictionary<string, string>? options = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        return PreferenceLosses.Get(name).Create(options);
+    }
+
     private static void Require(FineTuningLossInput input, string name)
     {
         if (!input.Pairs)

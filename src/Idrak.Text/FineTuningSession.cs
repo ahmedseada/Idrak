@@ -59,6 +59,8 @@ public sealed class FineTuningSession : IDisposable
     private ILearningRateScheduler? _schedule;
     private IFineTuningLoss? _lastLoss;
     private FineTuner.CustomLoss? _lastCustom;
+    private IFineTuningLoss? _lastPairLoss;
+    private FineTuner.CustomLoss? _lastPairCustom;
     private int _nonFinite;
     private bool _disposed;
 
@@ -309,6 +311,60 @@ public sealed class FineTuningSession : IDisposable
             throw new ArgumentException("No sequence has a token to train (each needs two tokens or more).", nameof(sequences));
         }
 
+        return StepOn(batches, sequences, cancellationToken);
+    }
+
+    /// <summary>
+    /// One optimizer step over preference pairs with a preference loss (DPO, ORPO, SimPO: <see cref="FineTuningLosses.Preference"/>):
+    /// the pairs in padded batches of whole pairs (as <see cref="FineTuner.Train(PretrainedModel, IReadOnlyList{PreferencePair}, IReadOnlyList{PreferencePair}?, FineTuningOptions, string?, IProgress{FineTuningProgress}?, CancellationToken, Action{string}?)"/>
+    /// makes them), every batch accumulated into one update. A loss that reads the reference takes it from the sequences
+    /// when they carry it (<see cref="TrainingSequence.ReferenceLogProbabilities"/>: the previous adapter's, computed with
+    /// <see cref="LogProbabilities"/> before the round's first step), else the base model's (adapters off), computed once
+    /// per sequence. The iterative preference training of a language-model policy is a loop of these.
+    /// </summary>
+    /// <param name="pairs">The pairs: each one's chosen and rejected answer after the same prompt.</param>
+    /// <param name="loss">The preference loss (one that needs pairs, or any loss of one's own).</param>
+    /// <param name="cancellationToken">Stops between batches, before the update.</param>
+    /// <exception cref="ArgumentException">No pair, or none whose two answers have a token to train.</exception>
+    public FineTuningStepStats StepPairs(IReadOnlyList<PreferencePair> pairs, IFineTuningLoss loss, CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentNullException.ThrowIfNull(pairs);
+        ArgumentNullException.ThrowIfNull(loss);
+        if (pairs.Count == 0)
+        {
+            throw new ArgumentException("A preference step trains on at least one pair.", nameof(pairs));
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        ReleaseGenerators();
+        var sequences = FineTuner.Flatten(pairs);
+        if (_float8Pending)
+        {
+            _float8Pending = false;
+            _float8 = FineTuner.PrepareFloat8(Model, sequences, Options, _trace);
+        }
+
+        if (!ReferenceEquals(loss, _lastPairLoss))
+        {
+            (_lastPairLoss, _lastPairCustom) = (loss, new FineTuner.CustomLoss(loss, pairs: true, Options.Teacher));
+        }
+
+        _lastPairCustom!.Keep(sequences);
+        Runner.Custom = _lastPairCustom;
+        var batches = FineTuner.PairBatches(sequences, Options.BatchTokens, _random);
+        if (batches.Count == 0)
+        {
+            throw new ArgumentException("No pair has a token to train in both answers (each needs two tokens or more).", nameof(pairs));
+        }
+
+        return StepOn(batches, sequences, cancellationToken);
+    }
+
+    // A step over batches of `sequences`: this rank's share on a cluster, the update, the stats.
+    private FineTuningStepStats StepOn(List<FineTuner.Batch> batches, IReadOnlyList<TrainingSequence> sequences, CancellationToken cancellationToken)
+    {
+        var runner = Runner;
         var watch = Stopwatch.StartNew();
         if (Sync is { } sync && !sync.BeginStep(Steps))
         {

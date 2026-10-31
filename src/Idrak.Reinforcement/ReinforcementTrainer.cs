@@ -79,6 +79,12 @@ public static class ReinforcementTrainer
 /// pass): episodes of a group share their environment's seed, the policy's draws come from a seed per round, mini-batches
 /// from a shuffle per pass; so the same seed gives the same episodes, advantages and weights whatever the threads, and a
 /// run's random state is its seed and its iteration.</item>
+/// <item><b>Preference rounds</b> (<see cref="ReinforcementOptions.Pairs"/>, Craft's plan R0): each iteration's episodes become
+/// pairs by a <c>PreferencePairSources</c> source ("group": the best and the worst of each group by return; "verdict": a
+/// rejected answer against the text kept), and the policy (an <see cref="IPreferencePolicy{TObservation, TAction}"/>) makes
+/// <see cref="ReinforcementOptions.Epochs"/> updates on them with <see cref="ReinforcementOptions.PreferenceLoss"/> against
+/// <see cref="ReinforcementOptions.PreferenceReference"/> (the previous round's policy by default): iterative preference
+/// training, checkpointed, resumed and steered as any run. A round without a pair makes no update.</item>
 /// <item><b>Evaluation:</b> every <see cref="ReinforcementOptions.EvaluateEvery"/> iterations, greedy episodes from seeds of
 /// their own (the same ones each time).</item>
 /// <item><b>Checkpoints:</b> the policy (<see cref="IPolicy{TObservation, TAction}.Save"/>: weights and optimizer), the
@@ -162,8 +168,18 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
     {
         var o = Options;
         o.Validate();
-        var loss = PolicyLosses.Get(o.Algorithm);
-        int groupSize = GroupSize(o);
+        // Preference training (Craft's plan, R0): a pair source's choices and a preference loss instead of a policy loss.
+        var pairSource = o.Pairs is { } pairsName ? PreferencePairSources.Get(pairsName) : null;
+        IPreferencePolicy<TObservation, TAction>? preferences = null;
+        if (pairSource is not null)
+        {
+            preferences = _policy as IPreferencePolicy<TObservation, TAction> ?? throw new NotSupportedException(
+                $"ReinforcementOptions.Pairs ({pairSource.Name}) trains on preferences: {_policy.GetType().Name} is not an IPreferencePolicy (Idrak.Text's LanguageModelPolicy is).");
+            preferences.CheckPreferences(o.PreferenceLoss, o.PreferenceLossOptions, o.PreferenceReference);   // an unknown loss fails before the first rollout
+        }
+
+        var loss = pairSource is null ? PolicyLosses.Get(o.Algorithm) : null;
+        int groupSize = GroupSize(o, pairSource?.NeedsGroups == true);
         if (o.EpisodesPerIteration % groupSize != 0)
         {
             throw new ArgumentException(string.Create(CultureInfo.InvariantCulture,
@@ -175,9 +191,10 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
             _ = AdvantageEstimators.Get(named);                                         // an unknown name fails before the first rollout
         }
 
-        int epochs = o.Epochs > 0 ? o.Epochs : string.Equals(o.Algorithm, ReinforcementNames.Ppo, StringComparison.OrdinalIgnoreCase) ? 4 : 1;
+        int epochs = o.Epochs > 0 ? o.Epochs : pairSource is null && string.Equals(o.Algorithm, ReinforcementNames.Ppo, StringComparison.OrdinalIgnoreCase) ? 4 : 1;
         int miniBatch = o.MiniBatch > 0 ? Math.Min(o.MiniBatch, o.EpisodesPerIteration) : o.EpisodesPerIteration;
-        int updatesPerIteration = epochs * ((o.EpisodesPerIteration + miniBatch - 1) / miniBatch);
+        int updatesPerIteration = pairSource is not null ? epochs : epochs * ((o.EpisodesPerIteration + miniBatch - 1) / miniBatch);
+        var choices = new List<PreferenceChoice>();                                       // reused every round: the memory stays flat
         var scheduled = _policy as IScheduledPolicy;
         ILearningRateScheduler? schedule = null;
         if (scheduled is not null)
@@ -198,7 +215,7 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
             }
         }
 
-        var lossOptions = LossOptions(o, loss);
+        var lossOptions = loss is null ? null : LossOptions(o, loss);
         int evaluationSeed = o.EvaluationSeed ?? Seeds.Derive(seed, Seeds.Evaluation);
         var device = scheduled?.Device ?? Device.Default;
         var history = new List<IterationSummary>();
@@ -291,7 +308,43 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
                 var metricSums = new Dictionary<string, double>(StringComparer.Ordinal);
                 var metricNames = new List<string>();
                 int made = 0;
-                for (int epoch = 0; epoch < epochs; epoch++)
+                void Count(UpdateStats stats, long step)
+                {
+                    lossSum += stats.Loss;
+                    foreach (var (name, value) in stats.Metrics ?? new Dictionary<string, double>())
+                    {
+                        if (!metricSums.TryGetValue(name, out double sum))
+                        {
+                            metricNames.Add(name);
+                        }
+
+                        metricSums[name] = sum + value;
+                    }
+
+                    made++;
+                    updates++;
+                    float rate = scheduled?.Optimizer.LearningRate ?? 0f;
+                    schedule?.Step();
+                    if (Telemetry.IsEnabled(TelemetryLevel.Batches))
+                    {
+                        Telemetry.BatchCompleted(new BatchCompleted(iteration + 1, made, updatesPerIteration, updates, stats.Episodes, stats.Loss, rate,
+                            stats.Metrics is { } measured && measured.TryGetValue("gradient-norm", out double norm) ? norm : null, TimeSpan.Zero, Stopwatch.GetElapsedTime(step)));
+                    }
+                }
+
+                if (pairSource is not null)
+                {
+                    // A preference round: the batch's pairs chosen once, then an update on them per epoch (none without a pair).
+                    choices.Clear();
+                    pairSource.Choose(batch.Trajectories, choices, o.PairOptions);
+                    for (int epoch = 0; epoch < epochs && choices.Count > 0; epoch++)
+                    {
+                        long step = Stopwatch.GetTimestamp();
+                        Count(preferences!.UpdatePreferences(batch, choices, o.PreferenceLoss, o.PreferenceLossOptions, o.PreferenceReference), step);
+                    }
+                }
+
+                for (int epoch = 0; pairSource is null && epoch < epochs; epoch++)
                 {
                     Shuffle(order, Seeds.Derive(seed, Seeds.Shuffle, iteration, epoch), shuffle: miniBatch < o.EpisodesPerIteration);
                     for (int at = 0; at < order.Length; at += miniBatch)
@@ -305,27 +358,7 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
                         }
 
                         long step = Stopwatch.GetTimestamp();
-                        var stats = _policy.Update(batch, loss, chosen, lossOptions);
-                        lossSum += stats.Loss;
-                        foreach (var (name, value) in stats.Metrics ?? new Dictionary<string, double>())
-                        {
-                            if (!metricSums.TryGetValue(name, out double sum))
-                            {
-                                metricNames.Add(name);
-                            }
-
-                            metricSums[name] = sum + value;
-                        }
-
-                        made++;
-                        updates++;
-                        float rate = scheduled?.Optimizer.LearningRate ?? 0f;
-                        schedule?.Step();
-                        if (Telemetry.IsEnabled(TelemetryLevel.Batches))
-                        {
-                            Telemetry.BatchCompleted(new BatchCompleted(iteration + 1, made, updatesPerIteration, updates, stats.Episodes, stats.Loss, rate,
-                                stats.Metrics is { } measured && measured.TryGetValue("gradient-norm", out double norm) ? norm : null, TimeSpan.Zero, Stopwatch.GetElapsedTime(step)));
-                        }
+                        Count(_policy.Update(batch, loss!, chosen, lossOptions), step);
                     }
                 }
 
@@ -336,7 +369,12 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
                     metrics[name] = metricSums[name] / made;
                 }
 
-                summary = Summarize(iteration, batch, lossSum / made, made, scheduled?.Optimizer.LearningRate, rolloutTime, updateTime, metrics, o.PassReturn);
+                if (pairSource is not null)
+                {
+                    metrics["pairs"] = choices.Count;                                     // the round's, not a mean over its updates
+                }
+
+                summary = Summarize(iteration, batch, made == 0 ? 0 : lossSum / made, made, scheduled?.Optimizer.LearningRate, rolloutTime, updateTime, metrics, o.PassReturn);
             }
 
             // Evaluation: greedy episodes from their own seeds, the same ones every time.
@@ -387,11 +425,24 @@ public sealed class ReinforcementTrainer<TObservation, TAction>
     }
 
     // The group size: the option's, or for the group-relative estimators the largest of 8, 4, 2 that divides the episodes.
-    private static int GroupSize(ReinforcementOptions o)
+    private static int GroupSize(ReinforcementOptions o, bool pairGroups = false)
     {
         if (o.GroupSize > 0)
         {
             return o.GroupSize;
+        }
+
+        if (pairGroups)
+        {
+            foreach (int size in (ReadOnlySpan<int>)[8, 4, 2])
+            {
+                if (o.EpisodesPerIteration % size == 0)
+                {
+                    return size;
+                }
+            }
+
+            return 1;
         }
 
         string estimator = o.Estimator ?? (string.Equals(o.Algorithm, ReinforcementNames.Grpo, StringComparison.OrdinalIgnoreCase) ? ReinforcementNames.Group : "");
