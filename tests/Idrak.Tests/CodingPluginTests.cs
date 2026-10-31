@@ -25,7 +25,7 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CodingPluginGroup =
     [
-        ("command sandboxes: process is Idrak.Text's in CommandSandboxes; it runs a program without a shell, enforces the programs allowed, its time, output and memory limits (stopping the command), refuses network off, processes and CPUs naming container, and stops on cancellation; the coding tools run every command through the sandbox their options name", d => { if (d == Device.Cpu) ProcessSandboxLimits(); }),
+        ("command sandboxes: process is Idrak.Text's in CommandSandboxes; it runs a program without a shell, enforces the programs allowed, its time, output and memory limits (stopping the command), hands each line of output to CommandLimits.Output as it is written, refuses network off, processes and CPUs naming container, and stops on cancellation; the coding tools run every command through the sandbox their options name", d => { if (d == Device.Cpu) ProcessSandboxLimits(); }),
         ("command sandboxes: container refuses when no program is found or no image is set (naming IDRAK_SANDBOX_PROGRAM and IDRAK_SANDBOX_IMAGE), and builds its command line: the workspace mounted, the network off unless allowed, the memory, CPU and process limits, the user, the variables, the image, then the command", d => { if (d == Device.Cpu) ContainerSandboxCommandLine(); }),
         ("plugins: coding: CodingPlugin is the plug-in \"coding\" of ReinforcementPlugins.All; Register twice registers the coding environment, its four rewards and the container sandbox once, from Idrak.Reinforcement.Plugins; Unregister leaves the registries as found; the rewards pass the reward suite", d => { if (d == Device.Cpu) CodingPluginRegisters(); }),
         ("plugins: coding: on a C# suite (a project, a hidden test, a restore) and a scripted model: a seeded episode replays the same; the reward follows verification (solved, not solved, out of rounds); setup runs once per task and is reused; a broken setup is left out and reported; a test edit is overwritten by the hidden tests and reported, and refused when asked", d => { if (d == Device.Cpu) CodingEpisodes(); }),
@@ -128,6 +128,12 @@ internal abstract partial class DesktopTests : Tests
 
             var version = Run(new CommandLimits { Programs = ["dotnet"] }, "dotnet", "--version");
             Check(version is { Succeeded: true, TimedOut: false, OutOfMemory: false, Refused: false } && version.Output.Length > 0, $"dotnet --version runs: {version}");
+            var lines = new List<string>();
+            var watched = Run(new CommandLimits { Programs = ["dotnet"], MaxOutputCharacters = 40, Output = line => { lock (lines) { lines.Add(line); } } }, "dotnet", "--help");
+            Check(watched.Succeeded && lines.Count > 1 && string.Join('\n', lines).Length > 40 && watched.Output.Contains("characters cut", StringComparison.Ordinal),
+                $"CommandLimits.Output sees every line as it is written ({lines.Count} lines), untrimmed, while the result is cut to its cap");
+            Check(Run(new CommandLimits { Output = _ => throw new InvalidOperationException("a watcher that throws") }, "dotnet", "--version").Succeeded,
+                "a watcher that throws does not stop the command");
             Check(Run(new CommandLimits { Programs = ["git"] }, "dotnet", "--version") is { Refused: true } refused && refused.Output.Contains("not an allowed program", StringComparison.Ordinal),
                 "a program not allowed is refused");
             Check(Run(new CommandLimits(), "coding-test-no-such-program") is { Refused: true } missing && missing.Output.Contains("not installed", StringComparison.Ordinal),

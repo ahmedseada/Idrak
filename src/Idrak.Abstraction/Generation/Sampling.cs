@@ -57,4 +57,11 @@ public interface ITokenSampler : IDisposable
 /// <param name="MaxSteps">Steps whose statistics are kept.</param>
 /// <param name="HistoryCapacity">Recent tokens per row the penalties may look at.</param>
 /// <param name="Options">Temperature, top-k, top-p, min-p, penalties and seed.</param>
-public sealed record SamplerRequest(Device Device, int Rows, int Vocabulary, int MaxSteps, int HistoryCapacity, GenerationOptions Options);
+public sealed record SamplerRequest(Device Device, int Rows, int Vocabulary, int MaxSteps, int HistoryCapacity, GenerationOptions Options)
+{
+    /// <summary>
+    /// The tokenizer of the model whose logits are sampled (the generator's), for a sampler that decides by the tokens'
+    /// text (a grammar, balanced brackets); null when the generator has none to give. The built-in sampler does not read it.
+    /// </summary>
+    public ITokenizer? Tokenizer { get; init; }
+}

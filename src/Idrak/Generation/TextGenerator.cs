@@ -369,7 +369,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     // sequences, read by the generation only, aside), with a seed (one drawn at random per generation is not repeated).
     private static bool SameSampling(SamplerRequest kept, SamplerRequest request) =>
         request.Options.Seed is not null && kept.Device == request.Device && kept.Rows == request.Rows && kept.Vocabulary == request.Vocabulary
-        && kept.MaxSteps == request.MaxSteps && kept.HistoryCapacity == request.HistoryCapacity
+        && kept.MaxSteps == request.MaxSteps && kept.HistoryCapacity == request.HistoryCapacity && ReferenceEquals(kept.Tokenizer, request.Tokenizer)
         && kept.Options with { Stop = NoStops } == request.Options with { Stop = NoStops };
 
     private static readonly string[] NoStops = [];
@@ -633,7 +633,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             ? [.. Enumerable.Range(0, rows).SelectMany(r => ImagePrefill.Locate(tokens[r], given.Token, given.Features[r], sequence: r)
                 .Select(i => i with { Position = i.Position + starts[r] }))]
             : [];
-        using var sampler = CreateSampler(new SamplerRequest(Device, rows, SampledVocabulary(), limit + 1, 1, options));   // no penalties here
+        using var sampler = CreateSampler(new SamplerRequest(Device, rows, SampledVocabulary(), limit + 1, 1, options) { Tokenizer = Tokenizer });   // no penalties here
         // Rows of different lengths need a cache whose format attends from per-row starts (IRowStartsLayout: float32,
         // bfloat16); another format decodes them in float32.
         var batchLayout = !padded || Layout is IRowStartsLayout ? Layout : KeyValueLayouts.For(KeyValueFormat.Float32);
@@ -963,7 +963,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         // with the step recorded with it.
         bool reusing = ReuseDecoding && !KeepCache && options.UseCache;
         using var held = reusing ? TakeReusable() : new Reusable();
-        var request = new SamplerRequest(Device, 1, SampledVocabulary(), limit, Math.Max(1, options.RepeatLastN), options);
+        var request = new SamplerRequest(Device, 1, SampledVocabulary(), limit, Math.Max(1, options.RepeatLastN), options) { Tokenizer = Tokenizer };
         if (held.Request is { } keptRequest && !SameSampling(keptRequest, request))
         {
             held.DropSampler();

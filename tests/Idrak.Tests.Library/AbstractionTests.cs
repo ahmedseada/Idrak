@@ -14,7 +14,7 @@ internal abstract partial class Tests
     [
         ("abstractions: every KeyValueFormat has a layout that sizes its cache, and decoding through each layout matches the float32 cache (decoder and multi-head attention layers, bfloat16 expanded for the latter)", KeyValueLayoutsMatch),
         ("abstractions: every PackedFormat behind PackedWeight multiplies, expands, lists its buffers and builds layers like its own class (int8, 4-bit, bfloat16), one row and many", PackedWeightsMatch),
-        ("abstractions: a custom ITokenSampler (greedy, on the host, not recordable) plugged into TextGenerator gives the built-in sampler's top-1 text, with and without the KV cache", CustomSampler),
+        ("abstractions: a custom ITokenSampler (greedy, on the host, not recordable) plugged into TextGenerator gives the built-in sampler's top-1 text, with and without the KV cache, and its request carries the generator's tokenizer", CustomSampler),
         ("abstractions: Idrak.Abstraction and Idrak name no GPU device, Idrak.Gpu references Idrak.Abstraction alone, and its devices (cuda, vulkan, hip) are registered first, in that order", LibraryDevicesFirst),
     ];
 
@@ -92,13 +92,15 @@ internal abstract partial class Tests
             string expected = builtIn.Generate("abc", options).Text;
 
             HostGreedySampler? custom = null;
+            ITokenizer? given = null;
             var plugged = new TextGenerator(model, tokenizer, 32)
             {
                 KeepCache = false,
-                CreateSampler = request => custom = new HostGreedySampler(request.Device, request.Rows, request.Vocabulary),
+                CreateSampler = request => { given = request.Tokenizer; return custom = new HostGreedySampler(request.Device, request.Rows, request.Vocabulary); },
             };
             string actual = plugged.Generate("abc", options).Text;
             Check(custom is { Samples: > 0 }, "the custom sampler chose the tokens");
+            Check(ReferenceEquals(given, tokenizer), "the sampler's request carries the generator's tokenizer (SamplerRequest.Tokenizer), for a sampler that reads the tokens' text");
             Check(actual == expected, $"cache {cache}: custom sampler '{actual}', built-in '{expected}'");
         }
     }

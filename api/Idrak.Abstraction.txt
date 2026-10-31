@@ -774,6 +774,7 @@ public enum Idrak.Abstraction.Cluster.WireType : int
 
 public sealed record Idrak.Abstraction.CommandLimits : System.IEquatable<Idrak.Abstraction.CommandLimits>
   public CommandLimits()
+  public System.Action<string>? Output { get; init; }
   public System.Collections.Generic.IReadOnlyDictionary<string, string>? Environment { get; init; }
   public System.Collections.Generic.IReadOnlyList<string>? Programs { get; init; }
   public System.TimeSpan Time { get; init; }
@@ -4279,6 +4280,7 @@ public readonly record struct Idrak.Abstraction.Generation.SampledToken : System
 public sealed record Idrak.Abstraction.Generation.SamplerRequest : System.IEquatable<Idrak.Abstraction.Generation.SamplerRequest>
   public Idrak.Abstraction.Device Device { get; init; }
   public Idrak.Abstraction.Generation.GenerationOptions Options { get; init; }
+  public Idrak.Abstraction.Generation.ITokenizer? Tokenizer { get; init; }
   public SamplerRequest(Idrak.Abstraction.Device Device, int Rows, int Vocabulary, int MaxSteps, int HistoryCapacity, Idrak.Abstraction.Generation.GenerationOptions Options)
   public int HistoryCapacity { get; init; }
   public int MaxSteps { get; init; }

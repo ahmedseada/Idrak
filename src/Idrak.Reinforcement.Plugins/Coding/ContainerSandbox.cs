@@ -216,7 +216,7 @@ public sealed class ContainerSandbox(ContainerSandboxOptions? options = null) : 
 
         // The program itself runs as a plain process under the time limit and the output cap; the container holds the rest.
         var process = CommandSandboxes.Default(CommandSandboxes.Process) ?? new ProcessCommandSandbox();
-        var outer = new CommandLimits { Time = limits.Time, MaxOutputCharacters = limits.MaxOutputCharacters };
+        var outer = new CommandLimits { Time = limits.Time, MaxOutputCharacters = limits.MaxOutputCharacters, Output = limits.Output };
         try
         {
             var result = await process.RunAsync(line, directory, outer, cancellationToken).ConfigureAwait(false);

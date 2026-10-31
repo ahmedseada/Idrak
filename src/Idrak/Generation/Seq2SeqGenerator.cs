@@ -345,7 +345,7 @@ public sealed class Seq2SeqGenerator(ISeq2SeqModel model, ITokenizer tokenizer) 
             var clock = Stopwatch.StartNew();
             Encode(source, context);
             encoded(clock.Elapsed);
-            sampler = CreateSampler(new SamplerRequest(device, 1, Model.Vocabulary, limit, Math.Max(1, options.RepeatLastN), options));
+            sampler = CreateSampler(new SamplerRequest(device, 1, Model.Vocabulary, limit, Math.Max(1, options.RepeatLastN), options) { Tokenizer = Tokenizer });
             sampler.SetHistory([Model.DecoderStartToken]);
             var step = new float[1];
             int current = Model.DecoderStartToken;

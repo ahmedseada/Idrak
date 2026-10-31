@@ -56,6 +56,14 @@ public sealed record CommandLimits
     /// null: the command's folder itself.
     /// </summary>
     public string? Root { get; init; }
+
+    /// <summary>
+    /// Receives each line of the command's output (standard output and error, as the command writes them) while it runs,
+    /// on the sandbox's reader thread: a terminal that shows the output live. The result's <see cref="CommandResult.Output"/>
+    /// still holds the whole output, trimmed to <see cref="MaxOutputCharacters"/>; this sees every line, untrimmed. It must
+    /// return quickly and not throw (an exception is dropped, the command goes on). Null: none.
+    /// </summary>
+    public Action<string>? Output { get; init; }
 }
 
 /// <summary>

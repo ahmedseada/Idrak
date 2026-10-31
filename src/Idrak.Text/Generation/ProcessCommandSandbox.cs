@@ -13,7 +13,8 @@ namespace Idrak.Text.Generation;
 /// enforced by stopping the whole process tree, and the output trimmed to its cap. The memory limit is checked on the
 /// started process's working set (<see cref="Process.WorkingSet64"/>, which .NET reports on every platform), every
 /// <see cref="PollInterval"/>; the processes it starts in turn are not counted. It cannot turn the network off nor limit
-/// processes or CPUs, so it refuses those limits, naming <see cref="CommandSandboxes.Container"/>.
+/// processes or CPUs, so it refuses those limits, naming <see cref="CommandSandboxes.Container"/>. Each line of output
+/// goes to <see cref="CommandLimits.Output"/> as it is written, when one is given.
 /// </summary>
 public sealed class ProcessCommandSandbox : ICommandSandbox
 {
@@ -90,8 +91,35 @@ public sealed class ProcessCommandSandbox : ICommandSandbox
         var output = new StringBuilder();
         var watch = Stopwatch.StartNew();
         using var process = new Process { StartInfo = start };
-        process.OutputDataReceived += (_, e) => { if (e.Data is not null) { lock (output) { output.Append(e.Data).Append('\n'); } } };
-        process.ErrorDataReceived += (_, e) => { if (e.Data is not null) { lock (output) { output.Append(e.Data).Append('\n'); } } };
+        var live = limits.Output;
+        void Line(string? data)
+        {
+            if (data is null)
+            {
+                return;
+            }
+
+            lock (output)
+            {
+                output.Append(data).Append('\n');
+            }
+
+            if (live is not null)
+            {
+                try
+                {
+                    live(data);
+                }
+#pragma warning disable CA1031 // A watcher's failure never stops the command (CommandLimits.Output).
+                catch (Exception)
+#pragma warning restore CA1031
+                {
+                }
+            }
+        }
+
+        process.OutputDataReceived += (_, e) => Line(e.Data);
+        process.ErrorDataReceived += (_, e) => Line(e.Data);
         try
         {
             process.Start();
