@@ -6019,6 +6019,7 @@ public sealed class Idrak.Abstraction.Serving.ModelHost<TModel> : System.IDispos
   public ModelHost.Lease Acquire(string name)
   public ModelHost.Lease Acquire(string name, System.TimeSpan? keepAlive)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Serving.LoadedModel> Loaded { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Loading { get; }
   public bool Unload(string name)
   public int? MaxLoaded { get; init; }
   public void Dispose()

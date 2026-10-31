@@ -20,11 +20,17 @@ public sealed class ModelHost<TModel> : IDisposable where TModel : class, IDispo
     private readonly TimeSpan? _defaultKeepAlive;
     private readonly TimeProvider _time;
     private readonly Dictionary<string, Entry> _models = [];
+    private readonly Dictionary<string, Pending> _loading = [];
     private readonly Lock _lock = new();
+    private bool _disposed;
     private readonly ITimer _sweeper;
 
     /// <summary>Creates the host.</summary>
-    /// <param name="load">Loads a model by name (called under the host's lock, so concurrent first requests load once).</param>
+    /// <param name="load">
+    /// Loads a model by name. It runs outside the host's lock (a download or a load never blocks <see cref="Loaded"/>,
+    /// <see cref="Unload"/>, the keep-alive sweep or another name); concurrent first requests for one name still load it
+    /// once, the later ones waiting for that load alone.
+    /// </param>
     /// <param name="defaultKeepAlive">Used when a lease does not specify one (null = forever).</param>
     /// <param name="timeProvider">Clock, replaceable in tests.</param>
     public ModelHost(Func<string, TModel> load, TimeSpan? defaultKeepAlive, TimeProvider? timeProvider = null)
@@ -54,30 +60,96 @@ public sealed class ModelHost<TModel> : IDisposable where TModel : class, IDispo
         }
     }
 
+    /// <summary>The names being loaded now (a first <see cref="Acquire(string, TimeSpan?)"/> still running), in no order.</summary>
+    public IReadOnlyList<string> Loading
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return [.. _loading.Keys];
+            }
+        }
+    }
+
     /// <summary>Returns the model <paramref name="name"/>, loading it if needed; it stays loaded for the default keep-alive after the lease ends.</summary>
     public Lease Acquire(string name) => Acquire(name, _defaultKeepAlive);
 
     /// <summary>
     /// Returns the model <paramref name="name"/>, loading it if needed. Dispose the lease when done; the model then stays
     /// loaded for <paramref name="keepAlive"/> (<see cref="TimeSpan.Zero"/> unloads at once, null keeps it forever).
+    /// The load runs on the calling thread without the host's lock held; a second caller for the same name waits for
+    /// that load (its lease reports the time it waited), and a failed load fails every caller waiting for it.
     /// </summary>
     public Lease Acquire(string name, TimeSpan? keepAlive)
     {
+        Pending? waitFor = null;
+        Pending? mine = null;
         lock (_lock)
         {
-            TimeSpan loadTime = TimeSpan.Zero;
-            if (!_models.TryGetValue(name, out var entry))
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (_models.TryGetValue(name, out var entry))
             {
-                MakeRoomLocked();
-                long start = _time.GetTimestamp();
-                entry = new Entry(_load(name), _time.GetUtcNow());
-                loadTime = _time.GetElapsedTime(start);
-                _models[name] = entry;
+                entry.Users++;
+                return new Lease(this, name, entry.Model, TimeSpan.Zero, keepAlive);
             }
 
-            entry.Users++;
-            return new Lease(this, name, entry.Model, loadTime, keepAlive);
+            if (_loading.TryGetValue(name, out waitFor))
+            {
+                waitFor.Waiters++;
+            }
+            else
+            {
+                MakeRoomLocked();
+                mine = new Pending();
+                _loading[name] = mine;
+            }
         }
+
+        long start = _time.GetTimestamp();
+        if (waitFor is not null)
+        {
+            // Another caller is loading this name: wait for that load alone (the host's lock stays free).
+            var loaded = waitFor.Done.Task.GetAwaiter().GetResult();
+            return new Lease(this, name, loaded.Model, _time.GetElapsedTime(start), keepAlive);
+        }
+
+        TModel model;
+        try
+        {
+            model = _load(name);
+        }
+        catch (Exception error)
+        {
+            lock (_lock)
+            {
+                _loading.Remove(name);
+            }
+
+            mine!.Done.TrySetException(error);
+            throw;
+        }
+
+        var loadTime = _time.GetElapsedTime(start);
+        Entry added;
+        lock (_lock)
+        {
+            _loading.Remove(name);
+            if (_disposed)
+            {
+                model.Dispose();
+                var gone = new ObjectDisposedException(GetType().FullName);
+                mine!.Done.TrySetException(gone);
+                throw gone;
+            }
+
+            // The loader and every caller that waited hold it from the start, so nothing unloads it before they have it.
+            added = new Entry(model, _time.GetUtcNow()) { Users = 1 + mine!.Waiters };
+            _models[name] = added;
+        }
+
+        mine.Done.TrySetResult(added);
+        return new Lease(this, name, model, loadTime, keepAlive);
     }
 
     /// <summary>Unloads a model now if nobody is using it; returns whether it was unloaded.</summary>
@@ -116,7 +188,8 @@ public sealed class ModelHost<TModel> : IDisposable where TModel : class, IDispo
         }
     }
 
-    // Unloads idle models, the longest unused first, until one more fits under MaxLoaded. Called under the lock.
+    // Unloads idle models, the longest unused first, until one more fits under MaxLoaded (the loads under way count).
+    // Called under the lock.
     private void MakeRoomLocked()
     {
         if (MaxLoaded is not { } most)
@@ -126,7 +199,7 @@ public sealed class ModelHost<TModel> : IDisposable where TModel : class, IDispo
 
         foreach (var (name, entry) in _models.Where(p => p.Value.Users == 0).OrderBy(p => p.Value.LastUsed ?? p.Value.LoadedAt).ToList())
         {
-            if (_models.Count < Math.Max(1, most))
+            if (_models.Count + _loading.Count < Math.Max(1, most))
             {
                 return;
             }
@@ -155,6 +228,7 @@ public sealed class ModelHost<TModel> : IDisposable where TModel : class, IDispo
         _sweeper.Dispose();
         lock (_lock)
         {
+            _disposed = true;
             foreach (var entry in _models.Values)
             {
                 entry.Model.Dispose();
@@ -162,6 +236,14 @@ public sealed class ModelHost<TModel> : IDisposable where TModel : class, IDispo
 
             _models.Clear();
         }
+    }
+
+    // A first load under way: the callers that wait for it, and its outcome.
+    private sealed class Pending
+    {
+        public TaskCompletionSource<Entry> Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public int Waiters { get; set; }
     }
 
     private sealed class Entry(TModel model, DateTimeOffset loadedAt)

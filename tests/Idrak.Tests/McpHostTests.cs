@@ -649,6 +649,14 @@ internal abstract partial class DesktopTests : Tests
         int connected;
         await using (var source = await McpTools.ConnectHttpAsync(new Uri(host.Address), host.Token))
         {
+            // The server records an answered request after writing it, so the client may be connected a moment before
+            // the event lands: wait for it (bounded) before counting.
+            var waited = System.Diagnostics.Stopwatch.StartNew();
+            while (!recorder.Events.Any(e => e.Transport == "http" && e.Kind is McpEventKind.RequestAnswered or McpEventKind.Refused) && waited.Elapsed < TimeSpan.FromSeconds(5))
+            {
+                await Task.Delay(5);
+            }
+
             var connect = recorder.Events.Where(e => e.Transport == "http").ToList();
             int requests = connect.Count(e => e.Kind is McpEventKind.RequestAnswered or McpEventKind.Refused);
             Check(source.ServerName == "idrak" && connect.All(e => e.Kind != McpEventKind.Refused && e.Status < 400)

@@ -531,6 +531,49 @@ internal abstract partial class Tests
         clock.Now = clock.Now.AddYears(1);
         host.Sweep();
         Check(host.Loaded.Single().Name == "forever", "negative keep-alive never expires");
+
+        // A load (a download, a 7B model) runs without the host's lock: Loaded, Unload and other names never wait for it
+        // (the owner's editor froze reading Loaded on its UI thread while a model downloaded), and a second caller for
+        // the same name waits for that one load.
+        using var gate = new ManualResetEventSlim();
+        int slowLoads = 0;
+        using var slowHost = new ModelHost<Dummy>(name =>
+        {
+            if (name == "slow")
+            {
+                Interlocked.Increment(ref slowLoads);
+                gate.Wait(TimeSpan.FromSeconds(30));
+            }
+
+            return new Dummy();
+        }, TimeSpan.FromMinutes(5), clock);
+        var first = Task.Run(() => slowHost.Acquire("slow"));
+        var spin = System.Diagnostics.Stopwatch.StartNew();
+        while (slowHost.Loading.Count == 0 && spin.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            Thread.Yield();
+        }
+
+        var read = System.Diagnostics.Stopwatch.StartNew();
+        var during = slowHost.Loaded;
+        read.Stop();
+        Check(during.Count == 0 && slowHost.Loading.SequenceEqual(["slow"]), "while loading: Loaded is empty and Loading names the model");
+        Check(read.Elapsed < TimeSpan.FromSeconds(1), $"Loaded answers while a load runs (took {read.Elapsed.TotalMilliseconds:F0} ms)");
+        var second = Task.Run(() => slowHost.Acquire("slow"));
+        using (var other = slowHost.Acquire("other"))
+        {
+            Check(other.Model is not null && !first.IsCompleted, "another name loads while the slow one is still loading");
+        }
+
+        gate.Set();
+        using var a = first.GetAwaiter().GetResult();
+        using var b = second.GetAwaiter().GetResult();
+        Check(slowLoads == 1 && ReferenceEquals(a.Model, b.Model), "two first callers of one name: one load, the same model");
+        Check(slowHost.Loaded.Single(m => m.Name == "slow").ActiveUsers == 2 && slowHost.Loading.Count == 0, "both hold it; nothing is loading");
+
+        using var failing = new ModelHost<Dummy>(_ => throw new InvalidOperationException("no such model"), TimeSpan.FromMinutes(5), clock);
+        try { failing.Acquire("x"); Check(false, "a failed load throws"); } catch (InvalidOperationException) { }
+        Check(failing.Loading.Count == 0 && failing.Loaded.Count == 0, "a failed load leaves nothing loading or loaded");
     }
 
     internal static (Sequential Model, CharTokenizer Tokenizer) TinyLanguageModel(Device device, int context = 32)
