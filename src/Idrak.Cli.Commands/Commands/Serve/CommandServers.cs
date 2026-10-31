@@ -7,8 +7,8 @@ using Idrak.Cli.Shared;
 namespace Idrak.Cli.Commands.Serve;
 
 /// <summary>
-/// The servers the commands start: serve's and ui's HTTP server (serve --mcp's protocol on standard input and output with
-/// it) and the cluster dashboard. They need ASP.NET Core, which is the idrak tool's (src/Idrak.Cli registers them at
+/// The servers the commands start: serve's and ui's HTTP server (serve --mcp's models with it, served over MCP by
+/// Idrak.Mcp's McpHost) and the cluster dashboard. They need ASP.NET Core, which is the idrak tool's (src/Idrak.Cli registers them at
 /// startup), not this library's: a host that registers none (an app) refuses those commands by what they need
 /// (<see cref="CommandNeeds"/>) before they ask for a server, and <see cref="CommandServers.Get"/> says so if one does.
 /// </summary>
@@ -17,7 +17,7 @@ internal interface ICommandServers
     /// <summary>Starts the HTTP server over <paramref name="models"/>, waits for Ctrl+C, the host's stop or <c>idrak server stop</c>; the exit code.</summary>
     int Serve(CommandContext context, ServeSettings settings, IReadOnlyList<ServedModel> models, Action<string>? started);
 
-    /// <summary>Serves <paramref name="models"/> (and <paramref name="tools"/>) over MCP on standard input and output until the client leaves; the exit code.</summary>
+    /// <summary>Serves <paramref name="models"/> (and <paramref name="tools"/>) over MCP on the command's transport (stdio until the client leaves, http until Ctrl+C); the exit code.</summary>
     int ServeMcp(CommandContext context, ServeSettings settings, IReadOnlyList<ServedModel> models, IReadOnlyList<ITool> tools);
 
     /// <summary>Starts the cluster dashboard with the command's settings, prints its address and opens it unless <c>--no-browser</c>.</summary>

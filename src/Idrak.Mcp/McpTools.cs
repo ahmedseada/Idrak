@@ -16,9 +16,10 @@ namespace Idrak.Mcp;
 
 /// <summary>
 /// Connects to Model Context Protocol servers (<see cref="ConnectAsync"/>, <see cref="ConnectStdioAsync"/>,
-/// <see cref="ConnectHttpAsync"/>) so their tools can be added to a <see cref="ToolRegistry"/>, and serves tools to MCP
+/// <see cref="ConnectHttpAsync(Uri, CancellationToken)"/>) so their tools can be added to a <see cref="ToolRegistry"/>, and serves tools to MCP
 /// clients: a registry's (<see cref="ServerTools(IToolRegistry)"/>) and the models of an inference engine
-/// (<see cref="ServerTools(IModelCatalog)"/>, <see cref="ModelTools(IModelCatalog)"/>).
+/// (<see cref="ServerTools(IModelCatalog)"/>, <see cref="ModelTools(IModelCatalog)"/>); <see cref="McpHost"/> serves them
+/// over a registered transport (stdio, http).
 /// </summary>
 public static partial class McpTools
 {
@@ -33,6 +34,17 @@ public static partial class McpTools
     /// <summary>Connects to an MCP server over HTTP (streamable HTTP, falling back to server-sent events).</summary>
     public static Task<McpToolSource> ConnectHttpAsync(Uri endpoint, CancellationToken cancellationToken = default) =>
         ConnectAsync(new HttpClientTransport(new HttpClientTransportOptions { Endpoint = endpoint }), cancellationToken);
+
+    /// <summary>
+    /// Connects to an MCP server over HTTP, sending <c>Authorization: Bearer <paramref name="bearerToken"/></c> with every
+    /// request (an Idrak http host requires it by default); null sends none.
+    /// </summary>
+    public static Task<McpToolSource> ConnectHttpAsync(Uri endpoint, string? bearerToken, CancellationToken cancellationToken = default) =>
+        ConnectAsync(new HttpClientTransport(new HttpClientTransportOptions
+        {
+            Endpoint = endpoint,
+            AdditionalHeaders = bearerToken is { Length: > 0 } ? new Dictionary<string, string> { ["Authorization"] = "Bearer " + bearerToken } : null,
+        }), cancellationToken);
 
     /// <summary>
     /// The tools of <paramref name="registry"/> as MCP server tools (add them to <c>McpServerOptions.ToolCollection</c>).

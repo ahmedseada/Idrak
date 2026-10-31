@@ -45,6 +45,8 @@ internal sealed class ChatCommand : Command
         """ + "\n" + ModelChoices.ImageTransformHelp + "\n" + ModelChoices.VisionOptionHelp + "\n" + """
               --mcp SERVER      let the model call an MCP server's tools: an http(s) URL, or a command that starts
                                  the server ("npx -y some-server"); repeatable
+              --mcp-token TOKEN  the bearer token sent to http(s) MCP servers (idrak mcp serve --transport http
+                                 prints its own)
         """ + "\n" + GenerationSettings.Help + """
 
         Slash commands:
@@ -61,7 +63,7 @@ internal sealed class ChatCommand : Command
         conversation, for now).
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--history", "--file", "--mcp", "--image", "--audio", ModelChoices.ImageTransformOption, ModelChoices.VisionOption];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--history", "--file", "--mcp", "--mcp-token", "--image", "--audio", ModelChoices.ImageTransformOption, ModelChoices.VisionOption];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--grayscale"];
 

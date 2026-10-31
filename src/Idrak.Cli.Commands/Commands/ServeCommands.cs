@@ -44,7 +44,7 @@ internal sealed class ServeCommand : Command
     public override CommandNeeds Needs => CommandNeeds.NetworkListener;
 
     /// <inheritdoc />
-    public override CommandNeeds NeedsFor(CommandContext context) => context.Flag("--mcp") ? CommandNeeds.ConsoleInput : CommandNeeds.NetworkListener;
+    public override CommandNeeds NeedsFor(CommandContext context) => context.Flag("--mcp") ? McpServeCommand.NeedsOf(context) : CommandNeeds.NetworkListener;
 
     /// <summary>The options of the server (serve and ui).</summary>
     public const string OptionsHelp = """
@@ -119,11 +119,13 @@ internal sealed class ServeCommand : Command
         expect with -p.
 
         MCP:
-              --mcp                  serve over the Model Context Protocol on standard input/output instead of
-                                     HTTP: the models as the tools generate and chat (each takes a "model" argument
-                                     when several are served), until the client disconnects; status lines go to the
-                                     error output
+              --mcp                  serve over the Model Context Protocol instead of the chat API: the models as
+                                     the tools generate and chat (each takes a "model" argument when several are
+                                     served), on standard input/output until the client disconnects (or with
+                                     --transport http, at a printed address with a printed token, until Ctrl+C);
+                                     status lines go to the error output
               --tools FILE.dll       with --mcp, also serve the tools an assembly declares (repeatable)
+        {McpServeCommand.TransportHelp}
 
         Examples:
           idrak serve Qwen/Qwen3-0.6B
@@ -133,11 +135,12 @@ internal sealed class ServeCommand : Command
           idrak serve ocr=bakrianoo/arabic-legal-documents-ocr-1.0 -d cuda:0 -w bf16 --grayscale
           idrak serve ocr --image-transform "grayscale,max_width=1024,contrast=1.5"
           idrak serve qwen --mcp --tools ./MyTools.dll  # an MCP client's configuration starts it this way
+          idrak serve qwen --mcp --transport http        # MCP for clients that connect to it (address and token printed)
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ServeOptions.ValueOptions, .. ModelChoices.ValueOptions, "--tools"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ServeOptions.ValueOptions, .. ModelChoices.ValueOptions, "--tools", .. McpServeCommand.TransportOptions];
 
-    public override IReadOnlyCollection<string> Flags => [.. ServeOptions.Flags, "--mcp"];
+    public override IReadOnlyCollection<string> Flags => [.. ServeOptions.Flags, "--mcp", "--mcp-allow-remote"];
 
     public override IReadOnlyDictionary<string, string> ShortForms => ServeOptions.ShortForms.Concat(ModelChoices.ShortForms).ToDictionary();
 
@@ -146,6 +149,11 @@ internal sealed class ServeCommand : Command
         var settings = ServeOptions.ReadSettings(context);
         if (!context.Flag("--mcp"))
         {
+            if (McpServeCommand.TransportOptions.Any(o => context.Option(o) is not null) || context.Flag("--mcp-allow-remote"))
+            {
+                throw new UsageException("--transport, --mcp-address, --mcp-token and --mcp-allow-remote choose how MCP is served; add --mcp.");
+            }
+
             return context.Options("--tools").Count > 0 ? throw new UsageException("--tools serves tools over MCP; add --mcp.")
                 : CommandServers.Get(context).Serve(context, settings, ServeOptions.ReadModels(context, context.Positional), null);
         }

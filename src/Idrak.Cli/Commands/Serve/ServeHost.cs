@@ -270,9 +270,9 @@ internal sealed class ServeHost
     }
 
     /// <summary>
-    /// <c>idrak serve --mcp</c>: the models as MCP tools (generate, chat) with <paramref name="tools"/>, over standard
-    /// input and output until the client disconnects; each model loads on its first call. Status lines go to the error
-    /// output, since the output carries the protocol.
+    /// <c>idrak serve --mcp</c>: the models as MCP tools (generate, chat) with <paramref name="tools"/>, over the
+    /// command's transport (<see cref="McpServeCommand.Serve"/>: stdio until the client disconnects, http until Ctrl+C);
+    /// each model loads on its first call. Status lines go to the error output, since stdio's output carries the protocol.
     /// </summary>
     public int RunMcp(IReadOnlyList<ITool> tools)
     {

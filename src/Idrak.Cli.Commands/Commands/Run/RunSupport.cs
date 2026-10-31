@@ -88,7 +88,7 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
             var addresses = context.Options("--mcp");
             foreach (string server in addresses)
             {
-                var source = Connect(server);
+                var source = Connect(server, context.Option("--mcp-token"));
                 servers.Add(source);
                 tools.AddRange(source.ListToolsAsync(addresses.Count > 1 ? $"{source.ServerName ?? "mcp" + servers.Count}_" : null).GetAwaiter().GetResult());
                 context.Detail($"MCP server {source.ServerName ?? server}: {tools.Count} tools in all");
@@ -130,14 +130,15 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
         }
     }
 
-    // An http(s) URL is a server to call over HTTP; anything else is a command line that starts a server (over stdio).
-    private static Idrak.Mcp.McpToolSource Connect(string server)
+    // An http(s) URL is a server to call over HTTP (with --mcp-token's bearer token when given); anything else is a
+    // command line that starts a server (over stdio).
+    private static Idrak.Mcp.McpToolSource Connect(string server, string? token)
     {
         try
         {
             if (Uri.TryCreate(server, UriKind.Absolute, out var url) && url.Scheme is "http" or "https")
             {
-                return Idrak.Mcp.McpTools.ConnectHttpAsync(url).GetAwaiter().GetResult();
+                return Idrak.Mcp.McpTools.ConnectHttpAsync(url, token).GetAwaiter().GetResult();
             }
 
             var words = server.Split(' ', StringSplitOptions.RemoveEmptyEntries);

@@ -23,7 +23,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Network` | 2 | 4 | 1 | 7 | 0 |
 | `Idrak.Onnx.Runtime` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.AspNetCore` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Mcp` | 0 | 0 | 0 | 0 | 0 |
+| `Idrak.Mcp` | 2 | 0 | 1 | 3 | 0 |
 | `Idrak.Reinforcement` | 2 | 0 | 1 | 3 | 0 |
 | `Idrak.Text.Plugins` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Vision.Plugins` | 0 | 0 | 0 | 0 | 0 |
@@ -237,8 +237,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.ToolCallFormats` | registry | public | — |  | json, pythonic | Text, Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.TuningMetrics` | registry | public | — |  | cer, contains, exact, f1, number, wer | Abstraction, Audio, Text | Abstraction |
 | `Idrak.Abstraction.ICommandSandbox` | interface | public | — | ContainerSandbox, ProcessCommandSandbox |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
-| `Idrak.Abstraction.IConfigurableKind` | interface | public | — | AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, BandPassProcessor, +100 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Data, Idrak, Imaging, Mcp, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, +136 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.IConfigurableKind` | interface | public | — | AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, BandPassProcessor, +102 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Data, Idrak, Imaging, Mcp, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, +138 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.IKind<TRequest, T>` | interface | public | — | AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, BoxesScoresDecoder, ChatTemplates.GuardedReader, ClassicControlPlugin.ClassicKind, CodingEnvironmentKind, +36 |  | Abstraction, Audio, Audio.Plugins, Data, Idrak, Imaging, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.ILibraryRegistrations` | interface | public | — | LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, +5 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.IOptionSchema` | interface | public | — | CSharpRewards.BuildReward, CSharpRewards.TestsReward, ClassicControlPlugin.ClassicKind, ClippedRatioLoss, CodingRewards.RoundsReward, CodingRewards.TestsPassedReward, +14 |  | Reinforcement, Reinforcement.Plugins, Text | Abstraction |
@@ -568,6 +568,14 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Networking.Abstractions.IGradientCompressor` | interface | public | — | DenseCompressor, TopKCompressor |  | Network | Network |
 | `Idrak.Networking.Abstractions.LocalTransport` | abstract class | internal | Storage | NvlinkTransport, PciHostTransport |  | Network | Network |
 | `Idrak.Networking.Abstractions.SyncCore` | abstract class | internal | Tensor | GradientReduction, LocalSgd, ShardedGradientReduction |  | Network | Network |
+
+### Idrak.Mcp
+
+| Type | Kind | Visibility | Mentions | Implementations | Registered | Users | Belongs in |
+|---|---|---|---|---|---|---|---|
+| `Idrak.Mcp.Abstractions.IMcpListener` | interface | public | — | HttpMcpListener, StdioServerTransportKind.Listener |  | Mcp | Mcp |
+| `Idrak.Mcp.Abstractions.IMcpServerTransport` | interface | public | — | HttpServerTransportKind, StdioServerTransportKind |  | Mcp | Mcp |
+| `Idrak.Mcp.Abstractions.McpServerTransports` | registry | public | — |  | http, stdio | Mcp | Mcp |
 
 ### Idrak.Reinforcement
 
