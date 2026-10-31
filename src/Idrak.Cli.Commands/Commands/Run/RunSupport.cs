@@ -141,6 +141,13 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
                 return Idrak.Mcp.McpTools.ConnectHttpAsync(url, token).GetAwaiter().GetResult();
             }
 
+            // Text that starts like a URL but does not parse as one (a placeholder port, a typo) is a bad URL, not a
+            // command line: running it as one would only fail with the shell's "not recognized".
+            if (server.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || server.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new UsageException($"--mcp '{server}' starts like a URL but is not a valid one (is the port a number?): give the server's full address, such as http://127.0.0.1:5000/mcp.");
+            }
+
             var words = server.Split(' ', StringSplitOptions.RemoveEmptyEntries);
             return words.Length == 0 ? throw new UsageException("--mcp needs a URL or a command that starts the server.")
                 : Idrak.Mcp.McpTools.ConnectStdioAsync(words[0], words.Skip(1)).GetAwaiter().GetResult();

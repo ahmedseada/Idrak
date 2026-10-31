@@ -59,7 +59,7 @@ internal sealed class ReinforceCommand : Command
 
     public override string Name => "reinforce";
 
-    public override string Summary => "Reinforcement learning of a model's adapters in an environment: GRPO, PPO, on-policy distillation, preference rounds (DPO, ORPO, SimPO)";
+    public override string Summary => "Reinforcement learning of a model's adapters: GRPO, PPO, on-policy distillation, DPO, ORPO, SimPO";
 
     public override string Usage => $$"""
         MODEL --env NAME [--data FILE | --suite DIR] -o DIR [options]

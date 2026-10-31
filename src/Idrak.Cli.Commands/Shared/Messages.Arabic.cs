@@ -463,8 +463,8 @@ internal static partial class Messages
             "جمع شبكة وأوزانها ومقاييسها ومقطع رموزها من مجلد في حزمة نموذج واحدة (.ikm)",
         ["Distil a teacher model into a student: its token probabilities (on the fly or precomputed) or its answers"] =
             "تقطير نموذج معلم في نموذج طالب: احتمالات رموزه (أثناء التدريب أو محسوبة مسبقا) أو إجاباته",
-        ["Reinforcement learning of a model's adapters in an environment: GRPO, PPO, on-policy distillation"] =
-            "التعلم المعزز لمحولات نموذج في بيئة: GRPO و PPO والتقطير على إجابات النموذج نفسه",
+        ["Reinforcement learning of a model's adapters: GRPO, PPO, on-policy distillation, DPO, ORPO, SimPO"] =
+            "التعلم المعزز لمحولات نموذج: GRPO و PPO والتقطير على إجابات النموذج نفسه و DPO و ORPO و SimPO",
         ["Fine-tune language models (LoRA, QLoRA, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info"] =
             "الضبط الدقيق لنماذج اللغة (LoRA و QLoRA و DoRA و DPO/ORPO/SimPO)؛ والتقييم والمحادثة والتصدير والتنزيل والمعلومات",
         ["Write a commented tune.json (model, data, adapter and training settings) for idrak tune --config"] =
