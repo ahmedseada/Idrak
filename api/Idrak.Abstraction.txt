@@ -3511,6 +3511,70 @@ public enum Idrak.Abstraction.Generation.FeedForwardActivation : int
   Silu = 0
   TanhSigmoid = 3
 
+public sealed record Idrak.Abstraction.Generation.FillInMiddleContext : System.IEquatable<Idrak.Abstraction.Generation.FillInMiddleContext>
+  public FillInMiddleContext(Idrak.Abstraction.Generation.IPretrainedTokenizer Tokenizer, string Prefix, string Suffix)
+  public Idrak.Abstraction.Generation.IPretrainedTokenizer Tokenizer { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.FillInMiddleSnippet> Snippets { get; init; }
+  public string Prefix { get; init; }
+  public string Suffix { get; init; }
+  public string? Path { get; init; }
+  public string? Repository { get; init; }
+
+public static class Idrak.Abstraction.Generation.FillInMiddleFormats
+  public static Idrak.Abstraction.Generation.GenerationOptions Options(Idrak.Abstraction.Generation.IFillInMiddlePrompt prompt, Idrak.Abstraction.Generation.GenerationOptions options)
+  public static Idrak.Abstraction.Generation.IFillInMiddleFormat For(Idrak.Abstraction.Generation.IPretrainedTokenizer tokenizer)
+  public static Idrak.Abstraction.Generation.IFillInMiddleFormat Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.Generation.IFillInMiddleFormat? Default(string name)
+  public static Idrak.Abstraction.Generation.IFillInMiddlePrompt Create(System.ReadOnlySpan<char> name, Idrak.Abstraction.Generation.FillInMiddleContext context)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string? Detect(Idrak.Abstraction.Generation.IPretrainedTokenizer tokenizer)
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Generation.IFillInMiddleFormat format)
+  public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
+
+public sealed class Idrak.Abstraction.Generation.FillInMiddleLayout : Idrak.Abstraction.Generation.IFillInMiddleFormat, Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Generation.FillInMiddleContext, Idrak.Abstraction.Generation.IFillInMiddlePrompt>
+  public FillInMiddleLayout(string name, string summary, Idrak.Abstraction.Generation.FillInMiddleOrder order, Idrak.Abstraction.Generation.FillInMiddleTokens tokens)
+  public Idrak.Abstraction.Generation.FillInMiddleOrder Order { get; }
+  public Idrak.Abstraction.Generation.FillInMiddleTokens Tokens { get; }
+  public Idrak.Abstraction.Generation.IFillInMiddlePrompt Create(Idrak.Abstraction.Generation.FillInMiddleContext request)
+  public System.Collections.Generic.IReadOnlySet<string> Keys { get; }
+  public bool Detect(Idrak.Abstraction.Generation.IPretrainedTokenizer tokenizer)
+  public static Idrak.Abstraction.Generation.FillInMiddleLayout PrefixSuffixMiddle(string name, string summary, Idrak.Abstraction.Generation.FillInMiddleTokens tokens)
+  public static Idrak.Abstraction.Generation.FillInMiddleLayout SuffixPrefixMiddle(string name, string summary, Idrak.Abstraction.Generation.FillInMiddleTokens tokens)
+  public string Name { get; }
+  public string Summary { get; }
+
+public enum Idrak.Abstraction.Generation.FillInMiddleOrder : int
+  PrefixSuffixMiddle = 0
+  SuffixPrefixMiddle = 1
+
+public sealed record Idrak.Abstraction.Generation.FillInMiddlePrompt : Idrak.Abstraction.Generation.IFillInMiddlePrompt, System.IEquatable<Idrak.Abstraction.Generation.FillInMiddlePrompt>
+  public FillInMiddlePrompt(string Text, System.Collections.Generic.IReadOnlyList<int> Ids, System.Collections.Generic.IReadOnlyList<string> Stop, System.Collections.Generic.IReadOnlyList<int> StopIds, int PrefixEnd, int Snippets)
+  public System.Collections.Generic.IReadOnlyList<int> Ids { get; init; }
+  public System.Collections.Generic.IReadOnlyList<int> StopIds { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> Stop { get; init; }
+  public int PrefixEnd { get; init; }
+  public int Snippets { get; init; }
+  public string Text { get; init; }
+
+public sealed record Idrak.Abstraction.Generation.FillInMiddleSnippet : System.IEquatable<Idrak.Abstraction.Generation.FillInMiddleSnippet>
+  public FillInMiddleSnippet(string Path, string Text)
+  public string Path { get; init; }
+  public string Text { get; init; }
+
+public sealed record Idrak.Abstraction.Generation.FillInMiddleTokens : System.IEquatable<Idrak.Abstraction.Generation.FillInMiddleTokens>
+  public FillInMiddleTokens(string Prefix, string Suffix, string? Middle)
+  public System.Collections.Generic.IEnumerable<string> Required()
+  public System.Collections.Generic.IReadOnlyList<string> Stop { get; init; }
+  public string Prefix { get; init; }
+  public string Suffix { get; init; }
+  public string? Begin { get; init; }
+  public string? FileSeparator { get; init; }
+  public string? Middle { get; init; }
+  public string? Repository { get; init; }
+  public string? SnippetMarker { get; init; }
+
 public sealed class Idrak.Abstraction.Generation.Float16Weight : Idrak.Abstraction.Generation.PackedWeight, Idrak.Abstraction.IRecordable
   public Idrak.Abstraction.Tensor Packed { get; }
   public const string FormatName = "float16"
@@ -3578,6 +3642,7 @@ public sealed record Idrak.Abstraction.Generation.GenerationStats : System.IEqua
   public System.TimeSpan PromptDuration { get; init; }
   public System.TimeSpan TotalDuration { get; init; }
   public double TokensPerSecond { get; }
+  public int CachedTokens { get; init; }
   public int ContextResets { get; init; }
   public int GeneratedTokens { get; init; }
   public int PromptTokens { get; init; }
@@ -3631,6 +3696,17 @@ public interface Idrak.Abstraction.Generation.IFeatureCache : System.IDisposable
   public void Clear()
 
 public interface Idrak.Abstraction.Generation.IFeatureCacheKind : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Generation.FeatureCacheOptions, Idrak.Abstraction.Generation.IFeatureCache>
+
+public interface Idrak.Abstraction.Generation.IFillInMiddleFormat : Idrak.Abstraction.IConfigurableKind, Idrak.Abstraction.IKind, Idrak.Abstraction.IKind<Idrak.Abstraction.Generation.FillInMiddleContext, Idrak.Abstraction.Generation.IFillInMiddlePrompt>
+  public bool Detect(Idrak.Abstraction.Generation.IPretrainedTokenizer tokenizer)
+
+public interface Idrak.Abstraction.Generation.IFillInMiddlePrompt
+  public System.Collections.Generic.IReadOnlyList<int> Ids { get; }
+  public System.Collections.Generic.IReadOnlyList<int> StopIds { get; }
+  public System.Collections.Generic.IReadOnlyList<string> Stop { get; }
+  public int PrefixEnd { get; }
+  public int Snippets { get; }
+  public string Text { get; }
 
 public interface Idrak.Abstraction.Generation.IFusedWriteLayout : Idrak.Abstraction.Generation.IKeyValueLayout, Idrak.Abstraction.IKind
   public bool HalfWords { get; }

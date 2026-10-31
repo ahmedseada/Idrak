@@ -986,6 +986,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         var generated = new List<int>();
         var text = new ArrayBufferWriter<char>();
         int emitted = 0, read = 0, decoded = 0, decodedFrom = 0, taken = 0, lastProgress = 0, resets = 0;
+        int cachedTokens = 0;                                               // prompt tokens read from the kept cache
         TimeSpan promptDuration = TimeSpan.Zero;
         string? doneReason = null;
 
@@ -1183,19 +1184,37 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
                 // Image tokens are the same ids whatever the image: the kept cache is reused up to the first image only.
                 shared = Math.Min(Math.Min(shared, history.Count - 1), images.Count > 0 ? images.Min(i => i.Position) : int.MaxValue);
-                if (kept is not null && shared > 0 && shared <= decoding.Length)
+                try
                 {
-                    using var noGrad = Autograd.NoGrad();
-                    using var scope = new TensorScope();
-                    decoding.Truncate(shared);
-                    sampler.Sample(Feed(history.Count - shared, shared));
+                    if (kept is not null && shared > 0 && shared <= decoding.Length)
+                    {
+                        using var noGrad = Autograd.NoGrad();
+                        using var scope = new TensorScope();
+                        decoding.Truncate(shared);
+                        sampler.Sample(Feed(history.Count - shared, shared));
+                        cachedTokens = shared;
+                    }
+                    else
+                    {
+                        Prefill(history.Count);
+                    }
+
+                    sampler.Read(0, 1);
+                    // A decoding step is never stopped part-way: a cancellation that comes during one ends the reply
+                    // after it (the loop's check), the cache kept, instead of throwing it away with the step. Only the
+                    // prompt's passes (this one, and a full window's re-read) stop between layers.
+                    decoding.Cancellation = CancellationToken.None;
                 }
-                else
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested && options.UseCache && KeepCache && decoding.Length <= history.Count)
                 {
-                    Prefill(history.Count);
+                    // The prompt's pass stopped part-way (the next request came): the stopped pass is withdrawn, so the
+                    // cache still holds history[..Length] (the shared prefix, and every piece fed whole). It is kept for
+                    // the next prompt, which would otherwise feed the whole prefix again.
+                    KeepCacheFor(decoding, history.GetRange(0, decoding.Length));
+                    keep = true;
+                    throw;
                 }
 
-                sampler.Read(0, 1);
                 promptDuration = total.Elapsed;
                 if (prefillStart != 0)
                 {
@@ -1218,7 +1237,8 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                         }
                     }
 
-                    if (doneReason is not null || produced >= limit)
+                    // Cancelled while the reader held the chunk: no step after it (the stop comes at the next token, not one later).
+                    if (doneReason is not null || produced >= limit || cancellationToken.IsCancellationRequested)
                     {
                         break;
                     }
@@ -1239,7 +1259,9 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
                         if (options.UseCache)
                         {
+                            decoding.Cancellation = cancellationToken;              // the re-read is a prompt's pass
                             Prefill(context / 2);
+                            decoding.Cancellation = CancellationToken.None;
                             resets++;
                         }
                         else
@@ -1310,7 +1332,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         doneReason ??= "length";
         Device.Synchronize();
         var stats = new GenerationStats(promptTokens, promptDuration, generated.Count, total.Elapsed - promptDuration,
-            total.Elapsed, resets);
+            total.Elapsed, resets) { CachedTokens = cachedTokens };
         yield return new GenerationChunk("", Done: true, DoneReason: doneReason, Stats: stats)
         {
             Generated = generated.Count,

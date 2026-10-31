@@ -8,7 +8,7 @@ using Idrak.Abstraction.Plugins;
 namespace Idrak.Text.Plugins;
 
 /// <summary>
-/// The text model families (decoders, encoders, encoder-decoders, their GGUF mappings, tool-call formats and RoPE
+/// The text model families (decoders, encoders, encoder-decoders, their GGUF mappings, tool-call and fill-in-the-middle formats and RoPE
 /// scalings) and the coding languages (the coding agent's programs, prompt lines and folders) of Idrak.Text.Plugins. Each family is a plug-in in a namespace of its own
 /// (<c>Idrak.Text.Plugins.Family</c>), whose static <c>FamilyPlugin</c> class registers it alone (<c>Register()</c>,
 /// <c>Unregister()</c>; see <see cref="IIdrakPlugin"/>). <see cref="RegisterAll"/> registers every one of them through

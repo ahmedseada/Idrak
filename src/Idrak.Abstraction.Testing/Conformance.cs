@@ -180,6 +180,17 @@ public static class Conformance
     }
 
     /// <summary>
+    /// Checks the fill-in-the-middle format registered as <paramref name="name"/> (or <paramref name="format"/>, when
+    /// given; <see cref="FillInMiddleFormatSuite"/>) with <paramref name="tokenizer"/>, which has its tokens: it detects
+    /// the tokenizer, the prompt holds the prefix and suffix, its ids are its text's, its stops are tokens, a longer prefix
+    /// keeps the text up to the old prefix's end, the snippets it holds are in it, the same prompt again and from several
+    /// threads, and, given a <paramref name="reference"/>, the same prompts.
+    /// </summary>
+    public static ConformanceReport CheckFillInMiddleFormat(string name, IPretrainedTokenizer tokenizer, IFillInMiddleFormat? format = null,
+        IFillInMiddleFormat? reference = null, ContractCheckOptions? options = null) =>
+        Check(format ?? FillInMiddleFormats.Get(name), new FillInMiddleFormatSuite(tokenizer, reference), options);
+
+    /// <summary>
     /// Checks the reading order registered as <paramref name="name"/> (or <paramref name="order"/>, when given;
     /// <see cref="ReadingOrderSuite"/>): its columns reorder the line's characters, a line of its own direction keeps its
     /// order, a reading turned back gives the same columns (and the text itself when <paramref name="invertible"/>), the

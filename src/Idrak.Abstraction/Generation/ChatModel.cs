@@ -13,6 +13,12 @@ namespace Idrak.Abstraction.Generation;
 public sealed record GenerationStats(int PromptTokens, TimeSpan PromptDuration, int GeneratedTokens, TimeSpan GenerationDuration,
     TimeSpan TotalDuration, int ContextResets)
 {
+    /// <summary>
+    /// Tokens of the prompt read from the cache kept from the last generation (a shared prefix: <c>TextGenerator.KeepCache</c>)
+    /// instead of being processed again; 0 when none was (the prompt's pass processed <see cref="PromptTokens"/> less these).
+    /// </summary>
+    public int CachedTokens { get; init; }
+
     /// <summary>Generated tokens per second.</summary>
     public double TokensPerSecond => GenerationDuration.TotalSeconds > 0 ? GeneratedTokens / GenerationDuration.TotalSeconds : 0;
 }

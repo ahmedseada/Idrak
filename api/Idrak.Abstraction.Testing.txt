@@ -131,6 +131,7 @@ public static class Idrak.Abstraction.Testing.Conformance
   public static Idrak.Abstraction.Testing.ConformanceReport CheckCollectives(Idrak.Abstraction.Testing.CollectivesUnderTest collectives, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckEnvironmentKind<TObservation, TAction>(Idrak.Abstraction.Reinforcement.IEnvironmentKind kind, System.Func<System.Random, TObservation, TAction> act, System.Collections.Generic.IReadOnlyDictionary<string, string>? kindOptions = null, int maxSteps = 64, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckFeatureCache(Idrak.Abstraction.Generation.IFeatureCache cache, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
+  public static Idrak.Abstraction.Testing.ConformanceReport CheckFillInMiddleFormat(string name, Idrak.Abstraction.Generation.IPretrainedTokenizer tokenizer, Idrak.Abstraction.Generation.IFillInMiddleFormat? format = null, Idrak.Abstraction.Generation.IFillInMiddleFormat? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckImageModelFamily(System.Func<string, Idrak.Abstraction.Testing.ImageModelUnderTest> load, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Testing.ImageFamilySample> samples, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckKeywordIndex(Idrak.Abstraction.Testing.KeywordIndexUnderTest index, Idrak.Abstraction.Testing.KeywordIndexUnderTest? reference = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
   public static Idrak.Abstraction.Testing.ConformanceReport CheckLearningRateSchedule(string name, Idrak.Abstraction.Training.ILearningRateSchedule? schedule = null, Idrak.Abstraction.Testing.ContractCheckOptions? options = null)
@@ -271,6 +272,15 @@ public sealed class Idrak.Abstraction.Testing.FeatureCacheSuite : Idrak.Abstract
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
   public override string Name { get; }
   public override void Run(Idrak.Abstraction.Generation.IFeatureCache implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
+
+public sealed class Idrak.Abstraction.Testing.FillInMiddleFormatSuite : Idrak.Abstraction.Testing.ContractSuite<Idrak.Abstraction.Generation.IFillInMiddleFormat>
+  public FillInMiddleFormatSuite(Idrak.Abstraction.Generation.IPretrainedTokenizer tokenizer, Idrak.Abstraction.Generation.IFillInMiddleFormat? reference = null)
+  public Idrak.Abstraction.Generation.IFillInMiddleFormat? Reference { get; }
+  public Idrak.Abstraction.Generation.IPretrainedTokenizer Tokenizer { get; }
+  public override Idrak.Abstraction.Testing.ContractCase RandomCase(System.Random random, bool large)
+  public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Testing.ContractCase> FixedCases()
+  public override string Name { get; }
+  public override void Run(Idrak.Abstraction.Generation.IFillInMiddleFormat implementation, Idrak.Abstraction.Testing.ContractCase case, Idrak.Abstraction.Testing.CaseChecks checks)
 
 public sealed record Idrak.Abstraction.Testing.ImageFamilySample : System.IEquatable<Idrak.Abstraction.Testing.ImageFamilySample>
   public ImageFamilySample(string Path, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Data.ImageData>? Images = null, System.Collections.Generic.IReadOnlyList<float[]>? Expected = null, float Tolerance = 0.0001f, string? Error = null)

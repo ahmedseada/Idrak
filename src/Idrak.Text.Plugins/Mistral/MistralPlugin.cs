@@ -11,7 +11,8 @@ namespace Idrak.Text.Plugins.Mistral;
 /// The Mistral family: Hugging Face's <c>MistralForCausalLM</c> and <c>MixtralForCausalLM</c> (config.json's
 /// "architectures") in <see cref="PretrainedArchitectures"/> (<see cref="MistralArchitectures"/>), the tekken GGUF
 /// pre-tokenizer in <see cref="GgufPreTokenizers"/>, and Mistral's tool-call format "mistral" (<c>[TOOL_CALLS]</c>) in
-/// <see cref="ToolCallFormats"/>. Its GGUF files are llama.cpp's "llama", so it registers <see cref="LlamaPlugin"/> when
+/// <see cref="ToolCallFormats"/>, and Codestral's fill-in-the-middle format "mistral" in <see cref="FillInMiddleFormats"/>
+/// (<see cref="FillInMiddle"/>). Its GGUF files are llama.cpp's "llama", so it registers <see cref="LlamaPlugin"/> when
 /// that is missing (and takes it back only then).
 /// </summary>
 public static class MistralPlugin
@@ -28,6 +29,18 @@ public static class MistralPlugin
     /// <summary>Mistral's tool-call format in <see cref="ToolCallFormats"/>: "mistral".</summary>
     public const string ToolCallFormat = "mistral";
 
+    /// <summary>Mistral's fill-in-the-middle format in <see cref="FillInMiddleFormats"/>: "mistral".</summary>
+    public const string FillInMiddleFormat = "mistral";
+
+    /// <summary>
+    /// Mistral's fill-in-the-middle format (Codestral), as mistral-common's <c>encode_fim</c> lays it out: suffix first and
+    /// no middle token, <c>&lt;s&gt;[SUFFIX]suffix[PREFIX]prefix</c>, so the model continues the prefix; ending on
+    /// <c>&lt;/s&gt;</c>. Mistral writes no repository files (<see cref="IFillInMiddlePrompt.Snippets"/> is 0).
+    /// </summary>
+    public static FillInMiddleLayout FillInMiddle { get; } = FillInMiddleLayout.SuffixPrefixMiddle(FillInMiddleFormat,
+        "Mistral's (Codestral's) <s>[SUFFIX] suffix [PREFIX] prefix, suffix first",
+        new FillInMiddleTokens("[PREFIX]", "[SUFFIX]", null) { Begin = "<s>", Stop = ["</s>"] });
+
     /// <summary>The architecture names the plug-in registers in <see cref="PretrainedArchitectures"/>, in order.</summary>
     public static IReadOnlyList<string> Architectures { get; } = [MistralForCausalLM, MixtralForCausalLM];
 
@@ -43,7 +56,7 @@ public static class MistralPlugin
     /// <summary>Unregisters the family, leaving the registries as <see cref="Register"/> found them.</summary>
     public static void Unregister() => IdrakPlugins.Unregister(Plugin);
 
-    // Llama's GGUF mapping when missing, the two architectures, the pre-tokenizer and the tool-call format.
+    // Llama's GGUF mapping when missing, the two architectures, the pre-tokenizer, the tool-call format and the fill-in-the-middle format.
     private sealed class MistralRegistration() : IdrakPlugin("mistral")
     {
         protected override void RegisterParts()
@@ -54,6 +67,7 @@ public static class MistralPlugin
             Part(() => GgufPreTokenizers.Register(PreTokenizer, MistralArchitectures.TekkenPattern), () => GgufPreTokenizers.Unregister(PreTokenizer));
             Part(() => ToolCallFormats.Register(new MistralToolCallFormat()),
                 () => ToolCallFormats.Unregister(ToolCallFormat));
+            Part(() => FillInMiddleFormats.Register(FillInMiddle), () => FillInMiddleFormats.Unregister(FillInMiddleFormat));
         }
     }
 }

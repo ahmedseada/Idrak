@@ -12,7 +12,7 @@ namespace Idrak.Text.Plugins.Gemma;
 /// images (<c>Gemma3ForConditionalGeneration</c>, in each of its checkpoints' namings), registered in
 /// <see cref="PretrainedArchitectures"/> (<see cref="GemmaArchitectures"/>), and llama.cpp's "gemma", "gemma2" and "gemma3"
 /// in <see cref="GgufArchitectures"/> (<see cref="GemmaGguf"/>), so Idrak's <c>PretrainedModel.Load</c> and <c>GgufModel</c>
-/// read them. The vision part of Gemma 3 with images is Idrak.Vision.Plugins' (its Gemma 3 vision plug-in registers this one
+/// read them; and CodeGemma's fill-in-the-middle format "gemma" in <see cref="FillInMiddleFormats"/> (<see cref="FillInMiddle"/>). The vision part of Gemma 3 with images is Idrak.Vision.Plugins' (its Gemma 3 vision plug-in registers this one
 /// when it is missing); without it, such a checkpoint is refused naming the vision family.
 /// </summary>
 public static class GemmaPlugin
@@ -35,6 +35,25 @@ public static class GemmaPlugin
     /// <summary>llama.cpp's architecture names the plug-in registers in <see cref="GgufArchitectures"/>, in order: "gemma", "gemma2", "gemma3".</summary>
     public static IReadOnlyList<string> GgufNames { get; } = ["gemma", "gemma2", "gemma3"];
 
+    /// <summary>CodeGemma's fill-in-the-middle format in <see cref="FillInMiddleFormats"/>: "gemma".</summary>
+    public const string FillInMiddleFormat = "gemma";
+
+    /// <summary>
+    /// CodeGemma's fill-in-the-middle format (Hugging Face's CodeGemma post):
+    /// <c>&lt;bos&gt;&lt;|fim_prefix|&gt;prefix&lt;|fim_suffix|&gt;suffix&lt;|fim_middle|&gt;</c> (its tokenizer adds the
+    /// <c>&lt;bos&gt;</c>; Idrak's adds none, so the format writes it), other files each after a
+    /// <c>&lt;|file_separator|&gt;</c> and its path, ending on the post's terminators (the three FIM tokens,
+    /// <c>&lt;|file_separator|&gt;</c> and <c>&lt;eos&gt;</c>).
+    /// </summary>
+    public static FillInMiddleLayout FillInMiddle { get; } = FillInMiddleLayout.PrefixSuffixMiddle(FillInMiddleFormat,
+        "CodeGemma's <|fim_prefix|> prefix <|fim_suffix|> suffix <|fim_middle|>, with <|file_separator|> files before it",
+        new FillInMiddleTokens("<|fim_prefix|>", "<|fim_suffix|>", "<|fim_middle|>")
+        {
+            Begin = "<bos>",
+            FileSeparator = "<|file_separator|>",
+            Stop = ["<|fim_prefix|>", "<|fim_middle|>", "<|fim_suffix|>", "<|file_separator|>", "<eos>"],
+        });
+
     /// <summary>The plug-in, as <see cref="IdrakPlugins"/> records it ("gemma"; listed in <see cref="TextPlugins.All"/>).</summary>
     public static IIdrakPlugin Plugin { get; } = new GemmaRegistration();
 
@@ -47,7 +66,7 @@ public static class GemmaPlugin
     /// <summary>Unregisters the family, leaving <see cref="PretrainedArchitectures"/> and <see cref="GgufArchitectures"/> as <see cref="Register"/> found them.</summary>
     public static void Unregister() => IdrakPlugins.Unregister(Plugin);
 
-    // The family under each architecture name, then each GGUF name, one part each.
+    // The family under each architecture name, then each GGUF name, one part each, then the fill-in-the-middle format.
     private sealed class GemmaRegistration() : IdrakPlugin("gemma")
     {
         protected override void RegisterParts()
@@ -60,6 +79,7 @@ public static class GemmaPlugin
             Part(() => GgufArchitectures.Register(GgufNames[0], GemmaGguf.Gemma()), () => GgufArchitectures.Unregister(GgufNames[0]));
             Part(() => GgufArchitectures.Register(GgufNames[1], GemmaGguf.Gemma2()), () => GgufArchitectures.Unregister(GgufNames[1]));
             Part(() => GgufArchitectures.Register(GgufNames[2], GemmaGguf.Gemma3()), () => GgufArchitectures.Unregister(GgufNames[2]));
+            Part(() => FillInMiddleFormats.Register(FillInMiddle), () => FillInMiddleFormats.Unregister(FillInMiddleFormat));
         }
     }
 }

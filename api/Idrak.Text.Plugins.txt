@@ -19,8 +19,10 @@ public static class Idrak.Text.Plugins.CSharp.CSharpLanguagePlugin
   public static void Unregister()
 
 public static class Idrak.Text.Plugins.DeepSeek.DeepSeekPlugin
+  public const string FillInMiddleFormat = "deepseek"
   public const string PreTokenizer = "deepseek-r1-qwen"
   public const string ToolCallFormat = "deepseek"
+  public static Idrak.Abstraction.Generation.FillInMiddleLayout FillInMiddle { get; }
   public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
   public static bool IsRegistered { get; }
   public static void Register()
@@ -42,10 +44,12 @@ public static class Idrak.Text.Plugins.Gemma.GemmaGguf
   public static string? TensorName(string name)
 
 public static class Idrak.Text.Plugins.Gemma.GemmaPlugin
+  public const string FillInMiddleFormat = "gemma"
   public const string Gemma2ForCausalLM = "Gemma2ForCausalLM"
   public const string Gemma3ForCausalLM = "Gemma3ForCausalLM"
   public const string Gemma3ForConditionalGeneration = "Gemma3ForConditionalGeneration"
   public const string GemmaForCausalLM = "GemmaForCausalLM"
+  public static Idrak.Abstraction.Generation.FillInMiddleLayout FillInMiddle { get; }
   public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
   public static System.Collections.Generic.IReadOnlyList<string> Architectures { get; }
   public static System.Collections.Generic.IReadOnlyList<string> GgufNames { get; }
@@ -91,10 +95,12 @@ public static class Idrak.Text.Plugins.Mistral.MistralArchitectures
   public static string? MixtralTensorName(string name)
 
 public static class Idrak.Text.Plugins.Mistral.MistralPlugin
+  public const string FillInMiddleFormat = "mistral"
   public const string MistralForCausalLM = "MistralForCausalLM"
   public const string MixtralForCausalLM = "MixtralForCausalLM"
   public const string PreTokenizer = "tekken"
   public const string ToolCallFormat = "mistral"
+  public static Idrak.Abstraction.Generation.FillInMiddleLayout FillInMiddle { get; }
   public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
   public static System.Collections.Generic.IReadOnlyList<string> Architectures { get; }
   public static bool IsRegistered { get; }
@@ -119,11 +125,13 @@ public static class Idrak.Text.Plugins.Qwen.QwenArchitectures
   public static string? MoeTensorName(string name)
 
 public static class Idrak.Text.Plugins.Qwen.QwenPlugin
+  public const string FillInMiddleFormat = "qwen"
   public const string Qwen2ForCausalLM = "Qwen2ForCausalLM"
   public const string Qwen2MoeForCausalLM = "Qwen2MoeForCausalLM"
   public const string Qwen3ForCausalLM = "Qwen3ForCausalLM"
   public const string Qwen3MoeForCausalLM = "Qwen3MoeForCausalLM"
   public const string ToolCallFormat = "qwen3-coder"
+  public static Idrak.Abstraction.Generation.FillInMiddleLayout FillInMiddle { get; }
   public static Idrak.Abstraction.Plugins.IIdrakPlugin Plugin { get; }
   public static System.Collections.Generic.IReadOnlyList<string> Architectures { get; }
   public static System.Collections.Generic.IReadOnlyList<string> PreTokenizers { get; }

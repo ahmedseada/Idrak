@@ -157,6 +157,31 @@ QwenPlugin.Register();
 using var model = PretrainedModel.Load(folder);              // or GgufModel.Prepare("model.gguf") first
 ```
 
+### Fill-in-the-middle formats
+
+Four families register their fill-in-the-middle format in `FillInMiddleFormats`, each on the library's
+`FillInMiddleLayout` with the tokens of its own tokenizer; a model's format is detected from its tokenizer
+(`FillInMiddleFormats.Detect`), and a tokenizer none of them matches has none (completion falls back to the prefix alone,
+said so by the caller):
+
+| Format | Family | Layout | Repository files |
+|---|---|---|---|
+| `qwen` | Qwen2.5-Coder, Qwen3-Coder | `<\|fim_prefix\|>prefix<\|fim_suffix\|>suffix<\|fim_middle\|>` | `<\|repo_name\|>` and `<\|file_sep\|>path` before it |
+| `deepseek` | DeepSeek-Coder | `<｜begin▁of▁sentence｜><｜fim▁begin｜>prefix<｜fim▁hole｜>suffix<｜fim▁end｜>` | `#path` lines at the start of the prefix |
+| `gemma` | CodeGemma | `<bos><\|fim_prefix\|>prefix<\|fim_suffix\|>suffix<\|fim_middle\|>` | `<\|file_separator\|>path` before it |
+| `mistral` | Codestral | `<s>[SUFFIX]suffix[PREFIX]prefix` (suffix first, no middle token) | none |
+
+CodeLlama (Llama's family) is not registered: Meta's infilling feeds `▁<PRE>`, `▁<SUF>` and `▁<MID>` by id with the
+suffix encoded without SentencePiece's leading space, which a text prompt does not express; an app that has checked its
+tokenizer registers its own `FillInMiddleLayout`.
+
+```csharp
+var tokenizer = (IPretrainedTokenizer)model.Tokenizer!;
+var format = FillInMiddleFormats.For(tokenizer);              // "not registered" when the model's family has none
+var prompt = format.Create(new FillInMiddleContext(tokenizer, before, after));
+await foreach (var chunk in generator.StreamAsync(prompt.Text, FillInMiddleFormats.Options(prompt, options), token)) { … }
+```
+
 ## Coding languages
 
 The library's coding agent and tools (`CodingAgent`, `CodingTools`, Idrak.Text) name no programming language: they
