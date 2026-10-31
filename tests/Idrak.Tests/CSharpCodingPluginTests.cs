@@ -22,7 +22,7 @@ internal abstract partial class DesktopTests : Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] CSharpCodingGroup =
     [
-        ("plugins: csharp: CSharpCodingPlugin is the plug-in \"csharp\" of ReinforcementPlugins.All; Register twice registers the csharp environment and its two rewards once, and the coding plug-in and the C# language when missing; Unregister takes back only what it registered (coding stays as found); the rewards pass the reward suite and read the TRX results and the build's logs", d => { if (d == Device.Cpu) CSharpPluginRegisters(); }),
+        ("plugins: csharp: CSharpCodingPlugin is the plug-in \"csharp-coding\" of ReinforcementPlugins.All; Register twice registers the csharp environment and its two rewards once, and the coding plug-in and the C# language when missing; Unregister takes back only what it registered (coding stays as found); the rewards pass the reward suite and read the TRX results and the build's logs", d => { if (d == Device.Cpu) CSharpPluginRegisters(); }),
         ("plugins: csharp: on a C# solution (a library, an xunit test project): a task with no commands gets dotnet's defaults; a partly right answer gets the share of tests it passes; a build with errors gets csharp-build's penalty per error; edits to the test project and the build's shared files are refused when asked; two episodes in parallel share the package folder and leave no build nodes running", d => { if (d == Device.Cpu) CSharpEpisodes(); }),
     ];
 
@@ -140,8 +140,8 @@ internal abstract partial class DesktopTests : Tests
     private static void CSharpPluginRegisters()
     {
         var plugin = CSharpCodingPlugin.Plugin;
-        Check(plugin.Name == "csharp" && ReinforcementPlugins.All.Contains(plugin) && plugin.GetType().Namespace == "Idrak.Reinforcement.Plugins.CSharp",
-            "the plug-in \"csharp\" of ReinforcementPlugins.All, in Idrak.Reinforcement.Plugins.CSharp");
+        Check(plugin.Name == "csharp-coding" && ReinforcementPlugins.All.Contains(plugin) && plugin.GetType().Namespace == "Idrak.Reinforcement.Plugins.CSharp",
+            "the plug-in \"csharp-coding\" (not a bare language name another package may take) of ReinforcementPlugins.All, in Idrak.Reinforcement.Plugins.CSharp");
         bool codingWas = CodingPlugin.IsRegistered, csharpWas = CSharpCodingPlugin.IsRegistered, languageWas = CSharpLanguagePlugin.IsRegistered;
         string State() => $"{string.Join(",", EnvironmentKinds.Names)} | {string.Join(",", RewardFunctions.Names)} | {string.Join(",", CodingLanguages.Names)} | {string.Join(",", IdrakPlugins.Names)}";
         try

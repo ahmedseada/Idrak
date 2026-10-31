@@ -525,7 +525,7 @@ internal abstract partial class Tests
         Check(registrations is not null && typeof(ILibraryRegistrations).IsAssignableFrom(registrations),
             "Idrak.Reinforcement names its ILibraryRegistrations with the LibraryRegistrations attribute, which LibraryDefaults reads");
         Check(Idrak.Reinforcement.Plugins.ReinforcementPlugins.Package.Name == "Idrak.Reinforcement.Plugins"
-              && Idrak.Reinforcement.Plugins.ReinforcementPlugins.All.Select(p => p.Name).SequenceEqual(["coding", "csharp", "classic"]),
-            "the plug-in package's families: coding (R4), csharp (R4b), classic (R6)");
+              && Idrak.Reinforcement.Plugins.ReinforcementPlugins.All.Select(p => p.Name).SequenceEqual(["coding", "csharp-coding", "classic"]),
+            "the plug-in package's families: coding (R4), csharp-coding (R4b), classic (R6)");
     }
 }

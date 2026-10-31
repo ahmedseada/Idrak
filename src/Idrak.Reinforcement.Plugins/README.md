@@ -26,7 +26,7 @@ ReinforcementPlugins.RegisterAll();      // every family of the package; calling
 | Namespace | Plug-in | Registers | Read more |
 |---|---|---|---|
 | `Idrak.Reinforcement.Plugins.Coding` | `CodingPlugin` ("coding") | `EnvironmentKinds`: `coding`; `RewardFunctions`: `tests-passed`, `verify-fraction`, `rounds`, `tool-errors`; `CommandSandboxes`: `container` | `CodingEnvironmentKind`, `CodingVerifier` |
-| `Idrak.Reinforcement.Plugins.CSharp` | `CSharpCodingPlugin` ("csharp"; requires "coding" and Idrak.Text.Plugins' "csharp-language") | `EnvironmentKinds`: `csharp`; `RewardFunctions`: `csharp-tests`, `csharp-build` | `CSharpEnvironmentVariant`, `CSharpRewards` |
+| `Idrak.Reinforcement.Plugins.CSharp` | `CSharpCodingPlugin` ("csharp-coding"; requires "coding" and Idrak.Text.Plugins' "csharp-language") | `EnvironmentKinds`: `csharp`; `RewardFunctions`: `csharp-tests`, `csharp-build` | `CSharpEnvironmentVariant`, `CSharpRewards` |
 | `Idrak.Reinforcement.Plugins.Classic` | `ClassicControlPlugin` ("classic") | `EnvironmentKinds`: `bandit`, `cartpole`, `pendulum`, `mountain-car` | `CartPoleEnvironment`, `PendulumEnvironment`, `MountainCarEnvironment`, `BanditEnvironment` |
 
 **Coding** (`Idrak.Reinforcement.Plugins.Coding`): the coding task layer (`CodingTask` with its `task.json` layout,

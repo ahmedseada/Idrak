@@ -18,7 +18,11 @@ namespace Idrak.Reinforcement.Plugins.CSharp;
 /// </summary>
 public static class CSharpCodingPlugin
 {
-    /// <summary>The plug-in, as <see cref="IdrakPlugins"/> records it ("csharp"; listed in <see cref="ReinforcementPlugins.All"/>).</summary>
+    /// <summary>
+    /// The plug-in, as <see cref="IdrakPlugins"/> records it ("csharp-coding", beside Idrak.Text.Plugins' "csharp-language"; listed in
+    /// <see cref="ReinforcementPlugins.All"/>). Not "csharp": a plug-in registered under a taken name replaces the earlier one,
+    /// so a bare language name would unregister an app's own C# plug-in (Craft's editor language, loaded beside it).
+    /// </summary>
     public static IIdrakPlugin Plugin { get; } = new CSharpCodingRegistration();
 
     /// <summary>Whether the plug-in is registered.</summary>
@@ -30,7 +34,7 @@ public static class CSharpCodingPlugin
     /// <summary>Unregisters them, leaving <see cref="EnvironmentKinds"/>, <see cref="RewardFunctions"/> and the plug-ins it needs as <see cref="Register"/> found them.</summary>
     public static void Unregister() => IdrakPlugins.Unregister(Plugin);
 
-    private sealed class CSharpCodingRegistration() : IdrakPlugin("csharp")
+    private sealed class CSharpCodingRegistration() : IdrakPlugin("csharp-coding")
     {
         protected override void RegisterParts()
         {
