@@ -30,7 +30,10 @@ public sealed record Idrak.Mcp.Abstractions.McpTransportRequest : System.IEquata
   public System.IO.Stream? Output { get; init; }
   public System.TimeSpan SessionIdleTimeout { get; init; }
   public bool AllowRemote { get; init; }
+  public bool ReplaceIdleSessions { get; init; }
   public bool RequireToken { get; init; }
+  public const int DefaultMaxSessions = 1024
+  public int MaxSessions { get; init; }
   public long MaxRequestBytes { get; init; }
   public required ModelContextProtocol.Server.McpServerOptions Server { get; init; }
   public string Path { get; init; }
@@ -57,10 +60,14 @@ public sealed record Idrak.Mcp.McpHostOptions : System.IEquatable<Idrak.Mcp.McpH
   public System.IO.Stream? Output { get; init; }
   public System.TimeSpan SessionIdleTimeout { get; init; }
   public bool AllowRemote { get; init; }
+  public bool ReplaceIdleSessions { get; init; }
   public bool RequireToken { get; init; }
   public const string AddressVariable = "IDRAK_MCP_ADDRESS"
+  public const string MaxSessionsVariable = "IDRAK_MCP_MAX_SESSIONS"
   public const string NoToken = "none"
+  public const string ReplaceIdleVariable = "IDRAK_MCP_REPLACE_IDLE"
   public const string TokenVariable = "IDRAK_MCP_TOKEN"
+  public int MaxSessions { get; init; }
   public long MaxRequestBytes { get; init; }
   public static Idrak.Mcp.McpHostOptions FromEnvironment()
   public string Path { get; init; }
@@ -84,6 +91,7 @@ public static class Idrak.Mcp.McpTools
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.Tool> ModelTools(Idrak.Abstraction.Serving.IModelCatalog models, System.Func<string, Idrak.Abstraction.Generation.GenerationOptions?>? defaults)
   public static System.Collections.Generic.IReadOnlyList<ModelContextProtocol.Server.McpServerTool> ServerTools(Idrak.Abstraction.Generation.IToolRegistry registry)
   public static System.Collections.Generic.IReadOnlyList<ModelContextProtocol.Server.McpServerTool> ServerTools(Idrak.Abstraction.Serving.IModelCatalog models)
+  public static System.Threading.Tasks.Task<Idrak.Mcp.McpToolSource> ConnectAsync(ModelContextProtocol.Client.IClientTransport transport, ModelContextProtocol.Client.McpClientOptions? options, System.Threading.CancellationToken cancellationToken = default)
   public static System.Threading.Tasks.Task<Idrak.Mcp.McpToolSource> ConnectAsync(ModelContextProtocol.Client.IClientTransport transport, System.Threading.CancellationToken cancellationToken = default)
   public static System.Threading.Tasks.Task<Idrak.Mcp.McpToolSource> ConnectHttpAsync(System.Uri endpoint, System.Threading.CancellationToken cancellationToken = default)
   public static System.Threading.Tasks.Task<Idrak.Mcp.McpToolSource> ConnectHttpAsync(System.Uri endpoint, string? bearerToken, System.Threading.CancellationToken cancellationToken = default)

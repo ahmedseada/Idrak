@@ -2213,6 +2213,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public void OnKernelsLoaded(in Idrak.Abstraction.Diagnostics.KernelsLoaded e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
+  public void OnMcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
@@ -2259,6 +2260,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstract
   public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public void OnKernelsLoaded(in Idrak.Abstraction.Diagnostics.KernelsLoaded e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
+  public void OnMcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
@@ -2408,6 +2410,7 @@ public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public (default) void OnKernelsLoaded(in Idrak.Abstraction.Diagnostics.KernelsLoaded e)
   public (default) void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
+  public (default) void OnMcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public (default) void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public (default) void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public (default) void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
@@ -2476,6 +2479,7 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public void OnInferenceStage(in Idrak.Abstraction.Diagnostics.InferenceStage e)
   public void OnKernelsLoaded(in Idrak.Abstraction.Diagnostics.KernelsLoaded e)
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
+  public void OnMcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
@@ -2509,6 +2513,34 @@ public readonly record struct Idrak.Abstraction.Diagnostics.LayerForward : Syste
   public int[] OutputShape { get; init; }
   public string Layer { get; init; }
   public string LayerType { get; init; }
+
+public readonly record struct Idrak.Abstraction.Diagnostics.McpEvent : System.IEquatable<Idrak.Abstraction.Diagnostics.McpEvent>
+  public Idrak.Abstraction.Diagnostics.McpEventKind Kind { get; init; }
+  public McpEvent(Idrak.Abstraction.Diagnostics.McpEventKind Kind, string Transport, string? Session, string? Method, string? Tool, int Status, long BytesIn, long BytesOut, System.TimeSpan Duration, string? Address, string? Client, string? Reason)
+  public System.TimeSpan Duration { get; init; }
+  public int Status { get; init; }
+  public long BytesIn { get; init; }
+  public long BytesOut { get; init; }
+  public string Describe()
+  public string Transport { get; init; }
+  public string? Address { get; init; }
+  public string? Client { get; init; }
+  public string? Method { get; init; }
+  public string? Reason { get; init; }
+  public string? Session { get; init; }
+  public string? Tool { get; init; }
+
+public enum Idrak.Abstraction.Diagnostics.McpEventKind : int
+  CancelSent = 9
+  Refused = 8
+  RequestAnswered = 3
+  RequestReceived = 2
+  SessionClosed = 1
+  SessionOpened = 0
+  ToolCallCancelled = 6
+  ToolCallFailed = 7
+  ToolCallFinished = 5
+  ToolCallStarted = 4
 
 public readonly record struct Idrak.Abstraction.Diagnostics.MeasuredChoicesShared : System.IEquatable<Idrak.Abstraction.Diagnostics.MeasuredChoicesShared>
   public MeasuredChoicesShared(int Rank, string Device, bool Taken, int Choices, string Detail)
@@ -2804,6 +2836,7 @@ public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static void GraphRecordingFailed(in Idrak.Abstraction.Diagnostics.GraphRecordingFailed e)
   public static void InferenceStage(Idrak.Abstraction.Diagnostics.InferenceStageKind stage, Idrak.Abstraction.Device? device, long start, long count = 0, long bytes = 0, int rows = 1, int pieces = 1, int pieceSize = 0)
   public static void KernelsLoaded(in Idrak.Abstraction.Diagnostics.KernelsLoaded e)
+  public static void Mcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public static void PipelineStep(in Idrak.Abstraction.Diagnostics.PipelineStepped e)
   public static void RankState(in Idrak.Abstraction.Diagnostics.RankStateChanged e)
   public static void Suggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
@@ -2826,13 +2859,14 @@ public static class Idrak.Abstraction.Diagnostics.TelemetryJson
   public static void Write(System.Text.Json.Utf8JsonWriter w, Idrak.Abstraction.Diagnostics.TelemetryRecord record)
 
 [Flags] public enum Idrak.Abstraction.Diagnostics.TelemetryLevel : int
-  All = 8191
+  All = 16383
   Batches = 2
   Devices = 256
   Engine = 128
   Gradients = 4
   Inference = 32
   Layers = 8
+  Mcp = 8192
   Network = 2048
   None = 0
   Operations = 16

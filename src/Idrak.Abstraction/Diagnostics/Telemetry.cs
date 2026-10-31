@@ -80,8 +80,15 @@ public enum TelemetryLevel
     /// </summary>
     Stages = 1 << 12,
 
+    /// <summary>
+    /// The Model Context Protocol (Idrak.Mcp, <see cref="McpEvent"/>): sessions opened and closed, requests received and
+    /// answered (method, tool, HTTP status, bytes, time), server tool calls started, finished, cancelled or failed,
+    /// requests refused (401, 403, 404, 413, 503, ...) with their reason, and the cancellations a client sends.
+    /// </summary>
+    Mcp = 1 << 13,
+
     /// <summary>Everything.</summary>
-    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Devices | Overrides | Suggestions | Network | Stages,
+    All = Training | Batches | Gradients | Layers | Operations | Inference | Tools | Engine | Devices | Overrides | Suggestions | Network | Stages | Mcp,
 }
 
 /// <summary>
@@ -231,6 +238,11 @@ public interface ITelemetryHook
 
     /// <summary>A calibration corrected a link profile (<see cref="TelemetryLevel.Network"/>).</summary>
     void OnCalibrated(in ProfileCalibrated e)
+    {
+    }
+
+    /// <summary>An MCP server or client reported a session, request, tool call, refusal or cancellation (<see cref="TelemetryLevel.Mcp"/>).</summary>
+    void OnMcp(in McpEvent e)
     {
     }
 }
@@ -526,6 +538,18 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Network) != 0)
             {
                 h.OnCalibrated(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports an MCP event, to the hooks listening at <see cref="TelemetryLevel.Mcp"/>; check <see cref="IsEnabled"/> first.</summary>
+    public static void Mcp(in McpEvent e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Mcp) != 0)
+            {
+                h.OnMcp(in e);
             }
         }
     }

@@ -4,6 +4,7 @@
 using System.Buffers;
 using System.Buffers.Text;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
@@ -48,6 +49,7 @@ internal sealed class HttpServerTransportKind : IMcpServerTransport
         ArgumentNullException.ThrowIfNull(request.Server);
         CheckKeys(this, request);
         cancellationToken.ThrowIfCancellationRequested();
+        McpTelemetry.Attach(request.Server);
         var endPoint = ParseAddress(request.Address, request.AllowRemote);
         if (request.Path is not { Length: > 0 } path || path[0] != '/' || path.AsSpan().ContainsAny(" ?#\r\n"))
         {
@@ -162,6 +164,9 @@ internal sealed class HttpMcpListener : IMcpListener
 
     private static readonly JsonTypeInfo<JsonRpcMessage> MessageType = (JsonTypeInfo<JsonRpcMessage>)McpJsonUtilities.DefaultOptions.GetTypeInfo(typeof(JsonRpcMessage));
 
+    private static readonly JsonTypeInfo<CancelledNotificationParams> CancelType =
+        (JsonTypeInfo<CancelledNotificationParams>)McpJsonUtilities.DefaultOptions.GetTypeInfo(typeof(CancelledNotificationParams));
+
     private readonly Socket _socket;
     private readonly McpTransportRequest _request;
     private readonly byte[] _path;
@@ -175,6 +180,11 @@ internal sealed class HttpMcpListener : IMcpListener
     private readonly Task _accepting;
     private string? _lastVersion;                    // the last Mcp-Protocol-Version read, kept to read it without a new string
     private int _stopping;
+    private int _open;                               // sessions open (and being opened), against MaxSessions
+
+    // The sessionless requests in flight by id (2026-07-28 and later: no session to send a notifications/cancelled to),
+    // so a cancellation finds its call; an id two clients use at once is ambiguous, and cancelled by its connection only.
+    private readonly Dictionary<RequestId, (CancellationTokenSource? Abort, int Count)> _sessionless = [];
 
     public HttpMcpListener(Socket socket, McpTransportRequest request, string path, string? token)
     {
@@ -247,7 +257,7 @@ internal sealed class HttpMcpListener : IMcpListener
                     {
                         if (buffer.Length >= MaxHead)
                         {
-                            await WriteSimpleAsync(stream, 431, "Request Header Fields Too Large"u8, null, close: true).ConfigureAwait(false);
+                            await RefuseAsync(stream, default, 431, "Request Header Fields Too Large"u8).ConfigureAwait(false);
                             return;
                         }
 
@@ -266,7 +276,7 @@ internal sealed class HttpMcpListener : IMcpListener
 
                 if (!Head.TryParse(buffer.AsSpan(0, headEnd + 4), out var head))
                 {
-                    await WriteSimpleAsync(stream, 400, "Bad Request"u8, null, close: true).ConfigureAwait(false);
+                    await RefuseAsync(stream, default, 400, "Bad Request: the request line or a header cannot be read"u8).ConfigureAwait(false);
                     return;
                 }
 
@@ -312,73 +322,132 @@ internal sealed class HttpMcpListener : IMcpListener
     // connection (into the buffer after what is left) when there is one.
     private async Task<(int Filled, bool Close, Task<int>? Pending)> AnswerAsync(NetworkStream stream, Head head, byte[] buffer, int consumed, int filled)
     {
+        long start = McpTelemetry.Start();
         var request = buffer.AsMemory(0, consumed);
         bool close = head.Close;
         if (!head.PathIs(request.Span, _path))
         {
-            await WriteSimpleAsync(stream, 404, "Not Found"u8, null, close: true).ConfigureAwait(false);
+            await RefuseAsync(stream, head, 404, "Not Found"u8).ConfigureAwait(false);
             return (0, true, null);
         }
 
         if (!OriginAllowed(head, request.Span))
         {
-            await WriteSimpleAsync(stream, 403, "Forbidden: the request comes from a page off this machine"u8, null, close: true).ConfigureAwait(false);
+            await RefuseAsync(stream, head, 403, "Forbidden: the request comes from a page off this machine"u8).ConfigureAwait(false);
             return (0, true, null);
         }
 
         if (_token is not null && !Authorized(head, request.Span))
         {
-            await WriteSimpleAsync(stream, 401, "Unauthorized: send Authorization: Bearer TOKEN"u8, null, close: true, unauthorized: true).ConfigureAwait(false);
+            await RefuseAsync(stream, head, 401, "Unauthorized: send Authorization: Bearer TOKEN"u8, extra: "WWW-Authenticate: Bearer\r\n"u8).ConfigureAwait(false);
             return (0, true, null);
+        }
+
+        // The protocol revision is read now, while the head is in the buffer (reading the body moves what follows it).
+        string? version = head.ProtocolVersion.Length > 0 ? ProtocolVersion(request.Span[head.ProtocolVersion.Range]) : null;
+        bool sessionless = head.ProtocolVersion.Length > 0 && Sessionless(request.Span[head.ProtocolVersion.Range]);
+        if (sessionless)
+        {
+            // 2026-07-28 and later: every request stands alone (no Mcp-Session-Id, no initialize, no GET stream, no DELETE).
+            if (head.Method != HttpMethod.Post)
+            {
+                await RefuseAsync(stream, head, 405, "Method Not Allowed: the 2026-07-28 and later protocol revisions have no sessions: POST each request"u8,
+                    extra: "Allow: POST\r\n"u8).ConfigureAwait(false);
+                return (0, true, null);
+            }
+
+            return await PostAsync(stream, head, buffer, consumed, filled, null, version, sessionless: true, start).ConfigureAwait(false);
         }
 
         Session? session = null;
         if (head.SessionId.Length > 0 && !TryFindSession(request.Span[head.SessionId.Range], out session))
         {
-            await WriteSimpleAsync(stream, 404, """{"jsonrpc":"2.0","error":{"code":-32001,"message":"Session not found"},"id":null}"""u8, null, close: true, json: true)
-                .ConfigureAwait(false);
+            await RefuseAsync(stream, head, 404, """{"jsonrpc":"2.0","error":{"code":-32001,"message":"Session not found"},"id":null}"""u8, json: true).ConfigureAwait(false);
             return (0, true, null);
         }
 
         switch (head.Method)
         {
             case HttpMethod.Post:
-                return await PostAsync(stream, head, buffer, consumed, filled, session).ConfigureAwait(false);
+                return await PostAsync(stream, head, buffer, consumed, filled, session, version, sessionless: false, start).ConfigureAwait(false);
             case HttpMethod.Get:
                 if (session is null)
                 {
-                    await WriteSimpleAsync(stream, 400, "Bad Request: GET needs an Mcp-Session-Id"u8, null, close: true).ConfigureAwait(false);
+                    await RefuseAsync(stream, head, 400, "Bad Request: GET needs an Mcp-Session-Id"u8).ConfigureAwait(false);
                     return (0, true, null);
                 }
 
-                await GetAsync(stream, session).ConfigureAwait(false);
+                await GetAsync(stream, session, start).ConfigureAwait(false);
                 return (0, true, null);
             case HttpMethod.Delete:
                 if (session is null)
                 {
-                    await WriteSimpleAsync(stream, 400, "Bad Request: DELETE needs an Mcp-Session-Id"u8, null, close: true).ConfigureAwait(false);
+                    await RefuseAsync(stream, head, 400, "Bad Request: DELETE needs an Mcp-Session-Id"u8).ConfigureAwait(false);
                     return (0, true, null);
                 }
 
-                if (_sessions.TryRemove(session.Id, out _))
-                {
-                    await session.DisposeAsync().ConfigureAwait(false);
-                }
-
+                await CloseSessionAsync(session, "deleted by its client").ConfigureAwait(false);
                 if (head.ContentLength != 0 || head.Chunked)
                 {
                     close = true;                                            // a body nobody reads
                 }
 
-                await WriteSimpleAsync(stream, 200, default, null, close).ConfigureAwait(false);
+                int sent = await WriteSimpleAsync(stream, 200, default, null, close).ConfigureAwait(false);
+                if (start != 0)
+                {
+                    McpTelemetry.Emit(McpEventKind.RequestAnswered, McpServerTransports.Http, session.Id, "DELETE", status: 200, bytesOut: sent, start: start);
+                }
+
                 return (Compact(buffer, consumed, filled), close, null);
             default:
-                await WriteSimpleAsync(stream, 405, "Method Not Allowed"u8, null, close: true).ConfigureAwait(false);
+                await RefuseAsync(stream, head, 405, "Method Not Allowed"u8).ConfigureAwait(false);
                 return (0, true, null);
         }
     }
 
-    private async Task<(int Filled, bool Close, Task<int>? Pending)> PostAsync(NetworkStream stream, Head head, byte[] buffer, int consumed, int filled, Session? session)
+    // A revision without sessions: 2026-07-28 (the one that removed them) or later; revisions are dates, compared as text.
+    private static bool Sessionless(ReadOnlySpan<byte> version) => version.SequenceCompareTo("2026-07-28"u8) >= 0;
+
+    // A refusal: reported (status and reason) when a hook listens, then answered and the connection closed.
+    private Task<int> RefuseAsync(NetworkStream stream, Head head, int status, ReadOnlySpan<byte> body, string? sessionId = null, bool json = false,
+        ReadOnlySpan<byte> extra = default)
+    {
+        if (McpTelemetry.Enabled)
+        {
+            string reason = Encoding.UTF8.GetString(body);
+            if (json && reason.IndexOf("\"message\":\"", StringComparison.Ordinal) is var at and >= 0)
+            {
+                reason = reason[(at + 11)..reason.IndexOf('"', at + 11)];
+            }
+
+            McpTelemetry.Emit(McpEventKind.Refused, McpServerTransports.Http, sessionId, MethodName(head.Method), status: status, address: Remote(stream), reason: reason);
+        }
+
+        return WriteSimpleAsync(stream, status, body, sessionId, close: true, json, extra);
+    }
+
+    private static string MethodName(HttpMethod method) => method switch
+    {
+        HttpMethod.Post => "POST",
+        HttpMethod.Get => "GET",
+        HttpMethod.Delete => "DELETE",
+        _ => "other",
+    };
+
+    private static string? Remote(NetworkStream stream)
+    {
+        try
+        {
+            return stream.Socket.RemoteEndPoint?.ToString();
+        }
+        catch (ObjectDisposedException)
+        {
+            return null;
+        }
+    }
+
+    private async Task<(int Filled, bool Close, Task<int>? Pending)> PostAsync(NetworkStream stream, Head head, byte[] buffer, int consumed, int filled, Session? session,
+        string? version, bool sessionless, long start)
     {
         if (head.ExpectContinue)
         {
@@ -393,8 +462,7 @@ internal sealed class HttpMcpListener : IMcpListener
         {
             if (status != 0)
             {
-                await WriteSimpleAsync(stream, status, status == 413 ? "Request Entity Too Large"u8 : "Bad Request: the body cannot be read"u8, null, close: true)
-                    .ConfigureAwait(false);
+                await RefuseAsync(stream, head, status, status == 413 ? "Request Entity Too Large"u8 : "Bad Request: the body cannot be read"u8, session?.Id).ConfigureAwait(false);
                 return (0, true, null);
             }
 
@@ -418,27 +486,77 @@ internal sealed class HttpMcpListener : IMcpListener
         filled = Compact(buffer, used.Position, filled);
         if (message is null)
         {
+            Refused(stream, head, 400, "Parse error: the body is not a JSON-RPC message", session?.Id);
             await WriteSimpleAsync(stream, 400, """{"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error"},"id":null}"""u8, null, close: head.Close, json: true)
                 .ConfigureAwait(false);
             return (filled, head.Close, null);
         }
 
-        if (session is null)
+        string? method = null, tool = null;
+        if (start != 0)
+        {
+            (method, tool) = (McpTelemetry.MethodOf(message), McpTelemetry.ToolOf(message));
+            McpTelemetry.Emit(McpEventKind.RequestReceived, McpServerTransports.Http, session?.Id, method, tool, bytesIn: length);
+        }
+
+        if (version is not null)
+        {
+            message.Context ??= new JsonRpcMessageContext();
+            message.Context.ProtocolVersion = version;
+        }
+
+        RequestId sessionlessId = default;
+        if (sessionless)
+        {
+            // A notification needs no server: a cancellation finds its call here; any other is accepted and has nothing to do.
+            if (message is JsonRpcNotification notification)
+            {
+                if (notification.Method == NotificationMethods.CancelledNotification)
+                {
+                    CancelSessionless(notification);
+                }
+
+                int accepted = await WriteSimpleAsync(stream, 202, default, null, head.Close).ConfigureAwait(false);
+                if (start != 0)
+                {
+                    McpTelemetry.Emit(McpEventKind.RequestAnswered, McpServerTransports.Http, null, method, tool, 202, length, accepted, start);
+                }
+
+                return (filled, head.Close, null);
+            }
+
+            if (message is not JsonRpcRequest call)
+            {
+                Refused(stream, head, 400, "a sessionless message is a request or a notification", null);
+                await WriteSimpleAsync(stream, 400, """{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request: without a session, only requests and notifications are taken"},"id":null}"""u8,
+                    null, close: head.Close, json: true).ConfigureAwait(false);
+                return (filled, head.Close, null);
+            }
+
+            sessionlessId = call.Id;
+            session = Session.Stateless(_request.Server);
+        }
+        else if (session is null)
         {
             if (message is not JsonRpcRequest { Method: RequestMethods.Initialize })
             {
+                Refused(stream, head, 400, "a session starts with an initialize request", null);
                 await WriteSimpleAsync(stream, 400, """{"jsonrpc":"2.0","error":{"code":-32000,"message":"Bad Request: a session starts with an initialize request; send the Mcp-Session-Id it answered with"},"id":null}"""u8,
                     null, close: head.Close, json: true).ConfigureAwait(false);
                 return (filled, head.Close, null);
             }
 
-            session = StartSession();
-        }
-
-        if (head.ProtocolVersion.Length > 0)
-        {
-            message.Context ??= new JsonRpcMessageContext();
-            message.Context.ProtocolVersion = ProtocolVersion(buffer.AsSpan(head.ProtocolVersion.Range));
+            session = StartSession(start == 0 ? null : McpTelemetry.ClientOf(message), start == 0 ? null : Remote(stream));
+            if (session is null)
+            {
+                int retry = RetryAfterSeconds();
+                string text = string.Create(CultureInfo.InvariantCulture,
+                    $$"""{"jsonrpc":"2.0","error":{"code":-32000,"message":"Service Unavailable: the server holds the most sessions it keeps open ({{_request.MaxSessions}}); retry after {{retry}} s"},"id":null}""");
+                Refused(stream, head, 503, $"the most sessions open ({_request.MaxSessions.ToString(CultureInfo.InvariantCulture)})", null);
+                await WriteSimpleAsync(stream, 503, Encoding.UTF8.GetBytes(text), null, close: head.Close, json: true,
+                    Encoding.ASCII.GetBytes(string.Create(CultureInfo.InvariantCulture, $"Retry-After: {retry}\r\n"))).ConfigureAwait(false);
+                return (filled, head.Close, null);
+            }
         }
 
         // Keep a read open on the connection while the call runs: it ends at once when the client leaves (0 bytes), which
@@ -465,24 +583,34 @@ internal sealed class HttpMcpListener : IMcpListener
             }, abort, CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
 
+        if (sessionless)
+        {
+            TrackSessionless(sessionlessId, abort, add: true);
+        }
+
         Interlocked.Increment(ref session.Active);
-        var response = new ResponseStream(stream, session.Id, head.Close);
+        var response = new ResponseStream(stream, sessionless ? null : session.Id, head.Close);
         bool closeAfter = head.Close;
+        string? failure = null;
         try
         {
-            bool wrote = await session.Transport.HandlePostRequestAsync(message, response, abort.Token).ConfigureAwait(false);
+            bool wrote = sessionless
+                ? await session.Transport.HandlePostRequestAsync(message, response, response.OnFirstMessage, abort.Token).ConfigureAwait(false)
+                : await session.Transport.HandlePostRequestAsync(message, response, abort.Token).ConfigureAwait(false);
             if (wrote || response.Started)
             {
                 await response.CompleteAsync(_stop.Token).ConfigureAwait(false);
             }
             else
             {
-                await WriteSimpleAsync(stream, 202, default, session.Id, head.Close).ConfigureAwait(false);
+                response.Status = 202;
+                response.Sent += await WriteSimpleAsync(stream, 202, default, sessionless ? null : session.Id, head.Close).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (abort.IsCancellationRequested)
         {
             closeAfter = true;
+            failure = "cancelled: the client left or the server stopped";
             if (!_stop.IsCancellationRequested && message is JsonRpcRequest call)
             {
                 await CancelCallAsync(session, call.Id).ConfigureAwait(false);       // the client left: its call stops
@@ -508,9 +636,81 @@ internal sealed class HttpMcpListener : IMcpListener
             response.Release();
             session.Touch();
             Interlocked.Decrement(ref session.Active);
+            if (sessionless)
+            {
+                TrackSessionless(sessionlessId, abort, add: false);
+                await session.DisposeAsync().ConfigureAwait(false);         // a sessionless request's server lives as long as the request
+            }
+
+            if (start != 0)
+            {
+                McpTelemetry.Emit(McpEventKind.RequestAnswered, McpServerTransports.Http, sessionless ? null : session.Id, method, tool, response.Status, length, response.Sent,
+                    start, reason: failure);
+            }
         }
 
         return (offset, closeAfter, probe);
+    }
+
+    // A refusal answered on a connection kept open (a body that does not parse, a request without its session): reported.
+    private static void Refused(NetworkStream stream, Head head, int status, string reason, string? sessionId)
+    {
+        if (McpTelemetry.Enabled)
+        {
+            McpTelemetry.Emit(McpEventKind.Refused, McpServerTransports.Http, sessionId, MethodName(head.Method), status: status, address: Remote(stream), reason: reason);
+        }
+    }
+
+    private void TrackSessionless(RequestId id, CancellationTokenSource abort, bool add)
+    {
+        lock (_sessionless)
+        {
+            var (source, count) = _sessionless.GetValueOrDefault(id);
+            if (add)
+            {
+                _sessionless[id] = (count == 0 ? abort : null, count + 1);
+            }
+            else if (count <= 1)
+            {
+                _sessionless.Remove(id);
+            }
+            else
+            {
+                _sessionless[id] = (ReferenceEquals(source, abort) ? null : source, count - 1);
+            }
+        }
+    }
+
+    // notifications/cancelled without a session: the call of that id stops, when exactly one is in flight.
+    private void CancelSessionless(JsonRpcNotification notification)
+    {
+        CancelledNotificationParams? cancel;
+        try
+        {
+            cancel = notification.Params?.Deserialize(CancelType);
+        }
+        catch (JsonException)
+        {
+            return;
+        }
+
+        CancellationTokenSource? abort = null;
+        if (cancel is not null)
+        {
+            lock (_sessionless)
+            {
+                abort = _sessionless.TryGetValue(cancel.RequestId, out var entry) && entry.Count == 1 ? entry.Abort : null;
+            }
+        }
+
+        try
+        {
+            abort?.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // the call ended first
+        }
     }
 
     // A call whose client left: the server hears a cancellation for it, as if the client had sent one.
@@ -521,8 +721,7 @@ internal sealed class HttpMcpListener : IMcpListener
             var cancel = new JsonRpcNotification
             {
                 Method = NotificationMethods.CancelledNotification,
-                Params = JsonSerializer.SerializeToNode(new CancelledNotificationParams { RequestId = id, Reason = "the client disconnected" },
-                    (JsonTypeInfo<CancelledNotificationParams>)McpJsonUtilities.DefaultOptions.GetTypeInfo(typeof(CancelledNotificationParams))),
+                Params = JsonSerializer.SerializeToNode(new CancelledNotificationParams { RequestId = id, Reason = "the client disconnected" }, CancelType),
             };
             await session.Transport.HandlePostRequestAsync(cancel, Stream.Null, _stop.Token).ConfigureAwait(false);
         }
@@ -532,11 +731,11 @@ internal sealed class HttpMcpListener : IMcpListener
         }
     }
 
-    private async Task GetAsync(NetworkStream stream, Session session)
+    private async Task GetAsync(NetworkStream stream, Session session, long start)
     {
         if (Interlocked.Exchange(ref session.Streaming, 1) == 1)
         {
-            await WriteSimpleAsync(stream, 409, "Conflict: the session's event stream is open already"u8, session.Id, close: true).ConfigureAwait(false);
+            await RefuseAsync(stream, default, 409, "Conflict: the session's event stream is open already"u8, session.Id).ConfigureAwait(false);
             return;
         }
 
@@ -585,6 +784,11 @@ internal sealed class HttpMcpListener : IMcpListener
             }
 
             ArrayPool<byte>.Shared.Return(probeBuffer);
+            if (start != 0)
+            {
+                McpTelemetry.Emit(McpEventKind.RequestAnswered, McpServerTransports.Http, session.Id, "GET", status: 200, bytesOut: response.Sent, start: start,
+                    reason: "the session's event stream");
+            }
         }
     }
 
@@ -751,19 +955,104 @@ internal sealed class HttpMcpListener : IMcpListener
 
     // ------------------------------------------------------------------ sessions
 
-    private Session StartSession()
+    // A new session, unless MaxSessions are open (then null, or the idle one unused the longest closed for it when allowed).
+    private Session? StartSession(string? client, string? address)
     {
+        int max = _request.MaxSessions;
+        if (Interlocked.Increment(ref _open) > max && max > 0 && !(_request.ReplaceIdleSessions && ReplaceIdle()))
+        {
+            Interlocked.Decrement(ref _open);
+            return null;
+        }
+
         string id = HttpServerTransportKind.NewToken(16);
         var transport = new StreamableHttpServerTransport(null) { SessionId = id };
         var server = McpServer.Create(transport, _request.Server);
-        var session = new Session(id, transport, server);
+        var session = new Session(id, transport, server) { Client = client, Address = address };
         _sessions[id] = session;
-        if (_stop.IsCancellationRequested && _sessions.TryRemove(id, out _))
+        if (McpTelemetry.Enabled)
         {
-            _ = session.DisposeAsync().AsTask();
+            McpTelemetry.Emit(McpEventKind.SessionOpened, McpServerTransports.Http, id, address: address, client: client);
+        }
+
+        if (_stop.IsCancellationRequested)
+        {
+            _ = CloseSessionAsync(session, "the server stopped");
         }
 
         return session;
+    }
+
+    // Closes the idle session unused the longest for a new one; false when every session is busy. Only a session this call
+    // removed counts, so two new sessions at the limit never take the place of the same old one.
+    private bool ReplaceIdle()
+    {
+        for (int attempt = 0; attempt < 4; attempt++)
+        {
+            Session? oldest = null;
+            foreach (var (_, session) in _sessions)
+            {
+                if (Volatile.Read(ref session.Active) == 0 && (oldest is null || Volatile.Read(ref session.LastUsed) < Volatile.Read(ref oldest.LastUsed)))
+                {
+                    oldest = session;
+                }
+            }
+
+            if (oldest is null)
+            {
+                return false;
+            }
+
+            if (Remove(oldest, string.Create(CultureInfo.InvariantCulture, $"replaced by a new session: the most open is {_request.MaxSessions}")))
+            {
+                _ = oldest.DisposeAsync().AsTask();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Seconds until the first idle session would close for idleness (1 when none will soon, or idle sessions never close).
+    private int RetryAfterSeconds()
+    {
+        long limit = (long)_request.SessionIdleTimeout.TotalMilliseconds, now = Environment.TickCount64, soonest = long.MaxValue;
+        if (limit > 0)
+        {
+            foreach (var (_, session) in _sessions)
+            {
+                long left = Volatile.Read(ref session.Active) == 0 ? limit - (now - Volatile.Read(ref session.LastUsed)) : limit;
+                soonest = Math.Min(soonest, left);
+            }
+        }
+
+        return soonest == long.MaxValue ? 1 : (int)Math.Clamp((soonest + 999) / 1000, 1, int.MaxValue);
+    }
+
+    // Removes and closes a session (once, whoever asks first): reported with its lifetime and why.
+    private async Task CloseSessionAsync(Session session, string reason)
+    {
+        if (Remove(session, reason))
+        {
+            await session.DisposeAsync().ConfigureAwait(false);
+        }
+    }
+
+    // Takes a session out of the table and its place out of the count (true for the one caller that did), reported.
+    private bool Remove(Session session, string reason)
+    {
+        if (!_sessions.TryRemove(new KeyValuePair<string, Session>(session.Id, session)))
+        {
+            return false;
+        }
+
+        Interlocked.Decrement(ref _open);
+        if (McpTelemetry.Enabled)
+        {
+            McpTelemetry.Emit(McpEventKind.SessionClosed, McpServerTransports.Http, session.Id, start: session.Created, address: session.Address, client: session.Client, reason: reason);
+        }
+
+        return true;
     }
 
     private bool TryFindSession(ReadOnlySpan<byte> id, out Session? session)
@@ -784,9 +1073,9 @@ internal sealed class HttpMcpListener : IMcpListener
         long now = Environment.TickCount64, limit = (long)_request.SessionIdleTimeout.TotalMilliseconds;
         foreach (var (id, session) in _sessions)
         {
-            if (Volatile.Read(ref session.Active) == 0 && now - Volatile.Read(ref session.LastUsed) > limit && _sessions.TryRemove(id, out _))
+            if (Volatile.Read(ref session.Active) == 0 && now - Volatile.Read(ref session.LastUsed) > limit)
             {
-                _ = session.DisposeAsync().AsTask();
+                _ = CloseSessionAsync(session, string.Create(CultureInfo.InvariantCulture, $"idle for more than {_request.SessionIdleTimeout}"));
             }
         }
     }
@@ -834,20 +1123,21 @@ internal sealed class HttpMcpListener : IMcpListener
     // ------------------------------------------------------------------ writing
 
     // A whole answer with a Content-Length: the status, the session id when there is one, and a short body.
-    private Task WriteSimpleAsync(NetworkStream stream, int status, ReadOnlySpan<byte> body, string? sessionId, bool close, bool json = false, bool unauthorized = false)
+    // The bytes sent.
+    private Task<int> WriteSimpleAsync(NetworkStream stream, int status, ReadOnlySpan<byte> body, string? sessionId, bool close, bool json = false, ReadOnlySpan<byte> extra = default)
     {
-        byte[] message = ArrayPool<byte>.Shared.Rent(512 + body.Length);
-        int length = Head.WriteStatus(message, status, body.Length, json ? "application/json"u8 : "text/plain; charset=utf-8"u8, sessionId, close, chunked: false,
-            unauthorized ? "WWW-Authenticate: Bearer\r\n"u8 : default);
+        byte[] message = ArrayPool<byte>.Shared.Rent(512 + extra.Length + body.Length);
+        int length = Head.WriteStatus(message, status, body.Length, json ? "application/json"u8 : "text/plain; charset=utf-8"u8, sessionId, close, chunked: false, extra);
         body.CopyTo(message.AsSpan(length));
         return SendAsync(stream, message, length + body.Length);
     }
 
-    private async Task SendAsync(NetworkStream stream, byte[] message, int length)
+    private async Task<int> SendAsync(NetworkStream stream, byte[] message, int length)
     {
         try
         {
             await stream.WriteAsync(message.AsMemory(0, length), _stop.Token).ConfigureAwait(false);
+            return length;
         }
         finally
         {
@@ -892,12 +1182,9 @@ internal sealed class HttpMcpListener : IMcpListener
 
             _socket.Dispose();
             await _accepting.ConfigureAwait(false);
-            foreach (var id in _sessions.Keys)
+            foreach (var (_, session) in _sessions)
             {
-                if (_sessions.TryRemove(id, out var session))
-                {
-                    await session.DisposeAsync().ConfigureAwait(false);
-                }
+                await CloseSessionAsync(session, "the server stopped").ConfigureAwait(false);
             }
 
             foreach (var (stream, _) in _connections)
@@ -929,7 +1216,8 @@ internal sealed class HttpMcpListener : IMcpListener
 
     public async ValueTask DisposeAsync() => await StopAsync().ConfigureAwait(false);
 
-    // One client's session: the SDK's transport and server, its run, and how it is used.
+    // One client's session: the SDK's transport and server, its run, and how it is used. A sessionless request (2026-07-28
+    // and later) gets one of its own, stateless, for as long as it is answered.
     private sealed class Session(string id, StreamableHttpServerTransport transport, McpServer server) : IAsyncDisposable
     {
         private readonly CancellationTokenSource _stop = new();
@@ -942,9 +1230,21 @@ internal sealed class HttpMcpListener : IMcpListener
 
         public string Id => id;
 
+        public long Created { get; } = Stopwatch.GetTimestamp();
+
+        public string? Client { get; init; }
+
+        public string? Address { get; init; }
+
         public StreamableHttpServerTransport Transport => transport;
 
         public CancellationToken Stopping => _stop.Token;
+
+        public static Session Stateless(McpServerOptions options)
+        {
+            var transport = new StreamableHttpServerTransport(null) { Stateless = true };
+            return new Session("", transport, McpServer.Create(transport, options));
+        }
 
         public void Touch() => Volatile.Write(ref LastUsed, Environment.TickCount64);
 
@@ -1140,9 +1440,10 @@ internal readonly record struct Head(HttpMethod Method, Slice Target, bool Close
             409 => " Conflict\r\n"u8,
             413 => " Content Too Large\r\n"u8,
             431 => " Request Header Fields Too Large\r\n"u8,
+            503 => " Service Unavailable\r\n"u8,
             _ => " Error\r\n"u8,
         });
-        if (status == 405)
+        if (status == 405 && extra.IndexOf("Allow:"u8) < 0)
         {
             Append(into, ref n, "Allow: GET, POST, DELETE\r\n"u8);
         }
@@ -1193,7 +1494,7 @@ internal readonly record struct Head(HttpMethod Method, Slice Target, bool Close
 // The answer to one POST or GET: the SDK writes server-sent events into it. It keeps them in a pooled buffer and sends
 // on a flush, the headers with the first send; an answer never flushed before it ends goes out whole, in one send, with
 // a Content-Length (the usual answer to a quick call), else as chunks.
-internal sealed class ResponseStream(NetworkStream stream, string sessionId, bool close) : Stream
+internal sealed class ResponseStream(NetworkStream stream, string? sessionId, bool close) : Stream
 {
     private const int Reserve = 512;                     // room before the data for the headers and a chunk's size line
 
@@ -1206,6 +1507,27 @@ internal sealed class ResponseStream(NetworkStream stream, string sessionId, boo
 
     /// <summary>Sends each write at once (the GET event stream: events are rare, and wait for nothing).</summary>
     public bool FlushEachWrite { get; init; }
+
+    /// <summary>The status the headers carry (200), until they went out.</summary>
+    public int Status { get; set; } = 200;
+
+    /// <summary>The bytes sent on the connection for this answer, headers included.</summary>
+    public long Sent { get; set; }
+
+    /// <summary>
+    /// The SDK's call before the first message is written (sessionless requests): a JSON-RPC error that comes first sets
+    /// the status as the 2026-07-28 revision maps it (method not found 404; an unsupported or missing protocol version or
+    /// header 400).
+    /// </summary>
+    public ValueTask OnFirstMessage(JsonRpcMessage? first)
+    {
+        if (!Started && first is JsonRpcError { Error: { } error })
+        {
+            Status = error.Code == (int)McpErrorCode.MethodNotFound ? 404 : error.Code is >= -32022 and <= -32020 ? 400 : Status;
+        }
+
+        return default;
+    }
 
     public override bool CanRead => false;
 
@@ -1274,13 +1596,13 @@ internal sealed class ResponseStream(NetworkStream stream, string sessionId, boo
         int headLength = 0;
         if (!Started && final)
         {
-            headLength = Head.WriteStatus(head, 200, _length, "text/event-stream"u8, sessionId, close, chunked: false, default);
+            headLength = Head.WriteStatus(head, Status, _length, "text/event-stream"u8, sessionId, close, chunked: false, default);
         }
         else
         {
             if (!Started)
             {
-                headLength = Head.WriteStatus(head, 200, 0, "text/event-stream"u8, sessionId, close, chunked: true, default);
+                headLength = Head.WriteStatus(head, Status, 0, "text/event-stream"u8, sessionId, close, chunked: true, default);
             }
 
             if (_length > 0)
@@ -1306,6 +1628,7 @@ internal sealed class ResponseStream(NetworkStream stream, string sessionId, boo
         _length = 0;
         if (end > start)
         {
+            Sent += end - start;
             await stream.WriteAsync(held.AsMemory(start, end - start), cancellationToken).ConfigureAwait(false);
         }
     }

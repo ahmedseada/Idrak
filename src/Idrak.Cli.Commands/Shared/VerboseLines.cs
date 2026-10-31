@@ -13,7 +13,8 @@ namespace Idrak.Cli.Shared;
 /// measured, each kernel set a device loaded (from the kernel cache or made first, with its time and size), the first
 /// host fallback of each operation, each device failure (a kernel refused, a launch or runtime call
 /// that failed, kernels a profile cannot time: each different one once), and each graph recording that failed (with its
-/// reason). On the error output, over the progress line (which redraws under it); the main output and <c>--json</c> stay
+/// reason), and the Model Context Protocol served and called (each session, request with its method, tool, status, bytes
+/// and time, tool call, refusal, and cancellation sent). On the error output, over the progress line (which redraws under it); the main output and <c>--json</c> stay
 /// as they are.
 /// Stages are read at <c>TelemetryLevel.Stages</c>, which waits for nothing, so the run's timing is the run's.
 /// <c>--profile</c> is the report at the end; both can be on. The test runner takes both too.
@@ -55,7 +56,15 @@ internal sealed class VerboseLines : ITelemetryHook, IDisposable
         };
     }
 
-    public TelemetryLevel Levels => TelemetryLevel.Stages | TelemetryLevel.Devices;
+    public TelemetryLevel Levels => TelemetryLevel.Stages | TelemetryLevel.Devices | TelemetryLevel.Mcp;
+
+    public void OnMcp(in McpEvent e)
+    {
+        lock (_lock)
+        {
+            Line($"mcp: {e.Describe()}");
+        }
+    }
 
     public void OnInferenceStage(in InferenceStage e)
     {

@@ -27,12 +27,13 @@ internal sealed class TraceCommand : Command
         ["devices"] = TelemetryLevel.Devices,
         ["overrides"] = TelemetryLevel.Overrides,
         ["network"] = TelemetryLevel.Network,
+        ["mcp"] = TelemetryLevel.Mcp,
         ["all"] = TelemetryLevel.All,
     };
 
     /// <summary>What is traced without <c>--levels</c>: everything but the per-operation events and gradient norms.</summary>
     public const TelemetryLevel DefaultLevels = TelemetryLevel.Training | TelemetryLevel.Batches | TelemetryLevel.Layers
-        | TelemetryLevel.Inference | TelemetryLevel.Tools | TelemetryLevel.Engine | TelemetryLevel.Devices | TelemetryLevel.Overrides | TelemetryLevel.Suggestions | TelemetryLevel.Network;
+        | TelemetryLevel.Inference | TelemetryLevel.Tools | TelemetryLevel.Engine | TelemetryLevel.Devices | TelemetryLevel.Overrides | TelemetryLevel.Suggestions | TelemetryLevel.Network | TelemetryLevel.Mcp;
 
     public override string Name => "trace";
 
@@ -51,7 +52,8 @@ internal sealed class TraceCommand : Command
         "                      (every tensor operation and kernel, very verbose), inference, tools, engine,\n" +
         "                      devices (GPU failures and operations retried on the CPU),\n" +
         "                      overrides (an app's implementation falling back or compared in shadow),\n" +
-        "                      network (a cluster's transfers, collectives, ranks and faults), all\n" +
+        "                      network (a cluster's transfers, collectives, ranks and faults),\n" +
+        "                      mcp (MCP sessions, requests, tool calls, refusals, cancellations sent), all\n" +
         "                      (default: all but operations and gradients)\n" +
         "      --sync          synchronize the device before each timing (true GPU times, slower)\n\n" +
         "Examples:\n" +
@@ -173,7 +175,7 @@ internal sealed class TraceCommand : Command
     private sealed class Counter(TelemetryLevel levels) : ITelemetryHook
     {
         // The kinds in the order the summary and the JSON list them.
-        private static readonly string[] Kinds = ["training", "epochs", "batches", "layers", "operations", "inference", "tools", "engine", "devices"];
+        private static readonly string[] Kinds = ["training", "epochs", "batches", "layers", "operations", "inference", "tools", "engine", "devices", "mcp"];
 
         private readonly int[] _counts = new int[Kinds.Length];
 
@@ -210,5 +212,7 @@ internal sealed class TraceCommand : Command
         public void OnEngine(in EngineEvent e) => Interlocked.Increment(ref _counts[7]);
 
         public void OnDeviceFailed(in DeviceFailed e) => Interlocked.Increment(ref _counts[8]);
+
+        public void OnMcp(in McpEvent e) => Interlocked.Increment(ref _counts[9]);
     }
 }

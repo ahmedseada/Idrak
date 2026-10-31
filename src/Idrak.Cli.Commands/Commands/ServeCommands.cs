@@ -140,7 +140,7 @@ internal sealed class ServeCommand : Command
 
     public override IReadOnlyCollection<string> ValueOptions => [.. ServeOptions.ValueOptions, .. ModelChoices.ValueOptions, "--tools", .. McpServeCommand.TransportOptions];
 
-    public override IReadOnlyCollection<string> Flags => [.. ServeOptions.Flags, "--mcp", "--mcp-allow-remote"];
+    public override IReadOnlyCollection<string> Flags => [.. ServeOptions.Flags, "--mcp", .. McpServeCommand.TransportFlags];
 
     public override IReadOnlyDictionary<string, string> ShortForms => ServeOptions.ShortForms.Concat(ModelChoices.ShortForms).ToDictionary();
 
@@ -149,9 +149,9 @@ internal sealed class ServeCommand : Command
         var settings = ServeOptions.ReadSettings(context);
         if (!context.Flag("--mcp"))
         {
-            if (McpServeCommand.TransportOptions.Any(o => context.Option(o) is not null) || context.Flag("--mcp-allow-remote"))
+            if (McpServeCommand.TransportOptions.Any(o => context.Option(o) is not null) || McpServeCommand.TransportFlags.Any(context.Flag))
             {
-                throw new UsageException("--transport, --mcp-address, --mcp-token and --mcp-allow-remote choose how MCP is served; add --mcp.");
+                throw new UsageException("--transport, --mcp-address, --mcp-token, --mcp-max-sessions, --mcp-allow-remote and --mcp-replace-idle choose how MCP is served; add --mcp.");
             }
 
             return context.Options("--tools").Count > 0 ? throw new UsageException("--tools serves tools over MCP; add --mcp.")

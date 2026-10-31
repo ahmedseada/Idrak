@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Idrak.Cli;
+using Idrak.Cli.Commands.Serve;
 using Idrak.Mcp;
 using Idrak.Mcp.Abstractions;
 using StreamClientTransport = ModelContextProtocol.Protocol.StreamClientTransport;
@@ -20,12 +21,16 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] McpHostGroup =
     [
-        ("mcp host: stdio over pipes lists the tools, calls one, cancels a long call and stops", d => { if (d == Device.Cpu) Run(McpHostStdioAsync); }),
+        ("mcp host: stdio over pipes lists the tools, calls one, cancels a long call (Idrak's client sends notifications/cancelled: the server's tool stops) and stops", d => { if (d == Device.Cpu) Run(McpHostStdioAsync); }),
         ("mcp host: http on loopback: McpTools.ConnectHttpAsync lists, calls, cancels a long call (client cancel and disconnect), ends its session, stops", d => { if (d == Device.Cpu) Run(McpHostHttpAsync); }),
         ("mcp host: http refuses a missing or wrong token (401), a page off this machine (403), an unknown session (404), a non-loopback bind unless allowed; the token can be turned off", d => { if (d == Device.Cpu) Run(McpHostHttpRefusalsAsync); }),
         ("mcp host: an unknown transport fails with \"not registered\" naming stdio and http; option keys a transport does not take are refused", d => { if (d == Device.Cpu) Run(McpHostRegistryAsync); }),
-        ("mcp host: per-call cost of a trivial tool over http and over stdio, cold and warm apart (printed)", d => { if (d == Device.Cpu) Run(McpHostOverheadAsync); }),
-        ("cli serve: mcp serve --transport http prints its address and token; a client with the token lists and calls; Ctrl+C stops it", d => { if (d == Device.Cpu) CliMcpServeHttp(); }),
+        ("mcp host: a client of the 2026-07-28 revision connects over http in one request (server/discover, no 400, no initialize) and over stdio; sessionless GET and DELETE are 405; a sessionless notifications/cancelled stops its call", d => { if (d == Device.Cpu) Run(McpHostSessionlessAsync); }),
+        ("mcp host: http MaxSessions: a new session over the limit is 503 with Retry-After; ReplaceIdleSessions closes the idle one unused the longest for it; IDRAK_MCP_MAX_SESSIONS and IDRAK_MCP_REPLACE_IDLE", d => { if (d == Device.Cpu) Run(McpHostSessionLimitAsync); }),
+        ("mcp host: telemetry (TelemetryLevel.Mcp): sessions opened and closed, requests received and answered (method, tool, status, bytes, time), tool calls finished, failed and cancelled, refusals with status and reason, over http and stdio", d => { if (d == Device.Cpu) Run(McpHostTelemetryAsync); }),
+        ("mcp host: per-call cost of a trivial tool over http and over stdio, cold and warm apart, telemetry off and with a listener (printed)", d => { if (d == Device.Cpu) Run(McpHostOverheadAsync); }),
+        ("cli serve: mcp serve --transport http prints its address and token; a client with the token lists and calls; --verbose prints its requests, --profile its report at exit; Ctrl+C stops it", d => { if (d == Device.Cpu) CliMcpServeHttp(); }),
+        ("cli serve: mcp serve over stdio with --verbose and --profile: the events and the report go to the error output, the protocol's output holds JSON-RPC lines only; --quiet drops the status line, not the events", d => { if (d == Device.Cpu) CliMcpServeStdioVerbose(); }),
     ];
 
     private static void Run(Func<Task> test) => test().GetAwaiter().GetResult();
@@ -51,6 +56,8 @@ internal abstract partial class DesktopTests : Tests
 
                 return "done";
             }))
+            .Add(Tool.Create("fail", "Always fails", JsonNode.Parse("""{"type":"object","properties":{}}""")!,
+                (_, _) => Task.FromException<string>(new InvalidOperationException("the fail tool fails"))))
             .Build();
         return (registry, () =>
         {
@@ -63,12 +70,12 @@ internal abstract partial class DesktopTests : Tests
     private static async Task CheckToolsAndCallAsync(McpToolSource source, string where)
     {
         var tools = await source.ListToolsAsync();
-        Check(tools.Select(t => t.Definition.Name).Order().SequenceEqual(["echo", "slow"]), $"{where}: tools {string.Join(", ", tools.Select(t => t.Definition.Name))}");
+        Check(tools.Select(t => t.Definition.Name).Order().SequenceEqual(["echo", "fail", "slow"]), $"{where}: tools {string.Join(", ", tools.Select(t => t.Definition.Name))}");
         Check(await source.CallAsync("echo", new JsonObject { ["text"] = "سلام" }) == "سلام", $"{where}: a call answers");
     }
 
-    // A long call the client cancels: the server's tool sees its token cancelled (over http the SDK's client closes the
-    // request's connection, which the server takes as the call's cancellation).
+    // A long call the client cancels: the server's tool sees its token cancelled (Idrak's client sends notifications/cancelled
+    // over any transport; over http the SDK's client also closes the request's connection, which cancels the call too).
     private static async Task CheckCancelAsync(McpToolSource source, Func<TaskCompletionSource> armed, string where)
     {
         var cancelled = armed();
@@ -93,11 +100,18 @@ internal abstract partial class DesktopTests : Tests
         var toServer = new Pipe();
         var toClient = new Pipe();
         var host = await McpHost.StartAsync(McpServerTransports.Stdio, registry, new McpHostOptions { Input = toServer.Reader.AsStream(), Output = toClient.Writer.AsStream() });
-        Check(host.Address == "stdio" && host.Token is null && host.Transport == "stdio" && host.ToolCount == 2, $"stdio host: {host.Address}, {host.Token}, {host.ToolCount} tools");
+        Check(host.Address == "stdio" && host.Token is null && host.Transport == "stdio" && host.ToolCount == 3, $"stdio host: {host.Address}, {host.Token}, {host.ToolCount} tools");
         await using (var source = await McpTools.ConnectAsync(new StreamClientTransport(toServer.Writer.AsStream(), toClient.Reader.AsStream())))
         {
             Check(source.ServerName == "idrak", $"stdio: server name {source.ServerName}");
             await CheckToolsAndCallAsync(source, "stdio");
+            using (var recorder = new McpRecorder())
+            {
+                await CheckCancelAsync(source, armed, "stdio");
+                Check(await recorder.WaitAsync(e => e.Kind == McpEventKind.CancelSent && e.Tool == "slow"), $"stdio: the client reports the cancellation it sent: {recorder}");
+            }
+
+            Check(await source.CallAsync("echo", new JsonObject { ["text"] = "after" }) == "after", "stdio: the session goes on after a cancelled call");
             await host.StopAsync();
             Check(host.Completion.IsCompleted, "stdio: StopAsync completes the host");
         }
@@ -323,6 +337,15 @@ internal abstract partial class DesktopTests : Tests
         Check(McpServerTransports.Get("stdio") != mine && McpServerTransports.Default("stdio") is not null, "unregistering brings the library's stdio back");
     }
 
+    private sealed class NullMcpHook : ITelemetryHook
+    {
+        public TelemetryLevel Levels => TelemetryLevel.Mcp;
+
+        public void OnMcp(in McpEvent e)
+        {
+        }
+    }
+
     private sealed class RecordingTransport : IMcpServerTransport
     {
         public string Name => "stdio";
@@ -344,6 +367,11 @@ internal abstract partial class DesktopTests : Tests
         var arguments = new JsonObject { ["text"] = "hi" };
         await using var httpHost = await McpHost.StartAsync("http", registry);
         await using var http = await McpTools.ConnectHttpAsync(new Uri(httpHost.Address), httpHost.Token);
+        await using var session = await McpTools.ConnectAsync(new ModelContextProtocol.Client.HttpClientTransport(new ModelContextProtocol.Client.HttpClientTransportOptions
+        {
+            Endpoint = new Uri(httpHost.Address),
+            AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = "Bearer " + httpHost.Token },
+        }), new ModelContextProtocol.Client.McpClientOptions { ProtocolVersion = "2025-11-25" });
         var toServer = new Pipe();
         var toClient = new Pipe();
         await using var stdioHost = await McpHost.StartAsync("stdio", registry, new McpHostOptions { Input = toServer.Reader.AsStream(), Output = toClient.Writer.AsStream() });
@@ -359,25 +387,47 @@ internal abstract partial class DesktopTests : Tests
             return Stopwatch.GetElapsedTime(start).TotalMicroseconds;
         }
 
-        double httpCold = await TimeAsync(http, 1), stdioCold = await TimeAsync(stdio, 1);
+        double httpCold = await TimeAsync(http, 1), sessionCold = await TimeAsync(session, 1), stdioCold = await TimeAsync(stdio, 1);
         await TimeAsync(http, warmup);
+        await TimeAsync(session, warmup);
         await TimeAsync(stdio, warmup);
-        double httpWarm = 0, stdioWarm = 0;
-        long httpBytes = 0, stdioBytes = 0;
+        double httpWarm = 0, sessionWarm = 0, stdioWarm = 0;
+        long httpBytes = 0, sessionBytes = 0, stdioBytes = 0;
         for (int b = 0; b < blocks; b++)
         {
             long before = GC.GetTotalAllocatedBytes(precise: true);
             httpWarm += await TimeAsync(http, block);
             long middle = GC.GetTotalAllocatedBytes(precise: true);
+            sessionWarm += await TimeAsync(session, block);
+            long after = GC.GetTotalAllocatedBytes(precise: true);
             stdioWarm += await TimeAsync(stdio, block);
-            stdioBytes += GC.GetTotalAllocatedBytes(precise: true) - middle;
+            stdioBytes += GC.GetTotalAllocatedBytes(precise: true) - after;
+            sessionBytes += after - middle;
             httpBytes += middle - before;
         }
 
         int calls = blocks * block;
-        Console.WriteLine($"    mcp per call (echo, client and server in process): http cold {httpCold:F0} us, warm {httpWarm / calls:F1} us, {httpBytes / calls} B; "
+        Console.WriteLine($"    mcp per call (echo, client and server in process): http sessionless (2026-07-28) cold {httpCold:F0} us, warm {httpWarm / calls:F1} us, {httpBytes / calls} B; "
+                          + $"http session (2025-11-25) cold {sessionCold:F0} us, warm {sessionWarm / calls:F1} us, {sessionBytes / calls} B; "
                           + $"stdio (pipes) cold {stdioCold:F0} us, warm {stdioWarm / calls:F1} us, {stdioBytes / calls} B");
-        Check(httpWarm > 0 && stdioWarm > 0, "the calls were timed");
+
+        // Telemetry off and a listener at TelemetryLevel.Mcp (it keeps nothing), in alternating blocks on the warm
+        // connections: what the events cost when somebody listens, against the one static read when nobody does.
+        double httpOff = 0, stdioOff = 0, httpHeard = 0, stdioHeard = 0;
+        for (int b = 0; b < blocks; b++)
+        {
+            httpOff += await TimeAsync(http, block);
+            stdioOff += await TimeAsync(stdio, block);
+            using (Telemetry.Subscribe(new NullMcpHook()))
+            {
+                httpHeard += await TimeAsync(http, block);
+                stdioHeard += await TimeAsync(stdio, block);
+            }
+        }
+
+        Console.WriteLine($"    mcp per call, telemetry off / with a listener (alternating blocks): http {httpOff / calls:F1} / {httpHeard / calls:F1} us, "
+                          + $"stdio {stdioOff / calls:F1} / {stdioHeard / calls:F1} us");
+        Check(httpWarm > 0 && stdioWarm > 0 && httpHeard > 0 && stdioHeard > 0, "the calls were timed");
     }
 
     private static void CliMcpServeHttp()
@@ -385,7 +435,8 @@ internal abstract partial class DesktopTests : Tests
         string tools = typeof(CliServeTestTools).Assembly.Location;
         var error = new McpErrorWriter();
         using var stop = new CancellationTokenSource();
-        var serving = Task.Run(() => CommandLine.Run(["mcp", "serve", tools, "--transport", "http", "--mcp-token", "cli-token", "--quiet"], new StringWriter(), error,
+        var output = new StringWriter();
+        var serving = Task.Run(() => CommandLine.Run(["mcp", "serve", tools, "--transport", "http", "--mcp-token", "cli-token", "--quiet", "--verbose", "--profile"], output, error,
             CommandHost.Console, stop.Token));
         try
         {
@@ -407,10 +458,86 @@ internal abstract partial class DesktopTests : Tests
         }
 
         Check(serving.Wait(TimeSpan.FromSeconds(30)) && serving.Result == ExitCodes.Stopped, $"mcp serve over http stops with the host's stop (exit {(serving.IsCompleted ? serving.Result : -1)}): {error}");
+        string all = error.ToString();
+        Check(all.Contains("verbose: mcp: http tools/call serve_add: 200 in", StringComparison.Ordinal) && all.Contains("verbose: mcp: tool serve_add finished", StringComparison.Ordinal),
+            $"mcp serve --verbose prints each request and tool call: {all}");
+        Check(all.Contains("mcp requests", StringComparison.Ordinal) && all.Contains("mcp tool calls", StringComparison.Ordinal) && all.Contains("server/discover", StringComparison.Ordinal),
+            $"mcp serve --profile writes the session's requests and tool calls at exit: {all}");
+        Check(output.ToString().Length == 0, $"nothing on the output: {output}");
         var bad = ServeCli("mcp", "serve", tools, "--transport", "pigeon");
         Check(bad.Code == 2 && bad.Error.Contains("not registered", StringComparison.Ordinal), $"mcp serve --transport pigeon: {bad.Error}");
         var remote = ServeCli("mcp", "serve", tools, "--transport", "http", "--mcp-address", "0.0.0.0:0");
         Check(remote.Code == 2 && remote.Error.Contains("--mcp-allow-remote", StringComparison.Ordinal), $"mcp serve on 0.0.0.0 without --mcp-allow-remote: {remote.Error}");
+    }
+
+    // mcp serve over stdio: whatever --verbose and --profile print goes to the error output; the protocol's output carries
+    // JSON-RPC lines only, and the command's output nothing.
+    private static void CliMcpServeStdioVerbose()
+    {
+        string tools = typeof(CliServeTestTools).Assembly.Location;
+        foreach (string[] flags in (string[][])[["--verbose", "--profile"], ["--quiet", "--verbose"]])
+        {
+            var toServer = new Pipe();
+            var toClient = new Pipe();
+            var previous = McpServeCommand.Streams;
+            McpServeCommand.Streams = () => (toServer.Reader.AsStream(), toClient.Writer.AsStream());
+            var error = new McpErrorWriter();
+            var output = new StringWriter();
+            string where = $"mcp serve {string.Join(' ', flags)}";
+            try
+            {
+                var serving = Task.Run(() => CommandLine.Run(["mcp", "serve", tools, .. flags], output, error));
+                var lines = new List<string>();
+                Task.Run(async () =>
+                {
+                    var input = toServer.Writer.AsStream();
+                    using var reader = new StreamReader(toClient.Reader.AsStream());
+                    async Task<string> AskAsync(string line, string id)
+                    {
+                        await input.WriteAsync(Encoding.UTF8.GetBytes(line + "\n"));
+                        string? answer;
+                        while ((answer = await reader.ReadLineAsync()) is not null)
+                        {
+                            lines.Add(answer);
+                            if (answer.Contains($"\"id\":{id}", StringComparison.Ordinal))
+                            {
+                                return answer;
+                            }
+                        }
+
+                        return "";
+                    }
+
+                    await AskAsync(InitializeBody, "1");
+                    await input.WriteAsync("""{"jsonrpc":"2.0","method":"notifications/initialized"}"""u8.ToArray().Append((byte)'\n').ToArray());
+                    string sum = await AskAsync("""{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"serve_add","arguments":{"a":2,"b":40}}}""", "2");
+                    Check(sum.Contains("42", StringComparison.Ordinal), $"{where}: the call answers: {sum}");
+                    await toServer.Writer.CompleteAsync();
+                }).GetAwaiter().GetResult();
+                Check(serving.Wait(TimeSpan.FromSeconds(30)) && serving.Result == 0, $"{where} ends with its input: {error}");
+                bool json = lines.All(l =>
+                {
+                    try
+                    {
+                        return JsonNode.Parse(l) is JsonObject o && (string?)o["jsonrpc"] == "2.0";
+                    }
+                    catch (System.Text.Json.JsonException)
+                    {
+                        return false;
+                    }
+                });
+                Check(lines.Count >= 2 && json && output.ToString().Length == 0, $"{where}: the protocol's output holds JSON-RPC only ({lines.Count} lines), the output nothing: {string.Join("\n", lines)}{output}");
+                string text = error.ToString();
+                Check(text.Contains("verbose: mcp: stdio tools/call serve_add: in", StringComparison.Ordinal) && text.Contains("verbose: mcp: stdio session opened", StringComparison.Ordinal)
+                      && text.Contains("verbose: mcp: stdio session closed", StringComparison.Ordinal), $"{where}: the events on the error output: {text}");
+                Check(flags.Contains("--quiet") != text.Contains("Serving ", StringComparison.Ordinal), $"{where}: the status line {(flags.Contains("--quiet") ? "dropped" : "printed")}: {text}");
+                Check(flags.Contains("--profile") == text.Contains("mcp requests", StringComparison.Ordinal), $"{where}: the profile report {(flags.Contains("--profile") ? "written" : "not asked")}: {text}");
+            }
+            finally
+            {
+                McpServeCommand.Streams = previous;
+            }
+        }
     }
 
     // The error output of a command running on another thread: read whole at any time, and a signal once the address is out.
@@ -453,10 +580,269 @@ internal abstract partial class DesktopTests : Tests
         }
     }
 
+    // Records the MCP events while it lives.
+    private sealed class McpRecorder : ITelemetryHook, IDisposable
+    {
+        private readonly List<McpEvent> _events = [];
+        private readonly IDisposable _subscription;
+
+        public McpRecorder() => _subscription = Telemetry.Subscribe(this);
+
+        public TelemetryLevel Levels => TelemetryLevel.Mcp;
+
+        public void OnMcp(in McpEvent e)
+        {
+            lock (_events)
+            {
+                _events.Add(e);
+            }
+        }
+
+        public McpEvent[] Events
+        {
+            get
+            {
+                lock (_events)
+                {
+                    return [.. _events];
+                }
+            }
+        }
+
+        public void Clear()
+        {
+            lock (_events)
+            {
+                _events.Clear();
+            }
+        }
+
+        // Whether an event matching arrives within 15 s.
+        public async Task<bool> WaitAsync(Func<McpEvent, bool> match)
+        {
+            long until = Environment.TickCount64 + 15_000;
+            while (!Events.Any(match))
+            {
+                if (Environment.TickCount64 > until)
+                {
+                    return false;
+                }
+
+                await Task.Delay(10);
+            }
+
+            return true;
+        }
+
+        public void Dispose() => _subscription.Dispose();
+
+        public override string ToString() => string.Join("\n", Events.Select(e => e.Describe()));
+    }
+
+    // Sessionless (2026-07-28): the SDK's client probes with server/discover; served as the revision defines, it connects in
+    // that one request. Before, the probe was answered 400 and the client fell back to initialize and initialized (3 requests).
+    private static async Task McpHostSessionlessAsync()
+    {
+        var (registry, armed) = McpTestTools();
+        await using var host = await McpHost.StartAsync("http", registry);
+        using var recorder = new McpRecorder();
+        int connected;
+        await using (var source = await McpTools.ConnectHttpAsync(new Uri(host.Address), host.Token))
+        {
+            var connect = recorder.Events.Where(e => e.Transport == "http").ToList();
+            int requests = connect.Count(e => e.Kind is McpEventKind.RequestAnswered or McpEventKind.Refused);
+            Check(source.ServerName == "idrak" && connect.All(e => e.Kind != McpEventKind.Refused && e.Status < 400)
+                  && connect.Any(e => e.Kind == McpEventKind.RequestAnswered && e.Method == "server/discover" && e.Status == 200 && e.Session is null)
+                  && !connect.Any(e => e.Method is "initialize" or "notifications/initialized") && requests == 1,
+                $"http: the client connects without a session in one request (no 400, no initialize): {requests} requests\n{recorder}");
+            connected = requests;
+            await CheckToolsAndCallAsync(source, "http sessionless");
+            Check(recorder.Events.Where(e => e.Kind == McpEventKind.RequestAnswered && e.Transport == "http").All(e => e.Session is null && e.Status == 200),
+                $"http: every request of the client went without a session: {recorder}");
+            await CheckCancelAsync(source, armed, "http sessionless");
+            Check(await source.CallAsync("echo", new JsonObject { ["text"] = "after" }) == "after", "http sessionless: calls go on after a cancelled one");
+        }
+
+        // A client pinned to a revision with sessions still gets one (initialize, then its Mcp-Session-Id).
+        recorder.Clear();
+        var pinned = new ModelContextProtocol.Client.HttpClientTransport(new ModelContextProtocol.Client.HttpClientTransportOptions
+        {
+            Endpoint = new Uri(host.Address),
+            AdditionalHeaders = new Dictionary<string, string> { ["Authorization"] = "Bearer " + host.Token },
+        });
+        await using (var old = await McpTools.ConnectAsync(pinned, new ModelContextProtocol.Client.McpClientOptions { ProtocolVersion = "2025-11-25" }))
+        {
+            // What a connection cost before sessionless requests were served: the probe answered 400, then this handshake.
+            int handshake = recorder.Events.Count(e => e.Transport == "http" && e.Kind is McpEventKind.RequestAnswered or McpEventKind.Refused);
+            Console.WriteLine($"    mcp connect over http: {connected} request(s) now (server/discover); before: {1 + handshake} (server/discover answered 400, then {handshake} of the handshake)");
+
+            Check(await old.CallAsync("echo", new JsonObject { ["text"] = "old" }) == "old"
+                  && recorder.Events.Any(e => e.Kind == McpEventKind.SessionOpened && e.Session is { Length: > 0 }), $"http: a 2025-11-25 client gets a session: {recorder}");
+        }
+
+        // Sessionless GET and DELETE: 405 (Allow: POST); a sessionless cancellation finds its call by id.
+        using var http = new HttpClient();
+        var get = new HttpRequestMessage(HttpMethod.Get, host.Address);
+        get.Headers.TryAddWithoutValidation("Authorization", "Bearer " + host.Token);
+        get.Headers.TryAddWithoutValidation("MCP-Protocol-Version", "2026-07-28");
+        var got = await http.SendAsync(get);
+        Check(got.StatusCode == HttpStatusCode.MethodNotAllowed && got.Content.Headers.Allow.Contains("POST"), $"http: a sessionless GET is 405 with Allow: POST, not {(int)got.StatusCode}");
+        var cancelled = armed();
+        const string meta = """
+            "_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{},"io.modelcontextprotocol/clientInfo":{"name":"raw","version":"1"}}
+            """;
+        using var other = new HttpClient();
+        var call = RawPostAsync(http, host.Address, host.Token, null, """{"jsonrpc":"2.0","id":"raw-1","method":"tools/call","params":{"name":"slow","arguments":{},""" + meta + "}}", default,
+            protocol: "2026-07-28");
+        Check(await recorder.WaitAsync(e => e.Kind == McpEventKind.ToolCallStarted && e.Tool == "slow"), "http: the sessionless slow call started");
+        var cancel = await RawPostAsync(other, host.Address, host.Token, null, """{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"raw-1","reason":"test"}}""", default,
+            protocol: "2026-07-28");
+        Check(cancel.StatusCode == HttpStatusCode.Accepted, $"http: a sessionless notification is 202, not {(int)cancel.StatusCode}");
+        Check(await Task.WhenAny(cancelled.Task, Task.Delay(TimeSpan.FromSeconds(15))) == cancelled.Task, "http: a sessionless notifications/cancelled did not stop its call");
+        try
+        {
+            _ = await call;                                                    // a cancelled call is answered with nothing: its connection closes
+        }
+        catch (Exception x) when (x is HttpRequestException or IOException or TaskCanceledException)
+        {
+        }
+        var unknown = await RawPostAsync(http, host.Address, host.Token, null, """{"jsonrpc":"2.0","id":5,"method":"initialize","params":{"protocolVersion":"2026-07-28","capabilities":{},"clientInfo":{"name":"raw","version":"1"}}}""",
+            default, protocol: "2026-07-28");
+        Check(unknown.StatusCode == HttpStatusCode.NotFound, $"http: initialize on 2026-07-28 is method-not-found, 404, not {(int)unknown.StatusCode}");
+
+        // Over stdio the same client connects natively too: server/discover, no initialize.
+        recorder.Clear();
+        var (toServer, toClient) = (new Pipe(), new Pipe());
+        await using var stdioHost = await McpHost.StartAsync("stdio", registry, new McpHostOptions { Input = toServer.Reader.AsStream(), Output = toClient.Writer.AsStream() });
+        await using (var stdio = await McpTools.ConnectAsync(new StreamClientTransport(toServer.Writer.AsStream(), toClient.Reader.AsStream())))
+        {
+            Check(await stdio.CallAsync("echo", new JsonObject { ["text"] = "s" }) == "s", "stdio: a call");
+            var methods = recorder.Events.Where(e => e.Transport == "stdio" && e.Kind == McpEventKind.RequestReceived).Select(e => e.Method).ToList();
+            Check(methods.FirstOrDefault() == "server/discover" && !methods.Contains("initialize"), $"stdio: the client connects with server/discover alone: {string.Join(", ", methods)}");
+        }
+    }
+
+    private static async Task McpHostSessionLimitAsync()
+    {
+        var (registry, _) = McpTestTools();
+        using var http = new HttpClient();
+        await using (var host = await McpHost.StartAsync("http", registry, new McpHostOptions { Token = "t", MaxSessions = 2 }))
+        {
+            string first = await RawInitializeAsync(http, host.Address, "t");
+            await RawInitializeAsync(http, host.Address, "t");
+            using var recorder = new McpRecorder();
+            var refused = await RawPostAsync(http, host.Address, "t", null, InitializeBody, default);
+            int retry = refused.Headers.RetryAfter?.Delta is { } delta ? (int)delta.TotalSeconds : -1;
+            Check(refused.StatusCode == HttpStatusCode.ServiceUnavailable && retry >= 1, $"http: a third session over 2 is 503 with Retry-After ({retry} s), not {(int)refused.StatusCode}");
+            Check(recorder.Events.Any(e => e.Kind == McpEventKind.Refused && e.Status == 503 && e.Reason?.Contains("most sessions", StringComparison.Ordinal) == true), $"http: the 503 is reported: {recorder}");
+            Check((await RawPostAsync(http, host.Address, "t", first, """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""", default)).StatusCode == HttpStatusCode.OK,
+                "http: the open sessions go on at the limit");
+            var delete = new HttpRequestMessage(HttpMethod.Delete, host.Address);
+            delete.Headers.TryAddWithoutValidation("Authorization", "Bearer t");
+            delete.Headers.TryAddWithoutValidation("Mcp-Session-Id", first);
+            await http.SendAsync(delete);
+            await RawInitializeAsync(http, host.Address, "t");                  // a session deleted frees its place
+        }
+
+        await using (var host = await McpHost.StartAsync("http", registry, new McpHostOptions { Token = "t", MaxSessions = 1, ReplaceIdleSessions = true }))
+        {
+            string first = await RawInitializeAsync(http, host.Address, "t");
+            string second = await RawInitializeAsync(http, host.Address, "t");
+            Check((await RawPostAsync(http, host.Address, "t", first, """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""", default)).StatusCode == HttpStatusCode.NotFound
+                  && (await RawPostAsync(http, host.Address, "t", second, """{"jsonrpc":"2.0","id":2,"method":"tools/list"}""", default)).StatusCode == HttpStatusCode.OK,
+                "http: with ReplaceIdleSessions the idle session unused the longest made room for the new one");
+        }
+
+        await using (var unlimited = await McpHost.StartAsync("http", registry, new McpHostOptions { Token = "t", MaxSessions = 0 }))
+        {
+            for (int i = 0; i < 5; i++)
+            {
+                await RawInitializeAsync(http, unlimited.Address, "t");
+            }
+        }
+
+        string? max = Environment.GetEnvironmentVariable(McpHostOptions.MaxSessionsVariable), replace = Environment.GetEnvironmentVariable(McpHostOptions.ReplaceIdleVariable);
+        try
+        {
+            Environment.SetEnvironmentVariable(McpHostOptions.MaxSessionsVariable, "3");
+            Environment.SetEnvironmentVariable(McpHostOptions.ReplaceIdleVariable, "1");
+            var options = McpHostOptions.FromEnvironment();
+            Check(options.MaxSessions == 3 && options.ReplaceIdleSessions, $"IDRAK_MCP_MAX_SESSIONS=3, IDRAK_MCP_REPLACE_IDLE=1: {options.MaxSessions}, {options.ReplaceIdleSessions}");
+            Environment.SetEnvironmentVariable(McpHostOptions.MaxSessionsVariable, "many");
+            string? error = null;
+            try
+            {
+                McpHostOptions.FromEnvironment();
+            }
+            catch (ArgumentException e)
+            {
+                error = e.Message;
+            }
+
+            Check(error?.Contains("IDRAK_MCP_MAX_SESSIONS=many", StringComparison.Ordinal) == true, $"a bad IDRAK_MCP_MAX_SESSIONS is named: {error}");
+            Check(new McpHostOptions().MaxSessions == McpTransportRequest.DefaultMaxSessions && !new McpHostOptions().ReplaceIdleSessions, "the defaults: 1024, no replacing");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(McpHostOptions.MaxSessionsVariable, max);
+            Environment.SetEnvironmentVariable(McpHostOptions.ReplaceIdleVariable, replace);
+        }
+    }
+
+    private static async Task McpHostTelemetryAsync()
+    {
+        var (registry, armed) = McpTestTools();
+        using var recorder = new McpRecorder();
+        await using (var host = await McpHost.StartAsync("http", registry, new McpHostOptions { Token = "t" }))
+        {
+            using var http = new HttpClient();
+            string session = await RawInitializeAsync(http, host.Address, "t");
+            await RawPostAsync(http, host.Address, "t", session, """{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"text":"hi"}}}""", default);
+            await RawPostAsync(http, host.Address, "t", session, """{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fail","arguments":{}}}""", default);
+            await RawPostAsync(http, host.Address, "wrong", null, InitializeBody, default);
+            var delete = new HttpRequestMessage(HttpMethod.Delete, host.Address);
+            delete.Headers.TryAddWithoutValidation("Authorization", "Bearer t");
+            delete.Headers.TryAddWithoutValidation("Mcp-Session-Id", session);
+            await http.SendAsync(delete);
+            var e = recorder.Events;
+            Check(e.Any(x => x.Kind == McpEventKind.SessionOpened && x.Session == session && x.Client == "raw 1" && x.Address?.StartsWith("127.0.0.1:", StringComparison.Ordinal) == true),
+                $"http: the session opened, with its client and address: {recorder}");
+            Check(e.Any(x => x.Kind == McpEventKind.RequestReceived && x.Method == "tools/call" && x.Tool == "echo" && x.BytesIn > 0), $"http: the call received: {recorder}");
+            Check(e.Any(x => x.Kind == McpEventKind.RequestAnswered && x.Session == session && x.Method == "tools/call" && x.Tool == "echo" && x.Status == 200 && x.BytesIn > 0 && x.BytesOut > 0
+                             && x.Duration > TimeSpan.Zero), $"http: the call answered with status, bytes and time: {recorder}");
+            Check(e.Any(x => x.Kind == McpEventKind.ToolCallStarted && x.Tool == "echo") && e.Any(x => x.Kind == McpEventKind.ToolCallFinished && x.Tool == "echo" && x.Session == session),
+                $"http: the tool call started and finished: {recorder}");
+            Check(e.Any(x => x.Kind == McpEventKind.ToolCallFailed && x.Tool == "fail" && x.Reason?.Contains("fails", StringComparison.Ordinal) == true), $"http: the failed call, with why: {recorder}");
+            Check(e.Any(x => x.Kind == McpEventKind.Refused && x.Status == 401 && x.Reason?.Contains("Bearer", StringComparison.Ordinal) == true), $"http: the 401, with why: {recorder}");
+            Check(e.Any(x => x.Kind == McpEventKind.SessionClosed && x.Session == session && x.Reason == "deleted by its client"), $"http: the session closed, with why: {recorder}");
+
+            // A cancelled tool call.
+            await using var source = await McpTools.ConnectHttpAsync(new Uri(host.Address), "t");
+            await CheckCancelAsync(source, armed, "http telemetry");
+            Check(await recorder.WaitAsync(x => x.Kind == McpEventKind.ToolCallCancelled && x.Tool == "slow"), $"http: the cancelled tool call: {recorder}");
+            Check(e.All(x => x.Describe().Length > 0), "every event describes itself");
+        }
+
+        recorder.Clear();
+        var (toServer, toClient) = (new Pipe(), new Pipe());
+        var stdioHost = await McpHost.StartAsync("stdio", registry, new McpHostOptions { Input = toServer.Reader.AsStream(), Output = toClient.Writer.AsStream() });
+        await using (var stdio = await McpTools.ConnectAsync(new StreamClientTransport(toServer.Writer.AsStream(), toClient.Reader.AsStream())))
+        {
+            await stdio.CallAsync("echo", new JsonObject { ["text"] = "s" });
+            await stdioHost.StopAsync();
+        }
+
+        await stdioHost.DisposeAsync();
+        var s = recorder.Events.Where(x => x.Transport == "stdio").ToList();
+        Check(s.Any(x => x.Kind == McpEventKind.SessionOpened && x.Client?.Length > 0) && s.Any(x => x.Kind == McpEventKind.RequestAnswered && x.Method == "tools/call" && x.Tool == "echo"
+              && x.Duration > TimeSpan.Zero) && s.Any(x => x.Kind == McpEventKind.SessionClosed && x.BytesIn > 0 && x.BytesOut > 0),
+            $"stdio: the session (opened with its client, closed with its bytes) and the answered call: {recorder}");
+    }
+
     private const string InitializeBody = """{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"raw","version":"1"}}}""";
 
     private static async Task<HttpResponseMessage> RawPostAsync(HttpClient http, string address, string? token, string? session, string body, CancellationToken cancellationToken,
-        string? origin = null)
+        string? origin = null, string? protocol = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, address) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
         request.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
@@ -473,6 +859,11 @@ internal abstract partial class DesktopTests : Tests
         if (origin is not null)
         {
             request.Headers.TryAddWithoutValidation("Origin", origin);
+        }
+
+        if (protocol is not null)
+        {
+            request.Headers.TryAddWithoutValidation("MCP-Protocol-Version", protocol);
         }
 
         var response = await http.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken);

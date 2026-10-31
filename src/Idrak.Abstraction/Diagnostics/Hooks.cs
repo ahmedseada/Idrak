@@ -109,6 +109,9 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
             $"Read {e.Stage} on {e.Device}: {e.Duration.TotalMilliseconds:F2} ms ({e.Count:N0}{(e.Bytes > 0 ? $", {e.Bytes / 1048576.0:F1} MB" : "")})"));
 
     /// <inheritdoc />
+    public void OnMcp(in McpEvent e) => _out.WriteLine("MCP: " + e.Describe());
+
+    /// <inheritdoc />
     public void OnEngine(in EngineEvent e) => _out.WriteLine(e.Kind switch
     {
         EngineEventKind.ModelLoaded => string.Create(CultureInfo.InvariantCulture, $"Engine: loaded {e.Model} in {e.Duration.TotalMilliseconds:F1} ms"),
@@ -435,6 +438,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnEngine(in EngineEvent e) => Write(e);
 
     /// <inheritdoc />
+    public void OnMcp(in McpEvent e) => Write(e);
+
+    /// <inheritdoc />
     public void OnDeviceFailed(in DeviceFailed e) => Write(e);
 
     /// <inheritdoc />
@@ -542,6 +548,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnEngine(in EngineEvent e) => _channel.OnEngine(in e);
+
+    /// <inheritdoc />
+    public void OnMcp(in McpEvent e) => _channel.OnMcp(in e);
 
     /// <inheritdoc />
     public void OnDeviceFailed(in DeviceFailed e) => _channel.OnDeviceFailed(in e);
@@ -735,6 +744,21 @@ public static class TelemetryJson
                 w.WriteNumber("duration_ms", e.Duration.TotalMilliseconds);
                 w.WriteNumber("count", e.Count);
                 w.WriteNumber("bytes", e.Bytes);
+                break;
+            case McpEvent e:
+                w.WriteString("event", "mcp");
+                w.WriteString("kind", e.Kind.ToString());
+                w.WriteString("transport", e.Transport);
+                if (e.Session is { } session) w.WriteString("session", session);
+                if (e.Method is { } method) w.WriteString("method", method);
+                if (e.Tool is { } tool) w.WriteString("tool", tool);
+                if (e.Status != 0) w.WriteNumber("status", e.Status);
+                if (e.BytesIn != 0) w.WriteNumber("bytes_in", e.BytesIn);
+                if (e.BytesOut != 0) w.WriteNumber("bytes_out", e.BytesOut);
+                w.WriteNumber("duration_ms", e.Duration.TotalMilliseconds);
+                if (e.Address is { } address) w.WriteString("address", address);
+                if (e.Client is { } client) w.WriteString("client", client);
+                if (e.Reason is { } mcpReason) w.WriteString("reason", mcpReason);
                 break;
             case EngineEvent e:
                 w.WriteString("event", "engine");

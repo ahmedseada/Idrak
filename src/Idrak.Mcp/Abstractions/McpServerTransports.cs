@@ -43,6 +43,22 @@ public sealed record McpTransportRequest
     /// <summary>The largest request body a network transport reads, in bytes (32 MiB); a larger one is answered 413.</summary>
     public long MaxRequestBytes { get; init; } = 32L << 20;
 
+    /// <summary>
+    /// The most sessions a network transport keeps open at once (<see cref="DefaultMaxSessions"/>); 0 or less: no limit. A new
+    /// session over it is refused with 503 and <c>Retry-After</c>, unless <see cref="ReplaceIdleSessions"/> closes an idle one
+    /// for it. Requests of the sessionless protocol revisions (2026-07-28 and later) hold no session and do not count.
+    /// </summary>
+    public int MaxSessions { get; init; } = DefaultMaxSessions;
+
+    /// <summary>
+    /// Whether a new session at <see cref="MaxSessions"/> closes the session unused the longest (one with no request in
+    /// flight and no event stream open) to take its place (false: the new session is refused with 503).
+    /// </summary>
+    public bool ReplaceIdleSessions { get; init; }
+
+    /// <summary>The default <see cref="MaxSessions"/>: 1024 (a session holds a few KB until it is deleted or goes idle).</summary>
+    public const int DefaultMaxSessions = 1024;
+
     /// <summary>The stream a stream transport reads the client's messages from (null: the process's standard input).</summary>
     public Stream? Input { get; init; }
 

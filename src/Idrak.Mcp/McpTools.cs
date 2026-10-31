@@ -2,10 +2,15 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Buffers;
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.Json.Serialization.Metadata;
+using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
@@ -15,7 +20,7 @@ using Tool = Idrak.Abstraction.Generation.Tool;
 namespace Idrak.Mcp;
 
 /// <summary>
-/// Connects to Model Context Protocol servers (<see cref="ConnectAsync"/>, <see cref="ConnectStdioAsync"/>,
+/// Connects to Model Context Protocol servers (<see cref="ConnectAsync(IClientTransport, CancellationToken)"/>, <see cref="ConnectStdioAsync"/>,
 /// <see cref="ConnectHttpAsync(Uri, CancellationToken)"/>) so their tools can be added to a <see cref="ToolRegistry"/>, and serves tools to MCP
 /// clients: a registry's (<see cref="ServerTools(IToolRegistry)"/>) and the models of an inference engine
 /// (<see cref="ServerTools(IModelCatalog)"/>, <see cref="ModelTools(IModelCatalog)"/>); <see cref="McpHost"/> serves them
@@ -26,6 +31,13 @@ public static partial class McpTools
     /// <summary>Connects over any MCP client transport.</summary>
     public static async Task<McpToolSource> ConnectAsync(IClientTransport transport, CancellationToken cancellationToken = default) =>
         new(await McpClient.CreateAsync(transport, cancellationToken: cancellationToken).ConfigureAwait(false));
+
+    /// <summary>
+    /// Connects over any MCP client transport with the SDK's client options (its name, capabilities, the protocol revision:
+    /// null, the default, takes the newest the server serves; a revision with sessions, such as "2025-11-25", pins it).
+    /// </summary>
+    public static async Task<McpToolSource> ConnectAsync(IClientTransport transport, McpClientOptions? options, CancellationToken cancellationToken = default) =>
+        new(await McpClient.CreateAsync(transport, options, cancellationToken: cancellationToken).ConfigureAwait(false));
 
     /// <summary>Starts <paramref name="command"/> with <paramref name="arguments"/> and talks to it over standard input/output.</summary>
     public static Task<McpToolSource> ConnectStdioAsync(string command, IEnumerable<string> arguments, CancellationToken cancellationToken = default) =>
@@ -148,9 +160,23 @@ public static partial class McpTools
     }
 }
 
-/// <summary>A connection to an MCP server whose tools Idrak models can call. Dispose it to disconnect.</summary>
+/// <summary>
+/// A connection to an MCP server whose tools Idrak models can call. Dispose it to disconnect. A call whose caller cancels
+/// it sends the server <c>notifications/cancelled</c> with the call's request id (over stdio too, where nothing else tells
+/// the server), so the server's tool stops.
+/// </summary>
 public sealed class McpToolSource : IAsyncDisposable
 {
+    private static readonly JsonTypeInfo<CallToolRequestParams> CallParams = (JsonTypeInfo<CallToolRequestParams>)McpJsonUtilities.DefaultOptions.GetTypeInfo(typeof(CallToolRequestParams));
+    private static readonly JsonTypeInfo<CallToolResult> CallResult = (JsonTypeInfo<CallToolResult>)McpJsonUtilities.DefaultOptions.GetTypeInfo(typeof(CallToolResult));
+    private static readonly JsonTypeInfo<CancelledNotificationParams> CancelParams =
+        (JsonTypeInfo<CancelledNotificationParams>)McpJsonUtilities.DefaultOptions.GetTypeInfo(typeof(CancelledNotificationParams));
+
+    // The ids this source gives its calls: a string the SDK's own (numbers) never equal, unique within the connection.
+    private readonly string _idPrefix = "idrak-" + Transports.HttpServerTransportKind.NewToken(6) + "-";
+    private readonly ConcurrentDictionary<Task, byte> _cancels = new();
+    private long _nextId;
+
     internal McpToolSource(McpClient client) => Client = client;
 
     /// <summary>The MCP client, for anything beyond tools (resources, prompts).</summary>
@@ -171,15 +197,69 @@ public sealed class McpToolSource : IAsyncDisposable
             (arguments, ct) => CallAsync(t.Name, arguments, ct)))];
     }
 
-    /// <summary>Calls the server tool <paramref name="name"/> and returns its text content (throws if the server reports an error).</summary>
+    /// <summary>
+    /// Calls the server tool <paramref name="name"/> and returns its text content (throws if the server reports an error).
+    /// Cancelling <paramref name="cancellationToken"/> throws <see cref="OperationCanceledException"/> and sends the server
+    /// <c>notifications/cancelled</c> for the call.
+    /// </summary>
     public async Task<string> CallAsync(string name, JsonObject arguments, CancellationToken cancellationToken = default)
     {
-        var result = await Client.CallToolAsync(new CallToolRequestParams { Name = name, Arguments = McpTools.ToElements(arguments) }, cancellationToken)
-            .ConfigureAwait(false);
+        var request = new JsonRpcRequest
+        {
+            Id = new RequestId(_idPrefix + Interlocked.Increment(ref _nextId).ToString(CultureInfo.InvariantCulture)),
+            Method = RequestMethods.ToolsCall,
+            Params = JsonSerializer.SerializeToNode(new CallToolRequestParams { Name = name, Arguments = McpTools.ToElements(arguments) }, CallParams),
+        };
+        long start = Stopwatch.GetTimestamp();
+        JsonRpcResponse response;
+        try
+        {
+            response = await Client.SendRequestAsync(request, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // The SDK's client may not tell the server (its own cancellation callback is unregistered when the wait it
+            // races ends first); this always does. Sent in the background: the caller's cancellation does not wait for it.
+            var cancel = SendCancelAsync(request.Id, name, start);
+            _cancels.TryAdd(cancel, 0);
+            _ = cancel.ContinueWith(static (t, s) => ((ConcurrentDictionary<Task, byte>)s!).TryRemove(t, out _), _cancels, CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            throw;
+        }
+
+        var result = response.Result.Deserialize(CallResult) ?? throw new JsonException($"The MCP tool '{name}' answered no result.");
         string text = McpTools.TextOf(result.Content);
         return result.IsError == true ? throw new InvalidOperationException(text.Length > 0 ? text : $"The MCP tool '{name}' failed.") : text;
     }
 
-    /// <summary>Disconnects (and stops a server started with <see cref="McpTools.ConnectStdioAsync"/>).</summary>
-    public ValueTask DisposeAsync() => Client.DisposeAsync();
+    private async Task SendCancelAsync(RequestId id, string tool, long start)
+    {
+        try
+        {
+            await Client.SendMessageAsync(new JsonRpcNotification
+            {
+                Method = NotificationMethods.CancelledNotification,
+                Params = JsonSerializer.SerializeToNode(new CancelledNotificationParams { RequestId = id, Reason = "the caller cancelled the call" }, CancelParams),
+            }, CancellationToken.None).ConfigureAwait(false);
+            if (McpTelemetry.Enabled)
+            {
+                McpTelemetry.Emit(McpEventKind.CancelSent, "client", Client.SessionId, RequestMethods.ToolsCall, tool, start: start, reason: id.ToString());
+            }
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // The connection is gone: the server's session ends with it, and its calls with that.
+        }
+    }
+
+    /// <summary>Disconnects (and stops a server started with <see cref="McpTools.ConnectStdioAsync"/>), once the cancellations in flight are sent.</summary>
+    public async ValueTask DisposeAsync()
+    {
+        if (!_cancels.IsEmpty)
+        {
+            await Task.WhenAll(_cancels.Keys).ConfigureAwait(false);
+        }
+
+        await Client.DisposeAsync().ConfigureAwait(false);
+    }
 }

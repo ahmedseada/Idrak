@@ -33,10 +33,22 @@ internal sealed class McpServeCommand : Command
               --mcp-address H:P      where http listens (default 127.0.0.1:0: a port the system picks, printed)
               --mcp-token TOKEN      the bearer token http requires (default: a random one, printed); none: no token
               --mcp-allow-remote     let http listen on an address other machines reach (off: loopback only)
+              --mcp-max-sessions N   the most http sessions open at once (default 1024; 0: no limit); a new
+                                     one over it is answered 503 with Retry-After (clients of the 2026-07-28
+                                     revision hold no session and are not counted)
+              --mcp-replace-idle     at that limit, close the idle session unused the longest for the new one
+              --verbose              print each session, request (method, tool, status, bytes, time), tool call
+                                     and refusal on the error output (never on the output: over stdio it is
+                                     the protocol); --quiet keeps them and drops the status lines
+              --profile              at exit, the profile report with the session's requests and tool calls by
+                                     method and tool (counts, errors, p50 and p99 times, bytes) and refusals
         """;
 
     /// <summary>The value options of <see cref="TransportHelp"/>.</summary>
-    public static IReadOnlyCollection<string> TransportOptions => ["--transport", "--mcp-address", "--mcp-token"];
+    public static IReadOnlyCollection<string> TransportOptions => ["--transport", "--mcp-address", "--mcp-token", "--mcp-max-sessions"];
+
+    /// <summary>The flags of <see cref="TransportHelp"/>.</summary>
+    public static IReadOnlyCollection<string> TransportFlags => ["--mcp-allow-remote", "--mcp-replace-idle"];
 
     public override string Usage => $$"""
         TOOLS.dll [TOOLS.dll...] [options]
@@ -63,7 +75,7 @@ internal sealed class McpServeCommand : Command
 
     public override IReadOnlyCollection<string> ValueOptions => TransportOptions;
 
-    public override IReadOnlyCollection<string> Flags => ["--list", "--mcp-allow-remote"];
+    public override IReadOnlyCollection<string> Flags => ["--list", .. TransportFlags];
 
     /// <summary>The protocol's input and output (tests replace them with pipes).</summary>
     internal static Func<(Stream Input, Stream Output)> Streams { get; set; } = () => (Console.OpenStandardInput(), Console.OpenStandardOutput());
@@ -100,16 +112,34 @@ internal sealed class McpServeCommand : Command
     public static string TransportName(CommandContext context) => context.Option("--transport") is { Length: > 0 } name ? name : McpServerTransports.DefaultName;
 
     /// <summary>
-    /// How the command's host listens: --mcp-address and --mcp-token over IDRAK_MCP_ADDRESS and IDRAK_MCP_TOKEN,
-    /// --mcp-allow-remote, and <see cref="Streams"/> for stdio.
+    /// How the command's host listens: --mcp-address, --mcp-token and --mcp-max-sessions over IDRAK_MCP_ADDRESS,
+    /// IDRAK_MCP_TOKEN and IDRAK_MCP_MAX_SESSIONS, --mcp-replace-idle over IDRAK_MCP_REPLACE_IDLE, --mcp-allow-remote, and
+    /// <see cref="Streams"/> for stdio.
     /// </summary>
     public static McpHostOptions HostOptions(CommandContext context, string transport)
     {
-        var options = McpHostOptions.FromEnvironment().WithToken(context.Option("--mcp-token")) with
+        McpHostOptions environment;
+        try
+        {
+            environment = McpHostOptions.FromEnvironment();
+        }
+        catch (ArgumentException e)
+        {
+            throw new UsageException(e.Message);
+        }
+
+        var options = environment.WithToken(context.Option("--mcp-token")) with
         {
             AllowRemote = context.Flag("--mcp-allow-remote"),
+            ReplaceIdleSessions = environment.ReplaceIdleSessions || context.Flag("--mcp-replace-idle"),
             ServerVersion = typeof(Idrak.Layers.Sequential).Assembly.GetName().Version?.ToString(),
         };
+        if (context.Option("--mcp-max-sessions") is not null)
+        {
+            int max = context.IntOption("--mcp-max-sessions", options.MaxSessions);
+            options = options with { MaxSessions = max >= 0 ? max : throw new UsageException("--mcp-max-sessions takes 0 (no limit) or more.") };
+        }
+
         if (context.Option("--mcp-address") is { Length: > 0 } address)
         {
             options = options with { Address = address };

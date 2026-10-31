@@ -179,6 +179,85 @@ public enum EngineEventKind
 /// <param name="Reason">Why a request was rejected, or null.</param>
 public readonly record struct EngineEvent(EngineEventKind Kind, string Model, TimeSpan Duration, TimeSpan QueueWait, int BatchSize, string? Reason);
 
+/// <summary>What happened in a Model Context Protocol server or client (<see cref="McpEvent"/>).</summary>
+public enum McpEventKind
+{
+    /// <summary>A client's session opened (an http <c>initialize</c>, or the stdio client's first request): its address and client.</summary>
+    SessionOpened,
+
+    /// <summary>A session closed (deleted, idle, replaced, stopped, or the stdio client left): its lifetime, and its bytes over stdio.</summary>
+    SessionClosed,
+
+    /// <summary>A request or notification arrived: its method, the tool it calls, its bytes (http).</summary>
+    RequestReceived,
+
+    /// <summary>A request was answered: its method, status (http), bytes in and out (http) and time from its arrival.</summary>
+    RequestAnswered,
+
+    /// <summary>A server-side tool call started.</summary>
+    ToolCallStarted,
+
+    /// <summary>A server-side tool call finished with a result.</summary>
+    ToolCallFinished,
+
+    /// <summary>A server-side tool call was cancelled (the client cancelled or left, or the server stopped).</summary>
+    ToolCallCancelled,
+
+    /// <summary>A server-side tool call failed (threw, or returned a result marked as an error): <see cref="McpEvent.Reason"/> says why.</summary>
+    ToolCallFailed,
+
+    /// <summary>A request was refused before it reached the server (http 400, 401, 403, 404, 405, 409, 413, 431, 503): its status and reason.</summary>
+    Refused,
+
+    /// <summary>A client sent <c>notifications/cancelled</c> for a call its caller cancelled: the tool, and the request id in <see cref="McpEvent.Reason"/>.</summary>
+    CancelSent,
+}
+
+/// <summary>
+/// Published by Idrak.Mcp's servers (the stdio and http transports, and every server tool call) and clients when
+/// <c>TelemetryLevel.Mcp</c> is enabled; nothing is measured when no hook listens there.
+/// </summary>
+/// <param name="Kind">What happened.</param>
+/// <param name="Transport">"stdio", "http", or the client's side ("client"); empty when the tool call's transport is not known.</param>
+/// <param name="Session">The session's id (http with a session), or null.</param>
+/// <param name="Method">The JSON-RPC method ("tools/call"), or the HTTP method of a refused or bodiless request; null for session events.</param>
+/// <param name="Tool">The tool a <c>tools/call</c> names, or null.</param>
+/// <param name="Status">The HTTP status answered (http); 0 over stdio.</param>
+/// <param name="BytesIn">The request's body bytes (http), or a stdio session's bytes read when it closes.</param>
+/// <param name="BytesOut">The bytes sent for the answer, headers included (http), or a stdio session's bytes written when it closes.</param>
+/// <param name="Duration">From the request's arrival to its answer, a tool call's time, or a session's lifetime.</param>
+/// <param name="Address">Where the client connects from (http), or the listener's address; null when not known.</param>
+/// <param name="Client">The client's name and version as it reported them, or null.</param>
+/// <param name="Reason">Why a request was refused, a call failed or a session closed; a cancelled call's request id; or null.</param>
+public readonly record struct McpEvent(McpEventKind Kind, string Transport, string? Session, string? Method, string? Tool, int Status, long BytesIn, long BytesOut,
+    TimeSpan Duration, string? Address, string? Client, string? Reason)
+{
+    /// <summary>The event as one line for people ("http POST tools/call echo: 200 in 0.4 ms, 180 B in, 412 B out").</summary>
+    public string Describe()
+    {
+        var c = System.Globalization.CultureInfo.InvariantCulture;
+        string where = Transport.Length > 0 ? Transport + " " : "";
+        string session = Session is { Length: > 0 } s ? $" (session {(s.Length > 8 ? s[..8] : s)})" : "";
+        string time = Duration.TotalSeconds < 1 ? string.Create(c, $"{Duration.TotalMilliseconds:0.0#} ms") : string.Create(c, $"{Duration.TotalSeconds:0.00} s");
+        string what = Tool is { } tool ? $"{Method} {tool}" : Method ?? "";
+        string bytes = BytesIn > 0 || BytesOut > 0 ? string.Create(c, $", {BytesIn:N0} B in, {BytesOut:N0} B out") : "";
+        return Kind switch
+        {
+            McpEventKind.SessionOpened => $"{where}session opened{session}{(Address is { } a ? " from " + a : "")}{(Client is { } cl ? ", client " + cl : "")}",
+            McpEventKind.SessionClosed => $"{where}session closed{session} after {time}{(Reason is { } r ? ": " + r : "")}{bytes}",
+            McpEventKind.RequestReceived => $"{where}{what} received{session}{(BytesIn > 0 ? string.Create(c, $", {BytesIn:N0} B") : "")}",
+            McpEventKind.RequestAnswered => $"{where}{what}: {(Status > 0 ? Status.ToString(c) + " " : "")}in {time}{session}{bytes}{(Reason is { } r ? " (" + r + ")" : "")}",
+            McpEventKind.ToolCallStarted => $"{where}tool {Tool} started{session}",
+            McpEventKind.ToolCallFinished => $"{where}tool {Tool} finished in {time}{session}",
+            McpEventKind.ToolCallCancelled => $"{where}tool {Tool} cancelled after {time}{session}",
+            McpEventKind.ToolCallFailed => $"{where}tool {Tool} failed after {time}{session}: {Reason}",
+            McpEventKind.Refused => $"{where}{Method} refused {Status.ToString(c)}{session}: {Reason}",
+            McpEventKind.CancelSent => $"{where}cancel sent for {Tool} after {time} (request {Reason})",
+            _ => $"{where}{Kind}",
+        };
+    }
+}
+
 /// <summary>A stage of reading an answer from a prompt (<see cref="InferenceStage"/>).</summary>
 public enum InferenceStageKind
 {

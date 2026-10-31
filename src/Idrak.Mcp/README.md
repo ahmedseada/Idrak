@@ -20,6 +20,13 @@ contracts) and the MCP SDK only.
     `Address` says otherwise (a host off this machine only with `AllowRemote`), a bearer token required (a random one
     unless `Token` gives it; `RequireToken = false` turns it off), each client its own session (`Mcp-Session-Id`), a
     call cancelled when its client cancels or disconnects, idle sessions closed after `SessionIdleTimeout`.
+  - Protocol revisions: a client of the 2026-07-28 revision (the SDK's default) is served without a session, as the
+    revision defines: `server/discover` and every request stand alone (no `initialize`, no `Mcp-Session-Id`; GET and
+    DELETE answer 405), so it connects in one request; a client of an earlier revision gets its session from
+    `initialize`.
+  - Sessions: at most `MaxSessions` open at once (1024 by default, 0: no limit; `IDRAK_MCP_MAX_SESSIONS`); a new one over
+    it is answered 503 with `Retry-After` (the seconds until an idle session closes), unless `ReplaceIdleSessions`
+    (`IDRAK_MCP_REPLACE_IDLE=1`) closes the idle session unused the longest for it. Sessionless requests do not count.
   `host.Address` is what a client's configuration takes ("stdio", `http://127.0.0.1:PORT/mcp`), `host.Token` the token
   it sends; dispose the host (or cancel its token) to stop it. A host registers another transport (an ASP.NET Core one)
   with `McpServerTransports.Register`.
@@ -34,10 +41,22 @@ Console.WriteLine($"{host.Address}, Authorization: Bearer {host.Token}");
 // Or the SDK's options, for anything beyond tools: new McpServerOptions { ToolCollection = [.. McpTools.ServerTools(registry)] }
 ```
 
+- **Cancellation:** a call `McpToolSource.CallAsync` (and the tools `ListToolsAsync` gives) whose caller cancels it sends
+  the server `notifications/cancelled` with the call's request id, over stdio as over http, so the server's tool stops.
+- **Telemetry:** at `TelemetryLevel.Mcp` (`McpEvent`): sessions opened and closed (transport, address, client), requests
+  received and answered (method, tool, HTTP status, bytes in and out, time), server tool calls started, finished,
+  cancelled or failed, refusals (400, 401, 403, 404, 405, 409, 413, 431, 503) with their reason, and the cancellations a
+  client sends. Nothing is measured when no hook listens (one static read and a bitwise AND per site). The profile probe
+  "mcp" sums them for a run: requests by method and tool (count, errors, p50, p99, bytes), tool calls, sessions, refusals.
+  Over stdio a request's bytes are not split out: the session's bytes read and written come with its close.
+  `idrak trace --levels mcp -- mcp serve ...` writes them as JSON Lines.
+
 From the command line: `idrak mcp serve TOOLS.dll` serves tools, `idrak serve MODEL --mcp [--tools TOOLS.dll]` models
 (and tools); both over stdio by default, or `--transport http` (with `--mcp-address HOST:PORT`, `--mcp-token TOKEN` or
-`none`, `--mcp-allow-remote`; `IDRAK_MCP_TRANSPORT`, `IDRAK_MCP_ADDRESS`, `IDRAK_MCP_TOKEN`), which prints the address
-and token. A model calls such a server's tools with `idrak chat MODEL --mcp http://127.0.0.1:PORT/mcp --mcp-token TOKEN`.
+`none`, `--mcp-allow-remote`; `--mcp-max-sessions N`, `--mcp-replace-idle`; `IDRAK_MCP_TRANSPORT`, `IDRAK_MCP_ADDRESS`, `IDRAK_MCP_TOKEN`,
+`IDRAK_MCP_MAX_SESSIONS`, `IDRAK_MCP_REPLACE_IDLE`), which prints the address and token. `--verbose` prints each
+session, request, tool call and refusal on the error output (never on the output, which carries the protocol over
+stdio), `--profile` the session's report at exit. A model calls such a server's tools with `idrak chat MODEL --mcp http://127.0.0.1:PORT/mcp --mcp-token TOKEN`.
 
 ## Install
 

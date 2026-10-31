@@ -32,7 +32,7 @@ internal static class LibraryDefaults
     // application) is skipped. Planned packages are listed so they work the day they appear.
     private static readonly string[] Assemblies =
         ["Idrak", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Data", "Idrak.Text", "Idrak.Vision", "Idrak.Diffusion", "Idrak.Audio", "Idrak.Reinforcement",
-            "Idrak.Cluster", "Idrak.Network", "Idrak.Onnx.Runtime"];
+            "Idrak.Cluster", "Idrak.Network", "Idrak.Onnx.Runtime", "Idrak.Mcp"];
 
     /// <summary>
     /// Has the first-party assemblies register their built-ins of <paramref name="registry"/>, unless done already (on
@@ -52,6 +52,7 @@ internal static class LibraryDefaults
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Cluster.LibraryRegistrations", "Idrak.Cluster")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Networking.LibraryRegistrations", "Idrak.Network")]
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Onnx.Runtime.LibraryRegistrations", "Idrak.Onnx.Runtime")]
+    [DynamicDependency(DynamicallyAccessedMemberTypes.PublicParameterlessConstructor, "Idrak.Mcp.LibraryRegistrations", "Idrak.Mcp")]
     // An application ships only the packages it references (a phone app takes a few), so the trimmer cannot resolve the
     // others' assemblies (IL2035). That is the intent: an assembly not shipped has nothing to keep, and Find skips it.
     [UnconditionalSuppressMessage("Trimming", "IL2035", Justification = "Each package is optional: one the application does not ship has no registrations to keep.")]

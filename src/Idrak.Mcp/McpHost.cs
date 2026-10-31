@@ -19,6 +19,12 @@ public sealed record McpHostOptions
     /// <summary>The variable that gives the http transport's bearer token when an option does not ("none": no token): "IDRAK_MCP_TOKEN".</summary>
     public const string TokenVariable = "IDRAK_MCP_TOKEN";
 
+    /// <summary>The variable that gives <see cref="MaxSessions"/> when an option does not (0: no limit): "IDRAK_MCP_MAX_SESSIONS".</summary>
+    public const string MaxSessionsVariable = "IDRAK_MCP_MAX_SESSIONS";
+
+    /// <summary>The variable that turns <see cref="ReplaceIdleSessions"/> on (1, true, on or yes) or off (0, false, off or no): "IDRAK_MCP_REPLACE_IDLE".</summary>
+    public const string ReplaceIdleVariable = "IDRAK_MCP_REPLACE_IDLE";
+
     /// <summary>The token value that turns the token off ("none"), in <see cref="TokenVariable"/> and on the command line.</summary>
     public const string NoToken = "none";
 
@@ -49,6 +55,15 @@ public sealed record McpHostOptions
     /// <summary>The largest request body a network transport reads, in bytes (32 MiB).</summary>
     public long MaxRequestBytes { get; init; } = 32L << 20;
 
+    /// <summary>
+    /// The most http sessions open at once (<see cref="McpTransportRequest.DefaultMaxSessions"/>); 0 or less: no limit. A new
+    /// one over it is answered 503 with <c>Retry-After</c>, unless <see cref="ReplaceIdleSessions"/> is set.
+    /// </summary>
+    public int MaxSessions { get; init; } = McpTransportRequest.DefaultMaxSessions;
+
+    /// <summary>Whether a new http session at <see cref="MaxSessions"/> closes the one unused the longest (and idle) to take its place (false).</summary>
+    public bool ReplaceIdleSessions { get; init; }
+
     /// <summary>The stdio transport's input (null: standard input).</summary>
     public Stream? Input { get; init; }
 
@@ -59,14 +74,39 @@ public sealed record McpHostOptions
     public IReadOnlyDictionary<string, string>? TransportOptions { get; init; }
 
     /// <summary>
-    /// The defaults with <see cref="Address"/> from <see cref="AddressVariable"/> and <see cref="Token"/> from
-    /// <see cref="TokenVariable"/> when they are set ("none" in the token's turns the token off).
+    /// The defaults with <see cref="Address"/> from <see cref="AddressVariable"/>, <see cref="Token"/> from
+    /// <see cref="TokenVariable"/> ("none" turns the token off), <see cref="MaxSessions"/> from <see cref="MaxSessionsVariable"/>
+    /// and <see cref="ReplaceIdleSessions"/> from <see cref="ReplaceIdleVariable"/>, when they are set.
     /// </summary>
+    /// <exception cref="ArgumentException">A variable holds a value that does not parse (the message names it).</exception>
     public static McpHostOptions FromEnvironment()
     {
         string? address = Environment.GetEnvironmentVariable(AddressVariable) is { } a && a.Trim().Length > 0 ? a.Trim() : null;
         string? token = Environment.GetEnvironmentVariable(TokenVariable) is { } t && t.Trim().Length > 0 ? t.Trim() : null;
-        return new McpHostOptions().WithToken(token) with { Address = address };
+        var options = new McpHostOptions().WithToken(token) with { Address = address };
+        if (Environment.GetEnvironmentVariable(MaxSessionsVariable)?.Trim() is { Length: > 0 } max)
+        {
+            options = options with
+            {
+                MaxSessions = int.TryParse(max, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out int n) && n >= 0 ? n
+                    : throw new ArgumentException($"{MaxSessionsVariable}={max}: give the most sessions open at once, a whole number (0: no limit)."),
+            };
+        }
+
+        if (Environment.GetEnvironmentVariable(ReplaceIdleVariable)?.Trim() is { Length: > 0 } replace)
+        {
+            options = options with
+            {
+                ReplaceIdleSessions = replace.ToLowerInvariant() switch
+                {
+                    "1" or "true" or "on" or "yes" => true,
+                    "0" or "false" or "off" or "no" => false,
+                    _ => throw new ArgumentException($"{ReplaceIdleVariable}={replace}: give 1 (a new session at the limit replaces the idle one unused the longest) or 0."),
+                },
+            };
+        }
+
+        return options;
     }
 
     /// <summary>These options with <paramref name="token"/>: null keeps them, <see cref="NoToken"/> turns the token off, anything else is the token.</summary>
@@ -173,6 +213,7 @@ public sealed class McpHost : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(server);
         options ??= new McpHostOptions();
         var kind = McpServerTransports.Get(transport);
+        McpTelemetry.Attach(server);                                     // tool calls reported on any transport
         var listener = await kind.StartAsync(new McpTransportRequest
         {
             Server = server,
@@ -183,6 +224,8 @@ public sealed class McpHost : IAsyncDisposable
             AllowRemote = options.AllowRemote,
             SessionIdleTimeout = options.SessionIdleTimeout,
             MaxRequestBytes = options.MaxRequestBytes,
+            MaxSessions = options.MaxSessions,
+            ReplaceIdleSessions = options.ReplaceIdleSessions,
             Input = options.Input,
             Output = options.Output,
             Options = options.TransportOptions,
