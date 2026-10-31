@@ -19,6 +19,7 @@ internal abstract partial class DesktopTests : Tests
         ("coding agent: transcripts written as OpenAI chat JSON read back for fine-tuning", AgentTranscriptJson),
         ("coding agent: a task is copied, run, verified by its commands and recorded", AgentRunsTask),
         ("coding agent: a call repeated right after itself is not run again, and the model is told to use its result", AgentSkipsRepeatedCalls),
+        ("coding agent: a steering note given while it runs is read before its next request and stays in the conversation", AgentReadsSteeringNotes),
     ];
 
     // CodingTools cuts lines as places in the text and matches spans; the reference splits the text into strings.
@@ -142,6 +143,46 @@ internal abstract partial class DesktopTests : Tests
             Check(fake.Requests[2].Messages[^1] is { Role: "tool", ToolName: "read_file" } note && note.Content.Contains("Not run again", StringComparison.Ordinal),
                 "the model sees the note in place of a result");
             Check(results[4].Content.Contains("alpha", StringComparison.Ordinal), "the later repeat reads the file");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static void AgentReadsSteeringNotes(Device device)
+    {
+        _ = device;
+        string root = Path.Combine(Path.GetTempPath(), "idrak-steer-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        File.WriteAllText(Path.Combine(root, "a.txt"), "alpha");
+        try
+        {
+            var fake = FakeChatModel.Script(
+                FakeChatModel.ToolCall("read_file", new JsonObject { ["path"] = "a.txt" }),
+                FakeChatModel.ToolCall("list_files", []),
+                FakeChatModel.Answer("Done."));
+            CodingAgent? agent = null;
+            // The note is given while the first tool call runs: the next request carries it, and the one after still has it.
+            agent = new CodingAgent(fake) { OnToolResult = r => { if (r.Call.Name == "read_file") agent!.Steer("  Only read, do not edit.  "); } };
+            var run = agent.RunAsync("What does a.txt say?", new CodingTools(root)).GetAwaiter().GetResult();
+            Check(run is { End: CodingAgentEnd.Answered, Rounds: 3 }, $"counts {run.End} {run.Rounds}");
+            Check(!fake.Requests[0].Messages.Any(m => m.Content.Contains("Note from the user", StringComparison.Ordinal)), "no note before it was given");
+            Check(fake.Requests[1].Messages[^1] is { Role: "user", Content: "Note from the user: Only read, do not edit." },
+                $"the next request ends with the note, trimmed (it ends with '{fake.Requests[1].Messages[^1].Content}')");
+            Check(fake.Requests[2].Messages.Count(m => m.Content == "Note from the user: Only read, do not edit.") == 1, "the note stays in the conversation, once");
+            Check(agent.PendingNotes == 0, "every note was read");
+            bool refused = false;
+            try
+            {
+                agent.Steer(" ");
+            }
+            catch (ArgumentException)
+            {
+                refused = true;
+            }
+
+            Check(refused, "an empty note is refused");
         }
         finally
         {

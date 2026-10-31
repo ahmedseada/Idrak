@@ -205,6 +205,7 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
     }
 
     private readonly AgentOptions _options = options ?? new AgentOptions();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<string> _steering = new();
 
     /// <summary>How the agent works.</summary>
     public AgentOptions Options => _options;
@@ -214,6 +215,22 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
 
     /// <summary>Called after each tool call.</summary>
     public Action<ToolResult>? OnToolResult { get; init; }
+
+    /// <summary>The steering notes given (<see cref="Steer"/>) and not yet read by the model.</summary>
+    public int PendingNotes => _steering.Count;
+
+    /// <summary>
+    /// Gives the running agent a note from the user (from any thread): before its next request to the model, every note
+    /// given since the last one is added to the conversation as a user message (<c>Note from the user: …</c>), so the
+    /// model reads it before its next step and it stays in the conversation from then on. A note given while no run is
+    /// going waits for the next run's first request.
+    /// </summary>
+    /// <exception cref="ArgumentException">The note is empty or white space.</exception>
+    public void Steer(string note)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(note);
+        _steering.Enqueue(note.Trim());
+    }
 
     /// <summary>
     /// Runs the agent on <paramref name="prompt"/> with <paramref name="tools"/> as they are: the model replies, its tool
@@ -243,6 +260,11 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
                 if (rounds >= _options.MaxRounds)
                 {
                     return Result(CodingAgentEnd.OutOfBudget, $"stopped after {rounds} rounds");
+                }
+
+                while (_steering.TryDequeue(out var note))
+                {
+                    messages.Add(new ChatMessage("user", "Note from the user: " + note));
                 }
 
                 var watch = Stopwatch.StartNew();

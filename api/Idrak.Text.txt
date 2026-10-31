@@ -731,9 +731,11 @@ public sealed class Idrak.Text.Generation.CodingAgent
   public System.Action<Idrak.Abstraction.Generation.ChatDelta>? OnDelta { get; init; }
   public System.Action<Idrak.Abstraction.Generation.ToolResult>? OnToolResult { get; init; }
   public System.Threading.Tasks.Task<Idrak.Text.Generation.CodingAgentRun> RunAsync(string prompt, Idrak.Text.Generation.CodingTools tools, System.Threading.CancellationToken cancellationToken = default)
+  public int PendingNotes { get; }
   public static System.Threading.Tasks.Task<Idrak.Text.Generation.CodingToolTurn> RunToolCallsAsync(Idrak.Abstraction.Generation.IToolRegistry registry, Idrak.Abstraction.Generation.ChatMessage reply, string? previousCalls, System.Threading.CancellationToken cancellationToken = default)
   public static string DefaultSystemPrompt { get; }
   public static string SystemPrompt(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.ICodingLanguage> languages)
+  public void Steer(string note)
 
 public enum Idrak.Text.Generation.CodingAgentEnd : int
   Answered = 0
