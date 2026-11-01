@@ -29,6 +29,7 @@ internal abstract partial class DesktopTests : Tests
         ("coding agent: three ```json fences (write_file with escaped newlines and braces, edit_file, run_command) are all read and run, in order", AgentRunsEveryFencedCall),
         ("coding tools: a refusal or error (old_text not found or not unique, a path outside the folder, a missing file, a refused command) is a failed result with its message; the model reads it as before", CodingToolErrorsFail),
         ("coding agent: edit_file refuses a file the task has not read or written (read it first), a new task reads again, the option off allows it; the prompt asks for the read", AgentReadsBeforeEditing),
+        ("coding agent: a template that renders no tools gets them in the system message with the fenced-json call format the agent reads back; results as user messages; a template with tools renders them as before", ToolsWithoutTemplateSupport),
     ];
 
     private static void AgentReadsBeforeEditing(Device device)

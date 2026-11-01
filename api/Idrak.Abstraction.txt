@@ -4541,6 +4541,11 @@ public sealed record Idrak.Abstraction.Generation.ToolDefinition : System.IEquat
 public sealed class Idrak.Abstraction.Generation.ToolFailedException : System.Exception
   public ToolFailedException(string message)
 
+public static class Idrak.Abstraction.Generation.ToolPrompts
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> WithTools(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools)
+  public static bool RendersTools(Idrak.Abstraction.Generation.IChatTemplate template)
+  public static string Describe(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools)
+
 public sealed class Idrak.Abstraction.Generation.ToolProviderAttribute : System.Attribute
   public System.Type Provider { get; }
   public ToolProviderAttribute(System.Type provider)
