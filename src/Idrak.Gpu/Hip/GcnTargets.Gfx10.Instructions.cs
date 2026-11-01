@@ -1,0 +1,170 @@
+// Copyright (c) 2026 Ahmed Seada
+// Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
+
+using static Idrak.Gpu.Abstractions.GcnFormat;
+using static Idrak.Gpu.Abstractions.GcnInstructionFlags;
+
+namespace Idrak.Gpu.Abstractions;
+
+public static partial class GcnTargets
+{
+    // The gfx10 family's instructions: the ones Idrak's GCN kernels use (tests/Idrak.Tests/data/gcn/gfx10/forms.s), each with
+    // its gfx9 meaning, operands and modifiers, in the family's mnemonic and number. The numbers were read from llvm-mc 18's
+    // bytes for each form on gfx1010 and gfx1030 (forms.golden) and agree on both; DPP and SDWA forms are left out (no kernel
+    // uses them).
+    private sealed partial class Gfx10
+    {
+        private static readonly GcnInstruction[] Instructions =
+        [
+            // SOP1: one scalar source
+            Row(GcnOp.SMovB32, "s_mov_b32", Sop1, 0x03, "d1 s1"),
+            Row(GcnOp.SMovB64, "s_mov_b64", Sop1, 0x04, "d2 s2"),
+            Row(GcnOp.SNotB64, "s_not_b64", Sop1, 0x08, "d2 s2"),
+            Row(GcnOp.SAndSaveexecB64, "s_and_saveexec_b64", Sop1, 0x24, "d2 s2"),
+            Row(GcnOp.SAndSaveexecB32, "s_and_saveexec_b32", Sop1, 0x3C, "d1 s1"),
+            // SOP2: two scalar sources
+            Row(GcnOp.SAddU32, "s_add_u32", Sop2, 0x00, "d1 s1 s1"),
+            Row(GcnOp.SAddcU32, "s_addc_u32", Sop2, 0x04, "d1 s1 s1"),
+            Row(GcnOp.SSubU32, "s_sub_u32", Sop2, 0x01, "d1 s1 s1"),
+            Row(GcnOp.SAddI32, "s_add_i32", Sop2, 0x02, "d1 s1 s1"),
+            Row(GcnOp.SSubI32, "s_sub_i32", Sop2, 0x03, "d1 s1 s1"),
+            Row(GcnOp.SMulI32, "s_mul_i32", Sop2, 0x26, "d1 s1 s1"),
+            Row(GcnOp.SMulHiU32, "s_mul_hi_u32", Sop2, 0x35, "d1 s1 s1"),
+            Row(GcnOp.SMinU32, "s_min_u32", Sop2, 0x07, "d1 s1 s1"),
+            Row(GcnOp.SMinI32, "s_min_i32", Sop2, 0x06, "d1 s1 s1"),
+            Row(GcnOp.SMaxU32, "s_max_u32", Sop2, 0x09, "d1 s1 s1"),
+            Row(GcnOp.SMaxI32, "s_max_i32", Sop2, 0x08, "d1 s1 s1"),
+            Row(GcnOp.SLshlB32, "s_lshl_b32", Sop2, 0x1E, "d1 s1 s1"),
+            Row(GcnOp.SLshlB64, "s_lshl_b64", Sop2, 0x1F, "d2 s2 s1"),
+            Row(GcnOp.SLshrB32, "s_lshr_b32", Sop2, 0x20, "d1 s1 s1"),
+            Row(GcnOp.SAshrI32, "s_ashr_i32", Sop2, 0x22, "d1 s1 s1"),
+            Row(GcnOp.SAndB32, "s_and_b32", Sop2, 0x0E, "d1 s1 s1"),
+            Row(GcnOp.SAndB64, "s_and_b64", Sop2, 0x0F, "d2 s2 s2"),
+            Row(GcnOp.SOrB32, "s_or_b32", Sop2, 0x10, "d1 s1 s1"),
+            Row(GcnOp.SOrB64, "s_or_b64", Sop2, 0x11, "d2 s2 s2"),
+            Row(GcnOp.SXorB32, "s_xor_b32", Sop2, 0x12, "d1 s1 s1"),
+            Row(GcnOp.SXorB64, "s_xor_b64", Sop2, 0x13, "d2 s2 s2"),
+            Row(GcnOp.SAndn2B64, "s_andn2_b64", Sop2, 0x15, "d2 s2 s2"),
+            Row(GcnOp.SCselectB32, "s_cselect_b32", Sop2, 0x0A, "d1 s1 s1"),
+            Row(GcnOp.SCselectB64, "s_cselect_b64", Sop2, 0x0B, "d2 s2 s2"),
+            // SOPK: a 16-bit constant
+            Row(GcnOp.SMovkI32, "s_movk_i32", Sopk, 0x00, "d k"),
+            // SOPC: scalar compares
+            Row(GcnOp.SCmpEqU32, "s_cmp_eq_u32", Sopc, 0x06, "s1 s1"),
+            Row(GcnOp.SCmpLgU32, "s_cmp_lg_u32", Sopc, 0x07, "s1 s1"),
+            Row(GcnOp.SCmpGtU32, "s_cmp_gt_u32", Sopc, 0x08, "s1 s1"),
+            Row(GcnOp.SCmpGeU32, "s_cmp_ge_u32", Sopc, 0x09, "s1 s1"),
+            Row(GcnOp.SCmpLtU32, "s_cmp_lt_u32", Sopc, 0x0A, "s1 s1"),
+            Row(GcnOp.SCmpLeU32, "s_cmp_le_u32", Sopc, 0x0B, "s1 s1"),
+            Row(GcnOp.SCmpGtI32, "s_cmp_gt_i32", Sopc, 0x02, "s1 s1"),
+            Row(GcnOp.SCmpLtI32, "s_cmp_lt_i32", Sopc, 0x04, "s1 s1"),
+            Row(GcnOp.SCmpEqU64, "s_cmp_eq_u64", Sopc, 0x12, "s2 s2"),
+            Row(GcnOp.SBitcmp1B32, "s_bitcmp1_b32", Sopc, 0x0D, "s1 s1"),
+            // SOPP: program control
+            Row(GcnOp.SNop, "s_nop", Sopp, 0x00, "k"),
+            Row(GcnOp.SWaitcnt, "s_waitcnt", Sopp, 0x0C, "w"),
+            Row(GcnOp.SBarrier, "s_barrier", Sopp, 0x0A, ""),
+            Row(GcnOp.SBranch, "s_branch", Sopp, 0x02, "j"),
+            Row(GcnOp.SCbranchScc0, "s_cbranch_scc0", Sopp, 0x04, "j"),
+            Row(GcnOp.SCbranchScc1, "s_cbranch_scc1", Sopp, 0x05, "j"),
+            Row(GcnOp.SCbranchVccz, "s_cbranch_vccz", Sopp, 0x06, "j"),
+            Row(GcnOp.SCbranchVccnz, "s_cbranch_vccnz", Sopp, 0x07, "j"),
+            Row(GcnOp.SCbranchExecz, "s_cbranch_execz", Sopp, 0x08, "j"),
+            Row(GcnOp.SCbranchExecnz, "s_cbranch_execnz", Sopp, 0x09, "j"),
+            Row(GcnOp.SEndpgm, "s_endpgm", Sopp, 0x01, ""),
+            // SMEM: scalar memory
+            Row(GcnOp.SLoadDword, "s_load_dword", Smem, 0x00, "d1 b2 o"),
+            Row(GcnOp.SLoadDwordx2, "s_load_dwordx2", Smem, 0x01, "d2 b2 o"),
+            Row(GcnOp.SLoadDwordx4, "s_load_dwordx4", Smem, 0x02, "d4 b2 o"),
+            Row(GcnOp.SLoadDwordx8, "s_load_dwordx8", Smem, 0x03, "d8 b2 o"),
+            // VOP1: one vector source
+            Row(GcnOp.VMovB32, "v_mov_b32", Vop1, 0x01, "v1 x1", E64 | Clamp),
+            Row(GcnOp.VReadfirstlaneB32, "v_readfirstlane_b32", Vop1, 0x02, "D1 y1"),
+            Row(GcnOp.VCvtF32I32, "v_cvt_f32_i32", Vop1, 0x05, "v1 x1", E64 | Clamp | Omod),
+            Row(GcnOp.VCvtF32U32, "v_cvt_f32_u32", Vop1, 0x06, "v1 x1", E64 | Clamp | Omod),
+            Row(GcnOp.VCvtU32F32, "v_cvt_u32_f32", Vop1, 0x07, "v1 x1", E64 | Clamp | Omod | Neg0 | Abs0),
+            Row(GcnOp.VCvtI32F32, "v_cvt_i32_f32", Vop1, 0x08, "v1 x1", E64 | Clamp | Omod | Neg0 | Abs0),
+            Row(GcnOp.VCvtF32F16, "v_cvt_f32_f16", Vop1, 0x0B, "v1 x1", E64 | Clamp | Omod | Neg0 | Abs0),
+            Row(GcnOp.VCvtF32F64, "v_cvt_f32_f64", Vop1, 0x0F, "v1 x2", E64 | Clamp | Omod | Neg0 | Abs0),
+            Row(GcnOp.VCvtF64F32, "v_cvt_f64_f32", Vop1, 0x10, "v2 x1", E64 | Clamp | Omod | Neg0 | Abs0),
+            Row(GcnOp.VRndneF32, "v_rndne_f32", Vop1, 0x23, "v1 x1", E64 | Clamp | Omod | Neg0 | Abs0),
+            Row(GcnOp.VFloorF32, "v_floor_f32", Vop1, 0x24, "v1 x1", E64 | Clamp | Omod | Neg0 | Abs0),
+            Row(GcnOp.VExpF32, "v_exp_f32", Vop1, 0x25, "v1 x1", E64 | Clamp | Omod | Neg0 | Abs0),
+            Row(GcnOp.VLogF32, "v_log_f32", Vop1, 0x27, "v1 x1", E64 | Clamp | Omod | Neg0 | Abs0),
+            Row(GcnOp.VRcpF32, "v_rcp_f32", Vop1, 0x2A, "v1 x1", E64 | Clamp | Omod | Neg0 | Abs0),
+            Row(GcnOp.VRcpIflagF32, "v_rcp_iflag_f32", Vop1, 0x2B, "v1 x1", E64 | Clamp | Omod | Neg0 | Abs0),
+            Row(GcnOp.VRsqF32, "v_rsq_f32", Vop1, 0x2E, "v1 x1", E64 | Clamp | Omod | Neg0 | Abs0),
+            Row(GcnOp.VSqrtF32, "v_sqrt_f32", Vop1, 0x33, "v1 x1", E64 | Clamp | Omod | Neg0 | Abs0),
+            // VOP2: two vector sources
+            Row(GcnOp.VAddF32, "v_add_f32", Vop2, 0x03, "v1 x1 x1", E64 | Clamp | Omod | Neg0 | Abs0 | Neg1 | Abs1),
+            Row(GcnOp.VSubF32, "v_sub_f32", Vop2, 0x04, "v1 x1 x1", E64 | Clamp | Omod | Neg0 | Abs0 | Neg1 | Abs1),
+            Row(GcnOp.VSubrevF32, "v_subrev_f32", Vop2, 0x05, "v1 x1 x1", E64 | Clamp | Omod | Neg0 | Abs0 | Neg1 | Abs1),
+            Row(GcnOp.VMulF32, "v_mul_f32", Vop2, 0x08, "v1 x1 x1", E64 | Clamp | Omod | Neg0 | Abs0 | Neg1 | Abs1),
+            Row(GcnOp.VMaxF32, "v_max_f32", Vop2, 0x10, "v1 x1 x1", E64 | Clamp | Omod | Neg0 | Abs0 | Neg1 | Abs1),
+            Row(GcnOp.VMinF32, "v_min_f32", Vop2, 0x0F, "v1 x1 x1", E64 | Clamp | Omod | Neg0 | Abs0 | Neg1 | Abs1),
+            Row(GcnOp.VMaxI32, "v_max_i32", Vop2, 0x12, "v1 x1 x1", E64 | Clamp),
+            Row(GcnOp.VMinI32, "v_min_i32", Vop2, 0x11, "v1 x1 x1", E64 | Clamp),
+            Row(GcnOp.VMaxU32, "v_max_u32", Vop2, 0x14, "v1 x1 x1", E64 | Clamp),
+            Row(GcnOp.VMinU32, "v_min_u32", Vop2, 0x13, "v1 x1 x1", E64 | Clamp),
+            Row(GcnOp.VMulU32U24, "v_mul_u32_u24", Vop2, 0x0B, "v1 x1 x1", E64 | Clamp),
+            Row(GcnOp.VLshrrevB32, "v_lshrrev_b32", Vop2, 0x16, "v1 x1 x1", E64 | Clamp),
+            Row(GcnOp.VAshrrevI32, "v_ashrrev_i32", Vop2, 0x18, "v1 x1 x1", E64 | Clamp),
+            Row(GcnOp.VLshlrevB32, "v_lshlrev_b32", Vop2, 0x1A, "v1 x1 x1", E64 | Clamp),
+            Row(GcnOp.VAndB32, "v_and_b32", Vop2, 0x1B, "v1 x1 x1", E64 | Clamp),
+            Row(GcnOp.VOrB32, "v_or_b32", Vop2, 0x1C, "v1 x1 x1", E64 | Clamp),
+            Row(GcnOp.VXorB32, "v_xor_b32", Vop2, 0x1D, "v1 x1 x1", E64 | Clamp),
+            Row(GcnOp.VAddU32, "v_add_nc_u32", Vop2, 0x25, "v1 x1 x1", E64 | Clamp),
+            Row(GcnOp.VSubU32, "v_sub_nc_u32", Vop2, 0x26, "v1 x1 x1", E64 | Clamp),
+            Row(GcnOp.VSubrevU32, "v_subrev_nc_u32", Vop2, 0x27, "v1 x1 x1", E64 | Clamp),
+            Row(GcnOp.VCndmaskB32, "v_cndmask_b32", Vop2, 0x01, "v1 x1 x1 i2", E64 | Neg0 | Abs0 | Neg1 | Abs1),
+            // VOPC: vector compares
+            Row(GcnOp.VCmpLtF32, "v_cmp_lt_f32", Vopc, 0x01, "c2 x1 x1", E64 | Clamp | Neg0 | Abs0 | Neg1 | Abs1),
+            Row(GcnOp.VCmpEqF32, "v_cmp_eq_f32", Vopc, 0x02, "c2 x1 x1", E64 | Clamp | Neg0 | Abs0 | Neg1 | Abs1),
+            Row(GcnOp.VCmpLeF32, "v_cmp_le_f32", Vopc, 0x03, "c2 x1 x1", E64 | Clamp | Neg0 | Abs0 | Neg1 | Abs1),
+            Row(GcnOp.VCmpGtF32, "v_cmp_gt_f32", Vopc, 0x04, "c2 x1 x1", E64 | Clamp | Neg0 | Abs0 | Neg1 | Abs1),
+            Row(GcnOp.VCmpGeF32, "v_cmp_ge_f32", Vopc, 0x06, "c2 x1 x1", E64 | Clamp | Neg0 | Abs0 | Neg1 | Abs1),
+            Row(GcnOp.VCmpUF32, "v_cmp_u_f32", Vopc, 0x08, "c2 x1 x1", E64 | Clamp | Neg0 | Abs0 | Neg1 | Abs1),
+            Row(GcnOp.VCmpNeqF32, "v_cmp_neq_f32", Vopc, 0x0D, "c2 x1 x1", E64 | Clamp | Neg0 | Abs0 | Neg1 | Abs1),
+            Row(GcnOp.VCmpEqU32, "v_cmp_eq_u32", Vopc, 0xC2, "c2 x1 x1", E64),
+            Row(GcnOp.VCmpNeU32, "v_cmp_ne_u32", Vopc, 0xC5, "c2 x1 x1", E64),
+            Row(GcnOp.VCmpLtU32, "v_cmp_lt_u32", Vopc, 0xC1, "c2 x1 x1", E64),
+            Row(GcnOp.VCmpGtU32, "v_cmp_gt_u32", Vopc, 0xC4, "c2 x1 x1", E64),
+            Row(GcnOp.VCmpLeU32, "v_cmp_le_u32", Vopc, 0xC3, "c2 x1 x1", E64),
+            Row(GcnOp.VCmpGeU32, "v_cmp_ge_u32", Vopc, 0xC6, "c2 x1 x1", E64),
+            Row(GcnOp.VCmpLtI32, "v_cmp_lt_i32", Vopc, 0x81, "c2 x1 x1", E64),
+            Row(GcnOp.VCmpGtI32, "v_cmp_gt_i32", Vopc, 0x84, "c2 x1 x1", E64),
+            Row(GcnOp.VCmpClassF32, "v_cmp_class_f32", Vopc, 0x88, "c2 x1 x1", E64 | Neg0 | Abs0),
+            // VOP3: three sources (VOP3-only)
+            Row(GcnOp.VLdexpF32, "v_ldexp_f32", Vop3, 0x362, "v1 x1 x1", Clamp | Omod | Neg0 | Abs0),
+            Row(GcnOp.VFmaF32, "v_fma_f32", Vop3, 0x14B, "v1 x1 x1 x1", Clamp | Omod | Neg0 | Abs0 | Neg1 | Abs1 | Neg2 | Abs2),
+            Row(GcnOp.VAddF64, "v_add_f64", Vop3, 0x164, "v2 x2 x2", Clamp | Omod | Neg0 | Abs0 | Neg1 | Abs1),
+            Row(GcnOp.VMulLoU32, "v_mul_lo_u32", Vop3, 0x169, "v1 x1 x1"),
+            Row(GcnOp.VMulHiU32, "v_mul_hi_u32", Vop3, 0x16A, "v1 x1 x1"),
+            Row(GcnOp.VAdd3U32, "v_add3_u32", Vop3, 0x36D, "v1 x1 x1 x1"),
+            Row(GcnOp.VLshlAddU32, "v_lshl_add_u32", Vop3, 0x346, "v1 x1 x1 x1"),
+            Row(GcnOp.VLshlOrB32, "v_lshl_or_b32", Vop3, 0x36F, "v1 x1 x1 x1"),
+            Row(GcnOp.VOr3B32, "v_or3_b32", Vop3, 0x372, "v1 x1 x1 x1"),
+            Row(GcnOp.VBfeU32, "v_bfe_u32", Vop3, 0x148, "v1 x1 x1 x1"),
+            Row(GcnOp.VBfeI32, "v_bfe_i32", Vop3, 0x149, "v1 x1 x1 x1"),
+            Row(GcnOp.VMed3F32, "v_med3_f32", Vop3, 0x157, "v1 x1 x1 x1", Clamp | Omod | Neg0 | Abs0 | Neg1 | Abs1 | Neg2 | Abs2),
+            Row(GcnOp.VDivScaleF32, "v_div_scale_f32", Vop3, 0x16D, "v1 c2 x1 x1 x1", Clamp | Omod | Neg0 | Neg1 | Abs1 | Neg2),
+            Row(GcnOp.VDivFmasF32, "v_div_fmas_f32", Vop3, 0x16F, "v1 x1 x1 x1", Clamp | Omod | Neg0 | Abs0 | Neg1 | Abs1 | Neg2 | Abs2 | ReadsVcc),
+            Row(GcnOp.VDivFixupF32, "v_div_fixup_f32", Vop3, 0x15F, "v1 x1 x1 x1", Clamp | Omod | Neg0 | Abs0 | Neg1 | Abs1 | Neg2 | Abs2),
+            Row(GcnOp.VReadlaneB32, "v_readlane_b32", Vop3, 0x360, "D1 y1 z1"),
+            // DS: the workgroup's shared memory and lane exchanges
+            Row(GcnOp.DsReadB32, "ds_read_b32", Ds, 0x36, "v1 r"),
+            Row(GcnOp.DsReadB128, "ds_read_b128", Ds, 0xFF, "v4 r"),
+            Row(GcnOp.DsWriteB32, "ds_write_b32", Ds, 0x0D, "r e1"),
+            Row(GcnOp.DsBpermuteB32, "ds_bpermute_b32", Ds, 0xB3, "v1 r e1"),
+            // GLOBAL: global memory
+            Row(GcnOp.GlobalLoadDword, "global_load_dword", Global, 0x0C, "v1 r S"),
+            Row(GcnOp.GlobalLoadDwordx4, "global_load_dwordx4", Global, 0x0E, "v4 r S"),
+            Row(GcnOp.GlobalLoadUbyte, "global_load_ubyte", Global, 0x08, "v1 r S"),
+            Row(GcnOp.GlobalStoreDword, "global_store_dword", Global, 0x1C, "r e1 S"),
+            Row(GcnOp.GlobalStoreDwordx4, "global_store_dwordx4", Global, 0x1E, "r e4 S"),
+            Row(GcnOp.GlobalStoreByte, "global_store_byte", Global, 0x18, "r e1 S"),
+            Row(GcnOp.GlobalStoreShort, "global_store_short", Global, 0x1A, "r e1 S"),
+            Row(GcnOp.GlobalAtomicAdd, "global_atomic_add", Global, 0x32, "v1 r e1 S", Atomic),
+        ];
+    }
+}

@@ -730,7 +730,7 @@ internal sealed partial class GcnAssembler
             return end;
         }
 
-        int vm = 63, exp = 7, lgkm = 15, named = 0;
+        int vm = _set.CounterLimit(GcnCounter.Vm), exp = _set.CounterLimit(GcnCounter.Exp), lgkm = _set.CounterLimit(GcnCounter.Lgkm), named = 0;
         while (true)
         {
             at = SkipSpaces(line, at);
@@ -752,7 +752,7 @@ internal sealed partial class GcnAssembler
                 throw Syntax(at, which < 0 ? $"'{Text(counter)}' is not a counter (vmcnt, expcnt, lgkmcnt)" : $"{Text(counter)} is named twice");
             }
 
-            int most = which switch { 0 => 63, 1 => 7, _ => 15 };
+            int most = _set.CounterLimit(which switch { 0 => GcnCounter.Vm, 1 => GcnCounter.Exp, _ => GcnCounter.Lgkm });
             int end = ParseNumber(line, SkipSpaces(line, name + 1), out bool isFloat, out long count, out _);
             if (isFloat || count < 0 || count > most)
             {
@@ -781,7 +781,7 @@ internal sealed partial class GcnAssembler
             throw Syntax(at, "s_waitcnt waits for vmcnt(n), expcnt(n) or lgkmcnt(n), or takes their 16 bits");
         }
 
-        Add(GcnOperand.Immediate(WaitBits(vm, exp, lgkm)));
+        Add(GcnOperand.Immediate(_set.WaitBits(vm, exp, lgkm)));
         return at;
     }
 

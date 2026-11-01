@@ -39,6 +39,9 @@ internal enum GcnOp : ushort
     SSetpcB64,
     SSwappcB64,
     SAndSaveexecB64,
+
+    /// <summary>s_and_saveexec_b32: EXEC's low half, the wave32 form of gfx10 and later (llvm-mc takes it in wave64 too).</summary>
+    SAndSaveexecB32,
     SOrSaveexecB64,
     SXorSaveexecB64,
     SAndn2SaveexecB64,
@@ -534,6 +537,19 @@ internal enum GcnEncoding : byte
 {
     /// <summary>ISA version 9's (GCN 5 and CDNA's): among others a 20-bit SMEM offset and 13-bit signed global offsets.</summary>
     Isa9,
+
+    /// <summary>
+    /// ISA version 10's (RDNA 1 and 2): SMEM's offset and its scalar offset in the second dword (null for none, no IMM
+    /// bit), VOP3 at 0xD4000000 (VOP1's opcodes from 0x180) with a literal allowed, DS's opcode at 25:18, global offsets
+    /// 12 bits signed with DLC at bit 12, 106 scalar registers and two scalar values a vector instruction.
+    /// </summary>
+    Isa10,
+
+    /// <summary>
+    /// ISA version 11's (RDNA 3): ISA 10's, with SMEM's GLC at bit 14, the global instructions' GLC, SLC and SEG at 14,
+    /// 15 and 17:16 and 13-bit signed offsets, and the renumbered scalar, vector and memory opcodes of the family's table.
+    /// </summary>
+    Isa11,
 }
 
 /// <summary>

@@ -304,9 +304,14 @@ internal sealed partial class GcnAssembler : IDisposable
     private int _negMask, _absMask, _sextMask;
     private Modifiers _m;
 
-    // ISA 9's limits: scalar operand codes 0-101 are registers, vector and accumulation ones 256 a lane; one scalar value
-    // (a scalar register, a special register or a literal) read by a vector instruction (the constant bus).
-    private const int ScalarRegisters = 102, VectorRegisters = 256, ConstantBus = 1;
+    // The family's limits: scalar operand codes 0-101 are registers on ISA 9 (0-105 on ISA 10 and 11), vector and
+    // accumulation ones 256 a lane; one scalar value (a scalar register, a special register or a literal) read by a vector
+    // instruction on ISA 9, two on ISA 10 and 11 (the constant bus). ISA 10 and 11 run wave32 too, and llvm-mc takes a
+    // lane mask written as one register (s0, vcc_lo) in wave64 as well: a mask is one register or a pair there.
+    private const int VectorRegisters = 256;
+    private readonly GcnEncoding _encoding;
+    private readonly int ScalarRegisters, ConstantBus;
+    private readonly bool _singleMasks;
 
     /// <summary>
     /// An assembler for <paramref name="target"/>'s family, its buffer sized for <paramref name="bytes"/> of code (it grows
@@ -337,10 +342,16 @@ internal sealed partial class GcnAssembler : IDisposable
         _family = target.Family;
         _set = target as IGcnInstructionSet
                ?? throw new NotSupportedException($"The GCN family {target.Family} has no instruction encodings (IGcnInstructionSet): Idrak's assembler cannot write code for it.");
-        if (_set.Encoding != GcnEncoding.Isa9)
+        _encoding = _set.Encoding;
+        if (_encoding is not (GcnEncoding.Isa9 or GcnEncoding.Isa10 or GcnEncoding.Isa11))
         {
             throw new NotSupportedException($"The GCN family {target.Family} uses the {_set.Encoding} layouts, which Idrak's assembler does not write yet.");
         }
+
+        bool isa9 = _encoding == GcnEncoding.Isa9;
+        ScalarRegisters = isa9 ? 102 : 106;
+        ConstantBus = isa9 ? 1 : 2;
+        _singleMasks = !isa9;
 
         if (isa is { } version)
         {
@@ -420,12 +431,13 @@ internal sealed partial class GcnAssembler : IDisposable
     /// <summary>
     /// s_waitcnt: waits until at most <paramref name="vmcnt"/> vector memory operations (0-63),
     /// <paramref name="expcnt"/> exports (0-7) and <paramref name="lgkmcnt"/> LDS, GDS, constant and message operations
-    /// (0-15) are outstanding; a counter left null is not waited on.
+    /// (0-15 on gfx9, 0-63 on gfx10 and gfx11) are outstanding; a counter left null is not waited on.
     /// </summary>
     public void Waitcnt(int? vmcnt = null, int? expcnt = null, int? lgkmcnt = null)
     {
-        int vm = Count(vmcnt, 63, nameof(vmcnt)), exp = Count(expcnt, 7, nameof(expcnt)), lgkm = Count(lgkmcnt, 15, nameof(lgkmcnt));
-        Sopp(GcnOp.SWaitcnt, WaitBits(vm, exp, lgkm));
+        int vm = Count(vmcnt, _set.CounterLimit(GcnCounter.Vm), nameof(vmcnt)), exp = Count(expcnt, _set.CounterLimit(GcnCounter.Exp), nameof(expcnt));
+        int lgkm = Count(lgkmcnt, _set.CounterLimit(GcnCounter.Lgkm), nameof(lgkmcnt));
+        Sopp(GcnOp.SWaitcnt, _set.WaitBits(vm, exp, lgkm));
 
         static int Count(int? count, int most, string name)
         {
@@ -802,8 +814,18 @@ internal sealed partial class GcnAssembler : IDisposable
             }
         }
 
-        Word(0xC0000000 | (uint)_ins.Code << 18 | (imm ? 1u << 17 : 0) | (_m.Glc ? 1u << 16 : 0) | (uint)data << 6 | (uint)sbase);
-        Word(offsetWord);
+        if (_encoding == GcnEncoding.Isa9)
+        {
+            Word(0xC0000000 | (uint)_ins.Code << 18 | (imm ? 1u << 17 : 0) | (_m.Glc ? 1u << 16 : 0) | (uint)data << 6 | (uint)sbase);
+            Word(offsetWord);
+            return;
+        }
+
+        // ISA 10 and 11: 0xF4000000, the opcode at 25:18, GLC at 16 (ISA 11: 14), SDATA at 12:6, SBASE at 5:0; then the
+        // immediate offset at 20:0 and SOFFSET at 31:25 (null where the offset is immediate, the offset 0 where it is a register).
+        uint glc = _m.Glc ? 1u << (_encoding == GcnEncoding.Isa11 ? 14 : 16) : 0;
+        Word(0xF4000000 | (uint)_ins.Code << 18 | glc | (uint)data << 6 | (uint)sbase);
+        Word(imm ? (uint)_set.Special(GcnSpecial.Off) << 25 | offsetWord : offsetWord << 25);
     }
 
     // ---------------------------------------------------------------------------------------------------------------
@@ -908,7 +930,12 @@ internal sealed partial class GcnAssembler : IDisposable
                     throw Refuse(-1, "has no VOP3 form (_e64)");
                 }
 
-                EncodeVop3(p, ins.Format switch { GcnFormat.Vop1 => 0x140 + ins.Code, GcnFormat.Vop2 => 0x100 + ins.Code, _ => ins.Code });
+                EncodeVop3(p, ins.Format switch
+                {
+                    GcnFormat.Vop1 => (_encoding == GcnEncoding.Isa9 ? 0x140 : 0x180) + ins.Code,
+                    GcnFormat.Vop2 => 0x100 + ins.Code,
+                    _ => ins.Code,
+                });
                 break;
             case GcnVariant.Dpp:
                 EncodeDpp(p);
@@ -956,7 +983,8 @@ internal sealed partial class GcnAssembler : IDisposable
         return true;
     }
 
-    private bool IsVcc(GcnOperand operand) => operand is { Kind: GcnOperandKind.Special, Index: (int)GcnSpecial.Vcc };
+    private bool IsVcc(GcnOperand operand) => operand is { Kind: GcnOperandKind.Special, Index: (int)GcnSpecial.Vcc }
+        || _singleMasks && operand is { Kind: GcnOperandKind.Special, Index: (int)GcnSpecial.VccLo };
 
     // The 32-bit forms. VOP1: 0x7E000000, VDST at 24:17, the opcode at 16:9, SRC0 at 8:0. VOP2: the opcode at 30:25, VDST,
     // VSRC1 at 16:9, SRC0. VOPC: 0x7C000000, the opcode at 24:17, VSRC1, SRC0. Then a literal (src0's, or K).
@@ -990,9 +1018,9 @@ internal sealed partial class GcnAssembler : IDisposable
         }
     }
 
-    // VOP3: 0xD0000000, the opcode at 25:16, CLAMP at 15, then OP_SEL at 14:11 and ABS at 10:8 (VOP3a) or SDST at 14:8
-    // (VOP3b: the carry-out instructions), VDST at 7:0; SRC0 at 8:0, SRC1 at 17:9, SRC2 at 26:18, OMOD at 28:27, NEG at
-    // 31:29. ISA 9 holds no literal in it.
+    // VOP3: 0xD0000000 (ISA 10 and 11: 0xD4000000), the opcode at 25:16, CLAMP at 15, then OP_SEL at 14:11 and ABS at
+    // 10:8 (VOP3a) or SDST at 14:8 (VOP3b: the carry-out instructions), VDST at 7:0; SRC0 at 8:0, SRC1 at 17:9, SRC2 at
+    // 26:18, OMOD at 28:27, NEG at 31:29. ISA 9 holds no literal in it; ISA 10 and 11 one, after it.
     private void EncodeVop3(in Places p, int code)
     {
         bool carryOut = p.MaskOut >= 0 && p.Destination >= 0;
@@ -1027,8 +1055,23 @@ internal sealed partial class GcnAssembler : IDisposable
             }
         }
 
-        Word(0xD0000000 | (uint)code << 16 | (_m.Clamp ? 1u << 15 : 0) | (carryOut ? (uint)sdst << 8 : (uint)opSel << 11 | (uint)abs << 8) | (uint)vdst);
+        uint encoding = _encoding == GcnEncoding.Isa9 ? 0xD0000000 : 0xD4000000;
+        Word(encoding | (uint)code << 16 | (_m.Clamp ? 1u << 15 : 0) | (carryOut ? (uint)sdst << 8 : (uint)opSel << 11 | (uint)abs << 8) | (uint)vdst);
         Word((uint)neg << 29 | (uint)_m.Omod << 27 | (uint)src2 << 18 | (uint)src1 << 9 | (uint)src0);
+        Vop3Literal(p);
+    }
+
+    // ISA 10 and 11's VOP3 literal, after the instruction (CheckConstantBus has made sure there is one value at most).
+    private void Vop3Literal(in Places p)
+    {
+        foreach (int i in (ReadOnlySpan<int>)[p.Src0, p.Src1, p.Src2])
+        {
+            if (i >= 0 && _ops[i].Kind == GcnOperandKind.Literal)
+            {
+                Word(_ops[i].Value);
+                return;
+            }
+        }
     }
 
     // VOP3P: 0xD3800000, the opcode at 22:16, CLAMP at 15, OP_SEL_HI[2] at 14, OP_SEL at 13:11, NEG_HI at 10:8, VDST at
@@ -1066,6 +1109,11 @@ internal sealed partial class GcnAssembler : IDisposable
         }
 
         int opSelHi = (mix ? 0 : 7) & ~_m.OpSelHiGiven | _m.OpSelHi;
+        if (_encoding != GcnEncoding.Isa9)
+        {
+            throw Refuse(-1, $"has no VOP3P layout in Idrak's {_family} tables yet");
+        }
+
         Word(0xD3800000 | (uint)_ins.Code << 16 | (_m.Clamp ? 1u << 15 : 0) | (uint)(opSelHi >> 2 & 1) << 14 | (uint)(_m.OpSel & 7) << 11 | (uint)negHi << 8 | (uint)vdst);
         Word((uint)negLo << 29 | (uint)(opSelHi & 3) << 27 | (uint)src2 << 18 | (uint)src1 << 9 | (uint)src0);
     }
@@ -1221,7 +1269,7 @@ internal sealed partial class GcnAssembler : IDisposable
     // unnamed.
     private void CheckConstantBus(in Places p, bool implicitVcc)
     {
-        int first = -1, firstCount = 0, reads = 0;
+        int first = -1, firstCount = 0, second = -1, secondCount = 0, reads = 0;
         uint literal = 0;
         bool hasLiteral = false;
         if (implicitVcc || _ins.Has(GcnInstructionFlags.ReadsVcc))
@@ -1263,7 +1311,7 @@ internal sealed partial class GcnAssembler : IDisposable
                 GcnOperandKind.Special => _set.Special((GcnSpecial)operand.Index),
                 _ => -1,
             };
-            if (code < 0 || (code == first && operand.Count == firstCount))
+            if (code < 0 || (code == first && operand.Count == firstCount) || (code == second && operand.Count == secondCount))
             {
                 continue;
             }
@@ -1273,17 +1321,22 @@ internal sealed partial class GcnAssembler : IDisposable
                 first = code;
                 firstCount = operand.Count;
             }
+            else if (second < 0)
+            {
+                second = code;
+                secondCount = operand.Count;
+            }
 
             reads++;
             if (reads > ConstantBus)
             {
-                throw Refuse(i, $"ISA 9 reads at most {ConstantBus} scalar value (a scalar or special register, or a literal) in a vector instruction");
+                throw Refuse(i, $"{_family} reads at most {ConstantBus} scalar value (a scalar or special register, or a literal) in a vector instruction");
             }
         }
 
         if (reads > ConstantBus)
         {
-            throw Refuse(-1, $"ISA 9 reads at most {ConstantBus} scalar value (a scalar or special register, or a literal) in a vector instruction, and this one also reads vcc");
+            throw Refuse(-1, $"{_family} reads at most {ConstantBus} scalar value (a scalar or special register, or a literal) in a vector instruction, and this one also reads vcc");
         }
     }
 
@@ -1331,11 +1384,11 @@ internal sealed partial class GcnAssembler : IDisposable
         return ScalarSource(i);
     }
 
-    // A source of the VOP3 forms: as the 32-bit form's src0, without a literal (ISA 9 has none there).
+    // A source of the VOP3 forms: as the 32-bit form's src0, without a literal on ISA 9 (it has none there).
     private int Vop3Source(int i)
     {
         int code = VectorSource(i);
-        return code != GcnOperand.LiteralCode
+        return code != GcnOperand.LiteralCode || _encoding != GcnEncoding.Isa9
             ? code
             : throw Refuse(i, "ISA 9 holds no literal in a VOP3 or VOP3P instruction (only inline constants)");
     }
@@ -1371,8 +1424,9 @@ internal sealed partial class GcnAssembler : IDisposable
     private int ScalarPair(int i)
     {
         var operand = _ops[i];
-        return operand.Count == 2 && operand.Kind is GcnOperandKind.Sgpr or GcnOperandKind.Ttmp or GcnOperandKind.Special
-            ? ScalarDestination(i, 2)
+        int count = _singleMasks && operand.Count == 1 ? 1 : 2;
+        return operand.Count == count && operand.Kind is GcnOperandKind.Sgpr or GcnOperandKind.Ttmp or GcnOperandKind.Special
+            ? ScalarDestination(i, count)
             : throw Refuse(i, "this operand is a scalar register pair (vcc, or s[n:n+1] with n even)");
     }
 
@@ -1440,7 +1494,9 @@ internal sealed partial class GcnAssembler : IDisposable
             offset = _m.Offset;
         }
 
-        Word(0xD8000000 | (uint)_ins.Code << 17 | (_m.Gds ? 1u << 16 : 0) | (uint)offset);
+        Word(_encoding == GcnEncoding.Isa9
+            ? 0xD8000000 | (uint)_ins.Code << 17 | (_m.Gds ? 1u << 16 : 0) | (uint)offset
+            : 0xD8000000 | (uint)_ins.Code << 18 | (_m.Gds ? 1u << 17 : 0) | (uint)offset);   // ISA 10 and 11: the opcode at 25:18, GDS at 17
         Word((uint)vdst << 24 | (uint)data1 << 16 | (uint)data0 << 8 | (uint)addr);
     }
 
@@ -1512,13 +1568,20 @@ internal sealed partial class GcnAssembler : IDisposable
             }
         }
 
+        // The offset: 13 bits on ISA 9 and 11, 12 on ISA 10; signed for global, flat's unsigned in one bit less.
         int offset = _m.Offset;
-        if (global ? offset is < -4096 or > 4095 : offset is < 0 or > 4095)
+        int bits = _encoding == GcnEncoding.Isa10 ? 12 : 13, half = 1 << (bits - 1);
+        if (global ? offset < -half || offset >= half : offset < 0 || offset >= half)
         {
-            throw OutOfRange(-1, "offset", offset, global ? "the offset is -4096 to 4095" : "the offset is 0 to 4095 bytes");
+            throw OutOfRange(-1, "offset", offset, global ? $"the offset is {-half} to {half - 1}" : $"the offset is 0 to {half - 1} bytes");
         }
 
-        Word(0xDC000000 | (uint)ins.Code << 18 | (_m.Slc ? 1u << 17 : 0) | (_m.Glc ? 1u << 16 : 0) | (global ? 2u << 14 : 0) | ((uint)offset & (global ? 0x1FFFu : 0xFFFu)));
+        uint field = (uint)offset & ((1u << bits) - 1);
+        Word(_encoding == GcnEncoding.Isa11
+            // ISA 11: OFFSET at 12:0, GLC 14, SLC 15, SEG at 17:16.
+            ? 0xDC000000 | (uint)ins.Code << 18 | (global ? 2u << 16 : 0) | (_m.Slc ? 1u << 15 : 0) | (_m.Glc ? 1u << 14 : 0) | field
+            // ISA 9 and 10: OFFSET at 12:0 (ISA 10: 11:0, DLC at 12), SEG at 15:14, GLC 16, SLC 17.
+            : 0xDC000000 | (uint)ins.Code << 18 | (_m.Slc ? 1u << 17 : 0) | (_m.Glc ? 1u << 16 : 0) | (global ? 2u << 14 : 0) | field);
         Word((uint)vdst << 24 | (uint)saddr << 16 | (uint)data << 8 | (uint)addr);
     }
 
@@ -1612,9 +1675,6 @@ internal sealed partial class GcnAssembler : IDisposable
             Word(_ops[hasA ? a : b].Value);
         }
     }
-
-    /// <summary>s_waitcnt's 16 bits in ISA 9: vmcnt's low four bits at 3:0 and its high two at 15:14, expcnt at 6:4, lgkmcnt at 11:8.</summary>
-    internal static ushort WaitBits(int vmcnt, int expcnt, int lgkmcnt) => (ushort)((vmcnt & 0xF) | expcnt << 4 | lgkmcnt << 8 | (vmcnt >> 4) << 14);
 
     // A refusal naming the operand (or the instruction): with the line and column when assembling text.
     private Exception Refuse(int operand, string rule)

@@ -34,6 +34,8 @@ internal abstract partial class Tests
         ("gcn code object: formats 5 and 4 differ only in the ABI version and amdhsa.version; format 6, a target the family does not handle and kernels it cannot describe are refused with their reason", GcnCodeObjectFormats),
         ("gcn assembler: each gfx9 form fill_f32 uses, encoded from typed operands (scalar and vector registers, VCC, EXEC, M0, off, inline and literal constants, offsets, glc), equals its forms.golden record for gfx90c; branches reach their labels; operands a form cannot take are refused, naming them; nothing is allocated per instruction", GcnAssemblerForms),
         ("gcn assembler: every forms.golden record of each registered CPU (gfx900, gfx906, gfx908, gfx90c), its text parsed from UTF-8 and encoded as one block, equals llvm-mc's bytes, labels and branches included, and each form alone too; forms.s itself (LLVM's input syntax: no suffixes, bound_ctrl:0, s_waitcnt 0) less each CPU's rejected lines gives the same block", GcnAssemblerGolden),
+        ("gcn assembler: gfx10 (RDNA 1 and 2): every forms.golden record of gfx1010 and gfx1030 in wave64, its text parsed from UTF-8 and encoded by the unregistered gfx10 family (ISA 10's SMEM, VOP3, DS and global layouts, its renumbered opcodes, its waits, wave32's one-register lane masks taken as llvm-mc takes them), equals llvm-mc's bytes as one block and each form alone; forms.s gives the same block", GcnAssemblerGfx10Golden),
+        ("gcn assembler: gfx11 (RDNA 3): every forms.golden record of gfx1100 and gfx1102 in wave64, in gfx11's own names (s_load_b32, global_load_b32, ds_load_b32, v_add_nc_u32), encoded by the unregistered gfx11 family (ISA 11's layouts, M0 125 and null 124, its s_waitcnt fields), equals llvm-mc's bytes as one block and each form alone; forms.s gives the same block", GcnAssemblerGfx11Golden),
         ("gcn assembler: every line forms.golden lists as rejected for a registered CPU is refused for that CPU's version, naming the instruction, feature or operand (features decided by the reported version: v_fmac_f32 on 9.0.6, not 9.0.0 or 9.0.12; without a version, none)", GcnAssemblerRejected),
         ("gcn assembler: malformed or impossible text (unknown mnemonics, operands and modifiers, missing operands, bad ranges, virtual registers, directives, literals in VOP3, two scalar reads, labels defined twice or never) is refused with its line and column", GcnAssemblerMalformed),
         ("gcn assembler: assembling a whole forms block (gfx90c's 759 forms, labels and branches) allocates nothing once warm, and its code array alone after; fill_f32 written as text equals the typed fill_f32", GcnAssemblerAllocations),
@@ -623,14 +625,14 @@ internal abstract partial class Tests
     // One CPU's block of forms.golden: its records (llvm-mc's text and bytes, labels with none) and the forms.s lines it rejects.
     private sealed record GcnFormsBlock(List<(string Text, byte[] Bytes)> Records, List<(int Line, string Text)> Rejected);
 
-    private static string FormsPath(string file) => RepositoryPath("tests", "Idrak.Tests", "data", "gcn", "gfx9", file);
+    private static string FormsPath(string file, string family = "gfx9") => RepositoryPath("tests", "Idrak.Tests", "data", "gcn", family, file);
 
-    private static Dictionary<string, GcnFormsBlock> ReadFormsGolden()
+    private static Dictionary<string, GcnFormsBlock> ReadFormsGolden(string family = "gfx9")
     {
         var blocks = new Dictionary<string, GcnFormsBlock>(StringComparer.Ordinal);
         GcnFormsBlock Block(string cpu) => blocks.TryGetValue(cpu, out var block) ? block : blocks[cpu] = new([], []);
         string? rejecting = null;
-        foreach (string line in File.ReadLines(FormsPath("forms.golden")))
+        foreach (string line in File.ReadLines(FormsPath("forms.golden", family)))
         {
             if (line.StartsWith("# rejected: ", StringComparison.Ordinal))
             {
@@ -670,13 +672,34 @@ internal abstract partial class Tests
     internal static void GcnAssemblerGolden(Device device)
     {
         _ = device;
-        var golden = ReadFormsGolden();
-        string[] source = File.ReadAllLines(FormsPath("forms.s"));
-        foreach (string cpu in GcnRegisteredCpus)
+        GcnFamilyGolden("gfx9", GcnRegisteredCpus, GcnTargets.For);
+    }
+
+    // The RDNA families are not registered yet (plan 35, G8a: they are once their kernels run): their goldens are checked
+    // with the family itself, in wave64, the waves Idrak's kernels run in.
+    internal static void GcnAssemblerGfx10Golden(Device device)
+    {
+        _ = device;
+        GcnFamilyGolden("gfx10", ["gfx1010-w64", "gfx1030-w64"], _ => GcnTargets.Gfx10Family);
+    }
+
+    internal static void GcnAssemblerGfx11Golden(Device device)
+    {
+        _ = device;
+        GcnFamilyGolden("gfx11", ["gfx1100-w64", "gfx1102-w64"], _ => GcnTargets.Gfx11Family);
+    }
+
+    // Each CPU's block of a family's forms.golden (a CPU field "<mcpu>-w64" is that processor in wave64): the block as one
+    // text, each form alone, and forms.s less the CPU's rejected lines, all equal to llvm-mc's bytes.
+    private static void GcnFamilyGolden(string family, string[] cpus, Func<GcnIsaVersion, IGcnTarget> targetOf)
+    {
+        var golden = ReadFormsGolden(family);
+        string[] source = File.ReadAllLines(FormsPath("forms.s", family));
+        foreach (string cpu in cpus)
         {
             var block = golden[cpu];
-            var isa = GcnIsaVersion.Parse(cpu);
-            var target = GcnTargets.For(isa);
+            var isa = GcnIsaVersion.Parse(cpu.Split('-')[0]);
+            var target = targetOf(isa);
             byte[] expected = [.. block.Records.SelectMany(r => r.Bytes)];
             int forms = block.Records.Count(r => r.Bytes.Length > 0), labels = block.Records.Count - forms, branches = block.Records.Count(r => IsLabelBranch(r.Text));
 
