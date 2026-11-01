@@ -47,7 +47,7 @@ for `idrak new`.
 
 ### Where things live
 
-- **`ahmedseada/Rl-Samples-`** (empty today): the generator and the dataset. It is a tool and data, not library code.
+- **`ahmedseada/Rl-Samples-`** (empty today; the owner, 2026-11-01: the samples live here): the generator and the dataset. It is a tool and data, not library code.
   - `src/RlSamples.Generator`: a C# console app on the official Anthropic C# SDK (`Anthropic` package) and on Idrak's
     packages (it reuses `CodingTools`, `CodingTask`, `CodingVerifier` to run and check, so a transcript's tools behave
     exactly as the student's will).
@@ -142,7 +142,9 @@ At most two agents at a time in Idrak (Idrak's limit; the Rl-Samples work counts
    convertible Track 2 entry once, with up to three transcripts each. Rough cost before the pilot: about $0.20 a
    verified transcript on Opus 5.5 with caching (a 10-turn run, mostly cache reads), so about $2,000 for 10,000, plus
    rejected runs; G1's pilot replaces this guess with a measured number before G2 starts.
-4. **Data storage**: Git LFS in `Rl-Samples-`, or the data kept out of git (a release asset, a Hugging Face dataset).
+4. **Data storage** (decided by the owner, 2026-11-01: "the target samples will live in the samples repo"): every
+   generated sample (task folders, transcripts, pairs, eval sets) lives in `ahmedseada/Rl-Samples-`; Git LFS or plain
+   files there is still open for large files.
 5. **The student model**: which base G5 tunes (the bench's Qwen-Coder is the recommendation, the owner's runs decide).
 6. **Terms of use**: Anthropic's terms limit using Claude's outputs to train models; the owner checks that this use
    (a model for the owner's own C# agent and generator) is allowed under the account's terms before G2.
