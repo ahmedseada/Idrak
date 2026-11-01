@@ -127,7 +127,7 @@ internal static class EnvironmentVariables
         new("IDRAK_PACKED_CACHE", Tuning, "on", "0, off, false or no: int8 and int4 weights are not kept between loads (--packed-cache off)", Caches),
         new("IDRAK_PACKED_CACHE_DIR", Tuning, "<cache>/packed", "The folder kept int8 and int4 weights live in (--packed-cache DIR)", Caches),
         new("IDRAK_AUTOTUNE", Tuning, "1 (measure)", "0 or false: the formulas only, no measuring of kernel choices on the device", OnDevice),
-        new("IDRAK_TUNING_CACHE", Tuning, "on, under the cache folder", "0, false or off: measured choices are not kept; a path: the folder of the CUDA and HIP choice files", Caches),
+        new("IDRAK_TUNING_CACHE", Tuning, "on, under the cache folder", "0, false or off: measured choices are not kept; a path: the CUDA and HIP choices' folder", Caches),
         new("IDRAK_TUNE_NEIGHBOUR_OCTAVES", Tuning, "1", "How far a measured kernel choice reaches, in octaves of the work that follows the data (a convolution's, product's or attention's batch and lengths): a size class none measured takes the nearest measured class's choice within it instead of measuring (ComputeResources.TuningNeighbourOctaves); 0: every class measured", OnDevice),
         new("IDRAK_TUNE_BUDGET_MS", Tuning, "500", "How long the first use of a shape may stall while its kernel choices are measured, in milliseconds: each candidate runs once while it lasts, and past it the single runs decide (ComputeResources.TuningBudget; Vulkan)", OnDevice),
         new("IDRAK_TUNE_LOG", Tuning, "not set", "1: print every tuning measurement (candidates, time ratios, the choice) to the error output", OnDevice),

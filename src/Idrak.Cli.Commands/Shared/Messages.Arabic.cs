@@ -435,7 +435,7 @@ internal static partial class Messages
         ["Raw completion of a text, without the chat template"] = "إكمال خام لنص، دون قالب المحادثة",
         ["The tools an assembly registers: names, descriptions and parameters"] = "الأدوات التي تسجلها مكتبة: الأسماء والأوصاف والمعاملات",
         ["Calls each tool of an assembly with sample arguments and shows the results"] = "استدعاء كل أداة في مكتبة بوسائط مثال وعرض النتائج",
-        ["Serve the tools of an assembly over MCP (standard input/output)"] = "تقديم أدوات مكتبة عبر MCP (المدخل والمخرج القياسيان)",
+        ["Serve the tools of an assembly over MCP (standard input/output, or http)"] = "تقديم أدوات مكتبة عبر MCP (المدخل والمخرج القياسيان، أو http)",
         ["Check a running server (Idrak or any compatible one): reachable, APIs, models, latency"] = "فحص خادم يعمل (إدراك أو أي خادم متوافق): الوصول والواجهات والنماذج وزمن الاستجابة",
         ["Models of a running server: loaded or not, memory, context, last use"] = "نماذج خادم يعمل: محملة أو لا، والذاكرة والسياق وآخر استخدام",
         ["Stop a running server; open requests finish first"] = "إيقاف خادم يعمل؛ وتنتهي الطلبات المفتوحة أولا",
