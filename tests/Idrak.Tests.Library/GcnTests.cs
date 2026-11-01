@@ -26,7 +26,7 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] GcnGroup =
     [
         ("gcn targets: target strings parse from the span into major, minor and stepping (one hex digit each: gfx90c is 9.0.12, gfx1030 10.3.0) and the xnack and sramecc settings, with nothing allocated; generic targets, unknown or repeated features and malformed strings are refused", GcnTargetStrings),
-        ("gcn targets: gfx9 is the library's default and handles 9.0.x without a unified register file; an app's family is asked first; a target no family handles fails as not registered, naming the reported target", GcnTargetFamilies),
+        ("gcn targets: gfx9, gfx10 and gfx11 are the library's defaults: gfx9 handles 9.0.x without a unified register file, gfx10 10.1.x and 10.3.x, gfx11 11.0.x; an app's family is asked first; a target no family handles (9.0.10, 9.4.x, 12.x) fails as not registered, naming the reported target", GcnTargetFamilies),
         ("gcn targets: ELF flags as LLVM 18 writes them for every processor (the machine value, then xnack and sramecc any, off or on); a feature the processor lacks and format 6 are refused", GcnTargetElfFlags),
         ("gcn targets: gfx9's register files, reserved scalar registers, descriptor blocks and waves per SIMD as LLVM counts them; counts past the register file are refused", GcnTargetRegisters),
         ("gcn code object: fill_f32 for gfx90c read back: the ELF header and flags, segments, sections, symbols, the dynamic and hash tables, the metadata note; the same code, flags, note and descriptor as the golden (ld.lld's objects, formats 5 and 4)", GcnCodeObjectFill),
@@ -125,28 +125,41 @@ internal abstract partial class Tests
     internal static void GcnTargetFamilies(Device device)
     {
         _ = device;
-        Check(GcnTargets.Names.Contains("gfx9") && GcnTargets.Default("gfx9") is { Family: "gfx9" } && GcnTargets.Origin("gfx9") == Overrides.Library,
-            $"gfx9 is the library's default: {string.Join(", ", GcnTargets.Names)}, from {GcnTargets.Origin("gfx9")}");
-        foreach (string handled in (string[])["gfx90c:xnack-", "gfx90c", "gfx900", "gfx902:xnack+", "gfx904", "gfx906:sramecc+:xnack-", "gfx908", "gfx909"])
+        foreach (string family in (string[])["gfx9", "gfx10", "gfx11"])
         {
-            Check(GcnTargets.For(handled).Family == "gfx9", $"{handled} is gfx9's");
+            Check(GcnTargets.Names.Contains(family) && GcnTargets.Default(family) is { } known && known.Family == family && GcnTargets.Origin(family) == Overrides.Library,
+                $"{family} is the library's default: {string.Join(", ", GcnTargets.Names)}, from {GcnTargets.Origin(family)}");
         }
 
-        // 9.0.10 and 9.4.x (one file of vector and accumulation registers) and every later version are other families'.
-        foreach (string other in (string[])["gfx90a:xnack-", "gfx942:sramecc+:xnack-", "gfx1030", "gfx1100", "gfx1201"])
+        Check(ReferenceEquals(GcnTargets.Default("gfx10"), GcnTargets.Gfx10Family) && ReferenceEquals(GcnTargets.Default("gfx11"), GcnTargets.Gfx11Family),
+            "the registered RDNA families are the ones the kernel tests assemble with");
+        foreach (var (handled, family) in (ReadOnlySpan<(string, string)>)[
+                     ("gfx90c:xnack-", "gfx9"), ("gfx90c", "gfx9"), ("gfx900", "gfx9"), ("gfx902:xnack+", "gfx9"), ("gfx904", "gfx9"), ("gfx906:sramecc+:xnack-", "gfx9"), ("gfx908", "gfx9"),
+                     ("gfx909", "gfx9"), ("gfx1010:xnack-", "gfx10"), ("gfx1012", "gfx10"), ("gfx1030", "gfx10"), ("gfx1031", "gfx10"), ("gfx1036", "gfx10"), ("gfx1100", "gfx11"),
+                     ("gfx1101", "gfx11"), ("gfx1102", "gfx11"), ("gfx1103", "gfx11")])
         {
-            Check(!GcnTargets.TryFor(GcnIsaVersion.Parse(other), out _), $"{other} is not gfx9's");
-            ThrowsNaming<NotRegisteredException>(() => GcnTargets.For(other), $"{other} on its own", other, "not registered", "gfx9");
+            Check(GcnTargets.For(handled).Family == family, $"{handled} is {family}'s, not {GcnTargets.For(handled).Family}'s");
         }
 
-        Check(!GcnTargets.TryFor(new GcnIsaVersion(9, 0, 5), out _), "a 9.0.x version with no known processor is not handled");
+        // 9.0.10 and 9.4.x (one file of vector and accumulation registers) and 12.x (split wait counters, G8b) are
+        // families the library does not have yet.
+        foreach (string other in (string[])["gfx90a:xnack-", "gfx942:sramecc+:xnack-", "gfx1200", "gfx1201"])
+        {
+            Check(!GcnTargets.TryFor(GcnIsaVersion.Parse(other), out _), $"{other} is no registered family's");
+            ThrowsNaming<NotRegisteredException>(() => GcnTargets.For(other), $"{other} on its own", other, "not registered", "gfx9", "gfx10", "gfx11");
+        }
+
+        Check(!GcnTargets.TryFor(new GcnIsaVersion(9, 0, 5), out _) && !GcnTargets.TryFor(new GcnIsaVersion(10, 3, 9), out _),
+            "a 9.0.x or 10.3.x version with no known processor is not handled");
         try
         {
-            _ = GcnTargets.For("gfx1030");
+            _ = GcnTargets.For("gfx1201");
+            Check(false, "gfx1201 was handled");
         }
         catch (NotRegisteredException e)
         {
-            Check(e.Registry == "GcnTargets" && e.Name == "gfx1030" && e.Registered.Contains("gfx9"), $"the refusal names the registry, the target and the families: {e.Registry}, {e.Name}");
+            Check(e.Registry == "GcnTargets" && e.Name == "gfx1201" && e.Registered.Contains("gfx9") && e.Registered.Contains("gfx11"),
+                $"the refusal names the registry, the target and the families: {e.Registry}, {e.Name}");
         }
 
         // An app's family is asked before the library's, and leaves when unregistered.
@@ -162,7 +175,7 @@ internal abstract partial class Tests
             GcnTargets.Unregister(app.Family);
         }
 
-        Check(!GcnTargets.Names.Contains(app.Family) && !GcnTargets.TryFor(GcnIsaVersion.Parse("gfx1030"), out _), "unregistered, 10.3.x is nobody's again");
+        Check(!GcnTargets.Names.Contains(app.Family) && GcnTargets.For("gfx1030").Family == "gfx10", "unregistered, 10.3.x is gfx10's again");
     }
 
     // A family an app registers (a stand-in: it answers for 10.3.x and encodes nothing).
@@ -439,7 +452,7 @@ internal abstract partial class Tests
 
         ThrowsNaming<NotSupportedException>(() => GcnCodeObject.Write(isa, 6, FillKernel()), "format 6", "format 6", "IDRAK_HIP_CODE_OBJECT");
         ThrowsNaming<NotSupportedException>(() => GcnCodeObject.Write(isa, 3, FillKernel()), "format 3", "format 3");
-        ThrowsNaming<NotRegisteredException>(() => GcnCodeObject.Write(GcnIsaVersion.Parse("gfx1030"), 5, FillKernel()), "a target no family handles", "gfx1030", "not registered");
+        ThrowsNaming<NotRegisteredException>(() => GcnCodeObject.Write(GcnIsaVersion.Parse("gfx1201"), 5, FillKernel()), "a target no family handles", "gfx1201", "not registered");
         var gfx9 = GcnTargets.For(isa);
         ThrowsNaming<ArgumentException>(() => GcnCodeObject.Write(gfx9, GcnIsaVersion.Parse("gfx1030"), 5, [FillKernel()]), "gfx9 asked for 10.3.0", "gfx9", "gfx1030");
         ThrowsNaming<ArgumentException>(() => GcnCodeObject.Write(isa, 5), "no kernels", "at least one kernel");
@@ -678,8 +691,8 @@ internal abstract partial class Tests
         GcnFamilyGolden("gfx9", GcnRegisteredCpus, GcnTargets.For);
     }
 
-    // The RDNA families are not registered yet (plan 35, G8a: they are once their kernels run): their goldens are checked
-    // with the family itself, in wave64, the waves Idrak's kernels run in.
+    // The RDNA families' goldens are checked with the family itself (the one the library registers), in wave64, the waves
+    // Idrak's kernels run in.
     internal static void GcnAssemblerGfx10Golden(Device device)
     {
         _ = device;
@@ -1168,7 +1181,7 @@ internal abstract partial class Tests
         var xnackOff = GcnIsaVersion.Parse("gfx90c:xnack-");
         var off = new ElfReader(GcnKernels.FillCodeObject(xnackOff, 5));
         Check(off.U32(48) == 0x232 && off.SectionBytes(".text").SequenceEqual(goldenCode), $"gfx90c:xnack-: flags 0x{off.U32(48):X}, the same code");
-        ThrowsNaming<NotRegisteredException>(() => GcnKernels.FillCodeObject(GcnIsaVersion.Parse("gfx1030"), 5), "a target no family handles", "gfx1030", "not registered");
+        ThrowsNaming<NotRegisteredException>(() => GcnKernels.FillCodeObject(GcnIsaVersion.Parse("gfx1201"), 5), "a target no family handles", "gfx1201", "not registered");
     }
 
     internal static void GcnGateDevice(Device device)

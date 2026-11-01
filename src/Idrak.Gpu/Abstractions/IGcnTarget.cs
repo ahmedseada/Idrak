@@ -141,9 +141,9 @@ public sealed record GcnRegisterFile(int Vgprs, int VgprGranule, int Sgprs, int 
 public readonly record struct GcnDescriptorBits(uint Rsrc1, uint Rsrc3, ushort CodeProperties);
 
 /// <summary>
-/// One family of GCN instruction sets (gfx9: GCN 5 and CDNA's first targets; later gfx10, gfx11, gfx12), chosen by the
-/// version the device reports (<see cref="GcnIsaVersion"/>), never by its name: its wave sizes, register files, kernel
-/// descriptor encoding and the code object's ELF flags. Register one with <see cref="GcnTargets.Register"/>; the
+/// One family of GCN instruction sets (gfx9: GCN 5 and CDNA's first targets; gfx10: RDNA 1 and 2; gfx11: RDNA 3; later
+/// gfx12), chosen by the version the device reports (<see cref="GcnIsaVersion"/>), never by its name: its wave sizes,
+/// register files, kernel descriptor encoding and the code object's ELF flags. Register one with <see cref="GcnTargets.Register"/>; the
 /// assembler and the code object writer look a device's family up there.
 /// </summary>
 public interface IGcnTarget
@@ -193,7 +193,7 @@ public interface IGcnTarget
 
 /// <summary>
 /// The GCN target families by name. Built in (Idrak.Gpu): "gfx9" (GCN 5 and CDNA's gfx9 targets without a unified
-/// register file). Register another family, or replace one, with <see cref="Register"/>; families an app registers are
+/// register file), "gfx10" (RDNA 1 and 2) and "gfx11" (RDNA 3), the RDNA families in waves of 64. Register another family, or replace one, with <see cref="Register"/>; families an app registers are
 /// asked first. A device whose version no family handles is refused, naming the target it reported.
 /// </summary>
 public static partial class GcnTargets

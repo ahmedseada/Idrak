@@ -14,11 +14,14 @@ namespace Idrak.Gpu.Hip;
 // the next launch, and a replay of the same launch, finds it at zero; HipBackend keeps one zeroed buffer of counters per
 // device from its pool (rule 77) and gives each launch its own range.
 //
-// The memory order is gfx9's (LLVM's AMDGPU memory model, agent scope): a block's stores complete (s_waitcnt vmcnt(0),
-// written out: no register waits for a store) before the atomic, which returns the count (glc) to lane 0; the last block
-// reads what the others stored with glc loads, which miss the compute unit's vector L1 and read the L2 every compute
-// unit shares (CUDA's ld.global.cg). The interpreter checks each step: a load of another block's store without the
-// atomic between them, or without glc, is reported as a race.
+// The memory order is LLVM's AMDGPU memory model at agent scope, written once for every family and expanded by the
+// assembler as ptxas expands PTX's: a block's stores complete (s_waitcnt vmcnt(0) vscnt(0), written out: no register
+// waits for a store; gfx9 counts stores on vmcnt, ISA 10 and 11 add s_waitcnt_vscnt null, 0) before the atomic, which
+// returns the count (glc) to lane 0; the last block reads what the others stored with device-scope loads
+// (scope:SCOPE_DEV: glc on gfx9 and ISA 11, glc dlc on ISA 10), which miss the caches a compute unit's waves share and
+// read the L2 every compute unit shares (CUDA's ld.global.cg). The interpreter checks each step: a load of another
+// block's store without the atomic between them, before the stores were retired, or without the family's device scope,
+// is reported as a race.
 internal static partial class GcnKernels
 {
     private static string FinishText(FormattableString text) => text.ToString(CultureInfo.InvariantCulture);
@@ -31,7 +34,7 @@ internal static partial class GcnKernels
     private static void WaveArrive(ProductWriter w, string counters, string index, string total, string notLast)
     {
         string offset = w.S(), at = w.V(), one = w.V(), old = w.V(), count = w.S(), saved = w.SPair(), zero = w.V();
-        w.L($"s_waitcnt vmcnt(0)                                       ; this block's stores done: the atomic releases them");
+        w.L($"s_waitcnt vmcnt(0) vscnt(0)                                 ; this block's stores done: the atomic releases them");
         w.L($"s_lshl_b32 {offset}, {index}, 2");
         w.L($"v_mov_b32_e32 {at}, {offset}");
         // Lane 0 alone through saveexec and back (EXEC known full after: the allocator keeps the registers free).
@@ -61,7 +64,7 @@ internal static partial class GcnKernels
     {
         string offset = w.S(), at = w.V(), one = w.V(), old = w.V(), seen = w.V(), count = w.S(), saved = w.SPair();
         w.L($"""
-            s_waitcnt vmcnt(0)
+            s_waitcnt vmcnt(0) vscnt(0)
             s_barrier
             s_lshl_b32 {offset}, {index}, 2
             v_mov_b32_e32 {at}, {offset}
@@ -225,7 +228,7 @@ internal static partial class GcnKernels
 
         var vs = Registers(w, Wide * WaveThreads);
         WaveColumns(w, n, laneBytes, Wide,
-            (e, off, imm) => FinishText($"global_load_dword {vs[e]}, {off}, {yb}{imm} glc"),
+            (e, off, imm) => FinishText($"global_load_dword {vs[e]}, {off}, {yb}{imm} scope:SCOPE_DEV"),
             (e, _, _) => FinishText($"v_fma_f32 {acc[e % WaveThreads]}, {vs[e]}, {vs[e]}, {acc[e % WaveThreads]}"), vs);
         string total = WaveReduceAdd(w, acc, laneBytes);
         string ry = w.V();
@@ -252,7 +255,7 @@ internal static partial class GcnKernels
             }
 
             WaveColumns(w, n, laneBytes, Narrow,
-                (e, off, imm) => FinishText($"global_load_dword {ys[e]}, {off}, {yb}{imm} glc\nglobal_load_dword {rs[e]}, {off}, {rb}{imm}")
+                (e, off, imm) => FinishText($"global_load_dword {ys[e]}, {off}, {yb}{imm} scope:SCOPE_DEV\nglobal_load_dword {rs[e]}, {off}, {rb}{imm}")
                                  + (normalize ? FinishText($"\nglobal_load_dword {gs[e]}, {off}, {ygain}{imm}") : ""),
                 (e, off, imm) => (normalize
                     ? FinishText($"""
@@ -359,8 +362,8 @@ internal static partial class GcnKernels
         w.L($"v_min_u32_e32 {clamped}, {lastColumn}, {column}");
         w.L($"v_add_u32_e32 {at}, {rowFirst}, {clamped}");
         w.L($"v_lshlrev_b32_e32 {at}, 2, {at}");
-        w.L($"global_load_dword {g}, {at}, {y0} glc");
-        w.L($"global_load_dword {u}, {at}, {y1} glc");
+        w.L($"global_load_dword {g}, {at}, {y0} scope:SCOPE_DEV");
+        w.L($"global_load_dword {u}, {at}, {y1} scope:SCOPE_DEV");
         for (int kind = 0; kind < kinds.Length; kind++)
         {
             w.L($"s_cmp_eq_u32 {act}, {kind + 1}");

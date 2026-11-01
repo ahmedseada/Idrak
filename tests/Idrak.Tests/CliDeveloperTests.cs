@@ -301,7 +301,7 @@ internal abstract partial class DesktopTests : Tests
             (code, output, _) = DevRun("kernels", "dump", "gcn", "--target", "gfx908", "-o", chosen);
             Check(code == 0 && output.StartsWith("gcn", StringComparison.Ordinal) && File.Exists(Path.Combine(chosen, "gcn", "gfx908", "softmax_f32.s"))
                   && File.Exists(Path.Combine(chosen, "gcn", "virtual", "add_f32.s")), $"gcn for a chosen target: {output}");
-            Check(DevRun("kernels", "dump", "gcn", "--target", "gfx1100", "-o", chosen).Code == 2 && DevRun("kernels", "dump", "gcn", "--target", "sm_80", "-o", chosen).Code == 2,
+            Check(DevRun("kernels", "dump", "gcn", "--target", "gfx1201", "-o", chosen).Code == 2 && DevRun("kernels", "dump", "gcn", "--target", "sm_80", "-o", chosen).Code == 2,
                 "a target no family handles, or not a target: a usage error");
             Check(DevRun("kernels", "dump", "hip", "-o", only).Code == 2, "hip is not a kind of kernels dump");
         }

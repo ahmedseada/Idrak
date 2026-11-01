@@ -7,8 +7,8 @@ namespace Idrak.Gpu.Abstractions;
 
 public static partial class GcnTargets
 {
-    /// <summary>The gfx11 family (RDNA 3), made but not registered until its kernels are (plan 35, G8a).</summary>
-    internal static IGcnTarget Gfx11Family { get; } = new Gfx11();
+    /// <summary>The gfx11 family (RDNA 3), registered by the library (plan 35, G8a).</summary>
+    internal static IGcnTarget Gfx11Family => Families.Gfx11;
 
     /// <summary>
     /// The gfx11 family: ISA 11.0.x (RDNA 3), run by Idrak's kernels in waves of 64. Its encodings are ISA 11's

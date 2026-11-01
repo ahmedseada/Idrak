@@ -653,9 +653,10 @@ internal static partial class GcnKernels
     // step's items are the step kernel's blocks (row n, 64 units), item = n·⌈H/64⌉ + chunk; block b takes items b, b + grid,
     // … in turn, so each item's sums are the step kernel's, in its order (the same bits). Between steps every block meets
     // at the grid barrier: its stores completed and its waves met, thread 0 reads the generation and adds 1 to the arrivals
-    // (glc); the last to arrive resets them and advances the generation, the others wait for it to move (glc loads, past the
-    // compute unit's cache); then the scalar cache is dropped, so the next step's product reads the rows other blocks wrote
-    // from the L2. The host keeps the grid within what the device holds at once (HipBackend.Recurrent.cs).
+    // (glc); the last to arrive resets them and advances the generation (its reset released first: vmcnt(0) vscnt(0)), the
+    // others wait for it to move (device-scope loads, scope:SCOPE_DEV, past the compute unit's caches); then the scalar
+    // cache is dropped at device scope (s_dcache_inv, and on ISA 10 and 11 buffer_gl1_inv, the L1 it reads through), so
+    // the next step's product reads the rows other blocks wrote from the L2. The host keeps the grid within what the device holds at once (HipBackend.Recurrent.cs).
     private static GcnKernelSource RecurrentSequence(string name, string[] buffers, int gates, StepProduct product, bool backward,
         Action<PointwiseWriter, RecurrentContext, string[]> body)
     {
@@ -735,14 +736,14 @@ internal static partial class GcnKernels
         CvLines(w, $"""
             {label}_item_end:
             s_mov_b64 exec, -1
-            s_waitcnt vmcnt(0)
+            s_waitcnt vmcnt(0) vscnt(0)
             s_barrier
             s_add_u32 {SeqItem}, {SeqItem}, {SeqGrid}
             s_branch {label}_item
             {label}_step_end:
             s_cmp_ge_u32 {SeqK}, {SeqLast}
             s_cbranch_scc1 {label}_exit
-            s_waitcnt vmcnt(0)
+            s_waitcnt vmcnt(0) vscnt(0)
             s_barrier
             v_readfirstlane_b32 {SeqWave}, v0
             s_lshr_b32 {SeqWave}, {SeqWave}, 6
@@ -755,7 +756,7 @@ internal static partial class GcnKernels
             v_mov_b32_e32 {zero}, 0
             v_cmp_eq_u32_e32 vcc, 0, v0
             s_and_saveexec_b64 {SeqSaved}, vcc
-            global_load_dword {seen}, {at}, {barrier} offset:4 glc
+            global_load_dword {seen}, {at}, {barrier} offset:4 scope:SCOPE_DEV
             s_waitcnt vmcnt(0)
             global_atomic_add {old}, {at}, {one}, {barrier} glc
             s_waitcnt vmcnt(0)
@@ -767,21 +768,21 @@ internal static partial class GcnKernels
             s_cbranch_scc1 {label}_wait
             s_and_saveexec_b64 {SeqSaved}, vcc
             global_store_dword {at}, {zero}, {barrier}
-            s_waitcnt vmcnt(0)
+            s_waitcnt vmcnt(0) vscnt(0)
             global_atomic_add {old}, {at}, {one}, {barrier} offset:4 glc
             s_waitcnt vmcnt(0)
             s_or_b64 exec, exec, {SeqSaved}
             s_branch {label}_passed
             {label}_wait:
             s_sleep 1
-            global_load_dword {seen}, {at}, {barrier} offset:4 glc
+            global_load_dword {seen}, {at}, {barrier} offset:4 scope:SCOPE_DEV
             s_waitcnt vmcnt(0)
             v_readfirstlane_b32 {SeqT2}, {seen}
             s_cmp_eq_u32 {SeqT2}, {SeqGen}
             s_cbranch_scc1 {label}_wait
             {label}_passed:
             s_barrier
-            s_dcache_inv
+            s_dcache_inv scope:SCOPE_DEV
             s_add_u32 {SeqK}, {SeqK}, 1
             s_branch {label}_step
             {label}_exit:

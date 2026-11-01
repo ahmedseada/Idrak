@@ -22,11 +22,12 @@ namespace Idrak.Gpu.Hip;
 /// range of one as <c>s[3]</c>), special registers and values (<c>vcc</c>, <c>vcc_lo</c>, <c>exec_hi</c>, <c>m0</c>,
 /// <c>flat_scratch</c>, <c>xnack_mask</c>, <c>src_scc</c>, <c>src_shared_base</c>, <c>off</c>), integers (decimal,
 /// <c>0x</c>, <c>0b</c>, signed) and floats (<c>0.5</c>, <c>1e0</c>), labels, and the fields <c>hwreg(...)</c>,
-/// <c>gpr_idx(...)</c>, <c>vmcnt(n) expcnt(n) lgkmcnt(n)</c>. Sources take <c>-x</c>, <c>|x|</c>, <c>-|x|</c>,
+/// <c>gpr_idx(...)</c>, <c>vmcnt(n) expcnt(n) lgkmcnt(n) vscnt(n)</c>. Sources take <c>-x</c>, <c>|x|</c>, <c>-|x|</c>,
 /// <c>neg(x)</c>, <c>abs(x)</c> and, in SDWA, <c>sext(x)</c>.</item>
 /// <item>Modifiers after the operands, split by spaces: <c>clamp</c>, <c>mul:2</c>, <c>mul:4</c>, <c>div:2</c>,
 /// <c>op_sel:[..]</c>, <c>op_sel_hi:[..]</c>, <c>neg_lo:[..]</c>, <c>neg_hi:[..]</c>, <c>offset:n</c>,
-/// <c>offset:swizzle(..)</c>, <c>offset0:n</c>, <c>offset1:n</c>, <c>glc</c>, <c>slc</c>, <c>gds</c>; DPP's
+/// <c>offset:swizzle(..)</c>, <c>offset0:n</c>, <c>offset1:n</c>, <c>glc</c>, <c>slc</c>, <c>dlc</c>, <c>gds</c>,
+/// <c>scope:SCOPE_CU</c> and <c>scope:SCOPE_DEV</c> (a device-scope load, or s_dcache_inv, as the family spells it); DPP's
 /// <c>quad_perm:[a,b,c,d]</c>, <c>row_shl:n</c>, <c>row_shr:n</c>, <c>row_ror:n</c>, <c>wave_shl:1</c>,
 /// <c>wave_rol:1</c>, <c>wave_shr:1</c>, <c>wave_ror:1</c>, <c>row_mirror</c>, <c>row_half_mirror</c>,
 /// <c>row_bcast:15</c>, <c>row_bcast:31</c>, <c>row_mask:n</c>, <c>bank_mask:n</c>, <c>bound_ctrl:0</c> (or 1);
@@ -48,6 +49,11 @@ internal sealed partial class GcnAssembler
     private char[] _chars;
     private bool _parsing;
     private int _line, _column;
+
+    // What the line's scope expands to after its instruction (Statement): the stores' wait (-1: none), ISA 10 and 11's
+    // GL1 invalidation, and whether the instruction written is left out (an s_waitcnt naming vscnt alone, on RDNA).
+    private int _followStores = -1;
+    private bool _followGl1, _dropWritten;
     private Columns _columns;
 
     // Each operand's column, for the refusals.
@@ -140,8 +146,36 @@ internal sealed partial class GcnAssembler
             throw Syntax(at, Missing(ins));
         }
 
+        _followStores = -1;
+        _followGl1 = _dropWritten = false;
         at = ParseOperands(line, end);
         ParseModifiers(line, at);
+        if (!_dropWritten)
+        {
+            EmitStatement();
+        }
+
+        // The family's expansion of a scope written on the line (as ptxas expands PTX's fences): the stores' wait of an
+        // s_waitcnt's vscnt(n), the shader array's L1 dropped with the scalar cache (s_dcache_inv scope:SCOPE_DEV).
+        if (_followStores >= 0)
+        {
+            Begin(_set.Find(GcnOp.SWaitcntVscnt) ?? throw Syntax(at, $"the {_family} family counts stores apart but has no s_waitcnt_vscnt"), GcnVariant.Auto, typed: false);
+            Add(GcnOperand.Special(GcnSpecial.Null));
+            Add(GcnOperand.Immediate(_followStores));
+            _columns[0] = _columns[1] = _column;
+            EmitStatement();
+        }
+
+        if (_followGl1)
+        {
+            Begin(_set.Find(GcnOp.BufferGl1Inv) ?? throw Syntax(at, $"the {_family} family has no buffer_gl1_inv"), GcnVariant.Auto, typed: false);
+            EmitStatement();
+        }
+    }
+
+    // The instruction begun and parsed: kept for the kernel's passes, or encoded (and printed) at once.
+    private void EmitStatement()
+    {
         if (_kernel)
         {
             Record();
@@ -718,7 +752,6 @@ internal sealed partial class GcnAssembler
     // Fields written as functions: s_waitcnt's counts, hwreg(), gpr_idx(), swizzle().
     // ---------------------------------------------------------------------------------------------------------------
 
-    // vmcnt(n) expcnt(n) lgkmcnt(n), split by spaces, '&' or ','; a counter not named is not waited on. Or the 16 bits.
     // s_delay_alu's dependencies, '|' between them: instid0 at 3:0, instskip at 6:4, instid1 at 10:7 (or the 16 bits).
     private int ParseDelayAlu(ReadOnlySpan<byte> line, int at)
     {
@@ -796,6 +829,11 @@ internal sealed partial class GcnAssembler
 
     internal static readonly string[] DelaySkips = ["SAME", "NEXT", "SKIP_1", "SKIP_2", "SKIP_3", "SKIP_4"];
 
+    // vmcnt(n) expcnt(n) lgkmcnt(n) vscnt(n), split by spaces, '&' or ','; a counter not named is not waited on. Or the
+    // 16 bits. vscnt is the stores' counter, written in one text for every family (plan 35, G8a): where the family counts
+    // its stores on vmcnt (gfx9) it waits vmcnt(min(vm, n)), the same bits as vmcnt alone; where it counts them apart
+    // (ISA 10, 11) the line adds s_waitcnt_vscnt null, n (the s_waitcnt itself left out when it names vscnt alone), as
+    // LLVM's memory model waits "vmcnt(0) & vscnt(0)" before a release.
     private int ParseWaitCounts(ReadOnlySpan<byte> line, int at)
     {
         if (IsNumberStart(line, at))
@@ -810,7 +848,8 @@ internal sealed partial class GcnAssembler
             return end;
         }
 
-        int vm = _set.CounterLimit(GcnCounter.Vm), exp = _set.CounterLimit(GcnCounter.Exp), lgkm = _set.CounterLimit(GcnCounter.Lgkm), named = 0;
+        bool storesApart = (_set.Counting(GcnMemoryClass.VectorStore).Counters & GcnCounter.Vs) != 0;
+        int vm = _set.CounterLimit(GcnCounter.Vm), exp = _set.CounterLimit(GcnCounter.Exp), lgkm = _set.CounterLimit(GcnCounter.Lgkm), vs = -1, named = 0;
         while (true)
         {
             at = SkipSpaces(line, at);
@@ -826,13 +865,14 @@ internal sealed partial class GcnAssembler
             }
 
             ReadOnlySpan<byte> counter = line[at..name];
-            int which = counter.SequenceEqual("vmcnt"u8) ? 0 : counter.SequenceEqual("expcnt"u8) ? 1 : counter.SequenceEqual("lgkmcnt"u8) ? 2 : -1;
+            int which = counter.SequenceEqual("vmcnt"u8) ? 0 : counter.SequenceEqual("expcnt"u8) ? 1 : counter.SequenceEqual("lgkmcnt"u8) ? 2
+                : counter.SequenceEqual("vscnt"u8) ? 3 : -1;
             if (which < 0 || (named >> which & 1) != 0)
             {
-                throw Syntax(at, which < 0 ? $"'{Text(counter)}' is not a counter (vmcnt, expcnt, lgkmcnt)" : $"{Text(counter)} is named twice");
+                throw Syntax(at, which < 0 ? $"'{Text(counter)}' is not a counter (vmcnt, expcnt, lgkmcnt, vscnt)" : $"{Text(counter)} is named twice");
             }
 
-            int most = _set.CounterLimit(which switch { 0 => GcnCounter.Vm, 1 => GcnCounter.Exp, _ => GcnCounter.Lgkm });
+            int most = _set.CounterLimit(which switch { 0 => GcnCounter.Vm, 1 => GcnCounter.Exp, 3 when storesApart => GcnCounter.Vs, 3 => GcnCounter.Vm, _ => GcnCounter.Lgkm });
             int end = ParseNumber(line, SkipSpaces(line, name + 1), out bool isFloat, out long count, out _);
             if (isFloat || count < 0 || count > most)
             {
@@ -848,8 +888,11 @@ internal sealed partial class GcnAssembler
                 case 1:
                     exp = (int)count;
                     break;
-                default:
+                case 2:
                     lgkm = (int)count;
+                    break;
+                default:
+                    vs = (int)count;
                     break;
             }
 
@@ -858,7 +901,17 @@ internal sealed partial class GcnAssembler
 
         if (named == 0)
         {
-            throw Syntax(at, "s_waitcnt waits for vmcnt(n), expcnt(n) or lgkmcnt(n), or takes their 16 bits");
+            throw Syntax(at, "s_waitcnt waits for vmcnt(n), expcnt(n), lgkmcnt(n) or vscnt(n), or takes their 16 bits");
+        }
+
+        if (vs >= 0 && storesApart)
+        {
+            _followStores = vs;
+            _dropWritten = named == 1 << 3;
+        }
+        else if (vs >= 0)
+        {
+            vm = Math.Min(vm, vs);
         }
 
         Add(GcnOperand.Immediate(_set.WaitBits(vm, exp, lgkm)));
@@ -1090,6 +1143,8 @@ internal sealed partial class GcnAssembler
                 "glc" => format is GcnFormat.Smem or GcnFormat.Flat or GcnFormat.Global,
                 "dlc" => format is GcnFormat.Smem or GcnFormat.Flat or GcnFormat.Global && _encoding != GcnEncoding.Isa9,
                 "slc" => format is GcnFormat.Flat or GcnFormat.Global,
+                "scope" => format is GcnFormat.Flat or GcnFormat.Global && _ins.Operands.IndexOf(GcnRole.VectorDestination) >= 0 && !_ins.Has(GcnInstructionFlags.Atomic)
+                    || _ins.Op == GcnOp.SDcacheInv,
                 "gds" or "offset0" or "offset1" => format == GcnFormat.Ds,
                 "offset" => memory,
                 "clamp" or "mul" or "div" => vector,
@@ -1120,6 +1175,9 @@ internal sealed partial class GcnAssembler
                     break;
                 case "slc":
                     _m.Slc = true;
+                    break;
+                case "scope":
+                    ParseScope(line, ref at, start);
                     break;
                 case "gds":
                     _m.Gds = true;
@@ -1227,6 +1285,36 @@ internal sealed partial class GcnAssembler
                 throw Syntax(at, $"expected a space after {Text(name)}");
             }
         }
+    }
+
+    // scope:SCOPE_CU or scope:SCOPE_DEV (gfx12's spelling), expanded by the family (LLVM 18's memory model at agent scope,
+    // measured with llc 18): a device-scope load, past the caches a compute unit's waves share, is glc on gfx9 and ISA 11
+    // and glc dlc on ISA 10 (whose dlc passes the shader array's L1 too); s_dcache_inv at device scope also drops ISA 10
+    // and 11's L1 (buffer_gl1_inv), which their scalar cache reads through (gfx9's reads the L2). SCOPE_CU adds nothing.
+    private void ParseScope(ReadOnlySpan<byte> line, ref int at, int start)
+    {
+        int end = NameEnd(line, at);
+        ReadOnlySpan<byte> scope = line[at..end];
+        bool device = scope.SequenceEqual("SCOPE_DEV"u8);
+        if (!device && !scope.SequenceEqual("SCOPE_CU"u8))
+        {
+            throw Syntax(start, $"'{Text(scope)}' is not a scope Idrak expands (SCOPE_CU, SCOPE_DEV)");
+        }
+
+        at = end;
+        if (!device)
+        {
+            return;
+        }
+
+        if (_ins.Op == GcnOp.SDcacheInv)
+        {
+            _followGl1 = _encoding != GcnEncoding.Isa9;
+            return;
+        }
+
+        _m.Glc = true;
+        _m.Dlc |= _encoding == GcnEncoding.Isa10;
     }
 
     private static string SuffixText(GcnVariant variant) => variant switch

@@ -17,7 +17,18 @@ public static partial class GcnTargets
             unguarded: "a family's encodings are written into code objects whole, with no call to fall back at");
         var gfx9 = new Gfx9();
         table.RegisterDefault(gfx9.Family, gfx9);
+        table.RegisterDefault(Families.Gfx10.Family, Families.Gfx10);
+        table.RegisterDefault(Families.Gfx11.Family, Families.Gfx11);
         return table;
+    }
+
+    // The later families' one instance each, made when first asked for (by the registry or the tests), whatever order the
+    // partial files' static fields are set in.
+    private static class Families
+    {
+        public static readonly IGcnTarget Gfx10 = new Gfx10();
+
+        public static readonly IGcnTarget Gfx11 = new Gfx11();
     }
 
     /// <summary>The processors whose machine values the library knows, by name.</summary>
