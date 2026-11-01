@@ -30,12 +30,14 @@ internal sealed class GenerationSettings
     /// <summary>The options' lines for a command's usage text.</summary>
     public const string Help =
         "  -s, --system TEXT      the system prompt\n" +
-        "      --temperature T    sampling temperature (default: the model's own, else 0.6; 0 picks the most likely token)\n" +
-        "      --top-k N          sample among the N most likely tokens (default: the model's, else 20; 0 = all)\n" +
-        "      --top-p P          nucleus sampling (default: the model's, else 0.95; 1 = off)\n" +
+        "      --temperature T    sampling temperature (default 0.6; 0 picks the most likely token)\n" +
+        "      --top-k N          sample among the N most likely tokens (default 20; 0 = all)\n" +
+        "      --top-p P          nucleus sampling (default 0.95; 1 = off)\n" +
+        "      --min-p P          drop tokens less than P times as likely as the best (default 0 = off)\n" +
+        "                         sampling not given is the model's own (its generation_config.json), else these defaults\n" +
         "      --max-tokens N     longest answer in tokens (default: until the model stops, at most 4096)\n" +
         "      --seed N           random seed for reproducible answers\n" +
-        "      --repeat-penalty F divides the scores of tokens seen in the last --repeat-last-n tokens (default: the model's, else 1 = off)\n" +
+        "      --repeat-penalty F divides the scores of tokens seen in the last --repeat-last-n tokens (default 1 = off)\n" +
         "      --presence-penalty F, --frequency-penalty F  subtracted once from each recent token's score, or once per\n" +
         "                         time it was seen (default 0 = off); --repeat-last-n N: how far back they look (default 64)\n" +
         "      --repeat-stop N    end the answer when one phrase repeats N times in a row (default 0 = off)\n" +

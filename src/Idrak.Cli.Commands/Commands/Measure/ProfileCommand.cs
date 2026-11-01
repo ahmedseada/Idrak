@@ -232,7 +232,7 @@ internal sealed class ProfileCommand : Command
         string[] modules = [];
         var result = InProcessCluster.Run(topology, options, rank =>
         {
-            using var model = ModelChoices.Load(context, choice, Device.Cpu);   // each rank keeps its own stage of it
+            using var model = ModelChoices.Load(context, choice, Device.Cpu, autoWeights: false);   // each rank keeps its own stage of it
             using var pipe = PipelineStage.Place(model.Network, rank.Collectives, options);
             if (!pipe.IsFirst)
             {

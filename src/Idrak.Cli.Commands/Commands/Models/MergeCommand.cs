@@ -65,7 +65,7 @@ internal sealed class MergeCommand : Command
         }
 
         var clock = System.Diagnostics.Stopwatch.StartNew();
-        using var model = Shared.ModelChoices.Load(context, new Shared.ModelChoices.ModelChoice(local.Folder, null, null, null, adapter));
+        using var model = Shared.ModelChoices.Load(context, new Shared.ModelChoices.ModelChoice(local.Folder, null, null, null, adapter), autoWeights: false);
         ModelWork.SaveHuggingFace(model, output, type);
         string? merged = model.Notes.FirstOrDefault(n => n.StartsWith("adapter ", StringComparison.Ordinal));
         long bytes = ModelCache.FolderBytes(output);

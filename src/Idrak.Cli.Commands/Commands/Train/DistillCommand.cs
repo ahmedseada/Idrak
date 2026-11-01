@@ -94,7 +94,7 @@ internal sealed class DistillCommand : Command
                                     answered together from a seed of its own, and on a cluster each rank answers its
                                     shards' (default 0: one per rank, so one in one process; IDRAK_RL_SHARDS)
               --spread NAME         with --on-policy: blocks (runs of prompts, the default) or interleaved (IDRAK_RL_SPREAD)
-              --teacher-weights F   the teacher's weights: int8, int4 or bf16 (default: as stored)
+              --teacher-weights F   the teacher's weights: int8, int4 or bf16 (default: auto)
               --teacher-device D    the teacher's device (default: the student's), e.g. cpu, cuda:1
           -w, --weights F           the student's base weights: int8, int4 (QLoRA) or bf16
           and these options of idrak tune train: --rank, --lora-alpha (tune's --alpha), --lr, --epochs, --max-length,

@@ -72,7 +72,7 @@ internal sealed class QuantizeCommand : Command
         long floatBytes;
         double floatPerplexity;
         int[] tokens;
-        using (var reference = Shared.ModelChoices.Load(context, new Shared.ModelChoices.ModelChoice(local.Folder, null, null, null, null)))
+        using (var reference = Shared.ModelChoices.Load(context, new Shared.ModelChoices.ModelChoice(local.Folder, null, null, null, null), autoWeights: false))
         {
             tokens = ModelWork.CheckTokens(context, reference, limit);
             floatBytes = ModelWork.Bytes(reference.Network);

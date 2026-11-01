@@ -29,7 +29,7 @@ internal sealed class BatchCommand : Command
           -i, --input FILE       the prompts (JSON Lines)
           -o, --out FILE         the answers (JSON Lines; appended to)
               --batch-size N     prompts generated together (default 8; 1 when the model cannot batch)
-          -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: as stored)
+          -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: auto)
           --head-weights F       the output head's format beside -w (bf16: the checkpoint's own scores and one
                                  vocabulary table for tied models, less memory than int8/int4 heads, slower)
           -k, --kv FORMAT        KV cache format: float32, int8, bfloat16 or a registered one (default float32)
