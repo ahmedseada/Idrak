@@ -30,6 +30,10 @@ public static partial class GcnTargets
 
         private static bool FullVectorFile(GcnIsaVersion isa) => isa.Stepping is 0 or 1;
 
+        // Measured on gfx1100 and gfx1102 (llc 18): a transcendental's result read too soon, and an SGPR written by an
+        // SALU after a VALU read it as a lane mask.
+        public override GcnHazardFixes HazardFixes(GcnIsaVersion? isa) => GcnHazardFixes.TransResultThenValu | GcnHazardFixes.LaneMaskThenSaluWrite;
+
         // M0 is 125, null 124 (gfx10's swapped).
         protected override int M0 => 125;
 

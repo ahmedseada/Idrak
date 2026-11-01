@@ -28,6 +28,11 @@ public static partial class GcnTargets
 
         protected override int VectorAllocation(GcnIsaVersion isa) => 4;
 
+        // ISA 10.1 (gfx1010-gfx1013) only, measured with llc 18 (gfx1030 has neither); an unknown version gets them.
+        public override GcnHazardFixes HazardFixes(GcnIsaVersion? isa) => isa is { Minor: not 1 }
+            ? GcnHazardFixes.None
+            : GcnHazardFixes.VmemSgprThenScalarWrite | GcnHazardFixes.SmemSgprThenValuWrite;
+
         // M0 is 124, null (a global instruction's off, SMEM's absent offset) 125.
         protected override int M0 => 124;
 
@@ -197,21 +202,17 @@ public static partial class GcnTargets
         public bool BarrierWaitsForMemory => false;
 
         // The hazards (LLVM 18's GCNHazardRecognizer, llc -run-pass=post-RA-hazard-rec on gfx1010, gfx1030, gfx1100 and
-        // gfx1102 in wave64, 2026-11-01; tools/gcn/measure_hazards.py and measure_hazard_windows.py): none of gfx9's s_nop
-        // cases on any of them, so every count here is 0. KNOWN GAP, not inserted yet: the fixes LLVM makes otherwise are
-        // not wait states but instructions of their own, which the hazard pass does not write:
-        // - ISA 10.1 (gfx1010-gfx1013) only: a vector memory instruction reads an SGPR, then an SALU writes it:
-        //   s_waitcnt_depctr 0xffe3 before the write (a VALU between, or s_waitcnt 0, clears it; SALUs do not, at any distance);
-        // - ISA 10.1 only: SMEM reads an SGPR, then a VALU writes it: s_mov_b32 null, 0 before the write (an SALU between, or
-        //   a wait with lgkmcnt(0), clears it; VALUs do not); LDS, a branch, then vector memory: s_waitcnt_vscnt null, 0;
-        // - ISA 11: a transcendental's result read by a VALU: s_waitcnt_depctr 0x0fff before the reader, unless 5 VALUs or
-        //   2 transcendentals are between (SALUs do not count);
-        // - ISA 11: a VALU reads an SGPR or VCC as its lane mask, then an SALU writes it: s_waitcnt_depctr 0xfffe right after
-        //   the write, at any distance measured (6);
+        // gfx1102 in wave64, 2026-11-01/02; tools/gcn/measure_hazards.py and measure_hazard_windows.py): none of gfx9's s_nop
+        // cases on any of them, so every count here is 0. The fixes LLVM makes otherwise are instructions of their own, the
+        // four of GcnHazardFixes (each family's HazardFixes: ISA 10.1's two, ISA 11's two), which the hazard pass writes.
+        // KNOWN GAP, not inserted (measured for some shapes only, so no rule is guessed):
+        // - ISA 10.1: LDS, a branch, then vector memory (or the reverse): s_waitcnt_vscnt null, 0 before the second;
         // - ISA 11: a VALU reads VGPRs written on both sides of an EXEC write (partial forwarding): s_waitcnt_depctr 0x0fff,
-        //   measured for one shape only (5 VALUs between clear it, SALUs do not); its full rule is still to be measured.
-        // gfx1030 (ISA 10.3) needs none of them. Until they are written, Idrak's gfx10.1 and gfx11 code is not hazard-safe.
+        //   measured for one shape only (5 VALUs between clear it, SALUs do not).
+        // gfx1030 (ISA 10.3) needs none of them.
         public virtual int HazardWaitStates(GcnHazard hazard, GcnFeatureSetting xnack) => 0;
+
+        public abstract GcnHazardFixes HazardFixes(GcnIsaVersion? isa);
 
         // Waves of a workgroup spread over one compute unit's two SIMDs (CU mode, as the descriptor sets).
         public int SimdsPerComputeUnit => 2;

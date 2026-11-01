@@ -36,6 +36,8 @@ FAMILIES = {
     ], [
         "s_waitcnt_vscnt null, 0x0", "s_waitcnt_vscnt null, 0x3f",
         "global_load_dword v0, v[2:3], off glc dlc", "global_load_dword v0, v1, s[2:3] offset:-64 glc dlc",
+        "s_waitcnt_depctr 0xffe3", "s_waitcnt_depctr 0xfffe", "s_waitcnt_depctr 0xfff", "s_mov_b32 null, 0",
+        "buffer_gl0_inv", "buffer_gl1_inv",
     ]),
     "gfx11": ("gfx1100", [
         (r"\b(sc0|sc1|nt)\b", None),
@@ -45,6 +47,8 @@ FAMILIES = {
         "global_load_b32 v0, v[2:3], off glc dlc", "global_load_b32 v0, v1, s[2:3] offset:-64 glc dlc",
         "s_delay_alu instid0(VALU_DEP_1)", "s_delay_alu instid0(VALU_DEP_2) | instskip(NEXT) | instid1(SALU_CYCLE_1)",
         "s_delay_alu instid0(TRANS32_DEP_1)", "s_delay_alu instid0(VALU_DEP_4)",
+        "s_waitcnt_depctr 0xffe3", "s_waitcnt_depctr 0xfffe", "s_waitcnt_depctr 0xfff", "s_mov_b32 null, 0",
+        "buffer_gl0_inv", "buffer_gl1_inv",
     ]),
 }
 

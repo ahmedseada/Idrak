@@ -7,13 +7,13 @@
 # such CPU's records are one block of its own. The wave64 forms are those Idrak's kernels emit; a form's wave32
 # spelling follows it in forms.s, and each wave size lists the other's lines among those it rejects.
 #
-# gfx10/forms.s: 418 instruction lines. CPUs: gfx1010-w32, gfx1010-w64, gfx1030-w32, gfx1030-w64.
-# gfx1010-w32: 376 forms, 42 rejected
-# gfx1010-w64: 418 forms, 0 rejected
-# gfx1030-w32: 376 forms, 42 rejected
-# gfx1030-w64: 418 forms, 0 rejected
+# gfx10/forms.s: 424 instruction lines. CPUs: gfx1010-w32, gfx1010-w64, gfx1030-w32, gfx1030-w64.
+# gfx1010-w32: 382 forms, 42 rejected
+# gfx1010-w64: 424 forms, 0 rejected
+# gfx1030-w32: 382 forms, 42 rejected
+# gfx1030-w64: 424 forms, 0 rejected
 
-# rejected: gfx1010-w32 (42 of 418)
+# rejected: gfx1010-w32 (42 of 424)
 #	205	v_cndmask_b32_e32 v0, v1, v2, vcc	operands are not valid for this GPU or mode
 #	207	v_cndmask_b32_e32 v0, 0, v2, vcc	operands are not valid for this GPU or mode
 #	209	v_cndmask_b32_e32 v0, 1.0, v2, vcc	operands are not valid for this GPU or mode
@@ -439,8 +439,14 @@ gfx1010-w32	s_waitcnt_vscnt null, 0x0	0000fdbb
 gfx1010-w32	s_waitcnt_vscnt null, 0x3f	3f00fdbb
 gfx1010-w32	global_load_dword v0, v[2:3], off glc dlc	009031dc02007d00
 gfx1010-w32	global_load_dword v0, v1, s[2:3] offset:-64 glc dlc	c09f31dc01000200
+gfx1010-w32	s_waitcnt_depctr 0xffe3	e3ffa3bf
+gfx1010-w32	s_waitcnt_depctr 0xfffe	feffa3bf
+gfx1010-w32	s_waitcnt_depctr 0xfff	ff0fa3bf
+gfx1010-w32	s_mov_b32 null, 0	8003fdbe
+gfx1010-w32	buffer_gl0_inv	0000c4e100000000
+gfx1010-w32	buffer_gl1_inv	0000c8e100000000
 
-# rejected: gfx1010-w64 (0 of 418)
+# rejected: gfx1010-w64 (0 of 424)
 # gfx1010-w64
 gfx1010-w64	s_mov_b32 s0, s1	010380be
 gfx1010-w64	s_mov_b32 s0, 0	800380be
@@ -866,8 +872,14 @@ gfx1010-w64	s_waitcnt_vscnt null, 0x0	0000fdbb
 gfx1010-w64	s_waitcnt_vscnt null, 0x3f	3f00fdbb
 gfx1010-w64	global_load_dword v0, v[2:3], off glc dlc	009031dc02007d00
 gfx1010-w64	global_load_dword v0, v1, s[2:3] offset:-64 glc dlc	c09f31dc01000200
+gfx1010-w64	s_waitcnt_depctr 0xffe3	e3ffa3bf
+gfx1010-w64	s_waitcnt_depctr 0xfffe	feffa3bf
+gfx1010-w64	s_waitcnt_depctr 0xfff	ff0fa3bf
+gfx1010-w64	s_mov_b32 null, 0	8003fdbe
+gfx1010-w64	buffer_gl0_inv	0000c4e100000000
+gfx1010-w64	buffer_gl1_inv	0000c8e100000000
 
-# rejected: gfx1030-w32 (42 of 418)
+# rejected: gfx1030-w32 (42 of 424)
 #	205	v_cndmask_b32_e32 v0, v1, v2, vcc	operands are not valid for this GPU or mode
 #	207	v_cndmask_b32_e32 v0, 0, v2, vcc	operands are not valid for this GPU or mode
 #	209	v_cndmask_b32_e32 v0, 1.0, v2, vcc	operands are not valid for this GPU or mode
@@ -1293,8 +1305,14 @@ gfx1030-w32	s_waitcnt_vscnt null, 0x0	0000fdbb
 gfx1030-w32	s_waitcnt_vscnt null, 0x3f	3f00fdbb
 gfx1030-w32	global_load_dword v0, v[2:3], off glc dlc	009031dc02007d00
 gfx1030-w32	global_load_dword v0, v1, s[2:3] offset:-64 glc dlc	c09f31dc01000200
+gfx1030-w32	s_waitcnt_depctr 0xffe3	e3ffa3bf
+gfx1030-w32	s_waitcnt_depctr 0xfffe	feffa3bf
+gfx1030-w32	s_waitcnt_depctr 0xfff	ff0fa3bf
+gfx1030-w32	s_mov_b32 null, 0	8003fdbe
+gfx1030-w32	buffer_gl0_inv	0000c4e100000000
+gfx1030-w32	buffer_gl1_inv	0000c8e100000000
 
-# rejected: gfx1030-w64 (0 of 418)
+# rejected: gfx1030-w64 (0 of 424)
 # gfx1030-w64
 gfx1030-w64	s_mov_b32 s0, s1	010380be
 gfx1030-w64	s_mov_b32 s0, 0	800380be
@@ -1720,3 +1738,9 @@ gfx1030-w64	s_waitcnt_vscnt null, 0x0	0000fdbb
 gfx1030-w64	s_waitcnt_vscnt null, 0x3f	3f00fdbb
 gfx1030-w64	global_load_dword v0, v[2:3], off glc dlc	009031dc02007d00
 gfx1030-w64	global_load_dword v0, v1, s[2:3] offset:-64 glc dlc	c09f31dc01000200
+gfx1030-w64	s_waitcnt_depctr 0xffe3	e3ffa3bf
+gfx1030-w64	s_waitcnt_depctr 0xfffe	feffa3bf
+gfx1030-w64	s_waitcnt_depctr 0xfff	ff0fa3bf
+gfx1030-w64	s_mov_b32 null, 0	8003fdbe
+gfx1030-w64	buffer_gl0_inv	0000c4e100000000
+gfx1030-w64	buffer_gl1_inv	0000c8e100000000

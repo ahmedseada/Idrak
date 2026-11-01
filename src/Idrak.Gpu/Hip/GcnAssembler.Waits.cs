@@ -63,6 +63,8 @@ internal sealed partial class GcnAssembler
         {
             _hazardStates[h] = _set.HazardWaitStates((GcnHazard)h, _isa?.Xnack ?? GcnFeatureSetting.Any);
         }
+
+        SetHazardFixes();
     }
 
     private void ReturnWaitBuffers()
@@ -172,6 +174,11 @@ internal sealed partial class GcnAssembler
                 ushort storeCount = (ushort)Math.Max(0, _need[3]);
                 ApplyWait();
                 HazardAdvance((counts ? 1 : 0) + (stores ? 1 : 0));
+                if (counts)
+                {
+                    var (vm, exp, lgkm) = _set.WaitCounts(bits);
+                    HazardWaited(vm, exp, lgkm);
+                }
                 if (emit && counts)
                 {
                     AddRow(k, RowWait, bits);
@@ -194,12 +201,15 @@ internal sealed partial class GcnAssembler
                 }
             }
 
+            HazardFixBefore(k, emit);
             Issue(k);
             HazardRecord(k);
             if (emit)
             {
                 AddRow(k, RowItem, 0);
             }
+
+            HazardFixAfter(k, emit);
         }
     }
 

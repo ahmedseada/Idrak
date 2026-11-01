@@ -37,6 +37,7 @@ internal abstract partial class Tests
         ("gcn assembler: gfx10 (RDNA 1 and 2): every forms.golden record of gfx1010 and gfx1030 in wave64, its text parsed from UTF-8 and encoded by the unregistered gfx10 family (ISA 10's SMEM, VOP3, DS and global layouts, its renumbered opcodes, its waits, wave32's one-register lane masks taken as llvm-mc takes them), equals llvm-mc's bytes as one block and each form alone; forms.s gives the same block", GcnAssemblerGfx10Golden),
         ("gcn assembler: gfx11 (RDNA 3): every forms.golden record of gfx1100 and gfx1102 in wave64, in gfx11's own names (s_load_b32, global_load_b32, ds_load_b32, v_add_nc_u32), encoded by the unregistered gfx11 family (ISA 11's layouts, M0 125 and null 124, its s_waitcnt fields), equals llvm-mc's bytes as one block and each form alone; forms.s gives the same block", GcnAssemblerGfx11Golden),
         ("gcn assembler: gfx10 and gfx11 waits: the stores count apart on vscnt (two loads around a store: vmcnt(1) for the first load's use, where gfx9 waits vmcnt(2)); s_barrier after an LDS write and a store gets lgkmcnt(0) and s_waitcnt_vscnt null, 0x0; lgkmcnt and vmcnt to 63; the printed text, in each family's names, reads back to the same bytes", GcnAssemblerRdnaWaits),
+        ("gcn assembler: gfx10 and gfx11 hazards fixed with instructions, where llc 18 puts them: ISA 10.1 (gfx1010, not gfx1030): SMEM read an SGPR a VALU then writes (s_mov_b32 null, 0 before; an SALU between clears it), vector memory read an SGPR an SALU then writes (s_waitcnt_depctr 0xffe3 before; a VALU between clears it); ISA 11 (gfx1100, gfx1102): a transcendental's result read within 5 VALUs (s_waitcnt_depctr 0xfff before; 6 VALUs or 2 transcendentals clear it), an SALU writes a lane mask a VALU read (s_waitcnt_depctr 0xfffe right after; a VALU reading another SGPR clears it); gfx9 none; the printed text reads back to the same bytes", GcnAssemblerRdnaHazards),
         ("gcn assembler: every line forms.golden lists as rejected for a registered CPU is refused for that CPU's version, naming the instruction, feature or operand (features decided by the reported version: v_fmac_f32 on 9.0.6, not 9.0.0 or 9.0.12; without a version, none)", GcnAssemblerRejected),
         ("gcn assembler: malformed or impossible text (unknown mnemonics, operands and modifiers, missing operands, bad ranges, virtual registers, directives, literals in VOP3, two scalar reads, labels defined twice or never) is refused with its line and column", GcnAssemblerMalformed),
         ("gcn assembler: assembling a whole forms block (gfx90c's 759 forms, labels and branches) allocates nothing once warm, and its code array alone after; fill_f32 written as text equals the typed fill_f32", GcnAssemblerAllocations),
@@ -740,6 +741,108 @@ internal abstract partial class Tests
             .Replace("GSTORE", "global_store_dword", StringComparison.Ordinal).Replace("DSTORE", "ds_write_b32", StringComparison.Ordinal).Replace("DLOAD", "ds_read_b32", StringComparison.Ordinal));
         Check(Before(gfx9Text, "v_mul_f32") == "s_waitcnt vmcnt(2)" && Before(gfx9Text, "s_barrier") == "s_waitcnt lgkmcnt(0)",
             $"gfx9: one counter for loads and stores (the store retired with the second load, before the barrier):\n{gfx9Text}");
+    }
+
+    // The hazards ISA 10.1 and 11 fix with instructions (GcnHazardFixes), each where llc 18's post-RA-hazard-rec puts its
+    // fix for the same lines (tools/gcn/measure_hazard_windows.py): before the second instruction, or right after an SALU
+    // write of a lane mask; none where what clears it is between, and none on gfx1030.
+    internal static void GcnAssemblerRdnaHazards(Device device)
+    {
+        _ = device;
+        const string Rdna1 = """
+            .kernel hazards
+            .arg x, 8, global
+            .reqd_workgroup_size 64, 1, 1
+            .user_sgpr kernarg_segment_ptr
+              s_mov_b32 %s7, 1
+              s_load_dwordx2 %s[2:3], s[0:1], 0x0
+              global_load_dword %v1, v0, %s[2:3]
+              s_mov_b64 %s[2:3], 0
+              global_load_dword %v2, v0, %s[2:3]
+              v_mov_b32_e32 %v3, 0
+              s_mov_b64 %s[2:3], 1
+              s_load_dword %s4, %s[2:3], 0x4
+              v_cmp_gt_f32_e64 %s[2:3], v0, 0
+              s_load_dword %s5, %s[2:3], 0x8
+              s_add_u32 %s6, %s7, 1
+              v_cmp_gt_f32_e64 %s[2:3], v0, 1.0
+              s_endpgm
+            """;
+        foreach (string cpu in (string[])["gfx1010", "gfx1030"])
+        {
+            var isa = GcnIsaVersion.Parse(cpu);
+            bool fixes = cpu == "gfx1010";
+            using var asm = new GcnAssembler(GcnTargets.Gfx10Family, isa);
+            var code = asm.AssembleKernel(Encoding.UTF8.GetBytes(Rdna1), null);
+            string printed = asm.PrintedText;
+            Check((Before(printed, "v_cmp_gt_f32_e64") == "s_mov_b32 null, 0") == fixes,
+                $"{cpu}: SMEM read an SGPR pair, then a VALU writes it: s_mov_b32 null, 0 between on 10.1 only:\n{printed}");
+            Check((Before(printed, "s_mov_b64", ", 0") == "s_waitcnt_depctr 0xffe3") == fixes,
+                $"{cpu}: a global load read its scalar address, then an SALU writes it: s_waitcnt_depctr 0xffe3 between on 10.1 only:\n{printed}");
+            Check(Before(printed, "s_mov_b64", ", 1").StartsWith("v_mov_b32", StringComparison.Ordinal) && Before(printed, "v_cmp_gt_f32_e64", occurrence: 1).StartsWith("s_add_u32", StringComparison.Ordinal),
+                $"{cpu}: a VALU between clears the first, an SALU the second:\n{printed}");
+            byte[] again = AssembleGcn(GcnTargets.Gfx10Family, isa, printed);
+            Check(again.AsSpan().SequenceEqual(code.Code.Span), $"{cpu}: the printed text reads back to the same bytes:\n{printed}");
+        }
+
+        const string Rdna3 = """
+            .kernel hazards
+            .arg x, 8, global
+            .reqd_workgroup_size 64, 1, 1
+            .user_sgpr kernarg_segment_ptr
+              v_exp_f32_e32 %v1, v0
+              v_add_f32_e32 %v2, %v1, %v1
+              v_exp_f32_e32 %v3, v0
+              v_mov_b32_e32 %v20, 0
+              v_mov_b32_e32 %v21, 0
+              v_mov_b32_e32 %v22, 0
+              v_mov_b32_e32 %v23, 0
+              v_mov_b32_e32 %v24, 0
+              v_add_f32_e32 %v4, %v3, %v3
+              v_exp_f32_e32 %v5, v0
+              v_mov_b32_e32 %v20, 0
+              v_mov_b32_e32 %v21, 0
+              v_mov_b32_e32 %v22, 0
+              v_mov_b32_e32 %v23, 0
+              v_mov_b32_e32 %v24, 0
+              v_mov_b32_e32 %v25, 0
+              v_add_f32_e32 %v6, %v5, %v5
+              v_exp_f32_e32 %v7, v0
+              v_sqrt_f32_e32 %v8, v0
+              v_sqrt_f32_e32 %v9, v0
+              v_add_f32_e32 %v10, %v7, %v7
+              s_mov_b64 %s[4:5], -1
+              s_mov_b64 %s[6:7], -1
+              s_mov_b32 %s8, 3
+              v_cndmask_b32_e64 %v11, %v1, %v2, %s[4:5]
+              s_mov_b32 %s20, 7
+              s_mov_b64 %s[4:5], 0
+              v_cndmask_b32_e64 %v12, %v1, %v2, %s[6:7]
+              v_add_nc_u32_e32 %v13, %s8, v0
+              s_mov_b64 %s[6:7], 0
+              s_endpgm
+            """;
+        foreach (string cpu in (string[])["gfx1100", "gfx1102"])
+        {
+            var isa = GcnIsaVersion.Parse(cpu);
+            using var asm = new GcnAssembler(GcnTargets.Gfx11Family, isa);
+            var code = asm.AssembleKernel(Encoding.UTF8.GetBytes(Rdna3), null);
+            string printed = asm.PrintedText;
+            Check(Before(printed, "v_add_f32_e32") == "s_waitcnt_depctr 0xfff" && Before(printed, "v_add_f32_e32", occurrence: 1) == "s_waitcnt_depctr 0xfff",
+                $"{cpu}: a transcendental's result read next, and 5 VALUs later: s_waitcnt_depctr 0xfff before the reader:\n{printed}");
+            Check(Before(printed, "v_add_f32_e32", occurrence: 2).StartsWith("v_mov_b32", StringComparison.Ordinal) && Before(printed, "v_add_f32_e32", occurrence: 3).StartsWith("v_sqrt_f32", StringComparison.Ordinal),
+                $"{cpu}: 6 VALUs, or 2 transcendentals, between clear it:\n{printed}");
+            Check(Before(printed, "v_cndmask_b32_e64", occurrence: 1) == "s_waitcnt_depctr 0xfffe" && Before(printed, "s_mov_b64", ", 0").StartsWith("s_mov_b32", StringComparison.Ordinal),
+                $"{cpu}: an SALU writes the lane mask a VALU read: s_waitcnt_depctr 0xfffe right after the write:\n{printed}");
+            Check(Before(printed, "s_endpgm").StartsWith("s_mov_b64", StringComparison.Ordinal),
+                $"{cpu}: a VALU reading another SGPR between clears it:\n{printed}");
+            byte[] again = AssembleGcn(GcnTargets.Gfx11Family, isa, printed);
+            Check(again.AsSpan().SequenceEqual(code.Code.Span), $"{cpu}: the printed text reads back to the same bytes:\n{printed}");
+        }
+
+        // gfx9 has none of them: the same transcendental shape gets no fix.
+        var (_, gfx9Text) = KernelOf(Rdna3.Replace("v_add_nc_u32_e32", "v_add_u32_e32", StringComparison.Ordinal));
+        Check(!gfx9Text.Contains("depctr", StringComparison.Ordinal), $"gfx9: no s_waitcnt_depctr:\n{gfx9Text}");
     }
 
     // Each CPU's block of a family's forms.golden (a CPU field "<mcpu>-w64" is that processor in wave64): the block as one

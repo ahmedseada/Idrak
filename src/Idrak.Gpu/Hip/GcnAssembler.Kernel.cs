@@ -79,7 +79,8 @@ internal sealed partial class GcnAssembler
         public byte Kind;
     }
 
-    private const byte RowItem = 0, RowWait = 1, RowNop = 2, RowWaitStores = 3;
+    // RowDepctr: s_waitcnt_depctr with the row's bits; RowNullMov: s_mov_b32 null, 0 (the hazards' fixes, ISA 10.1 and 11).
+    private const byte RowItem = 0, RowWait = 1, RowNop = 2, RowWaitStores = 3, RowDepctr = 4, RowNullMov = 5;
 
     // How an instruction touches one of its operands.
     [Flags]
@@ -121,6 +122,9 @@ internal sealed partial class GcnAssembler
     private Operands _written;
 
     private GcnInstruction _waitIns = null!, _nopIns = null!;
+
+    // s_waitcnt_depctr and s_mov_b32, where the version's hazards are fixed with them; null elsewhere.
+    private GcnInstruction? _depctrIns, _nullMovIns;
 
     // s_waitcnt_vscnt, where the family counts stores apart (gfx10 and later); null elsewhere.
     private GcnInstruction? _storeWaitIns;
@@ -269,6 +273,12 @@ internal sealed partial class GcnAssembler
         _nopIns = _set.Find(GcnOp.SNop) ?? throw new NotSupportedException($"The GCN family {_family} has no s_nop.");
         _storeWaitIns = _countsStores
             ? _set.Find(GcnOp.SWaitcntVscnt) ?? throw new NotSupportedException($"The GCN family {_family} counts stores apart but has no s_waitcnt_vscnt.")
+            : null;
+        _depctrIns = (_fixes & ~GcnHazardFixes.SmemSgprThenValuWrite) != 0
+            ? _set.Find(GcnOp.SWaitcntDepctr) ?? throw new NotSupportedException($"The GCN family {_family} fixes its hazards with s_waitcnt_depctr but has none.")
+            : null;
+        _nullMovIns = (_fixes & GcnHazardFixes.SmemSgprThenValuWrite) != 0
+            ? _set.Find(GcnOp.SMovB32) ?? throw new NotSupportedException($"The GCN family {_family} fixes a hazard with s_mov_b32 but has none.")
             : null;
     }
 
@@ -862,6 +872,17 @@ internal sealed partial class GcnAssembler
                 case RowNop:
                     Begin(_nopIns, GcnVariant.Auto, typed: false);
                     Add(GcnOperand.Immediate(row.Value));
+                    _line = _items[row.Item].Line;
+                    break;
+                case RowDepctr:
+                    Begin(_depctrIns!, GcnVariant.Auto, typed: false);
+                    Add(GcnOperand.Immediate(row.Value));
+                    _line = _items[row.Item].Line;
+                    break;
+                case RowNullMov:
+                    Begin(_nullMovIns!, GcnVariant.Auto, typed: false);
+                    Add(GcnOperand.Special(GcnSpecial.Null));
+                    Add(GcnOperand.Inline(128, 0));
                     _line = _items[row.Item].Line;
                     break;
                 case RowWaitStores:

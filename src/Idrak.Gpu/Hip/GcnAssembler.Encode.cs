@@ -665,9 +665,20 @@ internal sealed partial class GcnAssembler : IDisposable
             case GcnFormat.Flat or GcnFormat.Global:
                 EncodeFlat();
                 break;
+            case GcnFormat.Mubuf when _encoding != GcnEncoding.Isa9:
+                EncodeMubuf();
+                break;
             default:
                 throw Refuse(-1, $"the {ins.Format} format is not one this assembler writes");
         }
+    }
+
+    // MUBUF (ISA 10 and 11): 0xE0000000, the opcode at 25:18; the cache invalidations take no operands, so the second
+    // dword is 0.
+    private void EncodeMubuf()
+    {
+        Word(0xE0000000 | (uint)_ins.Code << 18);
+        Word(0);
     }
 
     // ---------------------------------------------------------------------------------------------------------------

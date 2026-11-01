@@ -64,6 +64,7 @@ public static partial class GcnTargets
             // SOPP: program control
             Row(GcnOp.SNop, "s_nop", Sopp, 0x00, "k"),
             Row(GcnOp.SWaitcnt, "s_waitcnt", Sopp, 0x0C, "w"),
+            Row(GcnOp.SWaitcntDepctr, "s_waitcnt_depctr", Sopp, 0x23, "k"),
             Row(GcnOp.SBarrier, "s_barrier", Sopp, 0x0A, ""),
             Row(GcnOp.SBranch, "s_branch", Sopp, 0x02, "j"),
             Row(GcnOp.SCbranchScc0, "s_cbranch_scc0", Sopp, 0x04, "j"),
@@ -166,6 +167,9 @@ public static partial class GcnTargets
             Row(GcnOp.GlobalStoreByte, "global_store_byte", Global, 0x18, "r e1 S"),
             Row(GcnOp.GlobalStoreShort, "global_store_short", Global, 0x1A, "r e1 S"),
             Row(GcnOp.GlobalAtomicAdd, "global_atomic_add", Global, 0x32, "v1 r e1 S", Atomic),
+            // MUBUF: the cache invalidations
+            Row(GcnOp.BufferGl0Inv, "buffer_gl0_inv", Mubuf, 0x71, ""),
+            Row(GcnOp.BufferGl1Inv, "buffer_gl1_inv", Mubuf, 0x72, ""),
         ];
     }
 }

@@ -430,3 +430,9 @@ s_delay_alu instid0(VALU_DEP_1)
 s_delay_alu instid0(VALU_DEP_2) | instskip(NEXT) | instid1(SALU_CYCLE_1)
 s_delay_alu instid0(TRANS32_DEP_1)
 s_delay_alu instid0(VALU_DEP_4)
+s_waitcnt_depctr 0xffe3
+s_waitcnt_depctr 0xfffe
+s_waitcnt_depctr 0xfff
+s_mov_b32 null, 0
+buffer_gl0_inv
+buffer_gl1_inv

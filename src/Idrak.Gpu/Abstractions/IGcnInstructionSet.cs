@@ -142,6 +142,12 @@ internal enum GcnOp : ushort
 
     /// <summary>s_delay_alu (gfx11 and later): how long the next ALU instructions wait for the ones they depend on.</summary>
     SDelayAlu,
+
+    /// <summary>
+    /// s_waitcnt_depctr (gfx10 and later): waits for the dependency counters its 16 bits name at 0 (va_vdst at 15:12,
+    /// vm_vsrc at 4:2, sa_sdst at 0, among others); the hazards ISA 10.1 and 11 fix with it (<see cref="GcnHazardFixes"/>).
+    /// </summary>
+    SWaitcntDepctr,
     SBarrier,
     SSleep,
     SSetprio,
@@ -487,6 +493,13 @@ internal enum GcnOp : ushort
     FlatStoreByte,
     FlatStoreShort,
     FlatAtomicAdd,
+
+    // MUBUF (gfx10 and later): the cache invalidations
+    /// <summary>buffer_gl0_inv: invalidates the compute unit's L0 vector cache.</summary>
+    BufferGl0Inv,
+
+    /// <summary>buffer_gl1_inv: invalidates the shader array's L1 cache.</summary>
+    BufferGl1Inv,
 }
 
 /// <summary>The instruction formats: how an instruction's word (or words) is laid out.</summary>
@@ -536,6 +549,9 @@ internal enum GcnFormat : byte
 
     /// <summary>Global memory (two dwords).</summary>
     Global,
+
+    /// <summary>Buffer memory (two dwords; gfx10 and later: the cache invalidations, which take no operands).</summary>
+    Mubuf,
 }
 
 /// <summary>Which word layouts a family's formats follow (the bit fields of each <see cref="GcnFormat"/>).</summary>
@@ -1125,6 +1141,45 @@ internal enum GcnHazard : byte
 }
 
 /// <summary>
+/// The hazards a family fixes with an instruction of its own instead of wait states, each as LLVM 18's GCNHazardRecognizer
+/// fixes it (measured with <c>llc -run-pass=post-RA-hazard-rec</c>, tools/gcn/measure_hazards.py and
+/// measure_hazard_windows.py). <see cref="IGcnInstructionSet.HazardFixes"/> gives the ones a version has.
+/// </summary>
+[Flags]
+internal enum GcnHazardFixes : byte
+{
+    /// <summary>None.</summary>
+    None = 0,
+
+    /// <summary>
+    /// ISA 10.1: vector memory (global, FLAT, DS) reads an SGPR (EXEC included), then an SALU or SMEM writes it:
+    /// <c>s_waitcnt_depctr 0xffe3</c> (vm_vsrc(0)) before the write. A VALU between, s_waitcnt 0 or a depctr with vm_vsrc(0)
+    /// clears it; SALUs and s_waitcnt_vscnt do not, at any distance.
+    /// </summary>
+    VmemSgprThenScalarWrite = 1,
+
+    /// <summary>
+    /// ISA 10.1: SMEM reads an SGPR, then a VALU writes it: <c>s_mov_b32 null, 0</c> before the write. An SALU between (not a
+    /// SOPP, not s_waitcnt_vscnt) or a wait with lgkmcnt(0) clears it; VALUs do not.
+    /// </summary>
+    SmemSgprThenValuWrite = 2,
+
+    /// <summary>
+    /// ISA 11: a transcendental VALU writes a VGPR, then a VALU reads it with fewer than 6 VALUs and 2 transcendentals
+    /// between: <c>s_waitcnt_depctr 0x0fff</c> (va_vdst(0)) before the reader. Vector memory, DS or a depctr with va_vdst(0)
+    /// between clears it; SALUs do not count.
+    /// </summary>
+    TransResultThenValu = 4,
+
+    /// <summary>
+    /// ISA 11: a VALU reads an SGPR (or VCC) as its lane mask (v_cndmask, v_div_fmas), then an SALU writes it as its
+    /// destination: <c>s_waitcnt_depctr 0xfffe</c> (sa_sdst(0)) right after the write, at any distance. A VALU between
+    /// that reads another SGPR or a literal, or a depctr with sa_sdst(0), clears it; EXEC and M0 writes are none.
+    /// </summary>
+    LaneMaskThenSaluWrite = 8,
+}
+
+/// <summary>
 /// What Idrak's GCN assembler asks of a family (<see cref="IGcnTarget"/>) to encode its instructions: the word layouts
 /// it follows, its instructions (by meaning and by mnemonic), the features each version has, and the operand codes of
 /// its special registers; and, for kernels written with virtual registers, its wait counters and hazards. A family
@@ -1150,6 +1205,12 @@ internal interface IGcnInstructionSet
 
     /// <summary>The wait states <paramref name="hazard"/> needs on this family (0: none), with xnack as <paramref name="xnack"/> sets it.</summary>
     int HazardWaitStates(GcnHazard hazard, GcnFeatureSetting xnack);
+
+    /// <summary>
+    /// The hazards the family fixes with instructions of their own on <paramref name="isa"/> (null: the version is not
+    /// known, so every version's of the family); none by default.
+    /// </summary>
+    GcnHazardFixes HazardFixes(GcnIsaVersion? isa) => GcnHazardFixes.None;
 
     /// <summary>The SIMDs of a compute unit, over which a workgroup's waves are spread (what bounds a block's registers).</summary>
     int SimdsPerComputeUnit { get; }
