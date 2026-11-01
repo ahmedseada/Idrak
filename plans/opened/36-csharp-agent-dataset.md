@@ -73,6 +73,8 @@ for `idrak new`.
   the same task kept apart as DPO pairs.
 - **Resumable and counted**: a run folder under `test-output\` with a manifest (rows asked, kept, rejected and why,
   tokens, dollars, time left); Ctrl+C keeps what is done; `--max-dollars` stops a run at a budget.
+- **The key**: the Anthropic SDK reads `ANTHROPIC_API_KEY` from the environment; the generator never takes a key on
+  the command line, never writes one to a file or a log, and fails with the variable's name when it is unset.
 - **Every setting has an `RLS_*` variable** and a flag: model, effort, concurrency, budget, the source clones' paths,
   the sandbox (`IDRAK_SANDBOX`, `container` with an SDK image recommended), the split seed.
 
@@ -105,6 +107,35 @@ From each test entry (its group, its text, the method it runs, the code it reach
 Claude writes each conversion (the stub, the moved assertions, the prompt in the owner's words); `agent-check` decides
 whether it is kept.
 
+### Track 2: every abstraction namespace, none left out (the owner, 2026-11-01)
+
+The owner: "every package has its own abstraction namespace, make sure to include all". The contracts are not only in
+`Idrak.Abstraction`: each package keeps its own in `{package}.Abstractions` (Idrak's rule). G0 does not use a
+hand-written list: it finds every namespace ending in `.Abstraction`, `.Abstractions` or under `Idrak.Abstraction.*`
+in both repositories' sources, at the commit the run reads, and records each public interface, abstract class and
+`SlotTable` registry in it. **G4 fails when any namespace has no kept task** (a contract task, an implementation task
+or a written reason), and when a namespace found at the run's commit is missing from the catalog.
+
+Found at Idrak 58e5c2c and Craft 6dbb736 (files declaring each namespace):
+
+| Repository | Namespaces |
+|---|---|
+| Idrak, the shared contracts (`Idrak.Abstraction`) | `Idrak.Abstraction` (46), `.Cluster` (17), `.Data` (15), `.Devices` (25), `.Devices.Cpu` (21), `.Diagnostics` (8), `.Formats` (9), `.Generation` (40), `.Modules` (3), `.Operations` (4), `.Plugins` (5), `.Reinforcement` (11), `.Retrieval` (5), `.Serving` (5), `.Text` (2), `.Training` (6), `.Testing` (52), `.Testing.Devices` (4) |
+| Idrak, each package's own | `Idrak.Models.Abstractions` (17), `Idrak.Layers.Abstractions` (11), `Idrak.Training.Abstractions` (3), `Idrak.Datasets.Abstractions` (4), `Idrak.Onnx.Abstractions` (3), `Idrak.Gpu.Abstractions` (11), `Idrak.Text.Abstractions` (15), `Idrak.Text.Retrieval.Abstractions` (1), `Idrak.Text.Reinforcement.Abstractions` (1), `Idrak.Data.Abstractions` (7), `Idrak.Vision.Abstractions` (11), `Idrak.Audio.Abstractions` (24), `Idrak.Audio.Plugins.Vits.Abstractions` (1), `Idrak.Cluster.Abstractions` (1), `Idrak.Networking.Abstractions` (6), `Idrak.Mcp.Abstractions` (1), `Idrak.Reinforcement.Abstractions` (2), `Idrak.Reinforcement.Plugins.Coding.Abstractions` (1), `Idrak.Maui.Abstractions` (16) |
+| Craft | `Craft.Abstractions` (53), `Craft.Core.Abstractions` (1), `Craft.Editor.Abstractions` (4), `Craft.Plugins.Learning.Abstractions` (1) |
+
+Packages with no abstraction namespace of their own are covered from the other side, as **implementations**: each
+plug-in package (`Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins`, `Idrak.Data.Plugins`,
+`Idrak.Diffusion.Plugins`, `Idrak.Video.Plugins`, `Idrak.Reinforcement.Plugins`, `Idrak.HarfBuzz`, `Idrak.CoreML`,
+`Idrak.Onnx.Runtime`, `Idrak.AspNetCore`, `Idrak.Extensions`, the 18 Craft plug-ins and `Craft.Plugins.Sample`) gives
+"implement contract X the way this package does, register it, use it" tasks, checked against the contract it
+implements. Two packages declare public interfaces outside an `.Abstractions` namespace (`Idrak.Network`: 2,
+`Craft.Maui`: 7); G0 catalogs them too, and they go in the inventory note for the owner to decide whether they move.
+
+Each contract gets, as it applies: a non-default implementation registered in its `SlotTable` and shown to be used; the
+"not registered" failure for an unknown name; a plug-in package (`IIdrakPlugin`, `[assembly: IdrakPluginPackage]`,
+`Register`/`Unregister` leaving the registry as found) that ships it; and a project that uses it end to end.
+
 ### Track 3: the project generator (`idrak new --agent`)
 
 - `idrak new --agent "a REST API that classifies sentiment with a plug-in tokenizer" -o test-output\gen\api` plans the
@@ -127,7 +158,7 @@ At most two agents at a time in Idrak (Idrak's limit; the Rl-Samples work counts
 | G1 | `RlSamples.Generator`'s core: the client, cached prefixes, batches, the run manifest, the budget, the verifier on `CodingVerifier` | A 20-task pilot runs end to end on the owner's machine with its cost measured | G0 |
 | G2 | Track 1 at volume: T1-tasks, T1-sft, T1-pref | Targets of decision 3 reached; every row verified | G1, pilot cost approved |
 | G3 | Track 2: T2-tests, T2-contracts, T2-projects, T2-explain | Every catalog entry is a kept task or a written reason | G1 (parallel with G2) |
-| G4 | Quality: `idrak data validate`, `dedupe` (near), `stats`, group splits, a leakage check of eval against train | A report under `test-output\` | G2, G3 |
+| G4 | Quality: `idrak data validate`, `dedupe` (near), `stats`, group splits, a leakage check of eval against train, the namespace coverage check | A report under `test-output\`; every abstraction namespace covered | G2, G3 |
 | G5 | The owner's runs: `idrak tune` on T1-sft + T2-sft, then `idrak reinforce --env csharp` on the task sets, `agent-run` on the eval before and after | The tuned adapter beats the base on the eval | G4 |
 | G6 | Track 3 in Idrak: `ProjectTemplates` registry, `idrak new --agent`, its tests (a scripted model, as `CSharpCodingPluginTests` does) | CPU tests pass; the owner's run on the tuned adapter writes projects that build | G5 for the model; the command itself can start after G1 |
 
