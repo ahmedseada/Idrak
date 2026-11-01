@@ -326,9 +326,10 @@ public sealed class Idrak.Generation.Seq2SeqGenerator : Idrak.Abstraction.Genera
   public bool SelectBeamsOnDevice { get; init; }
   public bool SkipSpecialTokens { get; init; }
 
-public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generation.ITextModel
+public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generation.IDraftModel, Idrak.Abstraction.Generation.ITextModel
   public (string, string, Idrak.Abstraction.Generation.GenerationStats) Generate(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
   public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.IDraftSession StartDraft(System.Collections.Generic.IReadOnlyList<int> prompt, Idrak.Abstraction.Generation.GenerationOptions options)
   public Idrak.Abstraction.Generation.IKeyValueLayout? CacheLayout { get; init; }
   public Idrak.Abstraction.Generation.ITokenizer Tokenizer { get; }
   public Idrak.Abstraction.Generation.KeyValueFormat CacheFormat { get; init; }
@@ -344,6 +345,7 @@ public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generatio
   public System.Threading.Tasks.Task<(string, string, Idrak.Abstraction.Generation.GenerationStats)> GenerateAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
   public TextGenerator(Idrak.Layers.Sequential model, Idrak.Abstraction.Generation.ITokenizer tokenizer, int contextLength)
   public bool HoldsCache { get; }
+  public bool HoldsDraftCache { get; }
   public bool KeepCache { get; set; }
   public bool ReuseDecoding { get; set; }
   public bool SupportsBatches { get; }

@@ -2452,12 +2452,14 @@ public enum Idrak.Abstraction.Diagnostics.InferenceStageKind : int
   AudioFeatures = 9
   CacheAllocation = 6
   DecodeChunk = 4
+  Draft = 10
   Encoder = 2
   GraphCapture = 5
   ImageDecode = 0
   ImageTransforms = 1
   Prefill = 3
   Resample = 8
+  Verify = 11
 
 public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstraction.Diagnostics.ITelemetryHook, System.IAsyncDisposable, System.IDisposable
   public Idrak.Abstraction.Diagnostics.TelemetryLevel Levels { get; }
@@ -3608,6 +3610,7 @@ public static class Idrak.Abstraction.Generation.GenerationModelExtensions
 
 public sealed record Idrak.Abstraction.Generation.GenerationOptions : System.IEquatable<Idrak.Abstraction.Generation.GenerationOptions>
   public GenerationOptions()
+  public Idrak.Abstraction.Generation.IDraftModel? Draft { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> Stop { get; init; }
   public bool EarlyStopping { get; init; }
   public bool ReturnLogProbabilities { get; init; }
@@ -3626,6 +3629,9 @@ public sealed record Idrak.Abstraction.Generation.GenerationOptions : System.IEq
   public float Temperature { get; init; }
   public float TopP { get; init; }
   public int ChunkSize { get; init; }
+  public int DraftMaxTokens { get; init; }
+  public int DraftMinTokens { get; init; }
+  public int DraftTokens { get; init; }
   public int NumBeams { get; init; }
   public int NumCtx { get; init; }
   public int NumPredict { get; init; }
@@ -3642,9 +3648,13 @@ public sealed record Idrak.Abstraction.Generation.GenerationStats : System.IEqua
   public System.TimeSpan GenerationDuration { get; init; }
   public System.TimeSpan PromptDuration { get; init; }
   public System.TimeSpan TotalDuration { get; init; }
+  public double DraftAcceptance { get; }
   public double TokensPerSecond { get; }
   public int CachedTokens { get; init; }
   public int ContextResets { get; init; }
+  public int DraftAccepted { get; init; }
+  public int DraftRounds { get; init; }
+  public int DraftTokens { get; init; }
   public int GeneratedTokens { get; init; }
   public int PromptTokens { get; init; }
 
@@ -3686,6 +3696,15 @@ public interface Idrak.Abstraction.Generation.IDecodingStep : System.IDisposable
 public interface Idrak.Abstraction.Generation.IDescribedModel
   public Idrak.Abstraction.Generation.DecoderSpec Spec { get; }
   public string Architecture { get; }
+
+public interface Idrak.Abstraction.Generation.IDraftModel
+  public Idrak.Abstraction.Generation.IDraftSession StartDraft(System.Collections.Generic.IReadOnlyList<int> prompt, Idrak.Abstraction.Generation.GenerationOptions options)
+  public Idrak.Abstraction.Generation.ITokenizer Tokenizer { get; }
+  public int Vocabulary { get; }
+
+public interface Idrak.Abstraction.Generation.IDraftSession : System.IDisposable
+  public int Propose(System.Span<int> ids, System.Span<float> probabilities, int width, System.Threading.CancellationToken cancellationToken)
+  public void Accept(int accepted, int next)
 
 public interface Idrak.Abstraction.Generation.IFeatureCache : System.IDisposable
   public bool Contains(Idrak.Abstraction.Generation.FeatureCacheKey key)
@@ -4299,6 +4318,12 @@ public static class Idrak.Abstraction.Generation.SequencePoolers
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.Generation.ISequencePooler pooler)
 
+public static class Idrak.Abstraction.Generation.SpeculativeDecoding
+  public static bool IsGreedy(Idrak.Abstraction.Generation.GenerationOptions options)
+  public static int FirstRound(Idrak.Abstraction.Generation.GenerationOptions options)
+  public static int NextRound(int current, int proposed, int accepted, Idrak.Abstraction.Generation.GenerationOptions options)
+  public static string? Refusal(Idrak.Abstraction.Generation.ITokenizer target, Idrak.Abstraction.Generation.IDraftModel draft)
+
 public sealed class Idrak.Abstraction.Generation.TokenSampler : Idrak.Abstraction.Generation.ITokenSampler, System.IDisposable
   public Idrak.Abstraction.Generation.SampledToken[][] Read(int fromStep, int toStep)
   public Idrak.Abstraction.Tensor Ids { get; }
@@ -4318,6 +4343,8 @@ public sealed class Idrak.Abstraction.Generation.TokenSampler : Idrak.Abstractio
   public int TopK { get; set; }
   public int Vocabulary { get; }
   public static Idrak.Abstraction.Generation.ITokenSampler Create(Idrak.Abstraction.Generation.SamplerRequest request)
+  public static bool Probabilities(System.ReadOnlySpan<float> logits, System.Span<float> probabilities, float temperature, int topK, float topP, float minP)
+  public static void Penalize(System.Span<float> logits, System.ReadOnlySpan<int> recent, float repeat, float presence, float frequency)
   public uint Seed { get; set; }
   public void Dispose()
   public void Reset()

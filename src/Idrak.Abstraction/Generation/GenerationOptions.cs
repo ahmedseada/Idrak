@@ -167,4 +167,54 @@ public sealed record GenerationOptions
     /// <c>early_stopping=True</c>), or go on while a live beam could still beat the worst finished one (false).
     /// </summary>
     public bool EarlyStopping { get; init; } = true;
+
+    /// <summary>
+    /// Speculative decoding: a smaller model of the same vocabulary (<see cref="IDraftModel"/>; Idrak's <c>TextGenerator</c>
+    /// is one) proposes tokens, and the model generating checks them all in one pass over its key/value cache, keeping the
+    /// ones it agrees with, so a reply takes fewer passes of the large model. The reply is the target's own: with greedy
+    /// decoding (<see cref="TopK"/> 1) the same tokens as without a draft, otherwise drawn from the same distribution
+    /// (each proposal kept with probability min(1, p/q), a refused one replaced from max(0, p - q)). A draft whose
+    /// vocabulary differs from the target's is refused with the reason (<see cref="SpeculativeDecoding.Refusal"/>). A
+    /// prompt with images, a batch of prompts decoded together, and generation without the cache (<see cref="UseCache"/>
+    /// false) decode without it. Default null: no draft.
+    /// </summary>
+    public IDraftModel? Draft { get; init; }
+
+    /// <summary>
+    /// With a <see cref="Draft"/>: the tokens it proposes a round. 0 (the default) adapts them to the measured acceptance,
+    /// starting at <see cref="DraftMinTokens"/> + 3: two more after a round whose every proposal was kept, one fewer after one
+    /// that refused one, within <see cref="DraftMinTokens"/> and <see cref="DraftMaxTokens"/>. A number above 0 is used as
+    /// it is (within the context window).
+    /// </summary>
+    /// <exception cref="ArgumentOutOfRangeException">Negative.</exception>
+    public int DraftTokens
+    {
+        get => _draftTokens;
+        init => _draftTokens = value >= 0 ? value
+            : throw new ArgumentOutOfRangeException(nameof(DraftTokens), value, "The generation setting DraftTokens is 0 (adapted to the acceptance) or a number of tokens a round.");
+    }
+
+    private readonly int _draftTokens;
+
+    /// <summary>The fewest tokens an adapted round proposes (<see cref="DraftTokens"/> 0): 1 by default.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Below 1.</exception>
+    public int DraftMinTokens
+    {
+        get => _draftMinTokens;
+        init => _draftMinTokens = value >= 1 ? value
+            : throw new ArgumentOutOfRangeException(nameof(DraftMinTokens), value, "The generation setting DraftMinTokens is 1 or more.");
+    }
+
+    private readonly int _draftMinTokens = 1;
+
+    /// <summary>The most tokens an adapted round proposes (<see cref="DraftTokens"/> 0): 12 by default; at least <see cref="DraftMinTokens"/>.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Below 1.</exception>
+    public int DraftMaxTokens
+    {
+        get => _draftMaxTokens;
+        init => _draftMaxTokens = value >= 1 ? value
+            : throw new ArgumentOutOfRangeException(nameof(DraftMaxTokens), value, "The generation setting DraftMaxTokens is 1 or more.");
+    }
+
+    private readonly int _draftMaxTokens = 12;
 }

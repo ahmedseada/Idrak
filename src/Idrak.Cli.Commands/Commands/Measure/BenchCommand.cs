@@ -59,6 +59,11 @@ internal sealed class BenchCommand : Command
         "                        IDRAK_BENCH_WARMUP_ROUND)\n" +
         "      --devices LIST    the same benchmark on several devices in one table: 'all' (every listed device)\n" +
         "                        or names, e.g. cpu,vulkan:0 (instead of --device)\n" +
+        "      --draft MODEL     with a model: also time speculative decoding with MODEL drafting (a smaller model of\n" +
+        "                        the same vocabulary, loaded on the same device with the same -w/-k): tokens per second\n" +
+        "                        with it (its first run apart, Cold), the share of its tokens kept, and whether the\n" +
+        "                        greedy tokens are the same as without it\n" +
+        "      --draft-tokens N  with --draft: tokens a round proposes (default 0: adapted to the acceptance)\n" +
         "      --matrix          with a model: every weight format x KV format in one table (float32, int8, int4, bf16\n" +
         "                        x float32, int8, bfloat16; or the comma-separated lists given to -w and -k)\n" +
         "      --save NAME       keep the results as NAME under the cache folder (bench/NAME.json)\n" +
@@ -69,10 +74,11 @@ internal sealed class BenchCommand : Command
         "  idrak bench --kernels matmul,gemv -d cuda:0 -j\n" +
         "  idrak bench --devices cpu --warmup 5s --settle 2 -n 30\n" +
         "  idrak b mymodel --devices all\n" +
-        "  idrak b mymodel --matrix -w int8,int4 -d vulkan:0";
+        "  idrak b mymodel --matrix -w int8,int4 -d vulkan:0\n" +
+        "  idrak b big-model --draft small-model -d cuda:0 -w int8";
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        [.. ModelChoices.ValueOptions, "--prompt-tokens", "--tokens", "--kernels", "--repeat", "--save", "--compare", "--devices", .. WarmupOptions];
+        [.. ModelChoices.ValueOptions, "--prompt-tokens", "--tokens", "--kernels", "--repeat", "--save", "--compare", "--devices", "--draft", "--draft-tokens", .. WarmupOptions];
 
     // The kernel benchmarks' warm-up options (BenchSettle).
     private static readonly string[] WarmupOptions = ["--warmup", "--warmup-calls", "--settle", "--settle-rounds", "--warmup-round"];
@@ -116,9 +122,10 @@ internal sealed class BenchCommand : Command
             throw new UsageException("--matrix compares a model's weight and KV formats; name a model (the kernel benchmarks already time every packed format).");
         }
 
-        if (model is null && (context.Options("--adapter").Count > 0 || context.Option("--context") is not null || context.Option("--kv") is not null))
+        if (model is null && (context.Options("--adapter").Count > 0 || context.Option("--context") is not null || context.Option("--kv") is not null
+                              || context.Option("--draft") is not null))
         {
-            throw new UsageException("--kv, --context and --adapter apply to a model; name one, or leave them out for the kernel benchmarks.");
+            throw new UsageException("--kv, --context, --adapter and --draft apply to a model; name one, or leave them out for the kernel benchmarks.");
         }
 
         if (context.Option("--devices") is not null && context.Option("--device") is not null)
@@ -309,6 +316,10 @@ internal sealed class BenchCommand : Command
 
         progress.Clear();
 
+        var drafted = context.Option("--draft") is { } draftName
+            ? BenchDraft(context, draftName, run, generator, prompt, options, Median(generated), repeats, promptTokens + tokens + 1, document)
+            : [];
+
         var memory = ComputeResources.GetMemoryUsage(device);
         double promptRate = Median(prompts), generationRate = Median(generated);
         double flopsPerToken = 2.0 * model.Spec.ActiveParameterCount;                  // with experts, only those a token goes through
@@ -337,6 +348,72 @@ internal sealed class BenchCommand : Command
             new BenchResult("weights memory", weights / 1048576.0, "MiB", false, "on the device after loading"),
             new BenchResult("memory in use", memory.InUse / 1048576.0, "MiB", false,
                 memory.Limit is { } limit ? string.Create(CultureInfo.InvariantCulture, $"of {limit / 1048576.0:F0} MiB") : "after the runs"),
+            .. drafted,
+        ];
+    }
+
+    // --draft: the same generations with DRAFT proposing tokens (speculative decoding, GenerationOptions.Draft): its first run
+    // apart (Cold: the draft's kernels and its first prompt pass), then the median of the runs, the share of its tokens the
+    // target kept, and whether the greedy tokens are the target's own (rule 71: they must be).
+    private static List<BenchResult> BenchDraft(CommandContext context, string name, BenchRun run, Idrak.Generation.TextGenerator target, string prompt,
+        GenerationOptions options, double without, int repeats, int contextLength, JsonObject document)
+    {
+        var choice = ModelChoices.Choose(context, name);
+        if (context.Flag("--matrix"))
+        {
+            choice = choice with { Weights = run.Weights is "float32" or "f32" ? null : run.Weights, Kv = run.Kv };
+        }
+
+        int draftTokens = context.IntOption("--draft-tokens", 0);
+        if (draftTokens < 0)
+        {
+            throw new UsageException($"--draft-tokens needs 0 (adapted) or a number of tokens, not {draftTokens}.");
+        }
+
+        using var model = ModelChoices.Load(context, choice, run.Device);
+        var draft = model.CreateGenerator(KeyValueLayouts.Get(choice.Kv ?? "float32"), contextLength);
+        draft.KeepCache = false;                                        // every run reads its whole prompt again, as the target's
+        if (SpeculativeDecoding.Refusal(target.Tokenizer, draft) is { } reason)
+        {
+            throw new UsageException($"--draft {choice.Model}: {reason}");
+        }
+
+        var with = options with { Draft = draft, DraftTokens = draftTokens, ReturnTokens = true };
+        context.Write(string.Create(CultureInfo.InvariantCulture, $"  draft {choice.Model}: {model.Spec.ParameterCount / 1e6:F1}M parameters, {(draftTokens > 0 ? $"{draftTokens} tokens a round" : "rounds adapted to the acceptance")}"));
+        var alone = target.Stream(prompt, options with { ReturnTokens = true }).Last().Tokens!.Reply;
+        var cold = target.Stream(prompt, with).Last();
+        var rates = new List<double>();
+        GenerationStats last = cold.Stats!;
+        bool same = cold.Tokens!.Reply.AsSpan().SequenceEqual(alone);
+        using var progress = new ProgressLine(context, $"runs with the draft on {run.Device}", repeats);
+        for (int i = 0; i < repeats; i++)
+        {
+            var final = target.Stream(prompt, with).Last();
+            last = final.Stats!;
+            same &= final.Tokens!.Reply.AsSpan().SequenceEqual(alone);
+            rates.Add(last.TokensPerSecond);
+            progress.Report(i + 1);
+            progress.Erase();
+            context.Detail(string.Create(CultureInfo.InvariantCulture,
+                $"  run {i + 1} with the draft: generation {rates[^1]:F1} tokens/s, {last.DraftAccepted} of {last.DraftTokens} proposals kept in {last.DraftRounds} rounds"));
+        }
+
+        progress.Clear();
+        double rate = Median(rates);
+        document["draft"] = new JsonObject
+        {
+            ["model"] = choice.Model,
+            ["draft_tokens"] = draftTokens,
+            ["acceptance"] = last.DraftAcceptance,
+            ["same_tokens"] = same,
+        };
+        return
+        [
+            new BenchResult("generation with draft", rate, "tokens/s", true, $"{last.GeneratedTokens} tokens, {choice.Model} drafting", Cold: cold.Stats!.TokensPerSecond),
+            new BenchResult("draft speed-up", without > 0 ? rate / without : 0, "x", true, "over generation without the draft"),
+            new BenchResult("draft acceptance", 100 * last.DraftAcceptance, "%", true,
+                string.Create(CultureInfo.InvariantCulture, $"{last.DraftAccepted} of {last.DraftTokens} proposals, {last.DraftRounds} rounds")),
+            new BenchResult("draft same tokens", same ? 1 : 0, same ? "yes" : "NO", true, "greedy tokens with the draft equal those without it"),
         ];
     }
 

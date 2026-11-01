@@ -19,6 +19,21 @@ public sealed record GenerationStats(int PromptTokens, TimeSpan PromptDuration, 
     /// </summary>
     public int CachedTokens { get; init; }
 
+    /// <summary>
+    /// Tokens a draft model proposed (<see cref="GenerationOptions.Draft"/>, speculative decoding); 0 without one. Of
+    /// <see cref="GeneratedTokens"/>, <see cref="DraftAccepted"/> came from the draft and the rest from the target.
+    /// </summary>
+    public int DraftTokens { get; init; }
+
+    /// <summary>The draft's proposals the target kept (<see cref="DraftTokens"/>).</summary>
+    public int DraftAccepted { get; init; }
+
+    /// <summary>The share of the draft's proposals kept, 0 to 1 (0 without a draft).</summary>
+    public double DraftAcceptance => DraftTokens > 0 ? (double)DraftAccepted / DraftTokens : 0;
+
+    /// <summary>The target's passes over the draft's proposals (speculative rounds); 0 without a draft.</summary>
+    public int DraftRounds { get; init; }
+
     /// <summary>Generated tokens per second.</summary>
     public double TokensPerSecond => GenerationDuration.TotalSeconds > 0 ? GeneratedTokens / GenerationDuration.TotalSeconds : 0;
 }

@@ -31,6 +31,7 @@ internal sealed class VerboseLines : ITelemetryHook, IDisposable
     private readonly IDisposable _subscription;
     private readonly HashSet<(string Device, string? Operation, string Message)> _failures = [];
     private long _tokens, _chunks, _flushed = Stopwatch.GetTimestamp();
+    private long _rounds, _proposed, _kept;                             // speculative decoding's rounds since the last flush
     private TimeSpan _decoding;
 
     internal VerboseLines(TextWriter error)
@@ -86,6 +87,9 @@ internal sealed class VerboseLines : ITelemetryHook, IDisposable
                         FlushLocked();
                     }
 
+                    break;
+                case InferenceStageKind.Verify:
+                    (_rounds, _proposed, _kept) = (_rounds + 1, _proposed + Math.Max(0, e.PieceSize - 1), _kept + Math.Max(0, e.Count - 1));
                     break;
                 case InferenceStageKind.Encoder:
                     Line($"vision encoder on {e.Device}: {e.Count:N0} images, {Time(e.Duration)}");
@@ -167,6 +171,12 @@ internal sealed class VerboseLines : ITelemetryHook, IDisposable
             double seconds = Math.Max(_decoding.TotalSeconds, 1e-9);
             Line($"decoding: {_tokens:N0} tokens in {_chunks:N0} chunks, {Time(_decoding)} ({_tokens / seconds:N0} tokens/s)");
             (_tokens, _chunks, _decoding) = (0, 0, TimeSpan.Zero);
+        }
+
+        if (_rounds > 0)
+        {
+            Line($"speculative decoding: {_rounds:N0} rounds, {_kept:N0} of {_proposed:N0} proposed tokens kept ({100.0 * _kept / Math.Max(1, _proposed):F0}%)");
+            (_rounds, _proposed, _kept) = (0, 0, 0);
         }
 
         _flushed = Stopwatch.GetTimestamp();

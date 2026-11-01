@@ -35,7 +35,7 @@ public sealed record BatchChunk(int Index, string Text, bool Done = false, strin
 ///     Console.Write(chunk.Text);
 /// </code>
 /// </example>
-public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int contextLength) : ITextModel
+public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer, int contextLength) : ITextModel, IDraftModel
 {
     /// <summary>The language model.</summary>
     public Sequential Model { get; } = model;
@@ -291,7 +291,10 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
     private List<int> _keptIds = [];
     private Reusable? _reusable;
 
-    /// <summary>Frees the KV cache kept between generations (see <see cref="KeepCache"/>) and what <see cref="ReuseDecoding"/> keeps.</summary>
+    /// <summary>
+    /// Frees the KV cache kept between generations (see <see cref="KeepCache"/>), what <see cref="ReuseDecoding"/> keeps,
+    /// and the cache this generator keeps as another's draft (<see cref="StartDraft"/>).
+    /// </summary>
     public void ReleaseCache()
     {
         lock (_keptLock)
@@ -301,6 +304,9 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             _keptIds = [];
             _reusable?.Dispose();
             _reusable = null;
+            _draftKept?.Dispose();
+            _draftKept = null;
+            _draftKeptIds = [];
         }
     }
 
@@ -866,9 +872,23 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         CancellationToken cancellationToken = default) =>
         Task.Run(() => Generate(prompt, options, cancellationToken), CancellationToken.None);
 
-    /// <summary>Streams the continuation of <paramref name="prompt"/> in chunks of about <see cref="GenerationOptions.ChunkSize"/> tokens.</summary>
-    public IEnumerable<GenerationChunk> Stream(string prompt, GenerationOptions options, CancellationToken cancellationToken = default) =>
-        Stream(prompt, null, options, cancellationToken);
+    /// <summary>
+    /// Streams the continuation of <paramref name="prompt"/> in chunks of about <see cref="GenerationOptions.ChunkSize"/>
+    /// tokens; with a <see cref="GenerationOptions.Draft"/>, by speculative decoding (checked here: a draft of another
+    /// vocabulary, or this generator with a sampler of its own, is refused with the reason).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The draft cannot draft for this generator (the reason says why).</exception>
+    public IEnumerable<GenerationChunk> Stream(string prompt, GenerationOptions options, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (options.Draft is { } draft && options.UseCache)
+        {
+            CheckDraft(draft);
+            return Speculate(prompt, draft, options, cancellationToken);
+        }
+
+        return Stream(prompt, null, options, cancellationToken);
+    }
 
     /// <summary>
     /// Streams the continuation of a prompt holding images (a vision-language model's): the image tokens
@@ -952,11 +972,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
         // The ids asked for on the final chunk (ReturnTokens): the prompt as fed, each sampled id's log-probability, where
         // a stop sequence begins and its length.
         int[]? promptIds = options.ReturnTokens || options.ReturnLogProbabilities ? [.. history] : null;
-        var logProbabilities = options.ReturnLogProbabilities ? new List<float>() : null;
-        string? stopText = null;
-        var stops = options.Stop.Where(s => s.Length > 0).ToArray();
-        int holdBack = stops.Length == 0 ? 0 : stops.Max(s => s.Length) - 1;
-        var stopValues = stops.Length == 0 ? null : SearchValues.Create(stops, StringComparison.Ordinal);
+        var reply = new ReplyText(Tokenizer, options);
 
         // ReuseDecoding: the context, sampler and recorded step the last generation left (one generation at a time holds
         // them); `held` frees whatever this generation does not hand back. A sampler made for other options is dropped
@@ -983,12 +999,10 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
 
         sampler.SetHistory(history);
 
-        var generated = new List<int>();
-        var text = new ArrayBufferWriter<char>();
-        int emitted = 0, read = 0, decoded = 0, decodedFrom = 0, taken = 0, lastProgress = 0, resets = 0;
+        var generated = reply.Generated;
+        int read = 0, resets = 0;
         int cachedTokens = 0;                                               // prompt tokens read from the kept cache
         TimeSpan promptDuration = TimeSpan.Zero;
-        string? doneReason = null;
 
         // Downloads sampled ids up to `produced`, extends the text, and checks stop sequences; returns the new text to emit.
         string Collect(int produced, bool final)
@@ -997,85 +1011,15 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             {
                 foreach (var step in sampler.Read(read, produced))
                 {
-                    generated.Add(step[0].Id);
+                    reply.Add(step[0].Id, step[0].Probability);
                     history.Add(step[0].Id);
-                    logProbabilities?.Add(MathF.Log(step[0].Probability));
                 }
 
                 read = produced;
-                if (options.RepeatStop >= 2 && doneReason is null && Looping(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(generated), options.RepeatStop,
-                        options.RepeatStopMinTokens))
-                {
-                    doneReason = "repetition";
-                }
+                reply.CheckLoop();
             }
 
-            // The text is the decoding of the tokens from `decodedFrom` on, of which the first `taken` characters are in
-            // `text` already. Byte-level tokenizers split a character's UTF-8 bytes across tokens (one token can end a
-            // character and start the next), so a decoding can end in U+FFFD for bytes still to come: those characters
-            // wait, unless four tokens bring nothing new (a character has at most 4 bytes: the bytes are invalid).
-            // Decoding restarts a few tokens back (not at the new ones) now and then, since decoders may treat the start
-            // of a text specially (SentencePiece decoders drop its leading space).
-            if (generated.Count > decoded)
-            {
-                var ids = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(generated);
-                string all = Tokenizer.Decode(ids[decodedFrom..]);
-                int whole = all.Length;
-                while (!final && whole > taken && all[whole - 1] == '\uFFFD')
-                {
-                    whole--;
-                }
-
-                if (whole == taken && generated.Count - lastProgress >= 4)
-                {
-                    whole = all.Length;
-                }
-
-                if (whole > taken)
-                {
-                    text.Write(all.AsSpan(taken, whole - taken));
-                    taken = whole;
-                    lastProgress = generated.Count;
-                }
-
-                decoded = generated.Count;
-                if (taken == all.Length && decoded - decodedFrom >= 64)
-                {
-                    decodedFrom = decoded - 4;
-                    taken = Tokenizer.Decode(ids[decodedFrom..decoded]).Length;
-                }
-            }
-
-            var written = text.WrittenSpan;
-            int end = written.Length;
-            int searchFrom = Math.Max(0, emitted - holdBack);
-            if (stopValues is not null && searchFrom < end && written[searchFrom..].IndexOfAny(stopValues) >= 0)
-            {
-                // Some stop occurs: find the end as stop by stop (each search stops at the end found so far).
-                foreach (var stop in stops)
-                {
-                    // Only the text not yet searched (plus a stop's length of overlap) can hold a new match.
-                    int from = Math.Max(0, emitted - stop.Length + 1);
-                    int at = from < end ? written[from..end].IndexOf(stop, StringComparison.Ordinal) : -1;
-                    at = at < 0 ? -1 : at + from;
-                    if (at >= 0 && at < end)
-                    {
-                        end = at;
-                        doneReason = "stop";
-                        stopText = stop;
-                    }
-                }
-            }
-
-            int safe = doneReason is not null || final ? end : Math.Max(emitted, end - holdBack);
-            if (doneReason is null && !final && safe > emitted && char.IsHighSurrogate(written[safe - 1]))
-            {
-                safe--;                                                        // keep a character's two halves together
-            }
-
-            string piece = new(written[emitted..safe]);
-            emitted = safe;
-            return piece;
+            return reply.Take(final);
         }
 
         Model.Eval();
@@ -1223,7 +1167,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                 }
                 int produced = 1, chunkFrom = 1;
                 long chunkStart = Telemetry.StartStage();
-                while (doneReason is null && !cancellationToken.IsCancellationRequested)
+                while (reply.DoneReason is null && !cancellationToken.IsCancellationRequested)
                 {
                     bool flush = produced % Math.Max(1, options.ChunkSize) == 0 || produced >= limit;
                     if (flush)
@@ -1238,7 +1182,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                     }
 
                     // Cancelled while the reader held the chunk: no step after it (the stop comes at the next token, not one later).
-                    if (doneReason is not null || produced >= limit || cancellationToken.IsCancellationRequested)
+                    if (reply.DoneReason is not null || produced >= limit || cancellationToken.IsCancellationRequested)
                     {
                         break;
                     }
@@ -1252,7 +1196,7 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
                             yield return new GenerationChunk(piece) { Generated = generated.Count };
                         }
 
-                        if (doneReason is not null)
+                        if (reply.DoneReason is not null)
                         {
                             break;
                         }
@@ -1329,15 +1273,134 @@ public sealed class TextGenerator(Sequential model, ITokenizer tokenizer, int co
             }
         }
 
-        doneReason ??= "length";
+        reply.DoneReason ??= "length";
         Device.Synchronize();
         var stats = new GenerationStats(promptTokens, promptDuration, generated.Count, total.Elapsed - promptDuration,
             total.Elapsed, resets) { CachedTokens = cachedTokens };
-        yield return new GenerationChunk("", Done: true, DoneReason: doneReason, Stats: stats)
+        yield return new GenerationChunk("", Done: true, DoneReason: reply.DoneReason, Stats: stats)
         {
             Generated = generated.Count,
-            Tokens = promptIds is null ? null : Sampled(promptIds, generated, logProbabilities, doneReason == "stop" ? stopText : null),
+            Tokens = promptIds is null ? null : Sampled(promptIds, generated, reply.LogProbabilities, reply.DoneReason == "stop" ? reply.StopText : null),
         };
+    }
+
+    // A reply's text as its ids come, for one row (Stream and the speculative path): decoded a few tokens back now and then,
+    // a character whose bytes are still to come held back, stop sequences and loops found.
+    private sealed class ReplyText
+    {
+        private readonly ITokenizer _tokenizer;
+        private readonly GenerationOptions _options;
+        private readonly string[] _stops;
+        private readonly int _holdBack;
+        private readonly SearchValues<string>? _stopValues;
+        private readonly ArrayBufferWriter<char> _text = new();
+        private int _emitted, _decoded, _decodedFrom, _taken, _lastProgress;
+
+        public ReplyText(ITokenizer tokenizer, GenerationOptions options)
+        {
+            (_tokenizer, _options) = (tokenizer, options);
+            _stops = [.. options.Stop.Where(s => s.Length > 0)];
+            _holdBack = _stops.Length == 0 ? 0 : _stops.Max(s => s.Length) - 1;
+            _stopValues = _stops.Length == 0 ? null : SearchValues.Create(_stops, StringComparison.Ordinal);
+            LogProbabilities = options.ReturnLogProbabilities ? [] : null;
+        }
+
+        // The ids so far, and each one's log-probability when asked for (GenerationOptions.ReturnLogProbabilities).
+        public List<int> Generated { get; } = [];
+
+        public List<float>? LogProbabilities { get; }
+
+        // Why the reply ended ("stop", "repetition"), and the stop sequence found; null while it goes on.
+        public string? DoneReason { get; set; }
+
+        public string? StopText { get; private set; }
+
+        public void Add(int id, float probability)
+        {
+            Generated.Add(id);
+            LogProbabilities?.Add(MathF.Log(probability));
+        }
+
+        // After ids were added: a reply caught in a loop ends (GenerationOptions.RepeatStop).
+        public void CheckLoop()
+        {
+            if (_options.RepeatStop >= 2 && DoneReason is null
+                && Looping(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Generated), _options.RepeatStop, _options.RepeatStopMinTokens))
+            {
+                DoneReason = "repetition";
+            }
+        }
+
+        // Extends the text with the ids added since the last call and checks the stop sequences; returns the new text to emit.
+        public string Take(bool final)
+        {
+            // The text is the decoding of the tokens from `_decodedFrom` on, of which the first `_taken` characters are in
+            // `text` already. Byte-level tokenizers split a character's UTF-8 bytes across tokens (one token can end a
+            // character and start the next), so a decoding can end in U+FFFD for bytes still to come: those characters
+            // wait, unless four tokens bring nothing new (a character has at most 4 bytes: the bytes are invalid).
+            // Decoding restarts a few tokens back (not at the new ones) now and then, since decoders may treat the start
+            // of a text specially (SentencePiece decoders drop its leading space).
+            if (Generated.Count > _decoded)
+            {
+                var ids = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Generated);
+                string all = _tokenizer.Decode(ids[_decodedFrom..]);
+                int whole = all.Length;
+                while (!final && whole > _taken && all[whole - 1] == '\uFFFD')
+                {
+                    whole--;
+                }
+
+                if (whole == _taken && Generated.Count - _lastProgress >= 4)
+                {
+                    whole = all.Length;
+                }
+
+                if (whole > _taken)
+                {
+                    _text.Write(all.AsSpan(_taken, whole - _taken));
+                    _taken = whole;
+                    _lastProgress = Generated.Count;
+                }
+
+                _decoded = Generated.Count;
+                if (_taken == all.Length && _decoded - _decodedFrom >= 64)
+                {
+                    _decodedFrom = _decoded - 4;
+                    _taken = _tokenizer.Decode(ids[_decodedFrom.._decoded]).Length;
+                }
+            }
+
+            var written = _text.WrittenSpan;
+            int end = written.Length;
+            int searchFrom = Math.Max(0, _emitted - _holdBack);
+            if (_stopValues is not null && searchFrom < end && written[searchFrom..].IndexOfAny(_stopValues) >= 0)
+            {
+                // Some stop occurs: find the end as stop by stop (each search stops at the end found so far).
+                foreach (var stop in _stops)
+                {
+                    // Only the text not yet searched (plus a stop's length of overlap) can hold a new match.
+                    int from = Math.Max(0, _emitted - stop.Length + 1);
+                    int at = from < end ? written[from..end].IndexOf(stop, StringComparison.Ordinal) : -1;
+                    at = at < 0 ? -1 : at + from;
+                    if (at >= 0 && at < end)
+                    {
+                        end = at;
+                        DoneReason = "stop";
+                        StopText = stop;
+                    }
+                }
+            }
+
+            int safe = DoneReason is not null || final ? end : Math.Max(_emitted, end - _holdBack);
+            if (DoneReason is null && !final && safe > _emitted && char.IsHighSurrogate(written[safe - 1]))
+            {
+                safe--;                                                        // keep a character's two halves together
+            }
+
+            string piece = new(written[_emitted..safe]);
+            _emitted = safe;
+            return piece;
+        }
     }
 
     // A reply's ids as sampled (GenerationOptions.ReturnTokens): up to the token that completes its stop sequence `stop`

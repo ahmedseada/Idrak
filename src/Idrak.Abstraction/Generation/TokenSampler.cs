@@ -256,6 +256,81 @@ public sealed class TokenSampler : ITokenSampler
         return result;
     }
 
+    /// <summary>
+    /// The distribution <see cref="Sample"/> draws a row from, on the host: softmax(<paramref name="logits"/> / temperature)
+    /// restricted by <paramref name="topK"/>, <paramref name="minP"/> and <paramref name="topP"/>, with the non-finite
+    /// scores' rule (<c>Backend.SampleRowsKernel</c>), the same operations as the CPU sampler in the same order. Writes it
+    /// to <paramref name="probabilities"/> (as long as the logits; it sums to 1) and returns true, or returns false when
+    /// the row has nothing to sample (every logit NaN or -∞). Apply the penalties first (<see cref="Penalize"/>) to read
+    /// what a step with penalties samples from. For a check on the host of what the sampler would choose (speculative decoding).
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="probabilities"/> is shorter than <paramref name="logits"/>.</exception>
+    public static bool Probabilities(ReadOnlySpan<float> logits, Span<float> probabilities, float temperature, int topK, float topP, float minP)
+    {
+        if (probabilities.Length < logits.Length)
+        {
+            throw new ArgumentException($"{probabilities.Length} probabilities for {logits.Length} logits.", nameof(probabilities));
+        }
+
+        var weights = probabilities[..logits.Length];
+        float[] top = ArrayPool<float>.Shared.Rent(Math.Max(1, Math.Min(topK, logits.Length)));
+        float[]? candidateScores = null, candidateWeights = null;
+        try
+        {
+            float sum = SamplingWeights.Compute(logits, weights, temperature, topK, topP, minP, top, ref candidateScores, ref candidateWeights);
+            if (!(sum > 0f))
+            {
+                weights.Clear();
+                return false;
+            }
+
+            for (int j = 0; j < weights.Length; j++)
+            {
+                weights[j] /= sum;                                           // as the sampler's statistics divide
+            }
+
+            return true;
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(top);
+            if (candidateScores is not null)
+            {
+                ArrayPool<float>.Shared.Return(candidateScores);
+                ArrayPool<float>.Shared.Return(candidateWeights!);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The repetition penalties a step applies (<c>Backend.PenalizeRowsKernel</c>), on the host: each distinct id of
+    /// <paramref name="recent"/> (the last <see cref="RepeatLastN"/> tokens, oldest first) once, its score divided by
+    /// <paramref name="repeat"/> when positive (multiplied when not), then lowered by <paramref name="presence"/> and by
+    /// <paramref name="frequency"/> per occurrence; ids outside <paramref name="logits"/> skipped. The same operations as
+    /// the CPU kernel, so <see cref="Probabilities"/> after it reads what a step with penalties samples from.
+    /// </summary>
+    public static void Penalize(Span<float> logits, ReadOnlySpan<int> recent, float repeat, float presence, float frequency)
+    {
+        for (int k = recent.Length - 1; k >= 0; k--)
+        {
+            int id = recent[k];
+            if ((uint)id >= (uint)logits.Length || recent[(k + 1)..].Contains(id))
+            {
+                continue;                                                    // outside the logits, or penalized at its latest place
+            }
+
+            int count = 0;
+            foreach (int other in recent)
+            {
+                count += other == id ? 1 : 0;
+            }
+
+            float x = logits[id];
+            x = x > 0f ? x / repeat : x * repeat;
+            logits[id] = x - presence - frequency * count;
+        }
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {

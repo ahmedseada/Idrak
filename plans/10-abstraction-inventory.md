@@ -11,7 +11,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
-| `Idrak.Abstraction` | 182 | 18 | 59 | 259 | 0 |
+| `Idrak.Abstraction` | 184 | 18 | 59 | 261 | 0 |
 | `Idrak` | 54 | 5 | 20 | 79 | 0 |
 | `Idrak.Gpu` | 5 | 0 | 1 | 6 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
@@ -178,6 +178,8 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.ICtcDecoder` | interface | public | — | CtcDecoders.BuiltInDecoder, CtcDecoders.GuardedDecoder |  | Abstraction, Audio, Audio.Plugins, Vision | Abstraction |
 | `Idrak.Abstraction.Generation.IDecodingStep` | interface | public | — | DecodingContext.StepScope |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IDescribedModel` | interface | public | — | — |  | Abstraction, Audio.Plugins, Idrak, Text, Text.Plugins, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Generation.IDraftModel` | interface | public | — | TextGenerator |  | Abstraction, AspNetCore, Audio, Idrak, Mcp, Text, Text.Plugins | Abstraction |
+| `Idrak.Abstraction.Generation.IDraftSession` | interface | public | — | TextGenerator.DraftSession |  | Abstraction, AspNetCore, Audio, Idrak, Mcp, Text, Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IFeatureCache` | interface | public | Device, Tensor | DiskFeatureCache, MemoryFeatureCache |  | Abstraction, Audio, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IFeatureCacheKind` | interface | public | — | FeatureCacheKind, FeatureCaches.GuardedKind |  | Abstraction, Audio, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IFillInMiddleFormat` | interface | public | — | FillInMiddleFormats.GuardedFormat, FillInMiddleLayout |  | Text.Plugins | Abstraction |
@@ -210,7 +212,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.ITextModel` | interface | public | — | ChatEngineModel, Seq2SeqEngineModel, Seq2SeqGenerator, TextEngineModel, TextGenerator |  | Abstraction, AspNetCore, Idrak, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ITokenSampler` | interface | public | Tensor | TokenSampler, TokenSamplers.ShadowSampler |  | Idrak | Abstraction |
 | `Idrak.Abstraction.Generation.ITokenSamplerKind` | interface | public | — | TokenSamplers.BuiltInKind, TokenSamplers.GuardedKind |  | Idrak | Abstraction |
-| `Idrak.Abstraction.Generation.ITokenizer` | interface | public | — | BpeTokenizer, CharTokenizer, TokenizerModels.GuardedTokenizer, UnigramTokenizer, WordPieceTokenizer, WordTokenizer |  | Abstraction, Audio, Audio.Plugins, Idrak, Text, Text.Plugins, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Generation.ITokenizer` | interface | public | — | BpeTokenizer, CharTokenizer, TokenizerModels.GuardedTokenizer, UnigramTokenizer, WordPieceTokenizer, WordTokenizer |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Idrak, Mcp, Text, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.ITokenizerLoader` | interface | public | — | TokenizerLoaders.BuiltInLoader |  | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ITool` | interface | public | — | Tool |  | Abstraction, Mcp, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IToolCallFormat` | interface | public | — | DeepSeekToolCallFormat, HarmonyToolCallFormat, MistralToolCallFormat, Qwen3CoderToolCallFormat, ToolCallFormats.GuardedFormat, ToolCallFormats.JsonFormat, +1 |  | Abstraction, Text, Text.Plugins | Abstraction |

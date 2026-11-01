@@ -293,6 +293,19 @@ public enum InferenceStageKind
 
     /// <summary>Sound to a model's features (log-mel frames): Count the frames, Bytes the features.</summary>
     AudioFeatures,
+
+    /// <summary>
+    /// A draft model's proposals for one round of speculative decoding (<c>GenerationOptions.Draft</c>), to their ids read
+    /// back: Count the tokens proposed, Pieces the draft's passes.
+    /// </summary>
+    Draft,
+
+    /// <summary>
+    /// The target's one pass over a round's proposals and their checking: Count the tokens the round gave (the proposals
+    /// kept and the target's own next one), PieceSize the positions the pass verified (the proposals and one more), so
+    /// the round kept Count - 1 of PieceSize - 1 proposals.
+    /// </summary>
+    Verify,
 }
 
 /// <summary>
