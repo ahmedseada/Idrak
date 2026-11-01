@@ -66,6 +66,7 @@ public static partial class GcnTargets
             Row(GcnOp.SWaitcnt, "s_waitcnt", Sopp, 0x0C, "w"),
             Row(GcnOp.SWaitcntDepctr, "s_waitcnt_depctr", Sopp, 0x23, "k"),
             Row(GcnOp.SBarrier, "s_barrier", Sopp, 0x0A, ""),
+            Row(GcnOp.SSleep, "s_sleep", Sopp, 0x0E, "k"),
             Row(GcnOp.SBranch, "s_branch", Sopp, 0x02, "j"),
             Row(GcnOp.SCbranchScc0, "s_cbranch_scc0", Sopp, 0x04, "j"),
             Row(GcnOp.SCbranchScc1, "s_cbranch_scc1", Sopp, 0x05, "j"),
@@ -79,6 +80,7 @@ public static partial class GcnTargets
             Row(GcnOp.SLoadDwordx2, "s_load_dwordx2", Smem, 0x01, "d2 b2 o"),
             Row(GcnOp.SLoadDwordx4, "s_load_dwordx4", Smem, 0x02, "d4 b2 o"),
             Row(GcnOp.SLoadDwordx8, "s_load_dwordx8", Smem, 0x03, "d8 b2 o"),
+            Row(GcnOp.SDcacheInv, "s_dcache_inv", Smem, 0x20, ""),
             // VOP1: one vector source
             Row(GcnOp.VMovB32, "v_mov_b32", Vop1, 0x01, "v1 x1", E64 | Clamp),
             Row(GcnOp.VReadfirstlaneB32, "v_readfirstlane_b32", Vop1, 0x02, "D1 y1"),

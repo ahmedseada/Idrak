@@ -742,9 +742,10 @@ internal sealed partial class GcnMachine
             return false;
         }
 
-        if (read && Rdna && !i.Dlc)
+        // ISA 10's device scope is glc dlc (past the shader array's L1 too); ISA 11's is glc (llc 18's agent-scope loads).
+        if (read && Rdna && kernel.Cpu < GcnCpu.Gfx1100 && !i.Dlc)
         {
-            why = "; it was acquired through a completion counter, but the load has no dlc (RDNA's L1 may hold a stale line: device scope is glc dlc)";
+            why = "; it was acquired through a completion counter, but the load has no dlc (ISA 10's L1 may hold a stale line: device scope is glc dlc)";
             return false;
         }
 

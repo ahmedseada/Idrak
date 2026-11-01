@@ -52,7 +52,7 @@ internal abstract partial class Tests
             }
 
             var source = GcnKernels.Products.Single(k => k.Name == name);
-            var target = GcnTargets.For(isa);
+            var target = KernelTarget(isa);
             using var asm = new GcnAssembler(target, isa);
             var code = asm.AssembleKernel(source.Text);
             string printed = asm.PrintedText;

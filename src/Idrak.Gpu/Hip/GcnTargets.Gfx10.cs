@@ -42,6 +42,8 @@ public static partial class GcnTargets
 
         protected override FrozenDictionary<string, GcnInstruction>.AlternateLookup<ReadOnlySpan<char>> ByMnemonic => Index.ByMnemonic;
 
+        protected override FrozenDictionary<string, string>.AlternateLookup<ReadOnlySpan<char>> Aliases => Index.Aliases;
+
         // s_waitcnt: vmcnt's low four bits at 3:0 and high two at 15:14, expcnt at 6:4, lgkmcnt (six bits) at 13:8.
         public override ushort WaitBits(int vmcnt, int expcnt, int lgkmcnt) =>
             (ushort)((vmcnt & 0xF) | (expcnt & 7) << 4 | (lgkmcnt & 0x3F) << 8 | (vmcnt >> 4 & 3) << 14);
@@ -54,6 +56,15 @@ public static partial class GcnTargets
 
             public static readonly FrozenDictionary<string, GcnInstruction>.AlternateLookup<ReadOnlySpan<char>> ByMnemonic =
                 Instructions.ToFrozenDictionary(i => i.Mnemonic, StringComparer.Ordinal).GetAlternateLookup<ReadOnlySpan<char>>();
+
+            // gfx9's names for the adds ISA 10 renamed (no carry: v_add_nc_u32). llvm-mc 18 takes them on gfx1100 (its
+            // gfx11 aliases) but not on gfx1030; Idrak takes them on both, so one kernel text serves every family.
+            public static readonly FrozenDictionary<string, string>.AlternateLookup<ReadOnlySpan<char>> Aliases = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["v_add_u32"] = "v_add_nc_u32",
+                ["v_sub_u32"] = "v_sub_nc_u32",
+                ["v_subrev_u32"] = "v_subrev_nc_u32",
+            }.ToFrozenDictionary(StringComparer.Ordinal).GetAlternateLookup<ReadOnlySpan<char>>();
         }
     }
 
@@ -93,6 +104,10 @@ public static partial class GcnTargets
 
         protected abstract FrozenDictionary<string, GcnInstruction>.AlternateLookup<ReadOnlySpan<char>> ByMnemonic { get; }
 
+        // gfx9's spellings of the family's instructions, to the family's mnemonic (which the printer writes): Idrak's
+        // kernels are one text for every family, written in gfx9's names, as PTX is one text for every SM.
+        protected abstract FrozenDictionary<string, string>.AlternateLookup<ReadOnlySpan<char>> Aliases { get; }
+
         public GcnRegisterFile Registers(GcnIsaVersion isa, int waveSize)
         {
             CheckWave(waveSize);
@@ -126,7 +141,16 @@ public static partial class GcnTargets
 
         public GcnInstruction? Find(GcnOp op) => (uint)op < (uint)ByOp.Length ? ByOp[(int)op] : null;
 
-        public bool TryFind(ReadOnlySpan<char> mnemonic, [NotNullWhen(true)] out GcnInstruction? instruction) => ByMnemonic.TryGetValue(mnemonic, out instruction);
+        public bool TryFind(ReadOnlySpan<char> mnemonic, [NotNullWhen(true)] out GcnInstruction? instruction)
+        {
+            if (ByMnemonic.TryGetValue(mnemonic, out instruction))
+            {
+                return true;
+            }
+
+            instruction = null;
+            return Aliases.TryGetValue(mnemonic, out string? name) && ByMnemonic.TryGetValue(name, out instruction);
+        }
 
         // The table holds the instructions every version of the family has (the forms Idrak's kernels use).
         public GcnFeatures Features(GcnIsaVersion isa) => GcnFeatures.None;
