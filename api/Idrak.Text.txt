@@ -701,6 +701,7 @@ public sealed class Idrak.Text.Generation.ChatGenerator : Idrak.Abstraction.Gene
   public ChatGenerator(Idrak.Generation.TextGenerator generator, Idrak.Abstraction.Generation.IChatTemplate? template = null)
   public Idrak.Abstraction.Generation.ChatChunk Chat(Idrak.Abstraction.Generation.ChatRequest request, System.Threading.CancellationToken cancellationToken = default)
   public Idrak.Abstraction.Generation.IChatTemplate Template { get; }
+  public Idrak.Abstraction.Generation.SamplingSettings? RecommendedSampling { get; }
   public Idrak.Generation.TextGenerator Generator { get; }
   public Idrak.Text.Generation.ChatImages? Images { get; init; }
   public System.Collections.Generic.IAsyncEnumerable<(int, Idrak.Abstraction.Generation.ChatChunk)> StreamBatchAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatRequest> requests, System.Threading.CancellationToken cancellationToken = default)
@@ -946,6 +947,7 @@ public sealed class Idrak.Text.Inference.GenerativeModelBuilder
   public Idrak.Text.Inference.GenerativeModelBuilder KeepAlive(System.TimeSpan? idle)
   public Idrak.Text.Inference.GenerativeModelBuilder Parts(System.Collections.Generic.IReadOnlyCollection<string> kinds, System.Func<Idrak.Generation.TextGenerator, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource>> parts)
   public Idrak.Text.Inference.GenerativeModelBuilder QueueLimit(int waiting)
+  public Idrak.Text.Inference.GenerativeModelBuilder Sampling(Idrak.Abstraction.Generation.SamplingSettings? recommended)
   public Idrak.Text.Inference.GenerativeModelBuilder Template(Idrak.Abstraction.Generation.IChatTemplate template)
   public Idrak.Text.Inference.GenerativeModelBuilder Timeout(System.TimeSpan limit)
   public Idrak.Text.Inference.GenerativeModelBuilder Tools(Idrak.Abstraction.Generation.IToolRegistry tools)

@@ -17,7 +17,7 @@ internal sealed class GenerationSettings
     /// <summary>The value options.</summary>
     public static readonly string[] ValueOptions =
     [
-        "--temperature", "--top-k", "--top-p", "--max-tokens", "--system", "--tools", "--repeat-penalty", "--presence-penalty", "--frequency-penalty",
+        "--temperature", "--top-k", "--top-p", "--min-p", "--max-tokens", "--system", "--tools", "--repeat-penalty", "--presence-penalty", "--frequency-penalty",
         "--repeat-last-n", "--repeat-stop",
     ];
 
@@ -30,12 +30,12 @@ internal sealed class GenerationSettings
     /// <summary>The options' lines for a command's usage text.</summary>
     public const string Help =
         "  -s, --system TEXT      the system prompt\n" +
-        "      --temperature T    sampling temperature (default 0.6; 0 picks the most likely token)\n" +
-        "      --top-k N          sample among the N most likely tokens (default 20; 0 = all)\n" +
-        "      --top-p P          nucleus sampling (default 0.95; 1 = off)\n" +
+        "      --temperature T    sampling temperature (default: the model's own, else 0.6; 0 picks the most likely token)\n" +
+        "      --top-k N          sample among the N most likely tokens (default: the model's, else 20; 0 = all)\n" +
+        "      --top-p P          nucleus sampling (default: the model's, else 0.95; 1 = off)\n" +
         "      --max-tokens N     longest answer in tokens (default: until the model stops, at most 4096)\n" +
         "      --seed N           random seed for reproducible answers\n" +
-        "      --repeat-penalty F divides the scores of tokens seen in the last --repeat-last-n tokens (default 1 = off)\n" +
+        "      --repeat-penalty F divides the scores of tokens seen in the last --repeat-last-n tokens (default: the model's, else 1 = off)\n" +
         "      --presence-penalty F, --frequency-penalty F  subtracted once from each recent token's score, or once per\n" +
         "                         time it was seen (default 0 = off); --repeat-last-n N: how far back they look (default 64)\n" +
         "      --repeat-stop N    end the answer when one phrase repeats N times in a row (default 0 = off)\n" +
@@ -44,7 +44,7 @@ internal sealed class GenerationSettings
 
     /// <summary>The setting names <c>/set</c> knows.</summary>
     public static readonly string[] Names =
-        ["temperature", "top-k", "top-p", "max-tokens", "seed", "think", "repeat-penalty", "presence-penalty", "frequency-penalty", "repeat-last-n", "repeat-stop"];
+        ["temperature", "top-k", "top-p", "min-p", "max-tokens", "seed", "think", "repeat-penalty", "presence-penalty", "frequency-penalty", "repeat-last-n", "repeat-stop"];
 
     /// <summary>Softmax temperature; 0 means greedy.</summary>
     public float Temperature { get; set; } = 0.6f;
@@ -111,6 +111,67 @@ internal sealed class GenerationSettings
     /// <summary>Sets <paramref name="name"/> (one of <see cref="Names"/>) from text; returns an error message, or null.</summary>
     public string? Set(string name, string value)
     {
+        string? error = SetValue(name, value);
+        if (error is null)
+        {
+            _given.Add(name);
+        }
+
+        return error;
+    }
+
+    /// <summary>Min-p (0 = off).</summary>
+    public float MinP { get; set; }
+
+    // The settings the user gave (the command line, /set): the model's recommended sampling never replaces them.
+    private HashSet<string> _given = new(StringComparer.Ordinal);
+
+    /// <summary>The sampling values the user gave (the command line or <c>/set</c>), as <see cref="SamplingSettings"/>.</summary>
+    public SamplingSettings Given => new()
+    {
+        Temperature = _given.Contains("temperature") ? Temperature : null,
+        TopK = _given.Contains("top-k") ? TopK : null,
+        TopP = _given.Contains("top-p") ? TopP : null,
+        MinP = _given.Contains("min-p") ? MinP : null,
+        RepeatPenalty = _given.Contains("repeat-penalty") ? RepeatPenalty : null,
+    };
+
+    /// <summary>
+    /// Takes the model's <paramref name="recommended"/> sampling (<see cref="SamplingSettings"/>, its generation_config.json)
+    /// for every sampling value the user did not give (<see cref="Given"/>); the CLI's own defaults stay for the rest.
+    /// Says in --verbose which values came from the model. Returns what was taken ("" when nothing; null without a recommendation).
+    /// </summary>
+    public string? TakeRecommended(CommandContext? context, SamplingSettings? recommended, string model)
+    {
+        if (recommended is null)
+        {
+            return null;
+        }
+
+        var baseline = new GenerationOptions { Temperature = Temperature <= 0 ? 1f : Temperature, TopK = TopK, TopP = TopP, MinP = MinP, RepeatPenalty = RepeatPenalty };
+        var resolved = SamplingSettings.Resolve(baseline, Given, recommended);
+        var taken = resolved.FromModel.ToList();
+        if (taken.Count == 0)
+        {
+            context?.Detail($"{model} recommends its own sampling ({SamplingSettings.FileName}); the values given were kept");
+            return "";
+        }
+
+        var options = resolved.Options;
+        bool greedy = taken.Any(s => s.Name == "greedy");
+        bool keep = greedy || Temperature <= 0 && _given.Contains("temperature");   // greedy decoding: the CLI's temperature 0
+        Temperature = greedy ? 0f : keep ? Temperature : options.Temperature;
+        TopK = keep ? TopK : options.TopK;
+        TopP = keep ? TopP : options.TopP;
+        MinP = keep ? MinP : options.MinP;
+        RepeatPenalty = options.RepeatPenalty;
+        string said = string.Join(", ", taken.Select(s => $"{s.Name} {s.Value}"));
+        context?.Detail($"sampling from {model}'s {SamplingSettings.FileName}: {said} (now: {resolved.Describe()})");
+        return said;
+    }
+
+    private string? SetValue(string name, string value)
+    {
         var invariant = CultureInfo.InvariantCulture;
         bool Float(out float f) => float.TryParse(value, NumberStyles.Float, invariant, out f) && float.IsFinite(f);
         bool Int(out int i) => int.TryParse(value, NumberStyles.Integer, invariant, out i);
@@ -122,6 +183,11 @@ internal sealed class GenerationSettings
             case "top-k" when Int(out int k) && k >= 0:
                 TopK = k;
                 return null;
+            case "min-p" when Float(out float m) && m is >= 0 and <= 1:
+                MinP = m;
+                return null;
+            case "min-p":
+                return $"--min-p needs a number from 0 to 1 (0 = off), not '{value}'.";
             case "top-p" when Float(out float p) && p is > 0 and <= 1:
                 TopP = p;
                 return null;
@@ -183,6 +249,7 @@ internal sealed class GenerationSettings
         Temperature = Temperature <= 0 ? 1f : Temperature,
         TopK = Temperature <= 0 ? 1 : TopK,
         TopP = Temperature <= 0 ? 1f : TopP,
+        MinP = Temperature <= 0 ? 0f : MinP,
         RepeatPenalty = RepeatPenalty,
         PresencePenalty = PresencePenalty,
         FrequencyPenalty = FrequencyPenalty,
@@ -200,6 +267,7 @@ internal sealed class GenerationSettings
         yield return ("temperature", Temperature.ToString(invariant));
         yield return ("top-k", TopK.ToString(invariant));
         yield return ("top-p", TopP.ToString(invariant));
+        yield return ("min-p", MinP.ToString(invariant));
         yield return ("max-tokens", MaxTokens < 0 ? "unlimited" : MaxTokens.ToString(invariant));
         yield return ("seed", Seed?.ToString(invariant) ?? "random");
         yield return ("think", Think switch { true => "on", false => "off", null => "default" });
@@ -211,5 +279,10 @@ internal sealed class GenerationSettings
     }
 
     /// <summary>A copy (compare runs two sets side by side).</summary>
-    public GenerationSettings Clone() => (GenerationSettings)MemberwiseClone();
+    public GenerationSettings Clone()
+    {
+        var copy = (GenerationSettings)MemberwiseClone();
+        copy._given = new HashSet<string>(_given, StringComparer.Ordinal);
+        return copy;
+    }
 }

@@ -361,6 +361,7 @@ internal sealed class CompleteCommand : Command
         var settings = GenerationSettings.From(context);
         var choice = ModelChoices.Choose(context, name);
         using var model = ModelChoices.Load(context, choice);
+        settings.TakeRecommended(context, model.RecommendedSampling, choice.Model);       // the values not given: the model's own
         var generator = ModelChoices.CreateGenerator(model, choice);
         int contextLength = ModelChoices.ContextLength(choice, model);
         var options = settings.ToOptions(contextLength) with { Stop = context.Options("--stop") };

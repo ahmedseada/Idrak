@@ -114,6 +114,13 @@ public interface IChatModel
     IReadOnlySet<string> PartKinds => ChatParts.TextOnly;
 
     /// <summary>
+    /// The sampling the model's makers recommend (its generation_config.json, <see cref="SamplingSettings.Read"/>), or null
+    /// when it has none or the model does not know (the default). An app lays it under its explicit values with
+    /// <see cref="SamplingSettings.Resolve"/>. A model that forwards to another returns the inner model's.
+    /// </summary>
+    SamplingSettings? RecommendedSampling => null;
+
+    /// <summary>
     /// Streams the reply to <paramref name="request"/>; the last chunk has <see cref="ChatChunk.Done"/> set and carries the
     /// full message. Throws <see cref="NotSupportedException"/> for a message part whose kind is not in <see cref="PartKinds"/>.
     /// </summary>

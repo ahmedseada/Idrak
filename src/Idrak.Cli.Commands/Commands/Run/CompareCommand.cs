@@ -57,7 +57,8 @@ internal sealed class CompareCommand : Command
         var results = new List<(string Label, ChatAnswer Answer)>();
         foreach (var (label, name, choice) in new[] { ("A", a, ModelChoices.Choose(context, a)), ("B", b, choiceB) })
         {
-            using var loaded = LoadedChat.Load(context, name, settings, choice);
+            var own = settings.Clone();                               // each model's recommended sampling under the values given
+            using var loaded = LoadedChat.Load(context, name, own, choice);
             var messages = new List<ChatMessage>();
             if (settings.System is { Length: > 0 } system)
             {
@@ -65,7 +66,7 @@ internal sealed class CompareCommand : Command
             }
 
             messages.Add(new ChatMessage("user", prompt));
-            var answer = new ChatResponder(loaded.Chat, null).Answer(messages, settings, loaded.Context);
+            var answer = new ChatResponder(loaded.Chat, null).Answer(messages, own, loaded.Context);
             string title = $"{label}: {choice.Model}{(choice.Weights is { } w ? $" -w {w}" : "")}{(choice.Kv is { } k ? $" -k {k}" : "")}";
             results.Add((title, answer));
         }

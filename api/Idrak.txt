@@ -333,6 +333,7 @@ public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generatio
   public Idrak.Abstraction.Generation.IKeyValueLayout? CacheLayout { get; init; }
   public Idrak.Abstraction.Generation.ITokenizer Tokenizer { get; }
   public Idrak.Abstraction.Generation.KeyValueFormat CacheFormat { get; init; }
+  public Idrak.Abstraction.Generation.SamplingSettings? RecommendedSampling { get; init; }
   public Idrak.Abstraction.MatMulPrecision? PrefillPrecision { get; set; }
   public Idrak.Layers.Sequential Model { get; }
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.GenerationChunk> StreamAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
@@ -2223,6 +2224,7 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public Idrak.Abstraction.Generation.ITokenizer? Tokenizer { get; }
   public Idrak.Abstraction.Generation.ITrainableSoftParts OpenPart(string kind, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Generation.IFeatureCache? cache = null)
   public Idrak.Abstraction.Generation.IVisionEncoder CreateVisionEncoder(Idrak.Abstraction.Generation.VisionEncoderOptions? options = null)
+  public Idrak.Abstraction.Generation.SamplingSettings? RecommendedSampling { get; }
   public Idrak.Layers.Sequential Network { get; }
   public Idrak.Models.Abstractions.IPretrainedArchitecture Architecture { get; }
   public Idrak.Models.PackedWeightCacheUse? PackedCache { get; }

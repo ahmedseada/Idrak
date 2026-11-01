@@ -307,12 +307,36 @@ internal sealed class ServeHost
             {
                 b = b.KeepAlive(Settings.KeepAlive);
                 b = served.Template is null ? b : b.Template(served.Template);
+                b = b.Sampling(RecommendedSampling(served));    // a request's values over the model's own over the API's defaults
                 b = served.ReadsAudio ? b.Parts([ChatParts.Audio], generator => [Audio(served, generator)]) : b;
                 return served.ReadsImages ? b.Images(generator => Images(served, generator)) : b;
             });
         }
 
         return engine;
+    }
+
+    // The served model's recommended sampling (its generation_config.json), said in --verbose; null when it has none.
+    private SamplingSettings? RecommendedSampling(ServedModel model)
+    {
+        SamplingSettings? recommended;
+        try
+        {
+            recommended = Directory.Exists(model.Folder) ? SamplingSettings.Read(model.Folder) : null;
+        }
+        catch (InvalidDataException e)
+        {
+            _context.Detail($"{model.Name}: its recommended sampling was not read ({e.Message})");
+            return null;
+        }
+
+        if (recommended is not null)
+        {
+            _context.Detail($"{model.Name}: requests that give no sampling values take the model's: "
+                + string.Join(", ", SamplingSettings.Resolve(new GenerationOptions(), null, recommended).FromModel.Select(s => $"{s.Name} {s.Value}")));
+        }
+
+        return recommended;
     }
 
     private TextGenerator Load(ServedModel model)

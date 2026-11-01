@@ -14,6 +14,7 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] Pretrained =
     [
         ("pretrained: safetensors F32/BF16 round trip; sharded index", SafeTensorsRoundTrip),
+        ("pretrained: a model's recommended sampling (generation_config.json) is read, carried by its generator and chat model, and laid under explicit values (explicit, then the model's, then the defaults; greedy; out-of-range values left out)", RecommendedSamplingIsRead),
         ("pretrained: safetensors matrices read transposed (F32, F16, BF16; across read chunks) equal reading then transposing", SafeTensorsTransposed),
         ("pretrained: a Hugging Face-layout checkpoint loads through the registry and matches DecoderSpec; int8; custom architectures", PretrainedCheckpoint),
         ("pretrained: packed bfloat16 weights of a BF16 checkpoint come from its 16-bit values, bit for bit the float32 path's (projections, tied and own heads, tables, odd widths, signalling NaNs, a bfloat16 head beside int8, a merged adapter), with fewer managed bytes; the load's stages", BFloat16StraightThrough),

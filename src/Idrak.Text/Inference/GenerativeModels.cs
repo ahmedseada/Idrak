@@ -205,6 +205,19 @@ public sealed class GenerativeModelBuilder
         return this;
     }
 
+    internal SamplingSettings? RecommendedSampling { get; private set; }
+
+    /// <summary>
+    /// The sampling the model's makers recommend (<see cref="SamplingSettings.Read"/> of its folder), known before a copy
+    /// loads: the engine's model reports it (<see cref="IChatModel.RecommendedSampling"/>), so a server lays it under a
+    /// request's own values. Null (the default): a loaded copy's own, else none.
+    /// </summary>
+    public GenerativeModelBuilder Sampling(SamplingSettings? recommended)
+    {
+        RecommendedSampling = recommended;
+        return this;
+    }
+
     /// <summary>
     /// Chat models: tools that can be run on the server (<see cref="IToolChatModel.Tools"/>; for example by the ASP.NET Core chat
     /// endpoint with server-side execution).

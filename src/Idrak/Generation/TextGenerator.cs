@@ -65,8 +65,15 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
             + $"Use the model's own tokenizer, or pad this one to the model's vocabulary (IPretrainedTokenizer.PadVocabulary({width})).");
     }
 
+    /// <summary>
+    /// The sampling the model's makers recommend (a pretrained model's generation_config.json, which
+    /// <c>PretrainedModel.CreateGenerator</c> passes on), or null. Generation does not apply it by itself: an app lays it
+    /// under its explicit values with <see cref="SamplingSettings.Resolve"/>.
+    /// </summary>
+    public SamplingSettings? RecommendedSampling { get; init; }
+
     /// <summary>The device the model's parameters live on.</summary>
-    public Device Device => Model.Parameters().Concat(Model.Buffers()).First().Device;
+    public Device Device =>Model.Parameters().Concat(Model.Buffers()).First().Device;
 
     /// <summary>
     /// How the KV cache stores keys and values while generating: <see cref="KeyValueFormat.Int8"/> takes about a quarter

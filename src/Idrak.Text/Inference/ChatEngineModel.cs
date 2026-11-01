@@ -22,9 +22,15 @@ internal sealed class ChatEngineModel(GenerativeModelBuilder settings, Func<Devi
     /// <summary>The tools registered with the model, or null.</summary>
     public IToolRegistry? Tools => settings.ToolRegistry;
 
+    /// <summary>The sampling the model's makers recommend: the builder's (<see cref="GenerativeModelBuilder.Sampling"/>), else the last loaded copy's, else null.</summary>
+    public SamplingSettings? RecommendedSampling => settings.RecommendedSampling ?? _loadedSampling;
+
+    private volatile SamplingSettings? _loadedSampling;
+
     public override ChatGenerator LoadCopy()
     {
         var generator = settings.Load(load);
+        _loadedSampling = generator.RecommendedSampling;
         if (settings.ImageReader is null && settings.PartReader is null)
         {
             return new ChatGenerator(generator, settings.ChatTemplate);

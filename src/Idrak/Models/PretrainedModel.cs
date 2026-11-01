@@ -468,6 +468,14 @@ public sealed class PretrainedModel : IDisposable
 
         model.CheckpointFormat = reader.Names.Select(reader.FormatOf).OfType<WeightFormat>().GroupBy(f => f).MaxBy(g => g.Count())?.Key;
         model._loadBytes = reader.BytesRead;
+        try
+        {
+            model.RecommendedSampling = Abstraction.Generation.SamplingSettings.Read(folder);
+        }
+        catch (InvalidDataException e)
+        {
+            notes.Add($"the recommended sampling was not read: {e.Message}");
+        }
         if (options.Deferred)
         {
             try
@@ -665,6 +673,14 @@ public sealed class PretrainedModel : IDisposable
     /// not say (<see cref="ITensorStore.FormatOf"/>).
     /// </summary>
     public WeightFormat? CheckpointFormat { get; private set; }
+
+    /// <summary>
+    /// The sampling the model's makers recommend (its generation_config.json: temperature, top_p, top_k, min_p,
+    /// repetition_penalty, do_sample; a GGUF file's general.sampling keys, written there when the file is prepared), or
+    /// null when the folder has none. The generators made from the model carry it (<c>TextGenerator.RecommendedSampling</c>);
+    /// an app lays it under its explicit values with <see cref="Abstraction.Generation.SamplingSettings.Resolve"/>.
+    /// </summary>
+    public Abstraction.Generation.SamplingSettings? RecommendedSampling { get; private set; }
 
     /// <summary>Where the time of <see cref="Load"/> went, by stage (read, convert, upload, adapter merge, tokenizer, …).</summary>
     public PretrainedLoadTimes LoadTimes { get; private set; } = new(default, default, default, default, default, default, default, default, default);

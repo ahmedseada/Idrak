@@ -17,7 +17,7 @@ public static class PretrainedModelExtensions
         {
             model.Network.Eval();
             return new TextGenerator(model.Network, model.Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer."),
-                Math.Min(contextLength ?? model.MaxPositions, model.MaxPositions)) { CacheFormat = cacheFormat };
+                Math.Min(contextLength ?? model.MaxPositions, model.MaxPositions)) { CacheFormat = cacheFormat, RecommendedSampling = model.RecommendedSampling };
         }
 
         /// <summary>A text generator for the model whose KV cache is stored by <paramref name="cacheLayout"/> (see <see cref="KeyValueLayouts"/>).</summary>
@@ -26,7 +26,7 @@ public static class PretrainedModelExtensions
             ArgumentNullException.ThrowIfNull(cacheLayout);
             model.Network.Eval();
             return new TextGenerator(model.Network, model.Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer."),
-                Math.Min(contextLength ?? model.MaxPositions, model.MaxPositions)) { CacheLayout = cacheLayout };
+                Math.Min(contextLength ?? model.MaxPositions, model.MaxPositions)) { CacheLayout = cacheLayout, RecommendedSampling = model.RecommendedSampling };
         }
 
         /// <summary>A chat model using the model's own chat template (and its tool-call format).</summary>
