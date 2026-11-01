@@ -147,6 +147,7 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
                                       + "search the project's files, edit and write files, and run commands such as builds and tests.\n\n"
                                       + "How to work:\n"
                                       + "- Understand before changing: find the relevant files (list_files, search) and read them before editing.\n"
+                                      + "- Read a file with read_file before you edit it; never guess its text (edit_file refuses a file not read).\n"
                                       + "- Make focused changes with edit_file; copy old_text exactly as the file has it (read_file shows line numbers\n"
                                       + "  before a \"| \" separator: they are not part of the file). Create new files with write_file.\n"
                                       + "- Follow the project's conventions: its naming, formatting, file layout, frameworks and library versions.\n";
@@ -289,6 +290,7 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(prompt);
         ArgumentNullException.ThrowIfNull(tools);
+        tools.ForgetReads();                                    // a new task reads a file before it edits it (CodingToolOptions.ReadBeforeEdit)
         return LoopAsync([new("system", _options.SystemPrompt ?? SystemPrompt(tools.Languages)), new("user", prompt)], tools, cancellationToken);
     }
 

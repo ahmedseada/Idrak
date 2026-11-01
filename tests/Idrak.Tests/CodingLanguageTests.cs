@@ -112,6 +112,7 @@ internal abstract partial class DesktopTests : Tests
 
             How to work:
             - Understand before changing: find the relevant files (list_files, search) and read them before editing.
+            - Read a file with read_file before you edit it; never guess its text (edit_file refuses a file not read).
             - Make focused changes with edit_file; copy old_text exactly as the file has it (read_file shows line numbers
               before a "| " separator: they are not part of the file). Create new files with write_file.
             - Follow the project's conventions: its naming, formatting, file layout, frameworks and library versions.

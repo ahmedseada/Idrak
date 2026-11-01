@@ -779,6 +779,7 @@ public sealed record Idrak.Text.Generation.CodingToolOptions : System.IEquatable
   public System.Collections.Generic.IReadOnlyList<string>? IgnoredDirectories { get; init; }
   public System.TimeSpan CommandTimeout { get; init; }
   public bool Network { get; init; }
+  public bool ReadBeforeEdit { get; init; }
   public bool ReadOnly { get; init; }
   public double MaxCpus { get; init; }
   public int DetectionDepth { get; init; }
@@ -817,6 +818,7 @@ public sealed class Idrak.Text.Generation.CodingTools
   public string Workspace { get; }
   public string WriteFile(string path, string content)
   public string? LanguageNotice { get; }
+  public void ForgetReads()
 
 public sealed class Idrak.Text.Generation.Conversation
   public Idrak.Abstraction.Generation.IToolRegistry? Tools { get; }

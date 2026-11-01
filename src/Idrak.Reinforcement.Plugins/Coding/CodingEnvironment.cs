@@ -50,7 +50,8 @@ namespace Idrak.Reinforcement.Plugins.Coding;
 /// its verification runs once on its starting files, in a copy, and each limit is <c>timeout-scale</c> (10) times that
 /// run's time, at least <c>timeout-least</c> seconds (30) and at most 300 and 600 seconds, so a program that never ends
 /// costs seconds, not minutes), <c>timeout-scale</c>, <c>timeout-least</c>, <c>workspaces</c>, <c>keep</c>, <c>work</c> (the folder the copies are made in;
-/// a new temporary folder by default), <c>refuse-test-edits</c>. A variant for one language
+/// a new temporary folder by default), <c>refuse-test-edits</c>, <c>read-before-edit</c> (edit_file refuses a file the
+/// episode has not read or written, as the agent's tools do by default; off here unless given). A variant for one language
 /// (<see cref="ICodingEnvironmentVariant"/>, such as the C# plug-in's <c>csharp</c>) is this environment under its own
 /// name, with its language's defaults, its own options and its own info.
 /// </summary>
@@ -68,7 +69,7 @@ public sealed class CodingEnvironmentKind : ISuiteEnvironmentKind, IRewardedEnvi
     private static readonly string[] OwnKeys =
     [
         "suite", "filter", "reward", "rounds", "time", "system", "languages", "protect", "think", "sandbox", "memory", "processes", "cpus", "network", "command-timeout",
-        "verify-timeout", "timeout-scale", "timeout-least", "workspaces", "keep", "work", "refuse-test-edits",
+        "verify-timeout", "timeout-scale", "timeout-least", "workspaces", "keep", "work", "refuse-test-edits", "read-before-edit",
     ];
 
     private readonly IReadOnlyList<CodingTask>? _tasks;
@@ -237,6 +238,8 @@ internal sealed record CodingSettings(string? Suite, string? Filter, string Rewa
         double time = 1200, cpus = 0, scale = 10, least = 30;
         double? commandTimeout = null, verifyTimeout = null;
         long memory = 0;
+        // read-before-edit: edit_file refuses a file the episode has not read (CodingToolOptions.ReadBeforeEdit); off by default here, so episodes and rewards stay as they were.
+        bool readBeforeEdit = false;
         bool network = true, refuse = false, keep = Flag(kind, CodingEnvironmentKind.KeepWorkspacesVariable, Environment.GetEnvironmentVariable(CodingEnvironmentKind.KeepWorkspacesVariable) ?? "false");
         foreach (var (key, value) in options)
         {
@@ -284,6 +287,9 @@ internal sealed record CodingSettings(string? Suite, string? Filter, string Rewa
                 case "network":
                     network = Flag(kind, key, value);
                     break;
+                case "read-before-edit":
+                    readBeforeEdit = Flag(kind, key, value);
+                    break;
                 case "command-timeout":
                     commandTimeout = Seconds(kind, key, value);
                     break;
@@ -326,7 +332,7 @@ internal sealed record CodingSettings(string? Suite, string? Filter, string Rewa
         kind.VariantOptions?.Check(variantOptions);
         var tools = new CodingToolOptions
         {
-            Sandbox = sandbox, CommandTimeout = commandTimeout is { } c ? TimeSpan.FromSeconds(c) : MostCommand, MaxMemoryBytes = memory, MaxProcesses = processes, MaxCpus = cpus, Network = network,
+            Sandbox = sandbox, CommandTimeout = commandTimeout is { } c ? TimeSpan.FromSeconds(c) : MostCommand, MaxMemoryBytes = memory, MaxProcesses = processes, MaxCpus = cpus, Network = network, ReadBeforeEdit = readBeforeEdit,
             Languages = languages, Environment = kind.VariantOptions?.Variables(variantOptions),
         };
         string identity = string.Join("\n", options.OrderBy(p => p.Key, StringComparer.Ordinal).Select(p => $"{p.Key}={p.Value}"))
