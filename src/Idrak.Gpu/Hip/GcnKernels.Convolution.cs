@@ -26,8 +26,8 @@ namespace Idrak.Gpu.Hip;
 // fixed LDS tree. CUDA's atomic maxpool_bwd_f32 (dx[argmax[i]] += dy[i] without the windows) is chained and walked
 // instead (GcnKernels.Training.cs's maxpool_bwd_chain_u32 and maxpool_bwd_walk_f32, plan 35 G6c): no atomics.
 // - CUDA's tiled implicit products (conv_fwd_tile_f32, conv_bwd_input_tile_f32, conv_bwd_weight_tile_f32 and
-//   conv_split_reduce_f32; plan 35 G6c, ConvTile below): a convolution that is not depthwise no longer unfolds its patches.
-//   CUDA's 64 × 64 blocked tiles have no GCN form yet.
+//   conv_split_reduce_f32; plan 35 G6c, ConvProduct below): a convolution that is not depthwise no longer unfolds its patches.
+//   CUDA's 64 × 64 blocked forms (conv_fwd_f32, conv_bwd_input_f32, conv_bwd_weight_f32; plan 35's HIP parity) too.
 //
 // For --profile's labels and --bench-hip's rates (HipBackend.ConvolutionCost): each kernel, its arguments (pointers, then
 // 32-bit values, the float ones as their bits; PackArguments packs them), its unit, and its floating-point operations and
@@ -55,6 +55,7 @@ namespace Idrak.Gpu.Hip;
 // | conv_bwd_input_tile_f32   | dy, w, dx; (the 18 geometry values)                                                | element of dx x term    | 2     | 0.5   |
 // | conv_bwd_weight_tile_f32  | x, dy, dw, part; (the 18 geometry values)                                          | weight x position       | 2     | 0.5   |
 // | conv_split_reduce_f32     | part, dw; count, splits, n                                                         | weight x split          | 1     | 4     |
+// | conv_fwd_f32, conv_bwd_input_f32, conv_bwd_weight_f32 | (as their _tile forms), 64 x 64 tiles, 4 x 4 outputs a work-item | (as the tiles) | 2 | 0.125 |
 //
 // The counts stay below 2^30 (byte offsets are 32-bit): the backend takes the host fallback past them. Flags of the
 // depthwise forward: bit 0 a bias, the activation (ConvActivation) from bit 1 (CUDA's).
@@ -86,9 +87,12 @@ internal static partial class GcnKernels
         DepthwiseConvolution(),
         DepthwiseInput(),
         DepthwiseWeight(),
-        ConvTile(ConvPass.Forward),
-        ConvTile(ConvPass.Input),
-        ConvTile(ConvPass.Weight),
+        ConvProduct(ConvPass.Forward, blocked: false),
+        ConvProduct(ConvPass.Input, blocked: false),
+        ConvProduct(ConvPass.Weight, blocked: false),
+        ConvProduct(ConvPass.Forward, blocked: true),
+        ConvProduct(ConvPass.Input, blocked: true),
+        ConvProduct(ConvPass.Weight, blocked: true),
         ConvSplitReduce(),
     ];
 
@@ -97,6 +101,12 @@ internal static partial class GcnKernels
     /// <summary>The edge of an implicit product's tile (CUDA's ConvTileEdge): 16 × 16 outputs a block of 256, one a work-item.</summary>
     internal const int ConvTileEdge = 16;
 
+    /// <summary>The edge of the blocked implicit products' tiles (CUDA's ConvBlockedEdge): 64 × 64 outputs a block of 256, 4 × 4 a work-item.</summary>
+    internal const int ConvBlockedEdge = 64;
+
+    // The row of the blocked tiles' operands in LDS: 65 floats (CUDA's ConvStride).
+    private const int ConvBlockedStride = ConvBlockedEdge + 1;
+
     private enum ConvPass
     {
         Forward,
@@ -104,14 +114,20 @@ internal static partial class GcnKernels
         Weight,
     }
 
-    // CUDA's tiled implicit products (PtxKernels.Convolution.cs, "_tile"): the convolution and its two gradients each a
-    // product whose operands are read where they lie, the input's patches gathered as the tile needs them and never
-    // unfolded. A block of 256 takes a 16 × 16 tile of the product's outputs (grid x: column tiles, y: row tiles, z: batch
-    // entries, looped past the grid's z); work-item (tx, ty) = (tid mod 16, tid / 16) owns output (row ty, column tx). A step
-    // stages 16 terms of the sum of both operands in LDS (A [row][term]; B [term][column], rows of 17 for the weight
-    // gradient, whose columns run along ty so consecutive work-items read consecutive positions), every work-item one
-    // element of each, then adds its 16 products in term order (loads first, each into a register of its own: rule 80).
-    // So every output adds its terms in the order of the sum, as CUDA's tile does. The products:
+    // CUDA's implicit products (PtxKernels.Convolution.cs): the convolution and its two gradients each a product whose
+    // operands are read where they lie, the input's patches gathered as the tile needs them and never unfolded. A block of
+    // 256, (tx, ty) = (tid mod 16, tid / 16), takes a tile of the product's outputs (grid x: column tiles, y: row tiles, z:
+    // batch entries, looped past the grid's z), in one of CUDA's two forms:
+    //   "_tile" (16 × 16 tiles): work-item (tx, ty) owns output (row ty, column tx); A staged [row][term], B [term][column]
+    //            (rows of 17 for the weight gradient, whose columns run along ty so consecutive work-items read consecutive
+    //            positions).
+    //   blocked (64 × 64 tiles, plan 35's HIP parity): work-item (tx, ty) owns the 4 × 4 outputs (rows ty + 16i, columns
+    //            tx + 16j); it stages four elements of each operand (rows ty + 16j of A at term tx, columns tx + 16j of B at
+    //            term ty; the weight gradient's columns ty + 16j at term tx), A and B both [term][row or column] in rows of
+    //            65 floats, so the stores along the sum and the reads along rows and columns fall in different banks.
+    // A step stages 16 terms of the sum of both operands (every load first, each into a register of its own: rule 80), then
+    // each output adds its 16 products in term order; so every output adds its terms in the order of the sum, as CUDA's
+    // kernels do, and both forms give the same bits. The products:
     //   forward          entry (n, q); rows: the group's filters; columns: (oh, ow); terms (c, kh, kw); then the bias and the
     //                    activation (flags: 1 bias, the activation · 2).
     //   backward input   entry (n, q); rows: the group's channels; columns: (ih, iw); terms (f, kh, kw) where
@@ -120,13 +136,15 @@ internal static partial class GcnKernels
     //                    (whole steps of 16); added to dw with one split, else written to part[s] and added in split order
     //                    by conv_split_reduce_f32.
     // Arguments: the pointers, then the 18 geometry values (ConvolutionScalars).
-    private static GcnKernelSource ConvTile(ConvPass pass)
+    private static GcnKernelSource ConvProduct(ConvPass pass, bool blocked)
     {
-        string name = pass switch { ConvPass.Forward => "conv_fwd_tile_f32", ConvPass.Input => "conv_bwd_input_tile_f32", _ => "conv_bwd_weight_tile_f32" };
+        string stem = pass switch { ConvPass.Forward => "conv_fwd", ConvPass.Input => "conv_bwd_input", _ => "conv_bwd_weight" };
+        string name = blocked ? stem + "_f32" : stem + "_tile_f32";
         string[] buffers = pass switch { ConvPass.Forward => ["x", "w", "bias", "y"], ConvPass.Input => ["dy", "w", "dx"], _ => ["x", "dy", "dw", "part"] };
         bool weight = pass == ConvPass.Weight;
-        int bStride = weight ? ConvTileEdge + 1 : ConvTileEdge;
-        int aBytes = ConvTileEdge * ConvTileEdge * 4, bBytes = ConvTileEdge * bStride * 4;
+        int edge = blocked ? ConvBlockedEdge : ConvTileEdge, slots = blocked ? 4 : 1;
+        int bStride = blocked ? ConvBlockedStride : weight ? ConvTileEdge + 1 : ConvTileEdge;
+        int aBytes = blocked ? ConvTileEdge * ConvBlockedStride * 4 : ConvTileEdge * ConvTileEdge * 4, bBytes = ConvTileEdge * bStride * 4;
         var w = new PointwiseWriter();
         int dwords = 2 * buffers.Length + ConvolutionScalars.Length;
         string[] pointers = [.. Enumerable.Range(0, buffers.Length).Select(b => TrainingText($"%s[{2 * b}:{2 * b + 1}]"))];
@@ -162,78 +180,111 @@ internal static partial class GcnKernels
 
         string chw = weight ? CvHeld(w, TrainingText($"s_mul_i32 {{0}}, {c}, {hw}")) : "";
 
-        // Once a work-item: its place in the tile, its staged elements' places in LDS, its row's and column's parts.
-        string tx = w.V(), ty = w.V(), lsa = w.V(), lsb = w.V(), aRead = w.V(), bRead = w.V(), ar = w.V(), ao = w.V(), bc = w.V(), bh = w.V(), bw = w.V(), bo = w.V();
+        // Once a work-item: its place in the tile, its staged elements' places in LDS, their rows' and columns' parts.
+        string tx = w.V(), ty = w.V(), aRead = w.V(), bRead = w.V();
         string rowBase = CvScalar(w), colBase = CvScalar(w), gridZ = "%s60";
-        string lkb = weight ? tx : ty, lcol = weight ? ty : tx;
+        string lkb = weight ? tx : ty, lcolBase = weight ? ty : tx;
         string scale = pass switch { ConvPass.Forward => patch, ConvPass.Input => area, _ => ohow };
+        int shift = blocked ? 6 : 4;
         CvLines(w, $"""
             v_and_b32_e32 {tx}, 15, v0
             v_lshrrev_b32_e32 {ty}, 4, v0
-            s_lshl_b32 {rowBase}, s5, 4
-            s_lshl_b32 {colBase}, s4, 4
-            v_lshlrev_b32_e32 {lsa}, 4, {ty}
-            v_add_u32_e32 {lsa}, {lsa}, {tx}
-            v_lshlrev_b32_e32 {lsa}, 2, {lsa}
-            v_mul_u32_u24_e32 {lsb}, {bStride}, {lkb}
-            v_add_u32_e32 {lsb}, {lsb}, {lcol}
-            v_lshlrev_b32_e32 {lsb}, 2, {lsb}
-            v_add_u32_e32 {lsb}, {aBytes}, {lsb}
-            v_lshlrev_b32_e32 {aRead}, 6, {ty}
+            s_lshl_b32 {rowBase}, s5, {shift}
+            s_lshl_b32 {colBase}, s4, {shift}
             v_lshlrev_b32_e32 {bRead}, 2, {tx}
             v_add_u32_e32 {bRead}, {aBytes}, {bRead}
-            v_add_u32_e32 {ar}, {rowBase}, {ty}
-            v_mul_lo_u32 {ao}, {ar}, {scale}
-            v_add_u32_e32 {bc}, {colBase}, {lcol}
             """);
-        switch (pass)
+        CvLines(w, blocked ? (FormattableString)$"v_lshlrev_b32_e32 {aRead}, 2, {ty}" : $"v_lshlrev_b32_e32 {aRead}, 6, {ty}");
+        var lsa = new string[slots];
+        var lsb = new string[slots];
+        var ar = new string[slots];
+        var ao = new string[slots];
+        var bc = new string[slots];
+        var bh = new string[slots];
+        var bw = new string[slots];
+        var bo = new string[slots];
+        for (int j = 0; j < slots; j++)
         {
-            case ConvPass.Forward:
-            {
-                // column (oh, ow): bh = oh·SH - PH, bw = ow·SW - PW, bo = bh·W + bw
-                var (r3, r4) = CvDivMod(w, bc, ow, r);
-                CvLines(w, $"""
-                    v_mul_lo_u32 {bh}, {r3}, {sh}
-                    v_subrev_u32_e32 {bh}, {ph}, {bh}
-                    v_mul_lo_u32 {bw}, {r4}, {sw}
-                    v_subrev_u32_e32 {bw}, {pw}, {bw}
-                    v_mul_lo_u32 {bo}, {bh}, {width}
-                    v_add_u32_e32 {bo}, {bo}, {bw}
+            (lsa[j], lsb[j], ar[j], ao[j], bc[j], bh[j], bw[j], bo[j]) = (w.V(), w.V(), w.V(), w.V(), w.V(), w.V(), w.V(), w.V());
+            string lr = w.V(), lcol = w.V();
+            CvLines(w, $"""
+                v_add_u32_e32 {lr}, {16 * j}, {ty}
+                v_add_u32_e32 {lcol}, {16 * j}, {lcolBase}
+                """);
+            CvLines(w, blocked
+                ? (FormattableString)$"""
+                    v_mul_u32_u24_e32 {lsa[j]}, {ConvBlockedStride}, {tx}
+                    v_add_u32_e32 {lsa[j]}, {lsa[j]}, {lr}
+                    """
+                : $"""
+                    v_lshlrev_b32_e32 {lsa[j]}, 4, {lr}
+                    v_add_u32_e32 {lsa[j]}, {lsa[j]}, {tx}
                     """);
-                break;
-            }
+            CvLines(w, $"""
+                v_lshlrev_b32_e32 {lsa[j]}, 2, {lsa[j]}
+                v_mul_u32_u24_e32 {lsb[j]}, {bStride}, {lkb}
+                v_add_u32_e32 {lsb[j]}, {lsb[j]}, {lcol}
+                v_lshlrev_b32_e32 {lsb[j]}, 2, {lsb[j]}
+                v_add_u32_e32 {lsb[j]}, {aBytes}, {lsb[j]}
+                v_add_u32_e32 {ar[j]}, {rowBase}, {lr}
+                v_mul_lo_u32 {ao[j]}, {ar[j]}, {scale}
+                v_add_u32_e32 {bc[j]}, {colBase}, {lcol}
+                """);
+            switch (pass)
+            {
+                case ConvPass.Forward:
+                {
+                    // column (oh, ow): bh = oh·SH - PH, bw = ow·SW - PW, bo = bh·W + bw
+                    var (r3, r4) = CvDivMod(w, bc[j], ow, r);
+                    CvLines(w, $"""
+                        v_mul_lo_u32 {bh[j]}, {r3}, {sh}
+                        v_subrev_u32_e32 {bh[j]}, {ph}, {bh[j]}
+                        v_mul_lo_u32 {bw[j]}, {r4}, {sw}
+                        v_subrev_u32_e32 {bw[j]}, {pw}, {bw[j]}
+                        v_mul_lo_u32 {bo[j]}, {bh[j]}, {width}
+                        v_add_u32_e32 {bo[j]}, {bo[j]}, {bw[j]}
+                        """);
+                    break;
+                }
 
-            case ConvPass.Input:
-            {
-                // column (ih, iw): bh = ih + PH, bw = iw + PW
-                var (r3, r4) = CvDivMod(w, bc, width, r);
-                CvLines(w, $"""
-                    v_add_u32_e32 {bh}, {ph}, {r3}
-                    v_add_u32_e32 {bw}, {pw}, {r4}
-                    """);
-                break;
-            }
+                case ConvPass.Input:
+                {
+                    // column (ih, iw): bh = ih + PH, bw = iw + PW
+                    var (r3, r4) = CvDivMod(w, bc[j], width, r);
+                    CvLines(w, $"""
+                        v_add_u32_e32 {bh[j]}, {ph}, {r3}
+                        v_add_u32_e32 {bw[j]}, {pw}, {r4}
+                        """);
+                    break;
+                }
 
-            default:
-            {
-                // column (c, kh, kw): bh = kh·DH, bw = kw·DW, bo = c·HW + bh·W + bw
-                var (r3, r4) = CvDivMod(w, bc, area, r);
-                var (r5, r6) = CvDivMod(w, r4, kw, r);
-                CvLines(w, $"""
-                    v_mul_lo_u32 {bh}, {r5}, {dh}
-                    v_mul_lo_u32 {bw}, {r6}, {dw}
-                    v_mul_lo_u32 {bo}, {r3}, {hw}
-                    v_mul_lo_u32 {r5}, {bh}, {width}
-                    v_add_u32_e32 {bo}, {bo}, {r5}
-                    v_add_u32_e32 {bo}, {bo}, {bw}
-                    """);
-                break;
+                default:
+                {
+                    // column (c, kh, kw): bh = kh·DH, bw = kw·DW, bo = c·HW + bh·W + bw
+                    var (r3, r4) = CvDivMod(w, bc[j], area, r);
+                    var (r5, r6) = CvDivMod(w, r4, kw, r);
+                    CvLines(w, $"""
+                        v_mul_lo_u32 {bh[j]}, {r5}, {dh}
+                        v_mul_lo_u32 {bw[j]}, {r6}, {dw}
+                        v_mul_lo_u32 {bo[j]}, {r3}, {hw}
+                        v_mul_lo_u32 {r5}, {bh[j]}, {width}
+                        v_add_u32_e32 {bo[j]}, {bo[j]}, {r5}
+                        v_add_u32_e32 {bo[j]}, {bo[j]}, {bw[j]}
+                        """);
+                    break;
+                }
             }
         }
 
         // The batch entries: (n, q), or (q, split) with the split's positions.
         string bi = CvScalar(w), entryN = CvScalar(w), q = CvScalar(w), sp = CvScalar(w), qa = CvScalar(w), xb = CvScalar(w), t = CvScalar(w), s1 = CvScalar(w);
-        string biv = w.V(), acc = w.V();
+        string biv = w.V();
+        var acc = new string[slots * slots];
+        for (int i = 0; i < acc.Length; i++)
+        {
+            acc[i] = w.V();
+        }
+
         CvLines(w, $"""
             s_mov_b32 {bi}, s6
             {label}_batch:
@@ -288,12 +339,15 @@ internal static partial class GcnKernels
                 break;
         }
 
-        // The steps: 16 terms of both operands staged, then each work-item's 16 products in term order.
-        string kka = w.V(), kkb = w.V(), abase = w.V(), bbase = w.V(), khd = w.V(), kwd = w.V(), ohs = w.V(), ows = w.V(), va = w.V(), vb = w.V();
-        string at = w.V(), r41 = w.V(), r42 = w.V();
+        // The steps: 16 terms of both operands staged, then each output's 16 products in term order.
+        string kka = w.V(), kkb = w.V(), abase = w.V(), bbase = w.V(), khd = w.V(), kwd = w.V(), ohs = w.V(), ows = w.V();
         string p10 = w.Mask(), p11 = w.Mask(), m1 = w.Mask(), m2 = w.Mask();
+        foreach (string a in acc)
+        {
+            CvLines(w, $"v_mov_b32_e32 {a}, 0");
+        }
+
         CvLines(w, $"""
-            v_mov_b32_e32 {acc}, 0
             s_mov_b32 {t}, {k0}
             {label}_step:
             s_cmp_ge_u32 {t}, {k1}
@@ -372,103 +426,146 @@ internal static partial class GcnKernels
             }
         }
 
-        // The left operand's element (0 outside the product).
-        CvLines(w, $"""
-            v_mov_b32_e32 {va}, 0
-            v_cmp_gt_u32_e64 {m1}, {rows}, {ar}
-            s_and_b64 {m1}, {m1}, {p10}
-            """);
-        CvMasked(w, label + "_a", m1, () => CvLines(w, $"""
-            v_add_u32_e32 {at}, {abase}, {ao}
-            v_lshlrev_b32_e32 {at}, 2, {at}
-            global_load_dword {va}, {at}, {Pointer(weight ? "dy" : "w")}
-            """));
-
-        // The right operand's element (0 outside the data or the product).
-        CvLines(w, $"v_mov_b32_e32 {vb}, 0");
-        if (pass == ConvPass.Input)
+        // Each slot's left operand element (0 outside the product), then its right one (0 outside the data or the product).
+        var va = new string[slots];
+        var vb = new string[slots];
+        for (int j = 0; j < slots; j++)
         {
-            // dy[n, q·Fg + f, oh, ow] with oh·SH = ih + PH - kh·DH, ow·SW = iw + PW - kw·DW, both whole and in range
+            va[j] = w.V();
+            string at = w.V();
             CvLines(w, $"""
-                v_sub_u32_e32 {r41}, {bh}, {khd}
-                v_sub_u32_e32 {r42}, {bw}, {kwd}
+                v_mov_b32_e32 {va[j]}, 0
+                v_cmp_gt_u32_e64 {m1}, {rows}, {ar[j]}
+                s_and_b64 {m1}, {m1}, {p10}
                 """);
-            var (qh, mh) = CvDivMod(w, r41, sh, r);
-            var (qw, mw) = CvDivMod(w, r42, sw, r);
             CvLines(w, $"""
-                v_cmp_lt_i32_e64 {m1}, -1, {r41}
-                v_cmp_lt_i32_e64 {m2}, -1, {r42}
-                s_and_b64 {m1}, {m1}, {m2}
-                v_cmp_eq_u32_e64 {m2}, 0, {mh}
-                s_and_b64 {m1}, {m1}, {m2}
-                v_cmp_eq_u32_e64 {m2}, 0, {mw}
-                s_and_b64 {m1}, {m1}, {m2}
-                v_cmp_gt_u32_e64 {m2}, {oh}, {qh}
-                s_and_b64 {m1}, {m1}, {m2}
-                v_cmp_gt_u32_e64 {m2}, {ow}, {qw}
-                s_and_b64 {m1}, {m1}, {m2}
-                v_cmp_gt_u32_e64 {m2}, {cols}, {bc}
-                s_and_b64 {m1}, {m1}, {m2}
-                s_and_b64 {m1}, {m1}, {p11}
-                """);
-            CvMasked(w, label + "_b", m1, () => CvLines(w, $"""
-                v_mul_lo_u32 {at}, {qh}, {ow}
-                v_add_u32_e32 {at}, {at}, {qw}
-                v_add_u32_e32 {at}, {at}, {bbase}
+                v_add_u32_e32 {at}, {abase}, {ao[j]}
                 v_lshlrev_b32_e32 {at}, 2, {at}
-                global_load_dword {vb}, {at}, {Pointer("dy")}
-                """));
+                """);
+            CvMasked(w, TrainingText($"{label}_a{j}"), m1, () => CvLines(w, $"global_load_dword {va[j]}, {at}, {Pointer(weight ? "dy" : "w")}"));
+        }
+
+        for (int j = 0; j < slots; j++)
+        {
+            vb[j] = w.V();
+            string at = w.V(), r41 = w.V(), r42 = w.V();
+            CvLines(w, $"v_mov_b32_e32 {vb[j]}, 0");
+            if (pass == ConvPass.Input)
+            {
+                // dy[n, q·Fg + f, oh, ow] with oh·SH = ih + PH - kh·DH, ow·SW = iw + PW - kw·DW, both whole and in range
+                CvLines(w, $"""
+                    v_sub_u32_e32 {r41}, {bh[j]}, {khd}
+                    v_sub_u32_e32 {r42}, {bw[j]}, {kwd}
+                    """);
+                var (qh, mh) = CvDivMod(w, r41, sh, r);
+                var (qw, mw) = CvDivMod(w, r42, sw, r);
+                CvLines(w, $"""
+                    v_cmp_lt_i32_e64 {m1}, -1, {r41}
+                    v_cmp_lt_i32_e64 {m2}, -1, {r42}
+                    s_and_b64 {m1}, {m1}, {m2}
+                    v_cmp_eq_u32_e64 {m2}, 0, {mh}
+                    s_and_b64 {m1}, {m1}, {m2}
+                    v_cmp_eq_u32_e64 {m2}, 0, {mw}
+                    s_and_b64 {m1}, {m1}, {m2}
+                    v_cmp_gt_u32_e64 {m2}, {oh}, {qh}
+                    s_and_b64 {m1}, {m1}, {m2}
+                    v_cmp_gt_u32_e64 {m2}, {ow}, {qw}
+                    s_and_b64 {m1}, {m1}, {m2}
+                    v_cmp_gt_u32_e64 {m2}, {cols}, {bc[j]}
+                    s_and_b64 {m1}, {m1}, {m2}
+                    s_and_b64 {m1}, {m1}, {p11}
+                    """);
+                CvLines(w, $"""
+                    v_mul_lo_u32 {at}, {qh}, {ow}
+                    v_add_u32_e32 {at}, {at}, {qw}
+                    v_add_u32_e32 {at}, {at}, {bbase}
+                    v_lshlrev_b32_e32 {at}, 2, {at}
+                    """);
+                CvMasked(w, TrainingText($"{label}_b{j}"), m1, () => CvLines(w, $"global_load_dword {vb[j]}, {at}, {Pointer("dy")}"));
+            }
+            else
+            {
+                // x[n, q·Cg + c, ih, iw]: the forward's at (oh·SH - PH + kh·DH, ow·SW - PW + kw·DW), the weight gradient's at
+                // (oh·SH - PH + kh·DH, …) with the position's part in ohs, ows and the column's in bh, bw
+                CvLines(w, pass == ConvPass.Forward
+                    ? (FormattableString)$"""
+                        v_add_u32_e32 {r41}, {bh[j]}, {khd}
+                        v_add_u32_e32 {r42}, {bw[j]}, {kwd}
+                        """
+                    : $"""
+                        v_add_u32_e32 {r41}, {ohs}, {bh[j]}
+                        v_add_u32_e32 {r42}, {ows}, {bw[j]}
+                        """);
+                CvLines(w, $"""
+                    v_cmp_gt_u32_e64 {m1}, {h}, {r41}
+                    v_cmp_gt_u32_e64 {m2}, {width}, {r42}
+                    s_and_b64 {m1}, {m1}, {m2}
+                    v_cmp_gt_u32_e64 {m2}, {cols}, {bc[j]}
+                    s_and_b64 {m1}, {m1}, {m2}
+                    s_and_b64 {m1}, {m1}, {p11}
+                    """);
+                CvLines(w, $"""
+                    v_add_u32_e32 {at}, {bbase}, {bo[j]}
+                    v_lshlrev_b32_e32 {at}, 2, {at}
+                    """);
+                CvMasked(w, TrainingText($"{label}_b{j}"), m1, () => CvLines(w, $"global_load_dword {vb[j]}, {at}, {Pointer("x")}"));
+            }
+        }
+
+        // Staged, then each output's 16 products in term order.
+        for (int j = 0; j < slots; j++)
+        {
+            CvLines(w, $"""
+                ds_write_b32 {lsa[j]}, {va[j]}
+                ds_write_b32 {lsb[j]}, {vb[j]}
+                """);
+        }
+
+        CvLines(w, $"s_barrier");
+        if (blocked)
+        {
+            for (int e = 0; e < ConvTileEdge; e++)
+            {
+                var a4 = new string[4];
+                var b4 = new string[4];
+                for (int i = 0; i < 4; i++)
+                {
+                    (a4[i], b4[i]) = (w.V(), w.V());
+                    int offset = 4 * (e * ConvBlockedStride + 16 * i);
+                    CvLines(w, $"""
+                        ds_read_b32 {a4[i]}, {aRead}{(offset == 0 ? "" : TrainingText($" offset:{offset}"))}
+                        ds_read_b32 {b4[i]}, {bRead}{(offset == 0 ? "" : TrainingText($" offset:{offset}"))}
+                        """);
+                }
+
+                for (int i = 0; i < 4; i++)
+                {
+                    for (int j = 0; j < 4; j++)
+                    {
+                        CvLines(w, $"v_fma_f32 {acc[4 * i + j]}, {a4[i]}, {b4[j]}, {acc[4 * i + j]}");
+                    }
+                }
+            }
         }
         else
         {
-            // x[n, q·Cg + c, ih, iw]: the forward's at (oh·SH - PH + kh·DH, ow·SW - PW + kw·DW), the weight gradient's at
-            // (oh·SH - PH + kh·DH, …) with the position's part in ohs, ows and the column's in bh, bw
-            CvLines(w, pass == ConvPass.Forward
-                ? (FormattableString)$"""
-                    v_add_u32_e32 {r41}, {bh}, {khd}
-                    v_add_u32_e32 {r42}, {bw}, {kwd}
-                    """
-                : $"""
-                    v_add_u32_e32 {r41}, {ohs}, {bh}
-                    v_add_u32_e32 {r42}, {ows}, {bw}
+            var a16 = new string[ConvTileEdge];
+            var b16 = new string[ConvTileEdge];
+            for (int e = 0; e < ConvTileEdge; e++)
+            {
+                a16[e] = w.V();
+                b16[e] = w.V();
+                int aOffset = 4 * e, bOffset = 4 * e * bStride;
+                CvLines(w, $"""
+                    ds_read_b32 {a16[e]}, {aRead}{(aOffset == 0 ? "" : TrainingText($" offset:{aOffset}"))}
+                    ds_read_b32 {b16[e]}, {bRead}{(bOffset == 0 ? "" : TrainingText($" offset:{bOffset}"))}
                     """);
-            CvLines(w, $"""
-                v_cmp_gt_u32_e64 {m1}, {h}, {r41}
-                v_cmp_gt_u32_e64 {m2}, {width}, {r42}
-                s_and_b64 {m1}, {m1}, {m2}
-                v_cmp_gt_u32_e64 {m2}, {cols}, {bc}
-                s_and_b64 {m1}, {m1}, {m2}
-                s_and_b64 {m1}, {m1}, {p11}
-                """);
-            CvMasked(w, label + "_b", m1, () => CvLines(w, $"""
-                v_add_u32_e32 {at}, {bbase}, {bo}
-                v_lshlrev_b32_e32 {at}, 2, {at}
-                global_load_dword {vb}, {at}, {Pointer("x")}
-                """));
-        }
+            }
 
-        // Staged, then the 16 products in term order (every LDS read first, each into a register of its own).
-        CvLines(w, $"""
-            ds_write_b32 {lsa}, {va}
-            ds_write_b32 {lsb}, {vb}
-            s_barrier
-            """);
-        var a16 = new string[ConvTileEdge];
-        var b16 = new string[ConvTileEdge];
-        for (int e = 0; e < ConvTileEdge; e++)
-        {
-            a16[e] = w.V();
-            b16[e] = w.V();
-            int aOffset = 4 * e, bOffset = 4 * e * bStride;
-            CvLines(w, $"""
-                ds_read_b32 {a16[e]}, {aRead}{(aOffset == 0 ? "" : TrainingText($" offset:{aOffset}"))}
-                ds_read_b32 {b16[e]}, {bRead}{(bOffset == 0 ? "" : TrainingText($" offset:{bOffset}"))}
-                """);
-        }
-
-        for (int e = 0; e < ConvTileEdge; e++)
-        {
-            CvLines(w, $"v_fma_f32 {acc}, {a16[e]}, {b16[e]}, {acc}");
+            for (int e = 0; e < ConvTileEdge; e++)
+            {
+                CvLines(w, $"v_fma_f32 {acc[0]}, {a16[e]}, {b16[e]}, {acc[0]}");
+            }
         }
 
         CvLines(w, $"""
@@ -478,92 +575,105 @@ internal static partial class GcnKernels
             {label}_store:
             """);
 
-        // The work-item's output, when it is in the product.
-        string row = w.V(), col = w.V(), index = w.V(), old = w.V(), sum = w.V();
-        CvLines(w, $"""
-            v_add_u32_e32 {row}, {rowBase}, {ty}
-            v_add_u32_e32 {col}, {colBase}, {tx}
-            v_cmp_gt_u32_e64 {m1}, {rows}, {row}
-            v_cmp_gt_u32_e64 {m2}, {cols}, {col}
-            s_and_b64 {m1}, {m1}, {m2}
-            """);
-        CvMasked(w, label + "_out", m1, () =>
+        // Each of the work-item's outputs, when it is in the product: its arithmetic under the whole EXEC (a register first
+        // written under a narrowed EXEC stays live from the kernel's start), only its loads and stores masked.
+        for (int i = 0; i < slots; i++)
         {
-            switch (pass)
+            for (int j = 0; j < slots; j++)
             {
-                case ConvPass.Forward:
+                string sum0 = acc[i * slots + j], row = w.V(), col = w.V(), index = w.V(), old = w.V(), at = w.V();
+                string here = TrainingText($"{label}_o{i}{j}");
+                CvLines(w, $"""
+                    v_add_u32_e32 {row}, {rowBase}, {ty}
+                    v_add_u32_e32 {row}, {16 * i}, {row}
+                    v_add_u32_e32 {col}, {colBase}, {tx}
+                    v_add_u32_e32 {col}, {16 * j}, {col}
+                    v_cmp_gt_u32_e64 {m1}, {rows}, {row}
+                    v_cmp_gt_u32_e64 {m2}, {cols}, {col}
+                    s_and_b64 {m1}, {m1}, {m2}
+                    v_mov_b32_e32 {old}, 0
+                    """);
+                switch (pass)
                 {
-                    // y[(n·F + f)·OHOW + column] = act(sum + bias[f]), f = q·Fg + row
-                    string qf = CvScalar(w), nf = CvScalar(w), code = CvScalar(w), fi = w.V(), bias = w.V(), biased = w.V(), activated = w.V();
-                    string hasBias = TrainingFlagMask(w, flags, 0);
-                    CvLines(w, $"""
-                        s_mul_i32 {qf}, {q}, {fg}
-                        v_add_u32_e32 {fi}, {qf}, {row}
-                        v_lshlrev_b32_e32 {at}, 2, {fi}
-                        global_load_dword {bias}, {at}, {Pointer("bias")}
-                        v_add_f32_e32 {biased}, {acc}, {bias}
-                        v_cndmask_b32_e64 {sum}, {acc}, {biased}, {hasBias}
-                        s_lshr_b32 {code}, {flags}, 1
-                        """);
-                    ConvActivationOf(w, label + "_act", code, sum, activated);
-                    CvLines(w, $"""
-                        s_mul_i32 {nf}, {entryN}, {f}
-                        v_add_u32_e32 {index}, {nf}, {fi}
-                        v_mul_lo_u32 {index}, {index}, {ohow}
-                        v_add_u32_e32 {index}, {index}, {col}
-                        v_lshlrev_b32_e32 {index}, 2, {index}
-                        global_store_dword {index}, {activated}, {Pointer("y")}
-                        """);
-                    break;
-                }
+                    case ConvPass.Forward:
+                    {
+                        // y[(n·F + f)·OHOW + column] = act(sum + bias[f]), f = q·Fg + row
+                        string qf = CvScalar(w), nf = CvScalar(w), code = CvScalar(w), fi = w.V(), biased = w.V(), sum = w.V(), activated = w.V();
+                        string hasBias = TrainingFlagMask(w, flags, 0);
+                        CvLines(w, $"""
+                            s_mul_i32 {qf}, {q}, {fg}
+                            v_add_u32_e32 {fi}, {qf}, {row}
+                            v_lshlrev_b32_e32 {at}, 2, {fi}
+                            """);
+                        CvMasked(w, here + "_bias", m1, () => CvLines(w, $"global_load_dword {old}, {at}, {Pointer("bias")}"));
+                        CvLines(w, $"""
+                            v_add_f32_e32 {biased}, {sum0}, {old}
+                            v_cndmask_b32_e64 {sum}, {sum0}, {biased}, {hasBias}
+                            s_lshr_b32 {code}, {flags}, 1
+                            """);
+                        ConvActivationOf(w, here + "_act", code, sum, activated);
+                        CvLines(w, $"""
+                            s_mul_i32 {nf}, {entryN}, {f}
+                            v_add_u32_e32 {index}, {nf}, {fi}
+                            v_mul_lo_u32 {index}, {index}, {ohow}
+                            v_add_u32_e32 {index}, {index}, {col}
+                            v_lshlrev_b32_e32 {index}, 2, {index}
+                            """);
+                        CvMasked(w, here, m1, () => CvLines(w, $"global_store_dword {index}, {activated}, {Pointer("y")}"));
+                        break;
+                    }
 
-                case ConvPass.Input:
-                {
-                    // dx[(n·C + q·Cg + row)·HW + column] += sum
-                    string qc = CvScalar(w), nc = CvScalar(w);
-                    CvLines(w, $"""
-                        s_mul_i32 {qc}, {q}, {cg}
-                        s_mul_i32 {nc}, {entryN}, {c}
-                        s_add_u32 {qc}, {qc}, {nc}
-                        v_add_u32_e32 {index}, {qc}, {row}
-                        v_mul_lo_u32 {index}, {index}, {hw}
-                        v_add_u32_e32 {index}, {index}, {col}
-                        v_lshlrev_b32_e32 {index}, 2, {index}
-                        global_load_dword {old}, {index}, {Pointer("dx")}
-                        v_add_f32_e32 {old}, {old}, {acc}
-                        global_store_dword {index}, {old}, {Pointer("dx")}
-                        """);
-                    break;
-                }
+                    case ConvPass.Input:
+                    {
+                        // dx[(n·C + q·Cg + row)·HW + column] += sum
+                        string qc = CvScalar(w), nc = CvScalar(w), added = w.V();
+                        CvLines(w, $"""
+                            s_mul_i32 {qc}, {q}, {cg}
+                            s_mul_i32 {nc}, {entryN}, {c}
+                            s_add_u32 {qc}, {qc}, {nc}
+                            v_add_u32_e32 {index}, {qc}, {row}
+                            v_mul_lo_u32 {index}, {index}, {hw}
+                            v_add_u32_e32 {index}, {index}, {col}
+                            v_lshlrev_b32_e32 {index}, 2, {index}
+                            """);
+                        CvMasked(w, here + "_old", m1, () => CvLines(w, $"global_load_dword {old}, {index}, {Pointer("dx")}"));
+                        CvLines(w, $"v_add_f32_e32 {added}, {old}, {sum0}");
+                        CvMasked(w, here, m1, () => CvLines(w, $"global_store_dword {index}, {added}, {Pointer("dx")}"));
+                        break;
+                    }
 
-                default:
-                {
-                    // dw[(q·Fg + row)·patch + column] += sum (one split), else part[sp·F·patch + that] = sum
-                    string qf = CvScalar(w), partAt = CvScalar(w);
-                    CvLines(w, $"""
-                        s_mul_i32 {qf}, {q}, {fg}
-                        v_add_u32_e32 {index}, {qf}, {row}
-                        v_mul_lo_u32 {index}, {index}, {patch}
-                        v_add_u32_e32 {index}, {index}, {col}
-                        s_cmp_lg_u32 {splits}, 1
-                        s_cbranch_scc1 {label}_part
-                        v_lshlrev_b32_e32 {at}, 2, {index}
-                        global_load_dword {old}, {at}, {Pointer("dw")}
-                        v_add_f32_e32 {old}, {old}, {acc}
-                        global_store_dword {at}, {old}, {Pointer("dw")}
-                        s_branch {label}_stored
-                        {label}_part:
-                        s_mul_i32 {partAt}, {f}, {patch}
-                        s_mul_i32 {partAt}, {sp}, {partAt}
-                        v_add_u32_e32 {at}, {partAt}, {index}
-                        v_lshlrev_b32_e32 {at}, 2, {at}
-                        global_store_dword {at}, {acc}, {Pointer("part")}
-                        {label}_stored:
-                        """);
-                    break;
+                    default:
+                    {
+                        // dw[(q·Fg + row)·patch + column] += sum (one split), else part[sp·F·patch + that] = sum
+                        string qf = CvScalar(w), partAt = CvScalar(w), added = w.V(), partByte = w.V();
+                        CvLines(w, $"""
+                            s_mul_i32 {qf}, {q}, {fg}
+                            v_add_u32_e32 {index}, {qf}, {row}
+                            v_mul_lo_u32 {index}, {index}, {patch}
+                            v_add_u32_e32 {index}, {index}, {col}
+                            v_lshlrev_b32_e32 {at}, 2, {index}
+                            s_mul_i32 {partAt}, {f}, {patch}
+                            s_mul_i32 {partAt}, {sp}, {partAt}
+                            v_add_u32_e32 {partByte}, {partAt}, {index}
+                            v_lshlrev_b32_e32 {partByte}, 2, {partByte}
+                            s_cmp_lg_u32 {splits}, 1
+                            s_cbranch_scc1 {here}_part
+                            """);
+                        CvMasked(w, here + "_old", m1, () => CvLines(w, $"global_load_dword {old}, {at}, {Pointer("dw")}"));
+                        CvLines(w, $"v_add_f32_e32 {added}, {old}, {sum0}");
+                        CvMasked(w, here + "_dw", m1, () => CvLines(w, $"global_store_dword {at}, {added}, {Pointer("dw")}"));
+                        CvLines(w, $"""
+                            s_branch {here}_stored
+                            {here}_part:
+                            """);
+                        CvMasked(w, here + "_p", m1, () => CvLines(w, $"global_store_dword {partByte}, {sum0}, {Pointer("part")}"));
+                        CvLines(w, $"{here}_stored:");
+                        break;
+                    }
                 }
             }
-        });
+        }
+
         CvLines(w, $"""
             s_add_u32 {bi}, {bi}, {gridZ}
             s_branch {label}_batch

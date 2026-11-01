@@ -25,6 +25,7 @@ internal abstract partial class Tests
         ("gcn kernels: rows: softmax_f32 and log-softmax (in place too) equal the CPU's over rows of 1 to 2,333 columns, with large magnitudes, -inf entries and an all -inf row (NaN on both), the same bits on two grids and wave orders", GcnRowsSoftmax),
         ("gcn kernels: rows: scale_mask_softmax_f32 equals the CPU's with a mask of 3 rows (-inf entries, an all-masked row: NaN on both; the mask row stepped with the grid's stride) and without a mask, the same bits on two grids and wave orders", GcnRowsScaleMaskSoftmax),
         ("gcn kernels: rows: log_softmax_topk_f32 equals the CPU's picks (values and columns; ties to the smaller column; -inf and NaN never picked; -inf and -1 once none is left, k past the row too), the same bits on two grids and wave orders", GcnRowsLogSoftmaxTopK),
+        ("gcn kernels: rows: CUDA's order: rms_norm_f32 (y and inv), layernorm_train_f32 (y and the stats) and softmax_f32 (and log-softmax) equal a C# model of CUDA's BlockReduce grouping bit for bit (rows of 1, 37, 1,000 and 2,333 columns), the interpreter's own reciprocal, square root, exponential and logarithm in the model", GcnRowsCudaOrder),
     ];
 
     private static readonly GcnIsaVersion[] RowsIsas = [GcnIsaVersion.Parse("gfx90c"), GcnIsaVersion.Parse("gfx908")];

@@ -118,7 +118,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Devices.IFloat8Backend` | interface | public | Storage | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IFusedPackedKernels` | interface | public | Storage | CudaBackend, HipBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IGraphCaptureBackend` | interface | public | Storage | CudaBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Devices.IHostStaging` | interface | public | Storage | CudaBackend.HostStaging |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.IHostStaging` | interface | public | Storage | CudaBackend.HostStaging, HipBackend.HostStaging |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IHostStorage` | interface | public | — | CpuStorage |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IKernelAvailability` | interface | public | — | HipBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IKernelProfiler` | interface | public | — | CudaBackend, HipBackend |  | Abstraction, Cluster, Gpu, Idrak, Mcp, Network | Abstraction |
@@ -134,7 +134,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Devices.IRowAttentionBackend` | interface | public | Storage | CpuBackend, CudaBackend, HipBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.ISegmentedAttentionBackend` | interface | public | Storage | CpuBackend, CudaBackend, HipBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.ISeparableDeviceProvider` | interface | public | Backend | HipProvider, LibraryRegistrations.CudaProvider, VulkanProvider |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Devices.ISlotStaging` | interface | public | Storage | CudaBackend.HostStaging |  | Gpu, Network | Abstraction |
+| `Idrak.Abstraction.Devices.ISlotStaging` | interface | public | Storage | CudaBackend.HostStaging, HipBackend.HostStaging |  | Gpu, Network | Abstraction |
 | `Idrak.Abstraction.Devices.ITensorOffloadingHooks` | interface | public | Device, Module, Tensor | Offloading.TensorHooks |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.MeasuredChoiceProviders` | registry | public | Backend |  | cuda, hip, vulkan | Cluster, Gpu | Abstraction |
 | `Idrak.Abstraction.Devices.Storage` | abstract class | public | Backend | CpuStorage, CudaStorage, DeferredStorage, HipStorage, VulkanBackend.VulkanStorage |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
@@ -623,7 +623,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `CpuBackend` | 128 of 144 |
 | `CudaBackend` | 136 of 144 |
 | `DeferredBackend` | 11 of 144 |
-| `HipBackend` | 130 of 144 |
+| `HipBackend` | 137 of 144 |
 | `VulkanBackend` | 124 of 144 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
@@ -674,7 +674,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `ConvolutionKernel(8)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Copy(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Copy2D(9)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `CreateHostStaging(2)` | virtual |  | ✓ |  |  |  |
+| `CreateHostStaging(2)` | virtual |  | ✓ |  | ✓ |  |
 | `CtcLossBackwardKernel(13)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `CtcLossKernel(12)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `DecoderMaskKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
@@ -691,7 +691,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `GatedActivationBackwardKernel(8)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `GatedActivationBackwardPackedKernel(8)` | virtual | ✓ | ✓ |  | ✓ |  |
 | `GatedActivationKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `GatedActivationPackedKernel(9)` | virtual | ✓ | ✓ |  |  |  |
+| `GatedActivationPackedKernel(9)` | virtual | ✓ | ✓ |  | ✓ |  |
 | `GatherBFloat16ColumnsKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `GatherBFloat16Kernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `GatherKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
@@ -730,18 +730,18 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `NormStatsKernel(8)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `OneHotKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `PackBFloat16Kernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `PackedMatMulEpilogueKernel(11)` | virtual |  | ✓ |  |  |  |
+| `PackedMatMulEpilogueKernel(11)` | virtual |  | ✓ |  | ✓ |  |
 | `PackedMatMulNormAddRmsNormKernel(17)` | virtual |  | ✓ |  | ✓ |  |
 | `PenalizeRowsKernel(13)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `PermuteKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `PowBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `PowKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `PrefersComposedAttention(12)` | virtual |  | ✓ |  |  | ✓ |
+| `PrefersComposedAttention(12)` | virtual |  | ✓ |  | ✓ | ✓ |
 | `ReleaseCachedMemory(0)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `ResetPeakMemoryUsage(0)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ResizeNormalizeKernel(13)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Return(1)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `ReuseQuantizedOperands(0)` | virtual |  | ✓ |  |  |  |
+| `ReuseQuantizedOperands(0)` | virtual |  | ✓ |  | ✓ |  |
 | `RmsNormAffineKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `RmsNormBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `RmsNormKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
@@ -755,7 +755,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `SigmoidFocalLossBackwardKernel(7)` | virtual | ✓ |  |  |  |  |
 | `SigmoidFocalLossKernel(6)` | virtual | ✓ |  |  |  |  |
 | `SoftmaxBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
-| `SoftmaxCrossEntropyRowsKernel(7)` | virtual | ✓ | ✓ |  |  | ✓ |
+| `SoftmaxCrossEntropyRowsKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `SoftmaxKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `SumAxisKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `SumColumnsKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
@@ -767,7 +767,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `UnaryBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `UnaryKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Upload(2)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `UploadRange(3)` | virtual | ✓ | ✓ | ✓ |  | ✓ |
+| `UploadRange(3)` | virtual | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `WeightNormBackwardKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `WeightNormKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `WhereBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |

@@ -798,6 +798,27 @@ internal static partial class GcnKernels
     private static void GatedBackwardBody(PointwiseWriter w, string label, string g, string u, string dy, string oldGate, string oldUp, string kind, string flags,
         string newGate, string newUp)
     {
+        var (value, slope, upValue, upSlope) = GatedValues(w, label, g, u, kind);
+        string written = TrainingFlagMask(w, flags, 2), dgate = w.V(), dup = w.V(), base1 = w.V(), base2 = w.V();
+        w.I(TrainingText($"""
+            v_cndmask_b32_e64 {base1}, {oldGate}, 0, {written}
+            v_mul_f32_e32 {dgate}, {dy}, {upValue}
+            v_mul_f32_e32 {dgate}, {dgate}, {slope}
+            v_add_f32_e32 {newGate}, {base1}, {dgate}
+            """));
+        string written2 = TrainingFlagMask(w, flags, 3);
+        w.I(TrainingText($"""
+            v_cndmask_b32_e64 {base2}, {oldUp}, 0, {written2}
+            v_mul_f32_e32 {dup}, {value}, {upSlope}
+            v_mul_f32_e32 {dup}, {dy}, {dup}
+            v_add_f32_e32 {newUp}, {base2}, {dup}
+            """));
+    }
+
+    // The gated activation's values at gate g and up u for `kind`: act(g) and its slope, the up side (u, or sigmoid(u) for
+    // kind 3) and its slope; shared by the gradient and the packed forward (gated_act_bf16_f32, plan 35's HIP parity).
+    private static (string Value, string Slope, string UpValue, string UpSlope) GatedValues(PointwiseWriter w, string label, string g, string u, string kind)
+    {
         const float K = 0.7978845608f, C = 0.044715f;
         string value = w.V(), slope = w.V(), upValue = w.V(), upSlope = w.V();
         string silu = label + "_silu", gelu = label + "_gelu", tanh = label + "_tanh", done = label + "_done";
@@ -869,20 +890,7 @@ internal static partial class GcnKernels
             v_mul_f32_e32 {upSlope}, {sg}, {q}
             {done}:
             """));
-        string written = TrainingFlagMask(w, flags, 2), dgate = w.V(), dup = w.V(), base1 = w.V(), base2 = w.V();
-        w.I(TrainingText($"""
-            v_cndmask_b32_e64 {base1}, {oldGate}, 0, {written}
-            v_mul_f32_e32 {dgate}, {dy}, {upValue}
-            v_mul_f32_e32 {dgate}, {dgate}, {slope}
-            v_add_f32_e32 {newGate}, {base1}, {dgate}
-            """));
-        string written2 = TrainingFlagMask(w, flags, 3);
-        w.I(TrainingText($"""
-            v_cndmask_b32_e64 {base2}, {oldUp}, 0, {written2}
-            v_mul_f32_e32 {dup}, {value}, {upSlope}
-            v_mul_f32_e32 {dup}, {dy}, {dup}
-            v_add_f32_e32 {newUp}, {base2}, {dup}
-            """));
+        return (value, slope, upValue, upSlope);
     }
 
     // gated_act_bwd_f32 with gate and up read as packed bfloat16 words (pg, pu: element 2p in word p's low half, 2p + 1 in
@@ -1649,7 +1657,7 @@ internal static partial class GcnKernels
                 v_fma_f32 {acc}, {x}, {x}, {acc}
                 """);
         });
-        w.Reduce(RowWriter.Add, acc);
+        w.ReduceAdd(acc);                                                    // CUDA's BlockReduce order (plan 35's training order)
         w.StoreFirstLane((w.ElementAddress(a.Pointer("partials"), w.Row), acc));
         w.EndRows();
         return w.Source();
@@ -1950,7 +1958,7 @@ internal static partial class GcnKernels
         {
             string total = a.Pointer("total"), before = w.V();
             w.L($"global_load_dword {before}, {w.Zero}, {total}");
-            w.Reduce(RowWriter.Add, acc);
+            w.ReduceAdd(acc);                                                    // CUDA's BlockReduce order (plan 35's training order)
             w.L($"s_cmp_eq_u32 {a.Scalar("direct")}, 0");
             w.L($"s_cbranch_scc1 .Lpart");
             w.L($"v_add_f32_e32 {before}, {before}, {acc}");
@@ -1997,7 +2005,7 @@ internal static partial class GcnKernels
                 v_add_f32_e32 {acc}, {acc}, {value}
                 """);
         });
-        w.Reduce(RowWriter.Add, acc);
+        w.ReduceAdd(acc);                                                    // CUDA's BlockReduce order (plan 35's training order)
         w.L($"""
             v_mul_f32_e32 {scaled}, {a.Scalar("scale")}, {acc}
             v_add_f32_e32 {sum}, {before}, {scaled}

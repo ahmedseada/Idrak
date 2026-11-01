@@ -24,7 +24,7 @@ internal static partial class GcnKernels
     /// (<see cref="Pointwise"/>, <see cref="Rows"/>, <see cref="Products"/>, <see cref="Attention"/>, <see cref="Shapes"/>, <see cref="Decoding"/>, <see cref="Training"/>,
     /// <see cref="Convolution"/>, <see cref="Ctc"/>, <see cref="Recurrent"/>; later phases add theirs here).
     /// </summary>
-    internal static IReadOnlyList<GcnKernelSource> All => _all ??= [new("fill_f32", FillText.ToArray()), .. Pointwise, .. Rows, .. Products, .. Attention, .. Shapes, .. Decoding, .. Training, .. Convolution, .. Ctc, .. Recurrent];
+    internal static IReadOnlyList<GcnKernelSource> All => _all ??= [new("fill_f32", FillText.ToArray()), .. Pointwise, .. Rows, .. Products, .. Attention, .. Shapes, .. Decoding, .. Training, .. Convolution, .. Ctc, .. Recurrent, .. Parity];
 
     /// <summary>
     /// Every kernel of <see cref="All"/> assembled for <paramref name="isa"/> by <paramref name="target"/>'s family (one

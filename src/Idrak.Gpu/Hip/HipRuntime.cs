@@ -157,6 +157,10 @@ internal static unsafe class HipRuntime
         hipGetErrorName = (delegate* unmanaged<int, byte*>)Optional(nameof(hipGetErrorName));
         hipStreamQuery = (delegate* unmanaged<IntPtr, int>)Optional(nameof(hipStreamQuery));   // polled waits (HipBackend.WaitStream)
         hipModuleUnload = (delegate* unmanaged<IntPtr, int>)Optional(nameof(hipModuleUnload));   // GCN modules given back (HipBackend.GcnFunction)
+        // Pinned host memory for background copies (HipBackend.HostStaging.cs; none: CreateHostStaging gives null).
+        hipHostMalloc = (delegate* unmanaged<void**, nuint, uint, int>)Optional(nameof(hipHostMalloc));
+        hipHostFree = (delegate* unmanaged<void*, int>)Optional(nameof(hipHostFree));
+        hipEventDestroy = (delegate* unmanaged<IntPtr, int>)Optional(nameof(hipEventDestroy));
 
         if (missing.Count > 0)
         {
@@ -231,6 +235,9 @@ internal static unsafe class HipRuntime
     public static delegate* unmanaged<IntPtr*, IntPtr, byte*, int> hipModuleGetFunction;
     public static delegate* unmanaged<IntPtr, uint, uint, uint, uint, uint, uint, uint, IntPtr, void**, void**, int> hipModuleLaunchKernel;
     public static delegate* unmanaged<IntPtr, int> hipModuleUnload;
+    public static delegate* unmanaged<void**, nuint, uint, int> hipHostMalloc;
+    public static delegate* unmanaged<void*, int> hipHostFree;
+    public static delegate* unmanaged<IntPtr, int> hipEventDestroy;
     public static delegate* unmanaged<byte*, int, int> hipGetDevicePropertiesR0600;
     public static delegate* unmanaged<byte*, int, int> hipGetDeviceProperties;
     public static delegate* unmanaged<byte*, int, int> hipDeviceGetUuid;

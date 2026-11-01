@@ -64,6 +64,22 @@ internal abstract partial class DesktopTests
             long causal = (long)Heads * prompt * (prompt + 1) / 2 * Dim;
             BenchOperation(b, string.Create(CultureInfo.InvariantCulture, $"tiled attention gradients, {Heads} heads x {prompt} rows (causal), head {Dim}"), causal,
                 HipBackend.Cost("attn_bwd_kv_f32"), () => hip.AttentionTiledBackward(q, keys, values, output, lse, dout, dq, dk, dv, Heads, prompt, prompt, prompt, Dim, 0.088f));
+
+            // HIP parity (plan 35): the token cross-entropy over a vocabulary, the packed gated activation, the packed
+            // product's epilogue (bias and residual after the product).
+            const int CeRows = 64, Vocabulary = 32000;
+            Storage ceLogits = on.Random(CeRows * Vocabulary, -4f, 4f), ceTargets = on.Of([.. Enumerable.Range(0, CeRows).Select(r => (float)(r * 131 % Vocabulary))]);
+            Storage ceWeights = on.Random(CeRows, 0.5f, 1f), ceLosses = on.Random(CeRows);
+            BenchOperation(b, $"token cross-entropy, {CeRows} rows of {Vocabulary}", (long)CeRows * Vocabulary, HipBackend.Cost("softmax_ce_rows_f32"),
+                () => hip.SoftmaxCrossEntropyRows(ceLogits, ceTargets, ceWeights, ceLosses, CeRows, Vocabulary, 1f));
+            const int Gated = 1 << 22;
+            Storage gGate = on.Random(Gated), gUp = on.Random(Gated), gY = on.Random(Gated), gPg = on.Random(Gated / 2), gPu = on.Random(Gated / 2), gPy = on.Random(Gated / 2);
+            BenchOperation(b, $"packed gated activation (SiLU; y, gate, up and y packed), {Gated} elements", Gated, HipBackend.Cost("gated_act_bf16_f32"),
+                () => hip.GatedActivationPacked(gGate, gUp, gPg, gPu, gY, gPy, Gated, 0, 14));
+            const int Em = 256, En = 2048, Ek = 2048;
+            Storage eX = on.Random(Em * Ek), eW = on.Random(Ek * En / 2), eBias = on.Random(En), eRes = on.Random(Em * En), eY = on.Random(Em * En);
+            BenchOperation(b, $"bfloat16 product with bias and residual (epilogue), {Em}x{En}x{Ek}", 2L * Em * En * Ek, (1, 0),
+                () => hip.PackedMatMulEpilogue(PackedFormat.BFloat16, eX, eW, null, eY, Em, En, Ek, eBias, eRes, false));
         }
 
         long host = Idrak.Abstraction.Operations.Kernels.HostCalls(hip) - before;

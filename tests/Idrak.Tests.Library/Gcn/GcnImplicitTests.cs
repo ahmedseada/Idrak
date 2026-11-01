@@ -49,40 +49,44 @@ internal abstract partial class Tests
             string shape = $"{Describe(g)}, {filters} filters, {groups} groups";
             float[] x = TrainingRandom(random, input, -1, 1), w = TrainingRandom(random, weights, -1, 1), bias = TrainingRandom(random, filters, -0.5f, 0.5f);
             float[] dy = TrainingRandom(random, outputs, -1, 1);
-            foreach (var isa in TrainingIsas)
+            foreach (var (isa, blocked) in TrainingIsas.SelectMany(isa => new[] { (isa, false), (isa, true) }))
             {
+                string fwd = blocked ? "conv_fwd_f32" : "conv_fwd_tile_f32", inp = blocked ? "conv_bwd_input_f32" : "conv_bwd_input_tile_f32";
+                string wgt = blocked ? "conv_bwd_weight_f32" : "conv_bwd_weight_tile_f32";
+                int Tile(int count) => blocked ? (count + GcnKernels.ConvBlockedEdge - 1) / GcnKernels.ConvBlockedEdge : Tiles(count);
+
                 // Forward: tiles of (columns: output positions, rows: the group's filters), entries (n, q) along z; the first
                 // run on one z (the kernel loops over the entries), the second on all of them.
                 foreach (var activation in new[] { ConvActivation.None, ConvActivation.Relu, ConvActivation.Gelu })
                 {
                     bool hasBias = activation != ConvActivation.Relu;
                     int flags = (hasBias ? 1 : 0) | (int)activation << 1;
-                    TrainingCase($"conv_fwd_tile_f32 ({isa}), {shape}, {activation}{(hasBias ? ", a bias" : "")}", [x, w, bias, new float[outputs]], [3],
+                    TrainingCase($"{fwd} ({isa}), {shape}, {activation}{(hasBias ? ", a bias" : "")}", [x, w, bias, new float[outputs]], [3],
                         (b, s) => b.Convolution(s[0], s[1], hasBias ? s[2] : null, s[3], g, filters, groups, activation),
-                        (m, a, z, seed) => G6cDispatch("conv_fwd_tile_f32", isa, m, (Tiles(g.OH * g.OW), Tiles(fg), z), seed,
+                        (m, a, z, seed) => G6cDispatch(fwd, isa, m, (Tile(g.OH * g.OW), Tile(fg), z), seed,
                             ImplicitArgs([a[0], a[1], hasBias ? a[2] : a[1], a[3]], g, filters, groups, flags, 1)),
-                        (1, g.N * groups), worst, "conv_fwd_tile_f32");
+                        (1, g.N * groups), worst, fwd);
                 }
 
-                TrainingCase($"conv_bwd_input_tile_f32 ({isa}), {shape}", [dy, w, TrainingRandom(random, input, -1, 1)], [2],
+                TrainingCase($"{inp} ({isa}), {shape}", [dy, w, TrainingRandom(random, input, -1, 1)], [2],
                     (b, s) => b.ConvolutionBackwardInput(s[0], s[1], s[2], g, filters, groups),
-                    (m, a, z, seed) => G6cDispatch("conv_bwd_input_tile_f32", isa, m, (Tiles(g.H * g.W), Tiles(cg), z), seed,
+                    (m, a, z, seed) => G6cDispatch(inp, isa, m, (Tile(g.H * g.W), Tile(cg), z), seed,
                         ImplicitArgs([a[0], a[1], a[2]], g, filters, groups, 0, 1)),
-                    (1, g.N * groups), worst, "conv_bwd_input_tile_f32");
+                    (1, g.N * groups), worst, inp);
 
                 // Weight: one split added to dw; four splits written to part, then added to dw in split order.
-                TrainingCase($"conv_bwd_weight_tile_f32 ({isa}), {shape}, one split", [x, dy, TrainingRandom(random, weights, -1, 1), new float[1]], [2],
+                TrainingCase($"{wgt} ({isa}), {shape}, one split", [x, dy, TrainingRandom(random, weights, -1, 1), new float[1]], [2],
                     (b, s) => b.ConvolutionBackwardWeight(s[0], s[1], s[2], g, filters, groups),
-                    (m, a, z, seed) => G6cDispatch("conv_bwd_weight_tile_f32", isa, m, (Tiles(patch), Tiles(fg), z), seed,
+                    (m, a, z, seed) => G6cDispatch(wgt, isa, m, (Tile(patch), Tile(fg), z), seed,
                         ImplicitArgs([a[0], a[1], a[2], a[2]], g, filters, groups, 0, 1)),
-                    (1, groups), worst, "conv_bwd_weight_tile_f32");
+                    (1, groups), worst, wgt);
                 const int Splits = 4;
-                TrainingCase($"conv_bwd_weight_tile_f32 + conv_split_reduce_f32 ({isa}), {shape}, {Splits} splits",
+                TrainingCase($"{wgt} + conv_split_reduce_f32 ({isa}), {shape}, {Splits} splits",
                     [x, dy, TrainingRandom(random, weights, -1, 1), new float[Splits * weights]], [2],
                     (b, s) => b.ConvolutionBackwardWeight(s[0], s[1], s[2], g, filters, groups),
                     (m, a, z, seed) =>
                     {
-                        G6cDispatch("conv_bwd_weight_tile_f32", isa, m, (Tiles(patch), Tiles(fg), z), seed, ImplicitArgs([a[0], a[1], a[2], a[3]], g, filters, groups, 0, Splits));
+                        G6cDispatch(wgt, isa, m, (Tile(patch), Tile(fg), z), seed, ImplicitArgs([a[0], a[1], a[2], a[3]], g, filters, groups, 0, Splits));
                         TrainingDispatch("conv_split_reduce_f32", isa, m, (Math.Max(1, (weights + 255) / 256), 1), seed, a[3], a[2], Cu(weights), Cu(Splits), Cu(weights));
                     },
                     (1, groups * Splits), worst, "conv_split_reduce_f32");

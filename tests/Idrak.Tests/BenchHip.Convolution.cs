@@ -58,13 +58,32 @@ internal abstract partial class DesktopTests
                     () => hip.Convolution(x, cw, cbias, y, g, Channels, 1, ConvActivation.Relu));
                 BenchOperation(b, $"3x3 convolution input gradient (implicit product), {shape}", (long)input * Channels * 9, HipBackend.Cost("conv_bwd_input_tile_f32"),
                     () => hip.ConvolutionBackwardInput(y, cw, dx, g, Channels, 1));
-                BenchOperation(b, $"3x3 convolution weight gradient (implicit product, the formula's splits), {shape}", (long)input * Channels * 9, HipBackend.Cost("conv_bwd_weight_tile_f32"),
+                BenchOperation(b, $"3x3 convolution weight gradient (implicit product, one split), {shape}", (long)input * Channels * 9, HipBackend.Cost("conv_bwd_weight_tile_f32"),
                     () => hip.ConvolutionBackwardWeight(x, y, cwGrad, g, Channels, 1));
             }
             finally
             {
                 HipBackend.ConvolutionPath = null;
             }
+
+            // HIP parity: CUDA's 64 x 64 blocked implicit products, and the path HIP measures for the shape.
+            HipBackend.ConvolutionPath = 2;
+            try
+            {
+                BenchOperation(b, $"3x3 convolution (implicit product, 64 x 64 tiles), {shape}", (long)input * Channels * 9, HipBackend.Cost("conv_fwd_f32"),
+                    () => hip.Convolution(x, cw, cbias, y, g, Channels, 1, ConvActivation.Relu));
+                BenchOperation(b, $"3x3 convolution input gradient (implicit product, 64 x 64 tiles), {shape}", (long)input * Channels * 9, HipBackend.Cost("conv_bwd_input_f32"),
+                    () => hip.ConvolutionBackwardInput(y, cw, dx, g, Channels, 1));
+                BenchOperation(b, $"3x3 convolution weight gradient (implicit product, 64 x 64 tiles, one split), {shape}", (long)input * Channels * 9,
+                    HipBackend.Cost("conv_bwd_weight_f32"), () => hip.ConvolutionBackwardWeight(x, y, cwGrad, g, Channels, 1));
+            }
+            finally
+            {
+                HipBackend.ConvolutionPath = null;
+            }
+
+            BenchOperation(b, $"3x3 convolution (the path measured for the shape), {shape}", (long)input * Channels * 9, HipBackend.Cost("conv_fwd_f32"),
+                () => hip.Convolution(x, cw, cbias, y, g, Channels, 1, ConvActivation.Relu));
 
             Storage dw = on.Random(Channels * 9, -0.1f, 0.1f), dwBias = on.Random(Channels), dwGrad = on.Random(Channels * 9);
             BenchOperation(b, $"3x3 depthwise convolution, {shape}", (long)input * 9, HipBackend.Cost("conv_dw_f32"),

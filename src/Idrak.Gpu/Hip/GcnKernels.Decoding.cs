@@ -828,7 +828,7 @@ internal static partial class GcnKernels
                 global_store_dword {e.Off}, {ss[e.K]}, {sb}{e.Imm}
                 v_fma_f32 {acc}, {ss[e.K]}, {ss[e.K]}, {acc}
                 """);
-        w.Reduce(RowWriter.Add, acc);
+        w.ReduceAdd(acc);                                                   // CUDA's BlockReduce order (plan 35's row order)
         string r = w.V();
         w.L($"v_mul_f32_e32 {r}, {acc}, {rc}");
         w.L($"v_add_f32_e32 {r}, {a.Scalar("eps")}, {r}");

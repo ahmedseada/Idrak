@@ -17,7 +17,10 @@ namespace Idrak.Gpu.Hip;
 // ... (coalesced): four a step while four fit (four loads in flight, rule 80), then one at a time, so each thread's
 // partial is over its columns in column order. The block's partials are combined by one tree of a fixed shape in LDS
 // (256 -> 128 between two s_barriers, -> 64 between two more, then 64 -> 1 within the first wave, whose LDS accesses
-// are in order), so a row's sum is the same on every device, every grid and every run (rule 86; no atomics).
+// are in order), so a row's sum is the same on every device, every grid and every run (rule 86; no atomics). The sums of
+// the norms and softmaxes (ReduceAdd; plan 35's row order) are grouped as CUDA's BlockReduce groups them instead: each 32
+// threads' butterfly over offsets 16 … 1, then the 8 warps' sums in order, so they equal CUDA's grouping bit for bit; their
+// maxima and arg-maxima (exact in any grouping) keep the tree.
 // Consecutive reductions use two LDS areas in turn, so no barrier is needed after a result is read. Per-call work (the
 // arguments, 1 / cols, the mask row's remainder) is done once at the start (rule 85).
 //
@@ -114,7 +117,7 @@ internal static partial class GcnKernels
         w.L($"v_mov_b32_e32 {acc}, 0");
         var xs = w.Vs();
         w.Columns(cols, e => $"global_load_dword {xs[e.K]}, {e.Off}, {xb}{e.Imm}", e => $"v_fma_f32 {acc}, {xs[e.K]}, {xs[e.K]}, {acc}");
-        w.Reduce(RowWriter.Add, acc);
+        w.ReduceAdd(acc);
         string r = w.V();
         w.L($"v_mul_f32_e32 {r}, {acc}, {rc}");
         w.L($"v_add_f32_e32 {r}, {eps}, {r}");
@@ -170,7 +173,7 @@ internal static partial class GcnKernels
         string sum = w.V();
         w.L($"v_mov_b32_e32 {sum}, 0");
         w.Columns(cols, e => $"global_load_dword {xs[e.K]}, {e.Off}, {xb}{e.Imm}", e => $"v_add_f32_e32 {sum}, {sum}, {xs[e.K]}");
-        w.Reduce(RowWriter.Add, sum);
+        w.ReduceAdd(sum);
         string mean = w.V();
         w.L($"v_mul_f32_e32 {mean}, {sum}, {rc}");
         string squares = w.V();
@@ -180,7 +183,7 @@ internal static partial class GcnKernels
             v_sub_f32_e32 {ds[e.K]}, {xs[e.K]}, {mean}
             v_fma_f32 {squares}, {ds[e.K]}, {ds[e.K]}, {squares}
             """);
-        w.Reduce(RowWriter.Add, squares);
+        w.ReduceAdd(squares);
         string rstd = w.V();
         w.L($"v_mul_f32_e32 {rstd}, {squares}, {rc}");
         w.L($"v_add_f32_e32 {rstd}, {eps}, {rstd}");
@@ -251,7 +254,7 @@ internal static partial class GcnKernels
             v_add_f32_e32 {s1}, {s1}, {gs[e.K]}
             v_fma_f32 {s2}, {gs[e.K]}, {hs[e.K]}, {s2}
             """);
-        w.Reduce(RowWriter.Add, s1, s2);
+        w.ReduceAdd(s1, s2);
         w.L($"v_mul_f32_e32 {s1}, {s1}, {rc}");
         w.L($"v_mul_f32_e32 {s2}, {s2}, {rc}");
         var dxs = w.Vs();
@@ -425,7 +428,7 @@ internal static partial class GcnKernels
             global_store_dword {e.Off}, {es[e.K]}, {yb}{e.Imm}
             v_add_f32_e32 {sum}, {sum}, {es[e.K]}
             """);
-        w.Reduce(RowWriter.Add, sum);
+        w.ReduceAdd(sum);
         string r = w.V();
         w.L($"v_rcp_f32_e32 {r}, {sum}");
         w.Columns(cols, e => $"global_load_dword {es[e.K]}, {e.Off}, {yb}{e.Imm}", e => $"""
@@ -438,7 +441,7 @@ internal static partial class GcnKernels
 
             v_add_f32_e32 {sum}, {sum}, {es[e.K]}
             """);
-        w.Reduce(RowWriter.Add, sum);
+        w.ReduceAdd(sum);
         string shift = w.V();
         w.L($"v_log_f32_e32 {shift}, {sum}");
         w.L($"v_fma_f32 {shift}, {shift}, {ln2}, {max}");
@@ -508,7 +511,7 @@ internal static partial class GcnKernels
             global_store_dword {e.Off}, {es[e.K]}, {yb}{e.Imm}
             v_add_f32_e32 {sum}, {sum}, {es[e.K]}
             """);
-        w.Reduce(RowWriter.Add, sum);
+        w.ReduceAdd(sum);
         string r = w.V();
         w.L($"v_rcp_f32_e32 {r}, {sum}");
         w.Columns(cols, e => $"global_load_dword {es[e.K]}, {e.Off}, {yb}{e.Imm}", e => $"""
@@ -545,7 +548,7 @@ internal static partial class GcnKernels
 
             v_add_f32_e32 {sum}, {sum}, {es[e.K]}
             """);
-        w.Reduce(RowWriter.Add, sum);
+        w.ReduceAdd(sum);
         string shift = w.V(), previous = w.V(), previousColumn = w.V(), at = w.V(), pass = w.S();
         w.L($"v_log_f32_e32 {shift}, {sum}");
         w.L($"v_fma_f32 {shift}, {shift}, {ln2}, {max}");
@@ -1028,6 +1031,58 @@ internal static partial class GcnKernels
             for (int i = 0; i < held.Length; i++)
             {
                 L($"ds_read_b32 {held[i]}, {AreaBase}{Offset(1024 * i)}");
+            }
+
+            L($"v_xor_b32_e32 {Area}, 0x{_areaBytes:x}, {Area}");
+            L($"v_xor_b32_e32 {AreaBase}, 0x{_areaBytes:x}, {AreaBase}");
+        }
+
+        /// <summary>
+        /// Each of <paramref name="held"/> summed over the block in CUDA's order (PtxKernels.Rows.cs's BlockReduce: each 32
+        /// threads, a CUDA warp, combined by the butterfly over offsets 16, 8, 4, 2, 1, here lane l with lane l + offset in LDS;
+        /// then every thread adds the 8 warps' sums in warp order to 0), so a row kernel's sums equal CUDA's bit for bit where
+        /// its threads' own sums do. Every thread ends with the result; the LDS areas alternate as <see cref="Reduce"/>'s do.
+        /// </summary>
+        public void ReduceAdd(params string[] held)
+        {
+            string[] other = new string[held.Length];
+            string lane = V(), part = V(), saved = SPair();
+            L($"v_and_b32_e32 {lane}, 31, {Tid}");
+            for (int i = 0; i < held.Length; i++)
+            {
+                other[i] = V();
+                L($"v_mov_b32_e32 {other[i]}, 0");
+                L($"ds_write_b32 {Area}, {held[i]}{Offset(1024 * i)}");
+            }
+
+            L($"s_barrier");
+            for (int offset = 16; offset >= 1; offset /= 2)
+            {
+                L($"v_cmp_gt_u32_e32 vcc, {offset}, {lane}");
+                L($"s_and_saveexec_b64 {saved}, vcc");
+                for (int i = 0; i < held.Length; i++)
+                {
+                    L($"ds_read_b32 {other[i]}, {Area}{Offset(1024 * i + 4 * offset)}");
+                }
+
+                for (int i = 0; i < held.Length; i++)
+                {
+                    L($"v_add_f32_e32 {held[i]}, {held[i]}, {other[i]}");
+                    L($"ds_write_b32 {Area}, {held[i]}{Offset(1024 * i)}");
+                }
+
+                L($"s_mov_b64 exec, {saved}");
+            }
+
+            L($"s_barrier");
+            for (int i = 0; i < held.Length; i++)
+            {
+                L($"v_mov_b32_e32 {held[i]}, 0");
+                for (int warp = 0; warp < RowThreads / 32; warp++)
+                {
+                    L($"ds_read_b32 {part}, {AreaBase}{Offset(1024 * i + 128 * warp)}");
+                    L($"v_add_f32_e32 {held[i]}, {held[i]}, {part}");
+                }
             }
 
             L($"v_xor_b32_e32 {Area}, 0x{_areaBytes:x}, {Area}");
