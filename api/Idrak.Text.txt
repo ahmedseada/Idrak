@@ -692,6 +692,7 @@ public sealed record Idrak.Text.Generation.AgentOptions : System.IEquatable<Idra
   public bool? Think { get; init; }
   public int FailedCallNudges { get; init; }
   public int MaxRounds { get; init; }
+  public int NoToolNudges { get; init; }
   public int Nudges { get; init; }
   public string? SystemPrompt { get; init; }
 
@@ -741,6 +742,7 @@ public sealed class Idrak.Text.Generation.CodingAgent
   public System.Action<Idrak.Abstraction.Generation.ToolResult>? OnToolResult { get; init; }
   public System.Threading.Tasks.Task<Idrak.Text.Generation.CodingAgentRun> ContinueAsync(Idrak.Text.Generation.CodingAgentRun earlier, string prompt, Idrak.Text.Generation.CodingTools tools, System.Threading.CancellationToken cancellationToken = default)
   public System.Threading.Tasks.Task<Idrak.Text.Generation.CodingAgentRun> RunAsync(string prompt, Idrak.Text.Generation.CodingTools tools, System.Threading.CancellationToken cancellationToken = default)
+  public const string NoToolReminder = "You answered without using any tool. If the task needs files changed or commands run, do it now with the tools (one fenced json call per block); otherwise repeat your answer."
   public int PendingNotes { get; }
   public static Idrak.Abstraction.Generation.ChatMessage ReadCallsInText(Idrak.Abstraction.Generation.ChatMessage reply, Idrak.Abstraction.Generation.ToolCallContext context)
   public static Idrak.Abstraction.Generation.ToolCallContext CallContext(Idrak.Abstraction.Generation.IChatTemplate? template, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools)
@@ -767,6 +769,7 @@ public sealed record Idrak.Text.Generation.CodingAgentRun : System.IEquatable<Id
   public bool? Think { get; init; }
   public int FailureNudges { get; init; }
   public int GeneratedTokens { get; init; }
+  public int NoToolNudges { get; init; }
   public int Nudges { get; init; }
   public int Rounds { get; init; }
   public int ToolCalls { get; init; }
@@ -824,6 +827,7 @@ public sealed class Idrak.Text.Generation.CodingTools
   public string Workspace { get; }
   public string WriteFile(string path, string content)
   public string? LanguageNotice { get; }
+  public void BeginReply()
   public void ForgetReads()
 
 public sealed class Idrak.Text.Generation.Conversation

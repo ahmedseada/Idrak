@@ -65,6 +65,14 @@ public sealed record AgentOptions
     public int FailedCallNudges { get; init; } = 1;
 
     /// <summary>
+    /// Reminders the agent sends, per run, when the model gives its final answer without having made any tool call in
+    /// the conversation (and no correction of unread calls was sent, <see cref="Nudges"/>): it is told it used no tool, to do the task with the tools if it needs files changed or commands run, or
+    /// else to repeat its answer (<see cref="CodingAgent.NoToolReminder"/>), and the run goes on. 1 by default; 0 sends
+    /// none (an answer without a call ends the run).
+    /// </summary>
+    public int NoToolNudges { get; init; } = 1;
+
+    /// <summary>
     /// The tools whose calls change a file named by their <c>path</c> argument, for <see cref="FailedCallNudges"/>:
     /// edit_file and write_file by default.
     /// </summary>
@@ -120,6 +128,9 @@ public sealed record CodingAgentRun(IReadOnlyList<ChatMessage> Messages, IReadOn
     /// <summary>Reminders sent because the model answered with failed changes left (<see cref="AgentOptions.FailedCallNudges"/>); each is a user message in <see cref="Messages"/>.</summary>
     public int FailureNudges { get; init; }
 
+    /// <summary>Reminders sent because the model answered without any tool call in the run (<see cref="AgentOptions.NoToolNudges"/>); each is a user message in <see cref="Messages"/>.</summary>
+    public int NoToolNudges { get; init; }
+
     /// <summary>The run as one JSON line: the conversation in the chat format with the figures as extra fields.</summary>
     public JsonObject ToJson()
     {
@@ -147,6 +158,11 @@ public sealed record CodingAgentRun(IReadOnlyList<ChatMessage> Messages, IReadOn
         {
             json["failure_nudges"] = FailureNudges;
         }
+
+        if (NoToolNudges > 0)
+        {
+            json["no_tool_nudges"] = NoToolNudges;
+        }
     }
 }
 
@@ -172,11 +188,18 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
                                       + "- Read a file with read_file before you edit it; never guess its text (edit_file refuses a file not read).\n"
                                       + "- Make focused changes with edit_file; copy old_text exactly as the file has it (read_file shows line numbers\n"
                                       + "  before a \"| \" separator: they are not part of the file). Create new files with write_file.\n"
-                                      + "- Follow the project's conventions: its naming, formatting, file layout, frameworks and library versions.\n";
+                                      + "- Follow the project's conventions: its naming, formatting, file layout, frameworks and library versions.\n"
+                                      + "- Write every reply in the language of the user's request.\n";
 
     private const string PromptTail = "\n- Do not weaken or delete tests to make them pass, unless the user asks for it.\n"
                                       + "- Do only what was asked; mention anything else worth doing instead of doing it.\n"
                                       + "- When the task is done, answer without a tool call: say briefly what you changed and how you checked it.";
+
+    /// <summary>
+    /// The reminder sent when the model answers without any tool call in the run (<see cref="AgentOptions.NoToolNudges"/>),
+    /// in English as the agent's other messages.
+    /// </summary>
+    public const string NoToolReminder = "You answered without using any tool. If the task needs files changed or commands run, do it now with the tools (one fenced json call per block); otherwise repeat your answer.";
 
     // The prompt's lines are cut at this width, continued with two spaces.
     private const int PromptWidth = 110;
@@ -343,8 +366,9 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(_options.Nudges, nameof(AgentOptions.Nudges));
         ArgumentOutOfRangeException.ThrowIfNegative(_options.FailedCallNudges, nameof(AgentOptions.FailedCallNudges));
+        ArgumentOutOfRangeException.ThrowIfNegative(_options.NoToolNudges, nameof(AgentOptions.NoToolNudges));
         var unresolved = new FailedChanges(_options.ChangingTools);
-        int failureNudges = 0;
+        int failureNudges = 0, noToolNudges = 0;
         var registry = Registry(tools, _options.ExtraTools);
         var definitions = ToolDefinitions(tools, _options.ExtraTools);
         var callContext = CallContext(_options.Template ?? (model as ChatGenerator)?.Template, definitions);
@@ -355,7 +379,7 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         limit.CancelAfter(_options.TimeLimit);
         CodingAgentRun Result(CodingAgentEnd end, string note) =>
-            new(messages, definitions, _options.Think, end, note, rounds, calls, errors, generated, modelTime, toolTime, tools.Workspace) { Nudges = nudges, FailureNudges = failureNudges };
+            new(messages, definitions, _options.Think, end, note, rounds, calls, errors, generated, modelTime, toolTime, tools.Workspace) { Nudges = nudges, FailureNudges = failureNudges, NoToolNudges = noToolNudges };
 
         try
         {
@@ -405,6 +429,13 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
 
                     if (Correction(reply, callContext) is not { } correction)
                     {
+                        if (noToolNudges < _options.NoToolNudges && nudges == 0 && !messages.Any(m => m.ToolCalls is { Count: > 0 }))   // no call in the conversation, no correction sent
+                        {
+                            messages.Add(new ChatMessage("user", NoToolReminder));
+                            noToolNudges++;
+                            continue;
+                        }
+
                         if (failureNudges < _options.FailedCallNudges && unresolved.Reminder() is { } reminder)
                         {
                             messages.Add(new ChatMessage("user", reminder));
@@ -433,6 +464,7 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
                 watch.Restart();
                 // Each call's result is told as that call ends (a later call may wait for an approval, or the turn be
                 // cancelled part way), never only when the whole turn has run.
+                tools.BeginReply();                                  // the results before this reply were given back (ReadBeforeEdit)
                 var turn = await RunToolCallsAsync(registry, reply, previousCalls, limit.Token, OnToolResult).ConfigureAwait(false);
                 if (turn.Key != previousCalls)                       // a repeated turn ran nothing: its notes are not failures
                 {

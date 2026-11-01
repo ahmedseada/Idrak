@@ -32,6 +32,12 @@ internal abstract partial class DesktopTests : Tests
         ("coding tools: a refusal or error (old_text not found or not unique, a path outside the folder, a missing file, a refused command) is a failed result with its message; the model reads it as before", CodingToolErrorsFail),
         ("coding agent: edit_file refuses a file the task has not read or written (read it first), a new task reads again, the option off allows it; the prompt asks for the read", AgentReadsBeforeEditing),
         ("coding agent: a template that renders no tools gets them in the system message with the fenced-json call format the agent reads back; results as user messages; a template with tools renders them as before", ToolsWithoutTemplateSupport),
+        ("coding tools: tool arguments written as strings (\"false\" in any case, \"12\", \"2.5\") are read as the schema's boolean, integer and number; anything else is refused naming the argument, the type and the value; the call keeps what was sent", ToolArgumentsCoerced),
+        ("coding agent: a template that renders one call at once (a probe, no family names; Llama 3.1's real one when it is in the local store) gets a reply of several calls as replies of one call, each with its result, in order", ToolsOneCallAtOnce),
+        ("coding agent: deepseek-coder's real chat template (from the local store) renders no tools, and ChatGenerator's prompt describes every coding tool in its system text", DeepSeekPromptCarriesTools),
+        ("coding agent: an edit_file in the same reply as the file's first read_file is refused until its result is seen; a file read before, or written in that reply, is edited; tools called without replies count a read at once", AgentEditsAfterTheReadIsSeen),
+        ("coding tools: a missed edit on a short file quotes the whole file and offers write_file; a second miss on the file leads with write_file; a success or a new task starts the count again", CodingEditMissedTwice),
+        ("coding agent: the default prompt asks for the user's language; an answer without any tool call in the run gets one reminder (in English), at most one a run, none at 0", AgentRemindsAnswerWithoutTools),
     ];
 
     private static void AgentReadsBeforeEditing(Device device)
@@ -308,7 +314,7 @@ internal abstract partial class DesktopTests : Tests
 
             foreach (var answer in new[] { "Done: House.cs has three floats and a price.", "Here is the class:\n```csharp\npublic class House { public float Price { get; set; } }\n```" })
             {
-                var plain = new CodingAgent(FakeChatModel.Script(FakeChatModel.Answer(answer))).RunAsync("x", tools).GetAwaiter().GetResult();
+                var plain = new CodingAgent(FakeChatModel.Script(FakeChatModel.Answer(answer)), new AgentOptions { NoToolNudges = 0 }).RunAsync("x", tools).GetAwaiter().GetResult();
                 Check(plain is { End: CodingAgentEnd.Answered, Rounds: 1, Nudges: 0 }, $"no call-like text, no correction: '{answer[..20]}…' ended {plain.End} after {plain.Rounds} rounds");
             }
 
@@ -621,7 +627,7 @@ internal abstract partial class DesktopTests : Tests
             Check(transcript.Messages.Count == 9 && transcript.Tools.Count == 6 && transcript.Messages[^1].Content == "Greet now returns Hello.", "transcript reads back");
 
             var lazy = FakeChatModel.Script(FakeChatModel.Answer("Done!"));
-            var failed = verifier.RunAsync(new CodingAgent(lazy), suite[0], Path.Combine(root, "run2")).GetAwaiter().GetResult();
+            var failed = verifier.RunAsync(new CodingAgent(lazy, new AgentOptions { NoToolNudges = 0 }), suite[0], Path.Combine(root, "run2")).GetAwaiter().GetResult();
             Check(failed.Outcome == CodingOutcome.Failed && failed.VerifyOutput.Contains("exit code 1", StringComparison.Ordinal), $"verification fails: {failed.VerifyOutput}");
 
             var looping = FakeChatModel.Script([.. Enumerable.Repeat(FakeChatModel.ToolCall("list_files", []), 5)]);

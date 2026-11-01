@@ -225,6 +225,12 @@ public sealed class ChatGenerator(TextGenerator generator, IChatTemplate? templa
                 (messages, tools) = (ToolPrompts.WithTools(messages, tools), []);
             }
 
+            // A template that renders one call at once: a reply of several calls as replies of one call, each with its result.
+            if (messages.Any(m => m.ToolCalls is { Count: > 1 }) && !ToolPrompts.RendersSeveralCalls(Template))
+            {
+                messages = ToolPrompts.OneCallEach(messages);
+            }
+
             Template.Render(messages, tools, request.Think, text);
             prompt = text.ToString();
         }

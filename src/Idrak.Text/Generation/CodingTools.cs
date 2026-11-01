@@ -181,7 +181,7 @@ public sealed partial class CodingTools
                 Schema(("path", "string", "File path, relative to the workspace.", true),
                     ("start_line", "integer", "First line to return (1-based, default 1).", false),
                     ("end_line", "integer", "Last line to return (default: as many as fit).", false)),
-                (args, _) => Task.FromResult(Seen(Text(args, "path")!, ReadFile(Text(args, "path")!, Number(args, "start_line"), Number(args, "end_line"))))),
+                (args, _) => Task.FromResult(Seen(Text(args, "path")!, ReadFile(Text(args, "path")!, Number(args, "start_line"), Number(args, "end_line")), read: true))),
             Tool.Create("search", "Search the files of the workspace for a regular expression; returns path:line: text for each match.",
                 Schema(("pattern", "string", Example("Regular expression (.NET syntax)", Examples(e => e.SearchPatterns), " or "), true),
                     ("path", "string", "Folder or file to search, relative to the workspace (default: everything).", false),
@@ -217,25 +217,71 @@ public sealed partial class CodingTools
     // The files the task has read or written (CodingToolOptions.ReadBeforeEdit), by their full paths.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _seen = new(StringComparer.Ordinal);
 
-    /// <summary>Forgets which files were read or written, so edit_file asks for a read again (<see cref="CodingToolOptions.ReadBeforeEdit"/>); the agent calls it as each task starts.</summary>
-    public void ForgetReads() => _seen.Clear();
+    // The files read in the current reply (BeginReply): their text has not reached the model yet. And the edits whose
+    // old_text was not found, by file, this task (the second one leads its error with write_file).
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _readNow = new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, int> _missed = new(StringComparer.Ordinal);
+    private volatile bool _replies;
 
-    // `answer` (read_file's or write_file's), with the file marked as seen when it is not an error.
-    private string Seen(string path, string answer)
+    /// <summary>
+    /// Forgets which files were read or written, so edit_file asks for a read again (<see cref="CodingToolOptions.ReadBeforeEdit"/>),
+    /// and the edits that missed; the agent calls it as each task starts.
+    /// </summary>
+    public void ForgetReads()
+    {
+        _seen.Clear();
+        _readNow.Clear();
+        _missed.Clear();
+    }
+
+    /// <summary>
+    /// Tells the tools that a model's reply starts: the results of the calls before it have been given back to the model.
+    /// From the first call on, a file read counts for <see cref="CodingToolOptions.ReadBeforeEdit"/> only from the next
+    /// reply (its text is seen once its result is given back), so an edit written in the same reply as the file's first
+    /// read is refused; without it, a read counts at once. The agent calls it before each reply's calls.
+    /// </summary>
+    public void BeginReply()
+    {
+        _replies = true;
+        foreach (var full in _readNow.Keys)
+        {
+            _seen[full] = 0;
+        }
+
+        _readNow.Clear();
+    }
+
+    // `answer` (read_file's or write_file's), with the file marked as seen when it is not an error: a written file at once
+    // (the model wrote its text), a read one once the reply ends (BeginReply) when replies are told.
+    private string Seen(string path, string answer, bool read = false)
     {
         if (!answer.StartsWith(ErrorPrefix, StringComparison.Ordinal) && Resolve(path, out string full) is null)
         {
-            _seen[full] = 0;
+            if (read && _replies && !_seen.ContainsKey(full))
+            {
+                _readNow[full] = 0;
+            }
+            else
+            {
+                _seen[full] = 0;
+            }
         }
 
         return answer;
     }
 
-    // The refusal of an edit of a file the task has not read or written, or null.
-    private string? Unread(string path) =>
-        _options.ReadBeforeEdit && Resolve(path, out string full) is null && File.Exists(full) && !_seen.ContainsKey(full)
-            ? $"{ErrorPrefix}read {path} first (read_file): this task has not read it, and edit_file needs its exact text as it is now."
-            : null;
+    // The refusal of an edit of a file the task has not read or written (or read only in this reply), or null.
+    private string? Unread(string path)
+    {
+        if (!_options.ReadBeforeEdit || Resolve(path, out string full) is not null || !File.Exists(full) || _seen.ContainsKey(full))
+        {
+            return null;
+        }
+
+        return _readNow.ContainsKey(full)
+            ? $"{ErrorPrefix}edit_file was written in the same reply as read_file for {path}, before its text was seen: edit it in your next reply, from read_file's result."
+            : $"{ErrorPrefix}read {path} first (read_file): this task has not read it, and edit_file needs its exact text as it is now.";
+    }
 
     // What a tool's method answers a refusal or an error with: "Error: …" (the methods' own text, which callers of the
     // methods read as before).
@@ -455,6 +501,13 @@ public sealed partial class CodingTools
                 string hint = Count(Collapse(text), Collapse(find)) > 0
                     ? " It matches when whitespace is ignored: copy the exact indentation and line breaks from the file."
                     : " That text is not in the file: copy old_text from the file's text, not from memory.";
+                if (_missed.AddOrUpdate(full, 1, (_, n) => n + 1) > 1)
+                {
+                    // The second miss on the file this task: writing it whole is the surer way.
+                    return $"Error: old_text was not found in {path} again: use write_file with {path}'s complete new content instead (its text is below). "
+                           + $"old_text was: {Escaped(oldText)}.{hint}{Quote(text)}";
+                }
+
                 return $"Error: old_text was not found in {path}. old_text was: {Escaped(oldText)}.{hint}{Quote(text)}";
             }
 
@@ -465,6 +518,7 @@ public sealed partial class CodingTools
 
             string changed = string.Concat(text.AsSpan(0, tolerant.Start), tolerant.Replacement, text.AsSpan(tolerant.Start + tolerant.Length));
             WriteKeepingBom(full, changed);
+            _missed.TryRemove(full, out _);
             return Edited(path, full, text, tolerant.Start, tolerant.Replacement, $"1 replacement; old_text matched {tolerant.How}");
         }
 
@@ -476,6 +530,7 @@ public sealed partial class CodingTools
         int at = text.IndexOf(find, StringComparison.Ordinal);
         string updated = replaceAll ? text.Replace(find, replacement, StringComparison.Ordinal) : string.Concat(text.AsSpan(0, at), replacement, text.AsSpan(at + find.Length));
         WriteKeepingBom(full, updated);
+        _missed.TryRemove(full, out _);
         return Edited(path, full, text, at, replacement, replaceAll ? $"{count} replacements" : "1 replacement");
     }
 
@@ -545,7 +600,7 @@ public sealed partial class CodingTools
 
         var invariant = System.Globalization.CultureInfo.InvariantCulture;
         bool all = lines.Count <= _options.EditQuotedLines;
-        var sb = new StringBuilder(all ? " The file's text (without line numbers):\n```\n"
+        var sb = new StringBuilder(all ? " The whole file is quoted here (without line numbers):\n```\n"
             : string.Create(invariant, $" The file's first {_options.EditQuotedLines} lines (without line numbers):\n```\n"));
         foreach (var (start, length) in lines.Take(_options.EditQuotedLines))
         {
@@ -553,7 +608,11 @@ public sealed partial class CodingTools
         }
 
         sb.Append("```");
-        if (!all)
+        if (all)
+        {
+            sb.Append(" Or give write_file the file's complete new content instead of editing it.");
+        }
+        else
         {
             sb.Append(invariant, $"\n… {lines.Count - _options.EditQuotedLines} more lines (read_file with start_line {_options.EditQuotedLines + 1})");
         }

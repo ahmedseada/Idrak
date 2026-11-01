@@ -296,11 +296,55 @@ internal static class ToolSchema
         {
             if (properties[name] is JsonObject property && value is not null && Mismatch(property, value) is { } expected)
             {
-                return $"argument '{name}' must be {expected}";
+                string given = value.ToJsonString();
+                return $"argument '{name}' must be {expected}, not {(given.Length > 60 ? given[..60] + " …" : given)}";
             }
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// <paramref name="arguments"/> with the values a model often writes as strings turned into the type the schema asks
+    /// for: a string "true" or "false" (any case, white space around it ignored) for a boolean, a string holding an
+    /// integer (invariant digits) for an integer, a string holding a finite number for a number. Any other value is kept
+    /// (<see cref="Validate"/> then names the argument and the type). The arguments themselves are never changed: a copy
+    /// holds the coerced values, or the same object comes back when none was.
+    /// </summary>
+    public static JsonObject Coerce(JsonNode? schema, JsonObject arguments)
+    {
+        if (schema is not JsonObject s || s["properties"] is not JsonObject properties)
+        {
+            return arguments;
+        }
+
+        JsonObject? copy = null;
+        foreach (var (name, value) in arguments)
+        {
+            if (value is not JsonValue text || text.GetValueKind() != JsonValueKind.String || properties[name] is not JsonObject property
+                || Coerced(TypeOf(property), text.GetValue<string>().Trim()) is not { } coerced)
+            {
+                continue;
+            }
+
+            copy ??= (JsonObject)arguments.DeepClone();
+            copy[name] = coerced;
+        }
+
+        return copy ?? arguments;
+    }
+
+    private static JsonNode? Coerced(string? type, string text)
+    {
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+        return type switch
+        {
+            "boolean" when text.Equals("true", StringComparison.OrdinalIgnoreCase) => JsonValue.Create(true),
+            "boolean" when text.Equals("false", StringComparison.OrdinalIgnoreCase) => JsonValue.Create(false),
+            "integer" when long.TryParse(text, System.Globalization.NumberStyles.AllowLeadingSign, invariant, out long whole) => JsonValue.Create(whole),
+            "number" when double.TryParse(text, System.Globalization.NumberStyles.Float, invariant, out double number) && double.IsFinite(number) => JsonValue.Create(number),
+            _ => null,
+        };
     }
 
     // Works for parsed numbers and for values created in code (a JsonValue holding an int does not convert to long).

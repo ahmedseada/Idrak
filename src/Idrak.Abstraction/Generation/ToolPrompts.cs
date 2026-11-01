@@ -47,6 +47,95 @@ public static class ToolPrompts
         }
     }
 
+    private static readonly ConditionalWeakTable<IChatTemplate, StrongBox<bool>> ProbedCalls = new();
+
+    /// <summary>
+    /// Whether <paramref name="template"/> renders an assistant message holding two tool calls (each with its result
+    /// after it): false when it renders one call but fails on two (a template that allows a single call at once), true
+    /// otherwise (also when one call already fails: the probe then tells nothing). Probed once per template.
+    /// </summary>
+    public static bool RendersSeveralCalls(IChatTemplate template)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        return ProbedCalls.GetValue(template, t => new StrongBox<bool>(ProbeCalls(t))).Value;
+    }
+
+    private static bool ProbeCalls(IChatTemplate template)
+    {
+        var probe = new ToolDefinition(ProbeName, "A probe.", new JsonObject { ["type"] = "object", ["properties"] = new JsonObject() });
+        IReadOnlyList<ChatMessage> Conversation(int calls)
+        {
+            var messages = new List<ChatMessage> { new("user", "hello"), new("assistant", "", ToolCalls: [.. Enumerable.Range(0, calls).Select(_ => new ToolCall(ProbeName, []))]) };
+            messages.AddRange(Enumerable.Range(0, calls).Select(i => new ChatMessage("tool", i == 0 ? "one" : "two", ToolName: ProbeName)));
+            return messages;
+        }
+
+        bool Renders(int calls)
+        {
+            try
+            {
+                _ = template.Render(Conversation(calls), [probe], null);
+                return true;
+            }
+            catch (Exception e) when (e is InvalidOperationException or NotSupportedException or ArgumentException or FormatException)
+            {
+                return false;
+            }
+        }
+
+        return !Renders(1) || Renders(2);
+    }
+
+    /// <summary>
+    /// <paramref name="messages"/> with each assistant message of several tool calls split into consecutive assistant
+    /// messages of one call each, each followed by its own result (the tool messages after it, in order), for a template
+    /// that renders one call at once (<see cref="RendersSeveralCalls"/>). The text stays on the first; calls without a
+    /// result yet follow each other. The same list comes back when no message has more than one call.
+    /// </summary>
+    public static IReadOnlyList<ChatMessage> OneCallEach(IReadOnlyList<ChatMessage> messages)
+    {
+        ArgumentNullException.ThrowIfNull(messages);
+        if (!messages.Any(m => m.Role == "assistant" && m.ToolCalls is { Count: > 1 }))
+        {
+            return messages;
+        }
+
+        var result = new List<ChatMessage>(messages.Count + 4);
+        for (int i = 0; i < messages.Count; i++)
+        {
+            var message = messages[i];
+            if (message.Role != "assistant" || message.ToolCalls is not { Count: > 1 } calls)
+            {
+                result.Add(message);
+                continue;
+            }
+
+            int results = 0;
+            while (i + 1 + results < messages.Count && messages[i + 1 + results].Role == "tool")
+            {
+                results++;
+            }
+
+            for (int c = 0; c < calls.Count; c++)
+            {
+                result.Add(c == 0 ? message with { ToolCalls = [calls[0]] } : new ChatMessage("assistant", "", ToolCalls: [calls[c]]));
+                if (c < results)
+                {
+                    result.Add(messages[i + 1 + c]);
+                }
+            }
+
+            for (int extra = calls.Count; extra < results; extra++)
+            {
+                result.Add(messages[i + 1 + extra]);                         // more results than calls: kept after them, in order
+            }
+
+            i += results;
+        }
+
+        return result;
+    }
+
     /// <summary>
     /// The instructions for <paramref name="tools"/>: how to call them (one fenced json block per call, as
     /// <see cref="ToolCallText.CallsInText"/> reads them), how results come back, and each tool's name, description and

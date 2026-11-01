@@ -78,21 +78,22 @@ public sealed class ToolRegistry : IToolRegistry
         var clock = Stopwatch.StartNew();
         string? error = null;
         string content;
+        var arguments = call.Arguments;
         try
         {
             if (!_tools.TryGetValue(call.Name, out var tool))
             {
                 error = $"unknown tool '{call.Name}'; available: {string.Join(", ", _tools.Keys)}";
             }
-            else if (ToolSchema.Validate(tool.Definition.Parameters, call.Arguments) is { } invalid)
+            else if (ToolSchema.Validate(tool.Definition.Parameters, arguments = ToolSchema.Coerce(tool.Definition.Parameters, call.Arguments)) is { } invalid)
             {
-                error = invalid;
+                error = invalid;                                         // after "true", "false" and numbers in strings were read as the schema asks
             }
-            else if (_allow.TryGetValue(call.Name, out var allowed) && !allowed(call.Arguments))
+            else if (_allow.TryGetValue(call.Name, out var allowed) && !allowed(arguments))
             {
                 error = $"these arguments are not allowed for '{call.Name}'";
             }
-            else if (_approval.TryGetValue(call.Name, out var approve) && !await approve(call, cancellationToken).ConfigureAwait(false))
+            else if (_approval.TryGetValue(call.Name, out var approve) && !await approve(arguments == call.Arguments ? call : call with { Arguments = arguments }, cancellationToken).ConfigureAwait(false))
             {
                 error = $"the call to '{call.Name}' was not approved";
             }
@@ -107,7 +108,7 @@ public sealed class ToolRegistry : IToolRegistry
 
                 try
                 {
-                    content = await tool!.InvokeAsync(call.Arguments, limit.Token).ConfigureAwait(false);
+                    content = await tool!.InvokeAsync(arguments, limit.Token).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {

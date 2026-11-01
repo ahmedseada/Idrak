@@ -4542,7 +4542,9 @@ public sealed class Idrak.Abstraction.Generation.ToolFailedException : System.Ex
   public ToolFailedException(string message)
 
 public static class Idrak.Abstraction.Generation.ToolPrompts
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> OneCallEach(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages)
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> WithTools(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools)
+  public static bool RendersSeveralCalls(Idrak.Abstraction.Generation.IChatTemplate template)
   public static bool RendersTools(Idrak.Abstraction.Generation.IChatTemplate template)
   public static string Describe(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools)
 
