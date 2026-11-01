@@ -5,6 +5,11 @@ or the tests.
 
     python3 -I tools/gcn/make_gcn_golden.py tests/Idrak.Tests/data/gcn
     LLVM_MC=llvm-mc-18 LLD=ld.lld-18 python3 -I tools/gcn/make_gcn_golden.py tests/Idrak.Tests/data/gcn
+    python3 -I tools/gcn/make_gcn_golden.py tests/Idrak.Tests/data/gcn --families gfx10,gfx11
+
+--families picks the families to make (default all: gfx9, gfx10, gfx11). gfx10/forms.s and gfx11/forms.s (made by
+make_family_forms.py) give <family>/forms.golden in gfx9's format, each CPU (gfx1010 and gfx1030; gfx1100 and gfx1102)
+in both wave sizes, a record's CPU field "<mcpu>-w32" or "<mcpu>-w64" (plan 35, G8a).
 
 Needs Python 3 and LLVM with the AMDGPU target (made with LLVM 18.1): llvm-mc, ld.lld, llvm-readelf and llvm-objdump,
 named by LLVM_MC, LLD, LLVM_READELF and LLVM_OBJDUMP (defaults: those plain names on PATH). Nothing is downloaded.
@@ -37,6 +42,11 @@ import tempfile
 
 TRIPLE = "amdgcn-amd-amdhsa"
 GFX9_CPUS = ["gfx900", "gfx906", "gfx908", "gfx90a", "gfx90c", "gfx940", "gfx942"]
+# The newer families (plan 35, G8a): each CPU in both wave sizes, a record's CPU field "<mcpu>-w32" or "<mcpu>-w64".
+FAMILY_CPUS = {
+    "gfx10": [("gfx1010", 32), ("gfx1010", 64), ("gfx1030", 32), ("gfx1030", 64)],
+    "gfx11": [("gfx1100", 32), ("gfx1100", 64), ("gfx1102", 32), ("gfx1102", 64)],
+}
 KERNEL_CPU = "gfx90c"
 KERNEL_VERSIONS = [4, 5]
 METADATA_VERSIONS = {4: "amdhsa.version: [ 1, 1 ]", 5: "amdhsa.version: [ 1, 2 ]"}
@@ -145,9 +155,10 @@ def printed_items(out):
     return items
 
 
-def assemble_forms(cpu, source, workdir):
+def assemble_forms(cpu, source, workdir, wave=None):
     """One CPU's records and rejected lines: [(text, bytes or None)], [(line number, source text, reason)]."""
-    base = [LLVM_MC, f"-triple={TRIPLE}", f"-mcpu={cpu}"]
+    base = [LLVM_MC, f"-triple={TRIPLE}", f"-mcpu={cpu}"] + ([f"-mattr=+wavefrontsize{wave}"] if wave else [])
+    name = cpu if wave is None else f"{cpu}-w{wave}"
     _, _, err = run(base + ["-show-encoding", "-o", os.devnull], source)
     rejected = {}
     for line in err.split("\n"):
@@ -170,7 +181,7 @@ def assemble_forms(cpu, source, workdir):
     accepted = [item for item in items if item[0] not in rejected]
 
     printed = printed_items(checked(base + ["-show-encoding"], accepted_source))
-    object_path = os.path.join(workdir, f"forms.{cpu}.o")
+    object_path = os.path.join(workdir, f"forms.{name}.o")
     checked(base + ["-filetype=obj", "-o", object_path], accepted_source)
     with open(object_path, "rb") as f:
         data = f.read()
@@ -250,6 +261,45 @@ def make_forms(folder, version, workdir):
     return {cpu: (sum(1 for _, e in results[cpu][0] if e is not None), results[cpu][1]) for cpu in GFX9_CPUS}
 
 
+def make_family_forms(folder, family, version, workdir):
+    """A newer family's forms.golden (plan 35, G8a): <family>/forms.s for each of its CPUs in wave32 and wave64."""
+    cpus = FAMILY_CPUS[family]
+    source = read_text(os.path.join(folder, family, "forms.s"))
+    instructions = sum(1 for _, kind, _ in source_items(source) if kind == "instruction")
+    keys = [f"{cpu}-w{wave}" for cpu, wave in cpus]
+    results = {f"{cpu}-w{wave}": assemble_forms(cpu, source, workdir, wave) for cpu, wave in cpus}
+    everywhere = set.intersection(*({number for number, _, _ in rejected} for _, rejected in results.values()))
+    if everywhere:
+        sys.exit(f"{family}/forms.s lines no {family} CPU accepts in either wave size (mistakes in forms.s): {sorted(everywhere)}")
+
+    out = [
+        f"# The {family} instruction forms of {family}/forms.s as LLVM assembles them: the goldens Idrak's GCN assembler is",
+        "# checked against for the family (plan 35, G8a). Made by tools/gcn/make_gcn_golden.py with " + version + ";",
+        "# do not edit, rerun the script.",
+        "#",
+        "# The format is gfx9/forms.golden's (see it), with each CPU in both wave sizes: a record's CPU field is",
+        "# \"<mcpu>-w32\" or \"<mcpu>-w64\" (llvm-mc's -mcpu with -mattr=+wavefrontsize32 or +wavefrontsize64), and each",
+        "# such CPU's records are one block of its own. The wave64 forms are those Idrak's kernels emit; a form's wave32",
+        "# spelling follows it in forms.s, and each wave size lists the other's lines among those it rejects.",
+        "#",
+        f"# {family}/forms.s: {instructions} instruction lines. CPUs: {', '.join(keys)}.",
+    ]
+    for key in keys:
+        records, rejected = results[key]
+        out.append(f"# {key}: {sum(1 for _, e in records if e is not None)} forms, {len(rejected)} rejected")
+    for key in keys:
+        records, rejected = results[key]
+        out.append("")
+        out.append(f"# rejected: {key} ({len(rejected)} of {instructions})")
+        for number, code, reason in rejected:
+            out.append(f"#\t{number}\t{code}\t{reason}")
+        out.append(f"# {key}")
+        for printed, encoded in records:
+            out.append(f"{key}\t{printed}\t{encoded.hex() if encoded is not None else ''}")
+    write_text(os.path.join(folder, family, "forms.golden"), "\n".join(out) + "\n")
+    return {key: (sum(1 for _, e in results[key][0] if e is not None), results[key][1]) for key in keys}
+
+
 def make_kernel(folder, name, workdir):
     kernels = os.path.join(folder, "kernels")
     source = read_text(os.path.join(kernels, name + ".s"))
@@ -278,17 +328,28 @@ def make_kernel(folder, name, workdir):
 
 
 def main():
-    if len(sys.argv) != 2:
-        sys.exit("usage: python3 -I tools/gcn/make_gcn_golden.py <the data folder, tests/Idrak.Tests/data/gcn>")
-    folder = sys.argv[1]
+    arguments = sys.argv[1:]
+    families = ["gfx9", *FAMILY_CPUS]
+    if len(arguments) == 3 and arguments[1] == "--families":
+        families = arguments[2].split(",")
+        arguments = arguments[:1]
+    if len(arguments) != 1 or any(f not in ["gfx9", *FAMILY_CPUS] for f in families):
+        sys.exit("usage: python3 -I tools/gcn/make_gcn_golden.py <the data folder, tests/Idrak.Tests/data/gcn> [--families gfx9,gfx10,gfx11]")
+    folder = arguments[0]
     version = llvm_version()
+    forms, made = {}, []
     with tempfile.TemporaryDirectory(prefix="gcn-golden-") as workdir:
-        forms = make_forms(folder, version, workdir)
-        made = make_kernel(folder, "fill_f32", workdir)
+        if "gfx9" in families:
+            forms.update(make_forms(folder, version, workdir))
+            made = make_kernel(folder, "fill_f32", workdir)
+        for family in families:
+            if family != "gfx9":
+                forms.update(make_family_forms(folder, family, version, workdir))
     print(version)
     for cpu, (count, rejected) in forms.items():
         print(f"{cpu}: {count} forms, {len(rejected)} rejected")
-    print("code objects: " + ", ".join(made))
+    if made:
+        print("code objects: " + ", ".join(made))
 
 
 if __name__ == "__main__":
