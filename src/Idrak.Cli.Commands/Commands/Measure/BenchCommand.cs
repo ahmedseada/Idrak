@@ -45,6 +45,9 @@ internal sealed class BenchCommand : Command
         "      --adapter DIR     merge a LoRA or DoRA adapter first\n" +
         "      --prompt-tokens N prompt length (default 512, at most the context)\n" +
         "      --tokens N        tokens to generate (default 128)\n" +
+        "      --num-ctx N       with a model: the context window a generation may use (default the prompt and the\n" +
+        "                        tokens); a long one (32768) shows what its key/value caches hold: they grow on demand\n" +
+        "                        (IDRAK_KV_GROW=0 reserves the whole window, as before), see the memory peak\n" +
         "      --kernels LIST    without a model: matmul,gemv,attention (default all)\n" +
         "      --small           without a model: small shapes (slow devices, quick checks)\n" +
         "  -n, --repeat N        runs per measurement (default 3 with a model, 10 for kernels); the median is kept\n" +
@@ -78,7 +81,7 @@ internal sealed class BenchCommand : Command
         "  idrak b big-model --draft small-model -d cuda:0 -w int8";
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        [.. ModelChoices.ValueOptions, "--prompt-tokens", "--tokens", "--kernels", "--repeat", "--save", "--compare", "--devices", "--draft", "--draft-tokens", .. WarmupOptions];
+        [.. ModelChoices.ValueOptions, "--prompt-tokens", "--tokens", "--num-ctx", "--kernels", "--repeat", "--save", "--compare", "--devices", "--draft", "--draft-tokens", .. WarmupOptions];
 
     // The kernel benchmarks' warm-up options (BenchSettle).
     private static readonly string[] WarmupOptions = ["--warmup", "--warmup-calls", "--settle", "--settle-rounds", "--warmup-round"];
@@ -288,12 +291,15 @@ internal sealed class BenchCommand : Command
 
         string prompt = Prompt(tokenizer, promptTokens);
         string kv = choice.Kv ?? "float32";
-        var generator = model.CreateGenerator(KeyValueLayouts.Get(kv), promptTokens + tokens + 1);
+        int window = Math.Min(Math.Max(context.IntOption("--num-ctx", promptTokens + tokens + 1), promptTokens + tokens + 1), model.MaxPositions);
+        var generator = model.CreateGenerator(KeyValueLayouts.Get(kv), window);
         generator.KeepCache = false;                                    // every run reads its whole prompt again
         var options = new GenerationOptions
         {
-            TopK = 1, Temperature = 1f, RepeatPenalty = 1f, Seed = 0, NumPredict = tokens, NumCtx = promptTokens + tokens + 1,
+            TopK = 1, Temperature = 1f, RepeatPenalty = 1f, Seed = 0, NumPredict = tokens, NumCtx = window, SlideContext = false,
         };
+        var caches = new CacheEvents();
+        using var cacheEvents = Telemetry.Subscribe(caches);
 
         context.Write(string.Create(CultureInfo.InvariantCulture, $"{choice.Model} on {device} ({device.Name}): {model.Spec.ParameterCount / 1e6:F1}M parameters, weights {choice.Weights ?? "as stored"}, KV cache {kv}"));
         context.Write($"  prompt {promptTokens} tokens, {tokens} generated, {repeats} run(s) after a warm-up");
@@ -321,6 +327,7 @@ internal sealed class BenchCommand : Command
             : [];
 
         var memory = ComputeResources.GetMemoryUsage(device);
+        cacheEvents.Dispose();
         double promptRate = Median(prompts), generationRate = Median(generated);
         double flopsPerToken = 2.0 * model.Spec.ActiveParameterCount;                  // with experts, only those a token goes through
         document["settings"] = new JsonObject
@@ -331,6 +338,8 @@ internal sealed class BenchCommand : Command
             ["generated_tokens"] = measuredGenerated,
             ["repeat"] = repeats,
             ["parameters"] = model.Spec.ParameterCount,
+            ["num_ctx"] = window,
+            ["kv_grow"] = DecodingContext.DefaultGrowCaches,
         };
         document["memory"] = new JsonObject
         {
@@ -338,6 +347,9 @@ internal sealed class BenchCommand : Command
             ["in_use_bytes"] = memory.InUse,
             ["cached_bytes"] = memory.Cached,
             ["limit_bytes"] = memory.Limit,
+            ["peak_bytes"] = memory.Peak,
+            ["cache_bytes"] = caches.Largest,
+            ["cache_growths"] = caches.Growths,
         };
         return
         [
@@ -348,8 +360,57 @@ internal sealed class BenchCommand : Command
             new BenchResult("weights memory", weights / 1048576.0, "MiB", false, "on the device after loading"),
             new BenchResult("memory in use", memory.InUse / 1048576.0, "MiB", false,
                 memory.Limit is { } limit ? string.Create(CultureInfo.InvariantCulture, $"of {limit / 1048576.0:F0} MiB") : "after the runs"),
+            new BenchResult("memory peak", memory.Peak / 1048576.0, "MiB", false, "the most in use on the device since the start"),
+            new BenchResult("KV cache", caches.Largest / 1048576.0, "MiB", false,
+                string.Create(CultureInfo.InvariantCulture, $"a generation's caches at their largest, window {window}, {(DecodingContext.DefaultGrowCaches ? $"grown {caches.Growths} times" : "reserved whole (IDRAK_KV_GROW=0)")}")),
             .. drafted,
         ];
+    }
+
+    // The key/value caches' sizes from the library's telemetry (rule 78): a generation's caches as made (a run of
+    // allocations starts a generation's set) and grown (each growth adds its layer's new bytes less its old, the slots
+    // doubling from the largest made), the largest a generation held, and how many times a cache grew.
+    private sealed class CacheEvents : ITelemetryHook
+    {
+        private readonly Lock _gate = new();
+        private InferenceStageKind? _last;
+        private long _now, _slots, _from;
+
+        public TelemetryLevel Levels => TelemetryLevel.Stages;
+
+        public long Largest { get; private set; }
+
+        public int Growths { get; private set; }
+
+        public void OnInferenceStage(in InferenceStage e)
+        {
+            lock (_gate)
+            {
+                if (e.Stage == InferenceStageKind.CacheAllocation)
+                {
+                    if (_last != InferenceStageKind.CacheAllocation)
+                    {
+                        (_now, _slots) = (0, 0);                            // a generation's caches are made anew
+                    }
+
+                    _now += e.Bytes;
+                    _slots = Math.Max(_slots, e.Count);
+                }
+                else if (e.Stage == InferenceStageKind.CacheGrowth)
+                {
+                    if (e.Count > _slots)
+                    {
+                        (_from, _slots) = (_slots, e.Count);                // a growth of every cache to these slots begins
+                    }
+
+                    Growths++;
+                    _now += e.Count > 0 ? e.Bytes - e.Bytes * _from / e.Count : 0;
+                }
+
+                _last = e.Stage;
+                Largest = Math.Max(Largest, _now);
+            }
+        }
     }
 
     // --draft: the same generations with DRAFT proposing tokens (speculative decoding, GenerationOptions.Draft): its first run

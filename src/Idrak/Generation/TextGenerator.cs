@@ -140,14 +140,16 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
 
     private (List<IAttentionCacheInfo> Layers, bool PositionAware)? _attention;
 
-    // Bytes the attention layers' key/value caches take once `decoding` makes them at its first step (none once made): what
-    // the device's free memory holds besides the prompt's pass.
-    private long CachesToCome(DecodingContext decoding)
+    // Bytes the attention layers' key/value caches take once `decoding` makes them for a prompt's pass of `length` positions
+    // (their slots for it while caches grow; none once made): what the device's free memory holds besides the prompt's pass.
+    private long CachesToCome(DecodingContext decoding, int length)
     {
         if (decoding.CacheBytes > 0)
         {
             return 0;
         }
+
+        int capacity = Math.Max(decoding.CacheSlots, decoding.SlotsFor(decoding.Length + length));
 
         var layout = decoding.Layout;
         long Bytes(long rows, int headDim) => rows * (2L * layout.RowWidth(headDim) + (layout is IScaledLayout ? 2 : 0)) * sizeof(float);
@@ -155,7 +157,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
         foreach (var attention in Attention.Layers)
         {
             int slots = decoding.SlidingWindowSteps > 0 && attention.SlidingWindow is { } window
-                ? Math.Min(decoding.Capacity, window - 1 + decoding.SlidingWindowSteps) : decoding.Capacity;
+                ? Math.Min(capacity, window - 1 + decoding.SlidingWindowSteps) : capacity;
             bytes += Bytes((long)decoding.Batch * attention.KvHeads * slots, attention.HeadDim);
         }
 
@@ -191,7 +193,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
             free = Math.Min(free, limit - usage.InUse);
         }
 
-        long room = (long)((free - CachesToCome(decoding)) * ComputeResources.WorkspaceShare);
+        long room = (long)((free - CachesToCome(decoding, length)) * ComputeResources.WorkspaceShare);
         int least = options.PrefillMinChunk > 0 ? options.PrefillMinChunk : PositionsVariable(GenerationOptions.PrefillMinChunkVariable) is int given and > 0 ? given
             : GenerationOptions.DefaultPrefillMinChunk;
         return PieceOf(room, decoding.Batch * PositionWidth * sizeof(float), least, length);
@@ -229,6 +231,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(piece);
         int layers = CachedLayers;
         var (_, size) = PieceShape(length, piece);
+        decoding.Reserve(decoding.Length + length);                        // caches that grow do so once for the whole prompt
         float[] buffer = ArrayPool<float>.Shared.Rent(rows * size);
         try
         {
@@ -798,6 +801,13 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                     }
                 }
 
+                // Caches that grew since the step was recorded are new storage: it is recorded again (log2 times a reply).
+                if (graph is not null && (decoding.Reserve(decoding.Length + 1) | !decoding.IsCurrent(graph)))
+                {
+                    graph.Dispose();
+                    graph = null;
+                }
+
                 if (graph is null && options.UseGraph && steppedOnce && sampler.Recordable && decoding.Recordable && StepsRecordable)
                 {
                     graph = decoding.CaptureStep(Step);
@@ -1217,6 +1227,13 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                     {
                         // The first step runs as it is: the device measures its card-dependent choices for these
                         // shapes (which it cannot while recording), and the graph recorded from the second step keeps them.
+                        // Caches that grew since the step was recorded are new storage: it is recorded again (log2 times a reply).
+                        if (graph is not null && (decoding.Reserve(decoding.Length + 1) | !decoding.IsCurrent(graph)))
+                        {
+                            graph.Dispose();
+                            graph = null;
+                        }
+
                         if (graph is null && options.UseGraph && steppedOnce && sampler.Recordable && decoding.Recordable && StepsRecordable)
                         {
                             graph = decoding.CaptureStep(Step);

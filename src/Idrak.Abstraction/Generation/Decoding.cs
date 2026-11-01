@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Runtime.CompilerServices;
 using Idrak.Abstraction.Diagnostics;
 
 namespace Idrak.Abstraction.Generation;
@@ -105,22 +106,60 @@ public sealed class KeyValueCache : IDisposable
     /// Cached keys, [batch·heads, capacity, headDim] (packed bytes for int8, bfloat16 pairs for bfloat16; a format of one's
     /// own: [batch·heads, capacity, <see cref="IKeyValueLayout.RowWidth"/>]).
     /// </summary>
-    public Tensor Keys { get; }
+    public Tensor Keys { get; private set; }
 
     /// <summary>Cached values, [batch·heads, capacity, headDim] (packed bytes for int8).</summary>
-    public Tensor Values { get; }
+    public Tensor Values { get; private set; }
 
     /// <summary>For int8 (or another <see cref="IScaledLayout"/>): the scale of each cached key row, [batch·heads, capacity].</summary>
-    public Tensor? KeyScales { get; }
+    public Tensor? KeyScales { get; private set; }
 
     /// <summary>For int8 (or another <see cref="IScaledLayout"/>): the scale of each cached value row, [batch·heads, capacity].</summary>
-    public Tensor? ValueScales { get; }
+    public Tensor? ValueScales { get; private set; }
 
     /// <summary>Device memory used, in bytes.</summary>
     public long Bytes => 4L * (Keys.Size + Values.Size + (KeyScales?.Size ?? 0) + (ValueScales?.Size ?? 0));
 
-    /// <summary>Positions the cache holds (its slots).</summary>
+    /// <summary>
+    /// Positions the cache holds now (its slots): what its context needed so far, rounded up, while its caches grow on
+    /// demand (<see cref="DecodingContext.GrowCaches"/>), never more than the context's <see cref="DecodingContext.Capacity"/>.
+    /// </summary>
     public int Capacity => Keys.Shape[1];
+
+    // Grows the cache to `capacity` slots: per tensor one zeroed allocation and one copy of every slot it held (Copy2D, row
+    // by row), the old storage freed at once. The positions keep their slots, so what attention reads is unchanged.
+    internal void Grow(int capacity)
+    {
+        if (capacity <= Capacity)
+        {
+            return;
+        }
+
+        Keys = Grown(Keys, capacity);
+        Values = Grown(Values, capacity);
+        KeyScales = KeyScales is null ? null : Grown(KeyScales, capacity);
+        ValueScales = ValueScales is null ? null : Grown(ValueScales, capacity);
+
+        static Tensor Grown(Tensor rows, int capacity)
+        {
+            int n = rows.Shape[0], old = rows.Shape[1], inner = rows.Size / (n * old);
+            int[] shape = [.. rows.Shape];
+            shape[1] = capacity;
+            var grown = Tensor.Empty(shape, rows.Device, zeroed: true, track: false);
+            try
+            {
+                rows.Backend.Copy2D(rows.Storage, 0, old * inner, grown.Storage, 0, capacity * inner, n, old * inner, accumulate: false);
+            }
+            catch
+            {
+                grown.Dispose();
+                throw;
+            }
+
+            rows.Dispose();
+            return grown;
+        }
+    }
 
     // The window this cache slides with (DecodingContext.SlidingWindowSteps), or null for a cache of the context's capacity.
     internal SlidingWindow? Sliding { get; init; }
@@ -176,6 +215,13 @@ public sealed class KeyValueCache : IDisposable
 public sealed class DecodingContext : IDisposable
 {
     private readonly Dictionary<object, KeyValueCache> _caches = new(ReferenceEqualityComparer.Instance);
+
+    // The slots the caches of the context's capacity hold now (0 before the first step), and the growths each recorded
+    // step was recorded at (a step recorded before a growth reads freed caches: ReplayStep refuses it).
+    private int _slots;
+    private readonly ConditionalWeakTable<ComputeGraph, StrongBox<int>> _recordedAt = new();
+    private bool _grow = DefaultGrowCaches;
+    private int _growthStart = DefaultGrowthStart;
 
     // What the layout can do, tested once (IRecordableLayout, ISlidingWindowLayout).
     private readonly bool _recordableLayout, _slidingLayout;
@@ -242,6 +288,143 @@ public sealed class DecodingContext : IDisposable
 
     /// <summary>How keys and values are cached and attended over.</summary>
     public IKeyValueLayout Layout { get; }
+
+    /// <summary>The variable <see cref="DefaultGrowCaches"/> is read from: "IDRAK_KV_GROW" ("0" reserves every cache's whole capacity).</summary>
+    public const string GrowVariable = "IDRAK_KV_GROW";
+
+    /// <summary>The positions a new context's first caches round up to (<see cref="GrowthStart"/>): 256 unless the app sets it.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Below 1.</exception>
+    public static int DefaultGrowthStart
+    {
+        get => s_growthStart;
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value);
+            s_growthStart = value;
+        }
+    }
+
+    private static int s_growthStart = 256;
+
+    /// <summary>
+    /// Whether new contexts grow their caches on demand (<see cref="GrowCaches"/>): true unless the environment variable
+    /// IDRAK_KV_GROW is "0" (or the app sets it).
+    /// </summary>
+    public static bool DefaultGrowCaches { get; set; } = Environment.GetEnvironmentVariable(GrowVariable) is not "0";
+
+    /// <summary>
+    /// Whether the caches of the context's capacity grow on demand (the default, <see cref="DefaultGrowCaches"/>): each is
+    /// made for what the first step needs (its positions and one more, rounded up to <see cref="GrowthStart"/>) and doubles,
+    /// up to <see cref="Capacity"/>, when a step needs more (one allocation and one copy per tensor, <see cref="CacheGrowths"/>
+    /// counts them), so a short request on a long context holds a short cache. False reserves the whole capacity at once.
+    /// A sliding window's cache (<see cref="SlidingWindowSteps"/>) keeps its own size either way. Set before the first step.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Caches were made already.</exception>
+    public bool GrowCaches
+    {
+        get => _grow;
+        set
+        {
+            if (_caches.Count > 0 && value != _grow)
+            {
+                throw new InvalidOperationException("GrowCaches is set before the first step (the caches are made with it).");
+            }
+
+            _grow = value;
+        }
+    }
+
+    /// <summary>The positions a first cache rounds up to while caches grow (<see cref="GrowCaches"/>): <see cref="DefaultGrowthStart"/> unless set.</summary>
+    /// <exception cref="ArgumentOutOfRangeException">Below 1.</exception>
+    public int GrowthStart
+    {
+        get => _growthStart;
+        set
+        {
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(value);
+            _growthStart = value;
+        }
+    }
+
+    /// <summary>The slots the caches of the context's capacity hold now: 0 before the first step, <see cref="Capacity"/> when they do not grow.</summary>
+    public int CacheSlots => _slots;
+
+    /// <summary>How many times the caches grew (<see cref="GrowCaches"/>); a step recorded before a growth is recorded again.</summary>
+    public int CacheGrowths { get; private set; }
+
+    /// <summary>
+    /// The slots caches would hold for <paramref name="positions"/> positions from nothing: the positions and one more,
+    /// rounded up to <see cref="GrowthStart"/>, at most <see cref="Capacity"/>; <see cref="Capacity"/> when caches do not grow.
+    /// </summary>
+    public int SlotsFor(int positions)
+    {
+        if (!_grow)
+        {
+            return Capacity;
+        }
+
+        long wanted = (Math.Max(0, (long)positions) + 1 + _growthStart - 1) / _growthStart * _growthStart;
+        return (int)Math.Min(Capacity, wanted);
+    }
+
+    /// <summary>
+    /// Makes room for <paramref name="positions"/> positions in the caches of the context's capacity (at most
+    /// <see cref="Capacity"/>): grows them when they hold fewer (at least doubling, so a reply of n tokens grows them about
+    /// log2(n) times). Returns true when they grew: a step recorded before (<see cref="CaptureStep"/>) reads the freed caches
+    /// and is recorded again (<see cref="IsCurrent"/>). A step grows them itself as it begins; call this before recording or
+    /// replaying a step, or before a long prompt goes through in pieces (one growth for the whole prompt).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">They would grow while a step is being recorded.</exception>
+    public bool Reserve(int positions)
+    {
+        positions = Math.Min(positions, Capacity);
+        if (positions <= _slots)
+        {
+            return false;
+        }
+
+        int slots = _slots == 0 ? SlotsFor(positions) : (int)Math.Min(Capacity, Math.Max(SlotsFor(positions), 2L * _slots));
+        if (_slots == 0 || !_caches.Values.Any(c => c.Sliding is null))
+        {
+            _slots = slots;                                              // no cache made yet: the first ones are made at this size
+            return false;
+        }
+
+        if (ComputeGraph.IsCapturing)
+        {
+            throw new InvalidOperationException($"The caches would grow from {_slots} to {slots} slots while a step is recorded: call Reserve before CaptureStep.");
+        }
+
+        using (Device.Backend.LongLivedAllocations())                      // a read's caches live as long as it
+        {
+            foreach (var cache in _caches.Values)
+            {
+                if (cache.Sliding is null && cache.Capacity < slots)
+                {
+                    long start = Telemetry.StartStage();
+                    cache.Grow(slots);
+                    Telemetry.InferenceStage(InferenceStageKind.CacheGrowth, Device, start, slots, cache.Bytes);
+                }
+            }
+        }
+
+        _slots = slots;
+        CacheGrowths++;
+        _mask?.Dispose();
+        _mask = null;
+        return true;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="graph"/>, a step recorded on this context (<see cref="CaptureStep"/>), still reads its caches:
+    /// false once they grew since (<see cref="Reserve"/>), when it is recorded again; always true for a step that is re-run
+    /// at each replay (a device without graphs: <see cref="ComputeGraph.IsRecorded"/> false), which grows them itself.
+    /// </summary>
+    public bool IsCurrent(ComputeGraph graph)
+    {
+        ArgumentNullException.ThrowIfNull(graph);
+        return !graph.IsRecorded || _recordedAt.TryGetValue(graph, out var at) && at.Value == CacheGrowths;   // a step re-run (no device graph) reads them anew
+    }
 
     /// <summary>Device memory used by the key/value caches created so far, in bytes.</summary>
     public long CacheBytes => _caches.Values.Sum(c => c.Bytes);
@@ -516,10 +699,11 @@ public sealed class DecodingContext : IDisposable
     }
 
     /// <summary>
-    /// The current step's [newSteps, capacity] causal mask, or null outside a step. Built on first use (the tiled and
+    /// The current step's [newSteps, slots] causal mask over the caches of the context's capacity (their
+    /// <see cref="CacheSlots"/>), or null outside a step. Built on first use (the tiled and
     /// decoding attention kernels never need it: for a long prompt it would be newSteps × capacity floats).
     /// </summary>
-    public Tensor? Mask => InStep ? _mask ??= Tensor.DecoderMask(Position, _steps, Capacity, track: false) : null;
+    public Tensor? Mask => InStep ? _mask ??= Tensor.DecoderMask(Position, _steps, _slots, track: false) : null;
 
     private Tensor? _mask;
     private int _steps;
@@ -724,6 +908,7 @@ public sealed class DecodingContext : IDisposable
             throw new InvalidOperationException($"Decoding past the context capacity ({Capacity}); call Reset and re-feed a shorter window.");
         }
 
+        Reserve(Length + steps);                                          // the caches grow before the step, never during it
         Slide(steps);
         _steps = steps;
         InStep = true;
@@ -848,11 +1033,13 @@ public sealed class DecodingContext : IDisposable
             throw new InvalidOperationException("Rows with different rotary offsets (images placed differently), or rotary offsets with row starts, upload their rotary positions from the host and cannot be recorded.");
         }
 
+        Reserve(Length + 1);                          // the caches grow now: the recording cannot
         Slide(1);                                     // a sliding window moves now: the recording cannot
         int length = Length;
         var graph = ComputeGraph.Capture(Device, step, "a decoding step");
         Length = length;   // recording does not execute the step
         ClearStep();
+        _recordedAt.AddOrUpdate(graph, new StrongBox<int>(CacheGrowths));
         return graph;
     }
 
@@ -889,9 +1076,16 @@ public sealed class DecodingContext : IDisposable
     /// <summary>Replays a step recorded with <see cref="CaptureStep"/> and advances the host-side length.</summary>
     public void ReplayStep(ComputeGraph graph, int steps = 1)
     {
+        ArgumentNullException.ThrowIfNull(graph);
         if (Length + steps > Capacity)
         {
             throw new InvalidOperationException($"Decoding past the context capacity ({Capacity}); call Reset and re-feed a shorter window.");
+        }
+
+        if (graph.IsRecorded && (Length + steps > _slots || !IsCurrent(graph)))
+        {
+            throw new InvalidOperationException($"The step was recorded over caches of {_slots} slots that have grown since or must grow for position {Length + steps} "
+                + "(DecodingContext.GrowCaches): call Reserve, and record the step again when it returns true or IsCurrent is false.");
         }
 
         Slide(steps);
@@ -961,12 +1155,17 @@ public sealed class DecodingContext : IDisposable
         if (!_caches.TryGetValue(owner, out var cache))
         {
             long start = Telemetry.StartStage();
-            using (Device.Backend.LongLivedAllocations())                  // a read's caches live as long as it
+            if (_slots == 0)
             {
-                _caches[owner] = cache = new KeyValueCache(rows, Capacity, headDim, Device, Layout);
+                _slots = SlotsFor(Length + Math.Max(1, _steps));          // made outside a step: what the next one needs
             }
 
-            Telemetry.InferenceStage(InferenceStageKind.CacheAllocation, Device, start, Capacity, cache.Bytes);
+            using (Device.Backend.LongLivedAllocations())                  // a read's caches live as long as it
+            {
+                _caches[owner] = cache = new KeyValueCache(rows, _slots, headDim, Device, Layout);
+            }
+
+            Telemetry.InferenceStage(InferenceStageKind.CacheAllocation, Device, start, _slots, cache.Bytes);
         }
 
         return cache;

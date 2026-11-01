@@ -282,7 +282,7 @@ public enum InferenceStageKind
     /// <summary>A decoding step recorded as a device graph: Bytes the memory the graph keeps.</summary>
     GraphCapture,
 
-    /// <summary>A layer's key/value cache allocated: Count its positions, Bytes its memory.</summary>
+    /// <summary>A layer's key/value cache allocated: Count its positions (its slots, what the step needs while caches grow), Bytes its memory.</summary>
     CacheAllocation,
 
     /// <summary>A sound file's bytes decoded to samples: Count the samples (every channel), Bytes the encoded bytes.</summary>
@@ -306,6 +306,12 @@ public enum InferenceStageKind
     /// the round kept Count - 1 of PieceSize - 1 proposals.
     /// </summary>
     Verify,
+
+    /// <summary>
+    /// A layer's key/value cache grown on demand (<c>DecodingContext.GrowCaches</c>: one allocation and one copy): Count its
+    /// positions now, Bytes its memory now.
+    /// </summary>
+    CacheGrowth,
 }
 
 /// <summary>

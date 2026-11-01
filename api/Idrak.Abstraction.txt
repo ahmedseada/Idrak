@@ -2461,6 +2461,7 @@ public enum Idrak.Abstraction.Diagnostics.InferenceStageKind : int
   AudioDecode = 7
   AudioFeatures = 9
   CacheAllocation = 6
+  CacheGrowth = 12
   DecodeChunk = 4
   Draft = 10
   Encoder = 2
@@ -3440,16 +3441,26 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public System.Collections.Generic.IReadOnlyList<int>? RotaryOffsets { get; }
   public System.Collections.Generic.IReadOnlyList<int>? RowStarts { get; }
   public System.Threading.CancellationToken Cancellation { get; set; }
+  public bool GrowCaches { get; set; }
   public bool InStep { get; }
+  public bool IsCurrent(Idrak.Abstraction.ComputeGraph graph)
   public bool LastPositionOnly { get; set; }
   public bool Recordable { get; }
+  public bool Reserve(int positions)
+  public const string GrowVariable = "IDRAK_KV_GROW"
   public int Batch { get; }
+  public int CacheGrowths { get; }
+  public int CacheSlots { get; }
   public int Capacity { get; }
+  public int GrowthStart { get; set; }
   public int Length { get; }
   public int LengthOf(Idrak.Abstraction.Generation.KeyValueCache cache)
   public int SlidingWindowSteps { get; set; }
+  public int SlotsFor(int positions)
   public long CacheBytes { get; }
   public long MemoryBytes { get; }
+  public static bool DefaultGrowCaches { get; set; }
+  public static int DefaultGrowthStart { get; set; }
   public void BeginStep(int steps)
   public void CancelStep()
   public void ClearMemory()

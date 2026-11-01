@@ -204,13 +204,14 @@ internal abstract partial class DesktopTests : Tests
             var json = IdrakJson(cache, [.. args, "--save", "first"]);
             Check((string?)json["kind"] == "model", json.ToJsonString());
             var names = json["results"]!.AsArray().Select(r => (string)r!["name"]!).ToList();
-            Check(names.SequenceEqual(["prompt", "generation", "prompt GFLOP/s", "generation GFLOP/s", "weights memory", "memory in use"]), string.Join(", ", names));
+            Check(names.SequenceEqual(["prompt", "generation", "prompt GFLOP/s", "generation GFLOP/s", "weights memory", "memory in use", "memory peak", "KV cache"]),
+                $"the bench's results, the memory peak and the KV caches' size at their largest included: {string.Join(", ", names)}");
             Check(json["results"]!.AsArray().Take(4).All(r => (double)r!["value"]! > 0), "speeds above 0");
             Check((long)json["memory"]!["weights_bytes"]! > 0 && (int)json["settings"]!["generated_tokens"]! > 0, json.ToJsonString());
             Check(File.Exists(Path.Combine(cache, "bench", "first.json")), "saved under the cache folder");
 
             var compared = IdrakJson(cache, [.. args, "--compare", "first"]);
-            Check(compared["compare"]!["results"]!.AsArray().Count == 6 && (string?)compared["compare"]!["name"] == "first", compared.ToJsonString());
+            Check(compared["compare"]!["results"]!.AsArray().Count == 8 && (string?)compared["compare"]!["name"] == "first", compared.ToJsonString());
             var (code, text, _) = MeasureIdrak(cache, [.. args, "--compare", "first"]);
             Check(code == 0 && text.Contains("generation") && text.Contains("Against 'first'"), text);
         }
@@ -230,8 +231,8 @@ internal abstract partial class DesktopTests : Tests
                 "--devices", devices);
             int expected = 4 * devices.Split(',').Length;
             var runs = json["runs"]!.AsArray();
-            Check(runs.Count == expected && runs.All(r => r!["error"] is null && r["results"]!.AsArray().Count == 6), json.ToJsonString());
-            Check(json["results"]!.AsArray().Count == expected * 6 && json["results"]!.AsArray().All(r => r!["run"] is not null), "every result names its run");
+            Check(runs.Count == expected && runs.All(r => r!["error"] is null && r["results"]!.AsArray().Count == 8), json.ToJsonString());
+            Check(json["results"]!.AsArray().Count == expected * 8 && json["results"]!.AsArray().All(r => r!["run"] is not null), "every result names its run");
             Check(runs.Select(r => (string)r!["label"]!).Distinct().Count() == expected, "labels differ");
 
             var (code, text, _) = MeasureIdrak(cache, "bench", "--small", "-n", "1", "--kernels", "matmul", "--devices", devices);
