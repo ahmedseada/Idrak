@@ -20,11 +20,16 @@ namespace Idrak.Gpu.Hip;
 //   one element a work-item), generalized to several written buffers, loads and stores gated by a flag bit (an optional
 //   gradient is never touched), the element's index (dropout's hash) and its group (i / inner mod groups, by LLVM's
 //   unsigned division through a reciprocal made once). "Single" kernels (sum_axis_f32, scatter_walk_f32,
-//   clip_factor_f32) take the tail alone: one element a work-item, grid-stride. Every product, quotient and sum is the
+//   clip_factor_f32; sum_axis_rows_f32 and attn_bwd_d_f32 in their own frames, CUDA's) take the tail alone: one element
+//   (a row's lane, a row) a work-item, grid-stride. Every product, quotient and sum is the
 //   CPU's, in the CPU's order (its vector path where it has one): exact where the CPU's arithmetic is.
 // - Rows (RowWriter, GcnKernels.Rows.cs): one block of 256 a row, grid-stride, the block's sums in RowWriter's fixed LDS
 //   tree; the whole sum, the sums of squares and the chunks of the split group reductions write one value a block that a
-//   second launch adds in block (chunk) order: never atomics, the same bits on every grid and device (rule 86).
+//   second launch adds in block (chunk) order: never atomics, the same bits on every grid and device (rule 86). Every sum
+//   is grouped as CUDA's kernel of the same name groups it (plan 35's training order): CUDA's halving tree where CUDA's
+//   kernel has one (sum_f32, the group statistics and sums: RowWriter.Reduce), CUDA's BlockReduce (each 32 threads'
+//   butterfly, then the 8 warps in order: RowWriter.ReduceAdd) where CUDA's has that (the sums of squares, sum_blocks_f32,
+//   softmax_bwd_f32, rms_norm_backward_f32, the weight norms), each thread's own sum over its elements in CUDA's order.
 // - Columns (sum_rows_f32, sum_cols_strided_f32): a thread a column, rows in order (eight rows' loads in flight a step,
 //   rule 80, then added in row order: the same bits); chunks of rows in grid y store partials that fold_chunks_f32
 //   (GcnKernels.Rows.cs) adds in chunk order.
@@ -78,7 +83,7 @@ namespace Idrak.Gpu.Hip;
 // | sum_blocks_f32         | partials, out; count, scale, accumulate, n                                  | 1                                   | partial               | 1     | 4     |
 // | sumsq_f32              | x, total, partials; count, direct, n                                        | n = min(ceil(count/256), 1024)      | element               | 2     | 4     |
 // | sum_axis_f32           | x, y; dim, inner, scale, accumulate, n                                      | single, n = outer x inner           | element of x          | 1     | 4     |
-// | sum_axis_rows_f32      | x, y; dim, scale, accumulate, n                                             | rows (or fewer), n = outer          | element of x          | 1     | 4     |
+// | sum_axis_rows_f32      | x, y; dim, scale, accumulate, n                                             | single, n = outer x 32 (32 a row)   | element of x          | 1     | 4     |
 // | broadcast_axis_f32     | dy, dx; diminner, inner, scale, n                                           | element-wise over dx                | element of dx         | 2     | 12    |
 // | scatter_chain_u32      | indices, chain; count, maxindex, n                                          | ceil(count/256) (or fewer)          | position x position   | 0     | 0.02  |
 // | scatter_walk_f32       | dy, chain, indices, dtable; dim, maxindex, count, n                         | single, n = count x dim             | element of dy         | 1     | 12    |
@@ -92,7 +97,7 @@ namespace Idrak.Gpu.Hip;
 // | group_scale_shift_f32  | x, scale, shift, y; groups, inner, flags, n                                 | element-wise                        | element               | 2     | 16    |
 // | weight_norm_f32        | gain, direction, weight; cols, n                                            | rows (or fewer)                     | element               | 3     | 12    |
 // | weight_norm_bwd_f32    | gain, direction, dweight, dgain, ddirection; cols, flags, n                 | rows (or fewer)                     | element               | 8     | 24    |
-// | attn_bwd_d_f32         | o, dout, dd; dim, n                                                         | rows (or fewer)                     | element               | 2     | 8     |
+// | attn_bwd_d_f32         | o, dout, dd; dim, n                                                         | single, n = rows (a work-item a row) | element              | 2     | 8     |
 // | attn_bwd_q_f32         | q, keys, values, dout, lse, delta, dq, dk, dv; rph, steps, cap, dim, scale, window, softcap, n | rows (or fewer) | row x position x dim | 6 | 8 |
 // | attn_bwd_kv_f32        | (as attn_bwd_q_f32), n = heads x cap                                        | key positions (or fewer)            | row x position x dim  | 8     | 8     |
 // | attn_spans_bwd_q_f32   | q, keys, values, starts, ends, dout, lse, delta, dq, dk, dv; rows, keyrows, dim, scale, group, hpt, softcap, heads, n | rows (or fewer) | row x key x dim | 6 | 8 |
@@ -109,6 +114,9 @@ internal static partial class GcnKernels
 
     /// <summary>Elements one chunk of the many-tensor AdamW takes (CUDA's 4,096): a block a chunk.</summary>
     internal const int MultiAdamChunk = 4096;
+
+    /// <summary>Work-items a row of <c>sum_axis_rows_f32</c> takes (CUDA's warp, <c>PtxKernels.WarpLanes</c>): its n is rows · this.</summary>
+    internal const int SumAxisRowLanes = 32;
 
     /// <summary>Elements a split group reduction's block takes (CUDA's GroupChunk): 32 a thread of the block.</summary>
     internal const int GroupChunk = 32 * RowThreads;
@@ -1381,7 +1389,8 @@ internal static partial class GcnKernels
 
     // ---- Row backward passes ------------------------------------------------------------------------------------------
 
-    // Softmax: dx += y · (dy - Σ dy · y); log-softmax: dx += dy - e^y · Σ dy (the CPU's vector path), one block a row.
+    // Softmax: dx += y · (dy - Σ dy · y); log-softmax: dx += dy - e^y · Σ dy, one block a row. The sum in CUDA's order
+    // (plan 35's training order): each thread's dy · y rounded, then added, over its columns in order; CUDA's BlockReduce.
     private static GcnKernelSource SoftmaxBackward()
     {
         var w = new RowWriter("softmax_bwd_f32", arrays: 1);
@@ -1399,12 +1408,12 @@ internal static partial class GcnKernels
         w.L($"s_cmp_lg_u32 {log}, 0");
         w.L($"s_cbranch_scc1 .Lsum_log");
         w.Columns(cols, e => $"global_load_dword {ys[e.K]}, {e.Off}, {yb}{e.Imm}\nglobal_load_dword {gs[e.K]}, {e.Off}, {gb}{e.Imm}",
-            e => $"v_fma_f32 {sum}, {gs[e.K]}, {ys[e.K]}, {sum}");
+            e => $"v_mul_f32_e32 {ts[e.K]}, {gs[e.K]}, {ys[e.K]}\nv_add_f32_e32 {sum}, {sum}, {ts[e.K]}");
         w.L($"s_branch .Lsummed");
         w.Label(".Lsum_log");
         w.Columns(cols, e => $"global_load_dword {gs[e.K]}, {e.Off}, {gb}{e.Imm}", e => $"v_add_f32_e32 {sum}, {sum}, {gs[e.K]}");
         w.Label(".Lsummed");
-        w.Reduce(RowWriter.Add, sum);
+        w.ReduceAdd(sum);                                                    // CUDA's BlockReduce order (plan 35's training order)
         string Loads(RowWriter.Element e) => $"""
             global_load_dword {ys[e.K]}, {e.Off}, {yb}{e.Imm}
             global_load_dword {gs[e.K]}, {e.Off}, {gb}{e.Imm}
@@ -1433,13 +1442,15 @@ internal static partial class GcnKernels
         return w.Source();
     }
 
-    // dx += inv · (dy - y · mean(dy · y)) per row (y the normalized output), one block a row.
+    // dx += inv · (dy - y · mean(dy · y)) per row (y the normalized output), one block a row; the sum in CUDA's order
+    // (each thread's fused dy · y over its columns, CUDA's BlockReduce), the mean its correctly rounded quotient by cols.
     private static GcnKernelSource RmsNormBackward()
     {
         var w = new RowWriter("rms_norm_backward_f32", arrays: 1);
         var a = w.Arguments(["dy", "y", "inv", "dx"], ["cols", "n"]);
         string cols = a.Scalar("cols");
-        string rc = w.ReciprocalOf(cols);
+        string colsF = w.V();
+        w.L($"v_cvt_f32_u32_e32 {colsF}, {cols}");
         w.BeginRows(a.Scalar("n"));
         int offset = w.RowOffset(cols);
         string gb = w.Base(a.Pointer("dy"), offset), yb = w.Base(a.Pointer("y"), offset), db = w.Base(a.Pointer("dx"), offset);
@@ -1448,13 +1459,13 @@ internal static partial class GcnKernels
         var ys = w.Vs();
         var ds = w.Vs();
         var ts = w.Vs();
-        string dot = w.V(), inv = w.V();
-        w.L($"v_mov_b32_e32 {dot}, 0");
+        string sum = w.V(), dot = w.V(), inv = w.V();
+        w.L($"v_mov_b32_e32 {sum}, 0");
         w.L($"global_load_dword {inv}, {w.Zero}, {invAt}");
         w.Columns(cols, e => $"global_load_dword {gs[e.K]}, {e.Off}, {gb}{e.Imm}\nglobal_load_dword {ys[e.K]}, {e.Off}, {yb}{e.Imm}",
-            e => $"v_fma_f32 {dot}, {gs[e.K]}, {ys[e.K]}, {dot}");
-        w.Reduce(RowWriter.Add, dot);
-        w.L($"v_mul_f32_e32 {dot}, {dot}, {rc}");
+            e => $"v_fma_f32 {sum}, {gs[e.K]}, {ys[e.K]}, {sum}");
+        w.ReduceAdd(sum);                                                    // CUDA's BlockReduce order (plan 35's training order)
+        RowMath(w, pw => pw.Div(dot, sum, colsF));
         w.Columns(cols,
             e => $"""
                 global_load_dword {gs[e.K]}, {e.Off}, {gb}{e.Imm}
@@ -1785,7 +1796,8 @@ internal static partial class GcnKernels
         w.Label(done);
     }
 
-    // y[j] += Σ_r x[r, j] (few rows): a thread a column, the rows added in order onto y (the CPU's order: bit for bit).
+    // y[j] += Σ_r x[r, j] (few rows): a thread a column, the rows summed in order from 0, then added to y (CUDA's
+    // sum_rows_f32, plan 35's training order).
     private static GcnKernelSource SumRows()
     {
         var w = new RowWriter("sum_rows_f32", arrays: 0);
@@ -1797,7 +1809,7 @@ internal static partial class GcnKernels
         w.L($"s_lshr_b32 {stride}, {grid}, 8");
         w.L($"s_mov_b32 {block}, s4");
         w.Label(".Lblocks");
-        string column0 = w.S(), column = w.V(), off = w.V(), saved = w.SPair(), acc = w.V(), at = w.SPair();
+        string column0 = w.S(), column = w.V(), off = w.V(), saved = w.SPair(), acc = w.V(), before = w.V(), at = w.SPair();
         w.L($"""
             s_lshl_b32 {column0}, {block}, 8
             s_cmp_ge_u32 {column0}, {cols}
@@ -1806,12 +1818,14 @@ internal static partial class GcnKernels
             v_lshlrev_b32_e32 {off}, 2, {column}
             v_cmp_gt_u32_e32 vcc, {cols}, {column}
             s_and_saveexec_b64 {saved}, vcc
-            global_load_dword {acc}, {off}, {y}
+            v_mov_b32_e32 {acc}, 0
             s_mov_b64 {at}, {x}
             """);
         SumRowsInOrder(w, acc, off, at, rowBytes, "0", rows);
         w.L($"""
-            global_store_dword {off}, {acc}, {y}
+            global_load_dword {before}, {off}, {y}
+            v_add_f32_e32 {before}, {before}, {acc}
+            global_store_dword {off}, {before}, {y}
             s_or_b64 exec, exec, {saved}
             s_add_u32 {block}, {block}, {stride}
             s_branch .Lblocks
@@ -2019,29 +2033,112 @@ internal static partial class GcnKernels
         return w.Source();
     }
 
-    // y[o] (+)= scale · Σ_d x[o, d] (a sum along the last axis): one block a row, coalesced, the block's tree (n = outer).
+    // y[o] (+)= scale · Σ_d x[o, d] (a sum along the last axis) in CUDA's frame (plan 35's training order): n = outer · 32
+    // work-items, 32 a row (CUDA's warp; a wave holds two rows), grid-stride. Lane l adds the row's columns l, l + 32, …
+    // in order from 0 (four loads in flight a step, rule 80), then the 32 lanes' butterfly over offsets 16, 8, 4, 2, 1
+    // (lane l with lane l + offset in LDS; a row's lanes are one wave's, whose LDS accesses are in order, so no barrier);
+    // lane 0 scales the sum and adds it to y when accumulating, as CUDA's sum_axis_rows_f32.
     private static GcnKernelSource SumAxisRows()
     {
-        var w = new RowWriter("sum_axis_rows_f32", arrays: 1);
+        var w = new RowWriter("sum_axis_rows_f32", arrays: 0, extraLds: 4 * RowThreads);
         var a = w.Arguments(["x", "y"], ["dim", "scale", "accumulate", "n"]);
-        string dim = a.Scalar("dim");
-        w.BeginRows(a.Scalar("n"));
-        string xb = w.Base(a.Pointer("x"), w.RowOffset(dim)), yAt = w.ElementAddress(a.Pointer("y"), w.Row);
-        var xs = w.Vs();
-        string acc = w.V(), before = w.V(), scaled = w.V(), sum = w.V(), mask = w.SPair();
-        w.L($"v_mov_b32_e32 {acc}, 0");
-        w.L($"global_load_dword {before}, {w.Zero}, {yAt}");
-        w.Columns(dim, e => $"global_load_dword {xs[e.K]}, {e.Off}, {xb}{e.Imm}", e => $"v_add_f32_e32 {acc}, {acc}, {xs[e.K]}");
-        w.Reduce(RowWriter.Add, acc);
+        string x = a.Pointer("x"), y = a.Pointer("y"), dim = a.Scalar("dim"), n = a.Scalar("n");
+        string grid = w.S(), base0 = w.S(), c = w.S(), end = w.S(), c4 = w.S();
+        string lane = w.V(), lds = w.V(), i = w.V(), row = w.V(), first = w.V(), off = w.V(), column = w.V(), acc = w.V(), other = w.V(), scaled = w.V();
+        string before = w.V(), saved = w.SPair(), part = w.SPair();
+        var xs = new string[4];
+        for (int k = 0; k < xs.Length; k++)
+        {
+            xs[k] = w.V();
+        }
+
         w.L($"""
-            v_mul_f32_e32 {scaled}, {a.Scalar("scale")}, {acc}
-            v_add_f32_e32 {sum}, {before}, {scaled}
-            s_cmp_lg_u32 {a.Scalar("accumulate")}, 0
-            s_cselect_b64 {mask}, -1, 0
-            v_cndmask_b32_e64 {scaled}, {scaled}, {sum}, {mask}
+            s_load_dword {grid}, s[0:1], 0xc                ; grid_size_x (work-items)
+            v_and_b32_e32 {lane}, 31, {w.Tid}
+            v_lshlrev_b32_e32 {lds}, 2, {w.Tid}
+            s_lshl_b32 {base0}, s4, 8
             """);
-        w.StoreFirstLane((yAt, scaled));
-        w.EndRows();
+        w.Label(".Lblocks");
+        w.L($"""
+            s_cmp_ge_u32 {base0}, {n}
+            s_cbranch_scc1 .Ldone
+            v_add_u32_e32 {i}, {base0}, {w.Tid}
+            v_cmp_gt_u32_e32 vcc, {n}, {i}
+            s_and_saveexec_b64 {saved}, vcc
+            v_lshrrev_b32_e32 {row}, 5, {i}
+            v_mul_lo_u32 {first}, {row}, {dim}
+            v_add_u32_e32 {first}, {first}, {lane}
+            v_lshlrev_b32_e32 {first}, 2, {first}
+            v_mov_b32_e32 {acc}, 0
+            s_mov_b32 {c}, 0
+            """);
+        w.Label(".Lmain");
+        w.L($"""
+            s_add_u32 {end}, {c}, 0x80
+            s_cmp_gt_u32 {end}, {dim}
+            s_cbranch_scc1 .Ltail
+            s_lshl_b32 {c4}, {c}, 2
+            v_add_u32_e32 {off}, {c4}, {first}
+            global_load_dword {xs[0]}, {off}, {x}
+            global_load_dword {xs[1]}, {off}, {x} offset:128
+            global_load_dword {xs[2]}, {off}, {x} offset:256
+            global_load_dword {xs[3]}, {off}, {x} offset:384
+            v_add_f32_e32 {acc}, {acc}, {xs[0]}
+            v_add_f32_e32 {acc}, {acc}, {xs[1]}
+            v_add_f32_e32 {acc}, {acc}, {xs[2]}
+            v_add_f32_e32 {acc}, {acc}, {xs[3]}
+            s_mov_b32 {c}, {end}
+            s_branch .Lmain
+            """);
+        w.Label(".Ltail");
+        w.L($"""
+            s_cmp_ge_u32 {c}, {dim}
+            s_cbranch_scc1 .Lsummed
+            v_add_u32_e32 {column}, {c}, {lane}
+            v_cmp_gt_u32_e32 vcc, {dim}, {column}
+            s_and_saveexec_b64 {part}, vcc
+            s_lshl_b32 {c4}, {c}, 2
+            v_add_u32_e32 {off}, {c4}, {first}
+            global_load_dword {xs[0]}, {off}, {x}
+            v_add_f32_e32 {acc}, {acc}, {xs[0]}
+            s_mov_b64 exec, {part}
+            s_add_u32 {c}, {c}, 32
+            s_branch .Ltail
+            """);
+        w.Label(".Lsummed");
+        w.L($"ds_write_b32 {lds}, {acc}");
+        for (int offset = 16; offset >= 1; offset /= 2)
+        {
+            w.L($"""
+                v_cmp_gt_u32_e32 vcc, {offset}, {lane}
+                s_and_saveexec_b64 {part}, vcc
+                ds_read_b32 {other}, {lds} offset:{4 * offset}
+                v_add_f32_e32 {acc}, {acc}, {other}
+                ds_write_b32 {lds}, {acc}
+                s_mov_b64 exec, {part}
+                """);
+        }
+
+        w.L($"""
+            v_cmp_eq_u32_e32 vcc, 0, {lane}
+            s_and_saveexec_b64 {part}, vcc
+            v_lshlrev_b32_e32 {off}, 2, {row}
+            v_mul_f32_e32 {scaled}, {a.Scalar("scale")}, {acc}
+            s_cmp_eq_u32 {a.Scalar("accumulate")}, 0
+            s_cbranch_scc1 .Lstore
+            global_load_dword {before}, {off}, {y}
+            v_add_f32_e32 {scaled}, {scaled}, {before}
+            """);
+        w.Label(".Lstore");
+        w.L($"""
+            global_store_dword {off}, {scaled}, {y}
+            s_mov_b64 exec, {part}
+            s_or_b64 exec, exec, {saved}
+            s_add_u32 {base0}, {base0}, {grid}
+            s_branch .Lblocks
+            """);
+        w.Label(".Ldone");
+        w.L($"s_endpgm");
         return w.Source();
     }
 
@@ -2399,7 +2496,8 @@ internal static partial class GcnKernels
 
     // ---- Weight normalization -------------------------------------------------------------------------------------------
 
-    // weight = gain[r] · direction / ‖direction‖ per row (one block a row; the norm correctly rounded, then the quotient).
+    // weight = gain[r] · direction / ‖direction‖ per row (one block a row; the sum of squares in CUDA's order, each
+    // thread's over its columns then CUDA's BlockReduce; the norm correctly rounded, then the quotient).
     private static GcnKernelSource WeightNorm()
     {
         var w = new RowWriter("weight_norm_f32", arrays: 1);
@@ -2414,7 +2512,7 @@ internal static partial class GcnKernels
         w.L($"v_mov_b32_e32 {ss}, 0");
         w.L($"global_load_dword {gain}, {w.Zero}, {gainAt}");
         w.Columns(cols, e => $"global_load_dword {vs[e.K]}, {e.Off}, {vb}{e.Imm}", e => $"v_fma_f32 {ss}, {vs[e.K]}, {vs[e.K]}, {ss}");
-        w.Reduce(RowWriter.Add, ss);
+        w.ReduceAdd(ss);                                                     // CUDA's BlockReduce order (plan 35's training order)
         RowMath(w, pw =>
         {
             pw.Sqrt(root, ss);
@@ -2454,7 +2552,7 @@ internal static partial class GcnKernels
             v_fma_f32 {ss}, {vs[e.K]}, {vs[e.K]}, {ss}
             v_fma_f32 {dot}, {gs[e.K]}, {vs[e.K]}, {dot}
             """);
-        w.Reduce(RowWriter.Add, ss, dot);
+        w.ReduceAdd(ss, dot);                                                // CUDA's BlockReduce order (plan 35's training order)
         RowMath(w, pw =>
         {
             pw.Sqrt(root, ss);
@@ -2545,24 +2643,84 @@ internal static partial class GcnKernels
         yield return AttentionBackwardKeys(spans: true);
     }
 
-    // Δ[row] = dout[row] · o[row] over dim, one block a row.
+    // Δ[row] = dout[row] · o[row] over dim in CUDA's frame (plan 35's training order): a work-item a row (n = rows,
+    // grid-stride), the dimensions fused in order from 0 (four loads of each in flight a step, rule 80), as CUDA's
+    // attn_bwd_d_f32.
     private static GcnKernelSource AttentionDelta()
     {
-        var w = new RowWriter("attn_bwd_d_f32", arrays: 1);
+        const int InFlight = 4;
+        var w = new RowWriter("attn_bwd_d_f32", arrays: 0);
         var a = w.Arguments(["o", "dout", "dd"], ["dim", "n"]);
-        string dim = a.Scalar("dim");
-        w.BeginRows(a.Scalar("n"));
-        int offset = w.RowOffset(dim);
-        string ob = w.Base(a.Pointer("o"), offset), gb = w.Base(a.Pointer("dout"), offset);
-        var os = w.Vs();
-        var gs = w.Vs();
-        string dot = w.V();
-        w.L($"v_mov_b32_e32 {dot}, 0");
-        w.Columns(dim, e => $"global_load_dword {os[e.K]}, {e.Off}, {ob}{e.Imm}\nglobal_load_dword {gs[e.K]}, {e.Off}, {gb}{e.Imm}",
-            e => $"v_fma_f32 {dot}, {gs[e.K]}, {os[e.K]}, {dot}");
-        w.Reduce(RowWriter.Add, dot);
-        w.StoreFirstLane((w.ElementAddress(a.Pointer("dd"), w.Row), dot));
-        w.EndRows();
+        string o = a.Pointer("o"), dout = a.Pointer("dout"), dim = a.Scalar("dim"), n = a.Scalar("n");
+        string grid = w.S(), base0 = w.S(), d = w.S(), end = w.S();
+        string row = w.V(), at = w.V(), dot = w.V(), off = w.V(), saved = w.SPair();
+        var os = new string[InFlight];
+        var gs = new string[InFlight];
+        for (int k = 0; k < InFlight; k++)
+        {
+            (os[k], gs[k]) = (w.V(), w.V());
+        }
+
+        w.L($"""
+            s_load_dword {grid}, s[0:1], 0xc                ; grid_size_x (work-items)
+            s_lshl_b32 {base0}, s4, 8
+            """);
+        w.Label(".Lblocks");
+        w.L($"""
+            s_cmp_ge_u32 {base0}, {n}
+            s_cbranch_scc1 .Ldone
+            v_add_u32_e32 {row}, {base0}, {w.Tid}
+            v_cmp_gt_u32_e32 vcc, {n}, {row}
+            s_and_saveexec_b64 {saved}, vcc
+            v_mul_lo_u32 {at}, {row}, {dim}
+            v_lshlrev_b32_e32 {at}, 2, {at}
+            v_mov_b32_e32 {dot}, 0
+            s_mov_b32 {d}, 0
+            """);
+        w.Label(".Lmain");
+        w.L($"""
+            s_add_u32 {end}, {d}, {InFlight}
+            s_cmp_gt_u32 {end}, {dim}
+            s_cbranch_scc1 .Ltail
+            """);
+        for (int k = 0; k < InFlight; k++)
+        {
+            string imm = k == 0 ? "" : TrainingText($" offset:{4 * k}");
+            w.L($"global_load_dword {os[k]}, {at}, {o}{imm}");
+            w.L($"global_load_dword {gs[k]}, {at}, {dout}{imm}");
+        }
+
+        for (int k = 0; k < InFlight; k++)
+        {
+            w.L($"v_fma_f32 {dot}, {os[k]}, {gs[k]}, {dot}");
+        }
+
+        w.L($"""
+            v_add_u32_e32 {at}, 0x{4 * InFlight:x}, {at}
+            s_mov_b32 {d}, {end}
+            s_branch .Lmain
+            """);
+        w.Label(".Ltail");
+        w.L($"""
+            s_cmp_ge_u32 {d}, {dim}
+            s_cbranch_scc1 .Lsummed
+            global_load_dword {os[0]}, {at}, {o}
+            global_load_dword {gs[0]}, {at}, {dout}
+            v_fma_f32 {dot}, {os[0]}, {gs[0]}, {dot}
+            v_add_u32_e32 {at}, 4, {at}
+            s_add_u32 {d}, {d}, 1
+            s_branch .Ltail
+            """);
+        w.Label(".Lsummed");
+        w.L($"""
+            v_lshlrev_b32_e32 {off}, 2, {row}
+            global_store_dword {off}, {dot}, {a.Pointer("dd")}
+            s_or_b64 exec, exec, {saved}
+            s_add_u32 {base0}, {base0}, {grid}
+            s_branch .Lblocks
+            """);
+        w.Label(".Ldone");
+        w.L($"s_endpgm");
         return w.Source();
     }
 

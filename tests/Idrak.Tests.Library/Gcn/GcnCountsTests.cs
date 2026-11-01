@@ -80,20 +80,27 @@ internal abstract partial class Tests
         CountsLine($"sum_rows_f32, {SumRows} x {SumCols} ({isa}; per element)", SumRows * SumCols, sums[0]);
         CountsLine($"sum_cols_strided_f32, {SumRows} x {SumCols}, one chunk ({isa}; per element)", SumRows * SumCols, sums[1]);
 
-        // The outputs' bits, against the kernels before G6b's (the same inputs, run on the build before it): the dot
-        // products' order is kept and the skipped rows' terms were exact zeros, the sums' rows are added in order.
+        // The outputs' bits, against the kernels before G6b's (the same inputs, run on the build before it; the tiled dq and
+        // dk re-pinned when Δ took CUDA's order): the dot products' order is kept and the skipped rows' terms were exact
+        // zeros, the sums' rows are added in order.
         (string What, float[] Values, string Before)[] outputs =
         [
             ("attn_bwd_q_f32's dq", tiled[6], TiledDqBefore), ("attn_bwd_kv_f32's dk", tiled[7], TiledDkBefore), ("attn_bwd_kv_f32's dv", tiled[8], TiledDvBefore),
             ("attn_spans_bwd_kv_f32's dk", spanned[9], SpansDkBefore), ("attn_spans_bwd_kv_f32's dv", spanned[10], SpansDvBefore),
             ("sum_rows_f32's sums", summed[1], SumRowsBefore), ("sum_cols_strided_f32's sums", summed[2], SumColsBefore),
         ];
+        var changed = new List<string>();
         foreach (var (what, values, before) in outputs)
         {
             string hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Runtime.InteropServices.MemoryMarshal.AsBytes(values.AsSpan())))[..16];
             Console.WriteLine($"    {what}: bits {hash}");
-            Check(hash == before, $"{what}: bits {hash}, before G6b {before} (the same bits expected)");
+            if (hash != before)
+            {
+                changed.Add($"{what}: bits {hash}, pinned {before}");
+            }
         }
+
+        Check(changed.Count == 0, $"the outputs' bits differ from the pinned ones (the same bits expected): {string.Join("; ", changed)}");
     }
 
     internal static void GcnDecodingCounts(Device device)
@@ -227,7 +234,9 @@ internal abstract partial class Tests
         CountsLine($"topk_greedy_f32, its last block of a row samples it, {Rows} rows of {Vocabulary} ({isa}; per score)", Rows * Vocabulary, one);
     }
 
-    // The outputs' hashes (SHA-256, first 8 bytes) of the kernels before G6b on the inputs above (main 52bf7e3, gfx90c).
-    private const string TiledDqBefore = "5BFEC5852875DA06", TiledDkBefore = "FDE698702F1A9276", TiledDvBefore = "469EE866F5BE35EE", SpansDkBefore = "854FD126B19FA304",
+    // The outputs' hashes (SHA-256, first 8 bytes) of the kernels before G6b on the inputs above (main 52bf7e3, gfx90c);
+    // the tiled dq and dk since plan 35's training order, part 2 (their Δ, attn_bwd_d_f32, a work-item a row in CUDA's
+    // order instead of a block's tree: 5BFEC5852875DA06 and FDE698702F1A9276 before it).
+    private const string TiledDqBefore = "2632187ADDA4F94D", TiledDkBefore = "8D7A729AA31841F4", TiledDvBefore = "469EE866F5BE35EE", SpansDkBefore = "854FD126B19FA304",
         SpansDvBefore = "469EE866F5BE35EE", SumRowsBefore = "97D0E68B9FD831CB", SumColsBefore = "97D0E68B9FD831CB";
 }

@@ -422,7 +422,8 @@ internal sealed unsafe partial class HipBackend
         var vt = Allocate(layout.KvHeads * layout.KvRows * dim, zeroed: false);
         try
         {
-            LaunchRows(delta, rows, dim, Cost(delta.Name).Flops, P(output), P(dOutput), P(d), U(dim), U(rows));
+            LaunchLabelled(delta, BlocksFor(rows, delta.Block), 1, string.Create(CultureInfo.InvariantCulture, $"{rows}x{dim}"),
+                Cost(delta.Name).Flops * rows * dim, P(output), P(dOutput), P(d), U(dim), U(rows));   // a work-item a row (CUDA's)
             int[] queryShape = [layout.Heads, dim, layout.Rows], queryStrides = [layout.Rows * dim, 1, dim];
             int[] keyShape = [layout.KvHeads, dim, layout.KvRows], keyStrides = [layout.KvRows * dim, 1, dim];
             PermuteKernel(layout.Q, qt, queryShape, queryStrides, accumulate: false);

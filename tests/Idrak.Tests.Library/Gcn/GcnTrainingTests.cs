@@ -23,6 +23,8 @@ internal abstract partial class Tests
     [
         ("gcn kernels: training: every training kernel assembles for gfx90c and gfx906 with its block of 256 declared, within its register budget, its printed text reading back to its bytes; GcnKernels.All lists each once", GcnTrainingAssembled),
         ("gcn kernels: training: CUDA's order: sumsq_f32 over its blocks and sum_blocks_f32 adding them equal a C# model of CUDA's BlockReduce grouping bit for bit (one block, many, the 1,024 most)", GcnTrainingSquaresCudaOrder),
+        ("gcn kernels: training: CUDA's order: sum_axis_rows_f32 (32 work-items a row, its butterfly; adding and not; on a full grid and one block), sum_rows_f32, softmax_bwd_f32 (and log-softmax), rms_norm_backward_f32, weight_norm_f32, weight_norm_bwd_f32's dgain and attn_bwd_d_f32 (a work-item a row) equal a C# model of CUDA's order bit for bit", GcnTrainingRowsCudaOrder),
+        ("gcn kernels: training: CUDA's order: norm_stats_f32, group_reduce_f32 and their split forms (norm_stats_part_f32 + norm_stats_final_f32, group_reduce_part_f32 + group_reduce_final_f32, three chunks a group) equal a C# model of CUDA's halving tree and Chan merge bit for bit", GcnTrainingGroupsCudaOrder),
         ("gcn kernels: training: the 13 unary backward kernels (sigmoid, tanh, ReLU, square, abs, exp, log, both GELUs, sqrt, sin, cos, SiLU) equal the CPU's dx += dy · op'(x) over 1 to 4,099 elements and 1,003 misaligned, the same bits on two grids and wave orders", GcnTrainingUnary),
         ("gcn kernels: training: extremum_bwd_f32 (max and min, ties to a, either gradient alone), where_bwd_f32 (NaN and ±0 conditions), clamp_bwd_f32 and leaky_relu_bwd_f32 equal the CPU's bit for bit; pow_bwd_f32 (odd, even, fractional and negative powers of negative and positive bases) and gated_act_bwd_f32 (every kind, added and written) within tolerance; the same bits on two grids and wave orders", GcnTrainingSelections),
         ("gcn kernels: training: norm_apply_f32, norm_bwd_f32, group_scale_shift_f32 (every flag), broadcast_axis_f32, and sum_axis_f32 equal the CPU's over groups of 1 to 400 elements (aligned and not), the same bits on two grids and wave orders", GcnTrainingGroups),
@@ -30,7 +32,7 @@ internal abstract partial class Tests
         ("gcn kernels: training: adam8_f32 equals the CPU's 8-bit Adam (the parameters within tolerance, every moment's code and the block scales bit for bit) over 700 elements (a partial last block), the same bits on two grids and wave orders", GcnTrainingAdam8),
         ("gcn kernels: training: multi_sumsq_f32, sum_blocks_f32, clip_factor_f32 and multi_adamw_f32 equal the CPU's fused AdamW over three tensors (5,000, 300 and 1 elements; with and without clipping; the gradients zeroed), the same bits on two grids and wave orders", GcnTrainingFusedAdamW),
         ("gcn kernels: training: softmax_bwd_f32 (and log-softmax), rms_norm_backward_f32, weight_norm_f32, weight_norm_bwd_f32 (each gradient alone and both) and attn_bwd_d_f32 equal the CPU's over rows of 1 to 2,333 columns, the same bits on two grids and wave orders", GcnTrainingRows),
-        ("gcn kernels: training: sum_rows_f32 (bit for bit), sum_cols_strided_f32 with one chunk and three (folded by fold_chunks_f32), sum_f32 and sumsq_f32 over one block and several (added by sum_blocks_f32), and sum_axis_rows_f32 equal the CPU's sums, the same bits on two grids and wave orders", GcnTrainingSums),
+        ("gcn kernels: training: sum_rows_f32, sum_cols_strided_f32 with one chunk and three (folded by fold_chunks_f32), sum_f32 and sumsq_f32 over one block and several (added by sum_blocks_f32), and sum_axis_rows_f32 equal the CPU's sums, the same bits on two grids and wave orders", GcnTrainingSums),
         ("gcn kernels: training: scatter_chain_u32 and scatter_walk_f32 add 300 rows into 37 ids (repeats past one tile of 256) bit for bit as the CPU's scatter-add, without atomics, the same bits on two grids and wave orders", GcnTrainingScatter),
         ("gcn kernels: training: norm_stats_f32 and group_reduce_f32 (one block a group), and norm_stats_part_f32 + norm_stats_final_f32 and group_reduce_part_f32 + group_reduce_final_f32 (groups of three chunks merged in chunk order) equal the CPU's statistics, the same bits on two grids and wave orders", GcnTrainingGroupStats),
         ("gcn kernels: training: attn_bwd_d_f32, attn_bwd_kv_f32 and attn_bwd_q_f32 equal the CPU's gradients of tiled attention over a cache (heads of 37, 64 and 300; plain, a window, a soft-cap, both), dk and dv summed without atomics, the same bits on two grids and wave orders", GcnTrainingAttentionTiled),
@@ -552,7 +554,7 @@ internal abstract partial class Tests
                 int blocks = (cols + 255) / 256;
                 TrainingCase($"sum_rows_f32 ({isa}), {Rows} x {cols}", [TrainingRandom(random, Rows * cols, -2, 2), TrainingRandom(random, cols, -1, 1)], [1],
                     (b, s) => b.SumRowsKernel(s[0], s[1], Rows, cols),
-                    (m, a, grid, seed) => TrainingDispatch("sum_rows_f32", isa, m, (grid, 1), seed, a[0], a[1], Rows, (ulong)cols), (1, blocks + 1), worst, "sum_rows_f32", exact: true);
+                    (m, a, grid, seed) => TrainingDispatch("sum_rows_f32", isa, m, (grid, 1), seed, a[0], a[1], Rows, (ulong)cols), (1, blocks + 1), worst, "sum_rows_f32");
             }
 
             foreach (int rows in (int[])[3, 150])
@@ -597,15 +599,16 @@ internal abstract partial class Tests
                     }, (1, 2), worst, "sumsq_f32");
             }
 
-            foreach (int dim in (int[])[64, 1000])
+            foreach (int dim in (int[])[32, 64, 1000])
             {
-                const int Outer = 4;
+                const int Outer = 11;
+                const ulong Lanes = Outer * GcnKernels.SumAxisRowLanes;
                 foreach (bool accumulate in (bool[])[false, true])
                 {
                     TrainingCase($"sum_axis_rows_f32{(accumulate ? " (adding)" : "")} ({isa}), {Outer} x {dim}", [TrainingRandom(random, Outer * dim, -2, 2), TrainingRandom(random, Outer, -1, 1)], [1],
                         (b, s) => b.SumAxisKernel(s[0], s[1], Outer, dim, 1, 0.25f, accumulate),
-                        (m, a, grid, seed) => TrainingDispatch("sum_axis_rows_f32", isa, m, (grid, 1), seed, a[0], a[1], (ulong)dim, Bits(0.25f), accumulate ? 1UL : 0UL, Outer),
-                        (2, Outer), worst, "sum_axis_rows_f32");
+                        (m, a, grid, seed) => TrainingDispatch("sum_axis_rows_f32", isa, m, (grid, 1), seed, a[0], a[1], (ulong)dim, Bits(0.25f), accumulate ? 1UL : 0UL, Lanes),
+                        (1, 2), worst, "sum_axis_rows_f32");
                 }
             }
         }

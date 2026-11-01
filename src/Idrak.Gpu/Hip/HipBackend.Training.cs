@@ -614,11 +614,14 @@ internal sealed unsafe partial class HipBackend
             return;
         }
 
-        if (inner == 1 && dim >= 64 && Gcn("sum_axis_rows_f32") is { } rows)
+        if (inner == 1 && dim >= GcnKernels.SumAxisRowLanes && Gcn("sum_axis_rows_f32") is { } rows)
         {
-            // A sum along the last axis: one block a row reads it coalesced, where the thread-per-output kernel reads each
-            // row serially with its neighbours a whole row apart.
-            LaunchRows(rows, outer, dim, 1, P(x), P(y), U(dim), F(scale), U(accumulate ? 1 : 0), U(outer));
+            // A sum along the last axis, where CUDA takes it (dim of a warp or more): 32 work-items a row read it coalesced,
+            // where the thread-per-output kernel reads each row serially with its neighbours a whole row apart; n = the
+            // lanes, CUDA's argument (plan 35's training order).
+            long lanes = (long)outer * GcnKernels.SumAxisRowLanes;
+            LaunchLabelled(rows, BlocksFor(lanes, rows.Block), 1, string.Create(CultureInfo.InvariantCulture, $"{outer}x{dim}"), all,
+                P(x), P(y), U(dim), F(scale), U(accumulate ? 1 : 0), U((int)lanes));
             return;
         }
 
