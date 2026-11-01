@@ -57,6 +57,20 @@ public sealed record AgentOptions
     public int Nudges { get; init; } = 2;
 
     /// <summary>
+    /// Reminders the agent sends, per run, when the model answers while a failed call of a changing tool
+    /// (<see cref="ChangingTools"/>) on a path has no later successful call of a changing tool on that path: the model is
+    /// told which calls failed and did not take effect, and to fix them or say plainly what was not done, and the run goes
+    /// on (each reminder clears the failures it listed). 1 by default; 0 sends none (the run ends on the answer).
+    /// </summary>
+    public int FailedCallNudges { get; init; } = 1;
+
+    /// <summary>
+    /// The tools whose calls change a file named by their <c>path</c> argument, for <see cref="FailedCallNudges"/>:
+    /// edit_file and write_file by default.
+    /// </summary>
+    public IReadOnlyList<string> ChangingTools { get; init; } = ["edit_file", "write_file"];
+
+    /// <summary>
     /// The chat template the model's prompts are rendered with, for reading calls written as text (its arguments key)
     /// and for the corrections' example (its tool-call format); null (the default): the model's own when it is a
     /// <see cref="ChatGenerator"/>, else none (the correction's example is a generic one).
@@ -103,6 +117,9 @@ public sealed record CodingAgentRun(IReadOnlyList<ChatMessage> Messages, IReadOn
     /// <summary>Corrections sent because a reply's calls could not be read (<see cref="AgentOptions.Nudges"/>); each is a user message in <see cref="Messages"/>.</summary>
     public int Nudges { get; init; }
 
+    /// <summary>Reminders sent because the model answered with failed changes left (<see cref="AgentOptions.FailedCallNudges"/>); each is a user message in <see cref="Messages"/>.</summary>
+    public int FailureNudges { get; init; }
+
     /// <summary>The run as one JSON line: the conversation in the chat format with the figures as extra fields.</summary>
     public JsonObject ToJson()
     {
@@ -124,6 +141,11 @@ public sealed record CodingAgentRun(IReadOnlyList<ChatMessage> Messages, IReadOn
         if (Nudges > 0)
         {
             json["nudges"] = Nudges;
+        }
+
+        if (FailureNudges > 0)
+        {
+            json["failure_nudges"] = FailureNudges;
         }
     }
 }
@@ -320,6 +342,9 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
     private async Task<CodingAgentRun> LoopAsync(List<ChatMessage> messages, CodingTools tools, CancellationToken cancellationToken)
     {
         ArgumentOutOfRangeException.ThrowIfNegative(_options.Nudges, nameof(AgentOptions.Nudges));
+        ArgumentOutOfRangeException.ThrowIfNegative(_options.FailedCallNudges, nameof(AgentOptions.FailedCallNudges));
+        var unresolved = new FailedChanges(_options.ChangingTools);
+        int failureNudges = 0;
         var registry = Registry(tools, _options.ExtraTools);
         var definitions = ToolDefinitions(tools, _options.ExtraTools);
         var callContext = CallContext(_options.Template ?? (model as ChatGenerator)?.Template, definitions);
@@ -330,7 +355,7 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         limit.CancelAfter(_options.TimeLimit);
         CodingAgentRun Result(CodingAgentEnd end, string note) =>
-            new(messages, definitions, _options.Think, end, note, rounds, calls, errors, generated, modelTime, toolTime, tools.Workspace) { Nudges = nudges };
+            new(messages, definitions, _options.Think, end, note, rounds, calls, errors, generated, modelTime, toolTime, tools.Workspace) { Nudges = nudges, FailureNudges = failureNudges };
 
         try
         {
@@ -380,6 +405,13 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
 
                     if (Correction(reply, callContext) is not { } correction)
                     {
+                        if (failureNudges < _options.FailedCallNudges && unresolved.Reminder() is { } reminder)
+                        {
+                            messages.Add(new ChatMessage("user", reminder));
+                            failureNudges++;
+                            continue;
+                        }
+
                         return Result(CodingAgentEnd.Answered, "");
                     }
 
@@ -402,6 +434,11 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
                 // Each call's result is told as that call ends (a later call may wait for an approval, or the turn be
                 // cancelled part way), never only when the whole turn has run.
                 var turn = await RunToolCallsAsync(registry, reply, previousCalls, limit.Token, OnToolResult).ConfigureAwait(false);
+                if (turn.Key != previousCalls)                       // a repeated turn ran nothing: its notes are not failures
+                {
+                    unresolved.Add(turn.Results);
+                }
+
                 previousCalls = turn.Key;
                 calls += turn.Results.Count;
                 errors += turn.Errors;
@@ -601,5 +638,72 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
         }
 
         return builder.Build();
+    }
+}
+
+// The failed calls of changing tools (AgentOptions.ChangingTools) a run has made, by tool and path, that no later
+// successful call of a changing tool on that path has made good (AgentOptions.FailedCallNudges). Insertion order kept.
+internal sealed class FailedChanges(IReadOnlyList<string> changingTools)
+{
+    // Characters of a failure's message the reminder quotes (its first line).
+    private const int MaxMessage = 200;
+
+    private readonly List<(string Tool, string Path, string Message)> _failed = [];
+
+    public void Add(IReadOnlyList<ToolResult> results)
+    {
+        foreach (var result in results)
+        {
+            if (!changingTools.Contains(result.Call.Name, StringComparer.Ordinal)
+                || result.Call.Arguments["path"] is not JsonValue value || !value.TryGetValue<string>(out var raw) || raw.Length == 0)
+            {
+                continue;
+            }
+
+            string path = Normal(raw);
+            bool failed = !result.Succeeded || result.Content.StartsWith("Error:", StringComparison.Ordinal);
+            if (!failed)
+            {
+                _failed.RemoveAll(f => f.Path == path);
+                continue;
+            }
+
+            string message = (result.Error ?? result.Content).Trim();
+            int line = message.IndexOf('\n', StringComparison.Ordinal);
+            message = line >= 0 ? message[..line] : message;
+            message = message.Length > MaxMessage ? message[..MaxMessage] + " …" : message;
+            _failed.RemoveAll(f => f.Tool == result.Call.Name && f.Path == path);
+            _failed.Add((result.Call.Name, path, message));
+        }
+    }
+
+    // The reminder for the failures left, which it clears; null when none is left.
+    public string? Reminder()
+    {
+        if (_failed.Count == 0)
+        {
+            return null;
+        }
+
+        var text = new StringBuilder("These calls failed and did not take effect:\n");
+        foreach (var (tool, path, message) in _failed)
+        {
+            text.Append("- ").Append(tool).Append(' ').Append(path).Append(": ").Append(message).Append('\n');
+        }
+
+        text.Append("Fix them, or say plainly what was not done.");
+        _failed.Clear();
+        return text.ToString();
+    }
+
+    private static string Normal(string path)
+    {
+        string p = path.Replace('\\', '/');
+        while (p.StartsWith("./", StringComparison.Ordinal))
+        {
+            p = p[2..];
+        }
+
+        return p;
     }
 }

@@ -16,6 +16,8 @@ internal abstract partial class DesktopTests : Tests
         ("coding tools: list, read, search, edit and write stay inside the workspace and explain mistakes", CodingToolsFiles),
         ("coding tools: read_file and search number and cut lines as the string-splitting reference (CRLF, lone CR, final newline, long lines); web text collapses white space as the regex did", d => { if (d == Device.Cpu) CodingToolsLinesMatchReference(); }),
         ("coding tools: run_command starts allowlisted programs without a shell and trims long output", CodingToolsCommands),
+        ("coding tools: edit_file on the bench's Program.cs (byte order mark, CRLF): a guessed old_text's error quotes it and the file; read_file's line numbers, trailing white space and the final line break tolerated when the match is unique, said so; the encoding kept; the option off is exact", CodingEditTolerance),
+        ("coding agent: an answer with a failed change left (no later success on its path) gets one reminder listing it; a change made good, a failed read or the option at 0 gets none", AgentRemindsFailedChanges),
         ("coding agent: transcripts written as OpenAI chat JSON read back for fine-tuning", AgentTranscriptJson),
         ("coding agent: a task is copied, run, verified by its commands and recorded", AgentRunsTask),
         ("coding agent: a call repeated right after itself is not run again, and the model is told to use its result", AgentSkipsRepeatedCalls),

@@ -686,9 +686,11 @@ public sealed record Idrak.Text.Generation.AgentOptions : System.IEquatable<Idra
   public Idrak.Abstraction.Generation.IChatTemplate? Template { get; init; }
   public Idrak.Text.Generation.CodingToolOptions Tools { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ITool> ExtraTools { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> ChangingTools { get; init; }
   public System.TimeSpan TimeLimit { get; init; }
   public bool CallsInText { get; init; }
   public bool? Think { get; init; }
+  public int FailedCallNudges { get; init; }
   public int MaxRounds { get; init; }
   public int Nudges { get; init; }
   public string? SystemPrompt { get; init; }
@@ -762,6 +764,7 @@ public sealed record Idrak.Text.Generation.CodingAgentRun : System.IEquatable<Id
   public System.TimeSpan ModelTime { get; init; }
   public System.TimeSpan ToolTime { get; init; }
   public bool? Think { get; init; }
+  public int FailureNudges { get; init; }
   public int GeneratedTokens { get; init; }
   public int Nudges { get; init; }
   public int Rounds { get; init; }
@@ -778,11 +781,13 @@ public sealed record Idrak.Text.Generation.CodingToolOptions : System.IEquatable
   public System.Collections.Generic.IReadOnlyList<string>? Commands { get; init; }
   public System.Collections.Generic.IReadOnlyList<string>? IgnoredDirectories { get; init; }
   public System.TimeSpan CommandTimeout { get; init; }
+  public bool EditTolerance { get; init; }
   public bool Network { get; init; }
   public bool ReadBeforeEdit { get; init; }
   public bool ReadOnly { get; init; }
   public double MaxCpus { get; init; }
   public int DetectionDepth { get; init; }
+  public int EditQuotedLines { get; init; }
   public int MaxListedFiles { get; init; }
   public int MaxOutputCharacters { get; init; }
   public int MaxProcesses { get; init; }
