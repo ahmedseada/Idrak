@@ -382,6 +382,9 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
     /// <summary>A PEFT adapter whose updates are added to the weights as they are read (null for none).</summary>
     public AdapterMerge? Adapter { get; init; }
 
+    /// <summary>What tells the load's progress as each stored tensor is begun (null for none).</summary>
+    public LoadProgress? Progress { get; init; }
+
     /// <summary>The time spent in the store's reads so far: its file reads and the conversion to the layer's layout.</summary>
     public TimeSpan ReadTime => Stopwatch.GetElapsedTime(0, _readTicks);
 
@@ -502,7 +505,11 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
             return null;
         }
 
-        Used.Add(stored);
+        if (Used.Add(stored))
+        {
+            Progress?.Read(stored);
+        }
+
         var storedShape = reader.ShapeOf(stored);
         int[] expected = architecture.Transposed(name) ? [.. shape.Reverse()] : [.. shape];
         if (!storedShape.SequenceEqual(expected))
@@ -512,4 +519,63 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
 
         return stored;
     }
+}
+
+/// <summary>
+/// A load's progress (<see cref="PretrainedOptions.Progress"/>): the checkpoint's tensors and their values counted once from
+/// its header, then each stored tensor as the build begins to read it; the start and the end said too.
+/// </summary>
+internal sealed class LoadProgress
+{
+    private readonly IProgress<PretrainedLoadProgress> _progress;
+    private readonly Dictionary<string, long> _sizes;
+    private readonly long _total;
+    private int _tensors;
+    private long _values;
+
+    private LoadProgress(IProgress<PretrainedLoadProgress> progress, Dictionary<string, long> sizes, long total)
+    {
+        _progress = progress;
+        _sizes = sizes;
+        _total = total;
+    }
+
+    /// <summary>The progress of a load from <paramref name="reader"/> told to <paramref name="progress"/>, or null when none listens (no work then).</summary>
+    public static LoadProgress? Of(ITensorStore reader, IProgress<PretrainedLoadProgress>? progress)
+    {
+        if (progress is null)
+        {
+            return null;
+        }
+
+        var sizes = new Dictionary<string, long>(StringComparer.Ordinal);
+        long total = 0;
+        foreach (var name in reader.Names)
+        {
+            long size = 1;
+            foreach (int dimension in reader.ShapeOf(name))
+            {
+                size *= Math.Max(0, dimension);
+            }
+
+            sizes[name] = size;
+            total += size;
+        }
+
+        return new LoadProgress(progress, sizes, total);
+    }
+
+    /// <summary>Nothing read yet.</summary>
+    public void Begin() => _progress.Report(new PretrainedLoadProgress(0, _sizes.Count, 0, _total));
+
+    /// <summary>The stored tensor <paramref name="stored"/> is begun (the ones before it are read).</summary>
+    public void Read(string stored)
+    {
+        _tensors++;
+        _values += _sizes.GetValueOrDefault(stored);
+        _progress.Report(new PretrainedLoadProgress(_tensors, _sizes.Count, _values, _total));
+    }
+
+    /// <summary>Every tensor read (those the model does not use too).</summary>
+    public void End() => _progress.Report(new PretrainedLoadProgress(_sizes.Count, _sizes.Count, _total, _total));
 }

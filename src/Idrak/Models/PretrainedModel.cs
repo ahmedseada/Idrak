@@ -112,9 +112,30 @@ public sealed record CreateOptions
     public IReadOnlyDictionary<string, JsonObject>? Parts { get; init; }
 }
 
+/// <summary>
+/// How far <see cref="PretrainedModel.Load"/> is (Craft's status bar, 2026-11-01: a 7B load took over 100 s with no sense
+/// of how far it was): the checkpoint's tensors begun of all of them, and their values (each tensor's size, so a large
+/// projection counts for what it holds).
+/// </summary>
+/// <param name="Tensors">The tensors read (or begun) so far.</param>
+/// <param name="TotalTensors">The checkpoint's tensors.</param>
+/// <param name="Values">The values of the tensors read so far.</param>
+/// <param name="TotalValues">The values of every tensor of the checkpoint.</param>
+public sealed record PretrainedLoadProgress(int Tensors, int TotalTensors, long Values, long TotalValues)
+{
+    /// <summary>The share read, by values, from 0 to 1 (by tensors when the sizes are not known).</summary>
+    public double Fraction => TotalValues > 0 ? Math.Clamp((double)Values / TotalValues, 0, 1) : TotalTensors > 0 ? Math.Clamp((double)Tensors / TotalTensors, 0, 1) : 1;
+}
+
 /// <summary>Settings for <see cref="PretrainedModel.Load"/>.</summary>
 public sealed record PretrainedOptions
 {
+    /// <summary>
+    /// Told how far the load is: once when the checkpoint's header is read (nothing read yet), as each tensor is read, and
+    /// once at the end (every tensor); on the loading thread. Null for none (no work is done for it then).
+    /// </summary>
+    public IProgress<PretrainedLoadProgress>? Progress { get; init; }
+
     /// <summary>Where the model is created (the default device when null).</summary>
     public Device? Device { get; init; }
 
@@ -350,7 +371,8 @@ public sealed class PretrainedModel : IDisposable
         var spec = architecture.Spec(config, notes);
         int maxPositions = Math.Min(options.MaxPositions ?? spec.MaxPositions, spec.MaxPositions);
         using var adapter = options.MergeAdapter is { } adapterFolder ? new AdapterMerge(adapterFolder) : null;
-        var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter, Deferred = options.Deferred };
+        var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter, Deferred = options.Deferred, Progress = LoadProgress.Of(reader, options.Progress) };
+        weights.Progress?.Begin();
         var buildDevice = options.Deferred ? DeferredTensors.Device : options.Device;
         var packedCache = PackedWeightCache.For(options, folder);
         var buildOptions = new DecoderBuildOptions { Device = buildDevice, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions, PackedCache = packedCache };
@@ -476,6 +498,7 @@ public sealed class PretrainedModel : IDisposable
             throw;
         }
 
+        weights.Progress?.End();
         return model;
 
         static TimeSpan Max(TimeSpan time) => time > TimeSpan.Zero ? time : TimeSpan.Zero;

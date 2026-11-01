@@ -273,6 +273,7 @@ public static class Idrak.Data.HuggingFaceModels
   public static System.Collections.Generic.IReadOnlyList<Idrak.Data.RepoFile> ChooseFiles(string repo, System.Collections.Generic.IReadOnlyList<Idrak.Data.RepoFile> files, string subfolder = "")
   public static System.Threading.Tasks.Task<string> DownloadAsync(string repo, string revision = "main", string? token = null, Idrak.Abstraction.Data.IDownloader? downloader = null, System.Threading.CancellationToken cancellationToken = default)
   public static System.Threading.Tasks.Task<string> DownloadFolderAsync(string repo, string subfolder, string revision = "main", string? token = null, Idrak.Abstraction.Data.IDownloader? downloader = null, System.Threading.CancellationToken cancellationToken = default)
+  public static System.Threading.Tasks.Task<string> DownloadFolderAsync(string repo, string subfolder, string revision, string? token, Idrak.Abstraction.Data.IDownloader? downloader, System.IProgress<Idrak.Abstraction.Formats.ModelPullProgress>? progress, System.Threading.CancellationToken cancellationToken = default)
   public static bool IsFinished(string folder)
 
 public static class Idrak.Data.Kaggle

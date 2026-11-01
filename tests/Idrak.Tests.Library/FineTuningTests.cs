@@ -35,7 +35,7 @@ internal abstract partial class Tests
         ("fine-tuning: the activation estimate of each rung is not short of a step's measured peak (a decoder with query and key norms, activations above the loss's logits; the CPU counts every byte)", ActivationEstimateAgainstPeak),
         ("fine-tuning: with the activation estimate the first step starts at the rung that fits a small device (no out-of-memory step-down); with it off the ladder steps down; a resumed session starts at the saved rung", ActivationEstimateFirstRung),
         ("fine-tuning: a model tuned in place goes back as found: a loaded adapter leaves the base frozen (a session over it trains the adapter alone), RemoveAdapters frees every adapter and its gradients and the model scores as its base again; BatchTokensThatFit halves the batch until the estimate fits the device's room, never below one sequence", AdaptersInPlace),
-        ("models: a Hugging Face model id is downloaded (only the files the library reads, sharded weights) into the cache, loads, and works offline", ModelDownload),
+        ("models: a Hugging Face model id is downloaded (only the files the library reads, sharded weights) into the cache with its bytes of total told, loads with its tensors read of total told, and works offline", ModelDownload),
         ("models: offline, a model id takes the newest finished download, never a folder a pull left unfinished (its pull marker, or a partial file); a download that fails keeps its marker", OfflineSkipsUnfinished),
         ("fine-tuning: agent transcripts through the chat template, assistant-only tokens, LoRA and QLoRA training, PEFT adapters, merged export", AgentFineTuning),
         ("fine-tuning: a conversation too long for the maximum length keeps its whole answer (the user message is shortened, its start kept); an answer longer than the budget alone gives the end cut at once; rows encode on all cores in order", LongMessageKeepsAnswer),
@@ -981,13 +981,25 @@ internal abstract partial class Tests
             }
 
             var downloader = new Idrak.Data.Downloader(new HttpClient(web), cache) { Attempts = 1 };
-            string folder = Idrak.Data.HuggingFaceModels.DownloadAsync("org/tiny", token: "hf_model", downloader: downloader).GetAwaiter().GetResult();
+            var pulled = new Recorded<ModelPullProgress>();
+            string folder = Idrak.Data.HuggingFaceModels.DownloadFolderAsync("org/tiny", "", "main", "hf_model", downloader, pulled).GetAwaiter().GetResult();
+            long bytes = served.Sum(name => new FileInfo(Path.Combine(source, name!)).Length);
+            Check(pulled.Values.Count >= served.Count + 1 && pulled.Values[0] is { Received: 0, FilesDone: 0 } && pulled.Values[^1].FilesDone == served.Count && pulled.Values[^1].Files == served.Count,
+                $"the pull's progress: nothing first, each file done ({pulled.Values.Count} reports, last {pulled.Values[^1]})");
+            Check(pulled.Values.Zip(pulled.Values.Skip(1)).All(pair => pair.Second.Received >= pair.First.Received) && pulled.Values.All(v => v.Model == "org/tiny"),
+                "the bytes received never go back");
+            Check(pulled.Values[^1].Fraction == 1 || pulled.Values[^1].Received == pulled.Values[^1].Total, $"the last report is the whole: {pulled.Values[^1]} (the listing's sizes are 10 bytes a file, {bytes} served)");
             Check(folder == Path.Combine(cache, "huggingface", "models", "org", "tiny", commit[..12]), $"model folder {folder}");
             Check(Directory.GetFiles(folder).Select(Path.GetFileName).Order().SequenceEqual(served.Order()), "only the files the library reads");
 
+            var loading = new Recorded<PretrainedLoadProgress>();
             using (var original = PretrainedModel.Load(source, new PretrainedOptions { Device = device }))
-            using (var downloaded = PretrainedModel.Load(folder, new PretrainedOptions { Device = device }))
+            using (var downloaded = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, Progress = loading }))
             {
+                var told = loading.Values;
+                Check(told.Count >= 3 && told[0] is { Tensors: 0, Values: 0 } && told[0].TotalTensors > 0 && told[0].TotalValues > 0, $"the load says nothing is read first ({told[0]})");
+                Check(told.Zip(told.Skip(1)).All(pair => pair.Second.Values >= pair.First.Values && pair.Second.Fraction >= pair.First.Fraction), "the share read only grows");
+                Check(told[^1].Fraction == 1 && told[^1].Tensors == told[^1].TotalTensors && told.Count > 2, $"the end: every tensor ({told[^1]}, {told.Count} reports)");
                 int[] ids = [.. downloaded.Tokenizer!.Encode("hello there, general kenobi")];
                 TrainingSequence[] probe = [new TrainingSequence(ids, [.. ids.Select(_ => true)])];
                 AssertClose([FineTuner.Evaluate(original, probe)], [FineTuner.Evaluate(downloaded, probe)], 0f, "same loss as the original folder");
@@ -1975,6 +1987,20 @@ internal abstract partial class Tests
         finally
         {
             Directory.Delete(folder, true);
+        }
+    }
+
+    // A progress that keeps every report in order, on the reporting thread (Progress<T> would post them).
+    private sealed class Recorded<T> : IProgress<T>
+    {
+        public List<T> Values { get; } = [];
+
+        public void Report(T value)
+        {
+            lock (Values)
+            {
+                Values.Add(value);
+            }
         }
     }
 }

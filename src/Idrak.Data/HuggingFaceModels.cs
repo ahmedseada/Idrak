@@ -11,7 +11,7 @@ namespace Idrak.Data;
 /// an id. An id is looked up in Hugging Face's own cache (models fetched with transformers or huggingface-cli), then in
 /// Idrak's download cache, and downloaded otherwise: only the files the library reads (config, tokenizer, chat template,
 /// generation config and the safetensors weights, else one PyTorch checkpoint read without running it), into
-/// downloads/huggingface/models/&lt;owner&gt;/&lt;name&gt;/&lt;commit&gt;/ (a subfolder's model below it, <see cref="DownloadFolderAsync"/>).
+/// downloads/huggingface/models/&lt;owner&gt;/&lt;name&gt;/&lt;commit&gt;/ (a subfolder's model below it, <see cref="DownloadFolderAsync(string, string, string, string?, IDownloader?, CancellationToken)"/>).
 /// Gated and private models need a token (HF_TOKEN or huggingface-cli login).
 /// </summary>
 public static class HuggingFaceModels
@@ -23,7 +23,7 @@ public static class HuggingFaceModels
 
     /// <summary>
     /// The file a pull keeps in a model's revision folder (downloads/huggingface/models/&lt;owner&gt;/&lt;name&gt;/&lt;commit&gt;/)
-    /// until every file of it is in: <see cref="DownloadFolderAsync"/> writes it before its first file and deletes it after
+    /// until every file of it is in: <see cref="DownloadFolderAsync(string, string, string, string?, IDownloader?, CancellationToken)"/> writes it before its first file and deletes it after
     /// its last, as an app's model store does around its own pulls. A folder holding it, or a partial file (".part"), is
     /// unfinished: the offline fallback never takes it.
     /// </summary>
@@ -41,8 +41,17 @@ public static class HuggingFaceModels
     /// (once; "" for its top level) and returns their folder: a repository that keeps a model below its top level
     /// (myshell-ai/OpenVoiceV2's converter/) is read as one that keeps it at the top.
     /// </summary>
-    public static async Task<string> DownloadFolderAsync(string repo, string subfolder, string revision = "main", string? token = null, IDownloader? downloader = null,
-        CancellationToken cancellationToken = default)
+    public static Task<string> DownloadFolderAsync(string repo, string subfolder, string revision = "main", string? token = null, IDownloader? downloader = null,
+        CancellationToken cancellationToken = default) => DownloadFolderAsync(repo, subfolder, revision, token, downloader, null, cancellationToken);
+
+    /// <summary>
+    /// <see cref="DownloadFolderAsync(string, string, string, string?, IDownloader?, CancellationToken)"/>, telling
+    /// <paramref name="progress"/> the bytes received of all the files to download and the files done (several times a
+    /// second with Idrak.Data's <see cref="Downloader"/>, which reports each file's bytes; once per file with another
+    /// downloader); nothing when every file is cached.
+    /// </summary>
+    public static async Task<string> DownloadFolderAsync(string repo, string subfolder, string revision, string? token, IDownloader? downloader,
+        IProgress<ModelPullProgress>? progress, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(subfolder);
         subfolder = subfolder.Trim('/');
@@ -76,9 +85,16 @@ public static class HuggingFaceModels
         d.Log?.Invoke($"{repo}: {chosen.Count} of {files.Count} files needed ({Downloader.Size(chosen.Sum(f => f.Size))}), {missing.Count} to download");
         Directory.CreateDirectory(root);
         await File.WriteAllTextAsync(marker, commit, cancellationToken).ConfigureAwait(false);   // unfinished until the last file is in, between files too
+        var pull = progress is null ? null : new PullProgress(repo, missing.Sum(f => f.Size), missing.Count, progress, (d as Downloader)?.Progress);
+        // Each file's bytes reach the pull's progress through a downloader of the same cache and client that reports them.
+        var through = pull is not null && d is Downloader own
+            ? new Downloader(own.Http, own.CacheFolder) { Progress = pull, Log = own.Log, Refresh = own.Refresh, Attempts = own.Attempts, RetryDelay = own.RetryDelay }
+            : d;
+        pull?.Told("");
         foreach (var file in missing)
         {
-            await HuggingFace.DownloadFileAsync(repo, file.Path, "models", commit, token, d, cancellationToken).ConfigureAwait(false);
+            await HuggingFace.DownloadFileAsync(repo, file.Path, "models", commit, token, through, cancellationToken).ConfigureAwait(false);
+            pull?.FileDone(file.Size);
         }
 
         File.Delete(marker);
@@ -100,7 +116,33 @@ public static class HuggingFaceModels
             return NewestDownloaded(model, downloader) ?? throw new DirectoryNotFoundException($"{model} is not in a local cache.");
         }
 
-        return DownloadAsync(model, options.Revision, options.Token, downloader).GetAwaiter().GetResult();
+        return DownloadFolderAsync(model, "", options.Revision, options.Token, downloader, options.Progress).GetAwaiter().GetResult();
+    }
+
+    // A pull's progress: the bytes of the files done plus the file's bytes so far, of all the files to download; each file's
+    // reports also go on to the downloader's own progress, when it has one.
+    private sealed class PullProgress(string model, long total, int files, IProgress<ModelPullProgress> progress, IProgress<DownloadProgress>? next) : IProgress<DownloadProgress>
+    {
+        private long _done;
+        private int _filesDone;
+
+        public void Report(DownloadProgress value)
+        {
+            next?.Report(value);
+            if (!value.Completed)
+            {
+                progress.Report(new ModelPullProgress(model, Math.Min(total, _done + value.Received), total, _filesDone, files, value.File));
+            }
+        }
+
+        public void FileDone(long size)
+        {
+            _done += size;
+            _filesDone++;
+            Told("");
+        }
+
+        public void Told(string file) => progress.Report(new ModelPullProgress(model, Math.Min(total, _done), total, _filesDone, files, file));
     }
 
     /// <summary>
