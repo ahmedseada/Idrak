@@ -397,15 +397,13 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
                 inRow = 0;
 
                 watch.Restart();
-                var turn = await RunToolCallsAsync(registry, reply, previousCalls, limit.Token).ConfigureAwait(false);
+                // Each call's result is told as that call ends (a later call may wait for an approval, or the turn be
+                // cancelled part way), never only when the whole turn has run.
+                var turn = await RunToolCallsAsync(registry, reply, previousCalls, limit.Token, OnToolResult).ConfigureAwait(false);
                 previousCalls = turn.Key;
                 calls += turn.Results.Count;
                 errors += turn.Errors;
                 messages.AddRange(turn.Messages);
-                foreach (var result in turn.Results)
-                {
-                    OnToolResult?.Invoke(result);
-                }
 
                 toolTime += watch.Elapsed;
             }
@@ -427,7 +425,13 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
     /// call instead of answering from it), a failure sent back as "Error: …". Any environment that steps a coding agent
     /// turn by turn uses this, so its conversations are the loop's.
     /// </summary>
-    public static async Task<CodingToolTurn> RunToolCallsAsync(IToolRegistry registry, ChatMessage reply, string? previousCalls, CancellationToken cancellationToken = default)
+    /// <remarks>
+    /// <paramref name="onResult"/> is told each call's result as soon as that call ends, in call order (a registry that
+    /// runs a reply's calls together, <see cref="ToolRegistry.Parallel"/>, tells them when all have ended), so a call that
+    /// waits (an approval) or a turn cancelled part way (the time limit, a stop) never hides the calls already done.
+    /// </remarks>
+    public static async Task<CodingToolTurn> RunToolCallsAsync(IToolRegistry registry, ChatMessage reply, string? previousCalls, CancellationToken cancellationToken = default,
+        Action<ToolResult>? onResult = null)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(reply);
@@ -436,11 +440,35 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
         // call instead of answering from its result): they are not run again, and the model is told so.
         string key = string.Join("\n", toolCalls.Select(c => c.Name + " " + c.Arguments.ToJsonString()));
         bool repeated = key == previousCalls;
-        IReadOnlyList<ToolResult> results = repeated
-            ? [.. toolCalls.Select(c => new ToolResult(c, "", false,
-                "Not run again: this is the same call as the one just before, and its result is above. Use that result to answer, or make a different call.",
-                TimeSpan.Zero))]
-            : await registry.InvokeAsync(toolCalls, cancellationToken).ConfigureAwait(false);
+        IReadOnlyList<ToolResult> results;
+        if (repeated || onResult is null || registry is ToolRegistry { Parallel: true })
+        {
+            results = repeated
+                ? [.. toolCalls.Select(c => new ToolResult(c, "", false,
+                    "Not run again: this is the same call as the one just before, and its result is above. Use that result to answer, or make a different call.",
+                    TimeSpan.Zero))]
+                : await registry.InvokeAsync(toolCalls, cancellationToken).ConfigureAwait(false);
+            if (onResult is not null)
+            {
+                foreach (var result in results)
+                {
+                    onResult(result);
+                }
+            }
+        }
+        else
+        {
+            // One call after another, as the registry runs a reply's calls, each told as it ends.
+            var done = new List<ToolResult>(toolCalls.Count);
+            foreach (var call in toolCalls)
+            {
+                var result = await registry.InvokeAsync(call, cancellationToken).ConfigureAwait(false);
+                done.Add(result);
+                onResult(result);
+            }
+
+            results = done;
+        }
         var messages = new ChatMessage[results.Count];
         int errors = 0;
         for (int i = 0; i < results.Count; i++)

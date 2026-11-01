@@ -25,7 +25,44 @@ internal abstract partial class DesktopTests : Tests
         ("coding agent: calls written in fences are read and run (the owner's House reply: the file is written, read back, the build asked for)", AgentReadsFencedCalls),
         ("coding agent: a malformed call is nudged, the scripted model answers properly and the file is written; strict calls nudge a fenced one", AgentNudgesMalformedCall),
         ("coding agent: the nudge limit ends the run with CallsNotRead; an answer in words or with a code fence ends as answered", AgentNudgeLimit),
+        ("coding agent: each call's result is told as that call ends (before the next one waits), and a turn cut by the time limit still tells the calls that finished", AgentReportsEachResultAsItEnds),
     ];
+
+    private static void AgentReportsEachResultAsItEnds(Device device)
+    {
+        _ = device;
+        InAgentWorkspace(root =>
+        {
+            // write_file, then a tool that waits until the turn is cancelled (an approval nobody gives, cut by the time limit).
+            var results = new List<ToolResult>();
+            bool toldBeforeWaiting = false;
+            var wait = Tool.Create("wait_for_user", "Waits until cancelled.", new JsonObject { ["type"] = "object", ["properties"] = new JsonObject() },
+                async (_, token) =>
+                {
+                    toldBeforeWaiting = results.Any(r => r.Call.Name == "write_file");
+                    await Task.Delay(Timeout.Infinite, token);
+                    return "";
+                });
+            var reply = new ChatMessage("assistant", ToolCalls: [new ToolCall("write_file", new JsonObject { ["path"] = "a.txt", ["content"] = "alpha" }), new ToolCall("wait_for_user", [])]);
+            var fake = FakeChatModel.Script(reply, FakeChatModel.Answer("never asked"));
+            var agent = new CodingAgent(fake, new AgentOptions { ExtraTools = [wait], TimeLimit = TimeSpan.FromSeconds(1) }) { OnToolResult = results.Add };
+            var run = agent.RunAsync("Write a.txt", new CodingTools(root)).GetAwaiter().GetResult();
+            Check(toldBeforeWaiting, "write_file's result was told before the next call began to wait");
+            Check(run.End == CodingAgentEnd.OutOfBudget && File.Exists(Path.Combine(root, "a.txt")) && results.Count == 1 && results[0] is { Succeeded: true, Call.Name: "write_file" },
+                $"the time limit cut the turn; the written file's result was told ({run.End}: {run.Note}; {results.Count} told)");
+            Check(run is { ToolCalls: 0, Rounds: 1 } && !run.Messages.Any(m => m.Role == "tool"),
+                "the run's counts and messages are as before: the cut turn adds no tool message");
+
+            // Calls that all end: each told once, in call order, the same results as the turn's.
+            results.Clear();
+            var two = FakeChatModel.Script(new ChatMessage("assistant", ToolCalls: [new ToolCall("write_file", new JsonObject { ["path"] = "b.txt", ["content"] = "beta" }),
+                new ToolCall("read_file", new JsonObject { ["path"] = "b.txt" })]), FakeChatModel.Answer("Done."));
+            var done = new CodingAgent(two) { OnToolResult = results.Add }.RunAsync("Write and read b.txt", new CodingTools(root)).GetAwaiter().GetResult();
+            Check(done is { End: CodingAgentEnd.Answered, ToolCalls: 2 } && results.Select(r => r.Call.Name).SequenceEqual(["write_file", "read_file"])
+                  && results[1].Content.Contains("beta", StringComparison.Ordinal) && two.Requests[1].Messages.Count(m => m.Role == "tool") == 2,
+                $"two calls told in order, their results sent on ({string.Join(", ", results.Select(r => r.Call.Name))})");
+        });
+    }
 
     // A workspace for one agent test, deleted after it.
     private static void InAgentWorkspace(Action<string> test)

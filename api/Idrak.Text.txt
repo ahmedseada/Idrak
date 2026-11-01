@@ -741,7 +741,7 @@ public sealed class Idrak.Text.Generation.CodingAgent
   public int PendingNotes { get; }
   public static Idrak.Abstraction.Generation.ChatMessage ReadCallsInText(Idrak.Abstraction.Generation.ChatMessage reply, Idrak.Abstraction.Generation.ToolCallContext context)
   public static Idrak.Abstraction.Generation.ToolCallContext CallContext(Idrak.Abstraction.Generation.IChatTemplate? template, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools)
-  public static System.Threading.Tasks.Task<Idrak.Text.Generation.CodingToolTurn> RunToolCallsAsync(Idrak.Abstraction.Generation.IToolRegistry registry, Idrak.Abstraction.Generation.ChatMessage reply, string? previousCalls, System.Threading.CancellationToken cancellationToken = default)
+  public static System.Threading.Tasks.Task<Idrak.Text.Generation.CodingToolTurn> RunToolCallsAsync(Idrak.Abstraction.Generation.IToolRegistry registry, Idrak.Abstraction.Generation.ChatMessage reply, string? previousCalls, System.Threading.CancellationToken cancellationToken = default, System.Action<Idrak.Abstraction.Generation.ToolResult>? onResult = null)
   public static string DefaultSystemPrompt { get; }
   public static string SystemPrompt(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.ICodingLanguage> languages)
   public static string? Correction(Idrak.Abstraction.Generation.ChatMessage reply, Idrak.Abstraction.Generation.ToolCallContext context)
