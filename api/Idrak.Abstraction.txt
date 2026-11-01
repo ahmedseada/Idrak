@@ -3031,9 +3031,20 @@ public interface Idrak.Abstraction.Formats.ITensorStore : System.IDisposable
   public float[] Read(string name)
   public int[] ShapeOf(string name)
 
+public sealed record Idrak.Abstraction.Formats.ModelPullProgress : System.IEquatable<Idrak.Abstraction.Formats.ModelPullProgress>
+  public ModelPullProgress(string Model, long Received, long Total, int FilesDone, int Files, string File)
+  public double Fraction { get; }
+  public int Files { get; init; }
+  public int FilesDone { get; init; }
+  public long Received { get; init; }
+  public long Total { get; init; }
+  public string File { get; init; }
+  public string Model { get; init; }
+
 public sealed record Idrak.Abstraction.Formats.ModelSourceOptions : System.IEquatable<Idrak.Abstraction.Formats.ModelSourceOptions>
   public Idrak.Abstraction.Data.IDownloader? Downloader { get; init; }
   public ModelSourceOptions()
+  public System.IProgress<Idrak.Abstraction.Formats.ModelPullProgress>? Progress { get; init; }
   public bool Download { get; init; }
   public string Revision { get; init; }
   public string? Token { get; init; }

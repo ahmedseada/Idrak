@@ -63,12 +63,19 @@ public static class ModelSource
     /// with Idrak.Data). With <paramref name="download"/> false, only the caches are searched.
     /// </summary>
     public static string Resolve(string model, string revision = "main", string? token = null, IDownloader? downloader = null, bool download = true) =>
-        ModelSources.For(model)?.Resolve(model, Options(revision, token, downloader, download))
+        Resolve(model, Options(revision, token, downloader, download));
+
+    /// <summary>
+    /// <see cref="Resolve(string, string, string?, IDownloader?, bool)"/> with the source's options given whole: their
+    /// <see cref="ModelSourceOptions.Progress"/> told how a download goes (a model found in a cache reports nothing).
+    /// </summary>
+    public static string Resolve(string model, ModelSourceOptions options) =>
+        ModelSources.For(model)?.Resolve(model, options ?? throw new ArgumentNullException(nameof(options)))
         ?? throw new DirectoryNotFoundException(IsModelId(model) && !ModelSources.Names.Contains("huggingface")
             ? $"'{model}' reads as a Hugging Face model id, but no source resolves those; reference Idrak.Data, which adds it."
             : $"'{model}' is neither a folder nor a Hugging Face model id (owner/name).");
 
-    /// <summary>The options <see cref="Resolve"/> passes to a source: the revision, token, downloader and download switch.</summary>
+    /// <summary>The options <see cref="Resolve(string, string, string?, IDownloader?, bool)"/> passes to a source: the revision, token, downloader and download switch.</summary>
     public static ModelSourceOptions Options(string revision = "main", string? token = null, IDownloader? downloader = null, bool download = true) =>
         new() { Revision = revision, Token = token, Download = download, Downloader = downloader };
 

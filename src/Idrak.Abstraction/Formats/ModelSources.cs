@@ -22,6 +22,26 @@ public sealed record ModelSourceOptions
     /// your own for a mirror, an authenticated proxy or an offline cache.
     /// </summary>
     public IDownloader? Downloader { get; init; }
+
+    /// <summary>
+    /// Told how a download of the model goes (Craft's status bar, 2026-11-01): the bytes received of all the files to
+    /// download, and the files done of them, several times a second and once per file; null for none. A model found in a
+    /// cache downloads nothing and reports nothing.
+    /// </summary>
+    public IProgress<ModelPullProgress>? Progress { get; init; }
+}
+
+/// <summary>How far a model's download is: the bytes received of all its files to download, the files done, the file now.</summary>
+/// <param name="Model">The model being downloaded.</param>
+/// <param name="Received">The bytes received so far, of every file.</param>
+/// <param name="Total">The bytes of every file to download.</param>
+/// <param name="FilesDone">The files done.</param>
+/// <param name="Files">The files to download.</param>
+/// <param name="File">The file being downloaded now ("" between files).</param>
+public sealed record ModelPullProgress(string Model, long Received, long Total, int FilesDone, int Files, string File)
+{
+    /// <summary>The share received, from 0 to 1 (1 when there was nothing to download).</summary>
+    public double Fraction => Total > 0 ? Math.Clamp((double)Received / Total, 0, 1) : 1;
 }
 
 /// <summary>

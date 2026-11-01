@@ -2137,6 +2137,7 @@ public static class Idrak.Models.ModelSource
   public static Idrak.Abstraction.Formats.ModelSourceOptions Options(string revision = "main", string? token = null, Idrak.Abstraction.Data.IDownloader? downloader = null, bool download = true)
   public static bool IsModelId(string model)
   public static string LocalStoreModel(string name)
+  public static string Resolve(string model, Idrak.Abstraction.Formats.ModelSourceOptions options)
   public static string Resolve(string model, string revision = "main", string? token = null, Idrak.Abstraction.Data.IDownloader? downloader = null, bool download = true)
 
 public sealed record Idrak.Models.PackedWeightCacheUse : System.IEquatable<Idrak.Models.PackedWeightCacheUse>
@@ -2189,6 +2190,14 @@ public static class Idrak.Models.PretrainedFamilies
   public static Idrak.Models.Abstractions.IPretrainedArchitecture CommonArchitecture(System.Func<System.Text.Json.Nodes.JsonObject, Idrak.Abstraction.Generation.DecoderSpec, System.Collections.Generic.List<string>, Idrak.Abstraction.Generation.DecoderSpec> adjust)
   public static System.Text.Json.Nodes.JsonObject CommonConfig(Idrak.Abstraction.Generation.DecoderSpec spec, string modelType)
   public static string? CommonTensorName(string name)
+
+public sealed record Idrak.Models.PretrainedLoadProgress : System.IEquatable<Idrak.Models.PretrainedLoadProgress>
+  public PretrainedLoadProgress(int Tensors, int TotalTensors, long Values, long TotalValues)
+  public double Fraction { get; }
+  public int Tensors { get; init; }
+  public int TotalTensors { get; init; }
+  public long TotalValues { get; init; }
+  public long Values { get; init; }
 
 public sealed record Idrak.Models.PretrainedLoadTimes : System.IEquatable<Idrak.Models.PretrainedLoadTimes>
   public PretrainedLoadTimes(System.TimeSpan Open, System.TimeSpan Read, System.TimeSpan Convert, System.TimeSpan Merge, System.TimeSpan Upload, System.TimeSpan Build, System.TimeSpan Vision, System.TimeSpan Tokenizer, System.TimeSpan Total)
@@ -2247,6 +2256,7 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public Idrak.Abstraction.Devices.LookupTablePlacement? LookupTables { get; init; }
   public Idrak.Models.Abstractions.TokenizerOptions? Tokenizer { get; init; }
   public PretrainedOptions()
+  public System.IProgress<Idrak.Models.PretrainedLoadProgress>? Progress { get; init; }
   public bool BFloat16 { get; init; }
   public bool Deferred { get; init; }
   public bool Int4 { get; init; }
