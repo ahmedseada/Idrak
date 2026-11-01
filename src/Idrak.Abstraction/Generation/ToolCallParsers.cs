@@ -517,7 +517,59 @@ public static class ToolCallText
 
     // The calls in one JSON value when every one names an offered tool: checked on the UTF-8 bytes first, so a value
     // that is not calls builds nothing.
-    private static bool TakeCalls(ReadOnlySpan<char> json, ToolCallContext context, ref List<ToolCall>? calls)
+    // A value read as written, else (a model's habit: a file's content written with raw line breaks inside the JSON
+    // string) with the control characters inside its strings escaped. A value that parses as written is never changed.
+    private static bool TakeCalls(ReadOnlySpan<char> json, ToolCallContext context, ref List<ToolCall>? calls) =>
+        TakeCallsAsWritten(json, context, ref calls) || EscapedControls(json) is { } escaped && TakeCallsAsWritten(escaped, context, ref calls);
+
+    // The JSON text with each control character inside a string written as its escape (\n, \r, \t, \u00XX), or null when
+    // its strings hold none.
+    private static string? EscapedControls(ReadOnlySpan<char> json)
+    {
+        StringBuilder? escaped = null;
+        bool inString = false;
+        int copied = 0;
+        for (int i = 0; i < json.Length; i++)
+        {
+            char c = json[i];
+            if (!inString)
+            {
+                inString = c == '"';
+                continue;
+            }
+
+            if (c == '\\')
+            {
+                i++;
+                continue;
+            }
+
+            if (c == '"')
+            {
+                inString = false;
+                continue;
+            }
+
+            if (c >= ' ')
+            {
+                continue;
+            }
+
+            escaped ??= new StringBuilder(json.Length + 64);
+            escaped.Append(json[copied..i]).Append(c switch
+            {
+                '\n' => "\\n",
+                '\r' => "\\r",
+                '\t' => "\\t",
+                _ => "\\u" + ((int)c).ToString("x4", CultureInfo.InvariantCulture),
+            });
+            copied = i + 1;
+        }
+
+        return escaped?.Append(json[copied..]).ToString();
+    }
+
+    private static bool TakeCallsAsWritten(ReadOnlySpan<char> json, ToolCallContext context, ref List<ToolCall>? calls)
     {
         byte[] utf8 = ArrayPool<byte>.Shared.Rent(Encoding.UTF8.GetMaxByteCount(json.Length));
         try

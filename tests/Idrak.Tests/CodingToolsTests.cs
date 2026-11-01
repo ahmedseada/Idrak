@@ -26,7 +26,59 @@ internal abstract partial class DesktopTests : Tests
         ("coding agent: a malformed call is nudged, the scripted model answers properly and the file is written; strict calls nudge a fenced one", AgentNudgesMalformedCall),
         ("coding agent: the nudge limit ends the run with CallsNotRead; an answer in words or with a code fence ends as answered", AgentNudgeLimit),
         ("coding agent: each call's result is told as that call ends (before the next one waits), and a turn cut by the time limit still tells the calls that finished", AgentReportsEachResultAsItEnds),
+        ("coding agent: three ```json fences (write_file with escaped newlines and braces, edit_file, run_command) are all read and run, in order", AgentRunsEveryFencedCall),
     ];
+
+    // A 7B coder's reply: three json fences, write_file's content with \n escapes, quotes and braces.
+    private const string ThreeFencedCalls = """
+        I'll create the program, then change its greeting and run it.
+
+        ```json
+        {"name": "write_file", "arguments": {"path": "Program.cs", "content": "using System;\n\nclass Program\n{\n    static void Main()\n    {\n        Console.WriteLine(\"Hello\");\n    }\n}\n"}}
+        ```
+
+        ```json
+        {"name": "edit_file", "arguments": {"path": "Program.cs", "old_text": "Console.WriteLine(\"Hello\");", "new_text": "Console.WriteLine(\"Hello, {0}!\", \"World\");"}}
+        ```
+
+        ```json
+        {"name": "run_command", "arguments": {"command": "dotnet run"}}
+        ```
+        """;
+
+    private static void AgentRunsEveryFencedCall(Device device)
+    {
+        _ = device;
+        InAgentWorkspace(root =>
+        {
+            var fake = FakeChatModel.Script(FakeChatModel.Answer(ThreeFencedCalls), FakeChatModel.Answer("Program.cs prints Hello, World!"));
+            var sandbox = new RecordingSandbox(new CommandResult(0, false, "Hello, World!", TimeSpan.Zero, false));
+            var tools = new CodingTools(root, null, sandbox);
+            var results = new List<ToolResult>();
+            var run = new CodingAgent(fake) { OnToolResult = results.Add }.RunAsync("Write a hello program and run it", tools).GetAwaiter().GetResult();
+            string program = Path.Combine(root, "Program.cs");
+            string text = File.Exists(program) ? File.ReadAllText(program) : "(missing)";
+            Check(results.Select(r => r.Call.Name).SequenceEqual(["write_file", "edit_file", "run_command"]) && results.All(r => r.Succeeded),
+                $"the three calls ran in order: {string.Join(", ", results.Select(r => $"{r.Call.Name} {(r.Succeeded ? "ok" : r.Error)}"))}");
+            Check(text.Contains("Console.WriteLine(\"Hello, {0}!\", \"World\");", StringComparison.Ordinal) && text.Contains("class Program\n{", StringComparison.Ordinal),
+                $"Program.cs written with real newlines and braces, then edited: {text}");
+            Check(sandbox.Calls.Count == 1 && run is { End: CodingAgentEnd.Answered, ToolCalls: 3, Rounds: 2 },
+                $"the command ran once; {run.End}, {run.ToolCalls} calls, {run.Rounds} rounds");
+
+            // The same reply with the file's line breaks written raw inside the JSON string (not valid JSON): before, only
+            // the one-line run_command was read; now the strings' control characters are escaped and all three run.
+            File.Delete(program);
+            string raw = ThreeFencedCalls.Replace("\\n", "\n", StringComparison.Ordinal);
+            var context = CodingAgent.CallContext(null, [.. tools.All.Select(t => t.Definition)]);
+            var read = ToolCallText.CallsInText(raw, context);
+            Check(read is { Count: 3 } && read[0].Name == "write_file" && (string?)read[0].Arguments["content"] == "using System;\n\nclass Program\n{\n    static void Main()\n    {\n        Console.WriteLine(\"Hello\");\n    }\n}\n"
+                  && read[1].Name == "edit_file" && read[2].Name == "run_command",
+                $"raw line breaks inside a string: the three calls read, the content's lines kept ({(read is null ? "none" : string.Join(", ", read.Select(c => c.Name)))})");
+            var valid = ToolCallText.CallsInText(ThreeFencedCalls, context)!;
+            Check(valid.Count == 3 && valid.Zip(read!).All(p => p.First.Name == p.Second.Name && JsonNode.DeepEquals(p.First.Arguments, p.Second.Arguments)),
+                "valid JSON reads as before, and the escaped reply gives the same calls");
+        });
+    }
 
     private static void AgentReportsEachResultAsItEnds(Device device)
     {
