@@ -67,6 +67,13 @@ public sealed record CommandLimits
     /// return quickly and not throw (an exception is dropped, the command goes on). Null: none.
     /// </summary>
     public Action<string>? Output { get; init; }
+
+    /// <summary>
+    /// Who asks for the command, as the words of a sentence ("the agent", "the npm plug-in"): a sandbox that asks the user
+    /// first (an app's "approve-each") words its question with it ("The npm plug-in wants to run …"), and a log or a
+    /// listing may name it. It changes nothing about how the command runs. Default "the agent" (the coding tools').
+    /// </summary>
+    public string Requester { get; init; } = "the agent";
 }
 
 /// <summary>
