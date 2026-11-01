@@ -349,6 +349,7 @@ public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generatio
   public bool HoldsDraftCache { get; }
   public bool KeepCache { get; set; }
   public bool ReuseDecoding { get; set; }
+  public bool SkipSpecialTokens { get; init; }
   public bool SupportsBatches { get; }
   public int ContextLength { get; }
   public int Vocabulary { get; }

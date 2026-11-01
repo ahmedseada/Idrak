@@ -186,7 +186,9 @@ internal abstract partial class Tests
             Options = new GenerationOptions { Temperature = 0, NumPredict = 20, RepeatPenalty = 1 },
         };
         var reply = withImages.Chat(request);
-        string expected = model.Tokenizer!.Decode(newTokens);
+        // The reply's text leaves out special tokens (transformers' skip_special_tokens=True); the tokens stay 20.
+        var special = (Idrak.Abstraction.Generation.IPretrainedTokenizer)model.Tokenizer!;
+        string expected = special.Decode([.. newTokens.Where(t => !special.IsSpecial(t))]);
         Check(reply.Stats is { GeneratedTokens: 20 } && reply.Stats.PromptTokens == facts["input_ids"]!.AsArray().Count, $"20 tokens after the prompt: {reply.Stats}");
         Check(reply.Message!.Content == expected, $"the answer: '{reply.Message.Content}', transformers' '{expected}'");
         Check(withImages.Chat(request).Message!.Content == expected, "the same request again (the kept cache up to the image) answers the same");

@@ -14,6 +14,7 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] Pretrained =
     [
         ("pretrained: safetensors F32/BF16 round trip; sharded index", SafeTensorsRoundTrip),
+        ("pretrained: a special token sampled mid-reply is left out of the text (stream and batch), the end-of-turn marker still ends it, the ids stay as sampled; SkipSpecialTokens false writes it", SpecialTokensLeftOutOfText),
         ("pretrained: a model's recommended sampling (generation_config.json) is read, carried by its generator and chat model, and laid under explicit values (explicit, then the model's, then the defaults; greedy; out-of-range values left out)", RecommendedSamplingIsRead),
         ("pretrained: weights auto: the largest of float32, bfloat16, int8 and int4 that fits the free memory (faked by the budget), its logits those of the format named; nothing fitting refused before the load or offloaded; a named format wins; a bfloat16 checkpoint skips float32", AutoWeightsChooseByMemory),
         ("pretrained: safetensors matrices read transposed (F32, F16, BF16; across read chunks) equal reading then transposing", SafeTensorsTransposed),
