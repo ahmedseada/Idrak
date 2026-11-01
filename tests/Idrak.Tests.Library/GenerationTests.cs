@@ -18,6 +18,7 @@ internal abstract partial class Tests
         ("generation: word tokenizer splits, maps unknown words and decodes piecewise", WordTokenizerBehaviour),
         ("generation: ChatML template renders system, tools, turns and think modes", TemplateRendering),
         ("generation: keep-alive durations and model host expiry", KeepAliveAndHost),
+        ("generation: a model host's failed first load (and one the host's disposal ended) leaves no task nobody observed, with nobody else waiting", FailedLoadObserved),
         ("generation: num_predict, stop sequences, cache/graph/recompute agree; without a slide a reply ends where the window does", GeneratorBehaviour),
         ("generation: a batch of prompts of different lengths keeps a bfloat16 cache (IRowStartsLayout) and gives each prompt its text alone, greedy, through prompts and steps; float32 and bfloat16 caches give the same texts with recorded steps (UseGraph) as without, through many steps, and the device records the step once", BFloat16RowsBatch),
         ("generation: a measured prompt piece is never fewer than PrefillMinChunk positions (256 by default) however little memory is free, never more than the prompt, and as many as the room holds between", PrefillPieceFloor),
@@ -574,6 +575,52 @@ internal abstract partial class Tests
         using var failing = new ModelHost<Dummy>(_ => throw new InvalidOperationException("no such model"), TimeSpan.FromMinutes(5), clock);
         try { failing.Acquire("x"); Check(false, "a failed load throws"); } catch (InvalidOperationException) { }
         Check(failing.Loading.Count == 0 && failing.Loaded.Count == 0, "a failed load leaves nothing loading or loaded");
+    }
+
+    // Craft's run (2026-11-01): every failed local load came back later as "a background task nobody awaited", the host's
+    // pending load's task faulted with no caller waiting on it.
+    internal static void FailedLoadObserved(Device device)
+    {
+        _ = device;
+        string marker = "failed load " + Guid.NewGuid().ToString("N");
+        int unobserved = 0;
+        void OnUnobserved(object? sender, UnobservedTaskExceptionEventArgs e)
+        {
+            if (e.Exception.InnerExceptions.Any(x => x.Message == marker
+                || x is ObjectDisposedException { ObjectName: { } name } && name.Contains(nameof(Dummy), StringComparison.Ordinal)))
+            {
+                Interlocked.Increment(ref unobserved);
+            }
+        }
+
+        TaskScheduler.UnobservedTaskException += OnUnobserved;
+        try
+        {
+            FailLoads(marker);
+            for (int i = 0; i < 3; i++)
+            {
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+            }
+
+            Check(unobserved == 0, $"a failed load's task is observed by the host ({unobserved} came back as UnobservedTaskException)");
+        }
+        finally
+        {
+            TaskScheduler.UnobservedTaskException -= OnUnobserved;
+        }
+    }
+
+    // A load that throws, and one the host's disposal ends while it runs; nothing of either kept here.
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static void FailLoads(string marker)
+    {
+        using var failing = new ModelHost<Dummy>(_ => throw new InvalidOperationException(marker), TimeSpan.FromMinutes(5));
+        try { failing.Acquire("x"); Check(false, "a failed load throws"); } catch (InvalidOperationException) { }
+
+        ModelHost<Dummy>? closing = null;
+        closing = new ModelHost<Dummy>(_ => { closing!.Dispose(); return new Dummy(); }, TimeSpan.FromMinutes(5));
+        try { closing.Acquire("y"); Check(false, "a load the host's disposal ended throws"); } catch (ObjectDisposedException) { }
     }
 
     internal static (Sequential Model, CharTokenizer Tokenizer) TinyLanguageModel(Device device, int context = 32)

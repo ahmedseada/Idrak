@@ -126,7 +126,7 @@ public sealed class ModelHost<TModel> : IDisposable where TModel : class, IDispo
                 _loading.Remove(name);
             }
 
-            mine!.Done.TrySetException(error);
+            mine!.Fail(error);
             throw;
         }
 
@@ -139,7 +139,7 @@ public sealed class ModelHost<TModel> : IDisposable where TModel : class, IDispo
             {
                 model.Dispose();
                 var gone = new ObjectDisposedException(GetType().FullName);
-                mine!.Done.TrySetException(gone);
+                mine!.Fail(gone);
                 throw gone;
             }
 
@@ -244,6 +244,14 @@ public sealed class ModelHost<TModel> : IDisposable where TModel : class, IDispo
         public TaskCompletionSource<Entry> Done { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public int Waiters { get; set; }
+
+        // The load failed: every waiter gets the failure, and the task is marked observed here, since the loader itself
+        // throws it and often nobody waits (else every failed load came back as an UnobservedTaskException).
+        public void Fail(Exception error)
+        {
+            Done.TrySetException(error);
+            _ = Done.Task.Exception;
+        }
     }
 
     private sealed class Entry(TModel model, DateTimeOffset loadedAt)
