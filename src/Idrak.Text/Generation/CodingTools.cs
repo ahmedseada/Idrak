@@ -189,8 +189,23 @@ public sealed class CodingTools
                 (args, token) => RunCommandAsync(Text(args, "command")!, Text(args, "directory") ?? ".", Number(args, "timeout_seconds"), token)));
         }
 
-        All = tools;
+        All = [.. tools.Select(FailsOnError)];
     }
+
+    // What a tool's method answers a refusal or an error with: "Error: …" (the methods' own text, which callers of the
+    // methods read as before).
+    private const string ErrorPrefix = "Error: ";
+
+    // The tool with its "Error: …" answers as failed calls (ToolFailedException: the registry's failed ToolResult with the
+    // message), so the model reads that the call failed and an app marks it failed; every other answer as it is.
+    private static Tool FailsOnError(Tool tool) => tool with
+    {
+        Invoke = async (arguments, token) =>
+        {
+            string text = await tool.Invoke(arguments, token).ConfigureAwait(false);
+            return text.StartsWith(ErrorPrefix, StringComparison.Ordinal) ? throw new ToolFailedException(text[ErrorPrefix.Length..]) : text;
+        },
+    };
 
     /// <summary>The workspace folder (absolute).</summary>
     public string Workspace => _root;

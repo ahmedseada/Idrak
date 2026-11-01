@@ -27,7 +27,47 @@ internal abstract partial class DesktopTests : Tests
         ("coding agent: the nudge limit ends the run with CallsNotRead; an answer in words or with a code fence ends as answered", AgentNudgeLimit),
         ("coding agent: each call's result is told as that call ends (before the next one waits), and a turn cut by the time limit still tells the calls that finished", AgentReportsEachResultAsItEnds),
         ("coding agent: three ```json fences (write_file with escaped newlines and braces, edit_file, run_command) are all read and run, in order", AgentRunsEveryFencedCall),
+        ("coding tools: a refusal or error (old_text not found or not unique, a path outside the folder, a missing file, a refused command) is a failed result with its message; the model reads it as before", CodingToolErrorsFail),
     ];
+
+    private static void CodingToolErrorsFail(Device device)
+    {
+        _ = device;
+        InAgentWorkspace(root =>
+        {
+            File.WriteAllText(Path.Combine(root, "Program.cs"), "class Program { int a; int a2; }\n");
+            var tools = new CodingTools(root, null, new RecordingSandbox(new CommandResult(1, false, "build failed", TimeSpan.Zero, false)));
+            var registry = tools.Registry();
+            ToolResult Run(string name, JsonObject arguments) => registry.InvokeAsync(new ToolCall(name, arguments)).GetAwaiter().GetResult();
+            var failures = new (string Name, JsonObject Arguments, string Says)[]
+            {
+                ("edit_file", new() { ["path"] = "Program.cs", ["old_text"] = "int b;", ["new_text"] = "int c;" }, "not found"),
+                ("edit_file", new() { ["path"] = "Program.cs", ["old_text"] = "int a", ["new_text"] = "int c" }, "occurs"),
+                ("read_file", new() { ["path"] = "../outside.cs" }, "outside the workspace"),
+                ("read_file", new() { ["path"] = "Missing.cs" }, "does not exist"),
+                ("run_command", new() { ["command"] = "dotnet build && dotnet test" }, "not run by a shell"),
+            };
+            foreach (var (name, arguments, says) in failures)
+            {
+                var result = Run(name, arguments);
+                Check(!result.Succeeded && result.Error is { } error && error.Contains(says, StringComparison.Ordinal) && !error.StartsWith("Error:", StringComparison.Ordinal)
+                      && result.Content.Contains(says, StringComparison.Ordinal),
+                    $"{name} {arguments.ToJsonString()}: a failed result saying '{says}' ({(result.Succeeded ? "succeeded" : "failed")}: {result.Error ?? result.Content})");
+            }
+
+            Check(Run("read_file", new() { ["path"] = "Program.cs" }) is { Succeeded: true } read && read.Content.Contains("class Program", StringComparison.Ordinal)
+                  && Run("run_command", new() { ["command"] = "dotnet build" }) is { Succeeded: true } built && built.Content.Contains("build failed", StringComparison.Ordinal),
+                "a read and a command that ran (exit code 1 included) succeed");
+
+            // In the agent: the model reads "Error: …" as before, and the run counts the error.
+            var fake = FakeChatModel.Script(FakeChatModel.ToolCall("edit_file", new JsonObject { ["path"] = "Program.cs", ["old_text"] = "int b;", ["new_text"] = "int c;" }), FakeChatModel.Answer("It failed."));
+            var told = new List<ToolResult>();
+            var run = new CodingAgent(fake) { OnToolResult = told.Add }.RunAsync("Rename b", tools).GetAwaiter().GetResult();
+            Check(run is { ToolCalls: 1, ToolErrors: 1 } && told is [{ Succeeded: false }]
+                  && fake.Requests[1].Messages[^1] is { Role: "tool" } message && message.Content.StartsWith("Error: old_text was not found", StringComparison.Ordinal),
+                $"the agent: one failed call, the model told 'Error: …' ({fake.Requests[1].Messages[^1].Content})");
+        });
+    }
 
     // A 7B coder's reply: three json fences, write_file's content with \n escapes, quotes and braces.
     private const string ThreeFencedCalls = """

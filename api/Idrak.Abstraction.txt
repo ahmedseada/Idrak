@@ -4538,6 +4538,9 @@ public sealed record Idrak.Abstraction.Generation.ToolDefinition : System.IEquat
   public string Name { get; init; }
   public string? Description { get; init; }
 
+public sealed class Idrak.Abstraction.Generation.ToolFailedException : System.Exception
+  public ToolFailedException(string message)
+
 public sealed class Idrak.Abstraction.Generation.ToolProviderAttribute : System.Attribute
   public System.Type Provider { get; }
   public ToolProviderAttribute(System.Type provider)

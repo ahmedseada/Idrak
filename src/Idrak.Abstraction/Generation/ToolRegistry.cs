@@ -120,6 +120,11 @@ public sealed class ToolRegistry : IToolRegistry
                 content = "";
             }
         }
+        catch (ToolFailedException ex)
+        {
+            error = ex.Message;                                 // the tool's own words for the model (a refusal, a file not found)
+            content = "";
+        }
         catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
             error = $"'{call.Name}' failed: {ex.Message}";
