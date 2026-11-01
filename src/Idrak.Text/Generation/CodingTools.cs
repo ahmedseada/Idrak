@@ -46,6 +46,21 @@ public sealed record CodingToolOptions
     /// <summary>Lines <c>read_file</c> returns per call.</summary>
     public int MaxReadLines { get; init; } = 400;
 
+    /// <summary>
+    /// When edit_file's old_text is not in the file exactly, it is looked for again, in order: with read_file's line
+    /// numbers ("12| ") taken off every line (only when every non-empty line has one, numbered in sequence; new_text's
+    /// taken off too when all its lines have them), then line by line with trailing white space and a missing or extra
+    /// final line break ignored. Only a single match is taken, and the result says which way it matched; the exact match
+    /// is always tried first. True by default; false: the exact text only.
+    /// </summary>
+    public bool EditTolerance { get; init; } = true;
+
+    /// <summary>
+    /// Lines of the file an edit_file error quotes from its start when old_text is not found (beside old_text itself, cut
+    /// at 200 characters), so the model sees the difference and can copy the text: 10 by default; 0 quotes none.
+    /// </summary>
+    public int EditQuotedLines { get; init; } = 10;
+
     /// <summary>Matches <c>search</c> returns.</summary>
     public int MaxSearchResults { get; init; } = 100;
 
@@ -100,7 +115,7 @@ public sealed record CodingToolOptions
 /// only the language-free ones (git, <c>.git</c>). Paths are relative to the workspace and cannot leave it; results are
 /// plain text sized for a model's context; mistakes come back as messages the model can act on.
 /// </summary>
-public sealed class CodingTools
+public sealed partial class CodingTools
 {
     // Non-interactive and uncoloured, whatever the language (each language adds its programs' own).
     private static readonly Dictionary<string, string> Quiet = new(StringComparer.Ordinal) { ["CI"] = "1", ["NO_COLOR"] = "1", ["FORCE_COLOR"] = "0" };
@@ -435,10 +450,22 @@ public sealed class CodingTools
         int count = Count(text, find);
         if (count == 0)
         {
-            string hint = Count(Collapse(text), Collapse(find)) > 0
-                ? " It matches when whitespace is ignored: copy the exact indentation and line breaks from read_file."
-                : " Read the file again (read_file) and copy the text exactly.";
-            return $"Error: old_text was not found in {path}.{hint}";
+            if (!_options.EditTolerance || Tolerant(text, oldText, newText, Match) is not { } tolerant)
+            {
+                string hint = Count(Collapse(text), Collapse(find)) > 0
+                    ? " It matches when whitespace is ignored: copy the exact indentation and line breaks from the file."
+                    : " That text is not in the file: copy old_text from the file's text, not from memory.";
+                return $"Error: old_text was not found in {path}. old_text was: {Escaped(oldText)}.{hint}{Quote(text)}";
+            }
+
+            if (tolerant.Count > 1)
+            {
+                return $"Error: old_text was not found exactly in {path}; {tolerant.How} it occurs {tolerant.Count} or more times. Copy the exact text, with enough surrounding lines to make it unique.";
+            }
+
+            string changed = string.Concat(text.AsSpan(0, tolerant.Start), tolerant.Replacement, text.AsSpan(tolerant.Start + tolerant.Length));
+            WriteKeepingBom(full, changed);
+            return Edited(path, full, text, tolerant.Start, tolerant.Replacement, $"1 replacement; old_text matched {tolerant.How}");
         }
 
         if (count > 1 && !replaceAll)
@@ -448,13 +475,219 @@ public sealed class CodingTools
 
         int at = text.IndexOf(find, StringComparison.Ordinal);
         string updated = replaceAll ? text.Replace(find, replacement, StringComparison.Ordinal) : string.Concat(text.AsSpan(0, at), replacement, text.AsSpan(at + find.Length));
-        File.WriteAllText(full, updated);
+        WriteKeepingBom(full, updated);
+        return Edited(path, full, text, at, replacement, replaceAll ? $"{count} replacements" : "1 replacement");
+    }
 
-        // The changed lines with a little context, so the model sees the result without reading the file again.
-        int firstLine = text.AsSpan(0, at).Count('\n') + 1;
+    // The changed lines with a little context, so the model sees the result without reading the file again.
+    private string Edited(string path, string full, string before, int at, string replacement, string what)
+    {
+        int firstLine = before.AsSpan(0, at).Count('\n') + 1;
         int changedLines = SplitLines(replacement).Count;
         string view = ReadFile(path, Math.Max(1, firstLine - 2), firstLine + Math.Max(changedLines, 1) + 1);
-        return $"Edited {Relative(full)} ({(replaceAll ? $"{count} replacements" : "1 replacement")}):\n{view}";
+        return $"Edited {Relative(full)} ({what}):\n{view}";
+    }
+
+    // Writes text as UTF-8, with the byte order mark when the file had one (File.ReadAllText drops it and
+    // File.WriteAllText would not write it back: an edit would change the file's encoding).
+    private static void WriteKeepingBom(string full, string text)
+    {
+        bool bom = false;
+        if (File.Exists(full))
+        {
+            using var stream = File.OpenRead(full);
+            Span<byte> head = stackalloc byte[3];
+            bom = stream.Read(head) == 3 && head.SequenceEqual(Utf8Bom);
+        }
+
+        File.WriteAllText(full, text, new UTF8Encoding(encoderShouldEmitUTF8Identifier: bom));
+    }
+
+    private static ReadOnlySpan<byte> Utf8Bom => [0xEF, 0xBB, 0xBF];
+
+    private const int MaxQuotedLine = 200;
+
+    // old_text as an error shows it: in quotes, its line breaks, tabs, quotes and backslashes escaped, cut at
+    // MaxQuotedLine characters.
+    private static string Escaped(string text)
+    {
+        int shown = Math.Min(text.Length, MaxQuotedLine);
+        var sb = new StringBuilder(shown + 8).Append('"');
+        foreach (char c in text.AsSpan(0, shown))
+        {
+            _ = c switch
+            {
+                '\n' => sb.Append("\\n"),
+                '\r' => sb.Append("\\r"),
+                '\t' => sb.Append("\\t"),
+                '"' => sb.Append("\\\""),
+                '\\' => sb.Append("\\\\"),
+                _ => sb.Append(c),
+            };
+        }
+
+        return sb.Append(text.Length > MaxQuotedLine ? "\" …" : "\"").ToString();
+    }
+
+    // The file's first lines as they are (no line numbers), for an edit whose old_text was not found.
+    private string Quote(string text)
+    {
+        if (_options.EditQuotedLines <= 0)
+        {
+            return "";
+        }
+
+        var lines = SplitLines(text);
+        if (lines.Count == 0)
+        {
+            return " The file is empty.";
+        }
+
+        var invariant = System.Globalization.CultureInfo.InvariantCulture;
+        bool all = lines.Count <= _options.EditQuotedLines;
+        var sb = new StringBuilder(all ? " The file's text (without line numbers):\n```\n"
+            : string.Create(invariant, $" The file's first {_options.EditQuotedLines} lines (without line numbers):\n```\n"));
+        foreach (var (start, length) in lines.Take(_options.EditQuotedLines))
+        {
+            sb.Append(text.AsSpan(start, Math.Min(length, MaxQuotedLine))).Append(length > MaxQuotedLine ? " …\n" : "\n");
+        }
+
+        sb.Append("```");
+        if (!all)
+        {
+            sb.Append(invariant, $"\n… {lines.Count - _options.EditQuotedLines} more lines (read_file with start_line {_options.EditQuotedLines + 1})");
+        }
+
+        return sb.ToString();
+    }
+
+    // read_file's decorations: a line's number before "| " (right-aligned), and the note on lines not shown.
+    [GeneratedRegex(@"^[ \t]*(\d+)\| ?")]
+    private static partial Regex LinePrefix();
+
+    [GeneratedRegex(@"^… lines \d+-\d+ not shown")]
+    private static partial Regex NotShown();
+
+    // text without read_file's line numbers when every non-empty line has one, numbered in sequence (its "not shown"
+    // notes dropped); null otherwise.
+    private static string? WithoutLineNumbers(string text)
+    {
+        var sb = new StringBuilder(text.Length);
+        int previous = -1, numbered = 0;
+        foreach (var line in text.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
+        {
+            if (NotShown().IsMatch(line))
+            {
+                continue;
+            }
+
+            var prefix = LinePrefix().Match(line);
+            if (!prefix.Success)
+            {
+                if (line.Trim().Length > 0)
+                {
+                    return null;
+                }
+
+                sb.Append(line).Append('\n');
+                continue;
+            }
+
+            if (!int.TryParse(prefix.Groups[1].ValueSpan, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int number)
+                || previous >= 0 && number != previous + 1)
+            {
+                return null;
+            }
+
+            previous = number;
+            numbered++;
+            sb.Append(line.AsSpan(prefix.Length)).Append('\n');
+        }
+
+        if (numbered == 0)
+        {
+            return null;
+        }
+
+        sb.Length--;                                                         // the split's last piece had no line break after it
+        return sb.ToString();
+    }
+
+    // Where a tolerant match of edit_file's old_text is, what replaces it, how it matched, and how many matches (2: two or more).
+    private sealed record TolerantMatch(int Start, int Length, string Replacement, string How, int Count);
+
+    // old_text found the tolerant ways (CodingToolOptions.EditTolerance): the first way that finds it; null when none does.
+    private static TolerantMatch? Tolerant(string text, string oldText, string newText, Func<string, string> endings)
+    {
+        const string Lines = "with trailing white space and the final line break ignored";
+        if (WithoutLineNumbers(oldText) is { Length: > 0 } stripped)
+        {
+            const string Numbers = "after removing read_file's line numbers";
+            string replacement = endings(WithoutLineNumbers(newText) ?? newText), find = endings(stripped);
+            int count = Count(text, find);
+            if (count > 0)
+            {
+                return new TolerantMatch(text.IndexOf(find, StringComparison.Ordinal), find.Length, replacement, Numbers, Math.Min(count, 2));
+            }
+
+            if (ByLines(text, stripped, replacement, $"{Numbers}, {Lines}") is { } numbered)
+            {
+                return numbered;
+            }
+        }
+
+        return ByLines(text, oldText, endings(newText), Lines);
+    }
+
+    // old_text's whole lines against the file's, each without its trailing white space; a final line break in old_text
+    // ignored (one then taken off the replacement: the file keeps its own). The region is the matched lines' text
+    // without the last one's line break.
+    private static TolerantMatch? ByLines(string text, string oldText, string replacement, string how)
+    {
+        string find = oldText.Replace("\r\n", "\n", StringComparison.Ordinal);
+        bool broken = find.EndsWith('\n');
+        if (broken)
+        {
+            find = find[..^1];
+        }
+
+        string[] wanted = find.Split('\n');
+        if (wanted.All(w => w.Trim().Length == 0))
+        {
+            return null;
+        }
+
+        var lines = SplitLines(text);
+        int found = 0, first = -1;
+        for (int i = 0; i + wanted.Length <= lines.Count && found < 2; i++)
+        {
+            bool same = true;
+            for (int k = 0; k < wanted.Length && same; k++)
+            {
+                var (start, length) = lines[i + k];
+                same = text.AsSpan(start, length).TrimEnd(" \t\r").SequenceEqual(wanted[k].AsSpan().TrimEnd(" \t\r"));
+            }
+
+            if (same)
+            {
+                found++;
+                first = first < 0 ? i : first;
+            }
+        }
+
+        if (found == 0)
+        {
+            return null;
+        }
+
+        int from = lines[first].Start;
+        var (lastStart, lastLength) = lines[first + wanted.Length - 1];
+        if (broken)
+        {
+            replacement = replacement.EndsWith("\r\n", StringComparison.Ordinal) ? replacement[..^2] : replacement.EndsWith('\n') ? replacement[..^1] : replacement;
+        }
+
+        return new TolerantMatch(from, lastStart + lastLength - from, replacement, how, found);
     }
 
     /// <summary><c>write_file</c>.</summary>
@@ -477,7 +710,7 @@ public sealed class CodingTools
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        File.WriteAllText(full, content);
+        WriteKeepingBom(full, content);
         return $"{(existed ? "Replaced" : "Created")} {Relative(full)} ({SplitLines(content).Count} lines).";
     }
 
