@@ -42,6 +42,12 @@ public sealed record LanguageModelPolicyOptions
     public int MaxNewTokens { get; init; } = 256;
 
     /// <summary>
+    /// Whether an observation's tools are described in the system message (<see cref="Generation.ChatGenerator.ToolsInPrompt"/>):
+    /// null (the default) when the model's template renders no tools; true always; false never (a small model's context).
+    /// </summary>
+    public bool? ToolsInPrompt { get; init; }
+
+    /// <summary>
     /// The context window replies are generated in; null: the model's. A reply ends where the window does, and the episode
     /// whose reply filled it ends there, truncated (<see cref="ActionRecord.EndsEpisode"/>).
     /// </summary>
@@ -188,7 +194,8 @@ public sealed class LanguageModelPolicy : IPreferencePolicy<ChatObservation, Cha
         Session = session;
         Options = options;
         _ownsSession = ownsSession;
-        Chat = session.Generator(KeyValueLayouts.Get(options.CacheFormat), options.ContextLength);
+        var chat = session.Generator(KeyValueLayouts.Get(options.CacheFormat), options.ContextLength);
+        Chat = options.ToolsInPrompt is null ? chat : new Generation.ChatGenerator(chat.Generator, chat.Template) { ToolsInPrompt = options.ToolsInPrompt };
     }
 
     /// <summary>The session the policy samples from and trains.</summary>

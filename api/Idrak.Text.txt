@@ -714,6 +714,7 @@ public sealed class Idrak.Text.Generation.ChatGenerator : Idrak.Abstraction.Gene
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource> Parts { get; init; }
   public System.Collections.Generic.IReadOnlySet<string> PartKinds { get; }
   public System.Threading.Tasks.Task<Idrak.Abstraction.Generation.ChatChunk> ChatAsync(Idrak.Abstraction.Generation.ChatRequest request, System.Threading.CancellationToken cancellationToken = default)
+  public bool? ToolsInPrompt { get; init; }
   public string RenderPrompt(Idrak.Abstraction.Generation.ChatRequest request)
 
 public sealed class Idrak.Text.Generation.ChatImages
@@ -1203,6 +1204,7 @@ public sealed record Idrak.Text.Reinforcement.LanguageModelPolicyOptions : Syste
   public LanguageModelPolicyOptions()
   public bool SpreadPasses { get; init; }
   public bool? Think { get; init; }
+  public bool? ToolsInPrompt { get; init; }
   public const string BehaviorVariable = "IDRAK_RL_BEHAVIOR"
   public const string CacheFormatVariable = "IDRAK_RL_KV"
   public const string DivergenceVariable = "IDRAK_RL_DIVERGENCE"

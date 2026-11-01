@@ -93,7 +93,7 @@ public sealed partial class TextGenerator
 
         int promptTokens = history.Count;
         int[]? promptIds = options.ReturnTokens || options.ReturnLogProbabilities ? [.. history] : null;
-        var reply = new ReplyText(Tokenizer, options);
+        var reply = new ReplyText(Tokenizer, options, HiddenTokens(options));
         int vocabulary = SampledVocabulary(), width = CommonWidth(vocabulary, draft), most = MostPerRound(options);
         var rule = new HostRule(options, (uint)(options.Seed ?? Random.Shared.Next()));
         int cachedTokens = 0, resets = 0, proposedTotal = 0, acceptedTotal = 0, rounds = 0;

@@ -634,6 +634,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
         var stops = options.Stop.Where(x => x.Length > 0).ToArray();
         int holdBack = stops.Length == 0 ? 0 : stops.Max(x => x.Length) - 1;
         var stopValues = stops.Length == 0 ? null : SearchValues.Create(stops, StringComparison.Ordinal);
+        var hidden = HiddenTokens(options);
         var starts = tokens.Select(t => promptLength - t.Count).ToArray();
         var input = new float[rows * promptLength];
         for (int r = 0; r < rows; r++)
@@ -735,7 +736,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                 }
 
                 var ids = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(generated[r]);
-                string text = Tokenizer.Decode(ids);
+                string text = DecodeShown(ids, hidden);
                 if (ends[r] is null && stopValues is not null)
                 {
                     // The previous text held no stop, so a first match must end past the part it shares with this one
@@ -863,7 +864,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
             {
                 // The tokens up to the one that completes the stop sequence.
                 count = 1;
-                while (count < ids.Count && Tokenizer.Decode(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[..count]).Length < end + 1)
+                while (count < ids.Count && DecodeShown(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(ids)[..count], hidden).Length < end + 1)
                 {
                     count++;
                 }
@@ -989,7 +990,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
         // The ids asked for on the final chunk (ReturnTokens): the prompt as fed, each sampled id's log-probability, where
         // a stop sequence begins and its length.
         int[]? promptIds = options.ReturnTokens || options.ReturnLogProbabilities ? [.. history] : null;
-        var reply = new ReplyText(Tokenizer, options);
+        var reply = new ReplyText(Tokenizer, options, HiddenTokens(options));
 
         // ReuseDecoding: the context, sampler and recorded step the last generation left (one generation at a time holds
         // them); `held` frees whatever this generation does not hand back. A sampler made for other options is dropped
@@ -1308,6 +1309,70 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
         };
     }
 
+    /// <summary>
+    /// Leave a pretrained tokenizer's special tokens (<see cref="IPretrainedTokenizer.IsSpecial"/>) out of a reply's text,
+    /// as transformers' <c>decode(skip_special_tokens=True)</c>: a control token sampled mid-reply (a model's
+    /// begin-of-sentence token in its code) is not printed and the reply goes on. A special token whose text is part of a
+    /// stop sequence (the end-of-turn marker) stays, so the reply still ends there. The ids are kept as sampled
+    /// (<see cref="GenerationOptions.ReturnTokens"/>). True by default; false writes every token.
+    /// </summary>
+    public bool SkipSpecialTokens { get; init; } = true;
+
+    // Whether an id is left out of a reply's text (SkipSpecialTokens), asked once per id a generation samples; null when
+    // nothing is left out (the option off, or a tokenizer that marks no special tokens).
+    private Func<int, bool>? HiddenTokens(GenerationOptions options)
+    {
+        if (!SkipSpecialTokens || Tokenizer is not IPretrainedTokenizer pretrained)
+        {
+            return null;
+        }
+
+        string[] stops = [.. options.Stop.Where(s => s.Length > 0)];
+        var known = new Dictionary<int, bool>();
+        return id =>
+        {
+            if (!known.TryGetValue(id, out bool hide))
+            {
+                string text = pretrained.IsSpecial(id) ? pretrained.TokenOf(id) : "";
+                hide = text.Length > 0 && !stops.Any(s => s.Contains(text, StringComparison.Ordinal) || text.Contains(s, StringComparison.Ordinal));
+                known[id] = hide;
+            }
+
+            return hide;
+        };
+    }
+
+    // The text of `ids` without the ones `hidden` leaves out.
+    private string DecodeShown(ReadOnlySpan<int> ids, Func<int, bool>? hidden)
+    {
+        if (hidden is null)
+        {
+            return Tokenizer.Decode(ids);
+        }
+
+        int first = 0;
+        while (first < ids.Length && !hidden(ids[first]))
+        {
+            first++;
+        }
+
+        if (first == ids.Length)
+        {
+            return Tokenizer.Decode(ids);                       // nothing to leave out: no copy
+        }
+
+        var shown = new List<int>(ids.Length);
+        foreach (int id in ids)
+        {
+            if (!hidden(id))
+            {
+                shown.Add(id);
+            }
+        }
+
+        return Tokenizer.Decode(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(shown));
+    }
+
     // A reply's text as its ids come, for one row (Stream and the speculative path): decoded a few tokens back now and then,
     // a character whose bytes are still to come held back, stop sequences and loops found.
     private sealed class ReplyText
@@ -1318,15 +1383,19 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
         private readonly int _holdBack;
         private readonly SearchValues<string>? _stopValues;
         private readonly ArrayBufferWriter<char> _text = new();
+        private readonly Func<int, bool>? _hidden;
+        // The ids the text is decoded from: Generated without the hidden ones (the same list when nothing is hidden).
+        private readonly List<int> _shown;
         private int _emitted, _decoded, _decodedFrom, _taken, _lastProgress;
 
-        public ReplyText(ITokenizer tokenizer, GenerationOptions options)
+        public ReplyText(ITokenizer tokenizer, GenerationOptions options, Func<int, bool>? hidden = null)
         {
-            (_tokenizer, _options) = (tokenizer, options);
+            (_tokenizer, _options, _hidden) = (tokenizer, options, hidden);
             _stops = [.. options.Stop.Where(s => s.Length > 0)];
             _holdBack = _stops.Length == 0 ? 0 : _stops.Max(s => s.Length) - 1;
             _stopValues = _stops.Length == 0 ? null : SearchValues.Create(_stops, StringComparison.Ordinal);
             LogProbabilities = options.ReturnLogProbabilities ? [] : null;
+            _shown = hidden is null ? Generated : [];
         }
 
         // The ids so far, and each one's log-probability when asked for (GenerationOptions.ReturnLogProbabilities).
@@ -1342,6 +1411,11 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
         public void Add(int id, float probability)
         {
             Generated.Add(id);
+            if (_hidden is not null && !_hidden(id))
+            {
+                _shown.Add(id);
+            }
+
             LogProbabilities?.Add(MathF.Log(probability));
         }
 
@@ -1364,9 +1438,9 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
             // wait, unless four tokens bring nothing new (a character has at most 4 bytes: the bytes are invalid).
             // Decoding restarts a few tokens back (not at the new ones) now and then, since decoders may treat the start
             // of a text specially (SentencePiece decoders drop its leading space).
-            if (Generated.Count > _decoded)
+            if (_shown.Count > _decoded)
             {
-                var ids = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(Generated);
+                var ids = System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_shown);
                 string all = _tokenizer.Decode(ids[_decodedFrom..]);
                 int whole = all.Length;
                 while (!final && whole > _taken && all[whole - 1] == '\uFFFD')
@@ -1374,7 +1448,7 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                     whole--;
                 }
 
-                if (whole == _taken && Generated.Count - _lastProgress >= 4)
+                if (whole == _taken && _shown.Count - _lastProgress >= 4)
                 {
                     whole = all.Length;
                 }
@@ -1383,10 +1457,10 @@ public sealed partial class TextGenerator(Sequential model, ITokenizer tokenizer
                 {
                     _text.Write(all.AsSpan(_taken, whole - _taken));
                     _taken = whole;
-                    _lastProgress = Generated.Count;
+                    _lastProgress = _shown.Count;
                 }
 
-                _decoded = Generated.Count;
+                _decoded = _shown.Count;
                 if (_taken == all.Length && _decoded - _decodedFrom >= 64)
                 {
                     _decodedFrom = _decoded - 4;

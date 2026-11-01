@@ -132,6 +132,14 @@ public sealed class ChatGenerator(TextGenerator generator, IChatTemplate? templa
     /// <summary>The prompt format.</summary>
     public IChatTemplate Template { get; } = template ?? new ChatMLTemplate();
 
+    /// <summary>
+    /// Whether a request's tools are described in the system message instead of given to the template
+    /// (<see cref="ToolPrompts.WithTools"/>: the tools, the fenced-JSON call format the agent reads back, results as user
+    /// messages): null (the default) when the template renders no tools (<see cref="ToolPrompts.RendersTools"/>), so a
+    /// model whose template has no tool support still sees them; true always; false never.
+    /// </summary>
+    public bool? ToolsInPrompt { get; init; }
+
     /// <summary>The sampling the model's makers recommend: its generator's (<see cref="TextGenerator.RecommendedSampling"/>), or null.</summary>
     public SamplingSettings? RecommendedSampling => Generator.RecommendedSampling;
 
@@ -209,7 +217,15 @@ public sealed class ChatGenerator(TextGenerator generator, IChatTemplate? templa
                 text.Append(Template.AddedPrefix);
             }
 
-            Template.Render(request.Messages, request.Tools ?? [], request.Think, text);
+            // A template that cannot carry tools: the tools and the call format go into the system message instead.
+            var messages = request.Messages;
+            var tools = request.Tools ?? [];
+            if (tools.Count > 0 && (ToolsInPrompt ?? !ToolPrompts.RendersTools(Template)))
+            {
+                (messages, tools) = (ToolPrompts.WithTools(messages, tools), []);
+            }
+
+            Template.Render(messages, tools, request.Think, text);
             prompt = text.ToString();
         }
         finally

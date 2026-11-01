@@ -792,7 +792,7 @@ internal abstract partial class DesktopTests : Tests
             using var teacherModel = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
             using var teacher = DistillationTeachers.FromModel(teacherModel);
             var session = new FineTuningSession(studentModel, SessionOptions(1e-2f) with { Teacher = teacher }, totalSteps: 8);
-            using var policy = new LanguageModelPolicy(session, new LanguageModelPolicyOptions { MaxNewTokens = 6, TeacherWeight = 1f });
+            using var policy = new LanguageModelPolicy(session, new LanguageModelPolicyOptions { MaxNewTokens = 6, TeacherWeight = 1f, ToolsInPrompt = false });   // the tiny model's 256 positions hold no tool descriptions
             var environmentOptions = new Dictionary<string, string> { ["suite"] = quick, ["system"] = "Fix it.", ["rounds"] = "2" };
 
             // The student's own episodes in the coding environment, R2's trainer with grpo and the teacher term.
