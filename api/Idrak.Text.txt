@@ -691,7 +691,9 @@ public sealed record Idrak.Text.Generation.AgentOptions : System.IEquatable<Idra
   public bool CallsInText { get; init; }
   public bool? Think { get; init; }
   public int FailedCallNudges { get; init; }
+  public int LanguageNudges { get; init; }
   public int MaxRounds { get; init; }
+  public int NoChangeNudges { get; init; }
   public int NoToolNudges { get; init; }
   public int Nudges { get; init; }
   public string? SystemPrompt { get; init; }
@@ -748,8 +750,11 @@ public sealed class Idrak.Text.Generation.CodingAgent
   public static Idrak.Abstraction.Generation.ToolCallContext CallContext(Idrak.Abstraction.Generation.IChatTemplate? template, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools)
   public static System.Threading.Tasks.Task<Idrak.Text.Generation.CodingToolTurn> RunToolCallsAsync(Idrak.Abstraction.Generation.IToolRegistry registry, Idrak.Abstraction.Generation.ChatMessage reply, string? previousCalls, System.Threading.CancellationToken cancellationToken = default, System.Action<Idrak.Abstraction.Generation.ToolResult>? onResult = null)
   public static string DefaultSystemPrompt { get; }
+  public static string LanguageReminder(string script)
+  public static string NoChangeReminder(System.Collections.Generic.IReadOnlyList<string> changingTools)
   public static string SystemPrompt(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.ICodingLanguage> languages)
   public static string? Correction(Idrak.Abstraction.Generation.ChatMessage reply, Idrak.Abstraction.Generation.ToolCallContext context)
+  public static string? MalformedCallCorrection(Idrak.Abstraction.Generation.ChatMessage reply, Idrak.Abstraction.Generation.ToolCallContext context)
   public void Steer(string note)
 
 public enum Idrak.Text.Generation.CodingAgentEnd : int
@@ -769,6 +774,8 @@ public sealed record Idrak.Text.Generation.CodingAgentRun : System.IEquatable<Id
   public bool? Think { get; init; }
   public int FailureNudges { get; init; }
   public int GeneratedTokens { get; init; }
+  public int LanguageNudges { get; init; }
+  public int NoChangeNudges { get; init; }
   public int NoToolNudges { get; init; }
   public int Nudges { get; init; }
   public int Rounds { get; init; }

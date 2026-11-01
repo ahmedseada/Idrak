@@ -474,6 +474,189 @@ public static class ToolCallText
         return false;
     }
 
+    /// <summary>
+    /// The first call in <paramref name="text"/> that is meant as a call but is not valid JSON, so neither the template's
+    /// parser nor <see cref="CallsInText"/> could read it: a body between the template's call markers, the body of a
+    /// ```json (or bare ```) fence, or an object whose <c>"name"</c> is one of <paramref name="context"/>'s tools it
+    /// allows, each opening as a call does (<c>{"</c> or <c>[{</c>) but failing to parse where it stands (trailing
+    /// commas, comments and raw line breaks inside strings are allowed, as <see cref="CallsInText"/> reads them): where
+    /// in the call reading stopped, the reader's message and the rule it broke (<see cref="MalformedToolCall"/>). Null
+    /// when every such call parses. Nothing is repaired: the model is told what to write again. Each candidate is
+    /// checked as UTF-8 in a pooled buffer.
+    /// </summary>
+    public static MalformedToolCall? MalformedCall(ReadOnlySpan<char> text, ToolCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        var format = context.Template.ToolCalls;
+        if (format.Open.Length > 0)
+        {
+            for (int at = 0; at < text.Length;)
+            {
+                int open = text[at..].IndexOf(format.Open, StringComparison.Ordinal);
+                if (open < 0)
+                {
+                    break;
+                }
+
+                int body = at + open + format.Open.Length;
+                int close = format.Close.Length > 0 ? text[body..].IndexOf(format.Close, StringComparison.Ordinal) : -1;
+                int end = close < 0 ? text.Length : body + close;
+                if (Unreadable(text[body..end], context) is { } found)
+                {
+                    return found;
+                }
+
+                at = close < 0 ? text.Length : end + format.Close.Length;
+            }
+        }
+
+        for (int at = 0; NextFence(text, at, out var info, out int body);)
+        {
+            var language = text[info].Trim();
+            int close = body < text.Length ? text[body..].IndexOf(Fence, StringComparison.Ordinal) : -1;
+            int end = close < 0 ? text.Length : body + close;
+            if ((language.IsEmpty || language.Equals("json", StringComparison.OrdinalIgnoreCase)) && Unreadable(text[body..end], context) is { } found)
+            {
+                return found;
+            }
+
+            at = close < 0 ? text.Length : end + Fence.Length;
+        }
+
+        for (int at = 0; at < text.Length;)
+        {
+            int key = text[at..].IndexOf("\"name\"", StringComparison.Ordinal);
+            if (key < 0)
+            {
+                break;
+            }
+
+            key += at;
+            at = key + 6;
+            int brace = key - (text[..key].Length - text[..key].TrimEnd().Length) - 1;
+            if (brace >= 0 && text[brace] == '{' && OfferedName(text[at..], context) is not null && Unreadable(text[brace..], context) is { } found)
+            {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
+    // The tool named right after a "name" key (`: "write_file"`), when it is one of the request's tools it allows.
+    private static string? OfferedName(ReadOnlySpan<char> afterKey, ToolCallContext context)
+    {
+        var rest = afterKey.TrimStart();
+        if (rest.Length == 0 || rest[0] != ':')
+        {
+            return null;
+        }
+
+        rest = rest[1..].TrimStart();
+        if (rest.Length == 0 || rest[0] != '"')
+        {
+            return null;
+        }
+
+        rest = rest[1..];
+        int quote = rest.IndexOf('"');
+        if (quote <= 0)
+        {
+            return null;
+        }
+
+        var tools = context.Tools;
+        for (int i = 0; i < tools.Count; i++)
+        {
+            if (rest[..quote].SequenceEqual(tools[i].Name) && context.Allows(tools[i].Name))
+            {
+                return tools[i].Name;
+            }
+        }
+
+        return null;
+    }
+
+    // The call opening `region` (after whitespace) when it opens as a call but does not parse, else null.
+    private static MalformedToolCall? Unreadable(ReadOnlySpan<char> region, ToolCallContext context)
+    {
+        var json = region.TrimStart();
+        if (json.Length == 0 || json[0] is not ('{' or '[') || !OpensLikeCall(json, 0) || ReadError(json) is not { } read)
+        {
+            return null;
+        }
+
+        var (position, error) = read;
+
+        if (EscapedControls(json) is { } escaped && ReadError(escaped) is null)
+        {
+            return null;                                                     // raw line breaks in a string: CallsInText reads it
+        }
+
+        string? name = null;
+        int key = json.IndexOf("\"name\"", StringComparison.Ordinal);
+        if (key >= 0)
+        {
+            name = OfferedName(json[(key + 6)..], context);
+        }
+
+        char at = position < json.Length ? json[position] : '\0';
+        string hint = at == '\''
+            ? "strings are written in double quotes (\"...\"), never in single quotes, and a double quote inside a string is written \\\""
+            : position >= json.Length || error.Contains("end of", StringComparison.OrdinalIgnoreCase)
+                ? "the call ends before its JSON is closed: every { and [ needs its } and ], and every string its closing \""
+                : error.Contains("after a value", StringComparison.Ordinal) || error.Contains("after a property", StringComparison.Ordinal)
+                    ? $"the arguments and the values in a list are separated by commas, not '{at}'"
+                    : "strings use double quotes, the arguments are separated by commas, and a double quote or backslash inside a string is written \\\" or \\\\";
+        return new MalformedToolCall(name, position, error, hint);
+    }
+
+    // Where reading the JSON value that opens `json` stops (a character index into it) and the reader's message; null when
+    // the value reads to its end.
+    private static (int Position, string Error)? ReadError(ReadOnlySpan<char> json)
+    {
+        byte[] utf8 = ArrayPool<byte>.Shared.Rent(Encoding.UTF8.GetMaxByteCount(json.Length));
+        try
+        {
+            int length = Encoding.UTF8.GetBytes(json, utf8);
+            var bytes = utf8.AsSpan(0, length);
+            try
+            {
+                var reader = new Utf8JsonReader(bytes, isFinalBlock: true, new JsonReaderState(LenientReader));
+                while (reader.Read())
+                {
+                    if (reader.CurrentDepth == 0 && reader.TokenType is JsonTokenType.EndObject or JsonTokenType.EndArray)
+                    {
+                        return null;
+                    }
+                }
+
+                return (json.Length, "the text ends before the value is closed");
+            }
+            catch (JsonException ex)
+            {
+                // The reader's line and byte in that line, as a character index (its lines are split at '\n').
+                long line = ex.LineNumber ?? 0;
+                int start = 0;
+                for (; line > 0 && start < bytes.Length; line--)
+                {
+                    int next = bytes[start..].IndexOf((byte)'\n');
+                    start = next < 0 ? bytes.Length : start + next + 1;
+                }
+
+                int offset = (int)Math.Min(bytes.Length, start + (ex.BytePositionInLine ?? 0));
+                string message = ex.Message;
+                int cut = message.IndexOf(" LineNumber:", StringComparison.Ordinal);
+                message = (cut < 0 ? message : message[..cut]).TrimEnd().TrimEnd('.');
+                return (Encoding.UTF8.GetCharCount(bytes[..offset]), message);
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(utf8);
+        }
+    }
+
     // The next fence at or after `at`: its info string (the language) and where its body starts (after the fence's line).
     private static bool NextFence(ReadOnlySpan<char> text, int at, out Range info, out int body)
     {
@@ -754,6 +937,24 @@ public static class ToolCallText
 
         return -1;
     }
+}
+
+/// <summary>
+/// A tool call written as text that could not be read (<see cref="ToolCallText.MalformedCall"/>): where reading its
+/// JSON stopped and why, for a correction that tells the model what to write again.
+/// </summary>
+/// <param name="Name">The offered tool the call names, or null when it names none that could be found.</param>
+/// <param name="Position">The character of the call (0-based, from its opening brace) where reading stopped.</param>
+/// <param name="Error">The JSON reader's message.</param>
+/// <param name="Hint">The JSON rule the call broke there, in words.</param>
+public sealed record MalformedToolCall(string? Name, int Position, string Error, string Hint)
+{
+    /// <summary>
+    /// The problem as one clause for the model: "your edit_file call is not valid JSON at character 213 of the call
+    /// (the reader's message): strings are written in double quotes ...".
+    /// </summary>
+    public string Describe() =>
+        $"your {Name ?? "tool"} call is not valid JSON at character {(Position + 1).ToString(CultureInfo.InvariantCulture)} of the call ({Error}): {Hint}";
 }
 
 /// <summary>

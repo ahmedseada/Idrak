@@ -38,6 +38,9 @@ internal abstract partial class DesktopTests : Tests
         ("coding agent: an edit_file in the same reply as the file's first read_file is refused until its result is seen; a file read before, or written in that reply, is edited; tools called without replies count a read at once", AgentEditsAfterTheReadIsSeen),
         ("coding tools: a missed edit on a short file quotes the whole file and offers write_file; a second miss on the file leads with write_file; a success or a new task starts the count again", CodingEditMissedTwice),
         ("coding agent: the default prompt asks for the user's language; an answer without any tool call in the run gets one reminder (in English), at most one a run, none at 0", AgentRemindsAnswerWithoutTools),
+        ("coding agent: a tool call that is not valid JSON (a single-quoted value, ';' for ',') is told with where and why, beside read calls after their results, alone in the call-format correction", AgentToldMalformedCalls),
+        ("coding agent: code shown in the final answer with no file changed in the run gets one reminder to write it (instead of the no-tool one), none after a change or at 0", AgentRemindsUnchangedCode),
+        ("coding agent: a reply mostly in a script the request does not use (Han against Latin) gets one reminder in English, after the results or instead of ending; not for the request's script, code, few letters or 0", AgentRemindsReplyLanguage),
     ];
 
     private static void AgentReadsBeforeEditing(Device device)
@@ -314,7 +317,7 @@ internal abstract partial class DesktopTests : Tests
 
             foreach (var answer in new[] { "Done: House.cs has three floats and a price.", "Here is the class:\n```csharp\npublic class House { public float Price { get; set; } }\n```" })
             {
-                var plain = new CodingAgent(FakeChatModel.Script(FakeChatModel.Answer(answer)), new AgentOptions { NoToolNudges = 0 }).RunAsync("x", tools).GetAwaiter().GetResult();
+                var plain = new CodingAgent(FakeChatModel.Script(FakeChatModel.Answer(answer)), new AgentOptions { NoToolNudges = 0, NoChangeNudges = 0 }).RunAsync("x", tools).GetAwaiter().GetResult();
                 Check(plain is { End: CodingAgentEnd.Answered, Rounds: 1, Nudges: 0 }, $"no call-like text, no correction: '{answer[..20]}…' ended {plain.End} after {plain.Rounds} rounds");
             }
 
