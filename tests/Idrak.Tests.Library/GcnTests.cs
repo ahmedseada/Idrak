@@ -36,6 +36,7 @@ internal abstract partial class Tests
         ("gcn assembler: every forms.golden record of each registered CPU (gfx900, gfx906, gfx908, gfx90c), its text parsed from UTF-8 and encoded as one block, equals llvm-mc's bytes, labels and branches included, and each form alone too; forms.s itself (LLVM's input syntax: no suffixes, bound_ctrl:0, s_waitcnt 0) less each CPU's rejected lines gives the same block", GcnAssemblerGolden),
         ("gcn assembler: gfx10 (RDNA 1 and 2): every forms.golden record of gfx1010 and gfx1030 in wave64, its text parsed from UTF-8 and encoded by the unregistered gfx10 family (ISA 10's SMEM, VOP3, DS and global layouts, its renumbered opcodes, its waits, wave32's one-register lane masks taken as llvm-mc takes them), equals llvm-mc's bytes as one block and each form alone; forms.s gives the same block", GcnAssemblerGfx10Golden),
         ("gcn assembler: gfx11 (RDNA 3): every forms.golden record of gfx1100 and gfx1102 in wave64, in gfx11's own names (s_load_b32, global_load_b32, ds_load_b32, v_add_nc_u32), encoded by the unregistered gfx11 family (ISA 11's layouts, M0 125 and null 124, its s_waitcnt fields), equals llvm-mc's bytes as one block and each form alone; forms.s gives the same block", GcnAssemblerGfx11Golden),
+        ("gcn interpreter: gfx10 and gfx11 opcode sets (the interpreter's own, probed from LLVM's disassembler in wave64): every wave64 forms.golden record of gfx1010, gfx1030, gfx1100 and gfx1102 is located by its family's word layout (ISA 10's and 11's SMEM, VOP3, VOP3P, DS, FLAT and MUBUF) to an opcode whose mnemonic is the one llvm-mc printed", GcnInterpreterRdnaOpcodes),
         ("gcn assembler: gfx10 and gfx11 waits: the stores count apart on vscnt (two loads around a store: vmcnt(1) for the first load's use, where gfx9 waits vmcnt(2)); s_barrier after an LDS write and a store gets lgkmcnt(0) and s_waitcnt_vscnt null, 0x0; lgkmcnt and vmcnt to 63; the printed text, in each family's names, reads back to the same bytes", GcnAssemblerRdnaWaits),
         ("gcn assembler: gfx10 and gfx11 hazards fixed with instructions, where llc 18 puts them: ISA 10.1 (gfx1010, not gfx1030): SMEM read an SGPR a VALU then writes (s_mov_b32 null, 0 before; an SALU between clears it), vector memory read an SGPR an SALU then writes (s_waitcnt_depctr 0xffe3 before; a VALU between clears it); ISA 11 (gfx1100, gfx1102): a transcendental's result read within 5 VALUs (s_waitcnt_depctr 0xfff before; 6 VALUs or 2 transcendentals clear it), an SALU writes a lane mask a VALU read (s_waitcnt_depctr 0xfffe right after; a VALU reading another SGPR clears it); gfx9 none; the printed text reads back to the same bytes", GcnAssemblerRdnaHazards),
         ("gcn assembler: every line forms.golden lists as rejected for a registered CPU is refused for that CPU's version, naming the instruction, feature or operand (features decided by the reported version: v_fmac_f32 on 9.0.6, not 9.0.0 or 9.0.12; without a version, none)", GcnAssemblerRejected),
@@ -683,6 +684,54 @@ internal abstract partial class Tests
     {
         _ = device;
         GcnFamilyGolden("gfx10", ["gfx1010-w64", "gfx1030-w64"], _ => GcnTargets.Gfx10Family);
+    }
+
+    internal static void GcnInterpreterRdnaOpcodes(Device device)
+    {
+        _ = device;
+        foreach (var (family, cpus) in new[]
+                 {
+                     ("gfx10", new[] { ("gfx1010-w64", GcnCpu.Gfx1010), ("gfx1030-w64", GcnCpu.Gfx1030) }),
+                     ("gfx11", new[] { ("gfx1100-w64", GcnCpu.Gfx1100), ("gfx1102-w64", GcnCpu.Gfx1102) }),
+                 })
+        {
+            var golden = ReadFormsGolden(family);
+            foreach (var (block, cpu) in cpus)
+            {
+                int located = 0;
+                var wrong = new List<string>();
+                foreach (var (text, bytes) in golden[block].Records.Where(r => r.Bytes.Length > 0))
+                {
+                    uint w0 = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(bytes);
+                    var at = Idrak.Tests.Gcn.GcnOpcodeTable.Locate(family == "gfx11", w0);
+                    var opcode = at is { } where ? Idrak.Tests.Gcn.GcnOpcodeTable.Find(cpu, where.Format, where.Code) : null;
+                    if (opcode is not null && Stem(opcode.Name) == Stem(text.Split(' ', 2)[0]))
+                    {
+                        located++;
+                    }
+                    else if (wrong.Count < 12)
+                    {
+                        wrong.Add($"'{text}' ({Convert.ToHexStringLower(bytes)}): {(at is { } a ? $"{a.Format} 0x{a.Code:X}" : "no format")} is {opcode?.Name ?? "no opcode"}");
+                    }
+                }
+
+                int forms = golden[block].Records.Count(r => r.Bytes.Length > 0);
+                Check(located == forms && forms > 380, $"{block}: {located} of {forms} forms located to llvm-mc's mnemonic: {string.Join("; ", wrong)}");
+            }
+        }
+
+        static string Stem(string name)
+        {
+            foreach (string suffix in (string[])["_e32", "_e64", "_dpp", "_sdwa"])
+            {
+                if (name.EndsWith(suffix, StringComparison.Ordinal))
+                {
+                    return name[..^suffix.Length];
+                }
+            }
+
+            return name;
+        }
     }
 
     internal static void GcnAssemblerGfx11Golden(Device device)

@@ -19,6 +19,13 @@ internal enum GcnCpu
     Gfx906,
     Gfx908,
     Gfx90c,
+
+    // The RDNA families in wave64 (plan 35, G8a): their opcode tables (GcnInterpreter.Opcodes.Gfx10.cs, .Gfx11.cs) and
+    // where their words hold the opcode (GcnOpcodeTable.Locate); the rest of their decoding is still to come.
+    Gfx1010,
+    Gfx1030,
+    Gfx1100,
+    Gfx1102,
 }
 
 /// <summary>The gfx9 instruction formats the decoder reads.</summary>
@@ -39,6 +46,9 @@ internal enum GcnFormat : byte
     Flat,
     Global,
     Scratch,
+
+    /// <summary>MUBUF (the RDNA families' cache invalidations).</summary>
+    Mubuf,
 }
 
 /// <summary>A VOP1, VOP2 or VOPC instruction's form: its own 32-bit word, or a DPP or SDWA word after it.</summary>
@@ -118,9 +128,54 @@ internal static partial class GcnOpcodeTable
     /// <summary>Every opcode of a processor (for the tests' counts).</summary>
     internal static IEnumerable<GcnOpcode> All(GcnCpu cpu) => Opcodes[(int)cpu].SelectMany(t => t).OfType<GcnOpcode>();
 
+    private static string[] Formats => ["sop1", "sop2", "sopk", "sopc", "sopp", "smem", "vop1", "vop2", "vopc", "vop3", "vop3p", "ds", "flat", "global", "scratch", "mubuf"];
+
+    /// <summary>
+    /// Where an RDNA family's word holds its format and opcode (ISA 10's and 11's layouts, from the RDNA ISA references):
+    /// the scalar and VOP1/VOP2/VOPC words as gfx9's; SMEM 0xF4 (opcode 25:18), VOP3 0xD4 (25:16), VOP3P 0xCC (22:16),
+    /// DS 0xD8 (25:18), FLAT 0xDC (24:18, its segment at 15:14 on ISA 10 and 17:16 on ISA 11), MUBUF 0xE0 (24:18 on ISA
+    /// 10, 25:18 on 11); null for a word of another encoding.
+    /// </summary>
+    internal static (GcnFormat Format, int Code)? Locate(bool isa11, uint w0)
+    {
+        if (w0 >> 31 == 0)
+        {
+            return (w0 >> 25) switch
+            {
+                0x3F => (GcnFormat.Vop1, (int)(w0 >> 9) & 0xFF),
+                0x3E => (GcnFormat.Vopc, (int)(w0 >> 17) & 0xFF),
+                _ => (GcnFormat.Vop2, (int)(w0 >> 25) & 0x3F),
+            };
+        }
+
+        if (w0 >> 30 == 2)
+        {
+            return (w0 >> 23) switch
+            {
+                0x17D => (GcnFormat.Sop1, (int)(w0 >> 8) & 0xFF),
+                0x17E => (GcnFormat.Sopc, (int)(w0 >> 16) & 0x7F),
+                0x17F => (GcnFormat.Sopp, (int)(w0 >> 16) & 0x7F),
+                _ when w0 >> 28 == 0xB => (GcnFormat.Sopk, (int)(w0 >> 23) & 0x1F),
+                _ => (GcnFormat.Sop2, (int)(w0 >> 23) & 0x7F),
+            };
+        }
+
+        int segment = (int)(isa11 ? w0 >> 16 : w0 >> 14) & 3;
+        return (w0 >> 26) switch
+        {
+            0x3D => (GcnFormat.Smem, (int)(w0 >> 18) & 0xFF),
+            0x35 => (GcnFormat.Vop3, (int)(w0 >> 16) & 0x3FF),
+            0x33 => (GcnFormat.Vop3p, (int)(w0 >> 16) & 0x7F),
+            0x36 => (GcnFormat.Ds, (int)(w0 >> 18) & 0xFF),
+            0x37 => (segment switch { 0 => GcnFormat.Flat, 1 => GcnFormat.Scratch, _ => GcnFormat.Global }, (int)(w0 >> 18) & 0x7F),
+            0x38 => (GcnFormat.Mubuf, (int)(w0 >> 18) & (isa11 ? 0xFF : 0x7F)),
+            _ => null,
+        };
+    }
+
     private static GcnOpcode?[][][] Build()
     {
-        string[] formats = ["sop1", "sop2", "sopk", "sopc", "sopp", "smem", "vop1", "vop2", "vopc", "vop3", "vop3p", "ds", "flat", "global", "scratch"];
+        string[] formats = Formats;
         int cpuCount = Enum.GetValues<GcnCpu>().Length;
         var result = new GcnOpcode?[cpuCount][][];
         for (int c = 0; c < cpuCount; c++)
@@ -132,7 +187,17 @@ internal static partial class GcnOpcodeTable
             }
         }
 
-        foreach (string raw in Text.Split('\n'))
+        Read(Text, [GcnCpu.Gfx900, GcnCpu.Gfx906, GcnCpu.Gfx908, GcnCpu.Gfx90c], result);
+        Read(Gfx10Text, [GcnCpu.Gfx1010, GcnCpu.Gfx1030], result);
+        Read(Gfx11Text, [GcnCpu.Gfx1100, GcnCpu.Gfx1102], result);
+        return result;
+    }
+
+    // One table's lines into the processors its CPU columns name.
+    private static void Read(string text, GcnCpu[] cpus, GcnOpcode?[][][] result)
+    {
+        string[] formats = Formats;
+        foreach (string raw in text.Split('\n'))
         {
             string line = raw.Trim();
             if (line.Length == 0)
@@ -154,14 +219,14 @@ internal static partial class GcnOpcodeTable
             var slots = Template(parts.AsSpan(4), out string immediate, out string offset, out bool mix);
             var glc = halves.Length > 1 ? Template(halves[1].Split(' '), out _, out _, out _) : null;
             string stem = name.EndsWith("_e32", StringComparison.Ordinal) || name.EndsWith("_e64", StringComparison.Ordinal) ? name[..^4] : name;
-            for (int c = 0; c < cpuCount; c++)
+            for (int c = 0; c < cpus.Length; c++)
             {
                 if (mask[c] != '1')
                 {
                     continue;
                 }
 
-                result[c][format][code] = new GcnOpcode
+                result[(int)cpus[c]][format][code] = new GcnOpcode
                 {
                     Format = (GcnFormat)format,
                     Code = code,
@@ -177,8 +242,6 @@ internal static partial class GcnOpcodeTable
                 };
             }
         }
-
-        return result;
     }
 
     private static GcnSlot[] Template(ReadOnlySpan<string> tokens, out string immediate, out string offset, out bool mix)
