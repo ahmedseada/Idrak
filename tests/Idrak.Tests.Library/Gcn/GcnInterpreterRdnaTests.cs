@@ -41,7 +41,6 @@ internal abstract partial class Tests
             var target = KernelTarget(isa);
             var codes = new List<GcnKernelCode>(all.Count);
             var wrong = new List<string>();
-            var offsets = new List<string>();
             for (int k = 0; k < all.Count; k++)
             {
                 using var asm = new GcnAssembler(target, isa);
@@ -55,22 +54,13 @@ internal abstract partial class Tests
                         wrong.Add($"{all[k].Name}: its printed text reads back to other bytes");
                     }
                 }
-                catch (GcnSyntaxException e) when (target.Family == "gfx10" && e.Message.Contains("the offset is -2048 to 2047", StringComparison.Ordinal))
-                {
-                    offsets.Add(all[k].Name);
-                }
                 catch (Exception e) when (e is GcnSyntaxException or GcnAllocationException or NotSupportedException)
                 {
                     wrong.Add($"{all[k].Name}: {e.Message}");
                 }
             }
 
-            // KNOWN GAP (plan 35, G8a, left): the row kernels' global offsets reach 3072 (four loads 1,024 bytes apart),
-            // past ISA 10's 12-bit signed offset (±2047; gfx9 and ISA 11 take ±4095), so on gfx10 they are refused, and
-            // only those, for that reason alone; the row and decoding kernel tests run on gfx1100 until they are fixed.
             Check(wrong.Count == 0, $"{processor} ({target.Family}): {wrong.Count} of {all.Count} kernels:\n  " + string.Join("\n  ", wrong.Take(20)));
-            Check(target.Family == "gfx10" ? offsets.Count is > 0 and < 40 : offsets.Count == 0, $"{processor}: refused for ISA 10's offsets: {string.Join(", ", offsets)}");
-            Console.WriteLine($"    {processor}: {codes.Count} of {all.Count} kernels assembled{(offsets.Count > 0 ? $"; {offsets.Count} refused for ISA 10's ±2047 global offsets: {string.Join(", ", offsets)}" : "")}");
             byte[] codeObject = GcnCodeObject.Write(target, isa, 5, [.. codes]);
             foreach (var code in codes)
             {

@@ -898,8 +898,8 @@ internal static partial class GcnKernels
 
         /// <summary>A column of the row as a column loop's body sees it.</summary>
         /// <param name="K">Which column of a main step (0 to 3), or the tail's (4): the index of the body's registers.</param>
-        /// <param name="Off">The vector register holding the step's byte offset in the row (its first column · 4).</param>
-        /// <param name="Imm">This column's instruction offset (" offset:1024" for a step's second), or empty.</param>
+        /// <param name="Off">The vector register holding the step's byte offset in the row (its first column · 4, plus StepRebase in a main step).</param>
+        /// <param name="Imm">This column's instruction offset (in a main step " offset:-2048" for the first, -1024, none, 1024), or empty.</param>
         /// <param name="Column">The vector register holding the column's index (only when the loop is asked for it).</param>
         public readonly record struct Element(int K, string Off, string Imm, string? Column);
 
@@ -919,6 +919,10 @@ internal static partial class GcnKernels
             L($"s_cmp_gt_u32 {end}, {cols}");
             L($"s_cbranch_scc1 {label}_tail");
             L($"s_lshl_b32 {b4}, {b}, 2");
+
+            // The step's address is rebased by StepRebase bytes, so its columns' offsets (-2048 to 1024) fit every
+            // family's global offset: ISA 10's is 12 bits signed (-2048 to 2047), gfx9's and ISA 11's 13.
+            L($"s_add_u32 {b4}, {b4}, 0x{StepRebase:x}");
             L($"v_add_u32_e32 {off}, {b4}, {Tid4}");
             if (columns)
             {
@@ -931,12 +935,12 @@ internal static partial class GcnKernels
 
             for (int k = 0; k < Unroll; k++)
             {
-                Lines(load(new Element(k, off, Offset(4 * RowThreads * k), column[k])));
+                Lines(load(new Element(k, off, Offset(4 * RowThreads * k - StepRebase), column[k])));
             }
 
             for (int k = 0; k < Unroll; k++)
             {
-                Lines(use(new Element(k, off, Offset(4 * RowThreads * k), column[k])));
+                Lines(use(new Element(k, off, Offset(4 * RowThreads * k - StepRebase), column[k])));
             }
 
             L($"s_mov_b32 {b}, {end}");
@@ -1104,6 +1108,9 @@ internal static partial class GcnKernels
         }
 
         private static string Offset(int bytes) => bytes == 0 ? "" : F($" offset:{bytes}");
+
+        // What a main step's address is moved by: half its columns' bytes, so the offsets run from -2048 to 1024.
+        private const int StepRebase = 4 * RowThreads * Unroll / 2;
 
         /// <summary>The first thread stores each value at its address.</summary>
         public void StoreFirstLane(params (string Address, string Value)[] stores)
