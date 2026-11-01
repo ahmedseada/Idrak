@@ -20,8 +20,8 @@ internal enum GcnCpu
     Gfx908,
     Gfx90c,
 
-    // The RDNA families in wave64 (plan 35, G8a): their opcode tables (GcnInterpreter.Opcodes.Gfx10.cs, .Gfx11.cs) and
-    // where their words hold the opcode (GcnOpcodeTable.Locate); the rest of their decoding is still to come.
+    // The RDNA families in wave64 (plan 35, G8a): their opcode tables (GcnInterpreter.Opcodes.Gfx10.cs, .Gfx11.cs), where
+    // their words hold the opcode (GcnOpcodeTable.Locate) and their fields (GcnInterpreter.Decoder.Rdna.cs).
     Gfx1010,
     Gfx1030,
     Gfx1100,
@@ -106,6 +106,12 @@ internal sealed class GcnOpcode
 
     /// <summary>How many of S0, S1 and S2 the template prints.</summary>
     public int Sources { get; init; }
+
+    /// <summary>
+    /// The name the semantics know the opcode by: gfx9's mnemonic without _e32 or _e64 (an RDNA family's renamed
+    /// mnemonic, such as gfx11's global_load_b32 or gfx10's v_add_nc_u32, read as gfx9's; GcnOpcodeTable.Gfx9Stem).
+    /// </summary>
+    public required string Semantic { get; init; }
 
     /// <summary>The semantics, or null when the interpreter does not model this opcode (running it is refused).</summary>
     internal GcnExecute? Execute { get; set; }
@@ -219,6 +225,7 @@ internal static partial class GcnOpcodeTable
             var slots = Template(parts.AsSpan(4), out string immediate, out string offset, out bool mix);
             var glc = halves.Length > 1 ? Template(halves[1].Split(' '), out _, out _, out _) : null;
             string stem = name.EndsWith("_e32", StringComparison.Ordinal) || name.EndsWith("_e64", StringComparison.Ordinal) ? name[..^4] : name;
+            string semantic = Gfx9Stem(stem);
             for (int c = 0; c < cpus.Length; c++)
             {
                 if (mask[c] != '1')
@@ -232,13 +239,14 @@ internal static partial class GcnOpcodeTable
                     Code = code,
                     Name = name,
                     Base = stem,
+                    Semantic = semantic,
                     Slots = slots,
                     GlcSlots = glc,
                     Immediate = immediate,
                     OffsetKind = offset,
                     Mix = mix,
                     Sources = slots.Count(s => s.Field is GcnField.S0 or GcnField.S1 or GcnField.S2),
-                    Execute = GcnSemantics.Find(stem),
+                    Execute = GcnSemantics.Find(semantic),
                 };
             }
         }
@@ -387,6 +395,9 @@ internal sealed class GcnInstruction
 
     public bool Slc { get; init; }
 
+    /// <summary>RDNA: device level coherent (past the L1, as glc is past the L0).</summary>
+    public bool Dlc { get; init; }
+
     public bool Gds { get; init; }
 
     /// <summary>SMEM: the offset is an immediate (else a register, MemoryOffset its source value).</summary>
@@ -419,9 +430,13 @@ internal sealed class GcnInstruction
 /// <summary>An encoding the decoder refuses: its offset, its words and why.</summary>
 internal sealed class GcnDecodeException(string message) : Exception(message);
 
-/// <summary>Decodes gfx9 machine code for one processor.</summary>
-internal sealed class GcnDecoder(GcnCpu cpu)
+/// <summary>Decodes gfx9, gfx10 or gfx11 machine code for one processor.</summary>
+internal sealed partial class GcnDecoder(GcnCpu cpu)
 {
+    // The RDNA families' words (cpu >= Gfx1010) and ISA 11's (cpu >= Gfx1100).
+    private readonly bool rdna = cpu >= GcnCpu.Gfx1010;
+    private readonly bool isa11 = cpu >= GcnCpu.Gfx1100;
+
     public GcnCpu Cpu => cpu;
 
     /// <summary>The instruction at <paramref name="offset"/> of <paramref name="code"/>.</summary>
@@ -449,6 +464,11 @@ internal sealed class GcnDecoder(GcnCpu cpu)
             return DecodeScalar(offset, w0, w1, hasW1);
         }
 
+        if (rdna)
+        {
+            return DecodeRdna(offset, w0, w1, hasW1, w2, hasW2);
+        }
+
         switch (w0 >> 26)
         {
             case 0x30:
@@ -456,7 +476,7 @@ internal sealed class GcnDecoder(GcnCpu cpu)
                 return DecodeSmem(offset, w0, w1);
             case 0x34:
                 Need(hasW1, offset, w0, "VOP3");
-                return w0 >> 23 == 0x1A7 ? DecodeVop3p(offset, w0, w1) : DecodeVop3(offset, w0, w1);
+                return w0 >> 23 == 0x1A7 ? DecodeVop3p(offset, w0, w1, w2, hasW2) : DecodeVop3(offset, w0, w1, w2, hasW2);
             case 0x36:
                 Need(hasW1, offset, w0, "DS");
                 return DecodeDs(offset, w0, w1);
@@ -566,9 +586,9 @@ internal sealed class GcnDecoder(GcnCpu cpu)
             Cpu = cpu,
             Word0 = w0,
             Word1 = literal ? w1 : 0,
-            D = d,
-            S0 = s0,
-            S1 = s1,
+            D = Sr(d),
+            S0 = Sr(s0),
+            S1 = format == GcnFormat.Sopc && opcode.Immediate == "gpridx" ? s1 : Sr(s1),
             Simm16 = simm,
             Literal = literal ? w1 : 0,
             HasLiteral = literal,
@@ -601,8 +621,13 @@ internal sealed class GcnDecoder(GcnCpu cpu)
         }
 
         var opcode = Opcode(format, code, offset, $"{w0:X8}");
-        int dest = d < 0 ? -1 : opcode.Slots.FirstOrDefault(s => s.Field == GcnField.D) is { Class: 's' } ? d : 256 + d;
+        int dest = d < 0 ? -1 : opcode.Slots.FirstOrDefault(s => s.Field == GcnField.D) is { Class: 's' } ? Sr(d) : 256 + d;
         bool kLiteral = opcode.Immediate.Contains("lit", StringComparison.Ordinal);
+        if (rdna && s0 is 0xE9 or 0xEA or 0xF9 or 0xFA)
+        {
+            throw Refuse(offset, $"{w0:X8}", $"{(s0 == 0xF9 ? "SDWA" : "DPP")} on RDNA: not decoded by the interpreter (no kernel of the family uses it)");
+        }
+
         if (s0 is 0xFA or 0xF9)
         {
             if (kLiteral)
@@ -640,7 +665,7 @@ internal sealed class GcnDecoder(GcnCpu cpu)
             Word0 = w0,
             Word1 = literal ? w1 : 0,
             D = dest,
-            S0 = s0,
+            S0 = Sr(s0),
             S1 = s1,
             Literal = literal ? w1 : 0,
             HasLiteral = literal,
@@ -733,35 +758,32 @@ internal sealed class GcnDecoder(GcnCpu cpu)
         };
     }
 
-    private GcnInstruction DecodeVop3(int offset, uint w0, uint w1)
+    // VOP3: the same fields on gfx9 and RDNA (opcode 25:16, clamp 15, op_sel 14:11, abs 10:8 or VOP3b's sdst 14:8, vdst
+    // 7:0; the sources, omod and neg in the second word); RDNA's sources may be a literal, in a third word.
+    private GcnInstruction DecodeVop3(int offset, uint w0, uint w1, uint w2, bool hasW2)
     {
         int code = (int)(w0 >> 16) & 0x3FF;
         var opcode = Opcode(GcnFormat.Vop3, code, offset, $"{w0:X8} {w1:X8}");
         bool vop3b = opcode.Slots.Any(s => s.Field == GcnField.SD);
         int s0 = (int)w1 & 0x1FF, s1 = (int)(w1 >> 9) & 0x1FF, s2 = (int)(w1 >> 18) & 0x1FF;
-        foreach (int s in (ReadOnlySpan<int>)[s0, s1, s2])
-        {
-            if (s is 255 or 0xF9 or 0xFA)
-            {
-                throw Refuse(offset, $"{w0:X8} {w1:X8}", "a VOP3 source on gfx9 cannot be a literal, DPP or SDWA");
-            }
-        }
-
+        bool literal = SourceLiteral(offset, w0, w1, hasW2, "VOP3", s0, s1, s2);
         var dSlot = opcode.Slots.FirstOrDefault(s => s.Field == GcnField.D);
         int d = (int)w0 & 0xFF;
         return new GcnInstruction
         {
             Offset = offset,
-            Size = 8,
+            Size = literal ? 12 : 8,
             Opcode = opcode,
             Cpu = cpu,
             Word0 = w0,
             Word1 = w1,
-            D = dSlot.Class == 's' ? d : 256 + d,
-            SD = vop3b ? (int)(w0 >> 8) & 0x7F : -1,
-            S0 = s0,
-            S1 = s1,
-            S2 = s2,
+            Literal = literal ? w2 : 0,
+            HasLiteral = literal,
+            D = dSlot.Class == 's' ? Sr(d) : 256 + d,
+            SD = vop3b ? Sr((int)(w0 >> 8) & 0x7F) : -1,
+            S0 = Sr(s0),
+            S1 = Sr(s1),
+            S2 = Sr(s2),
             Abs = vop3b ? 0 : (int)(w0 >> 8) & 7,
             OpSel = vop3b ? 0 : (int)(w0 >> 11) & 0xF,
             Clamp = (w0 & 0x8000) != 0,
@@ -770,31 +792,27 @@ internal sealed class GcnDecoder(GcnCpu cpu)
         };
     }
 
-    private GcnInstruction DecodeVop3p(int offset, uint w0, uint w1)
+    // VOP3P: the same fields on gfx9 (0xD3800000) and RDNA (0xCC000000); RDNA's sources may be a literal.
+    private GcnInstruction DecodeVop3p(int offset, uint w0, uint w1, uint w2, bool hasW2)
     {
         int code = (int)(w0 >> 16) & 0x7F;
         var opcode = Opcode(GcnFormat.Vop3p, code, offset, $"{w0:X8} {w1:X8}");
         int s0 = (int)w1 & 0x1FF, s1 = (int)(w1 >> 9) & 0x1FF, s2 = (int)(w1 >> 18) & 0x1FF;
-        foreach (int s in (ReadOnlySpan<int>)[s0, s1, s2])
-        {
-            if (s is 255 or 0xF9 or 0xFA)
-            {
-                throw Refuse(offset, $"{w0:X8} {w1:X8}", "a VOP3P source on gfx9 cannot be a literal, DPP or SDWA");
-            }
-        }
-
+        bool literal = SourceLiteral(offset, w0, w1, hasW2, "VOP3P", s0, s1, s2);
         return new GcnInstruction
         {
             Offset = offset,
-            Size = 8,
+            Size = literal ? 12 : 8,
             Opcode = opcode,
             Cpu = cpu,
             Word0 = w0,
             Word1 = w1,
+            Literal = literal ? w2 : 0,
+            HasLiteral = literal,
             D = 256 + ((int)w0 & 0xFF),
-            S0 = s0,
-            S1 = s1,
-            S2 = s2,
+            S0 = Sr(s0),
+            S1 = Sr(s1),
+            S2 = Sr(s2),
             NegHi = (int)(w0 >> 8) & 7,
             OpSel = (int)(w0 >> 11) & 7,
             OpSelHi = (int)(w1 >> 27) & 3 | (int)((w0 >> 14) & 1) << 2,
@@ -834,11 +852,12 @@ internal sealed class GcnDecoder(GcnCpu cpu)
         };
     }
 
+    // DS: gfx9's opcode at 24:17 and gds at 16, RDNA's at 25:18 and 17; the offsets and the second word the same.
     private GcnInstruction DecodeDs(int offset, uint w0, uint w1)
     {
-        int code = (int)(w0 >> 17) & 0xFF;
+        int code = rdna ? (int)(w0 >> 18) & 0xFF : (int)(w0 >> 17) & 0xFF;
         var opcode = Opcode(GcnFormat.Ds, code, offset, $"{w0:X8} {w1:X8}");
-        if ((w0 & (1u << 25)) != 0)
+        if (!rdna && (w0 & (1u << 25)) != 0)
         {
             throw Refuse(offset, $"{w0:X8} {w1:X8}", "DS bit 25 is not defined on gfx9");
         }
@@ -854,7 +873,7 @@ internal sealed class GcnDecoder(GcnCpu cpu)
             Offset0 = (int)w0 & 0xFF,
             Offset1 = (int)(w0 >> 8) & 0xFF,
             MemoryOffset = (int)w0 & 0xFFFF,
-            Gds = (w0 & (1u << 16)) != 0,
+            Gds = (w0 & (1u << (rdna ? 17 : 16))) != 0,
             A = 256 + ((int)w1 & 0xFF),
             S0 = 256 + ((int)(w1 >> 8) & 0xFF),
             S1 = 256 + ((int)(w1 >> 16) & 0xFF),
@@ -942,6 +961,11 @@ internal static class GcnPrinter
                     text.Append(" glc");
                 }
 
+                if (i.Dlc)
+                {
+                    text.Append(" dlc");
+                }
+
                 break;
             case GcnFormat.Vop3:
                 if (i.OpSel != 0)
@@ -983,6 +1007,11 @@ internal static class GcnPrinter
                 if (i.Slc)
                 {
                     text.Append(" slc");
+                }
+
+                if (i.Dlc)
+                {
+                    text.Append(" dlc");
                 }
 
                 break;
@@ -1217,7 +1246,9 @@ internal static class GcnPrinter
             case "hwreg":
                 return Hwreg(k);
             case "waitcnt":
-                return Waitcnt(k);
+                return Waitcnt(i.Cpu, k);
+            case "delay":
+                return Delay(k);
             case "gpridx":
                 int mode = i.Opcode.Format == GcnFormat.Sopc ? i.S1 : k;
                 var names = new List<string>();
@@ -1261,13 +1292,61 @@ internal static class GcnPrinter
         return offset == 0 && width == 32 ? $"hwreg({name})" : $"hwreg({name}, {offset}, {width})";
     }
 
-    /// <summary>s_waitcnt's counters as LLVM prints them: those below their maximum, or all three when none is.</summary>
-    internal static string Waitcnt(int k)
+    /// <summary>
+    /// s_waitcnt's counters on a processor: gfx9 vmcnt at 3:0 and 15:14, expcnt 6:4, lgkmcnt 11:8 (4 bits); ISA 10 the
+    /// same with lgkmcnt at 13:8 (6 bits); ISA 11 expcnt at 2:0, lgkmcnt 9:4, vmcnt 15:10.
+    /// </summary>
+    internal static (int Vm, int Exp, int Lgkm, int LgkmMax) WaitFields(GcnCpu cpu, int k) => cpu switch
     {
-        int vm = (k & 0xF) | ((k >> 14) & 3) << 4, exp = (k >> 4) & 7, lgkm = (k >> 8) & 0xF;
-        if (vm == 63 && exp == 7 && lgkm == 15)
+        >= GcnCpu.Gfx1100 => ((k >> 10) & 0x3F, k & 7, (k >> 4) & 0x3F, 63),
+        >= GcnCpu.Gfx1010 => ((k & 0xF) | ((k >> 14) & 3) << 4, (k >> 4) & 7, (k >> 8) & 0x3F, 63),
+        _ => ((k & 0xF) | ((k >> 14) & 3) << 4, (k >> 4) & 7, (k >> 8) & 0xF, 15),
+    };
+
+    private static readonly string[] DelayIds =
+        ["NO_DEP", "VALU_DEP_1", "VALU_DEP_2", "VALU_DEP_3", "VALU_DEP_4", "TRANS32_DEP_1", "TRANS32_DEP_2", "TRANS32_DEP_3",
+         "FMA_ACCUM_CYCLE_1", "SALU_CYCLE_1", "SALU_CYCLE_2", "SALU_CYCLE_3"];
+
+    private static readonly string[] DelaySkips = ["SAME", "NEXT", "SKIP_1", "SKIP_2", "SKIP_3", "SKIP_4"];
+
+    /// <summary>
+    /// s_delay_alu's fields as LLVM prints them (ISA 11): instid0 at 3:0, instskip 6:4, instid1 10:7, each named and
+    /// joined by " | ", those at 0 left out; a value outside the names as its number.
+    /// </summary>
+    internal static string Delay(int k)
+    {
+        int id0 = k & 0xF, skip = (k >> 4) & 7, id1 = (k >> 7) & 0xF;
+        if (id0 >= DelayIds.Length || skip >= DelaySkips.Length || id1 >= DelayIds.Length || k >> 11 != 0)
         {
-            return "vmcnt(63) expcnt(7) lgkmcnt(15)";
+            return k.ToString(CultureInfo.InvariantCulture);
+        }
+
+        var parts = new List<string>(3);
+        if (id0 != 0)
+        {
+            parts.Add($"instid0({DelayIds[id0]})");
+        }
+
+        if (skip != 0)
+        {
+            parts.Add($"instskip({DelaySkips[skip]})");
+        }
+
+        if (id1 != 0)
+        {
+            parts.Add($"instid1({DelayIds[id1]})");
+        }
+
+        return parts.Count == 0 ? "0" : string.Join(" | ", parts);
+    }
+
+    /// <summary>s_waitcnt's counters as LLVM prints them: those below their maximum, or all three when none is.</summary>
+    internal static string Waitcnt(GcnCpu cpu, int k)
+    {
+        var (vm, exp, lgkm, lgkmMax) = WaitFields(cpu, k);
+        if (vm == 63 && exp == 7 && lgkm == lgkmMax)
+        {
+            return $"vmcnt(63) expcnt(7) lgkmcnt({lgkmMax})";
         }
 
         var parts = new List<string>();
@@ -1281,7 +1360,7 @@ internal static class GcnPrinter
             parts.Add($"expcnt({exp})");
         }
 
-        if (lgkm != 15)
+        if (lgkm != lgkmMax)
         {
             parts.Add($"lgkmcnt({lgkm})");
         }
@@ -1299,10 +1378,14 @@ internal static class GcnPrinter
             return width <= 1 ? $"{prefix}{n}" : $"{prefix}[{n}:{n + width - 1}]";
         }
 
+        bool rdna = IsRdna(i);
         switch (value)
         {
             case < 102:
+            case < 106 when rdna:
                 return width <= 1 ? $"s{value}" : $"s[{value}:{value + width - 1}]";
+            case 125 when rdna:
+                return "null";
             case 102 or 103:
                 return Named("flat_scratch", value - 102, width);
             case 104 or 105:
@@ -1351,6 +1434,9 @@ internal static class GcnPrinter
                 return $"<reserved {value}>";
         }
     }
+
+    // Whether an operand is printed for an RDNA family (ScalarName's messages pass no instruction: gfx9's names).
+    private static bool IsRdna(GcnInstruction? i) => i is not null && i.Cpu >= GcnCpu.Gfx1010;
 
     private static readonly string[] FloatConstants = ["0.5", "-0.5", "1.0", "-1.0", "2.0", "-2.0", "4.0", "-4.0", "0.15915494"];
 

@@ -176,6 +176,14 @@ internal static partial class GcnSemantics
         SaveExec(t, "s_xnor_saveexec_b64", (s, e) => ~(s ^ e));
         SaveExec(t, "s_andn1_saveexec_b64", (s, e) => ~s & e);
         SaveExec(t, "s_orn1_saveexec_b64", (s, e) => ~s | e);
+        // RDNA's wave32 form on EXEC's low half (in wave64 the high half is kept): s_and_saveexec_b32.
+        t["s_and_saveexec_b32"] = (m, w, i) =>
+        {
+            uint source = m.Scalar32(w, i.S0, i), exec = m.ReadScalar(w, 126, i);
+            m.WriteScalar(w, i.D, exec, i);
+            m.WriteScalar(w, 126, source & exec, i);
+            w.Scc = (source & exec) != 0;
+        };
         t["s_movrels_b32"] = (m, w, i) => m.WriteScalar(w, i.D, m.ReadScalar(w, i.S0 + (int)m.ReadScalar(w, 124, i), i), i);
         t["s_movreld_b32"] = (m, w, i) => m.WriteScalar(w, i.D + (int)m.ReadScalar(w, 124, i), m.Scalar32(w, i.S0, i), i);
 
@@ -402,9 +410,20 @@ internal static partial class GcnSemantics
         t["s_barrier"] = (_, w, _) => w.AtBarrier = true;
         t["s_waitcnt"] = (m, w, i) =>
         {
-            int k = i.Simm16;
-            m.Wait(w, (k & 0xF) | ((k >> 14) & 3) << 4, (k >> 8) & 0xF);
+            var (vm, _, lgkm, _) = GcnPrinter.WaitFields(i.Cpu, i.Simm16);
+            m.Wait(w, vm, lgkm);
         };
+
+        // RDNA: the stores' counter, waited to the register's value (null reads 0) plus the immediate's six bits.
+        t["s_waitcnt_vscnt"] = (m, w, i) => m.WaitVs(w, (int)Math.Min(63u, m.ReadScalar(w, i.D, i) + (uint)(i.Simm16 & 0x3F)));
+
+        // What the model needs nothing from: ISA 11's ALU delays, the dependency counters' wait (the hazards it fixes are
+        // the assembler's, checked against llc), and the cache invalidations (the model has no stale lines but those a
+        // completion counter's glc and dlc rules name).
+        foreach (string name in (string[])["s_delay_alu", "s_waitcnt_depctr", "buffer_gl0_inv", "buffer_gl1_inv", "s_gl1_inv"])
+        {
+            t[name] = static (_, _, _) => { };
+        }
     }
 
     // ---- Memory ---------------------------------------------------------------------------------------------------

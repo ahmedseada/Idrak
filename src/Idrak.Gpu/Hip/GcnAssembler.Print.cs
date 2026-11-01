@@ -139,7 +139,7 @@ internal sealed partial class GcnAssembler
             case GcnRole.Literal32 or GcnRole.Constant32:
                 PrintHex(operand.Value);
                 return;
-            case GcnRole.Immediate16 when _ins.Op == GcnOp.SWaitcntDepctr:
+            case GcnRole.Immediate16 when _ins.Op is GcnOp.SWaitcntDepctr or GcnOp.SWaitcntVscnt:
                 PrintHex(operand.Value);   // llvm-mc prints its 16 bits in hex
                 return;
             case GcnRole.MemoryOffset when operand.Kind is GcnOperandKind.Immediate or GcnOperandKind.Constant or GcnOperandKind.Literal:

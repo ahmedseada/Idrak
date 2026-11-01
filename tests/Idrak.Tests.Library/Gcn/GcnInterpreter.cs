@@ -104,6 +104,9 @@ internal sealed class GcnPending
     /// <summary>Counted by lgkmcnt (LDS, SMEM, FLAT).</summary>
     public bool Lgkm { get; init; }
 
+    /// <summary>Counted by vscnt (RDNA's stores and atomics without a return, in order; s_waitcnt_vscnt retires them).</summary>
+    public bool Vs { get; init; }
+
     /// <summary>On lgkmcnt, completes in order with the other in-order entries (LDS); SMEM and FLAT complete in any order.</summary>
     public bool InOrder { get; init; }
 
@@ -181,6 +184,8 @@ internal sealed class GcnWave
     internal readonly List<GcnPending> VmQueue = [];
 
     internal readonly List<GcnPending> LgkmQueue = [];
+
+    internal readonly List<GcnPending> VsQueue = [];
 
     internal bool Scc;
 
@@ -291,6 +296,12 @@ internal sealed partial class GcnMachine
     }
 
     internal GcnKernelDescriptor Descriptor => descriptor;
+
+    /// <summary>The kernel is an RDNA family's (gfx10, gfx11): vscnt, null (125), s0-s105.</summary>
+    internal bool Rdna => kernel.Cpu >= GcnCpu.Gfx1010;
+
+    /// <summary>The scalar registers below VCC's code: s0-s101 on gfx9, s0-s105 on RDNA.</summary>
+    internal int SgprLimit => Rdna ? 106 : 102;
 
     internal GcnKernelImage Kernel => kernel;
 
@@ -407,6 +418,10 @@ internal sealed partial class GcnMachine
         {
             why = "work-item ids mode 3 (reserved)";
         }
+        else if (Rdna && (descriptor.Properties & 0x400) != 0)
+        {
+            why = "wave32 (ENABLE_WAVEFRONT_SIZE32): the interpreter runs waves of 64";
+        }
 
         if (why is not null)
         {
@@ -504,6 +519,7 @@ internal sealed partial class GcnMachine
         Array.Clear(wave.AOwner);
         wave.VmQueue.Clear();
         wave.LgkmQueue.Clear();
+        wave.VsQueue.Clear();
         wave.Scc = (NextRandom() & 1) != 0;
         wave.Pc = kernel.Entry;
         wave.Ended = false;
@@ -551,9 +567,19 @@ internal sealed partial class GcnMachine
             wave.S[s++] = (uint)GroupId.Z;
         }
 
+        // ISA 11 packs the work-item ids into v0 (x 9:0, y 19:10, z 29:20; LLVM's packed TID), gfx9 and ISA 10 give each a
+        // register of its own.
+        bool packed = kernel.Cpu >= GcnCpu.Gfx1100;
         for (int lane = 0; lane < lanes; lane++)
         {
             int t = first + lane;
+            if (packed)
+            {
+                uint y = descriptor.WorkitemIds >= 1 ? (uint)(t / bx % by) : 0, z = descriptor.WorkitemIds >= 2 ? (uint)(t / (bx * by)) : 0;
+                wave.V[lane] = (uint)(t % bx) | y << 10 | z << 20;
+                continue;
+            }
+
             wave.V[lane] = (uint)(t % bx);
             if (descriptor.WorkitemIds >= 1 && wave.V.Length > 64)
             {
@@ -605,7 +631,7 @@ internal sealed partial class GcnMachine
         var instruction = Fetch(wave);
         var execute = instruction.Opcode.Execute
                       ?? throw Fail(GcnFailure.NotModelled, wave, instruction, $"{instruction.Opcode.Base} is not modelled by the interpreter");
-        if (instruction.Variant != GcnVariant.None && !GcnSemantics.TakesLaneForms(instruction.Opcode.Base))
+        if (instruction.Variant != GcnVariant.None && !GcnSemantics.TakesLaneForms(instruction.Opcode.Semantic))
         {
             throw Fail(GcnFailure.NotModelled, wave, instruction, $"the {instruction.Variant.ToString().ToUpperInvariant()} form of {instruction.Opcode.Base} is not modelled");
         }
@@ -623,11 +649,11 @@ internal sealed partial class GcnMachine
         ref byte kind = ref classes[pc / 4];
         if (kind == 0)
         {
-            string name = instruction.Opcode.Base;
+            string name = instruction.Opcode.Semantic;
             kind = name.StartsWith("global_", StringComparison.Ordinal) || name.StartsWith("flat_", StringComparison.Ordinal) ? (byte)1
                 : name.StartsWith("s_load", StringComparison.Ordinal) || name.StartsWith("s_buffer_load", StringComparison.Ordinal) ? (byte)2
                 : name.StartsWith("ds_", StringComparison.Ordinal) ? (byte)3
-                : name == "s_waitcnt" ? (byte)4
+                : name is "s_waitcnt" or "s_waitcnt_vscnt" ? (byte)4
                 : name == "s_barrier" ? (byte)5 : (byte)6;
         }
 
@@ -716,6 +742,12 @@ internal sealed partial class GcnMachine
             return false;
         }
 
+        if (read && Rdna && !i.Dlc)
+        {
+            why = "; it was acquired through a completion counter, but the load has no dlc (RDNA's L1 may hold a stale line: device scope is glc dlc)";
+            return false;
+        }
+
         return true;
     }
 
@@ -763,9 +795,11 @@ internal sealed partial class GcnMachine
     // ---- Registers ---------------------------------------------------------------------------------------------
 
     /// <summary>The name of scalar register <paramref name="r"/> for messages.</summary>
-    internal static string ScalarName(int r) => r switch
+    internal string ScalarName(int r) => r switch
     {
         < 102 => $"s{r}",
+        < 106 when Rdna => $"s{r}",
+        GcnDecoder.Null when Rdna => "null",
         106 => "vcc_lo",
         107 => "vcc_hi",
         124 => "m0",
@@ -776,12 +810,12 @@ internal sealed partial class GcnMachine
 
     private void CheckScalar(GcnWave wave, int r, GcnInstruction i)
     {
-        if (r < kernel.UsableSgprs || r is 106 or 107 or 124 or 126 or 127)
+        if (r < kernel.UsableSgprs || r is 106 or 107 or 124 or 126 or 127 || (Rdna && r == GcnDecoder.Null))
         {
             return;
         }
 
-        throw r < 102
+        throw r < SgprLimit
             ? Fail(GcnFailure.Register, wave, i, $"s{r} is past the {kernel.UsableSgprs} SGPRs the descriptor allocates ({descriptor.SgprBlocks}, less VCC{(kernel.Xnack ? " and the xnack mask" : "")})")
             : Fail(GcnFailure.Register, wave, i, $"{ScalarName(r)} is not modelled by the interpreter");
     }
@@ -790,6 +824,11 @@ internal sealed partial class GcnMachine
     internal uint ReadScalar(GcnWave wave, int r, GcnInstruction i)
     {
         CheckScalar(wave, r, i);
+        if (Rdna && r == GcnDecoder.Null)
+        {
+            return 0;                                                            // null reads as 0
+        }
+
         if (wave.SOwner[r] is { } pending)
         {
             throw PendingRead(wave, i, ScalarName(r), pending);
@@ -801,6 +840,11 @@ internal sealed partial class GcnMachine
     internal void WriteScalar(GcnWave wave, int r, uint value, GcnInstruction i)
     {
         CheckScalar(wave, r, i);
+        if (Rdna && r == GcnDecoder.Null)
+        {
+            return;                                                              // a write to null is dropped
+        }
+
         if (wave.SOwner[r] is { } pending)
         {
             throw PendingWrite(wave, i, ScalarName(r), pending);
@@ -811,7 +855,7 @@ internal sealed partial class GcnMachine
 
     internal void CheckPair(GcnWave wave, int r, GcnInstruction i)
     {
-        if (r < 102 && (r & 1) != 0)
+        if (r < SgprLimit && (r & 1) != 0)
         {
             throw Fail(GcnFailure.Register, wave, i, $"s[{r}:{r + 1}]: a 64-bit scalar operand starts at an even register");
         }
@@ -984,7 +1028,7 @@ internal sealed partial class GcnMachine
         Fail(GcnFailure.MissingWait, wave, i,
             $"it writes {register}, which '{pending.Instruction.Text}' at 0x{pending.Instruction.Offset:X4} still writes (its late return would overwrite this): no s_waitcnt {Counter(pending)} retired it");
 
-    private static string Counter(GcnPending p) => p.Vm && p.Lgkm ? "vmcnt or lgkmcnt" : p.Vm ? "vmcnt" : "lgkmcnt";
+    private static string Counter(GcnPending p) => p.Vm && p.Lgkm ? "vmcnt or lgkmcnt" : p.Vm ? "vmcnt" : p.Vs ? "vscnt" : "lgkmcnt";
 
     // ---- Pending memory operations and s_waitcnt ----------------------------------------------------------------
 
@@ -1039,13 +1083,31 @@ internal sealed partial class GcnMachine
             }
         }
 
+        if (pending.Vs)
+        {
+            wave.VsQueue.Add(pending);
+            if (wave.VsQueue.Count > 63)
+            {
+                Retire(wave, wave.VsQueue[0]);
+            }
+        }
+
         if (pending.Lgkm)
         {
             wave.LgkmQueue.Add(pending);
-            if (wave.LgkmQueue.Count > 15)
+            if (wave.LgkmQueue.Count > (Rdna ? 63 : 15))
             {
                 Retire(wave, wave.LgkmQueue[0]);
             }
+        }
+    }
+
+    /// <summary>s_waitcnt_vscnt (RDNA): the stores and atomics without a return complete in order; the oldest beyond <paramref name="vs"/> are done.</summary>
+    internal void WaitVs(GcnWave wave, int vs)
+    {
+        while (wave.VsQueue.Count > vs)
+        {
+            Retire(wave, wave.VsQueue[0]);
         }
     }
 
@@ -1096,6 +1158,11 @@ internal sealed partial class GcnMachine
         {
             Retire(wave, wave.LgkmQueue[0]);
         }
+
+        while (wave.VsQueue.Count > 0)
+        {
+            Retire(wave, wave.VsQueue[0]);
+        }
     }
 
     private static void Retire(GcnWave wave, GcnPending pending)
@@ -1145,6 +1212,7 @@ internal sealed partial class GcnMachine
         pending.OnRetire?.Invoke(wave);
         wave.VmQueue.Remove(pending);
         wave.LgkmQueue.Remove(pending);
+        wave.VsQueue.Remove(pending);
     }
 
     /// <summary>A new store record of the current workgroup, wave and barrier interval; its index is what the race tracking keeps per byte.</summary>

@@ -271,7 +271,7 @@ internal sealed partial class GcnMachine
 
     internal static void ScalarLoad(GcnMachine m, GcnWave w, GcnInstruction i)
     {
-        string name = i.Opcode.Base;
+        string name = i.Opcode.Semantic;
         int dwords = name.EndsWith("x16", StringComparison.Ordinal) ? 16 : name.EndsWith("x8", StringComparison.Ordinal) ? 8
             : name.EndsWith("x4", StringComparison.Ordinal) ? 4 : name.EndsWith("x2", StringComparison.Ordinal) ? 2 : 1;
         uint offset = i.Imm ? (uint)i.MemoryOffset : m.Scalar32(w, i.MemoryOffset, i);
@@ -304,9 +304,9 @@ internal sealed partial class GcnMachine
         }
 
         int align = Math.Min(dwords, 4);
-        if (i.D % align != 0 || i.D + dwords > 102 && i.D < 102)
+        if (i.D % align != 0 || i.D + dwords > m.SgprLimit && i.D < m.SgprLimit)
         {
-            throw m.Fail(GcnFailure.Register, w, i, $"s[{i.D}:{i.D + dwords - 1}]: {dwords} SGPRs start at a multiple of {align}, within s0-s101");
+            throw m.Fail(GcnFailure.Register, w, i, $"s[{i.D}:{i.D + dwords - 1}]: {dwords} SGPRs start at a multiple of {align}, within s0-s{m.SgprLimit - 1}");
         }
 
         var values = new uint[dwords];
@@ -374,7 +374,7 @@ internal sealed partial class GcnMachine
     /// <summary>ds_read_*: per active lane, from address + offset; the destination pending until lgkmcnt retires it.</summary>
     internal static void LdsLoad(GcnMachine m, GcnWave w, GcnInstruction i)
     {
-        string name = i.Opcode.Base;
+        string name = i.Opcode.Semantic;
         ulong exec = m.ExecOf(w, i);
         m.ReadVector(w, i.A - 256, i, m.L0);
         bool two = name.StartsWith("ds_read2", StringComparison.Ordinal);
@@ -416,7 +416,7 @@ internal sealed partial class GcnMachine
     /// <summary>ds_write_*: per active lane, at once in the LDS; counted by lgkmcnt until a wait retires it (other waves may read it only then).</summary>
     internal static void LdsStore(GcnMachine m, GcnWave w, GcnInstruction i)
     {
-        string name = i.Opcode.Base;
+        string name = i.Opcode.Semantic;
         ulong exec = m.ExecOf(w, i);
         m.ReadVector(w, i.A - 256, i, m.L0);
         bool two = name.StartsWith("ds_write2", StringComparison.Ordinal);
@@ -466,7 +466,7 @@ internal sealed partial class GcnMachine
     /// <summary>ds_&lt;op&gt;[_rtn]_{u32,i32,b32,f32,u64}: atomic per lane in lane order; the _rtn forms return the old value.</summary>
     internal static void LdsAtomic(GcnMachine m, GcnWave w, GcnInstruction i)
     {
-        string name = i.Opcode.Base;
+        string name = i.Opcode.Semantic;
         bool returns = name.Contains("_rtn_", StringComparison.Ordinal);
         string op = name[3..name.IndexOf('_', 3)];
         bool wide = name.EndsWith("64", StringComparison.Ordinal);
@@ -569,7 +569,7 @@ internal sealed partial class GcnMachine
     /// <summary>ds_swizzle_b32, ds_permute_b32, ds_bpermute_b32: lanes exchanged through the LDS hardware, counted by lgkmcnt.</summary>
     internal static void LdsLanes(GcnMachine m, GcnWave w, GcnInstruction i)
     {
-        string name = i.Opcode.Base;
+        string name = i.Opcode.Semantic;
         ulong exec = m.ExecOf(w, i);
         var result = new uint[64];
         if (name == "ds_swizzle_b32")
@@ -686,7 +686,7 @@ internal sealed partial class GcnMachine
         ulong exec = m.ExecOf(w, i);
         Span<ulong> addresses = stackalloc ulong[64];
         m.Addresses(w, i, exec, addresses);
-        var (size, regs, signed, merge) = Shape(i.Opcode.Base);
+        var (size, regs, signed, merge) = Shape(i.Opcode.Semantic);
         var values = new uint[regs * 64];
         Span<byte> bytes = stackalloc byte[16];
         for (ulong mask = exec; mask != 0; mask &= mask - 1)
@@ -714,8 +714,8 @@ internal sealed partial class GcnMachine
         ulong exec = m.ExecOf(w, i);
         Span<ulong> addresses = stackalloc ulong[64];
         m.Addresses(w, i, exec, addresses);
-        var (size, regs, _, _) = Shape(i.Opcode.Base);
-        bool high = i.Opcode.Base.EndsWith("_d16_hi", StringComparison.Ordinal);
+        var (size, regs, _, _) = Shape(i.Opcode.Semantic);
+        bool high = i.Opcode.Semantic.EndsWith("_d16_hi", StringComparison.Ordinal);
         var data = new uint[regs * 64];
         for (int k = 0; k < regs; k++)
         {
@@ -736,13 +736,13 @@ internal sealed partial class GcnMachine
             m.GlobalWrite(addresses[lane], bytes[..size], w, i, lane, store);
         }
 
-        m.Issue(w, new GcnPending { Instruction = i, Vm = true, Lgkm = i.Opcode.Format == GcnFormat.Flat, Store = record });
+        m.Issue(w, new GcnPending { Instruction = i, Vm = !m.Rdna, Vs = m.Rdna, Lgkm = i.Opcode.Format == GcnFormat.Flat, Store = record });
     }
 
     /// <summary>global_atomic_* and flat_atomic_*: atomic per lane in lane order; with glc the old value returns.</summary>
     internal static void VectorAtomic(GcnMachine m, GcnWave w, GcnInstruction i)
     {
-        string name = i.Opcode.Base;
+        string name = i.Opcode.Semantic;
         ulong exec = m.ExecOf(w, i);
         Span<ulong> addresses = stackalloc ulong[64];
         m.Addresses(w, i, exec, addresses);
@@ -829,7 +829,7 @@ internal sealed partial class GcnMachine
         bool flat = i.Opcode.Format == GcnFormat.Flat;
         m.Issue(w, new GcnPending
         {
-            Instruction = i, Vm = true, Lgkm = flat, VFirst = old is null ? -1 : i.D - 256, VCount = regs, VValues = old, Lanes = exec,
+            Instruction = i, Vm = old is not null || !m.Rdna, Vs = old is null && m.Rdna, Lgkm = flat, VFirst = old is null ? -1 : i.D - 256, VCount = regs, VValues = old, Lanes = exec,
             OnRetire = old is null ? null : wave => touched.ForEach(a => m.Acquire(a, wave)),
         });
     }
