@@ -5,6 +5,9 @@ using Idrak.Abstraction.Plugins;
 
 [assembly: IdrakPluginPackage(typeof(Idrak.Audio.Plugins.AudioPluginsPackage))]
 
+// The architectures the families register (PretrainedArchitectures), so a refusal names this package (PluginPackageCatalogs).
+[assembly: IdrakPluginNames(nameof(Idrak.Models.Abstractions.PretrainedArchitectures), Idrak.Audio.Plugins.IdrakAudio.IdrakAudioLanguageFamily.Architecture)]
+
 namespace Idrak.Audio.Plugins;
 
 /// <summary>

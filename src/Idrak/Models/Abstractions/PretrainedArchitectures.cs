@@ -3,6 +3,7 @@
 
 using System.Runtime.CompilerServices;
 using System.Text.Json.Nodes;
+using Idrak.Abstraction.Plugins;
 using Idrak.Layers.Abstractions;
 
 namespace Idrak.Models.Abstractions;
@@ -116,7 +117,8 @@ public sealed record PretrainedBuildContext(JsonObject Config, DecoderSpec Spec,
 /// Idrak.Vision.Plugins), and a vision-language model's vision part is a <see cref="VisionFamilies"/> registration. Add
 /// others with <see cref="Register"/> (its <c>PretrainedFamilies.CommonArchitecture</c> makes one for families that share
 /// the common configuration keys and checkpoint names). An architecture nobody registered is refused, naming the plug-in
-/// packages.
+/// package that declares it (<see cref="IdrakPluginNamesAttribute"/>, through <see cref="PluginPackageCatalogs"/>) when the
+/// program has one.
 /// </summary>
 public static class PretrainedArchitectures
 {
@@ -141,9 +143,18 @@ public static class PretrainedArchitectures
     public static IReadOnlyCollection<string> Names => Registry.Keys;
 
     /// <summary>The architecture registered as <paramref name="name"/>.</summary>
-    public static IPretrainedArchitecture Get(ReadOnlySpan<char> name) => Registry.Find(name)
-        ?? throw new NotRegisteredException(nameof(PretrainedArchitectures), name.ToString(), Registry.Keys,
-            $"No architecture '{name}' is registered ({string.Join(", ", Registry.Keys)}); add it with PretrainedArchitectures.Register, or reference Idrak.Text.Plugins (text models) or Idrak.Vision.Plugins (vision-language models) and call its RegisterAll().");
+    public static IPretrainedArchitecture Get(ReadOnlySpan<char> name) => Registry.Find(name) ?? throw NotRegistered(name.ToString());
+
+    // The refusal names the plug-in package that declares the family asked for (PluginPackageCatalogs: the packages the
+    // program has), or no package when none does: never one package's families for another's.
+    private static NotRegisteredException NotRegistered(string name)
+    {
+        string registered = string.Join(", ", Registry.Keys);
+        string message = PluginPackageCatalogs.PackageOf(nameof(PretrainedArchitectures), name) is { } package
+            ? $"No architecture '{name}' is registered ({registered}); {package} declares it: call that package's RegisterAll() (or register its family alone), or add it with PretrainedArchitectures.Register."
+            : $"No architecture '{name}' is registered ({registered}); add it with PretrainedArchitectures.Register, or reference the plug-in package that holds the family and call its RegisterAll() (no plug-in package this program has declares '{name}').";
+        return new NotRegisteredException(nameof(PretrainedArchitectures), name, Registry.Keys, message);
+    }
 
     /// <summary>The library's architecture <paramref name="name"/>, whatever an app registered over it (for an app's family to build on); null when the library has none.</summary>
     public static IPretrainedArchitecture? Default(string name) => Registry.Default(name);

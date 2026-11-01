@@ -5,6 +5,13 @@ using Idrak.Abstraction.Plugins;
 
 [assembly: IdrakPluginPackage(typeof(Idrak.Text.Plugins.TextPluginsPackage))]
 
+// The architectures the families register (PretrainedArchitectures), so a refusal names this package (PluginPackageCatalogs).
+[assembly: IdrakPluginNames(nameof(Idrak.Models.Abstractions.PretrainedArchitectures),
+    Idrak.Text.Plugins.Gemma.GemmaPlugin.GemmaForCausalLM, Idrak.Text.Plugins.Gemma.GemmaPlugin.Gemma2ForCausalLM, Idrak.Text.Plugins.Gemma.GemmaPlugin.Gemma3ForCausalLM,
+    Idrak.Text.Plugins.Gemma.GemmaPlugin.Gemma3ForConditionalGeneration, Idrak.Text.Plugins.Llama.LlamaPlugin.LlamaForCausalLM,
+    Idrak.Text.Plugins.Qwen.QwenPlugin.Qwen2ForCausalLM, Idrak.Text.Plugins.Qwen.QwenPlugin.Qwen3ForCausalLM, Idrak.Text.Plugins.Qwen.QwenPlugin.Qwen2MoeForCausalLM,
+    Idrak.Text.Plugins.Qwen.QwenPlugin.Qwen3MoeForCausalLM, Idrak.Text.Plugins.Mistral.MistralPlugin.MistralForCausalLM, Idrak.Text.Plugins.Mistral.MistralPlugin.MixtralForCausalLM)]
+
 namespace Idrak.Text.Plugins;
 
 /// <summary>

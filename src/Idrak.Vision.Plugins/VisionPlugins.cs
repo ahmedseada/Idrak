@@ -5,6 +5,11 @@ using Idrak.Abstraction.Plugins;
 
 [assembly: IdrakPluginPackage(typeof(Idrak.Vision.Plugins.VisionPluginsPackage))]
 
+// The architectures the families register (PretrainedArchitectures), so a refusal names this package (PluginPackageCatalogs).
+[assembly: IdrakPluginNames(nameof(Idrak.Models.Abstractions.PretrainedArchitectures),
+    Idrak.Vision.Plugins.Qwen.QwenVisionFamily.Qwen25VlArchitecture, Idrak.Vision.Plugins.Qwen.QwenVisionFamily.Qwen2VlArchitecture,
+    Idrak.Vision.Plugins.Llava.LlavaPlugin.Architecture, Idrak.Vision.Plugins.IdrakVision.IdrakVisionFamily.Architecture)]
+
 namespace Idrak.Vision.Plugins;
 
 /// <summary>

@@ -152,6 +152,8 @@ internal abstract partial class Tests
         [
             ("PretrainedArchitectures", None, Idrak.Models.Abstractions.PretrainedArchitectures.Names, $"No architecture '{None}' is registered (",
                 () => Idrak.Models.Abstractions.PretrainedArchitectures.Get(None)),
+            ("PluginPackageCatalogs", None, Idrak.Abstraction.Plugins.PluginPackageCatalogs.Names, $"No plug-in package catalog '{None}' is registered (registered: ",
+                () => Idrak.Abstraction.Plugins.PluginPackageCatalogs.Get(None)),
             ("PretrainedEncoders", None, Idrak.Models.Abstractions.PretrainedEncoders.Names, $"Encoder family '{None}' is not registered (registered: ",
                 () => Idrak.Models.Abstractions.PretrainedEncoders.Get(None)),
             ("PretrainedSeq2Seq", None, Idrak.Models.Abstractions.PretrainedSeq2Seq.Names, $"Encoder-decoder family '{None}' is not registered (registered: ",

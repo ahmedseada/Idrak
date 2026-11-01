@@ -27,6 +27,8 @@ internal abstract partial class DesktopTests : Tests
         ("plugins: packages: the tool registers the four packages at startup (text first, reinforcement last), and -P on each package's DLL loads it through the tool's loader (its IdrakPluginPackage attribute) adding nothing twice; -P on an assembly that declares no package is refused naming the attribute, and on a library assembly registers its built-ins", PluginPackagesCli),
         ("plugins: packages: IDRAK_PLUGIN_PACKAGES chooses the packages the tool registers at startup (all four when unset, none, or a list taken in the tool's order) and is refused naming the variable when it names no package", PluginPackagesSetting),
         ("plugins: packages: no library assembly nor the tool grants a plug-in package its internals, the plug-in packages grant none but the test runner (as every library package does), and they are not library defaults", PluginPackagesNoInternals),
+        ("plugins: packages: LibraryDefaults loads only the libraries the program has (its files, read once, or loaded): one it lacks is skipped with no first-chance exception, and a host that has them all finds what loading every name finds", PluginPackagesLibrariesPresent),
+        ("plugins: packages: each plug-in package declares the architectures it registers (IdrakPluginNames), read alike from its file's metadata and the loaded assembly; PluginPackageCatalogs' library catalog and an app's name the package, and the missing-architecture refusal names the package that declares the family asked for, or no package (never Vision for a text family)", PluginPackagesArchitectureMessage),
         ("plugins: packages: the not-registered messages of VisionFamilies, SpeechFamilies, SpeechSynthesisFamilies, VoiceConverters, GgufArchitectures, ToolCallFormats, EnvironmentKinds and RewardFunctions name the plug-in package to reference and its RegisterAll, each as a NotRegisteredException", PluginPackagesMessages),
     ];
 
@@ -252,12 +254,13 @@ internal abstract partial class DesktopTests : Tests
             Check(PluginPackages.SelectMany(p => p.All).All(p => p.IsRegistered), $"-P {package.Name}.dll leaves every family registered");
         }
 
-        // An assembly that declares no package: refused, naming the attribute (Idrak.Mcp declares neither a package nor
-        // library registrations).
-        var (refusedExit, _, refused) = Cli("plugins", "list", "-P", typeof(Idrak.Mcp.McpTools).Assembly.Location);
+        // An assembly that declares no package: refused, naming the attribute (Idrak.AspNetCore declares neither a package
+        // nor library registrations; Idrak.Mcp now declares library registrations).
+        var (refusedExit, _, refused) = Cli("plugins", "list", "-P", typeof(Idrak.AspNetCore.ChatApiOptions).Assembly.Location);
         Check(refusedExit == 2 && refused.Contains("IdrakPluginPackage", StringComparison.Ordinal) && refused.Contains("IIdrakPluginPackage", StringComparison.Ordinal),
             $"-P on an assembly with no package: exit {refusedExit}: {refused}");
-        Check(!IdrakPlugins.Load(typeof(Idrak.Mcp.McpTools).Assembly) && IdrakPlugins.PackageOf(typeof(Idrak.Mcp.McpTools).Assembly) is null, "IdrakPlugins.Load: nothing declared, false");
+        Check(!IdrakPlugins.Load(typeof(Idrak.AspNetCore.ChatApiOptions).Assembly) && IdrakPlugins.PackageOf(typeof(Idrak.AspNetCore.ChatApiOptions).Assembly) is null,
+            "IdrakPlugins.Load: nothing declared, false");
 
         // A library assembly (Idrak.Onnx.Runtime, shipped with this runner): -P registers its built-ins, once.
         var runtimes = OnnxRuntimeLoaders.Names.ToList();
@@ -332,4 +335,178 @@ internal abstract partial class DesktopTests : Tests
         ThrowsNaming<NotRegisteredException>(() => Idrak.Abstraction.Reinforcement.RewardFunctions.Get(None), "RewardFunctions",
             [$"'{None}' is not registered", "RewardFunctions.Register", .. reinforcement]);
     }
+
+    private static void PluginPackagesLibrariesPresent(Device device)
+    {
+        _ = device;
+        const string Absent = "Idrak.NotShippedLibrary";
+        var files = LibraryFiles.Present;
+        Check(files is not null && ReferenceEquals(files, LibraryFiles.Present) && files.ByName.ContainsKey("Idrak") && files.ByName.ContainsKey("Idrak.Abstraction")
+              && !files.ByName.ContainsKey(Absent),
+            $"the runner's files are known, read once, and list Idrak and Idrak.Abstraction but not {Absent} ({files?.ByName.Count} files)");
+        Check(files!.Program.Any(p => Path.GetFileNameWithoutExtension(p) == "Idrak.Abstraction")
+              && files.Program.All(p => !string.Equals(Path.GetFileNameWithoutExtension(p), "System.Private.CoreLib", StringComparison.OrdinalIgnoreCase)
+                                        || Path.GetDirectoryName(p) == Path.TrimEndingDirectorySeparator(AppContext.BaseDirectory)),
+            "the program's files hold the runner's own and not the shared framework's");
+        Check(LibraryFiles.MayLoad("Idrak") && !LibraryFiles.MayLoad(Absent), $"Idrak may be loaded, {Absent} not");
+
+        // Loading a set with a library the program lacks: nothing thrown for it, the others found.
+        var thrown = new List<string>();
+        void Seen(object? sender, System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs e)
+        {
+            if (e.Exception is FileNotFoundException or FileLoadException && e.Exception.Message.Contains(Absent, StringComparison.Ordinal))
+            {
+                lock (thrown)
+                {
+                    thrown.Add($"{e.Exception.GetType().Name}: {e.Exception.Message}");
+                }
+            }
+        }
+
+        List<(Assembly, ILibraryRegistrations)> found;
+        AppDomain.CurrentDomain.FirstChanceException += Seen;
+        try
+        {
+            found = LibraryDefaults.Find(["Idrak", Absent, "Idrak.Text"]);
+        }
+        finally
+        {
+            AppDomain.CurrentDomain.FirstChanceException -= Seen;
+        }
+
+        Check(thrown.Count == 0, $"no first-chance exception for the library the program lacks: {string.Join("; ", thrown)}");
+        Check(found.Select(f => f.Item1.GetName().Name).SequenceEqual(["Idrak", "Idrak.Text"]),
+            $"the libraries present are found, in order: {string.Join(", ", found.Select(f => f.Item1.GetName().Name))}");
+
+        // The same as loading every listed name (the way before): the runner ships most of them (rule 71).
+        var listed = (string[])typeof(IdrakPlugins).Assembly.GetType("Idrak.Abstraction.LibraryDefaults", throwOnError: true)!
+            .GetField("Assemblies", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
+        var loadedEach = new List<string>();
+        foreach (string name in listed)
+        {
+            try
+            {
+                if (Assembly.Load(new AssemblyName(name)).GetCustomAttribute<LibraryRegistrationsAttribute>() is not null)
+                {
+                    loadedEach.Add(name);
+                }
+            }
+            catch (FileNotFoundException)
+            {
+                // a library this runner does not ship
+            }
+        }
+
+        var foundAll = LibraryDefaults.Find(listed).Select(f => f.Item1.GetName().Name!).ToList();
+        Check(foundAll.SequenceEqual(loadedEach) && foundAll.Count >= 10,
+            $"every library the runner ships is found as loading each name finds it: {string.Join(", ", foundAll)} / {string.Join(", ", loadedEach)}");
+    }
+
+    private sealed class TestPackageCatalog(string package) : IPluginPackageCatalog
+    {
+        public string Name => "plugins-test";
+
+        public string? PackageOf(string registry, string name) => registry == nameof(PretrainedArchitectures) && name == "PluginsTestArchitecture" ? package : null;
+    }
+
+    private static void PluginPackagesArchitectureMessage(Device device)
+    {
+        _ = device;
+        const string None = "PluginsTestArchitecture", Registry = nameof(PretrainedArchitectures);
+        var registeredBefore = PluginPackages.SelectMany(p => p.All).Where(p => p.IsRegistered).ToHashSet();
+        try
+        {
+            foreach (var package in PluginPackages)
+            {
+                package.RegisterAll();
+                var declared = package.Root.Assembly.GetCustomAttributes<IdrakPluginNamesAttribute>().Where(a => a.Registry == Registry).SelectMany(a => a.Names).ToList();
+                var registered = PretrainedArchitectures.Names.Where(n => PretrainedArchitectures.Origin(n) == package.Name).ToList();
+                Check(declared.Order(StringComparer.Ordinal).SequenceEqual(registered.Order(StringComparer.Ordinal), StringComparer.Ordinal),
+                    $"{package.Name} declares the architectures it registers: declared [{string.Join(", ", declared)}], registered [{string.Join(", ", registered)}]");
+
+                var read = new List<PresentPluginPackages.Declaration>();
+                PresentPluginPackages.Read(package.Root.Assembly.Location, read);
+                Check(read.Where(d => d.Registry == Registry).SelectMany(d => d.Names).SequenceEqual(declared) && read.All(d => d.Package == package.Name),
+                    $"{package.Name}: its file's metadata holds the same declarations, without loading it: {string.Join("; ", read.Select(d => $"{d.Package} {d.Registry} [{string.Join(", ", d.Names)}]"))}");
+                foreach (string name in declared)
+                {
+                    Check(PluginPackageCatalogs.PackageOf(Registry, name) == package.Name, $"the catalogs name {package.Name} for {name}: {PluginPackageCatalogs.PackageOf(Registry, name)}");
+                }
+            }
+
+            var abstraction = new List<PresentPluginPackages.Declaration>();
+            PresentPluginPackages.Read(typeof(IdrakPlugins).Assembly.Location, abstraction);
+            Check(abstraction.Count == 0 && PluginPackageCatalogs.PackageOf(Registry, None) is null && PluginPackageCatalogs.PackageOf("VisionFamilies", "Qwen2ForCausalLM") is null,
+                "the library declares no family, and a name nobody declares (or one asked of another registry) has no package");
+            Check(PluginPackageCatalogs.Names.Contains(PluginPackageCatalogs.Present) && PluginPackageCatalogs.Origin(PluginPackageCatalogs.Present) == Overrides.Library
+                  && PluginPackageCatalogs.Default(PluginPackageCatalogs.Present) is { Name: PluginPackageCatalogs.Present },
+                $"the library's catalog is registered as a library default: {string.Join(", ", PluginPackageCatalogs.Names)}");
+            ThrowsNaming<NotRegisteredException>(() => PluginPackageCatalogs.Get("plugins-test-nobody"), "PluginPackageCatalogs",
+                ["'plugins-test-nobody' is registered", "PluginPackageCatalogs.Register"]);
+
+            // The refusal of a text family nobody registered names the text package, never another.
+            bool qwen = Idrak.Text.Plugins.Qwen.QwenPlugin.IsRegistered;
+            Idrak.Text.Plugins.Qwen.QwenPlugin.Unregister();
+            try
+            {
+                string message = Refusal(Idrak.Text.Plugins.Qwen.QwenPlugin.Qwen2ForCausalLM);
+                Check(message.Contains("Idrak.Text.Plugins declares it", StringComparison.Ordinal) && message.Contains("RegisterAll()", StringComparison.Ordinal)
+                      && !message.Contains("Idrak.Vision.Plugins", StringComparison.Ordinal) && !message.Contains("Idrak.Audio.Plugins", StringComparison.Ordinal),
+                    $"the refusal of Qwen2ForCausalLM names Idrak.Text.Plugins alone: {message}");
+            }
+            finally
+            {
+                if (qwen)
+                {
+                    Idrak.Text.Plugins.Qwen.QwenPlugin.Register();
+                }
+            }
+
+            string neutral = Refusal(None);
+            Check(neutral.Contains("PretrainedArchitectures.Register", StringComparison.Ordinal) && neutral.Contains($"declares '{None}'", StringComparison.Ordinal)
+                  && !neutral.Contains("Idrak.Vision.Plugins", StringComparison.Ordinal) && !neutral.Contains("Idrak.Text.Plugins", StringComparison.Ordinal),
+                $"a family nobody declares is refused naming no package: {neutral}");
+
+            // An app's catalog names a package the program does not ship.
+            PluginPackageCatalogs.Register(new TestPackageCatalog("Contoso.Plugins"));
+            try
+            {
+                Check(PluginPackageCatalogs.PackageOf(Registry, None) == "Contoso.Plugins" && Refusal(None).Contains("Contoso.Plugins declares it", StringComparison.Ordinal)
+                      && PluginPackageCatalogs.Origin("plugins-test") == typeof(PluginPackageTestsMarker).Assembly.GetName().Name,
+                    $"an app's catalog names its package: {Refusal(None)}");
+            }
+            finally
+            {
+                PluginPackageCatalogs.Unregister("plugins-test");
+            }
+
+            Check(PluginPackageCatalogs.PackageOf(Registry, None) is null && !PluginPackageCatalogs.Names.Contains("plugins-test"), "unregistered, the app's catalog is gone");
+        }
+        finally
+        {
+            foreach (var plugin in PluginPackages.SelectMany(p => p.All).Reverse())
+            {
+                if (!registeredBefore.Contains(plugin))
+                {
+                    IdrakPlugins.Unregister(plugin);
+                }
+            }
+        }
+
+        static string Refusal(string name)
+        {
+            try
+            {
+                PretrainedArchitectures.Get(name);
+                return $"'{name}' was not refused";
+            }
+            catch (NotRegisteredException e)
+            {
+                return e.Registry == Registry && e.Name == name ? e.Message : $"refused by {e.Registry} for {e.Name}: {e.Message}";
+            }
+        }
+    }
+
+    // A type of this assembly, for the origin an app's registration gets.
+    private sealed class PluginPackageTestsMarker;
 }

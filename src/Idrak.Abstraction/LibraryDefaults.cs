@@ -29,7 +29,8 @@ internal static class LibraryDefaults
 
     // The first-party assemblies that register built-ins, in order (core first: the others build on it). Each names its
     // ILibraryRegistrations with [assembly: LibraryRegistrations(typeof(...))]; one that is missing (not shipped with the
-    // application) is skipped. Planned packages are listed so they work the day they appear.
+    // application) is skipped, without trying to load it (LibraryFiles). Planned packages are listed so they work the day
+    // they appear.
     private static readonly string[] Assemblies =
         ["Idrak", "Idrak.Gpu", "Idrak.Imaging", "Idrak.Data", "Idrak.Text", "Idrak.Vision", "Idrak.Diffusion", "Idrak.Audio", "Idrak.Reinforcement",
             "Idrak.Cluster", "Idrak.Network", "Idrak.Onnx.Runtime", "Idrak.Mcp"];
@@ -116,11 +117,22 @@ internal static class LibraryDefaults
         }
     }
 
-    private static List<(Assembly, ILibraryRegistrations)> Find()
+    private static List<(Assembly, ILibraryRegistrations)> Find() => Find(Assemblies);
+
+    // Each of the names the program has (LibraryFiles: one of its files, or loaded already) is loaded and its
+    // registrations made; one it does not ship is skipped without a load, so nothing throws for it (the owner's trail
+    // held a first-chance FileNotFoundException for each library a plug-in's folder lacked). A host that gives no files
+    // to tell from loads each name as before, skipping the ones that fail.
+    internal static List<(Assembly, ILibraryRegistrations)> Find(IReadOnlyList<string> names)
     {
-        var found = new List<(Assembly, ILibraryRegistrations)>(Assemblies.Length);
-        foreach (string name in Assemblies)
+        var found = new List<(Assembly, ILibraryRegistrations)>(names.Count);
+        foreach (string name in names)
         {
+            if (!LibraryFiles.MayLoad(name))
+            {
+                continue;
+            }
+
             Assembly assembly;
             try
             {
