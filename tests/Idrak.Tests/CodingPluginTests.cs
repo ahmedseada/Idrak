@@ -3,11 +3,13 @@
 
 using System.Diagnostics;
 using System.Globalization;
+using System.Text;
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Abstraction.Plugins;
 using Idrak.Abstraction.Reinforcement;
 using Idrak.Abstraction.Testing;
+using Idrak.Cluster;
 using Idrak.Generation;
 using Idrak.Models;
 using Idrak.Reinforcement;
@@ -26,6 +28,7 @@ internal abstract partial class DesktopTests : Tests
     private static readonly (string Name, Action<Device> Run)[] CodingPluginGroup =
     [
         ("command sandboxes: process is Idrak.Text's in CommandSandboxes; it runs a program without a shell, enforces the programs allowed, its time, output and memory limits (stopping the command), hands each line of output to CommandLimits.Output as it is written, refuses network off, processes and CPUs naming container, and stops on cancellation; the coding tools run every command through the sandbox their options name", d => { if (d == Device.Cpu) ProcessSandboxLimits(); }),
+        ("command sandboxes: interactive start: process starts a command with its standard input, output and error as streams (a child of this program echoes each line sent to it on its output, an error line on its error stream, and exits with its code at the end of its input; its variables set); the memory stays flat over thousands of lines; Stop and a dispose end its whole process tree, the time limit stops it; a program not allowed or not found is a refused start, a limit it cannot keep throws naming container, a cancelled start throws; a sandbox without an interactive start (container, an app's) refuses with the reason", d => { if (d == Device.Cpu) ProcessSandboxInteractive(); }),
         ("command sandboxes: container refuses when no program is found or no image is set (naming IDRAK_SANDBOX_PROGRAM and IDRAK_SANDBOX_IMAGE), and builds its command line: the workspace mounted, the network off unless allowed, the memory, CPU and process limits, the user, the variables, the image, then the command", d => { if (d == Device.Cpu) ContainerSandboxCommandLine(); }),
         ("plugins: coding: CodingPlugin is the plug-in \"coding\" of ReinforcementPlugins.All; Register twice registers the coding environment, its four rewards and the container sandbox once, from Idrak.Reinforcement.Plugins; Unregister leaves the registries as found; the rewards pass the reward suite", d => { if (d == Device.Cpu) CodingPluginRegisters(); }),
         ("plugins: coding: on a C# suite (a project, a hidden test, a restore) and a scripted model: a seeded episode replays the same; the reward follows verification (solved, not solved, out of rounds); setup runs once per task and is reused; a broken setup is left out and reported; a test edit is overwritten by the hidden tests and reported, and refused when asked", d => { if (d == Device.Cpu) CodingEpisodes(); }),
@@ -181,6 +184,211 @@ internal abstract partial class DesktopTests : Tests
         finally
         {
             Directory.Delete(root, recursive: true);
+        }
+    }
+
+    // Plan 1 (Craft), X part 6b: a command started interactively through the process sandbox, its streams the caller's.
+    private static void ProcessSandboxInteractive() => ProcessSandboxInteractiveAsync().GetAwaiter().GetResult();
+
+    private static async Task ProcessSandboxInteractiveAsync()
+    {
+        var limits = new CommandLimits();
+        ICommandSandbox registered = CommandSandboxes.Get(CommandSandboxes.Process);
+        Check(registered.CheckStart(limits) is null, "the registered process sandbox starts commands interactively (CheckStart is null)");
+        var sandbox = new ProcessCommandSandbox { PollInterval = TimeSpan.FromMilliseconds(5) };
+        var (file, prefix) = LocalhostCluster.ProgramOf(typeof(DesktopTests).Assembly);
+        string[] Child(string scenario) => [file, .. prefix, "--sandbox-child", scenario];
+        var wait = TimeSpan.FromSeconds(60);
+        string root = CodingTemp();
+        Directory.CreateDirectory(root);
+        try
+        {
+            var start = await sandbox.StartAsync(Child("echo"), root, new CommandLimits { Environment = new Dictionary<string, string> { ["IDRAK_SANDBOX_TEST"] = "7" } });
+            Check(start.Started, $"the echoing child starts: {start.Refusal}");
+            var session = start.Session!;
+            await using (session)
+            {
+                using var output = new StreamReader(session.Output, Encoding.UTF8);
+                using var error = new StreamReader(session.Error, Encoding.UTF8);
+                Check(session.ProcessId > 0 && await output.ReadLineAsync().WaitAsync(wait) == "ready 7", "it starts in its folder with its variable, and says so on its output");
+                foreach (var text in new[] { "first line", "second line, ünïcode and 数字" })
+                {
+                    await session.Input.WriteAsync(Encoding.UTF8.GetBytes(text + "\n"));
+                    string? back = await output.ReadLineAsync().WaitAsync(wait);
+                    Check(back == "echo: " + text, $"a line written to its input comes back on its output as it is sent ({back})");
+                }
+
+                await session.Input.WriteAsync("err oops\n"u8.ToArray());
+                Check(await error.ReadLineAsync().WaitAsync(wait) == "error: oops", "the error stream is its own");
+
+                // Memory flat: thousands of lines through the streams keep nothing between them and the caller.
+                var line = "a line of some length, sent and read back again\n"u8.ToArray();
+                for (int i = 0; i < 200; i++)
+                {
+                    await session.Input.WriteAsync(line);
+                    await output.ReadLineAsync();
+                }
+
+                long before = GC.GetTotalMemory(forceFullCollection: true);
+                for (int i = 0; i < 5_000; i++)
+                {
+                    await session.Input.WriteAsync(line);
+                    await output.ReadLineAsync();
+                }
+
+                long grown = GC.GetTotalMemory(forceFullCollection: true) - before;
+                Console.WriteLine($"    5,000 lines through the streams: the managed memory grew by {grown} bytes");
+                Check(grown < 256 * 1024, $"the memory stays flat over 5,000 lines ({grown} bytes more after them)");
+
+                await session.Input.DisposeAsync();                    // the end of its input: it says bye and exits with 3
+                Check(await output.ReadLineAsync().WaitAsync(wait) == "bye" && await output.ReadLineAsync().WaitAsync(wait) is null, "closing its input ends it: its last line, then the end of its output");
+                var ended = await session.Completion.WaitAsync(wait);
+                Check(ended is { ExitCode: 3, TimedOut: false, OutOfMemory: false, Stopped: false, Refused: false, Output.Length: 0 }, $"its exit code at its end, no output kept (the streams were the caller's): {ended}");
+            }
+
+            // Stop ends the whole tree: the child and the grandchild it started.
+            var tree = (await sandbox.StartAsync(Child("tree"), root, limits)).Session!;
+            await using (tree)
+            {
+                using var output = new StreamReader(tree.Output, Encoding.UTF8);
+                string said = await output.ReadLineAsync().WaitAsync(wait) ?? "";
+                Check(said.StartsWith("grandchild ", StringComparison.Ordinal), $"the child started a grandchild ({said})");
+                int grandchild = int.Parse(said["grandchild ".Length..], CultureInfo.InvariantCulture);
+                tree.Stop();
+                var stopped = await tree.Completion.WaitAsync(wait);
+                Check(stopped is { Stopped: true, ExitCode: null, TimedOut: false }, $"Stop: stopped, no exit code ({stopped})");
+                bool gone = false;
+                for (int i = 0; i < 200 && !gone; i++)
+                {
+                    gone = Ended(grandchild);
+                    if (!gone)
+                    {
+                        await Task.Delay(50);
+                    }
+                }
+
+                Check(gone, $"the grandchild {grandchild} ended with its parent (the process tree)");
+                tree.Stop();                                           // again, after its end: nothing
+            }
+
+            var slow = (await sandbox.StartAsync(Child("sleep"), root, new CommandLimits { Time = TimeSpan.FromMilliseconds(300) })).Session!;
+            await using (slow)
+            {
+                var timed = await slow.Completion.WaitAsync(wait);
+                Check(timed is { TimedOut: true, ExitCode: null, Stopped: false }, $"the time limit stops it ({timed})");
+            }
+
+            var disposed = (await sandbox.StartAsync(Child("sleep"), root, new CommandLimits { Time = Timeout.InfiniteTimeSpan })).Session!;
+            int pid = disposed.ProcessId;
+            await disposed.DisposeAsync();
+            Check(disposed.Completion.IsCompleted && disposed.Completion.Result.Stopped && Ended(pid), "a dispose of a running command stops it");
+
+            Check((await sandbox.StartAsync(["dotnet", "--version"], root, new CommandLimits { Programs = ["git"] })) is { Started: false } notAllowed
+                  && notAllowed.Refusal!.Contains("not an allowed program", StringComparison.Ordinal), "a program not allowed is a refused start");
+            Check((await sandbox.StartAsync(["coding-test-no-such-program"], root, limits)) is { Started: false } missing
+                  && missing.Refusal!.Contains("not installed", StringComparison.Ordinal), "a program not on the PATH is a refused start");
+            ThrowsNaming<NotSupportedException>(() => sandbox.StartAsync(Child("echo"), root, new CommandLimits { Network = false }).AsTask().GetAwaiter().GetResult(),
+                "an interactive start with the network off on process", "container");
+            using (var cancelled = new CancellationTokenSource())
+            {
+                cancelled.Cancel();
+                ThrowsNaming<OperationCanceledException>(() => sandbox.StartAsync(Child("echo"), root, limits, cancelled.Token).AsTask().GetAwaiter().GetResult(), "a cancelled start");
+            }
+
+            // A sandbox without an interactive start refuses, saying why and naming one that can.
+            foreach (ICommandSandbox without in new ICommandSandbox[] { new RecordingSandbox(new CommandResult(0, false, "", TimeSpan.Zero, false)), new ContainerSandbox(new ContainerSandboxOptions { Image = "coding-test:1" }) })
+            {
+                Check(without.CheckStart(limits) is { } why && why.Contains("cannot start a command interactively", StringComparison.Ordinal) && why.Contains(CommandSandboxes.Process, StringComparison.Ordinal),
+                    $"{without.Name}: CheckStart says it cannot, naming process");
+                ThrowsNaming<NotSupportedException>(() => without.StartAsync(["dotnet"], root, limits).AsTask().GetAwaiter().GetResult(), $"{without.Name}: an interactive start", "cannot start a command interactively");
+            }
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+
+        static bool Ended(int pid)
+        {
+            try
+            {
+                // An orphan whose parent was killed may stay a zombie where nothing reaps it (a container's first process): ended.
+                string stat = $"/proc/{pid}/stat";
+                if (OperatingSystem.IsLinux() && File.Exists(stat) && File.ReadAllText(stat).Contains(") Z ", StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                using var process = Process.GetProcessById(pid);
+                return process.HasExited;
+            }
+            catch (IOException)
+            {
+                return true;                                           // its /proc entry went while it was read
+            }
+            catch (ArgumentException)
+            {
+                return true;                                           // no such process any more
+            }
+            catch (InvalidOperationException)
+            {
+                return true;
+            }
+        }
+    }
+
+    // The children of the interactive start's test (Program.cs: --sandbox-child): echo, tree, sleep.
+    internal static int SandboxChild(string scenario)
+    {
+        switch (scenario)
+        {
+            case "echo":
+                Console.Out.WriteLine("ready " + Environment.GetEnvironmentVariable("IDRAK_SANDBOX_TEST"));
+                Console.Out.Flush();
+                using (var input = new StreamReader(Console.OpenStandardInput(), Encoding.UTF8))
+                using (var output = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false)) { AutoFlush = true })
+                using (var error = new StreamWriter(Console.OpenStandardError(), new UTF8Encoding(false)) { AutoFlush = true })
+                {
+                    while (input.ReadLine() is { } line)
+                    {
+                        if (line.StartsWith("err ", StringComparison.Ordinal))
+                        {
+                            error.WriteLine("error: " + line[4..]);
+                        }
+                        else
+                        {
+                            output.WriteLine("echo: " + line);
+                        }
+                    }
+
+                    output.WriteLine("bye");
+                }
+
+                return 3;
+            case "tree":
+                var (file, prefix) = LocalhostCluster.ProgramOf(typeof(DesktopTests).Assembly);
+                var start = new ProcessStartInfo(file) { UseShellExecute = false };
+                foreach (var word in prefix)
+                {
+                    start.ArgumentList.Add(word);
+                }
+
+                start.ArgumentList.Add("--sandbox-child");
+                start.ArgumentList.Add("sleep");
+                using (var grandchild = Process.Start(start)!)
+                {
+                    Console.Out.WriteLine("grandchild " + grandchild.Id.ToString(CultureInfo.InvariantCulture));
+                    Console.Out.Flush();
+                    Thread.Sleep(Timeout.Infinite);
+                }
+
+                return 0;
+            case "sleep":
+                Thread.Sleep(Timeout.Infinite);
+                return 0;
+            default:
+                Console.Error.WriteLine("unknown sandbox child: " + scenario);
+                return 2;
         }
     }
 

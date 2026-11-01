@@ -43,6 +43,11 @@
 using Idrak.Gpu.Cuda;
 using Idrak.Tests.Runner;
 
+if (args is ["--sandbox-child", var sandboxScenario])
+{
+    return DesktopTests.SandboxChild(sandboxScenario);                                  // a child of the interactive sandbox test (plan 1 of Craft, X part 6b)
+}
+
 Idrak.Abstraction.Devices.DeviceProviders.Register(new Tests.MinimalProvider());   // only by name: IDRAK_DEVICES=cpu,minimal
 
 // The text model families (Llama, Qwen, Mistral, Gemma, BERT, T5, …) are Idrak.Text.Plugins' (plan 26, P7); the

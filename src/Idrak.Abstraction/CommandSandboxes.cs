@@ -18,6 +18,9 @@ public sealed record CommandResult(int? ExitCode, bool TimedOut, string Output, 
 
     /// <summary>Stopped because it used more memory than <see cref="CommandLimits.MaxMemoryBytes"/> allows.</summary>
     public bool OutOfMemory { get; init; }
+
+    /// <summary>Stopped by its caller (<see cref="ICommandSession.Stop"/>), with its process tree: no exit code.</summary>
+    public bool Stopped { get; init; }
 }
 
 /// <summary>
@@ -98,11 +101,105 @@ public interface ICommandSandbox
     /// <param name="cancellationToken">Stops the command (its process tree) and throws <see cref="OperationCanceledException"/>.</param>
     /// <exception cref="NotSupportedException">The sandbox cannot enforce <paramref name="limits"/> (<see cref="Check"/>'s reason).</exception>
     ValueTask<CommandResult> RunAsync(IReadOnlyList<string> command, string directory, CommandLimits limits, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Null when the sandbox can start a command interactively under <paramref name="limits"/> (<see cref="StartAsync"/>:
+    /// its standard input, output and error as streams the caller reads and writes); else why not, naming a sandbox that
+    /// can. By default a sandbox cannot (it runs a command to its end, <see cref="RunAsync"/>), and says so.
+    /// </summary>
+    string? CheckStart(CommandLimits limits) =>
+        $"The {Name} sandbox cannot start a command interactively (its standard input, output and error as streams); "
+        + $"the {CommandSandboxes.Process} sandbox (Idrak.Text) can.";
+
+    /// <summary>
+    /// Starts <paramref name="command"/> (the program, then its arguments, as separate words: no shell) in
+    /// <paramref name="directory"/> under <paramref name="limits"/> and hands its standard input, output and error over as
+    /// streams (<see cref="ICommandSession"/>): a terminal tab that takes the keyboard, a language server, a script that
+    /// asks a question. The time and memory limits stop it with its process tree as for <see cref="RunAsync"/>; the output
+    /// cap and <see cref="CommandLimits.Output"/> do not apply (the caller reads the output). A program that is not allowed
+    /// or not found gives a refused start whose reason says why. <paramref name="cancellationToken"/> cancels the start
+    /// only (a question the sandbox asks first); once started, the command runs until it ends, its limit stops it, or
+    /// <see cref="ICommandSession.Stop"/>. By default a sandbox cannot (<see cref="CheckStart"/>).
+    /// </summary>
+    /// <param name="command">The program and its arguments, at least the program.</param>
+    /// <param name="directory">The folder to run in (absolute), inside <see cref="CommandLimits.Root"/> when one is given.</param>
+    /// <param name="limits">What the command may do.</param>
+    /// <param name="cancellationToken">Cancels the start (not the started command) and throws <see cref="OperationCanceledException"/>.</param>
+    /// <exception cref="NotSupportedException">The sandbox cannot start a command interactively under <paramref name="limits"/> (<see cref="CheckStart"/>'s reason).</exception>
+    ValueTask<CommandStart> StartAsync(IReadOnlyList<string> command, string directory, CommandLimits limits, CancellationToken cancellationToken = default) =>
+        ValueTask.FromException<CommandStart>(new NotSupportedException(CheckStart(limits) ?? $"The {Name} sandbox does not start commands interactively."));
+}
+
+/// <summary>
+/// A command started interactively (<see cref="ICommandSandbox.StartAsync"/>): its standard input, output and error as
+/// streams, and a handle that waits for its end and stops its process tree. The streams are the process's own pipes, so
+/// nothing is kept between them and the caller: memory does not grow with what the command reads or writes. Disposing it
+/// stops the command when it still runs and frees its handles. <see cref="Stop"/> and <c>DisposeAsync</c> may be called
+/// from any thread.
+/// </summary>
+public interface ICommandSession : IAsyncDisposable
+{
+    /// <summary>The started process's id.</summary>
+    int ProcessId { get; }
+
+    /// <summary>
+    /// The command's standard input: what is written is flushed to it at once; disposing the stream closes the input (the
+    /// command reads its end).
+    /// </summary>
+    Stream Input { get; }
+
+    /// <summary>The command's standard output, read as it writes it; a read gives 0 once it closed its output.</summary>
+    Stream Output { get; }
+
+    /// <summary>The command's standard error, read as it writes it; a read gives 0 once it closed it.</summary>
+    Stream Error { get; }
+
+    /// <summary>
+    /// Completes when the command ended: its exit code, or none when its time or memory limit or <see cref="Stop"/> stopped
+    /// it (<see cref="CommandResult.TimedOut"/>, <see cref="CommandResult.OutOfMemory"/>, <see cref="CommandResult.Stopped"/>).
+    /// Its <see cref="CommandResult.Output"/> is empty: the output went through <see cref="Output"/> and <see cref="Error"/>.
+    /// </summary>
+    Task<CommandResult> Completion { get; }
+
+    /// <summary>Stops the command with its whole process tree (nothing when it ended); <see cref="Completion"/> then completes.</summary>
+    void Stop();
+}
+
+/// <summary>An interactive start's outcome (<see cref="ICommandSandbox.StartAsync"/>): the started command, or why it did not start.</summary>
+public sealed record CommandStart
+{
+    private CommandStart(ICommandSession? session, string? refusal)
+    {
+        Session = session;
+        Refusal = refusal;
+    }
+
+    /// <summary>The started command, or null when it was refused.</summary>
+    public ICommandSession? Session { get; }
+
+    /// <summary>Why it did not start (not allowed, not installed, the user said no), or null when it started.</summary>
+    public string? Refusal { get; }
+
+    /// <summary>Whether it started (<see cref="Session"/> is set).</summary>
+    [System.Diagnostics.CodeAnalysis.MemberNotNullWhen(true, nameof(Session))]
+    [System.Diagnostics.CodeAnalysis.MemberNotNullWhen(false, nameof(Refusal))]
+    public bool Started => Session is not null;
+
+    /// <summary>A started command.</summary>
+    public static CommandStart Of(ICommandSession session) => new(session ?? throw new ArgumentNullException(nameof(session)), null);
+
+    /// <summary>A refused start, saying why.</summary>
+    public static CommandStart Refused(string why)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(why);
+        return new(null, why);
+    }
 }
 
 /// <summary>
 /// The command sandboxes by name (ignoring case). Idrak.Text registers <see cref="Process"/> (a plain process with the
-/// programs allowed, a time limit, an output cap and a memory limit; no isolation of the network), and the coding
+/// programs allowed, a time limit, an output cap and a memory limit; no isolation of the network; it also starts a command
+/// interactively, <see cref="ICommandSandbox.StartAsync"/>), and the coding
 /// plug-in of Idrak.Reinforcement.Plugins <see cref="Container"/> (Docker or Podman: the network off, memory, CPU and
 /// process limits). A sandbox that is not registered is refused with "not registered"; nothing falls back to another.
 /// Register another with <see cref="Register"/>; one under a library name takes the library's place, which

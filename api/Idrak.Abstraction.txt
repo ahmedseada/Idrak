@@ -790,6 +790,7 @@ public sealed record Idrak.Abstraction.CommandResult : System.IEquatable<Idrak.A
   public System.TimeSpan Duration { get; init; }
   public bool OutOfMemory { get; init; }
   public bool Refused { get; init; }
+  public bool Stopped { get; init; }
   public bool Succeeded { get; }
   public bool TimedOut { get; init; }
   public int? ExitCode { get; init; }
@@ -808,6 +809,13 @@ public static class Idrak.Abstraction.CommandSandboxes
   public static string Describe()
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.ICommandSandbox sandbox)
+
+public sealed record Idrak.Abstraction.CommandStart : System.IEquatable<Idrak.Abstraction.CommandStart>
+  public Idrak.Abstraction.ICommandSession? Session { get; }
+  public bool Started { get; }
+  public static Idrak.Abstraction.CommandStart Of(Idrak.Abstraction.ICommandSession session)
+  public static Idrak.Abstraction.CommandStart Refused(string why)
+  public string? Refusal { get; }
 
 public static class Idrak.Abstraction.Comparisons
   public static bool Close(float expected, float actual, float tolerance)
@@ -4602,10 +4610,20 @@ public sealed class Idrak.Abstraction.Generation.WordTokenizer : Idrak.Abstracti
   public void Dispose()
 
 public interface Idrak.Abstraction.ICommandSandbox
+  public (default) System.Threading.Tasks.ValueTask<Idrak.Abstraction.CommandStart> StartAsync(System.Collections.Generic.IReadOnlyList<string> command, string directory, Idrak.Abstraction.CommandLimits limits, System.Threading.CancellationToken cancellationToken = default)
+  public (default) string? CheckStart(Idrak.Abstraction.CommandLimits limits)
   public System.Threading.Tasks.ValueTask<Idrak.Abstraction.CommandResult> RunAsync(System.Collections.Generic.IReadOnlyList<string> command, string directory, Idrak.Abstraction.CommandLimits limits, System.Threading.CancellationToken cancellationToken = default)
   public string Name { get; }
   public string Summary { get; }
   public string? Check(Idrak.Abstraction.CommandLimits limits)
+
+public interface Idrak.Abstraction.ICommandSession : System.IAsyncDisposable
+  public System.IO.Stream Error { get; }
+  public System.IO.Stream Input { get; }
+  public System.IO.Stream Output { get; }
+  public System.Threading.Tasks.Task<Idrak.Abstraction.CommandResult> Completion { get; }
+  public int ProcessId { get; }
+  public void Stop()
 
 public interface Idrak.Abstraction.IConfigurableKind : Idrak.Abstraction.IKind
   public System.Collections.Generic.IReadOnlySet<string> Keys { get; }

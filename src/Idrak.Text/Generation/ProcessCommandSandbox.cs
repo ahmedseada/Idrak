@@ -14,7 +14,10 @@ namespace Idrak.Text.Generation;
 /// started process's working set (<see cref="Process.WorkingSet64"/>, which .NET reports on every platform), every
 /// <see cref="PollInterval"/>; the processes it starts in turn are not counted. It cannot turn the network off nor limit
 /// processes or CPUs, so it refuses those limits, naming <see cref="CommandSandboxes.Container"/>. Each line of output
-/// goes to <see cref="CommandLimits.Output"/> as it is written, when one is given.
+/// goes to <see cref="CommandLimits.Output"/> as it is written, when one is given. <see cref="StartAsync"/> starts a command
+/// interactively the same way (the programs allowed, the variables, the time and memory limits), its standard input kept
+/// open and its three standard streams handed to the caller as the process's own pipes (.NET's <see cref="Process"/> on
+/// every platform; nothing buffered between them and the caller).
 /// </summary>
 public sealed class ProcessCommandSandbox : ICommandSandbox
 {
@@ -52,40 +55,9 @@ public sealed class ProcessCommandSandbox : ICommandSandbox
         }
 
         static CommandResult Refuse(string why) => new(null, false, why, TimeSpan.Zero, true);
-        if (command.Count == 0 || command[0].Length == 0)
+        if (Prepare(command, directory, limits, out string program) is not { } start)
         {
-            return Refuse("Error: empty command.");
-        }
-
-        string program = Path.GetFileNameWithoutExtension(command[0]);
-        if (limits.Programs is { } allowed && (!allowed.Contains(program, StringComparer.OrdinalIgnoreCase) || command[0].Contains('/') || command[0].Contains('\\')))
-        {
-            return Refuse($"Error: '{command[0]}' is not an allowed program. Allowed: {string.Join(", ", allowed)}.");
-        }
-
-        string? executable = limits.Programs is null && Path.IsPathRooted(command[0]) && File.Exists(command[0]) ? command[0] : FindProgram(program);
-        if (executable is null)
-        {
-            return Refuse($"Error: '{program}' is not installed (not found on the PATH).");
-        }
-
-        var start = new ProcessStartInfo(executable)
-        {
-            WorkingDirectory = directory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            RedirectStandardInput = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        };
-        for (int i = 1; i < command.Count; i++)
-        {
-            start.ArgumentList.Add(command[i]);
-        }
-
-        foreach (var (name, value) in limits.Environment ?? new Dictionary<string, string>())
-        {
-            start.Environment[name] = value;
+            return Refuse(program);
         }
 
         var output = new StringBuilder();
@@ -174,6 +146,89 @@ public sealed class ProcessCommandSandbox : ICommandSandbox
         return new CommandResult(stopped ? null : process.ExitCode, timedOut, text, watch.Elapsed, false) { OutOfMemory = outOfMemory };
     }
 
+    /// <inheritdoc />
+    public string? CheckStart(CommandLimits limits) => Check(limits);
+
+    /// <inheritdoc />
+    public ValueTask<CommandStart> StartAsync(IReadOnlyList<string> command, string directory, CommandLimits limits, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(command);
+        ArgumentNullException.ThrowIfNull(directory);
+        ArgumentNullException.ThrowIfNull(limits);
+        if (Check(limits) is { } refusal)
+        {
+            throw new NotSupportedException(refusal);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (Prepare(command, directory, limits, out string program) is not { } start)
+        {
+            return ValueTask.FromResult(CommandStart.Refused(program));
+        }
+
+        var process = new Process { StartInfo = start };
+        try
+        {
+            process.Start();
+        }
+        catch (System.ComponentModel.Win32Exception ex)
+        {
+            process.Dispose();
+            return ValueTask.FromResult(CommandStart.Refused($"Error: could not start '{program}': {ex.Message}"));
+        }
+
+        return ValueTask.FromResult(CommandStart.Of(new ProcessCommandSession(this, process, limits)));
+    }
+
+    // The start of a command: the program checked against the ones allowed and found, the standard streams redirected, the
+    // variables set. Null with the reason in "program" when it is refused; else the program's name in it.
+    private static ProcessStartInfo? Prepare(IReadOnlyList<string> command, string directory, CommandLimits limits, out string program)
+    {
+        if (command.Count == 0 || command[0].Length == 0)
+        {
+            program = "Error: empty command.";
+            return null;
+        }
+
+        program = Path.GetFileNameWithoutExtension(command[0]);
+        if (limits.Programs is { } allowed && (!allowed.Contains(program, StringComparer.OrdinalIgnoreCase) || command[0].Contains('/') || command[0].Contains('\\')))
+        {
+            program = $"Error: '{command[0]}' is not an allowed program. Allowed: {string.Join(", ", allowed)}.";
+            return null;
+        }
+
+        string? executable = limits.Programs is null && Path.IsPathRooted(command[0]) && File.Exists(command[0]) ? command[0] : FindProgram(program);
+        if (executable is null)
+        {
+            program = $"Error: '{program}' is not installed (not found on the PATH).";
+            return null;
+        }
+
+        var start = new ProcessStartInfo(executable)
+        {
+            WorkingDirectory = directory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        for (int i = 1; i < command.Count; i++)
+        {
+            start.ArgumentList.Add(command[i]);
+        }
+
+        if (limits.Environment is { } environment)
+        {
+            foreach (var (name, value) in environment)
+            {
+                start.Environment[name] = value;
+            }
+        }
+
+        return start;
+    }
+
     /// <summary>The program <paramref name="name"/> found on the PATH (with the Windows executable extensions: a program installed as a .cmd script is found there), or null.</summary>
     public static string? FindProgram(string name)
     {
@@ -197,7 +252,7 @@ public sealed class ProcessCommandSandbox : ICommandSandbox
     }
 
     // Reads the started process's working set every poll; over the limit, marks it and stops the wait (the caller kills the tree).
-    private async Task WatchMemoryAsync(Process process, long limit, CancellationTokenSource stop, Action exceeded, CancellationToken done)
+    internal async Task WatchMemoryAsync(Process process, long limit, CancellationTokenSource stop, Action exceeded, CancellationToken done)
     {
         try
         {
@@ -243,5 +298,176 @@ public sealed class ProcessCommandSandbox : ICommandSandbox
 
         int head = max / 3, tail = max - head;
         return $"{text[..head]}\n… {text.Length - max} characters cut …\n{text[^tail..]}";
+    }
+}
+
+/// <summary>
+/// The process sandbox's interactive command (<see cref="ProcessCommandSandbox.StartAsync"/>): the process's own pipes as
+/// its streams (the input flushed on every write), its time and memory limits watched, <see cref="Stop"/> ending its tree.
+/// </summary>
+internal sealed class ProcessCommandSession : ICommandSession
+{
+    private readonly Process _process;
+    private readonly CancellationTokenSource _stop = new();
+    private int _stopped;
+    private int _disposed;
+
+    public ProcessCommandSession(ProcessCommandSandbox sandbox, Process process, CommandLimits limits)
+    {
+        _process = process;
+        ProcessId = process.Id;
+        Input = new InputStream(process.StandardInput.BaseStream);
+        Output = process.StandardOutput.BaseStream;
+        Error = process.StandardError.BaseStream;
+        Completion = WatchAsync(sandbox, limits);
+    }
+
+    public int ProcessId { get; }
+
+    public Stream Input { get; }
+
+    public Stream Output { get; }
+
+    public Stream Error { get; }
+
+    public Task<CommandResult> Completion { get; }
+
+    public void Stop()
+    {
+        if (Volatile.Read(ref _disposed) != 0 || Completion.IsCompleted)
+        {
+            return;
+        }
+
+        Volatile.Write(ref _stopped, 1);
+        try
+        {
+            _stop.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // Disposed meanwhile: the command was stopped by the dispose.
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        if (!Completion.IsCompleted)
+        {
+            Volatile.Write(ref _stopped, 1);
+            await _stop.CancelAsync().ConfigureAwait(false);
+        }
+
+        await Completion.ConfigureAwait(false);
+        try
+        {
+            await Input.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (IOException)
+        {
+            // The command closed its end first: nothing is left to close.
+        }
+
+        _process.Dispose();
+        _stop.Dispose();
+    }
+
+    // Waits for the end, stopping the tree at the time limit, the memory limit or Stop.
+    private async Task<CommandResult> WatchAsync(ProcessCommandSandbox sandbox, CommandLimits limits)
+    {
+        var watch = Stopwatch.StartNew();
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+        limit.CancelAfter(limits.Time);
+        bool timedOut = false, outOfMemory = false;
+        using var stopWatching = new CancellationTokenSource();
+        var memory = limits.MaxMemoryBytes > 0 ? sandbox.WatchMemoryAsync(_process, limits.MaxMemoryBytes, limit, () => outOfMemory = true, stopWatching.Token) : Task.CompletedTask;
+        try
+        {
+            await _process.WaitForExitAsync(limit.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            timedOut = Volatile.Read(ref _stopped) == 0 && !outOfMemory;
+            try
+            {
+                _process.Kill(entireProcessTree: true);
+            }
+            catch (Exception error) when (error is InvalidOperationException or System.ComponentModel.Win32Exception)
+            {
+                // It ended meanwhile, or a child of it is not ours to end.
+            }
+
+            await _process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+        }
+        finally
+        {
+            await stopWatching.CancelAsync().ConfigureAwait(false);
+            await memory.ConfigureAwait(false);
+        }
+
+        bool stopped = Volatile.Read(ref _stopped) != 0 && !timedOut && !outOfMemory;
+        return new CommandResult(timedOut || outOfMemory || stopped ? null : _process.ExitCode, timedOut, "", watch.Elapsed, false) { OutOfMemory = outOfMemory, Stopped = stopped };
+    }
+
+    // The input pipe, flushed on every write (a FileStream over a pipe buffers on some platforms), so what is typed arrives.
+    private sealed class InputStream(Stream inner) : Stream
+    {
+        public override bool CanRead => false;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => inner.CanWrite;
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override void Flush() => inner.Flush();
+
+        public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => Write(buffer.AsSpan(offset, count));
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            inner.Write(buffer);
+            inner.Flush();
+        }
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
+            await inner.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            await inner.DisposeAsync().ConfigureAwait(false);
+            await base.DisposeAsync().ConfigureAwait(false);
+        }
     }
 }

@@ -928,11 +928,13 @@ public sealed class Idrak.Text.Generation.ModelImages : System.IDisposable
 public sealed class Idrak.Text.Generation.ProcessCommandSandbox : Idrak.Abstraction.ICommandSandbox
   public ProcessCommandSandbox()
   public System.Threading.Tasks.ValueTask<Idrak.Abstraction.CommandResult> RunAsync(System.Collections.Generic.IReadOnlyList<string> command, string directory, Idrak.Abstraction.CommandLimits limits, System.Threading.CancellationToken cancellationToken = default)
+  public System.Threading.Tasks.ValueTask<Idrak.Abstraction.CommandStart> StartAsync(System.Collections.Generic.IReadOnlyList<string> command, string directory, Idrak.Abstraction.CommandLimits limits, System.Threading.CancellationToken cancellationToken = default)
   public System.TimeSpan PollInterval { get; init; }
   public static string? FindProgram(string name)
   public string Name { get; }
   public string Summary { get; }
   public string? Check(Idrak.Abstraction.CommandLimits limits)
+  public string? CheckStart(Idrak.Abstraction.CommandLimits limits)
 
 public static class Idrak.Text.Generation.WebTools
   public static Idrak.Abstraction.Generation.Tool Fetch(System.Net.Http.HttpClient http, System.Func<System.Uri, bool> allow, int maxCharacters)
