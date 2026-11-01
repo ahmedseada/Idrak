@@ -581,7 +581,7 @@ internal abstract partial class DesktopTests
             // run takes), then G6a's variants: each depth of k a step (4, G4a's; 8, the _k8 kernels) with each k split
             // count from 1 to min(64, k / 64), the fastest named against the default (depth 4, the formula's splits). All
             // give the same bits for a split count (GcnProductsDepths); the owner sets the faster one.
-            var (keptDepth, keptSplits) = (HipBackend.GemvDepth, HipBackend.ForcedGemvSplits);
+            var (keptDepth, keptSplits) = (HipBackend.ForcedGemvDepth, HipBackend.ForcedGemvSplits);
             int Formula(long words, int kk) => HipBackend.GemvSplitCount(hip.DeviceLimits.ComputeUnits, (int)((words + 63) / 64), kk);
             try
             {
@@ -601,10 +601,10 @@ internal abstract partial class DesktopTests
                             _ => () => hip.Float16MatMul(x, packed, y, m, nn, kk),
                         };
 
-                        (HipBackend.GemvDepth, HipBackend.ForcedGemvSplits) = (keptDepth, keptSplits);
-                        string kernel = GcnKernels.PackedGemvKernel(format, m, keptDepth);
+                        (HipBackend.ForcedGemvDepth, HipBackend.ForcedGemvSplits) = (keptDepth, keptSplits);
+                        string kernel = GcnKernels.PackedGemvKernel(format, m, keptDepth ?? GcnKernels.PackedGemvDefaultDepth);
                         int splits = HipBackend.GemvSplitCount(hip.DeviceLimits.ComputeUnits, (int)((words + 63) / 64), kk, keptSplits);
-                        BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{kernel} {m}x{kk}->{nn} (about {splits} splits)"),
+                        BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{kernel} {m}x{kk}->{nn} ({(keptDepth is null && keptSplits is null ? "as measured (G7a; the first call measures)" : $"about {splits} splits")})"),
                             HipBackend.ProductCost(kernel, m, nn, kk, splits), run);
 
                         int standard = Formula(words, kk), most = Math.Max(1, Math.Min(64, kk / 64));
@@ -614,7 +614,7 @@ internal abstract partial class DesktopTests
                         {
                             for (int count = 1; count <= most; count *= 2)
                             {
-                                (HipBackend.GemvDepth, HipBackend.ForcedGemvSplits) = (depth, count);
+                                (HipBackend.ForcedGemvDepth, HipBackend.ForcedGemvSplits) = (depth, count);
                                 string variant = GcnKernels.PackedGemvKernel(format, m, depth);
                                 double warm = BenchProduct(b, string.Create(CultureInfo.InvariantCulture,
                                         $"  {variant} {m}x{kk}->{nn}, depth {depth}, {count} split{(count > 1 ? "s" : "")}{(depth == GcnKernels.PackedGemvDefaultDepth && count == standard ? " (the default)" : "")}"),
@@ -639,7 +639,7 @@ internal abstract partial class DesktopTests
             }
             finally
             {
-                (HipBackend.GemvDepth, HipBackend.ForcedGemvSplits) = (keptDepth, keptSplits);
+                (HipBackend.ForcedGemvDepth, HipBackend.ForcedGemvSplits) = (keptDepth, keptSplits);
             }
 
             int rows = 64;
@@ -672,6 +672,7 @@ internal abstract partial class DesktopTests
             Storage source = On(b.LargeElements), target = On(b.LargeElements / 2);
             BenchOperation(b, $"bf16_pack_f32 {b.LargeText}", b.LargeElements, HipBackend.Cost("bf16_pack_f32"), () => hip.PackBFloat16(source, target, b.LargeElements));
             long fallbacks = Idrak.Abstraction.Operations.Kernels.HostCalls(hip) - before;
+            b.Row("  (measured choices, G7a)", $"{hip.Tuning.Count} kept for this device, in {hip.Tuning.File ?? "no file (IDRAK_AUTOTUNE=0 or IDRAK_TUNING_CACHE=0)"}");
             b.Row("  (host fallbacks during the section)", fallbacks == 0 ? "none: every operation ran on its kernel" : $"{fallbacks} (SHOULD BE NONE)");
         }
         finally

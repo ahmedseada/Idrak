@@ -225,10 +225,12 @@ internal static class TuningCache
     private static readonly Lock FileLock = new();
 
     /// <summary>
-    /// The folder for cache files, or null when the cache is off (<c>IDRAK_TUNING_CACHE=0</c>); tests pass the
-    /// <paramref name="environment"/> it reads (then its IDRAK_CACHE, when given, stands for the cache folder).
+    /// The folder for <paramref name="kind"/>'s cache files ("cuda", or "hip" for HipBackend.Tuning.cs), or null when the
+    /// cache is off (<c>IDRAK_TUNING_CACHE=0</c>); tests pass the <paramref name="environment"/> it reads (then its
+    /// IDRAK_CACHE, when given, stands for the cache folder). A folder the setting names is used as it is for every kind:
+    /// each device's file name and identity keep them apart.
     /// </summary>
-    internal static string? Folder(Func<string, string?>? environment = null)
+    internal static string? Folder(Func<string, string?>? environment = null, string kind = "cuda")
     {
         string? setting = (environment ?? Environment.GetEnvironmentVariable)("IDRAK_TUNING_CACHE");
         if (setting is "0" || string.Equals(setting, "false", StringComparison.OrdinalIgnoreCase) || string.Equals(setting, "off", StringComparison.OrdinalIgnoreCase))
@@ -242,7 +244,7 @@ internal static class TuningCache
         }
 
         string root = environment?.Invoke("IDRAK_CACHE") is { Length: > 0 } cache ? cache : ComputeResources.CacheFolder;
-        return Path.Combine(root, "tuning", "cuda");
+        return Path.Combine(root, "tuning", kind);
     }
 
     /// <summary>A file name for the device: its identity with every character a file system may reject replaced.</summary>

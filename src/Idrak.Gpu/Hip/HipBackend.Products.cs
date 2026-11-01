@@ -10,8 +10,9 @@ namespace Idrak.Gpu.Hip;
 // the float32 product (every transposition, beta, batches; a bias through MatMulBias), few rows (decoding: up to two
 // groups of 8 rows, b not transposed in a, n·k of 65,536 or more, as CUDA's gemv_nn_f32 / gemv_nt_f32) on the few-row
 // kernels and the rest on the tiled one; the packed few-row products (int8, int4, bfloat16, float16 weights, 1 to 8
-// rows, the kernel written for the fewest rows that hold m, four rows of k a step or eight with IDRAK_HIP_GEMV_DEPTH=8,
-// G6a's variants, the same bits) with k split over grid y (leftover 8.10: about two blocks a
+// rows, the kernel written for the fewest rows that hold m, four rows of k a step or eight, G6a's variants, the same bits;
+// the depth and the splits measured on the device per shape, HipBackend.Tuning.cs, unless IDRAK_HIP_GEMV_DEPTH or
+// IDRAK_HIP_GEMV_SPLITS force them) with k split over grid y (the default, leftover 8.10: about two blocks a
 // compute unit the device reports, a power of two, at most 64 and chunks of 64 rows or more, as CUDA's formula, or
 // IDRAK_HIP_GEMV_SPLITS), the splits' sums added in split order by each column range's last block (IDRAK_HIP_FINISH) or by
 // int8_gemv_finish_f32 (rule 86: never added by atomics); more int8
@@ -43,11 +44,12 @@ internal sealed unsafe partial class HipBackend
         int.TryParse(setting, NumberStyles.None, CultureInfo.InvariantCulture, out int depth) && depth == 8 ? 8 : GcnKernels.PackedGemvDefaultDepth;
 
     /// <summary>
-    /// The rows of k a step of the plain packed few-row products: 4 (the kernels G4a wrote) or 8 (their _k8 variants, the
-    /// same bits); <c>IDRAK_HIP_GEMV_DEPTH</c>, settable by tests and benchmarks to time both. The default stays 4 until
-    /// the device's measurement says otherwise (G7a's measured choices).
+    /// The rows of k a step the plain packed few-row products are forced to: 4 (the kernels G4a wrote) or 8 (their _k8
+    /// variants, the same bits), when <c>IDRAK_HIP_GEMV_DEPTH</c> is given; null to measure it on the device (G7a,
+    /// HipBackend.Tuning.cs; 4 until measured). Settable by tests and benchmarks to time both.
     /// </summary>
-    internal static int GemvDepth { get; set; } = GemvDepthSetting(Environment.GetEnvironmentVariable(GemvDepthVariable));
+    internal static int? ForcedGemvDepth { get; set; } =
+        Environment.GetEnvironmentVariable(GemvDepthVariable) is { Length: > 0 } depth ? GemvDepthSetting(depth) : null;
 
     // Row groups of 8 the few-row float32 products take (grid y), as CUDA's FewRowGroups.
     private const int FewRowGroups = 2;
@@ -305,9 +307,24 @@ internal sealed unsafe partial class HipBackend
             return false;
         }
 
+        // The rows of k a step and the k splits: forced by the settings, measured on the device for the plain products
+        // (G7a, HipBackend.Tuning.cs: each candidate runs into y, which the chosen one writes again), else the defaults.
+        int blocks = (int)((words + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords);
+        var (depth, wanted) = tail.Residual is not null
+            ? (GcnKernels.PackedGemvDefaultDepth, GemvSplitCount(DeviceLimits.ComputeUnits, blocks, k, ForcedGemvSplits))
+            : PackedChoice(format, variant, m, n, k, blocks, (d, s) => PackedFewRowsWith(format, x, packed, scales, y, m, n, k, variant, up, default, d, s));
+        return PackedFewRowsWith(format, x, packed, scales, y, m, n, k, variant, up, tail, depth, wanted);
+    }
+
+    // PackedFewRows with its rows of k a step (`depth`, the plain products') and its k splits (`wanted`) given.
+    private bool PackedFewRowsWith(Weights format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k,
+        GcnKernels.PackedGemvVariant variant, Storage? up, in AddNormTail tail, int depth, int wanted)
+    {
+        int perWord = GcnKernels.ColumnsPerWord(format);
+        long words = (n + perWord - 1) / perWord;
         bool addNorm = tail.Residual is not null, lastBlock = FinishByLastBlock;
         var kernel = addNorm && lastBlock ? GcnKernels.PackedGemvVariant.AddNorm : variant;
-        string name = kernel == GcnKernels.PackedGemvVariant.Plain ? GcnKernels.PackedGemvKernel(format, m, GemvDepth) : GcnKernels.FusedGemvKernel(format, kernel, m);
+        string name = kernel == GcnKernels.PackedGemvVariant.Plain ? GcnKernels.PackedGemvKernel(format, m, depth) : GcnKernels.FusedGemvKernel(format, kernel, m);
         int columnBlocks = (int)((words + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords);
         if (Gcn(name) is not { } function || columnBlocks > DeviceLimits.MaxGridDimX)
         {
@@ -316,7 +333,6 @@ internal sealed unsafe partial class HipBackend
 
         // Split boundaries on 64 rows for int4 (whole groups of scales, as CUDA's), anywhere for the others.
         int align = format == Weights.Int4 ? 64 : 1;
-        int wanted = GemvSplitCount(DeviceLimits.ComputeUnits, columnBlocks, k, ForcedGemvSplits);
         int chunk = ((k + wanted - 1) / wanted + align - 1) / align * align;
         int count = (k + chunk - 1) / chunk;
         var finish = count > 1 && !addNorm && !lastBlock ? Gcn("int8_gemv_finish_f32") : null;

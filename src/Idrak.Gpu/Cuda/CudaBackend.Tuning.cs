@@ -42,6 +42,12 @@ internal enum TuneOp : byte
     SpanKernel,
     SpanStrided,
     RowsPath,
+
+    /// <summary>
+    /// HIP's packed few-row products (plan 35, G7a; HipBackend.Tuning.cs): the rows of k a step and the k splits, one
+    /// choice (<c>depth &lt;&lt; 8 | splits</c>). Kept in HIP's own cache files (tuning/hip/), which share this format.
+    /// </summary>
+    HipPackedProduct,
 }
 
 /// <summary>

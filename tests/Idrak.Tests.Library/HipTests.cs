@@ -7,6 +7,7 @@ using System.Text.RegularExpressions;
 using Idrak;
 using Idrak.Abstraction.Devices.Cpu;
 using Idrak.Gpu.Abstractions;
+using Idrak.Gpu.Cuda;
 using Idrak.Gpu.Hip;
 
 // The HIP backend (the graphics driver's runtime on Windows, ROCm's on Linux; no part of the HIP SDK): found at run time
@@ -24,11 +25,97 @@ internal abstract partial class Tests
         ("hip kernel cache: the key changes with every input (a kernel set's with any kernel's text, the target, the device, the format and the versions); a stored code object comes back; IDRAK_HIP_KERNEL_CACHE moves or disables it", HipKernelCacheKeys),
         ("hip kernels: GcnKernels.All (fill_f32, the element-wise, row, product, attention, shape, decoding, training, convolution, CTC and recurrent kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c (formats 5 and 4), whose metadata, read back by the library, declares every kernel once with the arguments, kernel argument bytes and block it was written with; malformed objects are refused", HipKernelSet),
         ("hip kernels: IDRAK_HIP_KERNELS=0 turns the kernels off with that reason; a target Idrak does not read or no family handles gives a reason naming it (not registered); every kernel has its profile cost; IDRAK_HIP_ATTENTION_SPLIT and attention's splits; IDRAK_HIP_GEMV_SPLITS and the k splits of the packed few-row products; the element-wise grid's blocks per compute unit come from IDRAK_HIP_POINTWISE_BLOCKS; IDRAK_HIP_FINISH chooses the last block's finish or a second launch; IDRAK_HIP_ATTENTION_ROWS and the device's LDS the tiled attention's rows a block", HipKernelSettings),
+        ("hip measured choices (G7a): the packed few-row products' candidates (each depth with each k split count and the formula's; a setting leaves only its value); a made-up timer's clear winner is kept and a gain within the margin keeps the default; choices kept per device, driver and build in tuning/hip/, read back only for that identity and only when still a candidate; rank 0's choices taken but never written; HipMeasuredChoices registered for HIP backends alone", HipMeasuredChoicesWithoutDevice),
         ("hip telemetry: KernelsLoaded (a device's kernel set, from the cache or assembled, its time, kernels and bytes) reaches the hooks at the Devices level, the console logger's line and the JSON lines' kernels_loaded", HipKernelsLoadedEvent),
         ("hip: no vendor ids or card names in the code of src/Idrak.Gpu/Hip, and GPU targets (gfx names) only in its instruction-set tables, GcnTargets*.cs (comments may name them)", HipNoVendorNames),
         ("hip profiler and telemetry: HipBackend times its kernels (IKernelProfiler) as CUDA does; a runtime without the event functions times nothing and says why; on HIP devices fill_f32's launches are timed under its name or a label with its floating-point operations, a refused code object reaches the telemetry, and a host fallback carries why the kernels are unavailable", HipProfilerAndTelemetry),
         ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row, element-wise, attention, shape and product operations (float32, few-row, packed int8, int4, bfloat16 and float16, the expansions and bfloat16 packing) and the decoding ones (the fused packed products, attention over rows and packed sequences, penalties, rotary embeddings, the element-wise operations with parameters, the float32 products of one input, the norm and rotation of queries and keys and of the attention heads into a cache with NormRopeHeads true, the sampler's three paths with the CPU's tokens), the training ones, and the convolutions (composed and depthwise), pooling, resampling, CTC and recurrent steps on the GCN kernels (kernels loaded: none of them through the host fallback; on HIP devices)", HipDeviceMatchesCpu),
     ];
+
+    // G7a's logic without a device: the candidates, the choice by CUDA's comparison under a made-up timer, the table and its
+    // cache file, the sharing between ranks and the provider's registration.
+    internal static void HipMeasuredChoicesWithoutDevice(Device device)
+    {
+        _ = device;
+        int E(int depth, int splits) => HipBackend.EncodePacked(depth, splits);
+
+        // Candidates: k = 3072 allows 1 to 32 splits (min(64, k / 64) = 48), each with depths 4 and 8; the formula's 6 joins.
+        int[] all = HipBackend.PackedCandidates(null, null, 6, 3072);
+        int[] counts = [1, 2, 4, 6, 8, 16, 32];
+        Check(all.SequenceEqual(counts.Select(s => E(4, s)).Concat(counts.Select(s => E(8, s)))), $"each depth with each split count and the formula's: {string.Join(", ", all)}");
+        Check(HipBackend.PackedCandidates(8, null, 4, 3072).All(c => c >> 8 == 8) && HipBackend.PackedCandidates(null, 3, 4, 3072).SequenceEqual([E(4, 3), E(8, 3)])
+              && HipBackend.PackedCandidates(4, 2, 4, 3072).SequenceEqual([E(4, 2)]) && HipBackend.PackedCandidates(null, null, 1, 100).SequenceEqual([E(4, 1), E(8, 1)]),
+            "IDRAK_HIP_GEMV_DEPTH or IDRAK_HIP_GEMV_SPLITS leaves only its value among the candidates (both: one candidate, nothing to measure); a short k one split");
+        Check(E(8, 16) >> 8 == 8 && (E(8, 16) & 0xFF) == 16, "a choice encodes the depth and the splits");
+
+        // The comparison under a made-up timer: ms of `runs` runs of a candidate, with a little alternating noise.
+        int fallback = E(4, 6), noise = 0;
+        float Time(Dictionary<int, float> once, int candidate, int runs) => runs * once[candidate] * (1f + ((noise++ & 1) == 0 ? 0.005f : -0.005f));
+        var clear = all.ToDictionary(c => c, c => c == E(8, 4) ? 0.6f : c == fallback ? 1.0f : 1.3f);
+        Check(HipBackend.MeasureChoice(all, fallback, (c, runs) => Time(clear, c, runs)) == E(8, 4), "a candidate clearly faster than the default is kept");
+        var close = all.ToDictionary(c => c, c => c == E(8, 8) ? 0.985f : c == fallback ? 1.0f : 1.3f);
+        Check(HipBackend.MeasureChoice(all, fallback, (c, runs) => Time(close, c, runs)) == fallback, "a gain within the 3% margin keeps the default");
+
+        // The table and its cache file.
+        string folder = Directory.CreateTempSubdirectory("idrak-hip-tuning-").FullName;
+        try
+        {
+            Check(TuningCache.Folder(name => name == "IDRAK_CACHE" ? folder : null, "hip") == Path.Combine(folder, "tuning", "hip")
+                  && TuningCache.Folder(name => name == "IDRAK_CACHE" ? folder : null) == Path.Combine(folder, "tuning", "cuda")
+                  && TuningCache.Folder(name => name == "IDRAK_TUNING_CACHE" ? "0" : null, "hip") is null,
+                "HIP's choice files under the cache folder's tuning/hip/ (CUDA's stay in tuning/cuda/); IDRAK_TUNING_CACHE=0 keeps none");
+            var identity = new TuningIdentity("Test GPU; gfx90c; 8 CUs; 2048 MiB", "HIP runtime 6.2.0; driver 1", "0.0.0; kernels 0123");
+            var key = new TuneKey(TuneOp.HipPackedProduct, 0, 1, 1024, 3072);
+            var table = new HipTuningTable(identity, folder);
+            Check(!table.TryKnown(key, all, out _), "nothing known at first");
+            table.Record(key, E(8, 4));
+            Check(table.File is { } file && File.Exists(file) && File.ReadAllText(file).Contains("HipPackedProduct 0 1 1024 3072 0 0 0 = 2052", StringComparison.Ordinal),
+                $"a measured choice is written to the device's file: {table.File}");
+            var again = new HipTuningTable(identity, folder);
+            Check(again.TryKnown(key, all, out int read) && read == E(8, 4), "a new start reads it back for the same device, driver and build");
+            Check(!new HipTuningTable(identity, folder).TryKnown(key, HipBackend.PackedCandidates(4, null, 6, 3072), out _),
+                "a kept choice that is not among the shape's candidates now (a setting forces another depth) is not taken");
+            Check(!new HipTuningTable(identity with { Driver = "HIP runtime 6.3.0; driver 2" }, folder).TryKnown(key, all, out _),
+                "another driver's (or device's, or build's) file is not read: measured again");
+
+            // Sharing: rank 0's choices taken, never written to the taking device's file.
+            var exported = table.Export();
+            Check(exported.ContainsKey("t HipPackedProduct 0 1 1024 3072 0 0 0") && exported.ContainsKey("p HipPackedProduct 0 1 1024 3072 0 0 0"),
+                $"export: those measured here and those the file keeps: {string.Join("; ", exported.Keys)}");
+            string other = Directory.CreateTempSubdirectory("idrak-hip-tuning-rank-").FullName;
+            try
+            {
+                var follower = new HipTuningTable(identity, other);
+                Check(follower.Import(exported) == 1 && follower.TryKnown(key, all, out int taken) && taken == E(8, 4), "rank 0's choice is taken");
+                var second = key with { B = 4096 };
+                follower.Record(second, E(4, 8));
+                string text = File.ReadAllText(follower.File!);
+                Check(text.Contains("HipPackedProduct 0 1 4096 3072", StringComparison.Ordinal) && !text.Contains("HipPackedProduct 0 1 1024 3072", StringComparison.Ordinal),
+                    $"what it measures itself is written; rank 0's choice is not:\n{text}");
+            }
+            finally
+            {
+                Directory.Delete(other, recursive: true);
+            }
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+
+        // The provider: registered under "hip", for HIP backends alone.
+        var provider = MeasuredChoiceProviders.Find("hip");
+        Check(provider is HipMeasuredChoices && !provider.Handles(Device.Cpu.Backend) && MeasuredChoiceProviders.For(Device.Cpu.Backend) is null,
+            $"HipMeasuredChoices is registered and handles HIP backends only: {MeasuredChoiceProviders.Describe()}");
+        try
+        {
+            provider!.Export(Device.Cpu.Backend);
+            Check(false, "exporting a CPU backend's choices through HIP's provider must throw");
+        }
+        catch (ArgumentException)
+        {
+        }
+    }
 
     internal static void HipMissingRuntime(Device device)
     {
