@@ -125,7 +125,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Devices.ILongLivedAllocations` | interface | public | — | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IMaskedCacheAttentionBackend` | interface | public | Storage | CpuBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IMatrixUnitBackend` | interface | public | Storage | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Devices.IMeasuredChoicesProvider` | interface | public | Backend | CudaMeasuredChoices, VulkanMeasuredChoices |  | Abstraction, Cluster, Gpu | Abstraction |
+| `Idrak.Abstraction.Devices.IMeasuredChoicesProvider` | interface | public | Backend | CudaMeasuredChoices, HipMeasuredChoices, VulkanMeasuredChoices |  | Abstraction, Cluster, Gpu | Abstraction |
 | `Idrak.Abstraction.Devices.IMemoryOffload` | interface | public | Storage | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IMemoryReport` | interface | public | — | CpuBackend, CudaBackend, HipBackend, VulkanBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.IOffloadingBackend` | interface | public | — | CudaBackend |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
@@ -136,7 +136,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Devices.ISeparableDeviceProvider` | interface | public | Backend | HipProvider, LibraryRegistrations.CudaProvider, VulkanProvider |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.ISlotStaging` | interface | public | Storage | CudaBackend.HostStaging |  | Gpu, Network | Abstraction |
 | `Idrak.Abstraction.Devices.ITensorOffloadingHooks` | interface | public | Device, Module, Tensor | Offloading.TensorHooks |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.Devices.MeasuredChoiceProviders` | registry | public | Backend |  | cuda, vulkan | Cluster, Gpu | Abstraction |
+| `Idrak.Abstraction.Devices.MeasuredChoiceProviders` | registry | public | Backend |  | cuda, hip, vulkan | Cluster, Gpu | Abstraction |
 | `Idrak.Abstraction.Devices.Storage` | abstract class | public | Backend | CpuStorage, CudaStorage, DeferredStorage, HipStorage, VulkanBackend.VulkanStorage |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.TensorOffloading` | registry | public | Device, Module, Storage |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Diagnostics.IProfileProbe` | interface | public | Device | ClusterProbe, McpProbe, NetworkProbe, ProfileProbes.BandwidthProbe, ProfileProbes.CpuProbe, ProfileProbes.FallbacksProbe, +10 |  | Abstraction, Cluster, Mcp, Network | Abstraction |
@@ -623,7 +623,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `CpuBackend` | 128 of 144 |
 | `CudaBackend` | 136 of 144 |
 | `DeferredBackend` | 11 of 144 |
-| `HipBackend` | 129 of 144 |
+| `HipBackend` | 130 of 144 |
 | `VulkanBackend` | 124 of 144 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
@@ -720,7 +720,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `LogSoftmaxTopKKernel(6)` | virtual | ✓ | ✓ |  | ✓ |  |
 | `MatMulBiasKernel(7)` | virtual |  | ✓ |  | ✓ | ✓ |
 | `MatMulManyKernel(4)` | virtual |  | ✓ |  | ✓ |  |
-| `MaxPoolBackwardKernel(4)` | virtual | ✓ | ✓ |  |  |  |
+| `MaxPoolBackwardKernel(4)` | virtual | ✓ | ✓ |  | ✓ |  |
 | `MaxPoolBackwardKernel(4)` | virtual |  | ✓ |  | ✓ | ✓ |
 | `MaxPoolKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `MulAddKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |

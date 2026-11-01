@@ -30,6 +30,9 @@ internal abstract partial class Tests
         ("gcn kernels: convolution: lstm_cell_f32, gru_cell_f32 and their gradients equal the CPU's within tolerance (with and without the saved gates, a previous step, dOutput, the candidate's bias), the same bits on two grids and wave orders", GcnConvolutionCells),
         ("gcn kernels: convolution: lstm_step_f32, gru_step_f32 and their gradients equal the CPU's product and cell within tolerance (a hidden size past one block of units, with and without a previous or later step), the same bits on two wave orders", GcnConvolutionSteps),
         ("gcn kernels: convolution: gated_act_bwd_bf16_f32 equals the CPU's packed gated activation gradient within tolerance (every kind, added and written, an odd count), the same bits on two grids and wave orders", GcnConvolutionPackedGated),
+        ("gcn kernels: convolution: implicit: conv_fwd_tile_f32 (a bias, activations), conv_bwd_input_tile_f32 and conv_bwd_weight_tile_f32 (one split, and four added in split order by conv_split_reduce_f32) equal the CPU's convolution and its gradients within tolerance (strides, padding, dilation, groups, more than one tile), the same bits with the batch looped on one z and spread over z", GcnConvolutionImplicit),
+        ("gcn kernels: convolution: maxpool_bwd_chain_u32 + maxpool_bwd_walk_f32 (the count-only maximum-pool gradient, no atomics) equal the CPU's bit for bit (repeated positions, one gradient, more than one block), the same bits on two grids and wave orders", GcnConvolutionMaxPoolChain),
+        ("gcn kernels: convolution: sequences: lstm_seq_f32, gru_seq_f32 and their gradients (forward and reversed) give the bits of their step kernels run a step at a time, on two wave orders, the grid barrier left at zero arrivals and its generation moved once a step gap", GcnConvolutionSequences),
     ];
 
     private static ulong Cu(int value) => (uint)value;
@@ -42,8 +45,8 @@ internal abstract partial class Tests
     {
         _ = device;
         var names = G5cKernels.Select(k => k.Name).ToArray();
-        Check(GcnKernels.Convolution.Count == 16 && GcnKernels.Ctc.Count == 4 && GcnKernels.Recurrent.Count == 8 && names.Distinct().Count() == names.Length,
-            $"16 convolution, 4 CTC and 8 recurrent kernels, each once ({string.Join(", ", names)})");
+        Check(GcnKernels.Convolution.Count == 20 && GcnKernels.Ctc.Count == 4 && GcnKernels.Recurrent.Count == 12 && names.Distinct().Count() == names.Length,
+            $"20 convolution (G6c's implicit products and split reduce among them), 4 CTC and 12 recurrent kernels (G6c's sequences among them), each once ({string.Join(", ", names)})");
         foreach (string name in names)
         {
             Check(GcnKernels.All.Count(k => k.Name == name) == 1, $"GcnKernels.All lists {name} once");

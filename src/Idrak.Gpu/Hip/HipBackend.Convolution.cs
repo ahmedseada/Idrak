@@ -13,9 +13,13 @@ namespace Idrak.Gpu.Hip;
 //
 // A convolution or one of its gradients runs the depthwise kernels where every group reads one channel (CUDA's formula
 // takes them first), else the composed path (Backend.Convolution.cs: the patches unfolded by im2col_f32, the products of
-// GcnKernels.Products.cs, the permutations and the bias and activation on HIP's own kernels), CUDA's composed candidate.
-// CUDA's implicit products (64 × 64 and 16 × 16 tiles, measured per shape) have no GCN form yet; neither has CUDA's atomic
-// maxpool_bwd_f32 (dx[argmax[i]] += dy[i] without the windows): the library calls the gathered gradient.
+// GcnKernels.Products.cs, the permutations and the bias and activation on HIP's own kernels), CUDA's composed candidate,
+// or (plan 35, G6c) CUDA's tiled implicit product, which reads the operands where they lie and keeps nothing beyond its
+// output (and the weight gradient's partial sums). Until HIP measures the paths per shape (G7a), CUDA's formula chooses:
+// the implicit product, but for a product of fewer rows than a quarter of a tile (most of every tile's work-items idle),
+// which the composed path takes; the weight gradient at the most splits that leave each at least 4,096 positions.
+// CUDA's 64 × 64 blocked tiles have no GCN form yet. CUDA's atomic count-only maxpool_bwd_f32 is chained and walked
+// instead (HipBackend.Training.cs).
 //
 // Every per-output kernel walks its outputs grid-stride, launched as HIP's element-wise operations (PointwiseBlocks:
 // rule 81); conv_dw_bwd_weight_f32 takes a block a weight, within the device's grid (rule 84). Each launch is labelled for
@@ -36,6 +40,8 @@ internal sealed unsafe partial class HipBackend
         "interpolate_bwd_f32" => (12, 24),
         "resize_normalize_f32" => (2, 8),
         "conv_dw_f32" or "conv_dw_bwd_input_f32" or "conv_dw_bwd_weight_f32" => (2, 8),
+        "conv_fwd_tile_f32" or "conv_bwd_input_tile_f32" or "conv_bwd_weight_tile_f32" => (2, 0.5),
+        "conv_split_reduce_f32" => (1, 4),
         _ => CtcCost(kernel),
     };
 
@@ -305,10 +311,83 @@ internal sealed unsafe partial class HipBackend
         ConvolutionShapes.Depthwise(in g, groups) && filters % groups == 0 && filters > 0
         && KernelSizes([InputCount(g), OutputCount(g, filters), (long)filters * g.KH * g.KW, (long)g.N * g.OH * g.OW], [g.OW, g.OH, g.W, g.H, g.C, g.SH, g.SW, g.KH, g.KW]);
 
+    /// <summary>Tests and benchmarks: forces the composed path (0) or the implicit product (1) where it can run; null: the formula.</summary>
+    internal static int? ConvolutionPath { get; set; }
+
+    /// <summary>Tests: the weight gradient's split count on the implicit product; null: the formula's.</summary>
+    internal static int? ConvolutionSplits { get; set; }
+
+    // The rows, columns and batch entries of a pass's implicit product (CUDA's ConvProduct).
+    private static (int Rows, int Columns, int Batch) ImplicitProduct(int pass, in ConvGeometry g, int filters, int groups) => pass switch
+    {
+        ConvolutionShapes.Forward => (filters / groups, g.OH * g.OW, g.N * groups),
+        ConvolutionShapes.Input => (g.C / groups, g.H * g.W, g.N * groups),
+        _ => (filters / groups, g.PatchSize / groups, groups),
+    };
+
+    // Whether the implicit product runs this pass (forced, else CUDA's formula; see the file's comment): whole groups, every
+    // count within the kernels' byte offsets, the tiles within the device's grid, the kernel available.
+    private GcnFunction? ImplicitKernel(string name, int pass, in ConvGeometry g, int filters, int groups)
+    {
+        if (ConvolutionPath == 0 || groups <= 0 || filters <= 0 || g.C % groups != 0 || filters % groups != 0
+            || !KernelSizes([InputCount(g), OutputCount(g, filters), (long)filters * (g.PatchSize / groups), (long)g.N * g.OH * g.OW * 2,
+                (long)filters * (g.PatchSize / groups) * 64], [g.OW, g.OH, g.W, g.H, g.KH, g.KW, g.SH, g.SW]))
+        {
+            return null;
+        }
+
+        var (rows, columns, _) = ImplicitProduct(pass, in g, filters, groups);
+        if (rows <= 0 || columns <= 0 || (columns + GcnKernels.ConvTileEdge - 1) / GcnKernels.ConvTileEdge > DeviceLimits.MaxGridDimX
+            || (rows + GcnKernels.ConvTileEdge - 1) / GcnKernels.ConvTileEdge > DeviceLimits.MaxGridDimY || DeviceLimits.MaxGridDimZ <= 0
+            || (ConvolutionPath is null && rows * 4 < GcnKernels.ConvTileEdge))
+        {
+            return null;
+        }
+
+        return Gcn(name);
+    }
+
+    // Launches an implicit product: tiles along x (columns) and y (rows), the batch entries along z (the kernel loops over
+    // those past the device's z), labelled for --profile with its shape and its operations.
+    private void LaunchImplicit(GcnFunction f, int pass, in ConvGeometry g, int filters, int groups, int batch, params ReadOnlySpan<ulong> values)
+    {
+        var (rows, columns, _) = ImplicitProduct(pass, in g, filters, groups);
+        if (Profiling)
+        {
+            long terms = pass switch
+            {
+                ConvolutionShapes.Forward => g.PatchSize / groups,
+                ConvolutionShapes.Input => (long)(filters / groups) * g.KH * g.KW,
+                _ => (long)g.N * g.OH * g.OW,
+            };
+            LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"{f.Name} {ConvolutionShape(g)}"),
+                ConvolutionCost(f.Name).Flops * rows * (double)columns * terms * (pass == ConvolutionShapes.Weight ? groups : batch));
+        }
+
+        LaunchProduct(f, (columns + GcnKernels.ConvTileEdge - 1) / GcnKernels.ConvTileEdge, (rows + GcnKernels.ConvTileEdge - 1) / GcnKernels.ConvTileEdge,
+            Math.Clamp(batch, 1, DeviceLimits.MaxGridDimZ), values);
+    }
+
+    // The 18 geometry values after `buffers`, with flags and splits.
+    private static ulong[] ImplicitValues(in ConvGeometry g, int filters, int groups, int flags, int splits, ReadOnlySpan<ulong> buffers)
+    {
+        var values = ConvolutionValues(g, filters, groups, flags, -1, buffers.Length, buffers);
+        values[^1] = (uint)splits;
+        return values;
+    }
+
     public override void ConvolutionKernel(Storage x, Storage weight, Storage? bias, Storage y, in ConvGeometry g, int filters, int groups, ConvActivation activation)
     {
         if (!DepthwiseRuns(in g, filters, groups) || Gcn("conv_dw_f32") is not { } f)
         {
+            if (ImplicitKernel("conv_fwd_tile_f32", ConvolutionShapes.Forward, in g, filters, groups) is { } tile)
+            {
+                int implicitFlags = (bias is null ? 0 : 1) | (int)activation << 1;
+                LaunchImplicit(tile, ConvolutionShapes.Forward, in g, filters, groups, g.N * groups,
+                    ImplicitValues(g, filters, groups, implicitFlags, 1, [P(x), P(weight), bias is null ? P(weight) : P(bias), P(y)]));
+                return;
+            }
+
             base.ConvolutionKernel(x, weight, bias, y, in g, filters, groups, activation);       // the composed path, on HIP's kernels
             return;
         }
@@ -322,6 +401,12 @@ internal sealed unsafe partial class HipBackend
     {
         if (!DepthwiseRuns(in g, filters, groups) || Gcn("conv_dw_bwd_input_f32") is not { } f)
         {
+            if (ImplicitKernel("conv_bwd_input_tile_f32", ConvolutionShapes.Input, in g, filters, groups) is { } tile)
+            {
+                LaunchImplicit(tile, ConvolutionShapes.Input, in g, filters, groups, g.N * groups, ImplicitValues(g, filters, groups, 0, 1, [P(dy), P(weight), P(dx)]));
+                return;
+            }
+
             base.ConvolutionBackwardInputKernel(dy, weight, dx, in g, filters, groups);
             return;
         }
@@ -334,6 +419,12 @@ internal sealed unsafe partial class HipBackend
     {
         if (!DepthwiseRuns(in g, filters, groups) || Gcn("conv_dw_bwd_weight_f32") is not { } f)
         {
+            if (ImplicitKernel("conv_bwd_weight_tile_f32", ConvolutionShapes.Weight, in g, filters, groups) is { } tile)
+            {
+                ImplicitWeight(tile, x, dy, dweight, in g, filters, groups);
+                return;
+            }
+
             base.ConvolutionBackwardWeightKernel(x, dy, dweight, in g, filters, groups);
             return;
         }
@@ -345,5 +436,41 @@ internal sealed unsafe partial class HipBackend
         }
 
         LaunchKernel(f, GridFor(weights), 1, ConvolutionValues(g, filters, groups, 0, -1, 3, [P(x), P(dy), P(dweight)]));
+    }
+
+    // The weight gradient on the implicit product: one split adds to dweight; several write their partial sums to a
+    // temporary [splits, filters, patch] that conv_split_reduce_f32 adds to dweight in split order (CUDA's).
+    private void ImplicitWeight(GcnFunction tile, Storage x, Storage dy, Storage dweight, in ConvGeometry g, int filters, int groups)
+    {
+        long positions = (long)g.N * g.OH * g.OW;
+        int splits = ConvolutionSplits is int forced && ConvolutionShapes.SplitTried(forced, positions) ? forced : ConvolutionShapes.FormulaSplits(positions);
+        int count = filters * (g.PatchSize / groups);
+        if (splits > 1 && (PointwiseKernel("conv_split_reduce_f32", count) is null || (long)splits * count >= GcnKernels.PointwiseMostElements))
+        {
+            splits = 1;
+        }
+
+        if (splits == 1)
+        {
+            LaunchImplicit(tile, ConvolutionShapes.Weight, in g, filters, groups, groups, ImplicitValues(g, filters, groups, 0, 1, [P(x), P(dy), P(dweight), P(dweight)]));
+            return;
+        }
+
+        var part = Allocate(splits * count, zeroed: false);
+        try
+        {
+            LaunchImplicit(tile, ConvolutionShapes.Weight, in g, filters, groups, groups * splits, ImplicitValues(g, filters, groups, 0, splits, [P(x), P(dy), P(dweight), P(part)]));
+            var reduce = PointwiseKernel("conv_split_reduce_f32", count)!;
+            if (Profiling)
+            {
+                LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"{reduce.Name} {count}x{splits}"), (double)count * splits);
+            }
+
+            LaunchKernel(reduce, PointwiseBlocks(count), 1, P(part), P(dweight), U(count), U(splits), U(count));
+        }
+        finally
+        {
+            part.Release();                                                    // reused in stream order
+        }
     }
 }

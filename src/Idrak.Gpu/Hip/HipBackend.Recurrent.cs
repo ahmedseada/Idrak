@@ -11,8 +11,8 @@ namespace Idrak.Gpu.Hip;
 // product inside, a block a (row, 64 units), one launch a step. A storage the caller leaves out is passed as another valid
 // pointer with its flag clear; the kernels never touch it. Sizes past the kernels' 32-bit byte offsets, a grid past the
 // device's, or unavailable kernels return false, and the callers compose the step (the cell kernels after a product, or
-// products and element-wise operations). The sequence kernels (CUDA's cooperative launch with a grid barrier) return
-// false: the layers run the step kernels a step at a time. Each launch is labelled for --profile (RecurrentCost).
+// products and element-wise operations). The sequence kernels (G6c) run every step in one launch with a grid barrier
+// between steps. Each launch is labelled for --profile (RecurrentCost; a sequence's per step).
 internal sealed unsafe partial class HipBackend : IRecurrentKernels
 {
     /// <summary>The cost of a recurrent kernel per (row, unit) of a step, for hidden size <paramref name="hidden"/> (the step kernels' products).</summary>
@@ -26,6 +26,7 @@ internal sealed unsafe partial class HipBackend : IRecurrentKernels
         "lstm_step_bwd_f32" => (60 + 8.0 * hidden, 56 + 16.0 * hidden),
         "gru_step_f32" => (110 + 6.0 * hidden, 40 + 12.0 * hidden),
         "gru_step_bwd_f32" => (20 + 6.0 * hidden, 52 + 12.0 * hidden),
+        "lstm_seq_f32" or "lstm_seq_bwd_f32" or "gru_seq_f32" or "gru_seq_bwd_f32" => RecurrentCost(kernel.Replace("_seq", "_step", StringComparison.Ordinal), hidden),
         _ => (0, 0),
     };
 
@@ -214,16 +215,107 @@ internal sealed unsafe partial class HipBackend : IRecurrentKernels
         return true;
     }
 
-    // The sequence kernels need a cooperative launch with a grid barrier (CUDA's): not in GCN yet, so the layers run the steps.
+    // The sequence kernels (plan 35, G6c): every step in one launch, the blocks meeting at a grid barrier between steps
+    // (GcnKernels.RecurrentSequence). The grid takes at most one block a compute unit, as the device reports them: a block
+    // of four waves fits any gfx9 compute unit (which holds up to forty waves), so every block of the launch is resident
+    // while the others wait at the barrier, without a cooperative launch. The barrier's two words are allocated once and
+    // zeroed (the generation word moves on with every barrier, so they are not the completion counters, which stay zero).
+    private Storage? _gridBarrier;
+
+    private Storage GridBarrier() => _gridBarrier ??= Allocate(2, zeroed: true);
+
+    // A sequence kernel for these sizes (the step kernel's sizes, and the kernel available), or null.
+    private GcnFunction? SequenceKernel(string name, int batch, int steps, int hiddenSize) =>
+        DeviceLimits.ComputeUnits > 0 && StepKernel(name.Replace("_seq", "_step", StringComparison.Ordinal), Math.Max(batch, 1), steps, hiddenSize) is not null
+            ? Gcn(name) : null;
+
+    // The blocks of a sequence launch: one an item of a step (batch · ⌈H / 64⌉), at most one a compute unit.
+    private int SequenceBlocks(int batch, int hiddenSize) => (int)Math.Min(StepBlocks(batch, hiddenSize), DeviceLimits.ComputeUnits);
+
+    private void LaunchSequence(GcnFunction f, int batch, int steps, int hiddenSize, params ReadOnlySpan<ulong> values)
+    {
+        if (Profiling)
+        {
+            LabelNextLaunch(string.Create(CultureInfo.InvariantCulture, $"{f.Name} {batch}x{hiddenSize}x{steps}"),
+                RecurrentCost(f.Name, hiddenSize).Flops * batch * hiddenSize * steps);
+        }
+
+        LaunchKernel(f, (uint)SequenceBlocks(batch, hiddenSize), 1, values);
+    }
+
     bool IRecurrentKernels.LstmSequence(Storage projected, Storage weights, Storage cell, Storage output, Storage? gates, Storage? cells, int steps,
-        int batch, int hiddenSize, bool reverse) => false;
+        int batch, int hiddenSize, bool reverse)
+    {
+        if (SequenceKernel("lstm_seq_f32", batch, steps, hiddenSize) is not { } f)
+        {
+            return false;
+        }
+
+        if (batch == 0 || steps == 0 || hiddenSize == 0)
+        {
+            return true;
+        }
+
+        int flags = (gates is null ? 0 : 1) | (cells is null ? 0 : 2) | (reverse ? GcnKernels.SequenceReverse : 0);
+        LaunchSequence(f, batch, steps, hiddenSize, P(projected), P(weights), P(cell), P(output), P(gates ?? output), P(cells ?? output), P(GridBarrier()),
+            U(steps), U(hiddenSize), U(flags), U(batch));
+        return true;
+    }
 
     bool IRecurrentKernels.LstmSequenceBackward(Storage gates, Storage cells, Storage? dOutput, Storage weightsT, Storage dCell, Storage dGates, int steps,
-        int batch, int hiddenSize, bool reverse) => false;
+        int batch, int hiddenSize, bool reverse)
+    {
+        if (SequenceKernel("lstm_seq_bwd_f32", batch, steps, hiddenSize) is not { } f)
+        {
+            return false;
+        }
+
+        if (batch == 0 || steps == 0 || hiddenSize == 0)
+        {
+            return true;
+        }
+
+        int flags = (dOutput is null ? 0 : 1) | (reverse ? GcnKernels.SequenceReverse : 0);
+        LaunchSequence(f, batch, steps, hiddenSize, P(gates), P(cells), P(dOutput ?? cells), P(weightsT), P(dCell), P(dGates), P(GridBarrier()),
+            U(steps), U(hiddenSize), U(flags), U(batch));
+        return true;
+    }
 
     bool IRecurrentKernels.GruSequence(Storage projected, Storage weights, Storage? hiddenBias, Storage output, Storage? gates, int steps, int batch,
-        int hiddenSize, bool reverse) => false;
+        int hiddenSize, bool reverse)
+    {
+        if (SequenceKernel("gru_seq_f32", batch, steps, hiddenSize) is not { } f)
+        {
+            return false;
+        }
+
+        if (batch == 0 || steps == 0 || hiddenSize == 0)
+        {
+            return true;
+        }
+
+        int flags = (hiddenBias is null ? 0 : 1) | (gates is null ? 0 : 2) | (reverse ? GcnKernels.SequenceReverse : 0);
+        LaunchSequence(f, batch, steps, hiddenSize, P(projected), P(weights), P(hiddenBias ?? weights), P(output), P(gates ?? output), P(GridBarrier()),
+            U(steps), U(hiddenSize), U(flags), U(batch));
+        return true;
+    }
 
     bool IRecurrentKernels.GruSequenceBackward(Storage gates, Storage output, Storage? dOutput, Storage weightsT, Storage dHidden, Storage dGates,
-        Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse) => false;
+        Storage dRecurrent, int steps, int batch, int hiddenSize, bool reverse)
+    {
+        if (SequenceKernel("gru_seq_bwd_f32", batch, steps, hiddenSize) is not { } f)
+        {
+            return false;
+        }
+
+        if (batch == 0 || steps == 0 || hiddenSize == 0)
+        {
+            return true;
+        }
+
+        int flags = (dOutput is null ? 0 : 1) | (reverse ? GcnKernels.SequenceReverse : 0);
+        LaunchSequence(f, batch, steps, hiddenSize, P(gates), P(output), P(dOutput ?? output), P(weightsT), P(dHidden), P(dGates), P(dRecurrent),
+            P(GridBarrier()), U(steps), U(hiddenSize), U(flags), U(batch));
+        return true;
+    }
 }

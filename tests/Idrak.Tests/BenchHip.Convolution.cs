@@ -9,7 +9,8 @@ using Idrak.Gpu.Hip;
 // GcnKernels.Convolution.cs, .Ctc.cs and .Recurrent.cs (HipBackend.Cost), the section ending with the host fallbacks it
 // took (none expected). Sizes follow the large buffer (from the memory the device reports), never a card's: a batch of
 // 64-channel images whose activations take about a quarter of it, a CTC batch of 64 lines of 200 steps, recurrent steps
-// of 64 rows of 512 units.
+// of 64 rows of 512 units. G6c adds the implicit convolution products (beside the composed path), the count-only maximum
+// pool gradient, and the recurrent sequences in one launch.
 internal abstract partial class DesktopTests
 {
     private static void BenchHipConvolution(HipBench b)
@@ -36,8 +37,33 @@ internal abstract partial class DesktopTests
                 BenchOperation(b, $"unfolded 3x3 patches, {shape}", cols, HipBackend.Cost("im2col_f32"), () => hip.Im2Col(x, patches, g));
                 BenchOperation(b, $"folded 3x3 patches, {shape}", (long)input * 9, HipBackend.Cost("col2im_f32"), () => hip.Col2Im(patches, dx, g));
                 Storage w = on.Random(Channels * Channels * 9, -0.05f, 0.05f), bias = on.Random(Channels);
-                BenchOperation(b, $"3x3 convolution (composed: patches and products), {shape}", (long)input * Channels * 9, (2, 0),
-                    () => hip.Convolution(x, w, bias, y, g, Channels, 1, ConvActivation.Relu));
+                HipBackend.ConvolutionPath = 0;
+                try
+                {
+                    BenchOperation(b, $"3x3 convolution (composed: patches and products), {shape}", (long)input * Channels * 9, (2, 0),
+                        () => hip.Convolution(x, w, bias, y, g, Channels, 1, ConvActivation.Relu));
+                }
+                finally
+                {
+                    HipBackend.ConvolutionPath = null;
+                }
+            }
+
+            // G6c: the implicit products (no unfolded patches), each pass, against the composed row above.
+            Storage cw = on.Random(Channels * Channels * 9, -0.05f, 0.05f), cbias = on.Random(Channels), cwGrad = on.Random(Channels * Channels * 9);
+            HipBackend.ConvolutionPath = 1;
+            try
+            {
+                BenchOperation(b, $"3x3 convolution (implicit product, 16 x 16 tiles), {shape}", (long)input * Channels * 9, HipBackend.Cost("conv_fwd_tile_f32"),
+                    () => hip.Convolution(x, cw, cbias, y, g, Channels, 1, ConvActivation.Relu));
+                BenchOperation(b, $"3x3 convolution input gradient (implicit product), {shape}", (long)input * Channels * 9, HipBackend.Cost("conv_bwd_input_tile_f32"),
+                    () => hip.ConvolutionBackwardInput(y, cw, dx, g, Channels, 1));
+                BenchOperation(b, $"3x3 convolution weight gradient (implicit product, the formula's splits), {shape}", (long)input * Channels * 9, HipBackend.Cost("conv_bwd_weight_tile_f32"),
+                    () => hip.ConvolutionBackwardWeight(x, y, cwGrad, g, Channels, 1));
+            }
+            finally
+            {
+                HipBackend.ConvolutionPath = null;
             }
 
             Storage dw = on.Random(Channels * 9, -0.1f, 0.1f), dwBias = on.Random(Channels), dwGrad = on.Random(Channels * 9);
@@ -49,6 +75,11 @@ internal abstract partial class DesktopTests
                 () => hip.ConvolutionBackwardWeight(x, y, dwGrad, g, Channels, Channels));
             BenchOperation(b, $"2x2 max pooling, {shape}", (long)pooled * 4, HipBackend.Cost("maxpool_f32"), () => hip.MaxPool(x, py, argmax, pool));
             BenchOperation(b, $"2x2 max pooling gradient, {shape}", input, HipBackend.Cost("maxpool_bwd_gather_f32"), () => hip.MaxPoolBackward(py, argmax, dx, pool));
+            const int Gradients = 16384;
+            var picks = new Random(13);
+            Storage positions = on.Of([.. Enumerable.Range(0, Gradients).Select(_ => BitConverter.Int32BitsToSingle(picks.Next(input)))]);
+            BenchOperation(b, $"max pooling gradient without the windows (chained and walked, G6c), {Gradients} gradients", Gradients, HipBackend.Cost("maxpool_bwd_walk_f32"),
+                () => hip.MaxPoolBackward(py, positions, dx, Gradients));
             BenchOperation(b, $"2x2 average pooling, {shape}", (long)pooled * 4, HipBackend.Cost("avgpool_f32"), () => hip.AvgPool(x, py, pool, true, 0, 0));
             BenchOperation(b, $"2x2 average pooling gradient, {shape}", (long)input * 4, HipBackend.Cost("avgpool_bwd_f32"), () => hip.AvgPoolBackward(py, dx, pool, true, 0, 0));
             int planes = images * Channels;
@@ -82,6 +113,20 @@ internal abstract partial class DesktopTests
                 () => hip.LstmStep(projected, weights, cell, output, gates, cells, 1, 0, Time, Rows, Units));
             BenchOperation(b, $"LSTM step gradient, {Rows} rows of {Units} units (the product inside)", (long)Rows * Units, HipBackend.RecurrentCost("lstm_step_bwd_f32", Units),
                 () => hip.LstmStepBackward(gates, cells, output, weights, dCell, dGates, 1, 2, 0, Time, Rows, Units));
+
+            // G6c: every step of the sequence in one launch (a grid barrier between steps), against the step rows above.
+            Storage gruProjected = on.Random(Rows * Time * 3 * Units), gruWeights = on.Random(Units * 3 * Units, -0.05f, 0.05f), hBias = on.Random(Units);
+            Storage dHidden = on.Random(Rows * Units), dRecurrent = on.Random(Rows * Time * 3 * Units), gruGates = on.Random(Rows * Time * 4 * Units, 0.05f, 0.95f);
+            Storage gruDGates = on.Random(Rows * Time * 3 * Units);
+            long sequenceUnits = (long)Rows * Units * Time;
+            BenchOperation(b, $"LSTM sequence, {Rows} rows of {Units} units, {Time} steps (one launch)", sequenceUnits, HipBackend.RecurrentCost("lstm_seq_f32", Units),
+                () => hip.LstmSequence(projected, weights, cell, output, gates, cells, Time, Rows, Units, false));
+            BenchOperation(b, $"LSTM sequence gradient, {Rows} rows of {Units} units, {Time} steps (one launch)", sequenceUnits, HipBackend.RecurrentCost("lstm_seq_bwd_f32", Units),
+                () => hip.LstmSequenceBackward(gates, cells, output, weights, dCell, dGates, Time, Rows, Units, false));
+            BenchOperation(b, $"GRU sequence, {Rows} rows of {Units} units, {Time} steps (one launch)", sequenceUnits, HipBackend.RecurrentCost("gru_seq_f32", Units),
+                () => hip.GruSequence(gruProjected, gruWeights, hBias, output, gruGates, Time, Rows, Units, false));
+            BenchOperation(b, $"GRU sequence gradient, {Rows} rows of {Units} units, {Time} steps (one launch)", sequenceUnits, HipBackend.RecurrentCost("gru_seq_bwd_f32", Units),
+                () => hip.GruSequenceBackward(gruGates, output, output, gruWeights, dHidden, gruDGates, dRecurrent, Time, Rows, Units, false));
         }
 
         long host = Idrak.Abstraction.Operations.Kernels.HostCalls(hip) - before;
