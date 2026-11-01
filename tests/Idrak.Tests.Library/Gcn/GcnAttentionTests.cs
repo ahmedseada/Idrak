@@ -8,7 +8,7 @@ using Idrak.Gpu.Hip;
 using Idrak.Tests.Gcn;
 
 // HIP's attention and shape kernels in GCN (GcnKernels.Attention, GcnKernels.Shapes), each run by the GCN interpreter and
-// proven against the CPU (plan 35, G4b). Every kernel is assembled for gfx90c and gfx906 and run over shapes that are
+// proven against the CPU (plan 35, G4b). Every kernel is assembled for gfx90c, gfx906, gfx1030 and gfx1100 and run over shapes that are
 // multiples of nothing: head sizes of 37 and 64 (and 300, past one slot of the block), caches of 1 position to a few
 // tiles of 256, grouped heads, tables of ranges with an empty one, windows and soft-caps, one split and several merged,
 // each cache format; compared to the CPU backend within OnBoth's tolerance (the attention, which sums in another order)
@@ -20,7 +20,7 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] GcnAttentionGroup =
     [
-        ("gcn kernels: attention: every attention and shape kernel assembles for gfx90c and gfx906 with its block of 256 declared, within its register budget, its printed text reading back to its bytes; GcnKernels.All lists each once", GcnAttentionAssembled),
+        ("gcn kernels: attention: every attention and shape kernel assembles for gfx90c, gfx906, gfx1030 and gfx1100 with its block of 256 declared, within its register budget, its printed text reading back to its bytes; GcnKernels.All lists each once", GcnAttentionAssembled),
         ("gcn kernels: attention: attention_decode_f32 equals the CPU's decoding and tiled attention over a cache (1 to 300 positions, heads of 37, 64 and 300, rows of several steps, a window, a soft-cap, the log-sum-exp; one split, and two merged by attention_merge_f32), the same bits on two grids and wave orders", GcnAttentionDecode),
         ("gcn kernels: attention: attention_decode_bf16 and attention_decode_int8 equal the CPU's attention over bfloat16 and int8 caches (odd heads, several steps, a window, a soft-cap, two splits merged), the same bits on two grids and wave orders", GcnAttentionPacked),
         ("gcn kernels: attention: attention_tiled_r2/r4/r8_f32 (a block's rows sharing each key and value tile) equal attention_decode_f32 bit for bit without a window and the CPU's tiled attention over a cache with a window and a soft-cap (heads of 37, 64 and 256, rows of a head not a multiple of the block's, the log-sum-exp), the same bits on two grids and wave orders", GcnAttentionTiled),
@@ -31,7 +31,7 @@ internal abstract partial class Tests
         ("gcn kernels: shapes: permute_f32 (ranks 1, 4 and 6; adding) and copy2d_f32 (pitches, adding) equal the CPU's bit for bit, the same bits on two grids and wave orders", GcnShapesPermute),
     ];
 
-    private static readonly GcnIsaVersion[] AttentionIsas = [GcnIsaVersion.Parse("gfx90c"), GcnIsaVersion.Parse("gfx906")];
+    private static readonly GcnIsaVersion[] AttentionIsas = [GcnIsaVersion.Parse("gfx90c"), GcnIsaVersion.Parse("gfx906"), GcnIsaVersion.Parse("gfx1030"), GcnIsaVersion.Parse("gfx1100")];
 
     private static readonly Dictionary<(string, GcnIsaVersion), (GcnKernelCode Code, GcnKernelImage Image)> attentionKernels = [];
 

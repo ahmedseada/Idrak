@@ -785,7 +785,7 @@ internal static partial class GcnKernels
     // attention kernels (there with glc: other blocks stored the parts).
     private static void AttentionMergeRow(RowWriter w, string label, string pb, string stride, string splits, string dim, string yb, string lse, string ln2, bool glc)
     {
-        string coherent = glc ? " glc" : "";
+        string coherent = glc ? " scope:SCOPE_DEV" : "";
         string max = w.V(), offset = w.V(), m = w.V(), s = w.S();
         w.L($"""
             v_mov_b32_e32 {max}, {RowWriter.NegativeInfinity}

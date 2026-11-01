@@ -1444,7 +1444,7 @@ internal static partial class GcnKernels
             {
                 for (int c = 0; c < cpw; c++)
                 {
-                    w.L($"global_load_dword {acc[r, c]}, {read[c]}, {bases[r]} glc");
+                    w.L($"global_load_dword {acc[r, c]}, {read[c]}, {bases[r]} scope:SCOPE_DEV");
                 }
             }
 
@@ -1484,7 +1484,7 @@ internal static partial class GcnKernels
             {
                 for (int c = 0; c < cpw; c++)
                 {
-                    w.L($"global_load_dword {loaded[r % 2, c]}, {read[c]}, {bases[r]} glc");
+                    w.L($"global_load_dword {loaded[r % 2, c]}, {read[c]}, {bases[r]} scope:SCOPE_DEV");
                 }
             }
 

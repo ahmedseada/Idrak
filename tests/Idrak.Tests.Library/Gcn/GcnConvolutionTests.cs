@@ -9,7 +9,7 @@ using Idrak.Tests.Gcn;
 
 // HIP's convolution, pooling, resampling, CTC and recurrent kernels in GCN (GcnKernels.Convolution, .Ctc, .Recurrent) and
 // the packed gated activation's gradient, each run by the GCN interpreter and proven against the CPU (plan 35, G5c). Every
-// kernel is assembled for gfx90c and gfx906 and run over small shapes that are multiples of nothing (strides, padding
+// kernel is assembled for gfx90c, gfx906, gfx1030 and gfx1100 and run over small shapes that are multiples of nothing (strides, padding
 // above and below, dilation, 1-D images, upsampling and downsampling, odd hidden sizes, a hidden size past one block of
 // units), compared to the CPU backend within the device-against-CPU tolerance (OnBoth's, 1e-3 of max(1, |expected|)) or
 // bit for bit where the arithmetic is the CPU's; run again on another grid and another wave order to give the same bits
@@ -19,7 +19,7 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] GcnConvolutionGroup =
     [
-        ("gcn kernels: convolution: every convolution, pooling, resampling, CTC and recurrent kernel assembles for gfx90c and gfx906 with its block of 256 declared, within its register budget and LDS, its printed text reading back to its bytes, with its profile cost; GcnKernels.All lists each once", GcnConvolutionAssembled),
+        ("gcn kernels: convolution: every convolution, pooling, resampling, CTC and recurrent kernel assembles for gfx90c, gfx906, gfx1030 and gfx1100 with its block of 256 declared, within its register budget and LDS, its printed text reading back to its bytes, with its profile cost; GcnKernels.All lists each once", GcnConvolutionAssembled),
         ("gcn kernels: convolution: im2col_f32 and col2im_f32 equal the CPU's patches and their fold bit for bit (strides, padding, dilation, a 1-D image), the same bits on two grids and wave orders", GcnConvolutionPatches),
         ("gcn kernels: convolution: maxpool_f32 (values and arg-max), maxpool_bwd_gather_f32, avgpool_f32 and avgpool_bwd_f32 (padding counted or not, padding below and right) equal the CPU's bit for bit, the same bits on two grids and wave orders", GcnConvolutionPooling),
         ("gcn kernels: convolution: the adaptive average and maximum pooling and their gradients equal the CPU's bit for bit (downsampling, upsampling, the same size), the same bits on two grids and wave orders", GcnConvolutionAdaptive),

@@ -1693,7 +1693,7 @@ internal static partial class GcnKernels
     private static void SamplerRow(RowWriter w, RowWriter.Args a, SamplerForm form, SamplerConstants k, string row, string prefix, bool glc)
     {
         bool candidates = form != SamplerForm.Rows, greedy = form == SamplerForm.Greedy;
-        string coherent = glc ? " glc" : "";
+        string coherent = glc ? " scope:SCOPE_DEV" : "";
         var (rows, topk, extra, slotBase, d, ex, sc, e, one, divN) = (k.Rows, k.TopK, k.Extra, k.SlotBase, k.D, k.Ex, k.Sc, k.E, k.One, k.DivN);
         var (divD, divQ, expText, divText, posInf, two32, thirtyTwo, tid4, stepNumber, streamBase) =
             (k.DivD, k.DivQ, k.ExpText, k.DivText, k.PosInf, k.Two32, k.ThirtyTwo, k.Tid4, k.StepNumber, k.StreamBase);

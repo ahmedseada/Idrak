@@ -9,7 +9,7 @@ using Idrak.Gpu.Hip;
 using Idrak.Tests.Gcn;
 
 // HIP's training kernels in GCN (GcnKernels.Training), each run by the GCN interpreter and proven against the CPU (plan 35,
-// G5b). Every kernel is assembled for gfx90c and gfx906 and run over sizes that are multiples of nothing (element-wise:
+// G5b). Every kernel is assembled for gfx90c, gfx906, gfx1030 and gfx1100 and run over sizes that are multiples of nothing (element-wise:
 // 1, 255, 1,000 and 4,099 elements, and 1,003 with every buffer 4 bytes off 16-byte alignment; rows of 1 to 2,333
 // columns; groups split into chunks; key and query tiles past 256 for the attention gradients; head sizes of 37, 64 and
 // 300), with the flags, kinds and variants the operations take; compared to the CPU backend within the device-against-CPU
@@ -21,7 +21,7 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] GcnTrainingGroup =
     [
-        ("gcn kernels: training: every training kernel assembles for gfx90c and gfx906 with its block of 256 declared, within its register budget, its printed text reading back to its bytes; GcnKernels.All lists each once", GcnTrainingAssembled),
+        ("gcn kernels: training: every training kernel assembles for gfx90c, gfx906, gfx1030 and gfx1100 with its block of 256 declared, within its register budget, its printed text reading back to its bytes; GcnKernels.All lists each once", GcnTrainingAssembled),
         ("gcn kernels: training: CUDA's order: sumsq_f32 over its blocks and sum_blocks_f32 adding them equal a C# model of CUDA's BlockReduce grouping bit for bit (one block, many, the 1,024 most)", GcnTrainingSquaresCudaOrder),
         ("gcn kernels: training: CUDA's order: sum_axis_rows_f32 (32 work-items a row, its butterfly; adding and not; on a full grid and one block), sum_rows_f32, softmax_bwd_f32 (and log-softmax), rms_norm_backward_f32, weight_norm_f32, weight_norm_bwd_f32's dgain and attn_bwd_d_f32 (a work-item a row) equal a C# model of CUDA's order bit for bit", GcnTrainingRowsCudaOrder),
         ("gcn kernels: training: CUDA's order: norm_stats_f32, group_reduce_f32 and their split forms (norm_stats_part_f32 + norm_stats_final_f32, group_reduce_part_f32 + group_reduce_final_f32, three chunks a group) equal a C# model of CUDA's halving tree and Chan merge bit for bit", GcnTrainingGroupsCudaOrder),
@@ -40,7 +40,7 @@ internal abstract partial class Tests
         ("gcn kernels: training: counts: the interpreter's instructions, memory instructions, waits and barriers per element of the attention backward passes (a causal cache and causal ranges) and the column sums, printed as G6b's evidence", GcnTrainingCounts),
     ];
 
-    private static readonly GcnIsaVersion[] TrainingIsas = [GcnIsaVersion.Parse("gfx90c"), GcnIsaVersion.Parse("gfx906")];
+    private static readonly GcnIsaVersion[] TrainingIsas = [GcnIsaVersion.Parse("gfx90c"), GcnIsaVersion.Parse("gfx906"), GcnIsaVersion.Parse("gfx1030"), GcnIsaVersion.Parse("gfx1100")];
 
     private static readonly int[] TrainingCounts = [1, 255, 1000, 4099];
 

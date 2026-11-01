@@ -9,7 +9,7 @@ using Idrak.Tests.Gcn;
 using GcnWeights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
 
 // HIP's products in GCN (GcnKernels.Products), each run by the GCN interpreter and proven against the CPU (plan 35, G4a).
-// Every kernel is assembled for gfx90c and gfx906 and run over shapes that are not tile multiples (1, a tile less one,
+// Every kernel is assembled for gfx90c, gfx906, gfx1030 and gfx1100 and run over shapes that are not tile multiples (1, a tile less one,
 // a few tiles and a remainder), every transposition, beta zero and not, batches, with and without a bias; the packed
 // few-row products for 1 to 8 rows (fewer than their kernel's too), odd n over more than one block of words, k in one
 // split and in several (added by int8_gemv_finish_f32); compared to the CPU backend within the device-against-CPU
@@ -21,7 +21,7 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] GcnProductsGroup =
     [
-        ("gcn kernels: products: every product, packed few-row product and expansion kernel assembles for gfx90c and gfx906 with CUDA's argument list and its declared block, within its register budget, its printed text reading back to its bytes; GcnKernels.All lists each once", GcnProductsAssembled),
+        ("gcn kernels: products: every product, packed few-row product and expansion kernel assembles for gfx90c, gfx906, gfx1030 and gfx1100 with CUDA's argument list and its declared block, within its register budget, its printed text reading back to its bytes; GcnKernels.All lists each once", GcnProductsAssembled),
         ("gcn kernels: products: matmul_f32 equals the CPU's product (then alpha, beta and a bias) for nn, nt, tn and tt over 1 x 1 x 1, a tile less one (63 x 63 x 15), a few tiles and a remainder (70 x 130 x 37), a long k and batches of 3; beta 0 never reads c (a NaN there stays out); the same bits on a second run", GcnProductsMatMul),
         ("gcn kernels: products: gemv_nn_f32 and gemv_nt_f32 equal the CPU's over 1 to 11 rows (two row groups), odd n, k of 1 to 300 (both kernels' steps and tails), batches and beta; the same bits on a second run", GcnProductsGemv),
         ("gcn kernels: products: int8_gemv_r1/_r2/_r4_f32 and int8_gemv_f32 equal the CPU's Int8MatMul for 1, 2, 3, 5 and 8 rows, n = 301 (two blocks of words), k = 70 in one split and in three (int8_gemv_finish_f32, scaled); the same bits on a second run and finish grid", _ => GcnProductsPacked(GcnWeights.Int8)),
@@ -36,7 +36,7 @@ internal abstract partial class Tests
         ("gcn kernels: products: int8_dequant_f32, int4_dequant_f32, bf16_dequant_f32, f16_dequant_f32 (NaN payloads, infinities, subnormals) and bf16_pack_f32 (ties to even, NaN, overflow, an odd count) equal the CPU's bit for bit, on two grids", GcnProductsExpansions),
     ];
 
-    private static readonly GcnIsaVersion[] ProductIsas = [GcnIsaVersion.Parse("gfx90c"), GcnIsaVersion.Parse("gfx906")];
+    private static readonly GcnIsaVersion[] ProductIsas = [GcnIsaVersion.Parse("gfx90c"), GcnIsaVersion.Parse("gfx906"), GcnIsaVersion.Parse("gfx1030"), GcnIsaVersion.Parse("gfx1100")];
 
     private static readonly Dictionary<(string, GcnIsaVersion), (GcnKernelCode Code, GcnKernelImage Image)> productKernels = [];
 

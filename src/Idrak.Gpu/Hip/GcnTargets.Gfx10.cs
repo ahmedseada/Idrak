@@ -8,8 +8,8 @@ namespace Idrak.Gpu.Abstractions;
 
 public static partial class GcnTargets
 {
-    /// <summary>The gfx10 family (RDNA 1 and 2), made but not registered until its kernels are (plan 35, G8a).</summary>
-    internal static IGcnTarget Gfx10Family { get; } = new Gfx10();
+    /// <summary>The gfx10 family (RDNA 1 and 2), registered by the library (plan 35, G8a).</summary>
+    internal static IGcnTarget Gfx10Family => Families.Gfx10;
 
     /// <summary>
     /// The gfx10 family: ISA 10.1.x and 10.3.x (RDNA 1 and 2), run by Idrak's kernels in waves of 64. Its encodings are

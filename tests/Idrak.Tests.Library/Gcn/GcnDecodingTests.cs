@@ -11,9 +11,9 @@ using Variant = Idrak.Gpu.Hip.GcnKernels.PackedGemvVariant;
 
 // HIP's decoding kernels in GCN (GcnKernels.Decoding, and the element-wise kernels G5a added to GcnKernels.Pointwise),
 // each run by the GCN interpreter and proven against the CPU (plan 35, G5a; its rest: the sampler, the heads' norm and
-// rotation, gemv_multi_f32). Every kernel is assembled for gfx90c and
-// gfx906 (its printed text reading back to its bytes; with IDRAK_GCN_PRINTED naming a folder, written there for the
-// development check against llvm-mc), run over shapes that are not multiples of anything (fewer rows than a kernel's,
+// rotation, gemv_multi_f32). Every kernel is assembled for gfx90c, gfx906, gfx1030 and gfx1100 (its printed text
+// reading back to its bytes; with IDRAK_GCN_PRINTED naming a folder, written there for the development check against
+// llvm-mc), run over shapes that are not multiples of anything (fewer rows than a kernel's,
 // k in one split and in several, widths over more than one block, special values), compared to the CPU backend within
 // the device-against-CPU tolerance (OnBoth's, 1e-3 of max(1, |expected|); NaN and infinities where the CPU has them),
 // run a second time with another wave order and grid to give the same bits, and the interpreter reports no missing
@@ -22,7 +22,7 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] GcnDecodingGroup =
     [
-        ("gcn kernels: decoding: every decoding kernel and every element-wise kernel G5a added assembles for gfx90c and gfx906 with its arguments and its declared block, within its register budget, its printed text reading back to its bytes; GcnKernels.All lists each once", GcnDecodingAssembled),
+        ("gcn kernels: decoding: every decoding kernel and every element-wise kernel G5a added assembles for gfx90c, gfx906, gfx1030 and gfx1100 with its arguments and its declared block, within its register budget, its printed text reading back to its bytes; GcnKernels.All lists each once", GcnDecodingAssembled),
         ("gcn kernels: decoding: the gated products {int8,int4,bf16}_gemv_{silu,gelu}[_rR]_f32 equal the CPU's gated activation then packed product for 1, 3 and 8 rows, in one split and in several (added by int8_gemv_finish_f32, or by each column range's last split block: the same bits in any order of the blocks, the counters left at zero); the same bits on a second run", GcnDecodingGated),
         ("gcn kernels: decoding: the multi-output products {int8,int4,bf16}_gemv_multi[_rR]_f32 equal the CPU's products (with a bias) for one and three products of different widths, 1 and 5 rows, one split (written whole) and several, and a gate/up pair with act(gate) · up for SiLU, GELU and ReLU, finished by gemv_multi_finish_f32 or by the launch's last blocks (the same bits, the counters left at zero); the same bits on a second run", GcnDecodingMulti),
         ("gcn kernels: decoding: a packed product finished by gemv_addnorm_f32, and {int8,int4,bf16}_gemv_addnorm[_rR]_f32 finished by its last block, equal the CPU's product, the residual addition and RMS norm, with y's own norm first (the sandwich block) and without, in one split and in several; the one launch the two launches' bit for bit in any order of the blocks; the same bits on a second run", GcnDecodingAddNorm),

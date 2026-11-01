@@ -18,15 +18,8 @@ internal abstract partial class Tests
         ("gfx11", "gfx1100-w64", GcnCpu.Gfx1100), ("gfx11", "gfx1102-w64", GcnCpu.Gfx1102),
     ];
 
-    /// <summary>
-    /// The family the kernel tests assemble <paramref name="isa"/> with: the registered one, else the RDNA family made
-    /// but not registered yet (plan 35, G8a: registered once all its kernels run), so the kernels are proven on it first.
-    /// </summary>
-    internal static IGcnTarget KernelTarget(GcnIsaVersion isa) =>
-        GcnTargets.TryFor(isa, out var target) ? target
-        : isa.Major == 10 && GcnTargets.Gfx10Family.Handles(isa) ? GcnTargets.Gfx10Family
-        : isa.Major == 11 && GcnTargets.Gfx11Family.Handles(isa) ? GcnTargets.Gfx11Family
-        : GcnTargets.For(isa);
+    /// <summary>The family the kernel tests assemble <paramref name="isa"/> with: the registered one (gfx9, gfx10, gfx11).</summary>
+    internal static IGcnTarget KernelTarget(GcnIsaVersion isa) => GcnTargets.For(isa);
 
     // Every kernel of GcnKernels.All, one text in gfx9's names, assembled by the gfx10 and gfx11 families for each of
     // their CPUs: the printed text (the family's own names, waits and hazard fixes) reads back to the same bytes, and the
@@ -204,6 +197,180 @@ internal abstract partial class Tests
           GSTORE %v0, %v7, %s[6:7]
           s_endpgm
         """;
+
+    // Two one-wave workgroups: each stores its part (group * 256 + lane), releases it (RELEASE) and adds 1 to a completion
+    // counter; the last reads both parts with LOAD's scope and stores their sum, 256 + 2 * lane.
+    private const string ScopeKernel = """
+        .kernel scope
+        .arg parts, 8, global
+        .arg counter, 8, global
+        .arg out, 8, global
+        .reqd_workgroup_size 64, 1, 1
+        .user_sgpr kernarg_segment_ptr
+        .system_sgpr workgroup_id_x
+          s_load_dwordx4 %s[0:3], s[0:1], 0x0
+          s_load_dwordx2 %s[4:5], s[0:1], 0x10
+          v_lshlrev_b32_e32 %v0, 2, v0
+          s_lshl_b32 %s6, s2, 8
+          v_add_u32_e32 %v1, %s6, %v0
+          v_add_u32_e32 %v2, %s6, v0
+          global_store_dword %v1, %v2, %s[0:1]
+          RELEASE
+          v_mov_b32_e32 %v3, 0
+          v_mov_b32_e32 %v4, 1
+          v_mov_b32_e32 %v5, 0
+          v_cmp_eq_u32_e32 vcc, 0, v0
+          s_and_saveexec_b64 %s[8:9], vcc
+          global_atomic_add %v5, %v3, %v4, %s[2:3] glc
+          s_or_b64 exec, exec, %s[8:9]
+          v_readfirstlane_b32 %s10, %v5
+          s_cmp_lg_u32 %s10, 1
+          s_cbranch_scc1 .Ldone
+          global_load_dword %v6, %v0, %s[0:1]LOAD
+          global_load_dword %v7, %v0, %s[0:1] offset:256LOAD
+          v_add_u32_e32 %v8, %v6, %v7
+          global_store_dword %v0, %v8, %s[4:5]
+        .Ldone:
+          s_endpgm
+        """;
+
+    internal static void GcnDeviceScope(Device device)
+    {
+        _ = device;
+        const string Release = "s_waitcnt vmcnt(0) vscnt(0)", Scope = " scope:SCOPE_DEV";
+        string Text(string release, string load) => ScopeKernel.Replace("RELEASE", release, StringComparison.Ordinal).Replace("LOAD", load, StringComparison.Ordinal);
+        (GcnKernelCode Code, GcnKernelImage Image, string Printed) Build(GcnIsaVersion isa, string text)
+        {
+            var target = KernelTarget(isa);
+            using var asm = new GcnAssembler(target, isa);
+            var code = asm.AssembleKernel(Encoding.UTF8.GetBytes(text), null);
+            string printed = asm.PrintedText;
+            Check(AssembleGcn(target, isa, printed).AsSpan().SequenceEqual(code.Code.Span), $"{isa}: the printed text reads back to other bytes:\n{printed}");
+            return (code, GcnCodeObjectReader.Read(GcnCodeObject.Write(target, isa, 5, [code]), "scope"), printed);
+        }
+
+        uint[] Run(GcnKernelImage image, ulong seed)
+        {
+            var memory = new GcnMemory();
+            ulong parts = memory.Map("parts", 128 * 4), counter = memory.Map("counter", 4), output = memory.Map("out", 64 * 4);
+            var arguments = new byte[24];
+            BinaryPrimitives.WriteUInt64LittleEndian(arguments, parts);
+            BinaryPrimitives.WriteUInt64LittleEndian(arguments.AsSpan(8), counter);
+            BinaryPrimitives.WriteUInt64LittleEndian(arguments.AsSpan(16), output);
+            GcnInterpreter.Run(image, memory, new GcnDispatch { Workgroups = (2, 1, 1), WorkgroupSize = (64, 1, 1), Arguments = arguments, Seed = seed, ShuffleGroups = seed != 1 });
+            return memory.Read<uint>(output, 64);
+        }
+
+        void Refused(string what, GcnKernelImage image, string naming)
+        {
+            try
+            {
+                Run(image, 1);
+                Run(image, 2);
+                Check(false, $"{what}: ran without a failure");
+            }
+            catch (GcnInterpreterException e)
+            {
+                Check(e.Kind == GcnFailure.Race && e.Message.Contains(naming, StringComparison.Ordinal), $"{what}: a race naming '{naming}', not {e.Kind}: {e.Message}");
+            }
+        }
+
+        foreach (string cpu in (ReadOnlySpan<string>)["gfx90c", "gfx1030", "gfx1100"])
+        {
+            var isa = GcnIsaVersion.Parse(cpu);
+            var (code, image, printed) = Build(isa, Text(Release, Scope));
+            foreach (ulong seed in (ReadOnlySpan<ulong>)[1, 2])
+            {
+                var sums = Run(image, seed);
+                int bad = Enumerable.Range(0, 64).Count(lane => sums[lane] != (uint)(256 + 2 * lane));
+                Check(bad == 0, $"{cpu}, seed {seed}: {bad} of 64 sums differ (lane 0: {sums[0]}, 256 expected)");
+            }
+
+            var lines = printed.Split('\n').Select(l => l.Split(';')[0].Trim()).Where(l => l.Length > 0).ToList();
+            var loads = lines.Where(l => l.StartsWith("global_load", StringComparison.Ordinal)).ToList();
+            int atomic = lines.FindIndex(l => l.StartsWith("global_atomic", StringComparison.Ordinal));
+            if (cpu == "gfx90c")
+            {
+                // gfx9: the same bytes as its own spellings, vmcnt(0) for the stores and glc for the device's scope.
+                var (old, _, _) = Build(isa, Text("s_waitcnt vmcnt(0)", " glc"));
+                Check(old.Code.Span.SequenceEqual(code.Code.Span), $"gfx90c: vscnt(0) and scope:SCOPE_DEV give other bytes than vmcnt(0) and glc:\n{printed}");
+                Check(loads.Count == 2 && loads.All(l => l.EndsWith(" glc", StringComparison.Ordinal)) && !printed.Contains("vscnt", StringComparison.Ordinal),
+                    $"gfx90c: glc loads, no vscnt:\n{printed}");
+                continue;
+            }
+
+            bool isa10 = cpu == "gfx1030";
+            int store = lines.FindIndex(l => l.StartsWith("global_store", StringComparison.Ordinal));
+            Check(atomic > store && store >= 0 && lines.Skip(store).Take(atomic - store).Any(l => l == "s_waitcnt_vscnt null, 0x0"),
+                $"{cpu}: the release waits for the stores (s_waitcnt_vscnt null, 0x0) between the store and the atomic:\n{printed}");
+            Check(loads.Count == 2 && loads.All(l => isa10 ? l.EndsWith(" glc dlc", StringComparison.Ordinal) : l.EndsWith(" glc", StringComparison.Ordinal)),
+                $"{cpu}: device-scope loads are {(isa10 ? "glc dlc" : "glc")}:\n{printed}");
+
+            // gfx9's spellings on RDNA: vmcnt(0) retires no store, so nothing is released; ISA 10's glc alone may read a
+            // stale line of the shader array's L1 (ISA 11's glc is its device scope: the same bytes).
+            Refused($"{cpu}: the release written vmcnt(0)", Build(isa, Text("s_waitcnt vmcnt(0)", Scope)).Image, "workgroups run in no set order");
+            var glc = Build(isa, Text(Release, " glc"));
+            if (isa10)
+            {
+                Refused($"{cpu}: the loads written glc", glc.Image, "no dlc");
+            }
+            else
+            {
+                Check(glc.Code.Code.Span.SequenceEqual(code.Code.Span), $"{cpu}: glc and scope:SCOPE_DEV give other bytes");
+            }
+        }
+
+        // vscnt alone: on RDNA only s_waitcnt_vscnt, on gfx9 vmcnt; s_dcache_inv at the device's scope; the refusals.
+        foreach (string cpu in (ReadOnlySpan<string>)["gfx90c", "gfx1030", "gfx1100"])
+        {
+            var isa = GcnIsaVersion.Parse(cpu);
+            var target = KernelTarget(isa);
+            bool rdna = cpu != "gfx90c";
+            byte[] Bytes(string text) => AssembleGcn(target, isa, text);
+            Check(Bytes("s_waitcnt vscnt(2)").AsSpan().SequenceEqual(Bytes(rdna ? "s_waitcnt_vscnt null, 2" : "s_waitcnt vmcnt(2)")), $"{cpu}: s_waitcnt vscnt(2) alone");
+            Check(Bytes("s_waitcnt vmcnt(1) lgkmcnt(0) vscnt(0)").AsSpan().SequenceEqual(Bytes(rdna ? "s_waitcnt vmcnt(1) lgkmcnt(0)\ns_waitcnt_vscnt null, 0" : "s_waitcnt vmcnt(0) lgkmcnt(0)")),
+                $"{cpu}: vmcnt(1) lgkmcnt(0) vscnt(0)");
+            Check(Bytes("s_dcache_inv scope:SCOPE_DEV").AsSpan().SequenceEqual(Bytes(rdna ? "s_dcache_inv\nbuffer_gl1_inv" : "s_dcache_inv")), $"{cpu}: s_dcache_inv scope:SCOPE_DEV");
+            Check(Bytes("s_dcache_inv scope:SCOPE_CU").AsSpan().SequenceEqual(Bytes("s_dcache_inv"))
+                  && Bytes("global_load_dword v1, v0, s[0:1] scope:SCOPE_CU").AsSpan().SequenceEqual(Bytes("global_load_dword v1, v0, s[0:1]")),
+                $"{cpu}: SCOPE_CU adds nothing");
+            Check(Bytes("global_load_dword v1, v0, s[0:1] glc scope:SCOPE_DEV").AsSpan().SequenceEqual(Bytes("global_load_dword v1, v0, s[0:1] scope:SCOPE_DEV")),
+                $"{cpu}: glc with the device's scope");
+            foreach (var (bad, naming) in (ReadOnlySpan<(string, string)>)[
+                         ("global_store_dword v0, v1, s[0:1] scope:SCOPE_DEV", "takes no scope"), ("global_atomic_add v2, v0, v1, s[0:1] glc scope:SCOPE_DEV", "takes no scope"),
+                         ("global_load_dword v1, v0, s[0:1] scope:SCOPE_SYS", "'SCOPE_SYS' is not a scope"), ("s_waitcnt vscnt(0) vscnt(1)", "vscnt is named twice"),
+                         ("s_waitcnt vscnt(64)", "vscnt is 0 to 63")])
+            {
+                ThrowsNaming<GcnSyntaxException>(() => Bytes(bad), $"{cpu}: {bad}", naming);
+            }
+        }
+
+        // Every kernel of GcnKernels.All for gfx90c: its text gives the bytes its text with gfx9's spellings gives (the
+        // bytes before the scope was written), so gfx9's code is unchanged.
+        var gfx90c = GcnIsaVersion.Parse("gfx90c");
+        var gfx9 = KernelTarget(gfx90c);
+        int compared = 0;
+        foreach (var kernel in GcnKernels.All)
+        {
+            string text = Encoding.UTF8.GetString(kernel.Text);
+            string spelled = text.Replace("s_dcache_inv scope:SCOPE_DEV", "s_dcache_inv", StringComparison.Ordinal).Replace(" scope:SCOPE_DEV", " glc", StringComparison.Ordinal)
+                .Replace(" vscnt(0)", "", StringComparison.Ordinal);
+            if (spelled == text)
+            {
+                continue;
+            }
+
+            using var a = new GcnAssembler(gfx9, gfx90c);
+            using var b = new GcnAssembler(gfx9, gfx90c);
+            var now = a.AssembleKernel(kernel.Text, null);
+            var before = b.AssembleKernel(Encoding.UTF8.GetBytes(spelled), null);
+            Check(now.Code.Span.SequenceEqual(before.Code.Span), $"{kernel.Name} (gfx90c): the scope's spellings change its bytes");
+            compared++;
+        }
+
+        Check(compared >= 10, $"{compared} kernels write a scope (the completion counters, the last blocks' reads, the grid barrier)");
+        Console.WriteLine($"    gfx90c: {compared} kernels with a scope written, each gfx9's bytes");
+    }
 
     internal static void GcnInterpreterRdnaRun(Device device)
     {

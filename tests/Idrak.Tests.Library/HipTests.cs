@@ -397,8 +397,8 @@ internal abstract partial class Tests
         Check(HipBackend.KernelsSettingReason(null) is null && HipBackend.KernelsSettingReason("") is null && HipBackend.KernelsSettingReason("1") is null, "unset or 1: on");
         Check(HipBackend.TargetUnavailable("hip:0", "gfx90c:xnack-", out var isa, out var target) is null && target is { Family: "gfx9" } && isa.Minor == 0 && isa.Stepping == 12,
             "a target gfx9 handles: no reason, its family");
-        string? unregistered = HipBackend.TargetUnavailable("hip:0", "gfx1100", out _, out var none);
-        Check(none is null && unregistered is not null && unregistered.Contains("gfx1100", StringComparison.Ordinal) && unregistered.Contains("not registered", StringComparison.Ordinal)
+        string? unregistered = HipBackend.TargetUnavailable("hip:0", "gfx1201", out _, out var none);
+        Check(none is null && unregistered is not null && unregistered.Contains("gfx1201", StringComparison.Ordinal) && unregistered.Contains("not registered", StringComparison.Ordinal)
               && unregistered.Contains("hip:0", StringComparison.Ordinal), $"a target no family handles: {unregistered}");
         string? unread = HipBackend.TargetUnavailable("hip:0", "sm_80", out _, out _);
         Check(unread is not null && unread.Contains("'sm_80'", StringComparison.Ordinal) && unread.Contains("not a target string", StringComparison.Ordinal), $"a target Idrak does not read: {unread}");
