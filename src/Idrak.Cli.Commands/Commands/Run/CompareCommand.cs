@@ -24,7 +24,7 @@ internal sealed class CompareCommand : Command
 
         Options:
           -i, --input FILE       read (more of) the prompt from FILE (repeatable)
-          -w, --weights FORMAT   weight format of both (default: as stored); --weights-b FORMAT: of B only
+          -w, --weights FORMAT   weight format of both (default: auto); --weights-b FORMAT: of B only
           --head-weights F       the output head's format, of both (bf16 beside int8/int4: the checkpoint's own scores)
           -k, --kv FORMAT        KV cache format of both (default float32); --kv-b FORMAT: of B only
               --context N        context window in tokens (default 4096, at most the model's)
@@ -57,7 +57,8 @@ internal sealed class CompareCommand : Command
         var results = new List<(string Label, ChatAnswer Answer)>();
         foreach (var (label, name, choice) in new[] { ("A", a, ModelChoices.Choose(context, a)), ("B", b, choiceB) })
         {
-            using var loaded = LoadedChat.Load(context, name, settings, choice);
+            var own = settings.Clone();                               // each model's recommended sampling under the values given
+            using var loaded = LoadedChat.Load(context, name, own, choice);
             var messages = new List<ChatMessage>();
             if (settings.System is { Length: > 0 } system)
             {
@@ -65,7 +66,7 @@ internal sealed class CompareCommand : Command
             }
 
             messages.Add(new ChatMessage("user", prompt));
-            var answer = new ChatResponder(loaded.Chat, null).Answer(messages, settings, loaded.Context);
+            var answer = new ChatResponder(loaded.Chat, null).Answer(messages, own, loaded.Context);
             string title = $"{label}: {choice.Model}{(choice.Weights is { } w ? $" -w {w}" : "")}{(choice.Kv is { } k ? $" -k {k}" : "")}";
             results.Add((title, answer));
         }

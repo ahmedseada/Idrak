@@ -219,6 +219,37 @@ public sealed record PretrainedOptions
     /// Move the network to a device before running it (<see cref="PretrainedModel.Place"/>).
     /// </summary>
     public bool Deferred { get; init; }
+
+    /// <summary>
+    /// Choose the weights' format before reading any weight (<see cref="Models.AutoWeights"/>): the largest of
+    /// <see cref="AutoWeightsFormats"/> (float32, bfloat16, int8, int4) whose weights, the key/value caches for
+    /// <see cref="AutoWeightsContext"/> tokens and <see cref="AutoWeightsHeadroom"/> fit the memory the device reports
+    /// free (<see cref="AutoWeightsBudget"/> when given). When none fits, the load is refused before anything is read
+    /// (<see cref="InsufficientMemoryException"/>, naming what would fit), or, with
+    /// <see cref="ComputeResources.OffloadToHostMemory"/> on, goes on with the smallest format and part of it in system
+    /// memory. A format named here (<see cref="Int8"/>, <see cref="Int4"/>, <see cref="BFloat16"/>,
+    /// <see cref="PackedFormatName"/>) wins, and a deferred load keeps float32. <see cref="PretrainedModel.Weights"/> says
+    /// what was chosen. Off by default: float32 projections unless a format is named.
+    /// </summary>
+    public bool AutoWeights { get; init; }
+
+    /// <summary>
+    /// The tokens the weights choice keeps key/value room for (<see cref="AutoWeights"/>): null takes
+    /// <see cref="MaxPositions"/> when given, else <see cref="Models.AutoWeights.DefaultContext"/> (both within the model's).
+    /// </summary>
+    public int? AutoWeightsContext { get; init; }
+
+    /// <summary>The share of the weights' bytes the choice keeps free beside the working memory (<see cref="Models.AutoWeights.DefaultHeadroom"/>, 0.1, by default).</summary>
+    public double AutoWeightsHeadroom { get; init; } = Models.AutoWeights.DefaultHeadroom;
+
+    /// <summary>The bytes the choice may take instead of the memory the device reports free (a budget of one's own); null measures the device.</summary>
+    public long? AutoWeightsBudget { get; init; }
+
+    /// <summary>The formats the choice tries, the largest first; null for <see cref="Models.AutoWeights.Formats"/>.</summary>
+    public IReadOnlyList<string>? AutoWeightsFormats { get; init; }
+
+    // Whether the options name a weights' format (which wins over the choice).
+    internal bool NamesFormat => Int8 || Int4 || BFloat16 || PackedFormatName is not null;
 }
 
 /// <summary>A weight of a model as its checkpoint stores it (<see cref="PretrainedModel.StoredTensors"/>).</summary>
@@ -370,6 +401,28 @@ public sealed class PretrainedModel : IDisposable
         var notes = new List<string>();
         var spec = architecture.Spec(config, notes);
         int maxPositions = Math.Min(options.MaxPositions ?? spec.MaxPositions, spec.MaxPositions);
+        WeightsChoice? weightsChoice = null;
+        if (options.AutoWeights && !options.NamesFormat && !options.Deferred)
+        {
+            // The weights' format chosen before any weight is read: the largest that fits what the device reports free.
+            var target = options.Device ?? Idrak.Abstraction.Device.Default;
+            int context = Math.Min(options.AutoWeightsContext ?? options.MaxPositions ?? AutoWeights.DefaultContext, spec.MaxPositions);
+            // A bfloat16 checkpoint's values are bfloat16 already: float32 would hold the same values in twice the memory.
+            IReadOnlyList<string> formats = options.AutoWeightsFormats
+                ?? (reader.Names.Select(reader.FormatOf).OfType<WeightFormat>().GroupBy(f => f).MaxBy(g => g.Count())?.Key == WeightFormat.BFloat16
+                    ? [.. AutoWeights.Formats.Where(f => f != "float32")] : AutoWeights.Formats);
+            weightsChoice = AutoWeights.Choose(spec, context, options.AutoWeightsBudget ?? target.Backend.AvailableMemory(), ComputeResources.OffloadToHostMemory,
+                options.AutoWeightsHeadroom, formats, $"{name} on {target}");
+            options = weightsChoice.Format switch
+            {
+                "bfloat16" => options with { BFloat16 = true },
+                "int8" => options with { Int8 = true },
+                "int4" => options with { Int4 = true },
+                _ => options,
+            };
+            notes.Add($"weights {weightsChoice}.");
+        }
+
         using var adapter = options.MergeAdapter is { } adapterFolder ? new AdapterMerge(adapterFolder) : null;
         var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter, Deferred = options.Deferred, Progress = LoadProgress.Of(reader, options.Progress) };
         weights.Progress?.Begin();
@@ -468,6 +521,15 @@ public sealed class PretrainedModel : IDisposable
 
         model.CheckpointFormat = reader.Names.Select(reader.FormatOf).OfType<WeightFormat>().GroupBy(f => f).MaxBy(g => g.Count())?.Key;
         model._loadBytes = reader.BytesRead;
+        model.Weights = weightsChoice;
+        try
+        {
+            model.RecommendedSampling = Abstraction.Generation.SamplingSettings.Read(folder);
+        }
+        catch (InvalidDataException e)
+        {
+            notes.Add($"the recommended sampling was not read: {e.Message}");
+        }
         if (options.Deferred)
         {
             try
@@ -665,6 +727,20 @@ public sealed class PretrainedModel : IDisposable
     /// not say (<see cref="ITensorStore.FormatOf"/>).
     /// </summary>
     public WeightFormat? CheckpointFormat { get; private set; }
+
+    /// <summary>
+    /// The sampling the model's makers recommend (its generation_config.json: temperature, top_p, top_k, min_p,
+    /// repetition_penalty, do_sample; a GGUF file's general.sampling keys, written there when the file is prepared), or
+    /// null when the folder has none. The generators made from the model carry it (<c>TextGenerator.RecommendedSampling</c>);
+    /// an app lays it under its explicit values with <see cref="Abstraction.Generation.SamplingSettings.Resolve"/>.
+    /// </summary>
+    public Abstraction.Generation.SamplingSettings? RecommendedSampling { get; private set; }
+
+    /// <summary>
+    /// The weights' format the load chose (<see cref="PretrainedOptions.AutoWeights"/>) with the bytes it counted and the
+    /// memory it measured; null when the format was named or the choice was off.
+    /// </summary>
+    public WeightsChoice? Weights { get; private set; }
 
     /// <summary>Where the time of <see cref="Load"/> went, by stage (read, convert, upload, adapter merge, tokenizer, …).</summary>
     public PretrainedLoadTimes LoadTimes { get; private set; } = new(default, default, default, default, default, default, default, default, default);

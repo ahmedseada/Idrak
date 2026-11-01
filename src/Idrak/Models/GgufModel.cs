@@ -258,8 +258,26 @@ public static class GgufModel
             }
         }
 
-        WriteJson(Path.Combine(folder, "generation_config.json"), new JsonObject { ["eos_token_id"] = stops });
+        // The file's recommended sampling (llama.cpp's general.sampling.* keys) under generation_config.json's names, which
+        // SamplingSettings.Read takes as the model's own (Idrak.Abstraction.Generation.SamplingSettings).
+        var generation = new JsonObject { ["eos_token_id"] = stops };
+        foreach (var (key, name) in SamplingKeys)
+        {
+            if (file.Metadata.ContainsKey(key))
+            {
+                generation[name] = name == "top_k" ? JsonValue.Create(file.Get(key, 0L)) : JsonValue.Create((float)file.Get(key, 0.0));
+            }
+        }
+
+        WriteJson(Path.Combine(folder, "generation_config.json"), generation);
     }
+
+    // GGUF's sampling keys (llama.cpp's general.sampling.*) and generation_config.json's names for them.
+    private static readonly (string Key, string Name)[] SamplingKeys =
+    [
+        ("general.sampling.temp", "temperature"), ("general.sampling.top_k", "top_k"), ("general.sampling.top_p", "top_p"),
+        ("general.sampling.min_p", "min_p"), ("general.sampling.penalty_repeat", "repetition_penalty"),
+    ];
 
     // The library's fallback chat template (GgufChatTemplates, "chatml"): ChatML turns.
     internal const string ChatMLName = "chatml";

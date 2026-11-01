@@ -10,6 +10,14 @@ using System.Text.Json.Schema;
 
 namespace Idrak.Abstraction.Generation;
 
+/// <summary>
+/// Thrown by a tool to fail its call with <see cref="Exception.Message"/> as what the model is told (a refusal, a file
+/// not found, a text that does not match): <see cref="ToolRegistry"/> turns it into a failed <see cref="ToolResult"/>
+/// whose <see cref="ToolResult.Error"/> is the message as it is, so the model reads that the call failed (the template's
+/// tool message) and an app marks it failed, where a returned "Error: …" text would read as a success.
+/// </summary>
+public sealed class ToolFailedException(string message) : Exception(message);
+
 /// <summary>Marks a method as a tool a chat model may call (see <see cref="ToolRegistryBuilder.Add(object)"/>).</summary>
 /// <param name="name">The name the model uses to call it.</param>
 /// <param name="description">What the tool does, for the model.</param>

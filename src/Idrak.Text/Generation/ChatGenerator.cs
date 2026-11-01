@@ -132,6 +132,9 @@ public sealed class ChatGenerator(TextGenerator generator, IChatTemplate? templa
     /// <summary>The prompt format.</summary>
     public IChatTemplate Template { get; } = template ?? new ChatMLTemplate();
 
+    /// <summary>The sampling the model's makers recommend: its generator's (<see cref="TextGenerator.RecommendedSampling"/>), or null.</summary>
+    public SamplingSettings? RecommendedSampling => Generator.RecommendedSampling;
+
     /// <summary>
     /// How it reads images (a vision-language model); null (the default): text only. Each request's images are encoded
     /// when it is answered (a later turn encodes the conversation's images again); ChatBatch takes text only (StreamBatch decodes requests with images together).

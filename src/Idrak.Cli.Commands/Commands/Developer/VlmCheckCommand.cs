@@ -59,7 +59,7 @@ internal sealed class VlmCheckCommand : Command
         "      --vision-option K=V  a vision family option over the reference's (compare_real.py records the processor\n" +
         "                        options it used, such as --pan-and-scan, as \"vision_options\"; repeatable)\n" +
         "      --image-transform P  the image transforms instead of the reference's (the same syntax as run's)\n" +
-        "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format (default: as stored); the encoder is float32\n" +
+        "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format (default: auto); the encoder is float32\n" +
         "      --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory, slower)\n" +
         "  -k, --kv FORMAT       the KV cache format (default float32)\n" +
         "      --context N       the context window in tokens (default 4096, at most the model's)\n" +

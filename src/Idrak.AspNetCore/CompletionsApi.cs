@@ -134,7 +134,7 @@ public static class CompletionsApiEndpoints
         }
 
         return await Answer(http, settings, (string?)body["model"], request, (bool?)body["stream"] == true,
-            (bool?)body["stream_options"]?["include_usage"] == true, token);
+            (bool?)body["stream_options"]?["include_usage"] == true, token, body);
     }
 
     // POST /chat/upload: a multipart/form-data form (image files, prompt, system, stream, max_tokens, temperature,
@@ -191,7 +191,7 @@ public static class CompletionsApiEndpoints
     // A chat request answered by the model named (or the only one): one chat.completion object, or chat.completion.chunk
     // events then [DONE] when streamed.
     private static async Task<IResult> Answer(HttpContext http, CompletionsApiOptions settings, string? asked, ChatRequest request, bool stream, bool usage,
-        CancellationToken token)
+        CancellationToken token, JsonObject? body = null)
     {
         var engine = Engine(http);
         string? name = Pick(asked, settings.ChatModels.Keys.Concat(ChatNames(engine)));
@@ -204,6 +204,12 @@ public static class CompletionsApiEndpoints
         }
 
         IChatModel model = settings.ChatModels.TryGetValue(name, out var extra) ? extra : engine!.Model<IChatModel>(name);
+        if (body is not null && model.RecommendedSampling is { } recommended)
+        {
+            // The values the body does not give: the model's recommended sampling over the API's defaults (the body's own win).
+            request = request with { Options = CompletionsTranslation.Options(body, recommended.ApplyTo(new GenerationOptions { RepeatPenalty = 1f })) };
+        }
+
         try
         {
             ChatParts.ThrowIfUnsupported(model, request, name);         // an image for a text-only model: before anything loads
@@ -364,6 +370,11 @@ public static class CompletionsApiEndpoints
         if (settings.TextDefaultOptions.TryGetValue(name, out var defaults))
         {
             options = CompletionsTranslation.Options(body, defaults);       // the request's fields over the model's own settings
+        }
+        else if (engine!.Model<ITextModel>(name).RecommendedSampling is { } recommended)
+        {
+            // The request's fields over the model's recommended sampling over the API's defaults.
+            options = CompletionsTranslation.Options(body, recommended.ApplyTo(new GenerationOptions { RepeatPenalty = 1f }));
         }
 
         bool stream = (bool?)body["stream"] == true;

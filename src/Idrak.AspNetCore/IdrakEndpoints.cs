@@ -127,7 +127,7 @@ public static class IdrakEndpointExtensions
             GenerationOptions options;
             try
             {
-                options = ChatApiTranslation.Options(request.Options);
+                options = ChatApiTranslation.Options(request.Options, engine.Model<ITextModel>(name).RecommendedSampling);
             }
             catch (ArgumentException ex)
             {
@@ -274,7 +274,7 @@ public static class IdrakEndpointExtensions
         {
             request = await JsonSerializer.DeserializeAsync<ChatApiRequest>(http.Body, Json, token)
                 ?? throw new ArgumentException("empty request body");
-            (chat, var keepAlive, bool given) = ChatApiTranslation.Translate(request);
+            (chat, var keepAlive, bool given) = ChatApiTranslation.Translate(request, engine.Model<IChatModel>(name).RecommendedSampling);
             chat = ImageRequests.WithVisionOptions(ImageRequests.Check(chat, settings.ImageSettings, request.Grayscale == true), request.VisionOptions);
             chat = ImageRequests.WithImageTransforms(chat, request.ImageTransforms);
             if (given)

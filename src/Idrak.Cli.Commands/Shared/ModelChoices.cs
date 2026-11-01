@@ -231,11 +231,19 @@ internal static class ModelChoices
     /// Loads a pretrained language model with the chosen formats on <paramref name="device"/> (default: the command's
     /// device), with a progress line while it loads.
     /// </summary>
-    public static PretrainedModel Load(CommandContext context, ModelChoice choice, Device? device = null)
+    /// <remarks>
+    /// Without <c>-w</c> (or with <c>-w auto</c>) the weights' format is chosen before any weight is read
+    /// (<see cref="PretrainedOptions.AutoWeights"/>: the largest that fits the device's free memory with the key/value room
+    /// of the context), and the choice is said; <paramref name="autoWeights"/> false keeps float32 then (a reference
+    /// model, a conversion).
+    /// </remarks>
+    public static PretrainedModel Load(CommandContext context, ModelChoice choice, Device? device = null, bool autoWeights = true)
     {
         device ??= context.Device;
         string folder = Resolve(context, choice.Model);
         string? weights = choice.Weights?.ToLowerInvariant();
+        bool auto = weights is "auto" || weights is null && autoWeights;
+        weights = weights is "auto" ? null : weights;
         if (choice.AdapterImages?.Family is not null && Path.Combine(folder, "config.json") is var configFile && File.Exists(configFile)
             && System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(configFile)) is System.Text.Json.Nodes.JsonObject config)
         {
@@ -257,8 +265,24 @@ internal static class ModelChoices
                 HeadFormatName = HeadFormat(choice.HeadWeights),
                 MaxPositions = choice.Context,
                 MergeAdapter = choice.Adapter,
+                AutoWeights = auto,
+                AutoWeightsContext = choice.Context ?? DefaultContext,
             });
             progress.Clear();
+        }
+
+        if (model.Weights is { } chosen)
+        {
+            // Packed weights (or offload) are said on the error output, so the answer's output stays the answer.
+            string line = $"weights {chosen}";
+            if (chosen.Format is "int8" or "int4" || chosen.Offload)
+            {
+                context.Error(line + " (-w names a format)");
+            }
+            else
+            {
+                context.Detail(line);
+            }
         }
 
         context.Detail($"loaded {choice.Model} in {watch.Elapsed.TotalSeconds:F1} s on {device}");

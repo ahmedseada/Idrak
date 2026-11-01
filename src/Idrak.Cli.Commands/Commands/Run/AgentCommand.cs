@@ -42,7 +42,7 @@ internal sealed class AgentCommand : Command
               --strict-calls     read calls only as the chat template writes them, not from fences or bare JSON
               --languages LIST   the coding languages: all, detected, none or names such as csharp,typescript
                                  (default: IDRAK_CODING_LANGUAGES, else all)
-          -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: as stored)
+          -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: auto)
           --head-weights F       the output head's format beside -w (bf16: the checkpoint's own scores and one
                                  vocabulary table for tied models, less memory than int8/int4 heads, slower)
           -k, --kv FORMAT        KV cache format: float32, int8, bfloat16 or a registered one (default float32)

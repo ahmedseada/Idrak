@@ -333,6 +333,7 @@ public sealed class Idrak.Generation.TextGenerator : Idrak.Abstraction.Generatio
   public Idrak.Abstraction.Generation.IKeyValueLayout? CacheLayout { get; init; }
   public Idrak.Abstraction.Generation.ITokenizer Tokenizer { get; }
   public Idrak.Abstraction.Generation.KeyValueFormat CacheFormat { get; init; }
+  public Idrak.Abstraction.Generation.SamplingSettings? RecommendedSampling { get; init; }
   public Idrak.Abstraction.MatMulPrecision? PrefillPrecision { get; set; }
   public Idrak.Layers.Sequential Model { get; }
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.GenerationChunk> StreamAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
@@ -2035,6 +2036,15 @@ public abstract class Idrak.Models.Abstractions.WeightCodec
   public abstract void Encode(System.ReadOnlySpan<float> values, System.Span<byte> bytes)
   public static Idrak.Models.Abstractions.WeightCodec For(Idrak.Abstraction.Formats.WeightFormat format)
 
+public static class Idrak.Models.AutoWeights
+  public const double DefaultHeadroom = 0.1
+  public const int DefaultContext = 4096
+  public static Idrak.Models.WeightsChoice Choose(Idrak.Abstraction.Generation.DecoderSpec spec, int context, long? available, bool offload, double headroom = 0.1, System.Collections.Generic.IReadOnlyList<string>? formats = null, string? model = null)
+  public static System.Collections.Generic.IReadOnlyList<string> Formats { get; }
+  public static long WeightBytes(Idrak.Abstraction.Generation.DecoderSpec spec, string format)
+  public static long WorkingBytes(Idrak.Abstraction.Generation.DecoderSpec spec, int context, long weightBytes, double headroom)
+  public static string Gigabytes(long bytes)
+
 public sealed class Idrak.Models.BpeTokenizer : Idrak.Abstraction.Generation.IPretrainedTokenizer, Idrak.Abstraction.Generation.ITokenizer
   public Idrak.Abstraction.Generation.TokenizerEncoding Encode(string text, string? pair, Idrak.Abstraction.Generation.TokenizerEncodeOptions options)
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.TokenizerEncoding> EncodeBatch(System.Collections.Generic.IReadOnlyList<string> texts, System.Collections.Generic.IReadOnlyList<string>? pairs, Idrak.Abstraction.Generation.TokenizerEncodeOptions options)
@@ -2223,10 +2233,12 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public Idrak.Abstraction.Generation.ITokenizer? Tokenizer { get; }
   public Idrak.Abstraction.Generation.ITrainableSoftParts OpenPart(string kind, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Generation.IFeatureCache? cache = null)
   public Idrak.Abstraction.Generation.IVisionEncoder CreateVisionEncoder(Idrak.Abstraction.Generation.VisionEncoderOptions? options = null)
+  public Idrak.Abstraction.Generation.SamplingSettings? RecommendedSampling { get; }
   public Idrak.Layers.Sequential Network { get; }
   public Idrak.Models.Abstractions.IPretrainedArchitecture Architecture { get; }
   public Idrak.Models.PackedWeightCacheUse? PackedCache { get; }
   public Idrak.Models.PretrainedLoadTimes LoadTimes { get; }
+  public Idrak.Models.WeightsChoice? Weights { get; }
   public System.Collections.Generic.IEnumerable<(string, Idrak.Abstraction.Module)> NamedModules()
   public System.Collections.Generic.IReadOnlyCollection<string> Parts { get; }
   public System.Collections.Generic.IReadOnlyCollection<string> TrainedPartTensors { get; }
@@ -2256,14 +2268,19 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public Idrak.Abstraction.Devices.LookupTablePlacement? LookupTables { get; init; }
   public Idrak.Models.Abstractions.TokenizerOptions? Tokenizer { get; init; }
   public PretrainedOptions()
+  public System.Collections.Generic.IReadOnlyList<string>? AutoWeightsFormats { get; init; }
   public System.IProgress<Idrak.Models.PretrainedLoadProgress>? Progress { get; init; }
+  public bool AutoWeights { get; init; }
   public bool BFloat16 { get; init; }
   public bool Deferred { get; init; }
   public bool Int4 { get; init; }
   public bool Int8 { get; init; }
   public bool? PackedCache { get; init; }
+  public double AutoWeightsHeadroom { get; init; }
   public double SuggestionHeadroom { get; init; }
+  public int? AutoWeightsContext { get; init; }
   public int? MaxPositions { get; init; }
+  public long? AutoWeightsBudget { get; init; }
   public string? Architecture { get; init; }
   public string? HeadFormatName { get; init; }
   public string? MergeAdapter { get; init; }
@@ -2419,6 +2436,18 @@ public static class Idrak.Models.StoredWeights
   public static bool KeepsBFloat16(Idrak.Abstraction.Formats.ITensorStore store, Idrak.Abstraction.Generation.EncoderWeights weights, params System.Collections.Generic.IEnumerable<string> names)
   public static bool KeepsFloat16(Idrak.Abstraction.Formats.ITensorStore store, Idrak.Abstraction.Generation.EncoderWeights weights, params System.Collections.Generic.IEnumerable<string> names)
   public static float[] FoldWeightNorm(System.ReadOnlySpan<float> gains, System.ReadOnlySpan<float> directions, System.ReadOnlySpan<int> shape)
+
+public sealed record Idrak.Models.WeightsChoice : System.IEquatable<Idrak.Models.WeightsChoice>
+  public WeightsChoice(string Format, long WeightBytes, long WorkingBytes, long? AvailableBytes, int Context)
+  public bool Fits { get; }
+  public bool Offload { get; init; }
+  public int Context { get; init; }
+  public long NeededBytes { get; }
+  public long WeightBytes { get; init; }
+  public long WorkingBytes { get; init; }
+  public long? AvailableBytes { get; init; }
+  public override string ToString()
+  public string Format { get; init; }
 
 public static class Idrak.ModuleFiles
   public static void Load(this Idrak.Abstraction.Module module, System.IO.Stream stream)

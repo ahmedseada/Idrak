@@ -3699,6 +3699,7 @@ public interface Idrak.Abstraction.Generation.IBinaryPartKind : Idrak.Abstractio
   public Idrak.Abstraction.Generation.ChatPart FromBytes(System.ReadOnlySpan<byte> data, string? mediaType = null)
 
 public interface Idrak.Abstraction.Generation.IChatModel
+  public (default) Idrak.Abstraction.Generation.SamplingSettings? RecommendedSampling { get; }
   public (default) System.Collections.Generic.IReadOnlySet<string> PartKinds { get; }
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.ChatChunk> StreamAsync(Idrak.Abstraction.Generation.ChatRequest request, System.Threading.CancellationToken cancellationToken = default)
 
@@ -3902,6 +3903,7 @@ public interface Idrak.Abstraction.Generation.ISoftPartSource
   public string Kind { get; }
 
 public interface Idrak.Abstraction.Generation.ITextModel
+  public (default) Idrak.Abstraction.Generation.SamplingSettings? RecommendedSampling { get; }
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Abstraction.Generation.GenerationChunk> StreamAsync(string prompt, Idrak.Abstraction.Generation.GenerationOptions options, System.Threading.CancellationToken cancellationToken = default)
 
 public interface Idrak.Abstraction.Generation.ITokenSampler : System.IDisposable
@@ -4265,6 +4267,13 @@ public sealed class Idrak.Abstraction.Generation.RelativePositionBias : Idrak.Ab
   public override int Bucket(int relative)
   public override string ToString()
 
+public sealed record Idrak.Abstraction.Generation.ResolvedSampling : System.IEquatable<Idrak.Abstraction.Generation.ResolvedSampling>
+  public Idrak.Abstraction.Generation.GenerationOptions Options { get; init; }
+  public ResolvedSampling(Idrak.Abstraction.Generation.GenerationOptions Options, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.SampledSetting> Settings)
+  public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Generation.SampledSetting> FromModel { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.SampledSetting> Settings { get; init; }
+  public string Describe()
+
 public sealed record Idrak.Abstraction.Generation.RopeScaling : System.IEquatable<Idrak.Abstraction.Generation.RopeScaling>
   public RopeScaling(string type, System.Text.Json.Nodes.JsonObject? parameters = null)
   public System.Text.Json.Nodes.JsonObject Parameters { get; }
@@ -4321,6 +4330,12 @@ public sealed class Idrak.Abstraction.Generation.RotarySections : System.IEquata
   public override int GetHashCode()
   public override string ToString()
 
+public sealed record Idrak.Abstraction.Generation.SampledSetting : System.IEquatable<Idrak.Abstraction.Generation.SampledSetting>
+  public SampledSetting(string Name, string Value, string Source)
+  public string Name { get; init; }
+  public string Source { get; init; }
+  public string Value { get; init; }
+
 public readonly record struct Idrak.Abstraction.Generation.SampledToken : System.IEquatable<Idrak.Abstraction.Generation.SampledToken>
   public (int, float)[] Alternatives { get; init; }
   public SampledToken(int Id, float Probability, float Entropy, (int, float)[] Alternatives)
@@ -4337,6 +4352,25 @@ public sealed record Idrak.Abstraction.Generation.SamplerRequest : System.IEquat
   public int MaxSteps { get; init; }
   public int Rows { get; init; }
   public int Vocabulary { get; init; }
+
+public sealed record Idrak.Abstraction.Generation.SamplingSettings : System.IEquatable<Idrak.Abstraction.Generation.SamplingSettings>
+  public Idrak.Abstraction.Generation.GenerationOptions ApplyTo(Idrak.Abstraction.Generation.GenerationOptions options)
+  public SamplingSettings()
+  public bool IsEmpty { get; }
+  public bool? Greedy { get; init; }
+  public const string Default = "default"
+  public const string FileName = "generation_config.json"
+  public const string Given = "given"
+  public const string Model = "model"
+  public float? MinP { get; init; }
+  public float? RepeatPenalty { get; init; }
+  public float? Temperature { get; init; }
+  public float? TopP { get; init; }
+  public int? TopK { get; init; }
+  public static Idrak.Abstraction.Generation.ResolvedSampling Resolve(Idrak.Abstraction.Generation.GenerationOptions? baseline, Idrak.Abstraction.Generation.SamplingSettings? given, Idrak.Abstraction.Generation.SamplingSettings? recommended)
+  public static Idrak.Abstraction.Generation.SamplingSettings? FromJson(System.Text.Json.Nodes.JsonObject config)
+  public static Idrak.Abstraction.Generation.SamplingSettings? Read(string folder)
+  public string? Source { get; init; }
 
 public static class Idrak.Abstraction.Generation.SequencePoolers
   public const string First = "first"
@@ -4503,6 +4537,9 @@ public sealed record Idrak.Abstraction.Generation.ToolDefinition : System.IEquat
   public ToolDefinition(string Name, string? Description = null, System.Text.Json.Nodes.JsonNode? Parameters = null)
   public string Name { get; init; }
   public string? Description { get; init; }
+
+public sealed class Idrak.Abstraction.Generation.ToolFailedException : System.Exception
+  public ToolFailedException(string message)
 
 public sealed class Idrak.Abstraction.Generation.ToolProviderAttribute : System.Attribute
   public System.Type Provider { get; }

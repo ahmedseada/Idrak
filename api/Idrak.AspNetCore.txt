@@ -89,9 +89,9 @@ public sealed record Idrak.AspNetCore.ChatApiToolCall : System.IEquatable<Idrak.
   public Idrak.AspNetCore.ChatApiCalledFunction Function { get; init; }
 
 public static class Idrak.AspNetCore.ChatApiTranslation
-  public static (Idrak.Abstraction.Generation.ChatRequest, System.TimeSpan?, bool) Translate(Idrak.AspNetCore.ChatApiRequest request)
+  public static (Idrak.Abstraction.Generation.ChatRequest, System.TimeSpan?, bool) Translate(Idrak.AspNetCore.ChatApiRequest request, Idrak.Abstraction.Generation.SamplingSettings? recommended = null)
   public static (System.TimeSpan?, bool) KeepAliveOf(System.Text.Json.JsonElement? value)
-  public static Idrak.Abstraction.Generation.GenerationOptions Options(System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>? values)
+  public static Idrak.Abstraction.Generation.GenerationOptions Options(System.Collections.Generic.Dictionary<string, System.Text.Json.JsonElement>? values, Idrak.Abstraction.Generation.SamplingSettings? recommended = null)
 
 public static class Idrak.AspNetCore.CompletionsApiEndpoints
   public static Microsoft.AspNetCore.Routing.RouteGroupBuilder MapCompletionsApi(this Microsoft.AspNetCore.Routing.IEndpointRouteBuilder app, string route = "/v1", System.Action<Idrak.AspNetCore.CompletionsApiOptions>? configure = null)

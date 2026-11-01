@@ -23,6 +23,13 @@ public sealed record GenerationChunk(string Text, bool Done = false, string? Don
 /// <summary>Anything that continues a text prompt: <c>TextGenerator</c>, or a text or chat model hosted by the inference engine.</summary>
 public interface ITextModel
 {
+    /// <summary>
+    /// The sampling the model's makers recommend (its generation_config.json, <see cref="SamplingSettings.Read"/>), or null
+    /// when it has none or the model does not know (the default). An app lays it under its explicit values with
+    /// <see cref="SamplingSettings.Resolve"/>.
+    /// </summary>
+    SamplingSettings? RecommendedSampling => null;
+
     /// <summary>Streams the continuation of <paramref name="prompt"/>; the last chunk has <see cref="GenerationChunk.Done"/> set and carries the statistics.</summary>
     IAsyncEnumerable<GenerationChunk> StreamAsync(string prompt, GenerationOptions options, CancellationToken cancellationToken = default);
 }

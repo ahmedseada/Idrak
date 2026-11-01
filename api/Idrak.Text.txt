@@ -701,6 +701,7 @@ public sealed class Idrak.Text.Generation.ChatGenerator : Idrak.Abstraction.Gene
   public ChatGenerator(Idrak.Generation.TextGenerator generator, Idrak.Abstraction.Generation.IChatTemplate? template = null)
   public Idrak.Abstraction.Generation.ChatChunk Chat(Idrak.Abstraction.Generation.ChatRequest request, System.Threading.CancellationToken cancellationToken = default)
   public Idrak.Abstraction.Generation.IChatTemplate Template { get; }
+  public Idrak.Abstraction.Generation.SamplingSettings? RecommendedSampling { get; }
   public Idrak.Generation.TextGenerator Generator { get; }
   public Idrak.Text.Generation.ChatImages? Images { get; init; }
   public System.Collections.Generic.IAsyncEnumerable<(int, Idrak.Abstraction.Generation.ChatChunk)> StreamBatchAsync(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatRequest> requests, System.Threading.CancellationToken cancellationToken = default)
@@ -740,7 +741,7 @@ public sealed class Idrak.Text.Generation.CodingAgent
   public int PendingNotes { get; }
   public static Idrak.Abstraction.Generation.ChatMessage ReadCallsInText(Idrak.Abstraction.Generation.ChatMessage reply, Idrak.Abstraction.Generation.ToolCallContext context)
   public static Idrak.Abstraction.Generation.ToolCallContext CallContext(Idrak.Abstraction.Generation.IChatTemplate? template, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools)
-  public static System.Threading.Tasks.Task<Idrak.Text.Generation.CodingToolTurn> RunToolCallsAsync(Idrak.Abstraction.Generation.IToolRegistry registry, Idrak.Abstraction.Generation.ChatMessage reply, string? previousCalls, System.Threading.CancellationToken cancellationToken = default)
+  public static System.Threading.Tasks.Task<Idrak.Text.Generation.CodingToolTurn> RunToolCallsAsync(Idrak.Abstraction.Generation.IToolRegistry registry, Idrak.Abstraction.Generation.ChatMessage reply, string? previousCalls, System.Threading.CancellationToken cancellationToken = default, System.Action<Idrak.Abstraction.Generation.ToolResult>? onResult = null)
   public static string DefaultSystemPrompt { get; }
   public static string SystemPrompt(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.ICodingLanguage> languages)
   public static string? Correction(Idrak.Abstraction.Generation.ChatMessage reply, Idrak.Abstraction.Generation.ToolCallContext context)
@@ -778,6 +779,7 @@ public sealed record Idrak.Text.Generation.CodingToolOptions : System.IEquatable
   public System.Collections.Generic.IReadOnlyList<string>? IgnoredDirectories { get; init; }
   public System.TimeSpan CommandTimeout { get; init; }
   public bool Network { get; init; }
+  public bool ReadBeforeEdit { get; init; }
   public bool ReadOnly { get; init; }
   public double MaxCpus { get; init; }
   public int DetectionDepth { get; init; }
@@ -816,6 +818,7 @@ public sealed class Idrak.Text.Generation.CodingTools
   public string Workspace { get; }
   public string WriteFile(string path, string content)
   public string? LanguageNotice { get; }
+  public void ForgetReads()
 
 public sealed class Idrak.Text.Generation.Conversation
   public Idrak.Abstraction.Generation.IToolRegistry? Tools { get; }
@@ -946,6 +949,7 @@ public sealed class Idrak.Text.Inference.GenerativeModelBuilder
   public Idrak.Text.Inference.GenerativeModelBuilder KeepAlive(System.TimeSpan? idle)
   public Idrak.Text.Inference.GenerativeModelBuilder Parts(System.Collections.Generic.IReadOnlyCollection<string> kinds, System.Func<Idrak.Generation.TextGenerator, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource>> parts)
   public Idrak.Text.Inference.GenerativeModelBuilder QueueLimit(int waiting)
+  public Idrak.Text.Inference.GenerativeModelBuilder Sampling(Idrak.Abstraction.Generation.SamplingSettings? recommended)
   public Idrak.Text.Inference.GenerativeModelBuilder Template(Idrak.Abstraction.Generation.IChatTemplate template)
   public Idrak.Text.Inference.GenerativeModelBuilder Timeout(System.TimeSpan limit)
   public Idrak.Text.Inference.GenerativeModelBuilder Tools(Idrak.Abstraction.Generation.IToolRegistry tools)

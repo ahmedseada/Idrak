@@ -25,7 +25,74 @@ internal abstract partial class DesktopTests : Tests
         ("cli run: complete, tokenize (--chat, --count), template, embed (JSON and .npy), compare", CliRunText),
         ("cli run: tokenize --offsets, --pair, --special, --max-length, --truncation give tokenizers' encodings (WordPiece pairs, Unigram Arabic and emoji); plain output unchanged; bad values refused", d => { if (d == Device.Cpu) CliRunTokenizeDetailed(d); }),
         ("cli run: tools list/test on an assembly, run with --tools, agent in a read-only workspace, run --schema", CliRunToolsAndAgent),
+        ("cli run: the model's recommended sampling (generation_config.json) fills the values not given, said in --verbose; given values and /set win; the chat API takes it under a request's own", d => { if (d == Device.Cpu) CliRunRecommendedSampling(d); }),
     ];
+
+    private static void CliRunRecommendedSampling(Device device)
+    {
+        // The CLI's settings: what was given stays; the rest is the model's.
+        var recommended = new SamplingSettings { Temperature = 0.7f, TopK = 20, TopP = 0.8f, RepeatPenalty = 1.05f };
+        CommandContext? context = null;
+        var settings = new GenerationSettings();
+        Check(settings.Set("temperature", "0.3") is null && settings.TakeRecommended(context, recommended, "m") is { } said
+              && said == "top_k 20, top_p 0.8, repeat_penalty 1.05" && settings is { Temperature: 0.3f, TopK: 20, TopP: 0.8f, RepeatPenalty: 1.05f },
+            $"--temperature given: the rest from the model ({settings.Temperature}, {settings.TopK}, {settings.TopP}, {settings.RepeatPenalty})");
+        var greedy = new GenerationSettings();
+        Check(greedy.Set("temperature", "0") is null && greedy.TakeRecommended(context, recommended, "m") == "repeat_penalty 1.05"
+              && greedy.ToOptions(64) is { TopK: 1, Temperature: 1f, RepeatPenalty: 1.05f }, "--temperature 0 stays greedy under the model's sampling");
+        var none = new GenerationSettings();
+        Check(none.TakeRecommended(context, null, "m") is null && none is { Temperature: 0.6f, TopK: 20, TopP: 0.95f, RepeatPenalty: 1f },
+            "no recommendation: the CLI's own defaults");
+        var modelGreedy = new GenerationSettings();
+        modelGreedy.TakeRecommended(context, new SamplingSettings { Greedy = true }, "m");
+        Check(modelGreedy.ToOptions(64) is { TopK: 1 }, "the model's do_sample false: greedy");
+
+        // The chat API: a request's own values over the model's over the library's defaults.
+        var options = Idrak.AspNetCore.ChatApiTranslation.Options(new Dictionary<string, System.Text.Json.JsonElement>
+        {
+            ["temperature"] = System.Text.Json.JsonSerializer.SerializeToElement(0.2),
+        }, recommended);
+        Check(options is { Temperature: 0.2f, TopK: 20, TopP: 0.8f, RepeatPenalty: 1.05f },
+            $"chat API: the request's temperature, the model's top_k, top_p and penalty ({options.Temperature}, {options.TopK}, {options.TopP}, {options.RepeatPenalty})");
+
+        // A run on a copy of the tiny model with Qwen2.5-7B-Instruct's sampling in its generation_config.json, then with a value given.
+        string folder = Path.Combine(Path.GetTempPath(), "idrak-cli-recommended-" + Environment.ProcessId);
+        if (Directory.Exists(folder))
+        {
+            Directory.Delete(folder, true);
+        }
+
+        foreach (string file in Directory.EnumerateFiles(CliModel, "*", SearchOption.AllDirectories))
+        {
+            string target = Path.Combine(folder, Path.GetRelativePath(CliModel, file));
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(file, target);
+        }
+
+        string path = Path.Combine(folder, SamplingSettings.FileName);
+        var config = File.Exists(path) ? JsonNode.Parse(File.ReadAllText(path))!.AsObject() : new JsonObject();
+        config["do_sample"] = true;
+        config["temperature"] = 0.7;
+        config["top_k"] = 20;
+        config["top_p"] = 0.8;
+        config["repetition_penalty"] = 1.05;
+        File.WriteAllText(path, config.ToJsonString());
+        try
+        {
+            var (code, text, error) = RunIdrakOn(device, null, "run", folder, "Hello", "--max-tokens", "2", "--seed", "1", "--verbose");
+            string all = text + error;
+            Check(code == 0 && all.Contains("temperature 0.7, top_k 20, top_p 0.8, repeat_penalty 1.05", StringComparison.Ordinal),
+                $"--verbose says which values came from the model: {all}");
+            (code, text, error) = RunIdrakOn(device, null, "run", folder, "Hello", "--max-tokens", "2", "--seed", "1", "--verbose", "--top-k", "3");
+            all = text + error;
+            Check(code == 0 && all.Contains("temperature 0.7, top_p 0.8, repeat_penalty 1.05 (now:", StringComparison.Ordinal) && all.Contains("top_k 3 (given)", StringComparison.Ordinal),
+                $"--top-k given: the model's other values only: {all}");
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
 
     private static string CliModel => TestData("gguf/tiny-llama-hf");
 

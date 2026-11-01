@@ -62,6 +62,13 @@ public sealed record CodingToolOptions
     public bool ReadOnly { get; init; }
 
     /// <summary>
+    /// edit_file refuses a file the task has not read (read_file) or written (write_file) since the tools were made or
+    /// <see cref="CodingTools.ForgetReads"/> was called (the agent calls it as each task starts), saying to read it first:
+    /// an edit replaces exact text, and a model that guesses a file's text writes edits that do not match. True by default.
+    /// </summary>
+    public bool ReadBeforeEdit { get; init; } = true;
+
+    /// <summary>
     /// The <see cref="CommandSandboxes"/> sandbox every command runs in: <see cref="CommandSandboxes.Process"/> (a plain
     /// process) unless <see cref="CommandSandboxes.EnvironmentVariable"/> (IDRAK_SANDBOX) names another, such as
     /// <see cref="CommandSandboxes.Container"/> (Idrak.Reinforcement.Plugins).
@@ -159,7 +166,7 @@ public sealed class CodingTools
                 Schema(("path", "string", "File path, relative to the workspace.", true),
                     ("start_line", "integer", "First line to return (1-based, default 1).", false),
                     ("end_line", "integer", "Last line to return (default: as many as fit).", false)),
-                (args, _) => Task.FromResult(ReadFile(Text(args, "path")!, Number(args, "start_line"), Number(args, "end_line")))),
+                (args, _) => Task.FromResult(Seen(Text(args, "path")!, ReadFile(Text(args, "path")!, Number(args, "start_line"), Number(args, "end_line"))))),
             Tool.Create("search", "Search the files of the workspace for a regular expression; returns path:line: text for each match.",
                 Schema(("pattern", "string", Example("Regular expression (.NET syntax)", Examples(e => e.SearchPatterns), " or "), true),
                     ("path", "string", "Folder or file to search, relative to the workspace (default: everything).", false),
@@ -175,11 +182,11 @@ public sealed class CodingTools
                     ("old_text", "string", "The exact text to replace.", true),
                     ("new_text", "string", "The replacement.", true),
                     ("replace_all", "boolean", "Replace every occurrence.", false)),
-                (args, _) => Task.FromResult(EditFile(Text(args, "path")!, Text(args, "old_text")!, Text(args, "new_text")!, args["replace_all"]?.GetValue<bool>() ?? false))));
+                (args, _) => Task.FromResult(Unread(Text(args, "path")!) ?? EditFile(Text(args, "path")!, Text(args, "old_text")!, Text(args, "new_text")!, args["replace_all"]?.GetValue<bool>() ?? false))));
             tools.Add(Tool.Create("write_file", "Create a file, or replace a file's whole content. Prefer edit_file for changes to existing files.",
                 Schema(("path", "string", "File path, relative to the workspace; missing folders are created.", true),
                     ("content", "string", "The complete file content.", true)),
-                (args, _) => Task.FromResult(WriteFile(Text(args, "path")!, Text(args, "content")!))));
+                (args, _) => Task.FromResult(Seen(Text(args, "path")!, WriteFile(Text(args, "path")!, Text(args, "content")!)))));
             tools.Add(Tool.Create("run_command", $"Run a command in the workspace and return its exit code and output. Allowed programs: " +
                 $"{string.Join(", ", Commands)} (git only {string.Join(", ", _options.GitSubcommands)}). The command is not run by a shell: " +
                 "no pipes, redirection, && or variables. " + Example("Use it to build, test, lint and inspect", Examples(e => e.Commands), ", "),
@@ -189,8 +196,46 @@ public sealed class CodingTools
                 (args, token) => RunCommandAsync(Text(args, "command")!, Text(args, "directory") ?? ".", Number(args, "timeout_seconds"), token)));
         }
 
-        All = tools;
+        All = [.. tools.Select(FailsOnError)];
     }
+
+    // The files the task has read or written (CodingToolOptions.ReadBeforeEdit), by their full paths.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, byte> _seen = new(StringComparer.Ordinal);
+
+    /// <summary>Forgets which files were read or written, so edit_file asks for a read again (<see cref="CodingToolOptions.ReadBeforeEdit"/>); the agent calls it as each task starts.</summary>
+    public void ForgetReads() => _seen.Clear();
+
+    // `answer` (read_file's or write_file's), with the file marked as seen when it is not an error.
+    private string Seen(string path, string answer)
+    {
+        if (!answer.StartsWith(ErrorPrefix, StringComparison.Ordinal) && Resolve(path, out string full) is null)
+        {
+            _seen[full] = 0;
+        }
+
+        return answer;
+    }
+
+    // The refusal of an edit of a file the task has not read or written, or null.
+    private string? Unread(string path) =>
+        _options.ReadBeforeEdit && Resolve(path, out string full) is null && File.Exists(full) && !_seen.ContainsKey(full)
+            ? $"{ErrorPrefix}read {path} first (read_file): this task has not read it, and edit_file needs its exact text as it is now."
+            : null;
+
+    // What a tool's method answers a refusal or an error with: "Error: …" (the methods' own text, which callers of the
+    // methods read as before).
+    private const string ErrorPrefix = "Error: ";
+
+    // The tool with its "Error: …" answers as failed calls (ToolFailedException: the registry's failed ToolResult with the
+    // message), so the model reads that the call failed and an app marks it failed; every other answer as it is.
+    private static Tool FailsOnError(Tool tool) => tool with
+    {
+        Invoke = async (arguments, token) =>
+        {
+            string text = await tool.Invoke(arguments, token).ConfigureAwait(false);
+            return text.StartsWith(ErrorPrefix, StringComparison.Ordinal) ? throw new ToolFailedException(text[ErrorPrefix.Length..]) : text;
+        },
+    };
 
     /// <summary>The workspace folder (absolute).</summary>
     public string Workspace => _root;

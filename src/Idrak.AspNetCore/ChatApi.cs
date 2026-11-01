@@ -104,15 +104,17 @@ public static class ChatApiTranslation
     /// <summary>
     /// Validates the request and turns it into a <see cref="ChatRequest"/>; throws <see cref="ArgumentException"/> on bad input.
     /// Known options map to <see cref="GenerationOptions"/>; other options are accepted and ignored, as common servers of this API do.
+    /// The sampling values the request does not give are the model's <paramref name="recommended"/> ones when given
+    /// (<see cref="IChatModel.RecommendedSampling"/>), else the library's defaults.
     /// </summary>
-    public static (ChatRequest Request, TimeSpan? KeepAlive, bool KeepAliveGiven) Translate(ChatApiRequest request)
+    public static (ChatRequest Request, TimeSpan? KeepAlive, bool KeepAliveGiven) Translate(ChatApiRequest request, SamplingSettings? recommended = null)
     {
         if (request.Messages is null)
         {
             throw new ArgumentException("messages is required.");
         }
 
-        var options = Options(request.Options);
+        var options = Options(request.Options, recommended);
         bool? think = request.Think?.ValueKind switch
         {
             JsonValueKind.True => true,
@@ -162,10 +164,13 @@ public static class ChatApiTranslation
         return parts;
     }
 
-    /// <summary>Maps the chat API's option names to <see cref="GenerationOptions"/> (unknown names are ignored).</summary>
-    public static GenerationOptions Options(Dictionary<string, JsonElement>? values)
+    /// <summary>
+    /// Maps the chat API's option names to <see cref="GenerationOptions"/> (unknown names are ignored), over the model's
+    /// <paramref name="recommended"/> sampling when given (the request's own values win), else over the library's defaults.
+    /// </summary>
+    public static GenerationOptions Options(Dictionary<string, JsonElement>? values, SamplingSettings? recommended = null)
     {
-        var options = new GenerationOptions();
+        var options = recommended?.ApplyTo(new GenerationOptions()) ?? new GenerationOptions();
         foreach (var (key, value) in values ?? [])
         {
             try

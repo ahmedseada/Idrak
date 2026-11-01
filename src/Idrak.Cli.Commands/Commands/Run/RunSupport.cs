@@ -98,6 +98,7 @@ internal sealed class LoadedChat(PretrainedModel model, ModelChoices.ModelChoice
             var model = ModelChoices.Load(context, choice);
             try
             {
+                settings.TakeRecommended(context, model.RecommendedSampling, choice.Model);     // the values not given: the model's own
                 var chat = ModelChoices.CreateChat(model, choice);
                 var images = ImageInputs.For(model, choice.Transforms, choice.VisionOptions, out string? reason);
                 var audio = AudioInputs.For(model, out string? noAudio);             // null for a model without audio_config

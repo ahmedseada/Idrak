@@ -25,7 +25,174 @@ internal abstract partial class DesktopTests : Tests
         ("coding agent: calls written in fences are read and run (the owner's House reply: the file is written, read back, the build asked for)", AgentReadsFencedCalls),
         ("coding agent: a malformed call is nudged, the scripted model answers properly and the file is written; strict calls nudge a fenced one", AgentNudgesMalformedCall),
         ("coding agent: the nudge limit ends the run with CallsNotRead; an answer in words or with a code fence ends as answered", AgentNudgeLimit),
+        ("coding agent: each call's result is told as that call ends (before the next one waits), and a turn cut by the time limit still tells the calls that finished", AgentReportsEachResultAsItEnds),
+        ("coding agent: three ```json fences (write_file with escaped newlines and braces, edit_file, run_command) are all read and run, in order", AgentRunsEveryFencedCall),
+        ("coding tools: a refusal or error (old_text not found or not unique, a path outside the folder, a missing file, a refused command) is a failed result with its message; the model reads it as before", CodingToolErrorsFail),
+        ("coding agent: edit_file refuses a file the task has not read or written (read it first), a new task reads again, the option off allows it; the prompt asks for the read", AgentReadsBeforeEditing),
     ];
+
+    private static void AgentReadsBeforeEditing(Device device)
+    {
+        _ = device;
+        InAgentWorkspace(root =>
+        {
+            string program = Path.Combine(root, "Program.cs");
+            File.WriteAllText(program, "class Program { static void Main() { } }\n");
+            var guess = new JsonObject { ["path"] = "Program.cs", ["old_text"] = "static void Main() { }", ["new_text"] = "static void Main() => System.Console.WriteLine(1);" };
+            // A guessed edit first (refused, nothing changed), then the read and the same edit (done).
+            var fake = FakeChatModel.Script(FakeChatModel.ToolCall("edit_file", guess), FakeChatModel.ToolCall("read_file", new JsonObject { ["path"] = "Program.cs" }),
+                FakeChatModel.ToolCall("edit_file", (JsonObject)guess.DeepClone()), FakeChatModel.Answer("Main prints 1."));
+            var tools = new CodingTools(root);
+            var told = new List<ToolResult>();
+            var run = new CodingAgent(fake) { OnToolResult = told.Add }.RunAsync("Make Main print 1", tools).GetAwaiter().GetResult();
+            Check(told is [{ Succeeded: false } refused, { Succeeded: true }, { Succeeded: true }] && refused.Error!.StartsWith("read Program.cs first (read_file)", StringComparison.Ordinal)
+                  && fake.Requests[1].Messages[^1].Content.StartsWith("Error: read Program.cs first", StringComparison.Ordinal),
+                $"the unread edit is refused saying to read it first, then read and edited ({string.Join("; ", told.Select(r => r.Error ?? "ok"))})");
+            Check(File.ReadAllText(program).Contains("WriteLine(1)", StringComparison.Ordinal) && run is { End: CodingAgentEnd.Answered, ToolErrors: 1 }, "the edit after the read is made");
+
+            // A new task forgets the reads; a file the task wrote may be edited; the option off allows any edit.
+            var again = FakeChatModel.Script(FakeChatModel.ToolCall("edit_file", new JsonObject { ["path"] = "Program.cs", ["old_text"] = "WriteLine(1)", ["new_text"] = "WriteLine(2)" }), FakeChatModel.Answer("x"));
+            var second = new CodingAgent(again).RunAsync("Print 2", tools).GetAwaiter().GetResult();
+            Check(second.ToolErrors == 1 && File.ReadAllText(program).Contains("WriteLine(1)", StringComparison.Ordinal), "the next task must read the file again");
+            var written = FakeChatModel.Script(FakeChatModel.ToolCall("write_file", new JsonObject { ["path"] = "New.cs", ["content"] = "class A { }\n" }),
+                FakeChatModel.ToolCall("edit_file", new JsonObject { ["path"] = "New.cs", ["old_text"] = "class A", ["new_text"] = "class B" }), FakeChatModel.Answer("x"));
+            Check(new CodingAgent(written).RunAsync("Make B", tools).GetAwaiter().GetResult().ToolErrors == 0 && File.ReadAllText(Path.Combine(root, "New.cs")).Contains("class B", StringComparison.Ordinal),
+                "a file the task wrote can be edited");
+            var free = new CodingTools(root, new CodingToolOptions { ReadBeforeEdit = false });
+            var direct = FakeChatModel.Script(FakeChatModel.ToolCall("edit_file", new JsonObject { ["path"] = "Program.cs", ["old_text"] = "WriteLine(1)", ["new_text"] = "WriteLine(3)" }), FakeChatModel.Answer("x"));
+            Check(new CodingAgent(direct).RunAsync("Print 3", free).GetAwaiter().GetResult().ToolErrors == 0 && File.ReadAllText(program).Contains("WriteLine(3)", StringComparison.Ordinal),
+                "ReadBeforeEdit off: an unread edit is made");
+            Check(CodingAgent.DefaultSystemPrompt.Contains("Read a file with read_file before you edit it", StringComparison.Ordinal), "the default prompt asks for the read");
+        });
+    }
+
+    private static void CodingToolErrorsFail(Device device)
+    {
+        _ = device;
+        InAgentWorkspace(root =>
+        {
+            File.WriteAllText(Path.Combine(root, "Program.cs"), "class Program { int a; int a2; }\n");
+            var tools = new CodingTools(root, null, new RecordingSandbox(new CommandResult(1, false, "build failed", TimeSpan.Zero, false)));
+            var registry = tools.Registry();
+            ToolResult Run(string name, JsonObject arguments) => registry.InvokeAsync(new ToolCall(name, arguments)).GetAwaiter().GetResult();
+            _ = Run("read_file", new() { ["path"] = "Program.cs" });               // edits need the file read first
+            var failures = new (string Name, JsonObject Arguments, string Says)[]
+            {
+                ("edit_file", new() { ["path"] = "Program.cs", ["old_text"] = "int b;", ["new_text"] = "int c;" }, "not found"),
+                ("edit_file", new() { ["path"] = "Program.cs", ["old_text"] = "int a", ["new_text"] = "int c" }, "occurs"),
+                ("read_file", new() { ["path"] = "../outside.cs" }, "outside the workspace"),
+                ("read_file", new() { ["path"] = "Missing.cs" }, "does not exist"),
+                ("run_command", new() { ["command"] = "dotnet build && dotnet test" }, "not run by a shell"),
+            };
+            foreach (var (name, arguments, says) in failures)
+            {
+                var result = Run(name, arguments);
+                Check(!result.Succeeded && result.Error is { } error && error.Contains(says, StringComparison.Ordinal) && !error.StartsWith("Error:", StringComparison.Ordinal)
+                      && result.Content.Contains(says, StringComparison.Ordinal),
+                    $"{name} {arguments.ToJsonString()}: a failed result saying '{says}' ({(result.Succeeded ? "succeeded" : "failed")}: {result.Error ?? result.Content})");
+            }
+
+            Check(Run("read_file", new() { ["path"] = "Program.cs" }) is { Succeeded: true } read && read.Content.Contains("class Program", StringComparison.Ordinal)
+                  && Run("run_command", new() { ["command"] = "dotnet build" }) is { Succeeded: true } built && built.Content.Contains("build failed", StringComparison.Ordinal),
+                "a read and a command that ran (exit code 1 included) succeed");
+
+            // In the agent: the model reads "Error: …" as before, and the run counts the error.
+            var fake = FakeChatModel.Script(FakeChatModel.ToolCall("read_file", new JsonObject { ["path"] = "Program.cs" }),
+                FakeChatModel.ToolCall("edit_file", new JsonObject { ["path"] = "Program.cs", ["old_text"] = "int b;", ["new_text"] = "int c;" }), FakeChatModel.Answer("It failed."));
+            var told = new List<ToolResult>();
+            var run = new CodingAgent(fake) { OnToolResult = told.Add }.RunAsync("Rename b", tools).GetAwaiter().GetResult();
+            Check(run is { ToolCalls: 2, ToolErrors: 1 } && told is [{ Succeeded: true }, { Succeeded: false }]
+                  && fake.Requests[2].Messages[^1] is { Role: "tool" } message && message.Content.StartsWith("Error: old_text was not found", StringComparison.Ordinal),
+                $"the agent: one failed call, the model told 'Error: …' ({fake.Requests[2].Messages[^1].Content})");
+        });
+    }
+
+    // A 7B coder's reply: three json fences, write_file's content with \n escapes, quotes and braces.
+    private const string ThreeFencedCalls = """
+        I'll create the program, then change its greeting and run it.
+
+        ```json
+        {"name": "write_file", "arguments": {"path": "Program.cs", "content": "using System;\n\nclass Program\n{\n    static void Main()\n    {\n        Console.WriteLine(\"Hello\");\n    }\n}\n"}}
+        ```
+
+        ```json
+        {"name": "edit_file", "arguments": {"path": "Program.cs", "old_text": "Console.WriteLine(\"Hello\");", "new_text": "Console.WriteLine(\"Hello, {0}!\", \"World\");"}}
+        ```
+
+        ```json
+        {"name": "run_command", "arguments": {"command": "dotnet run"}}
+        ```
+        """;
+
+    private static void AgentRunsEveryFencedCall(Device device)
+    {
+        _ = device;
+        InAgentWorkspace(root =>
+        {
+            var fake = FakeChatModel.Script(FakeChatModel.Answer(ThreeFencedCalls), FakeChatModel.Answer("Program.cs prints Hello, World!"));
+            var sandbox = new RecordingSandbox(new CommandResult(0, false, "Hello, World!", TimeSpan.Zero, false));
+            var tools = new CodingTools(root, null, sandbox);
+            var results = new List<ToolResult>();
+            var run = new CodingAgent(fake) { OnToolResult = results.Add }.RunAsync("Write a hello program and run it", tools).GetAwaiter().GetResult();
+            string program = Path.Combine(root, "Program.cs");
+            string text = File.Exists(program) ? File.ReadAllText(program) : "(missing)";
+            Check(results.Select(r => r.Call.Name).SequenceEqual(["write_file", "edit_file", "run_command"]) && results.All(r => r.Succeeded),
+                $"the three calls ran in order: {string.Join(", ", results.Select(r => $"{r.Call.Name} {(r.Succeeded ? "ok" : r.Error)}"))}");
+            Check(text.Contains("Console.WriteLine(\"Hello, {0}!\", \"World\");", StringComparison.Ordinal) && text.Contains("class Program\n{", StringComparison.Ordinal),
+                $"Program.cs written with real newlines and braces, then edited: {text}");
+            Check(sandbox.Calls.Count == 1 && run is { End: CodingAgentEnd.Answered, ToolCalls: 3, Rounds: 2 },
+                $"the command ran once; {run.End}, {run.ToolCalls} calls, {run.Rounds} rounds");
+
+            // The same reply with the file's line breaks written raw inside the JSON string (not valid JSON): before, only
+            // the one-line run_command was read; now the strings' control characters are escaped and all three run.
+            File.Delete(program);
+            string raw = ThreeFencedCalls.Replace("\\n", "\n", StringComparison.Ordinal);
+            var context = CodingAgent.CallContext(null, [.. tools.All.Select(t => t.Definition)]);
+            var read = ToolCallText.CallsInText(raw, context);
+            Check(read is { Count: 3 } && read[0].Name == "write_file" && (string?)read[0].Arguments["content"] == "using System;\n\nclass Program\n{\n    static void Main()\n    {\n        Console.WriteLine(\"Hello\");\n    }\n}\n"
+                  && read[1].Name == "edit_file" && read[2].Name == "run_command",
+                $"raw line breaks inside a string: the three calls read, the content's lines kept ({(read is null ? "none" : string.Join(", ", read.Select(c => c.Name)))})");
+            var valid = ToolCallText.CallsInText(ThreeFencedCalls, context)!;
+            Check(valid.Count == 3 && valid.Zip(read!).All(p => p.First.Name == p.Second.Name && JsonNode.DeepEquals(p.First.Arguments, p.Second.Arguments)),
+                "valid JSON reads as before, and the escaped reply gives the same calls");
+        });
+    }
+
+    private static void AgentReportsEachResultAsItEnds(Device device)
+    {
+        _ = device;
+        InAgentWorkspace(root =>
+        {
+            // write_file, then a tool that waits until the turn is cancelled (an approval nobody gives, cut by the time limit).
+            var results = new List<ToolResult>();
+            bool toldBeforeWaiting = false;
+            var wait = Tool.Create("wait_for_user", "Waits until cancelled.", new JsonObject { ["type"] = "object", ["properties"] = new JsonObject() },
+                async (_, token) =>
+                {
+                    toldBeforeWaiting = results.Any(r => r.Call.Name == "write_file");
+                    await Task.Delay(Timeout.Infinite, token);
+                    return "";
+                });
+            var reply = new ChatMessage("assistant", ToolCalls: [new ToolCall("write_file", new JsonObject { ["path"] = "a.txt", ["content"] = "alpha" }), new ToolCall("wait_for_user", [])]);
+            var fake = FakeChatModel.Script(reply, FakeChatModel.Answer("never asked"));
+            var agent = new CodingAgent(fake, new AgentOptions { ExtraTools = [wait], TimeLimit = TimeSpan.FromSeconds(1) }) { OnToolResult = results.Add };
+            var run = agent.RunAsync("Write a.txt", new CodingTools(root)).GetAwaiter().GetResult();
+            Check(toldBeforeWaiting, "write_file's result was told before the next call began to wait");
+            Check(run.End == CodingAgentEnd.OutOfBudget && File.Exists(Path.Combine(root, "a.txt")) && results.Count == 1 && results[0] is { Succeeded: true, Call.Name: "write_file" },
+                $"the time limit cut the turn; the written file's result was told ({run.End}: {run.Note}; {results.Count} told)");
+            Check(run is { ToolCalls: 0, Rounds: 1 } && !run.Messages.Any(m => m.Role == "tool"),
+                "the run's counts and messages are as before: the cut turn adds no tool message");
+
+            // Calls that all end: each told once, in call order, the same results as the turn's.
+            results.Clear();
+            var two = FakeChatModel.Script(new ChatMessage("assistant", ToolCalls: [new ToolCall("write_file", new JsonObject { ["path"] = "b.txt", ["content"] = "beta" }),
+                new ToolCall("read_file", new JsonObject { ["path"] = "b.txt" })]), FakeChatModel.Answer("Done."));
+            var done = new CodingAgent(two) { OnToolResult = results.Add }.RunAsync("Write and read b.txt", new CodingTools(root)).GetAwaiter().GetResult();
+            Check(done is { End: CodingAgentEnd.Answered, ToolCalls: 2 } && results.Select(r => r.Call.Name).SequenceEqual(["write_file", "read_file"])
+                  && results[1].Content.Contains("beta", StringComparison.Ordinal) && two.Requests[1].Messages.Count(m => m.Role == "tool") == 2,
+                $"two calls told in order, their results sent on ({string.Join(", ", results.Select(r => r.Call.Name))})");
+        });
+    }
 
     // A workspace for one agent test, deleted after it.
     private static void InAgentWorkspace(Action<string> test)
@@ -512,7 +679,8 @@ internal abstract partial class DesktopTests : Tests
             Check(Run("edit_file", "{\"path\":\"src/app/user.service.ts\",\"old_text\":\"getUsers() {\\n return\",\"new_text\":\"x\"}").Contains("whitespace is ignored", StringComparison.Ordinal), "whitespace hint");
             Check(Run("edit_file", "{\"path\":\"src/app/user.service.ts\",\"old_text\":\"s\",\"new_text\":\"S\"}").Contains("occurs", StringComparison.Ordinal), "ambiguous edit");
 
-            // Line endings: the model writes \n; a CRLF file keeps CRLF.
+            // Line endings: the model writes \n; a CRLF file keeps CRLF (read first: edit_file refuses a file not read).
+            Run("read_file", "{\"path\":\"src/Program.cs\"}");
             Run("edit_file", "{\"path\":\"src/Program.cs\",\"old_text\":\"{\\n    static void Main() { }\\n}\",\"new_text\":\"{\\n    static void Main() => System.Console.WriteLine(1);\\n}\"}");
             Check(File.ReadAllText(Path.Combine(root, "src", "Program.cs")) == "class Program\r\n{\r\n    static void Main() => System.Console.WriteLine(1);\r\n}\r\n", "CRLF kept");
 

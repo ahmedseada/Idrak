@@ -41,6 +41,8 @@ public static class ChatTools
     {
         public IReadOnlySet<string> PartKinds => model.PartKinds;
 
+        public SamplingSettings? RecommendedSampling => model.RecommendedSampling;
+
         public async IAsyncEnumerable<ChatChunk> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             var messages = new List<ChatMessage>(request.Messages);
