@@ -59,8 +59,8 @@ internal sealed unsafe partial class HipBackend
         "sum_rows_f32" or "sum_cols_strided_f32" or "sum_f32" or "sum_blocks_f32" or "sum_axis_f32" or "sum_axis_rows_f32" => (1, 4),
         "sumsq_f32" => (2, 4),
         "broadcast_axis_f32" => (2, 12),
-        "scatter_chain_u32" => (0, 0.02),
-        "scatter_walk_f32" => (1, 12),
+        "scatter_chain_u32" or "maxpool_bwd_chain_u32" => (0, 0.02),
+        "scatter_walk_f32" or "maxpool_bwd_walk_f32" => (1, 12),
         "norm_stats_f32" or "norm_stats_part_f32" or "group_reduce_f32" or "group_reduce_part_f32" => (3, 8),
         "norm_stats_final_f32" => (10, 8),
         "group_reduce_final_f32" => (2, 8),
@@ -657,12 +657,34 @@ internal sealed unsafe partial class HipBackend
             return;
         }
 
-        long n = (long)count * dim;
-        if (count < 0 || dim < 0 || vocabulary <= 0 || (long)vocabulary * dim >= GcnKernels.PointwiseMostElements || PointwiseKernel("scatter_walk_f32", n) is not { } walk
-            || Gcn("scatter_chain_u32") is not { } chain)
+        if (!ChainAndWalk("scatter_chain_u32", "scatter_walk_f32", dy, indices, dtable, count, dim, vocabulary))
         {
             base.ScatterAddKernel(dy, indices, dtable, count, dim, vocabulary);
-            return;
+        }
+    }
+
+    // The count-only gradient of a maximum pool (plan 35, G6c), dx[argmax[i]] += dy[i] without the windows: CUDA's adds
+    // with atomics; here argmax's positions are chained by the index they name and each chain walked by its head, as
+    // scatter-add's rows (the ids read as the integers argmax holds), so every element of dx is written once, the
+    // gradients added in position order: the CPU's order and bits. The library calls the gathered form, which has the
+    // windows; this one is for parity with CUDA (its chain pass compares positions with each other: count² at worst).
+    public override void MaxPoolBackwardKernel(Storage dy, Storage argmax, Storage dx, int count)
+    {
+        if (count > 0 && !ChainAndWalk("maxpool_bwd_chain_u32", "maxpool_bwd_walk_f32", dy, argmax, dx, count, 1, dx.Length))
+        {
+            base.MaxPoolBackwardKernel(dy, argmax, dx, count);
+        }
+    }
+
+    // dtable[indices[i]] += dy[i]'s rows of `dim` through the chain kernel `chainName` and the walk kernel `walkName`;
+    // false when the kernels are unavailable or the sizes past them (the caller takes the host).
+    private bool ChainAndWalk(string chainName, string walkName, Storage dy, Storage indices, Storage dtable, int count, int dim, int vocabulary)
+    {
+        long n = (long)count * dim;
+        if (count < 0 || dim < 0 || vocabulary <= 0 || (long)vocabulary * dim >= GcnKernels.PointwiseMostElements || PointwiseKernel(walkName, n) is not { } walk
+            || Gcn(chainName) is not { } chain)
+        {
+            return false;
         }
 
         var links = Allocate(count, zeroed: false);
@@ -682,6 +704,8 @@ internal sealed unsafe partial class HipBackend
         {
             links.Release();                                                     // reused in stream order
         }
+
+        return true;
     }
 
     // ---- Grouped normalization -----------------------------------------------------------------------------------------

@@ -158,6 +158,8 @@ internal static partial class GcnKernels
         BroadcastAxis(),
         ScatterChain(),
         ScatterWalk(),
+        ScatterChain("maxpool_bwd_chain_u32", rawIds: true),
+        ScatterWalk("maxpool_bwd_walk_f32", rawIds: true),
         NormStats(),
         NormStatsPart(),
         NormStatsFinal(),
@@ -1168,9 +1170,10 @@ internal static partial class GcnKernels
         });
 
     // The second pass of scatter-add (n = count · dim): the work-item of each chain's head adds the id's rows of dy, in
-    // position order, to the table's row (clamped to maxindex, as CUDA's), and stores it once.
-    private static GcnKernelSource ScatterWalk() =>
-        TrainingElementwise("scatter_walk_f32", new(["dy", "chain", "indices", "dtable"], ["dim", "maxindex", "count"], [], [])
+    // position order, to the table's row (clamped to maxindex, as CUDA's), and stores it once. With `rawIds` the ids are
+    // integers as they lie (a maximum pool's argmax, plan 35 G6c's maxpool_bwd_walk_f32), else floats (an embedding's).
+    private static GcnKernelSource ScatterWalk(string name = "scatter_walk_f32", bool rawIds = false) =>
+        TrainingElementwise(name, new(["dy", "chain", "indices", "dtable"], ["dim", "maxindex", "count"], [], [])
         {
             Index = true,
             Single = true,
@@ -1190,7 +1193,7 @@ internal static partial class GcnKernels
                 s_mov_b64 {heads}, exec
                 s_cbranch_execz {walked}
                 global_load_dword {id}, {at}, {e.Pointers[2]}
-                v_cvt_u32_f32_e32 {id}, {id}
+                {(rawIds ? "" : TrainingText($"v_cvt_u32_f32_e32 {id}, {id}"))}
                 v_min_u32_e32 {id}, {e.Values[1]}, {id}
                 v_mul_lo_u32 {tableAt}, {id}, {e.Values[0]}
                 v_add_u32_e32 {tableAt}, {tableAt}, {column}
@@ -2037,9 +2040,10 @@ internal static partial class GcnKernels
     // The first pass of scatter-add (see the file's remarks): chain[pos] = the next position with the same id (count when
     // none), its top bit set when no earlier position has the id (the chain's head). A block takes 256 positions (n = the
     // blocks, grid-stride); the ids come a tile of 256 at a time through LDS, every thread of the block at every barrier.
-    private static GcnKernelSource ScatterChain()
+    // With `rawIds` the ids are integers as they lie (a maximum pool's argmax: maxpool_bwd_chain_u32), else floats.
+    private static GcnKernelSource ScatterChain(string name = "scatter_chain_u32", bool rawIds = false)
     {
-        var w = new RowWriter("scatter_chain_u32", arrays: 0, extraLds: 4 * RowThreads);
+        var w = new RowWriter(name, arrays: 0, extraLds: 4 * RowThreads);
         var a = w.Arguments(["indices", "chain"], ["count", "maxindex", "n"]);
         string indices = a.Pointer("indices"), chain = a.Pointer("chain"), count = a.Scalar("count"), maxIndex = a.Scalar("maxindex");
         int idsLds = w.ExtraLdsBase;
@@ -2059,7 +2063,7 @@ internal static partial class GcnKernels
             v_cmp_gt_u32_e64 {mine}, {count}, {pos}
             s_and_saveexec_b64 {saved}, {mine}
             global_load_dword {own}, {off}, {indices}
-            v_cvt_u32_f32_e32 {own}, {own}
+            {(rawIds ? "" : TrainingText($"v_cvt_u32_f32_e32 {own}, {own}"))}
             v_min_u32_e32 {own}, {maxIndex}, {own}
             s_or_b64 exec, exec, {saved}
             v_mov_b32_e32 {next}, {count}
@@ -2079,7 +2083,7 @@ internal static partial class GcnKernels
             v_cmp_gt_u32_e32 vcc, {count}, {j}
             s_and_saveexec_b64 {saved}, vcc
             global_load_dword {id}, {jOff}, {indices}
-            v_cvt_u32_f32_e32 {id}, {id}
+            {(rawIds ? "" : TrainingText($"v_cvt_u32_f32_e32 {id}, {id}"))}
             v_min_u32_e32 {id}, {maxIndex}, {id}
             s_or_b64 exec, exec, {saved}
             ds_write_b32 {writeAt}, {id}

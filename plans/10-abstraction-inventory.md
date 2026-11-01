@@ -623,7 +623,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `CpuBackend` | 128 of 144 |
 | `CudaBackend` | 136 of 144 |
 | `DeferredBackend` | 11 of 144 |
-| `HipBackend` | 129 of 144 |
+| `HipBackend` | 130 of 144 |
 | `VulkanBackend` | 124 of 144 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
@@ -720,7 +720,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `LogSoftmaxTopKKernel(6)` | virtual | ✓ | ✓ |  | ✓ |  |
 | `MatMulBiasKernel(7)` | virtual |  | ✓ |  | ✓ | ✓ |
 | `MatMulManyKernel(4)` | virtual |  | ✓ |  | ✓ |  |
-| `MaxPoolBackwardKernel(4)` | virtual | ✓ | ✓ |  |  |  |
+| `MaxPoolBackwardKernel(4)` | virtual | ✓ | ✓ |  | ✓ |  |
 | `MaxPoolBackwardKernel(4)` | virtual |  | ✓ |  | ✓ | ✓ |
 | `MaxPoolKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `MulAddKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |

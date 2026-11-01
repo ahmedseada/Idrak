@@ -150,7 +150,8 @@ internal abstract partial class Tests
     {
         _ = device;
         var names = GcnKernels.Training.Select(k => k.Name).ToArray();
-        Check(names.Length == 56 && names.Distinct().Count() == names.Length, $"56 training kernels (G5c's gated_act_bwd_bf16_f32 among them), each once ({names.Length}): {string.Join(", ", names)}");
+        Check(names.Length == 58 && names.Distinct().Count() == names.Length,
+            $"58 training kernels (G5c's gated_act_bwd_bf16_f32 and G6c's maxpool_bwd_chain_u32 and maxpool_bwd_walk_f32 among them), each once ({names.Length}): {string.Join(", ", names)}");
         foreach (string name in names)
         {
             Check(GcnKernels.All.Count(k => k.Name == name) == 1, $"GcnKernels.All lists {name} once");

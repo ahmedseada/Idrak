@@ -22,8 +22,9 @@ namespace Idrak.Gpu.Hip;
 //   hidden state from the output sequence (another row: no work-item writes what another reads) against U [H, G·H]; the
 //   gradient reads the later step's gate gradient against Uᵀ [G·H, H]. Grid x = batch · ⌈H / 64⌉ (block b: row b / ⌈H /
 //   64⌉, units 64 · (b mod ⌈H / 64⌉) on), within the device's grid (else the backend declines and the layers compose).
-// - CUDA's sequence kernels (every step in one cooperative launch, a grid barrier between steps) have no GCN form yet:
-//   HIP declines them, and the layers run the step kernels a step at a time.
+// - The sequence kernels (lstm_seq_f32, gru_seq_f32 and their gradients; plan 35, G6c) run the step kernels' item for
+//   every step in one launch, the blocks meeting at a grid barrier between steps (RecurrentSequence below), so a layer
+//   no longer steps one launch at a time.
 //
 // For --profile's labels and --bench-hip's rates (HipBackend.RecurrentCost), per (row, unit) of a step:
 //
@@ -54,7 +55,27 @@ internal static partial class GcnKernels
     /// <summary>The slices of a step kernel's recurrent sum: the block's waves.</summary>
     internal const int StepSlices = RowThreads / StepUnits;
 
-    private static GcnKernelSource[] BuildRecurrent() =>
+    private static GcnKernelSource[] BuildRecurrent() => [.. RecurrentCellsAndSteps(), .. RecurrentSequences()];
+
+    // The sequence kernels: each step kernel's storages, product and body, every step in one launch (RecurrentSequence).
+    private static GcnKernelSource[] RecurrentSequences() =>
+    [
+        RecurrentSequence("lstm_seq_f32", ["projected", "weights", "cell", "output", "gates", "cells"], 4,
+            new("output", "previous", Gates: 1, Weights: "weights", WeightGates: 4, Terms: 4), false, (w, c, sums) => LstmForward(w, c, recurrentOf: g => sums[g])),
+        RecurrentSequence("lstm_seq_bwd_f32", ["gates", "cells", "doutput", "weightst", "dcell", "dgates"], 4,
+            new("dgates", "next", Gates: 4, Weights: "weightst", WeightGates: 1, Terms: 1), true, (w, c, sums) => LstmBackward(w, c, sums[0])),
+        RecurrentSequence("gru_seq_f32", ["projected", "weights", "hbias", "output", "gates"], 3,
+            new("output", "previous", Gates: 1, Weights: "weights", WeightGates: 3, Terms: 3), false, (w, c, sums) => GruForward(w, c, recurrentOf: g => sums[g])),
+        RecurrentSequence("gru_seq_bwd_f32", ["gates", "output", "doutput", "weightst", "dhidden", "dgates", "drecurrent"], 3,
+            new("drecurrent", "next", Gates: 3, Weights: "weightst", WeightGates: 1, Terms: 1), true, (w, c, sums) =>
+            {
+                string incoming = w.V();
+                w.I(TrainingText($"v_add_f32_e32 {incoming}, {sums[0]}, {c.Load(c.Pointer("dhidden"), c.State, 0)}"));
+                GruBackward(w, c, incoming);
+            }),
+    ];
+
+    private static GcnKernelSource[] RecurrentCellsAndSteps() =>
     [
         RecurrentCell("lstm_cell_f32", ["projected", "recurrent", "cell", "hidden", "output", "gates", "cells"], ["step", "steps", "h", "flags"], 4, (w, c) =>
             LstmForward(w, c, recurrentOf: g => c.Load(c.Pointer("recurrent"), c.StateGate, g))),
@@ -373,8 +394,7 @@ internal static partial class GcnKernels
         StepT3 = "%s47", StepM = "%s48", StepMw = "%s49", StepAddress = "%s[50:51]", StepA = "%s52", StepB = "%s53", StepSaved = "%s[54:55]", StepWw = "%s56",
         StepAhead = "%s57", StepSourceBase = "%s[58:59]";
 
-    // A step kernel (see the file's remarks): the frame, the product, the slices' sums in LDS, then `body` in the first
-    // wave's lanes below H with the sums in registers.
+    // A step kernel (see the file's remarks): the frame, then one item (the block's row and units) as StepItem writes it.
     private static GcnKernelSource RecurrentStep(string name, string[] buffers, string[] values, int gates, StepProduct product,
         Action<PointwiseWriter, RecurrentContext, string[]> body)
     {
@@ -382,16 +402,67 @@ internal static partial class GcnKernels
         int dwords = 2 * buffers.Length + values.Length;
         string[] pointers = [.. Enumerable.Range(0, buffers.Length).Select(b => TrainingText($"%s[{2 * b}:{2 * b + 1}]"))];
         string[] registers = [.. Enumerable.Range(0, values.Length).Select(k => TrainingText($"%s{2 * buffers.Length + k}"))];
+        string label = TrainingText($".L{name}");
+        var body1 = new StringBuilder();
+        w.Into(body1);
+        StepItem(w, label, "s2", TrainingText($"{label}_done"), buffers, pointers, values, registers, gates, product, body);
+        CvLines(w, $"""
+            {label}_done:
+              s_endpgm
+            """);
+
+        // The head: directives, the arguments, then the held lines.
+        var text = new StringBuilder();
+        text.Append(CultureInfo.InvariantCulture, $".kernel {name}\n");
+        foreach (string buffer in buffers)
+        {
+            text.Append(CultureInfo.InvariantCulture, $".arg {buffer}, 8, global\n");
+        }
+
+        foreach (string value in values)
+        {
+            text.Append(CultureInfo.InvariantCulture, $".arg {value}, 4, value\n");
+        }
+
+        text.Append(CultureInfo.InvariantCulture, $"""
+            .reqd_workgroup_size {RowThreads}, 1, 1
+            .lds {StepSlices * product.Terms * StepUnits * 4}
+            .user_sgpr kernarg_segment_ptr
+            .system_sgpr workgroup_id_x
+
+            """);
+        AppendArgumentLoads(text, dwords, "s[0:1]");
+        text.Append(w.Held).Append(body1);
+        return new GcnKernelSource(name, Encoding.UTF8.GetBytes(text.ToString()));
+    }
+
+    // The kernel arguments' `dwords` dwords into %s0 up, from the kernarg segment's address `kernarg`, eight at a time.
+    private static void AppendArgumentLoads(StringBuilder text, int dwords, string kernarg)
+    {
+        for (int at = 0; at < dwords;)
+        {
+            int size = dwords - at >= 8 ? 8 : dwords - at >= 4 ? 4 : dwords - at >= 2 ? 2 : 1;
+            text.Append(size == 1
+                ? TrainingText($"  s_load_dword %s{at}, {kernarg}, 0x{4 * at:x}\n")
+                : TrainingText($"  s_load_dwordx{size} %s[{at}:{at + size - 1}], {kernarg}, 0x{4 * at:x}\n"));
+            at += size;
+        }
+    }
+
+    // One item of a step kernel (the block `block`'s row and 64 units: the step kernel's block, a sequence kernel's item):
+    // the product, the slices' sums in LDS, then `body` in the first wave's lanes below H with the sums in registers; every
+    // path ends at `end` (the first wave's lanes past H, the other waves after the sums met, and the body's end), with EXEC
+    // as it left it. `values` name the registers `registers` (step, previous or next, steps, h, flags).
+    private static void StepItem(PointwiseWriter w, string label, string block, string end, string[] buffers, string[] pointers, string[] values,
+        string[] registers, int gates, StepProduct product, Action<PointwiseWriter, RecurrentContext, string[]> body)
+    {
         string Value(string v) => registers[Array.IndexOf(values, v)];
         string Pointer(string b) => pointers[Array.IndexOf(buffers, b)];
         string h = Value("h"), steps = Value("steps"), flags = Value("flags");
         int terms = product.Terms;
-        string label = TrainingText($".L{name}");
 
         // The block's row and units, the lane's unit.
         const string Lane = "%v1", Unit = "%v2", Lane4 = "%v3", WeightAt = "%v4", WeightAhead = "%v5", PartAt = "%v6";
-        var body1 = new StringBuilder();
-        w.Into(body1);
         CvLines(w, $"""
             v_readfirstlane_b32 {StepSlice}, v0
             s_lshr_b32 {StepSlice}, {StepSlice}, 6
@@ -408,9 +479,9 @@ internal static partial class GcnKernels
             s_mul_i32 {StepT0}, {StepT0}, {StepT1}
             s_mul_hi_u32 {StepT0}, {StepT1}, {StepT0}
             s_add_i32 {StepT1}, {StepT1}, {StepT0}
-            s_mul_hi_u32 {StepRow}, s2, {StepT1}
+            s_mul_hi_u32 {StepRow}, {block}, {StepT1}
             s_mul_i32 {StepT2}, {StepRow}, {StepChunks}
-            s_sub_i32 {StepChunk}, s2, {StepT2}
+            s_sub_i32 {StepChunk}, {block}, {StepT2}
             s_add_u32 {StepT3}, {StepRow}, 1
             s_sub_i32 {StepT2}, {StepChunk}, {StepChunks}
             s_cmp_ge_u32 {StepChunk}, {StepChunks}
@@ -540,10 +611,10 @@ internal static partial class GcnKernels
         CvLines(w, $"""
             s_barrier
             s_cmp_lg_u32 {StepSlice}, 0
-            s_cbranch_scc1 {label}_done
+            s_cbranch_scc1 {end}
             v_cmp_gt_u32_e32 vcc, {h}, {Unit}
             s_and_saveexec_b64 {StepSaved}, vcc
-            s_cbranch_execz {label}_done
+            s_cbranch_execz {end}
             """);
         var totals = new string[terms];
         for (int g = 0; g < terms; g++)
@@ -565,12 +636,158 @@ internal static partial class GcnKernels
         CvLines(w, $"v_mov_b32_e32 {n}, {StepRow}");
         var context = Context(w, label + "_b", buffers, pointers, values, registers, gates, n, Unit);
         body(w, context, totals);
+    }
+
+    // Scalar registers of a sequence kernel's frame (its arguments take %s0 to %s19 at most; the step item's %s40 up).
+    private const string SeqGridItems = "%s20", SeqGrid = "%s21", SeqK = "%s22", SeqLast = "%s23", SeqItems = "%s24", SeqItem = "%s25", SeqStep = "%s26",
+        SeqPrevious = "%s27", SeqNext = "%s28", SeqFlags = "%s29", SeqT = "%s30", SeqT2 = "%s31", SeqGen = "%s32", SeqCount = "%s33", SeqSaved = "%s[34:35]",
+        SeqReverse = "%s36", SeqWave = "%s37";
+
+    /// <summary>The sequence kernels' flag bit: the steps taken from the last to the first (CUDA's PtxKernels.SequenceReverse).</summary>
+    internal const int SequenceReverse = 256;
+
+    // A sequence kernel (CUDA's lstm_seq_f32, gru_seq_f32 and their gradients, PtxKernels.RecurrentSequence): the step
+    // kernel's work for every step in one launch. Arguments: the step kernel's storages, the grid barrier (two words,
+    // arrivals and generation, arrivals 0 between launches), then steps, h, flags (the step kernel's bits 1 and 2 as given;
+    // SequenceReverse: the steps taken from the last; the bits of the previous and the later step set here) and batch. A
+    // step's items are the step kernel's blocks (row n, 64 units), item = n·⌈H/64⌉ + chunk; block b takes items b, b + grid,
+    // … in turn, so each item's sums are the step kernel's, in its order (the same bits). Between steps every block meets
+    // at the grid barrier: its stores completed and its waves met, thread 0 reads the generation and adds 1 to the arrivals
+    // (glc); the last to arrive resets them and advances the generation, the others wait for it to move (glc loads, past the
+    // compute unit's cache); then the scalar cache is dropped, so the next step's product reads the rows other blocks wrote
+    // from the L2. The host keeps the grid within what the device holds at once (HipBackend.Recurrent.cs).
+    private static GcnKernelSource RecurrentSequence(string name, string[] buffers, int gates, StepProduct product, bool backward,
+        Action<PointwiseWriter, RecurrentContext, string[]> body)
+    {
+        var w = new PointwiseWriter();
+        int dwords = 2 * buffers.Length + 2 + 4;
+        string[] pointers = [.. Enumerable.Range(0, buffers.Length).Select(b => TrainingText($"%s[{2 * b}:{2 * b + 1}]"))];
+        string barrier = TrainingText($"%s[{2 * buffers.Length}:{2 * buffers.Length + 1}]");
+        string steps = TrainingText($"%s{2 * buffers.Length + 2}"), h = TrainingText($"%s{2 * buffers.Length + 3}"),
+            baseFlags = TrainingText($"%s{2 * buffers.Length + 4}"), batch = TrainingText($"%s{2 * buffers.Length + 5}");
+        string[] names = ["step", "previous", "next", "steps", "h", "flags"];
+        string[] registers = [SeqStep, SeqPrevious, SeqNext, steps, h, SeqFlags];
+        string label = TrainingText($".L{name}");
+        var loop = new StringBuilder();
+        w.Into(loop);
         CvLines(w, $"""
-            {label}_done:
+            s_lshr_b32 {SeqGrid}, {SeqGridItems}, 8
+            s_add_u32 {SeqT}, {h}, 63
+            s_lshr_b32 {SeqT}, {SeqT}, 6
+            s_mul_i32 {SeqItems}, {batch}, {SeqT}
+            s_sub_u32 {SeqLast}, {steps}, 1
+            s_and_b32 {SeqReverse}, {baseFlags}, {SequenceReverse}
+            s_mov_b32 {SeqK}, 0
+            {label}_step:
+            s_sub_u32 {SeqT}, {SeqLast}, {SeqK}
+            """);
+
+        // The step taken k-th, its neighbours and flags. Forward: t = k (reverse: T-1-k), the previous step t∓1 when k > 0
+        // (flag 4). Backward, the steps from the last taken: t = T-1-k (reverse: k), the previous step t∓1 unless it is the
+        // first taken (flag 2), the later step t±1 unless it is the last taken (flag 4).
+        CvLines(w, backward
+            ? (FormattableString)$"""
+                s_cmp_lg_u32 {SeqReverse}, 0
+                s_cselect_b32 {SeqStep}, {SeqK}, {SeqT}
+                s_add_u32 {SeqT}, {SeqStep}, 1
+                s_sub_u32 {SeqT2}, {SeqStep}, 1
+                s_cmp_lg_u32 {SeqReverse}, 0
+                s_cselect_b32 {SeqPrevious}, {SeqT}, {SeqT2}
+                s_cselect_b32 {SeqNext}, {SeqT2}, {SeqT}
+                s_cmp_eq_u32 {SeqK}, {SeqLast}
+                s_cselect_b32 {SeqPrevious}, 0, {SeqPrevious}
+                s_cmp_eq_u32 {SeqK}, 0
+                s_cselect_b32 {SeqNext}, 0, {SeqNext}
+                s_and_b32 {SeqFlags}, {baseFlags}, 1
+                s_or_b32 {SeqT}, {SeqFlags}, 2
+                s_cmp_eq_u32 {SeqK}, {SeqLast}
+                s_cselect_b32 {SeqFlags}, {SeqFlags}, {SeqT}
+                s_or_b32 {SeqT}, {SeqFlags}, 4
+                s_cmp_eq_u32 {SeqK}, 0
+                s_cselect_b32 {SeqFlags}, {SeqFlags}, {SeqT}
+                """
+            : $"""
+                s_cmp_lg_u32 {SeqReverse}, 0
+                s_cselect_b32 {SeqStep}, {SeqT}, {SeqK}
+                s_add_u32 {SeqT}, {SeqStep}, 1
+                s_sub_u32 {SeqT2}, {SeqStep}, 1
+                s_cmp_lg_u32 {SeqReverse}, 0
+                s_cselect_b32 {SeqPrevious}, {SeqT}, {SeqT2}
+                s_cmp_eq_u32 {SeqK}, 0
+                s_cselect_b32 {SeqPrevious}, 0, {SeqPrevious}
+                s_mov_b32 {SeqNext}, 0
+                s_and_b32 {SeqFlags}, {baseFlags}, 3
+                s_or_b32 {SeqT}, {SeqFlags}, 4
+                s_cmp_eq_u32 {SeqK}, 0
+                s_cselect_b32 {SeqFlags}, {SeqFlags}, {SeqT}
+                """);
+
+        // The block's items of this step, each the step kernel's block; after each, EXEC full again and the block's waves
+        // meet (the item's LDS read before the next item writes it, its stores done).
+        CvLines(w, $"""
+            s_mov_b32 {SeqItem}, s4
+            {label}_item:
+            s_cmp_ge_u32 {SeqItem}, {SeqItems}
+            s_cbranch_scc1 {label}_step_end
+            """);
+        StepItem(w, label, SeqItem, TrainingText($"{label}_item_end"), buffers, pointers, names, registers, gates, product, body);
+        string at = w.V(), one = w.V(), old = w.V(), seen = w.V(), zero = w.V();
+        CvLines(w, $"""
+            {label}_item_end:
+            s_mov_b64 exec, -1
+            s_waitcnt vmcnt(0)
+            s_barrier
+            s_add_u32 {SeqItem}, {SeqItem}, {SeqGrid}
+            s_branch {label}_item
+            {label}_step_end:
+            s_cmp_ge_u32 {SeqK}, {SeqLast}
+            s_cbranch_scc1 {label}_exit
+            s_waitcnt vmcnt(0)
+            s_barrier
+            v_readfirstlane_b32 {SeqWave}, v0
+            s_lshr_b32 {SeqWave}, {SeqWave}, 6
+            s_cmp_lg_u32 {SeqWave}, 0
+            s_cbranch_scc1 {label}_passed
+            v_mov_b32_e32 {at}, 0
+            v_mov_b32_e32 {one}, 1
+            v_mov_b32_e32 {old}, 0
+            v_mov_b32_e32 {seen}, 0
+            v_mov_b32_e32 {zero}, 0
+            v_cmp_eq_u32_e32 vcc, 0, v0
+            s_and_saveexec_b64 {SeqSaved}, vcc
+            global_load_dword {seen}, {at}, {barrier} offset:4 glc
+            s_waitcnt vmcnt(0)
+            global_atomic_add {old}, {at}, {one}, {barrier} glc
+            s_waitcnt vmcnt(0)
+            s_or_b64 exec, exec, {SeqSaved}
+            v_readfirstlane_b32 {SeqGen}, {seen}
+            v_readfirstlane_b32 {SeqCount}, {old}
+            s_add_u32 {SeqCount}, {SeqCount}, 1
+            s_cmp_lg_u32 {SeqCount}, {SeqGrid}
+            s_cbranch_scc1 {label}_wait
+            s_and_saveexec_b64 {SeqSaved}, vcc
+            global_store_dword {at}, {zero}, {barrier}
+            s_waitcnt vmcnt(0)
+            global_atomic_add {old}, {at}, {one}, {barrier} offset:4 glc
+            s_waitcnt vmcnt(0)
+            s_or_b64 exec, exec, {SeqSaved}
+            s_branch {label}_passed
+            {label}_wait:
+            s_sleep 1
+            global_load_dword {seen}, {at}, {barrier} offset:4 glc
+            s_waitcnt vmcnt(0)
+            v_readfirstlane_b32 {SeqT2}, {seen}
+            s_cmp_eq_u32 {SeqT2}, {SeqGen}
+            s_cbranch_scc1 {label}_wait
+            {label}_passed:
+            s_barrier
+            s_dcache_inv
+            s_add_u32 {SeqK}, {SeqK}, 1
+            s_branch {label}_step
+            {label}_exit:
               s_endpgm
             """);
 
-        // The head: directives, the arguments, then the held lines.
         var text = new StringBuilder();
         text.Append(CultureInfo.InvariantCulture, $".kernel {name}\n");
         foreach (string buffer in buffers)
@@ -578,28 +795,22 @@ internal static partial class GcnKernels
             text.Append(CultureInfo.InvariantCulture, $".arg {buffer}, 8, global\n");
         }
 
-        foreach (string value in values)
-        {
-            text.Append(CultureInfo.InvariantCulture, $".arg {value}, 4, value\n");
-        }
-
         text.Append(CultureInfo.InvariantCulture, $"""
+            .arg barrier, 8, global
+            .arg steps, 4, value
+            .arg h, 4, value
+            .arg flags, 4, value
+            .arg batch, 4, value
             .reqd_workgroup_size {RowThreads}, 1, 1
-            .lds {StepSlices * terms * StepUnits * 4}
+            .lds {StepSlices * product.Terms * StepUnits * 4}
+            .user_sgpr dispatch_ptr
             .user_sgpr kernarg_segment_ptr
             .system_sgpr workgroup_id_x
+              s_load_dword {SeqGridItems}, s[0:1], 0xc
 
             """);
-        for (int at = 0; at < dwords;)
-        {
-            int size = dwords - at >= 8 ? 8 : dwords - at >= 4 ? 4 : dwords - at >= 2 ? 2 : 1;
-            text.Append(size == 1
-                ? TrainingText($"  s_load_dword %s{at}, s[0:1], 0x{4 * at:x}\n")
-                : TrainingText($"  s_load_dwordx{size} %s[{at}:{at + size - 1}], s[0:1], 0x{4 * at:x}\n"));
-            at += size;
-        }
-
-        text.Append(w.Held).Append(body1);
+        AppendArgumentLoads(text, dwords, "s[2:3]");
+        text.Append(w.Held).Append(loop);
         return new GcnKernelSource(name, Encoding.UTF8.GetBytes(text.ToString()));
     }
 }
