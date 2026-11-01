@@ -422,3 +422,11 @@ s_cbranch_scc0 lane_loop
 s_cbranch_execnz else_part
 v_cvt_f64_f32_e32 v[1:2], v3
 s_endpgm
+s_waitcnt_vscnt null, 0x0
+s_waitcnt_vscnt null, 0x3f
+global_load_b32 v0, v[2:3], off glc dlc
+global_load_b32 v0, v1, s[2:3] offset:-64 glc dlc
+s_delay_alu instid0(VALU_DEP_1)
+s_delay_alu instid0(VALU_DEP_2) | instskip(NEXT) | instid1(SALU_CYCLE_1)
+s_delay_alu instid0(TRANS32_DEP_1)
+s_delay_alu instid0(VALU_DEP_4)

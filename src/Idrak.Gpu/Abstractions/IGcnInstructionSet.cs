@@ -136,6 +136,12 @@ internal enum GcnOp : ushort
     SSetGprIdxOff,
     SNop,
     SWaitcnt,
+
+    /// <summary>s_waitcnt_vscnt (gfx10 and later, SOPK): waits on the vector stores' counter.</summary>
+    SWaitcntVscnt,
+
+    /// <summary>s_delay_alu (gfx11 and later): how long the next ALU instructions wait for the ones they depend on.</summary>
+    SDelayAlu,
     SBarrier,
     SSleep,
     SSetprio,
@@ -727,6 +733,9 @@ internal enum GcnRole : byte
 
     /// <summary>An accumulation register source.</summary>
     AccumulationSource,
+
+    /// <summary>s_delay_alu's dependencies: instid0(...) | instskip(...) | instid1(...).</summary>
+    DelayAlu,
 }
 
 /// <summary>
@@ -801,6 +810,7 @@ internal readonly struct GcnSignature
                 ('l', true, _) => GcnRole.Literal32,
                 ('g', true, _) => GcnRole.GprIndex,
                 ('w', true, _) => GcnRole.WaitCounts,
+                ('a', true, _) => GcnRole.DelayAlu,
                 ('j', true, _) => GcnRole.Target,
                 ('b', true, _) => GcnRole.MemoryBase,
                 ('o', true, _) => GcnRole.MemoryOffset,
@@ -969,6 +979,9 @@ internal enum GcnSpecial : byte
     /// <summary>No scalar address in a global instruction (off): the vector address is 64-bit.</summary>
     Off,
 
+    /// <summary>The register that reads 0 and drops writes (null, gfx10 and later): s_waitcnt_vscnt's register.</summary>
+    Null,
+
     /// <summary>The scratch base, a register pair (flat_scratch).</summary>
     FlatScratch,
 
@@ -1035,6 +1048,9 @@ internal enum GcnMemoryClass : byte
 
     /// <summary>Scalar memory (SMEM): loads, stores, cache operations, the clocks.</summary>
     Scalar,
+
+    /// <summary>A global store, or an atomic without a return, where the family counts stores apart (gfx10's vscnt); elsewhere a <see cref="Vector"/> operation.</summary>
+    VectorStore,
 }
 
 /// <summary>A family's wait counters (s_waitcnt's fields).</summary>
@@ -1052,6 +1068,9 @@ internal enum GcnCounter : byte
 
     /// <summary>expcnt: exports, and the data registers of GDS operations until they are read.</summary>
     Exp = 4,
+
+    /// <summary>The vector stores' counter (vscnt, gfx10 and later): global stores and atomics without a return.</summary>
+    Vs = 8,
 }
 
 /// <summary>

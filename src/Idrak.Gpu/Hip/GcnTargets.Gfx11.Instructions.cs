@@ -50,6 +50,7 @@ public static partial class GcnTargets
             Row(GcnOp.SCselectB64, "s_cselect_b64", Sop2, 0x31, "d2 s2 s2"),
             // SOPK: a 16-bit constant
             Row(GcnOp.SMovkI32, "s_movk_i32", Sopk, 0x00, "d k"),
+            Row(GcnOp.SWaitcntVscnt, "s_waitcnt_vscnt", Sopk, 0x18, "s1 k"),
             // SOPC: scalar compares
             Row(GcnOp.SCmpEqU32, "s_cmp_eq_u32", Sopc, 0x06, "s1 s1"),
             Row(GcnOp.SCmpLgU32, "s_cmp_lg_u32", Sopc, 0x07, "s1 s1"),
@@ -64,6 +65,7 @@ public static partial class GcnTargets
             // SOPP: program control
             Row(GcnOp.SNop, "s_nop", Sopp, 0x00, "k"),
             Row(GcnOp.SWaitcnt, "s_waitcnt", Sopp, 0x09, "w"),
+            Row(GcnOp.SDelayAlu, "s_delay_alu", Sopp, 0x07, "a"),
             Row(GcnOp.SBarrier, "s_barrier", Sopp, 0x3D, ""),
             Row(GcnOp.SBranch, "s_branch", Sopp, 0x20, "j"),
             Row(GcnOp.SCbranchScc0, "s_cbranch_scc0", Sopp, 0x21, "j"),

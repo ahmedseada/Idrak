@@ -79,7 +79,7 @@ internal sealed partial class GcnAssembler
         public byte Kind;
     }
 
-    private const byte RowItem = 0, RowWait = 1, RowNop = 2;
+    private const byte RowItem = 0, RowWait = 1, RowNop = 2, RowWaitStores = 3;
 
     // How an instruction touches one of its operands.
     [Flags]
@@ -121,6 +121,9 @@ internal sealed partial class GcnAssembler
     private Operands _written;
 
     private GcnInstruction _waitIns = null!, _nopIns = null!;
+
+    // s_waitcnt_vscnt, where the family counts stores apart (gfx10 and later); null elsewhere.
+    private GcnInstruction? _storeWaitIns;
 
     /// <summary>
     /// Assembles one kernel's text (UTF-8; see the class remarks): the code with physical registers, waits and wait
@@ -264,6 +267,9 @@ internal sealed partial class GcnAssembler
         RentWaitBuffers();
         _waitIns = _set.Find(GcnOp.SWaitcnt) ?? throw new NotSupportedException($"The GCN family {_family} has no s_waitcnt.");
         _nopIns = _set.Find(GcnOp.SNop) ?? throw new NotSupportedException($"The GCN family {_family} has no s_nop.");
+        _storeWaitIns = _countsStores
+            ? _set.Find(GcnOp.SWaitcntVscnt) ?? throw new NotSupportedException($"The GCN family {_family} counts stores apart but has no s_waitcnt_vscnt.")
+            : null;
     }
 
     private void ReturnKernelBuffers()
@@ -771,11 +777,14 @@ internal sealed partial class GcnAssembler
 
     private static bool ReadsM0(GcnInstruction ins, in Modifiers m) => (ins.Format == GcnFormat.Ds && m.Gds) || ins.Op is GcnOp.DsAppend or GcnOp.DsConsume;
 
+    // A global store, or an atomic without its return, is a store (counted apart where the family does: gfx10's vscnt).
     private static GcnMemoryClass MemoryOf(GcnInstruction ins, in Modifiers m) => ins.Format switch
     {
         GcnFormat.Smem => GcnMemoryClass.Scalar,
         GcnFormat.Ds => m.Gds ? GcnMemoryClass.Gds : GcnMemoryClass.Lds,
-        GcnFormat.Global => GcnMemoryClass.Vector,
+        GcnFormat.Global => ins.Operands.IndexOf(GcnRole.VectorDestination) < 0 || ins.Has(GcnInstructionFlags.Atomic) && !m.Glc
+            ? GcnMemoryClass.VectorStore
+            : GcnMemoryClass.Vector,
         GcnFormat.Flat => GcnMemoryClass.Flat,
         _ => GcnMemoryClass.None,
     };
@@ -852,6 +861,12 @@ internal sealed partial class GcnAssembler
                     break;
                 case RowNop:
                     Begin(_nopIns, GcnVariant.Auto, typed: false);
+                    Add(GcnOperand.Immediate(row.Value));
+                    _line = _items[row.Item].Line;
+                    break;
+                case RowWaitStores:
+                    Begin(_storeWaitIns!, GcnVariant.Auto, typed: false);
+                    Add(GcnOperand.Special(GcnSpecial.Null));
                     Add(GcnOperand.Immediate(row.Value));
                     _line = _items[row.Item].Line;
                     break;

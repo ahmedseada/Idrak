@@ -259,6 +259,8 @@ internal sealed partial class GcnAssembler
         {
             case GcnRole.WaitCounts:
                 return ParseWaitCounts(line, at);
+            case GcnRole.DelayAlu:
+                return ParseDelayAlu(line, at);
             case GcnRole.HardwareRegister:
                 return ParseHardwareRegister(line, at);
             case GcnRole.GprIndex:
@@ -482,6 +484,7 @@ internal sealed partial class GcnAssembler
             "exec_hi" => GcnSpecial.ExecHi,
             "m0" => GcnSpecial.M0,
             "off" => GcnSpecial.Off,
+            "null" => GcnSpecial.Null,
             "flat_scratch" => GcnSpecial.FlatScratch,
             "flat_scratch_lo" => GcnSpecial.FlatScratchLo,
             "flat_scratch_hi" => GcnSpecial.FlatScratchHi,
@@ -716,6 +719,83 @@ internal sealed partial class GcnAssembler
     // ---------------------------------------------------------------------------------------------------------------
 
     // vmcnt(n) expcnt(n) lgkmcnt(n), split by spaces, '&' or ','; a counter not named is not waited on. Or the 16 bits.
+    // s_delay_alu's dependencies, '|' between them: instid0 at 3:0, instskip at 6:4, instid1 at 10:7 (or the 16 bits).
+    private int ParseDelayAlu(ReadOnlySpan<byte> line, int at)
+    {
+        if (IsNumberStart(line, at))
+        {
+            int end = ParseNumber(line, at, out bool isFloat, out long integer, out _);
+            if (isFloat || integer is < 0 or > ushort.MaxValue)
+            {
+                throw Syntax(at, "s_delay_alu's 16 bits are 0 to 65535");
+            }
+
+            Add(GcnOperand.Immediate((int)integer));
+            return end;
+        }
+
+        int bits = 0, named = 0;
+        while (true)
+        {
+            at = SkipSpaces(line, at);
+            int name = NameEnd(line, at);
+            if (name == at || name >= line.Length || line[name] != (byte)'(')
+            {
+                break;
+            }
+
+            ReadOnlySpan<byte> field = line[at..name];
+            int which = field.SequenceEqual("instid0"u8) ? 0 : field.SequenceEqual("instskip"u8) ? 1 : field.SequenceEqual("instid1"u8) ? 2 : -1;
+            if (which < 0 || (named >> which & 1) != 0)
+            {
+                throw Syntax(at, which < 0 ? $"'{Text(field)}' is not a field of s_delay_alu (instid0, instskip, instid1)" : $"{Text(field)} is named twice");
+            }
+
+            int open = SkipSpaces(line, name + 1), close = NameEnd(line, open);
+            int value = DelayValue(line[open..close], which == 1);
+            if (value < 0)
+            {
+                throw Syntax(open, which == 1 ? "instskip is SAME, NEXT or SKIP_1 to SKIP_4" : $"{Text(field)} is NO_DEP, VALU_DEP_1-4, TRANS32_DEP_1-3, FMA_ACCUM_CYCLE_1 or SALU_CYCLE_1-3");
+            }
+
+            named |= 1 << which;
+            bits |= which switch { 0 => value, 1 => value << 4, _ => value << 7 };
+            at = SkipSpaces(line, Expect(line, SkipSpaces(line, close), (byte)')'));
+            if (at < line.Length && line[at] == (byte)'|')
+            {
+                at++;
+            }
+        }
+
+        if (named == 0)
+        {
+            throw Syntax(at, "s_delay_alu names instid0(...), instskip(...) or instid1(...), or takes their 16 bits");
+        }
+
+        Add(GcnOperand.Immediate(bits));
+        return at;
+    }
+
+    // An s_delay_alu field's value by name (LLVM's): the dependencies, or instskip's counts; -1 for another name.
+    private static int DelayValue(ReadOnlySpan<byte> name, bool skip)
+    {
+        ReadOnlySpan<string> names = skip ? DelaySkips : DelayIds;
+        for (int i = 0; i < names.Length; i++)
+        {
+            if (name.Length == names[i].Length && Ascii.Equals(name, names[i]))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    internal static readonly string[] DelayIds =
+        ["NO_DEP", "VALU_DEP_1", "VALU_DEP_2", "VALU_DEP_3", "VALU_DEP_4", "TRANS32_DEP_1", "TRANS32_DEP_2", "TRANS32_DEP_3", "FMA_ACCUM_CYCLE_1", "SALU_CYCLE_1", "SALU_CYCLE_2", "SALU_CYCLE_3"];
+
+    internal static readonly string[] DelaySkips = ["SAME", "NEXT", "SKIP_1", "SKIP_2", "SKIP_3", "SKIP_4"];
+
     private int ParseWaitCounts(ReadOnlySpan<byte> line, int at)
     {
         if (IsNumberStart(line, at))
@@ -1008,6 +1088,7 @@ internal sealed partial class GcnAssembler
             bool allowed = key switch
             {
                 "glc" => format is GcnFormat.Smem or GcnFormat.Flat or GcnFormat.Global,
+                "dlc" => format is GcnFormat.Smem or GcnFormat.Flat or GcnFormat.Global && _encoding != GcnEncoding.Isa9,
                 "slc" => format is GcnFormat.Flat or GcnFormat.Global,
                 "gds" or "offset0" or "offset1" => format == GcnFormat.Ds,
                 "offset" => memory,
@@ -1023,7 +1104,7 @@ internal sealed partial class GcnAssembler
                 throw Syntax(start, $"{_ins.Mnemonic}{SuffixText(_variant)} takes no {Text(name)}");
             }
 
-            bool flag = key is "glc" or "slc" or "gds" or "clamp" or "row_mirror" or "row_half_mirror";
+            bool flag = key is "glc" or "slc" or "dlc" or "gds" or "clamp" or "row_mirror" or "row_half_mirror";
             if (flag == valued)
             {
                 throw Syntax(start, flag ? $"{Text(name)} takes no value" : $"{Text(name)} takes a value ({Text(name)}:...)");
@@ -1033,6 +1114,9 @@ internal sealed partial class GcnAssembler
             {
                 case "glc":
                     _m.Glc = true;
+                    break;
+                case "dlc":
+                    _m.Dlc = true;
                     break;
                 case "slc":
                     _m.Slc = true;
@@ -1376,6 +1460,7 @@ internal sealed partial class GcnAssembler
         GcnRole.HardwareRegister => "hwreg(...)",
         GcnRole.GprIndex => "gpr_idx(...)",
         GcnRole.WaitCounts => "the counts",
+        GcnRole.DelayAlu => "the dependencies",
         GcnRole.Target => "a label",
         GcnRole.MemoryBase => "the base registers",
         GcnRole.MemoryOffset => "the offset",

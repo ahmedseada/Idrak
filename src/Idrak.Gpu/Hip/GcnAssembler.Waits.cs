@@ -13,20 +13,23 @@ namespace Idrak.Gpu.Hip;
 // the score of the operation that writes it. Counters that complete in order wait for just the operations up to that
 // one (vmcnt(1) when one newer is in flight); a counter with an operation that completes out of order in flight (SMEM,
 // FLAT), or two classes mixed, waits to 0. s_barrier waits for every counter first where the family's barrier does not.
+// Where the family counts stores apart (gfx10 and later: vscnt), they wait by s_waitcnt_vscnt null, n: their data
+// registers are read at issue, so only a barrier (or the text's own wait) waits for them.
 // Across blocks the state at a block's start merges its predecessors' (the most in flight, each register's newest
 // pending write), to a fixed point over loops; the hazards (GcnAssembler.Hazards.cs) are walked alongside, so the
 // wait states count the waits placed.
 internal sealed partial class GcnAssembler
 {
-    private const int Counters = 3, Classes = 8;
+    private const int Counters = 4, Classes = 8;
     private const int CounterBytes = 400, WaitBytes = Counters * CounterBytes, StateBytes = WaitBytes + HazardBytes;
     private const byte Seen = 1, Dirty = 2;
 
-    // Counter 0 vmcnt, 1 lgkmcnt, 2 expcnt.
+    // Counter 0 vmcnt, 1 lgkmcnt, 2 expcnt, 3 vscnt (the stores' counter, where the family has one).
     private readonly int[] _score = new int[Counters * RegisterSpace];
     private readonly int[] _classScore = new int[Counters * Classes];
     private readonly int[] _ub = new int[Counters], _lb = new int[Counters], _limit = new int[Counters], _need = new int[Counters];
     private readonly GcnCounting[] _counting = new GcnCounting[Classes];
+    private bool _countsStores;
 
     // The physical registers the instruction being walked reads and writes (scalar codes, VGPRs at 128 + n).
     private readonly int[] _reads = new int[256], _writes = new int[256];
@@ -44,8 +47,17 @@ internal sealed partial class GcnAssembler
         _limit[2] = _set.CounterLimit(GcnCounter.Exp);
         for (int c = 0; c < Classes; c++)
         {
-            _counting[c] = c <= (int)GcnMemoryClass.Scalar ? _set.Counting((GcnMemoryClass)c) : default;
+            _counting[c] = c <= (int)GcnMemoryClass.VectorStore ? _set.Counting((GcnMemoryClass)c) : default;
         }
+
+        // A family that counts no class on vscnt counts its stores as the other vector operations (gfx9: on vmcnt).
+        _countsStores = (_counting[(int)GcnMemoryClass.VectorStore].Counters & GcnCounter.Vs) != 0;
+        if (!_countsStores)
+        {
+            _counting[(int)GcnMemoryClass.VectorStore] = _counting[(int)GcnMemoryClass.Vector];
+        }
+
+        _limit[3] = _countsStores ? _set.CounterLimit(GcnCounter.Vs) : 1;
 
         for (int h = 0; h < _hazardStates.Length; h++)
         {
@@ -143,16 +155,31 @@ internal sealed partial class GcnAssembler
                 _need[0] = vm < _limit[0] ? vm : -1;
                 _need[1] = lgkm < _limit[1] ? lgkm : -1;
                 _need[2] = exp < _limit[2] ? exp : -1;
+                _need[3] = -1;
+                ApplyWait();
+            }
+            else if (item.Ins.Op == GcnOp.SWaitcntVscnt)
+            {
+                int vs = (int)_itemOps[item.First + 1].Value;
+                _need[0] = _need[1] = _need[2] = -1;
+                _need[3] = vs < _limit[3] ? vs : -1;
                 ApplyWait();
             }
             else if (WaitNeeded(item))
             {
+                bool counts = _need[0] >= 0 || _need[1] >= 0 || _need[2] >= 0, stores = _need[3] >= 0;
                 ushort bits = _set.WaitBits(_need[0] < 0 ? _limit[0] : _need[0], _need[2] < 0 ? _limit[2] : _need[2], _need[1] < 0 ? _limit[1] : _need[1]);
+                ushort storeCount = (ushort)Math.Max(0, _need[3]);
                 ApplyWait();
-                HazardAdvance(1);
-                if (emit)
+                HazardAdvance((counts ? 1 : 0) + (stores ? 1 : 0));
+                if (emit && counts)
                 {
                     AddRow(k, RowWait, bits);
+                }
+
+                if (emit && stores)
+                {
+                    AddRow(k, RowWaitStores, storeCount);
                 }
             }
 
@@ -262,7 +289,7 @@ internal sealed partial class GcnAssembler
     // The counts a wait before the instruction needs, in _need (-1: not waited on); false when it needs none.
     private bool WaitNeeded(in Item item)
     {
-        _need[0] = _need[1] = _need[2] = 0;
+        _need[0] = _need[1] = _need[2] = _need[3] = 0;
         for (int n = 0; n < _readCount; n++)
         {
             Pending(_reads[n], counters: 2);
@@ -352,10 +379,15 @@ internal sealed partial class GcnAssembler
             return;
         }
 
-        var counting = _counting[(int)cls];
-        for (int c = 0; c < 2; c++)
+        if (cls == GcnMemoryClass.VectorStore && !_countsStores)
         {
-            if ((counting.Counters & (c == 0 ? GcnCounter.Vm : GcnCounter.Lgkm)) == 0)
+            cls = GcnMemoryClass.Vector;   // one class with the loads, so a counted wait stays counted (vmcnt(1))
+        }
+
+        var counting = _counting[(int)cls];
+        foreach (int c in (ReadOnlySpan<int>)[0, 1, 3])
+        {
+            if ((counting.Counters & (c switch { 0 => GcnCounter.Vm, 1 => GcnCounter.Lgkm, _ => GcnCounter.Vs })) == 0)
             {
                 continue;
             }

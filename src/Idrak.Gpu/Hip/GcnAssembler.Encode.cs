@@ -201,6 +201,7 @@ internal readonly record struct GcnOperand
     internal static string SpecialName(GcnSpecial register) => register switch
     {
         GcnSpecial.Vcc => "vcc",
+        GcnSpecial.Null => "null",
         GcnSpecial.VccLo => "vcc_lo",
         GcnSpecial.VccHi => "vcc_hi",
         GcnSpecial.Exec => "exec",
@@ -556,7 +557,7 @@ internal sealed partial class GcnAssembler : IDisposable
     // An instruction's modifiers, as written (defaults: no offset, masks 0xF, SDWA's DWORD and UNUSED_PRESERVE).
     private struct Modifiers
     {
-        public bool Clamp, Glc, Slc, Gds, BoundCtrl, Swizzle;
+        public bool Clamp, Glc, Slc, Dlc, Gds, BoundCtrl, Swizzle;
         public int Omod;
         public int OpSel, OpSelCount, OpSelHi, OpSelHiGiven, NegLo, NegHi;
         public int Offset, Offset0, Offset1;
@@ -821,10 +822,11 @@ internal sealed partial class GcnAssembler : IDisposable
             return;
         }
 
-        // ISA 10 and 11: 0xF4000000, the opcode at 25:18, GLC at 16 (ISA 11: 14), SDATA at 12:6, SBASE at 5:0; then the
+        // ISA 10 and 11: 0xF4000000, the opcode at 25:18, GLC at 16 and DLC at 14 (ISA 11: 14 and 13), SDATA at 12:6, SBASE at 5:0; then the
         // immediate offset at 20:0 and SOFFSET at 31:25 (null where the offset is immediate, the offset 0 where it is a register).
-        uint glc = _m.Glc ? 1u << (_encoding == GcnEncoding.Isa11 ? 14 : 16) : 0;
-        Word(0xF4000000 | (uint)_ins.Code << 18 | glc | (uint)data << 6 | (uint)sbase);
+        bool isa11 = _encoding == GcnEncoding.Isa11;
+        uint cache = (_m.Glc ? 1u << (isa11 ? 14 : 16) : 0) | (_m.Dlc ? 1u << (isa11 ? 13 : 14) : 0);
+        Word(0xF4000000 | (uint)_ins.Code << 18 | cache | (uint)data << 6 | (uint)sbase);
         Word(imm ? (uint)_set.Special(GcnSpecial.Off) << 25 | offsetWord : offsetWord << 25);
     }
 
@@ -1578,10 +1580,10 @@ internal sealed partial class GcnAssembler : IDisposable
 
         uint field = (uint)offset & ((1u << bits) - 1);
         Word(_encoding == GcnEncoding.Isa11
-            // ISA 11: OFFSET at 12:0, GLC 14, SLC 15, SEG at 17:16.
-            ? 0xDC000000 | (uint)ins.Code << 18 | (global ? 2u << 16 : 0) | (_m.Slc ? 1u << 15 : 0) | (_m.Glc ? 1u << 14 : 0) | field
+            // ISA 11: OFFSET at 12:0, DLC 13, GLC 14, SLC 15, SEG at 17:16.
+            ? 0xDC000000 | (uint)ins.Code << 18 | (global ? 2u << 16 : 0) | (_m.Slc ? 1u << 15 : 0) | (_m.Glc ? 1u << 14 : 0) | (_m.Dlc ? 1u << 13 : 0) | field
             // ISA 9 and 10: OFFSET at 12:0 (ISA 10: 11:0, DLC at 12), SEG at 15:14, GLC 16, SLC 17.
-            : 0xDC000000 | (uint)ins.Code << 18 | (_m.Slc ? 1u << 17 : 0) | (_m.Glc ? 1u << 16 : 0) | (global ? 2u << 14 : 0) | field);
+            : 0xDC000000 | (uint)ins.Code << 18 | (_m.Slc ? 1u << 17 : 0) | (_m.Glc ? 1u << 16 : 0) | (global ? 2u << 14 : 0) | (_m.Dlc ? 1u << 12 : 0) | field);
         Word((uint)vdst << 24 | (uint)saddr << 16 | (uint)data << 8 | (uint)addr);
     }
 
@@ -1641,7 +1643,7 @@ internal sealed partial class GcnAssembler : IDisposable
     }
 
     private static bool IsRegister(GcnSpecial special) => special is GcnSpecial.Vcc or GcnSpecial.VccLo or GcnSpecial.VccHi or GcnSpecial.Exec or GcnSpecial.ExecLo
-        or GcnSpecial.ExecHi or GcnSpecial.M0 or GcnSpecial.FlatScratch or GcnSpecial.FlatScratchLo or GcnSpecial.FlatScratchHi or GcnSpecial.XnackMask
+        or GcnSpecial.ExecHi or GcnSpecial.M0 or GcnSpecial.Null or GcnSpecial.FlatScratch or GcnSpecial.FlatScratchLo or GcnSpecial.FlatScratchHi or GcnSpecial.XnackMask
         or GcnSpecial.XnackMaskLo or GcnSpecial.XnackMaskHi;
 
     // An immediate field's value, from lowest to highest.

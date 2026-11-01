@@ -422,3 +422,7 @@ s_cbranch_scc0 lane_loop
 s_cbranch_execnz else_part
 v_cvt_f64_f32_e32 v[1:2], v3
 s_endpgm
+s_waitcnt_vscnt null, 0x0
+s_waitcnt_vscnt null, 0x3f
+global_load_dword v0, v[2:3], off glc dlc
+global_load_dword v0, v1, s[2:3] offset:-64 glc dlc

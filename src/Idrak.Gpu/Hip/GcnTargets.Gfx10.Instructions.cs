@@ -49,6 +49,7 @@ public static partial class GcnTargets
             Row(GcnOp.SCselectB64, "s_cselect_b64", Sop2, 0x0B, "d2 s2 s2"),
             // SOPK: a 16-bit constant
             Row(GcnOp.SMovkI32, "s_movk_i32", Sopk, 0x00, "d k"),
+            Row(GcnOp.SWaitcntVscnt, "s_waitcnt_vscnt", Sopk, 0x17, "s1 k"),
             // SOPC: scalar compares
             Row(GcnOp.SCmpEqU32, "s_cmp_eq_u32", Sopc, 0x06, "s1 s1"),
             Row(GcnOp.SCmpLgU32, "s_cmp_lg_u32", Sopc, 0x07, "s1 s1"),

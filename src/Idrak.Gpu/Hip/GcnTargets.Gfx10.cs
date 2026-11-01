@@ -15,7 +15,7 @@ public static partial class GcnTargets
     /// The gfx10 family: ISA 10.1.x and 10.3.x (RDNA 1 and 2), run by Idrak's kernels in waves of 64. Its encodings are
     /// ISA 10's (<see cref="GcnEncoding.Isa10"/>), its instructions those of the table below.
     /// </summary>
-    private sealed partial class Gfx10 : Rdna
+    private sealed partial class Gfx10 : Gfx10And11
     {
         public override string Family => "gfx10";
 
@@ -59,7 +59,7 @@ public static partial class GcnTargets
     /// eights of registers, no scalar blocks, the mode bits. The occupancy follows LLVM 18's AMDGPUBaseInfo (20 waves a
     /// SIMD, the vector file and its allocation granule by wave size; scalar registers do not bound it on ISA 10 and later).
     /// </summary>
-    private abstract class Rdna : IGcnTarget, IGcnInstructionSet
+    private abstract class Gfx10And11 : IGcnTarget, IGcnInstructionSet
     {
         // COMPUTE_PGM_RSRC1: DX10_CLAMP (21) and IEEE_MODE (23), as on gfx9, and MEM_ORDERED (30). WGP_MODE (29) is off:
         // a workgroup runs on one compute unit (LLVM's cumode), so its waves share one L0 cache and LDS as on gfx9, and the
@@ -144,7 +144,7 @@ public static partial class GcnTargets
             GcnSpecial.Execz => 252,
             GcnSpecial.Scc => 253,
             GcnSpecial.LdsDirect => 254,
-            GcnSpecial.Off => Null,
+            GcnSpecial.Off or GcnSpecial.Null => Null,
             _ => throw new ArgumentOutOfRangeException(nameof(register), register, $"Not a special register the {Family} family encodes (it has no flat scratch or xnack mask among its scalar registers)."),
         };
 
@@ -165,9 +165,13 @@ public static partial class GcnTargets
 
         public int Ttmp(int index) => (uint)index < 16 ? 108 + index : throw new ArgumentOutOfRangeException(nameof(index), index, $"{Family} has ttmp0 to ttmp15.");
 
-        public virtual GcnCounting Counting(GcnMemoryClass memory) => memory switch
+        // The wait counters (ISA 10 and 11): vmcnt counts the vector loads (and atomics with a return) in order, vscnt the
+        // stores and atomics without one, in order (LLVM 18's SIInsertWaitcnts: s_waitcnt_vscnt null, n for them); lgkmcnt
+        // LDS in order and scalar memory out of order, as on gfx9.
+        public GcnCounting Counting(GcnMemoryClass memory) => memory switch
         {
             GcnMemoryClass.Vector => new(GcnCounter.Vm, InOrder: true),
+            GcnMemoryClass.VectorStore => new(GcnCounter.Vs, InOrder: true),
             GcnMemoryClass.Flat => new(GcnCounter.Vm | GcnCounter.Lgkm, InOrder: false),
             GcnMemoryClass.Lds => new(GcnCounter.Lgkm, InOrder: true),
             GcnMemoryClass.Gds => new(GcnCounter.Lgkm, InOrder: true, DataLock: GcnCounter.Exp),
@@ -180,7 +184,8 @@ public static partial class GcnTargets
             GcnCounter.Vm => 63,
             GcnCounter.Lgkm => 63,
             GcnCounter.Exp => 7,
-            _ => throw new ArgumentOutOfRangeException(nameof(counter), counter, "One counter: vmcnt, lgkmcnt or expcnt."),
+            GcnCounter.Vs => 63,
+            _ => throw new ArgumentOutOfRangeException(nameof(counter), counter, "One counter: vmcnt, lgkmcnt, expcnt or vscnt."),
         };
 
         public abstract ushort WaitBits(int vmcnt, int expcnt, int lgkmcnt);

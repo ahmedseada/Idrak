@@ -7,13 +7,13 @@
 # such CPU's records are one block of its own. The wave64 forms are those Idrak's kernels emit; a form's wave32
 # spelling follows it in forms.s, and each wave size lists the other's lines among those it rejects.
 #
-# gfx11/forms.s: 414 instruction lines. CPUs: gfx1100-w32, gfx1100-w64, gfx1102-w32, gfx1102-w64.
-# gfx1100-w32: 372 forms, 42 rejected
-# gfx1100-w64: 414 forms, 0 rejected
-# gfx1102-w32: 372 forms, 42 rejected
-# gfx1102-w64: 414 forms, 0 rejected
+# gfx11/forms.s: 422 instruction lines. CPUs: gfx1100-w32, gfx1100-w64, gfx1102-w32, gfx1102-w64.
+# gfx1100-w32: 380 forms, 42 rejected
+# gfx1100-w64: 422 forms, 0 rejected
+# gfx1102-w32: 380 forms, 42 rejected
+# gfx1102-w64: 422 forms, 0 rejected
 
-# rejected: gfx1100-w32 (42 of 414)
+# rejected: gfx1100-w32 (42 of 422)
 #	205	v_cndmask_b32_e32 v0, v1, v2, vcc	operands are not valid for this GPU or mode
 #	207	v_cndmask_b32_e32 v0, 0, v2, vcc	operands are not valid for this GPU or mode
 #	209	v_cndmask_b32_e32 v0, 1.0, v2, vcc	operands are not valid for this GPU or mode
@@ -435,8 +435,16 @@ gfx1100-w32	s_cbranch_scc0 lane_loop	ecffa1bf
 gfx1100-w32	s_cbranch_execnz else_part	e7ffa6bf
 gfx1100-w32	v_cvt_f64_f32_e32 v[1:2], v3	0321027e
 gfx1100-w32	s_endpgm	0000b0bf
+gfx1100-w32	s_waitcnt_vscnt null, 0x0	00007cbc
+gfx1100-w32	s_waitcnt_vscnt null, 0x3f	3f007cbc
+gfx1100-w32	global_load_b32 v0, v[2:3], off glc dlc	006052dc02007c00
+gfx1100-w32	global_load_b32 v0, v1, s[2:3] offset:-64 glc dlc	c07f52dc01000200
+gfx1100-w32	s_delay_alu instid0(VALU_DEP_1)	010087bf
+gfx1100-w32	s_delay_alu instid0(VALU_DEP_2) | instskip(NEXT) | instid1(SALU_CYCLE_1)	920487bf
+gfx1100-w32	s_delay_alu instid0(TRANS32_DEP_1)	050087bf
+gfx1100-w32	s_delay_alu instid0(VALU_DEP_4)	040087bf
 
-# rejected: gfx1100-w64 (0 of 414)
+# rejected: gfx1100-w64 (0 of 422)
 # gfx1100-w64
 gfx1100-w64	s_mov_b32 s0, s1	010080be
 gfx1100-w64	s_mov_b32 s0, 0	800080be
@@ -858,8 +866,16 @@ gfx1100-w64	s_cbranch_scc0 lane_loop	ebffa1bf
 gfx1100-w64	s_cbranch_execnz else_part	e6ffa6bf
 gfx1100-w64	v_cvt_f64_f32_e32 v[1:2], v3	0321027e
 gfx1100-w64	s_endpgm	0000b0bf
+gfx1100-w64	s_waitcnt_vscnt null, 0x0	00007cbc
+gfx1100-w64	s_waitcnt_vscnt null, 0x3f	3f007cbc
+gfx1100-w64	global_load_b32 v0, v[2:3], off glc dlc	006052dc02007c00
+gfx1100-w64	global_load_b32 v0, v1, s[2:3] offset:-64 glc dlc	c07f52dc01000200
+gfx1100-w64	s_delay_alu instid0(VALU_DEP_1)	010087bf
+gfx1100-w64	s_delay_alu instid0(VALU_DEP_2) | instskip(NEXT) | instid1(SALU_CYCLE_1)	920487bf
+gfx1100-w64	s_delay_alu instid0(TRANS32_DEP_1)	050087bf
+gfx1100-w64	s_delay_alu instid0(VALU_DEP_4)	040087bf
 
-# rejected: gfx1102-w32 (42 of 414)
+# rejected: gfx1102-w32 (42 of 422)
 #	205	v_cndmask_b32_e32 v0, v1, v2, vcc	operands are not valid for this GPU or mode
 #	207	v_cndmask_b32_e32 v0, 0, v2, vcc	operands are not valid for this GPU or mode
 #	209	v_cndmask_b32_e32 v0, 1.0, v2, vcc	operands are not valid for this GPU or mode
@@ -1281,8 +1297,16 @@ gfx1102-w32	s_cbranch_scc0 lane_loop	ecffa1bf
 gfx1102-w32	s_cbranch_execnz else_part	e7ffa6bf
 gfx1102-w32	v_cvt_f64_f32_e32 v[1:2], v3	0321027e
 gfx1102-w32	s_endpgm	0000b0bf
+gfx1102-w32	s_waitcnt_vscnt null, 0x0	00007cbc
+gfx1102-w32	s_waitcnt_vscnt null, 0x3f	3f007cbc
+gfx1102-w32	global_load_b32 v0, v[2:3], off glc dlc	006052dc02007c00
+gfx1102-w32	global_load_b32 v0, v1, s[2:3] offset:-64 glc dlc	c07f52dc01000200
+gfx1102-w32	s_delay_alu instid0(VALU_DEP_1)	010087bf
+gfx1102-w32	s_delay_alu instid0(VALU_DEP_2) | instskip(NEXT) | instid1(SALU_CYCLE_1)	920487bf
+gfx1102-w32	s_delay_alu instid0(TRANS32_DEP_1)	050087bf
+gfx1102-w32	s_delay_alu instid0(VALU_DEP_4)	040087bf
 
-# rejected: gfx1102-w64 (0 of 414)
+# rejected: gfx1102-w64 (0 of 422)
 # gfx1102-w64
 gfx1102-w64	s_mov_b32 s0, s1	010080be
 gfx1102-w64	s_mov_b32 s0, 0	800080be
@@ -1704,3 +1728,11 @@ gfx1102-w64	s_cbranch_scc0 lane_loop	ebffa1bf
 gfx1102-w64	s_cbranch_execnz else_part	e6ffa6bf
 gfx1102-w64	v_cvt_f64_f32_e32 v[1:2], v3	0321027e
 gfx1102-w64	s_endpgm	0000b0bf
+gfx1102-w64	s_waitcnt_vscnt null, 0x0	00007cbc
+gfx1102-w64	s_waitcnt_vscnt null, 0x3f	3f007cbc
+gfx1102-w64	global_load_b32 v0, v[2:3], off glc dlc	006052dc02007c00
+gfx1102-w64	global_load_b32 v0, v1, s[2:3] offset:-64 glc dlc	c07f52dc01000200
+gfx1102-w64	s_delay_alu instid0(VALU_DEP_1)	010087bf
+gfx1102-w64	s_delay_alu instid0(VALU_DEP_2) | instskip(NEXT) | instid1(SALU_CYCLE_1)	920487bf
+gfx1102-w64	s_delay_alu instid0(TRANS32_DEP_1)	050087bf
+gfx1102-w64	s_delay_alu instid0(VALU_DEP_4)	040087bf

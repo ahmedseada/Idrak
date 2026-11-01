@@ -36,6 +36,7 @@ internal abstract partial class Tests
         ("gcn assembler: every forms.golden record of each registered CPU (gfx900, gfx906, gfx908, gfx90c), its text parsed from UTF-8 and encoded as one block, equals llvm-mc's bytes, labels and branches included, and each form alone too; forms.s itself (LLVM's input syntax: no suffixes, bound_ctrl:0, s_waitcnt 0) less each CPU's rejected lines gives the same block", GcnAssemblerGolden),
         ("gcn assembler: gfx10 (RDNA 1 and 2): every forms.golden record of gfx1010 and gfx1030 in wave64, its text parsed from UTF-8 and encoded by the unregistered gfx10 family (ISA 10's SMEM, VOP3, DS and global layouts, its renumbered opcodes, its waits, wave32's one-register lane masks taken as llvm-mc takes them), equals llvm-mc's bytes as one block and each form alone; forms.s gives the same block", GcnAssemblerGfx10Golden),
         ("gcn assembler: gfx11 (RDNA 3): every forms.golden record of gfx1100 and gfx1102 in wave64, in gfx11's own names (s_load_b32, global_load_b32, ds_load_b32, v_add_nc_u32), encoded by the unregistered gfx11 family (ISA 11's layouts, M0 125 and null 124, its s_waitcnt fields), equals llvm-mc's bytes as one block and each form alone; forms.s gives the same block", GcnAssemblerGfx11Golden),
+        ("gcn assembler: gfx10 and gfx11 waits: the stores count apart on vscnt (two loads around a store: vmcnt(1) for the first load's use, where gfx9 waits vmcnt(2)); s_barrier after an LDS write and a store gets lgkmcnt(0) and s_waitcnt_vscnt null, 0x0; lgkmcnt and vmcnt to 63; the printed text, in each family's names, reads back to the same bytes", GcnAssemblerRdnaWaits),
         ("gcn assembler: every line forms.golden lists as rejected for a registered CPU is refused for that CPU's version, naming the instruction, feature or operand (features decided by the reported version: v_fmac_f32 on 9.0.6, not 9.0.0 or 9.0.12; without a version, none)", GcnAssemblerRejected),
         ("gcn assembler: malformed or impossible text (unknown mnemonics, operands and modifiers, missing operands, bad ranges, virtual registers, directives, literals in VOP3, two scalar reads, labels defined twice or never) is refused with its line and column", GcnAssemblerMalformed),
         ("gcn assembler: assembling a whole forms block (gfx90c's 759 forms, labels and branches) allocates nothing once warm, and its code array alone after; fill_f32 written as text equals the typed fill_f32", GcnAssemblerAllocations),
@@ -687,6 +688,58 @@ internal abstract partial class Tests
     {
         _ = device;
         GcnFamilyGolden("gfx11", ["gfx1100-w64", "gfx1102-w64"], _ => GcnTargets.Gfx11Family);
+    }
+
+    internal static void GcnAssemblerRdnaWaits(Device device)
+    {
+        _ = device;
+        const string Kernel = """
+            .kernel stores
+            .arg x, 8, global
+            .arg out, 8, global
+            .lds 256
+            .reqd_workgroup_size 64, 1, 1
+            .user_sgpr kernarg_segment_ptr
+              LOAD4 %s[0:3], s[0:1], 0x0
+              v_lshlrev_b32_e32 %v0, 2, v0
+              GLOAD %v1, %v0, %s[0:1]
+              GSTORE %v0, %v0, %s[2:3]
+              GLOAD %v2, %v0, %s[0:1] offset:256
+              v_mul_f32_e32 %v3, %v1, %v1
+              v_add_f32_e32 %v4, %v3, %v2
+              DSTORE %v0, %v4
+              s_barrier
+              DLOAD %v5, %v0
+              GSTORE %v0, %v5, %s[2:3] offset:256
+              s_endpgm
+            """;
+        foreach (var (target, cpu, names) in new[]
+                 {
+                     (GcnTargets.Gfx10Family, "gfx1030", (Load4: "s_load_dwordx4", Load: "global_load_dword", Store: "global_store_dword", DsStore: "ds_write_b32", DsLoad: "ds_read_b32")),
+                     (GcnTargets.Gfx11Family, "gfx1100", (Load4: "s_load_b128", Load: "global_load_b32", Store: "global_store_b32", DsStore: "ds_store_b32", DsLoad: "ds_load_b32")),
+                 })
+        {
+            var isa = GcnIsaVersion.Parse(cpu);
+            string text = Kernel.Replace("LOAD4", names.Load4, StringComparison.Ordinal).Replace("GLOAD", names.Load, StringComparison.Ordinal)
+                .Replace("GSTORE", names.Store, StringComparison.Ordinal).Replace("DSTORE", names.DsStore, StringComparison.Ordinal).Replace("DLOAD", names.DsLoad, StringComparison.Ordinal);
+            using var asm = new GcnAssembler(target, isa);
+            var code = asm.AssembleKernel(Encoding.UTF8.GetBytes(text), null);
+            string printed = asm.PrintedText;
+            Check(Before(printed, "v_mul_f32") == "s_waitcnt vmcnt(1)" && Before(printed, "v_add_f32") == "s_waitcnt vmcnt(0)",
+                $"{cpu}: the store counts on vscnt, so the first load's use waits vmcnt(1) and the second's vmcnt(0):\n{printed}");
+            Check(Before(printed, "s_barrier").StartsWith("s_waitcnt_vscnt null, ", StringComparison.Ordinal) && Before(printed, "s_waitcnt_vscnt") == "s_waitcnt lgkmcnt(0)",
+                $"{cpu}: s_barrier after an LDS write and a store waits lgkmcnt(0) and vscnt 0:\n{printed}");
+            byte[] again = AssembleGcn(target, isa, printed);
+            Check(again.AsSpan().SequenceEqual(code.Code.Span), $"{cpu}: the printed text reads back to {Convert.ToHexStringLower(again)}, not {Convert.ToHexStringLower(code.Code.Span)}:\n{printed}");
+            Check(Convert.ToHexStringLower(AssembleGcn(target, isa, "s_waitcnt vmcnt(40) lgkmcnt(33)")) == (cpu == "gfx1030" ? "78a18cbf" : "17a289bf")
+                  && Throws<GcnSyntaxException>(() => AssembleGcn(target, isa, "s_waitcnt lgkmcnt(64)")), $"{cpu}: lgkmcnt and vmcnt hold 0 to 63");
+        }
+
+        // gfx9 counts the store with the loads: the first load's use waits for it too.
+        var (_, gfx9Text) = KernelOf(Kernel.Replace("LOAD4", "s_load_dwordx4", StringComparison.Ordinal).Replace("GLOAD", "global_load_dword", StringComparison.Ordinal)
+            .Replace("GSTORE", "global_store_dword", StringComparison.Ordinal).Replace("DSTORE", "ds_write_b32", StringComparison.Ordinal).Replace("DLOAD", "ds_read_b32", StringComparison.Ordinal));
+        Check(Before(gfx9Text, "v_mul_f32") == "s_waitcnt vmcnt(2)" && Before(gfx9Text, "s_barrier") == "s_waitcnt lgkmcnt(0)",
+            $"gfx9: one counter for loads and stores (the store retired with the second load, before the barrier):\n{gfx9Text}");
     }
 
     // Each CPU's block of a family's forms.golden (a CPU field "<mcpu>-w64" is that processor in wave64): the block as one

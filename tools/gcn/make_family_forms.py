@@ -25,17 +25,26 @@ LABEL = re.compile(r"^([A-Za-z_.$][\w.$]*):$")
 SUFFIX = re.compile(r"_(e32|e64)$")
 DIAGNOSTIC = re.compile(r"^<stdin>:(\d+):\d+: (error|warning): (.*)$")
 
-# Per family: the CPU llvm-mc prints its canonical forms for, and the rewrites from gfx9's spelling (pattern, replacement;
-# None drops the line). gfx940's cache bits (sc0, sc1, nt) are no family's here; gfx10's global offsets are 12-bit signed.
+# Per family: the CPU llvm-mc prints its canonical forms for, the rewrites from gfx9's spelling (pattern, replacement;
+# None drops the line), and the family's own forms gfx9 has none of (its waits and cache bits), added at the end.
+# gfx940's cache bits (sc0, sc1, nt) are no family's here; gfx10's global offsets are 12-bit signed.
 FAMILIES = {
     "gfx10": ("gfx1030", [
         (r"\b(sc0|sc1|nt)\b", None),
         (r"^v_add_u32", "v_add_nc_u32"), (r"^v_sub_u32", "v_sub_nc_u32"), (r"^v_subrev_u32", "v_subrev_nc_u32"),
         (r"offset:4095\b", "offset:2047"), (r"offset:-4096\b", "offset:-2048"),
+    ], [
+        "s_waitcnt_vscnt null, 0x0", "s_waitcnt_vscnt null, 0x3f",
+        "global_load_dword v0, v[2:3], off glc dlc", "global_load_dword v0, v1, s[2:3] offset:-64 glc dlc",
     ]),
     "gfx11": ("gfx1100", [
         (r"\b(sc0|sc1|nt)\b", None),
         (r"^v_add_u32", "v_add_nc_u32"), (r"^v_sub_u32", "v_sub_nc_u32"), (r"^v_subrev_u32", "v_subrev_nc_u32"),
+    ], [
+        "s_waitcnt_vscnt null, 0x0", "s_waitcnt_vscnt null, 0x3f",
+        "global_load_b32 v0, v[2:3], off glc dlc", "global_load_b32 v0, v1, s[2:3] offset:-64 glc dlc",
+        "s_delay_alu instid0(VALU_DEP_1)", "s_delay_alu instid0(VALU_DEP_2) | instskip(NEXT) | instid1(SALU_CYCLE_1)",
+        "s_delay_alu instid0(TRANS32_DEP_1)", "s_delay_alu instid0(VALU_DEP_4)",
     ]),
 }
 
@@ -107,9 +116,9 @@ def main():
     with open(os.path.join(folder, "gfx9", "forms.s"), encoding="utf-8") as f:
         gfx9 = [line.split(";", 1)[0].strip() for line in f]
     chosen = [line for line in gfx9 if line and (LABEL.match(line) or SUFFIX.sub("", line.split()[0]) in used)]
-    for family, (cpu, rules) in FAMILIES.items():
+    for family, (cpu, rules, own) in FAMILIES.items():
         wave64 = [line if LABEL.match(line) else rewrite(line, rules) for line in chosen]
-        wave64 = [line for line in wave64 if line is not None]
+        wave64 = [line for line in wave64 if line is not None] + own
         printed64 = canonical(cpu, 64, wave64)
         wave32 = [line if LABEL.match(line) else rewrite(line, WAVE32) for line in wave64]
         printed32 = canonical(cpu, 32, wave32)

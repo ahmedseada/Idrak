@@ -14,7 +14,7 @@ public static partial class GcnTargets
     /// The gfx11 family: ISA 11.0.x (RDNA 3), run by Idrak's kernels in waves of 64. Its encodings are ISA 11's
     /// (<see cref="GcnEncoding.Isa11"/>), its instructions those of its table, in gfx11's own names.
     /// </summary>
-    private sealed partial class Gfx11 : Rdna
+    private sealed partial class Gfx11 : Gfx10And11
     {
         public override string Family => "gfx11";
 
