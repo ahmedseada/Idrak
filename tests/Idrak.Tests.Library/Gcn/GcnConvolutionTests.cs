@@ -57,8 +57,9 @@ internal abstract partial class Tests
             foreach (var isa in TrainingIsas)
             {
                 var (code, _) = TrainingKernel(name, isa);
-                Check(code is { RequiredWorkgroupSize: (GcnKernels.RowThreads, 1, 1), MaxFlatWorkgroupSize: GcnKernels.RowThreads, WaveSize: 64 },
-                    $"{name} ({isa}): declares the block of {GcnKernels.RowThreads} (required {code.RequiredWorkgroupSize}, max flat {code.MaxFlatWorkgroupSize})");
+                int block = name == "softmax_ce_rows_f32" ? GcnKernels.CrossEntropyThreads : GcnKernels.RowThreads;
+                Check(code is { WaveSize: 64 } && code.RequiredWorkgroupSize == (block, 1, 1) && code.MaxFlatWorkgroupSize == block,
+                    $"{name} ({isa}): declares the block of {block} (required {code.RequiredWorkgroupSize}, max flat {code.MaxFlatWorkgroupSize})");
                 Check(code.LdsBytes <= 65536, $"{name} ({isa}): {code.LdsBytes} bytes of LDS");
                 if (isa == TrainingIsas[0])
                 {

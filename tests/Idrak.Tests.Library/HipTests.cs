@@ -356,7 +356,7 @@ internal abstract partial class Tests
                 {
                     var (code, layout) = (codes[i], layouts[i]);
                     Check(layout.Arguments.SequenceEqual(code.Arguments) && layout.ArgumentBytes == GcnCodeObject.KernargBytes(code)
-                          && layout.Block == (code.RequiredWorkgroupSize?.X ?? code.MaxFlatWorkgroupSize) && layout.Block is 256 or GcnKernels.PackedGemvWords,
+                          && layout.Block == (code.RequiredWorkgroupSize?.X ?? code.MaxFlatWorkgroupSize) && (layout.Block is 256 or GcnKernels.PackedGemvWords || code.Name == "softmax_ce_rows_f32" && layout.Block == GcnKernels.CrossEntropyThreads),
                         $"{processor}, format {format}, {code.Name}: arguments, bytes and block as assembled ({layout.ArgumentBytes} bytes, block {layout.Block})");
                 }
 
