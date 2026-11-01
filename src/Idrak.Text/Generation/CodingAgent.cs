@@ -79,6 +79,24 @@ public sealed record AgentOptions
     public IReadOnlyList<string> ChangingTools { get; init; } = ["edit_file", "write_file"];
 
     /// <summary>
+    /// Reminders the agent sends, per run, when the model's final answer holds fenced code blocks while no call of a
+    /// changing tool (<see cref="ChangingTools"/>) has succeeded in the run: the code was shown, not written to a file, so
+    /// it is told that no file was changed and to make the changes with those tools, or to say plainly that none is needed
+    /// (<see cref="CodingAgent.NoChangeReminder"/>), and the run goes on. Sent before <see cref="NoToolNudges"/>' reminder,
+    /// which then is not sent too. 1 by default; 0 sends none.
+    /// </summary>
+    public int NoChangeNudges { get; init; } = 1;
+
+    /// <summary>
+    /// Reminders the agent sends, per run, when a reply's prose is mostly in a writing system the user's request does not
+    /// use at all (Han against a Latin request, say): compared by Unicode ranges of the letters only, without language
+    /// detection, code blocks, inline code and tool calls left out, at least 20 letters of prose and more than half of
+    /// them in that script (<see cref="CodingAgent.LanguageReminder"/>, in English). A reply with calls gets the reminder
+    /// after its results; a final answer gets it instead of ending the run. 1 by default; 0 sends none.
+    /// </summary>
+    public int LanguageNudges { get; init; } = 1;
+
+    /// <summary>
     /// The chat template the model's prompts are rendered with, for reading calls written as text (its arguments key)
     /// and for the corrections' example (its tool-call format); null (the default): the model's own when it is a
     /// <see cref="ChatGenerator"/>, else none (the correction's example is a generic one).
@@ -131,6 +149,12 @@ public sealed record CodingAgentRun(IReadOnlyList<ChatMessage> Messages, IReadOn
     /// <summary>Reminders sent because the model answered without any tool call in the run (<see cref="AgentOptions.NoToolNudges"/>); each is a user message in <see cref="Messages"/>.</summary>
     public int NoToolNudges { get; init; }
 
+    /// <summary>Reminders sent because the model answered with code blocks and no file changed (<see cref="AgentOptions.NoChangeNudges"/>); each is a user message in <see cref="Messages"/>.</summary>
+    public int NoChangeNudges { get; init; }
+
+    /// <summary>Reminders sent because a reply was written in a script the request does not use (<see cref="AgentOptions.LanguageNudges"/>); each is a user message in <see cref="Messages"/>.</summary>
+    public int LanguageNudges { get; init; }
+
     /// <summary>The run as one JSON line: the conversation in the chat format with the figures as extra fields.</summary>
     public JsonObject ToJson()
     {
@@ -162,6 +186,16 @@ public sealed record CodingAgentRun(IReadOnlyList<ChatMessage> Messages, IReadOn
         if (NoToolNudges > 0)
         {
             json["no_tool_nudges"] = NoToolNudges;
+        }
+
+        if (NoChangeNudges > 0)
+        {
+            json["no_change_nudges"] = NoChangeNudges;
+        }
+
+        if (LanguageNudges > 0)
+        {
+            json["language_nudges"] = LanguageNudges;
         }
     }
 }
@@ -200,6 +234,40 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
     /// in English as the agent's other messages.
     /// </summary>
     public const string NoToolReminder = "You answered without using any tool. If the task needs files changed or commands run, do it now with the tools (one fenced json call per block); otherwise repeat your answer.";
+
+    /// <summary>
+    /// The reminder sent when the model's final answer shows code while no file was changed in the run
+    /// (<see cref="AgentOptions.NoChangeNudges"/>), naming the changing tools (<see cref="AgentOptions.ChangingTools"/>).
+    /// </summary>
+    public static string NoChangeReminder(IReadOnlyList<string> changingTools)
+    {
+        ArgumentNullException.ThrowIfNull(changingTools);
+        string tools = changingTools.Count == 0 ? "the tools" : string.Join(" or ", changingTools);
+        return $"No file was changed in this run: code in your answer is only shown, not written to any file. Make the changes now with {tools} "
+               + "(read a file before you edit it), then answer; if no file needs changing, say so plainly.";
+    }
+
+    /// <summary>
+    /// The reminder sent when a reply's prose is mostly in <paramref name="script"/>, a script the user's request does not
+    /// use (<see cref="AgentOptions.LanguageNudges"/>), in English.
+    /// </summary>
+    public static string LanguageReminder(string script) =>
+        $"Your last reply is written mostly in {script} script, which the user's request does not use. Write all your replies in the language of the user's request.";
+
+    /// <summary>
+    /// The correction sent after a reply whose calls were run when one more call in its text could not be read
+    /// (<see cref="ToolCallText.MalformedCall"/>; <see cref="AgentOptions.Nudges"/>): that call was not run, what is wrong
+    /// with its JSON, and to write it again. Null when the reply holds no such call.
+    /// </summary>
+    public static string? MalformedCallCorrection(ChatMessage reply, ToolCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(reply);
+        ArgumentNullException.ThrowIfNull(context);
+        return ToolCallText.MalformedCall(reply.Content, context) is { } malformed
+            ? $"One tool call in your last reply could not be read, so it was not run and changed nothing: {malformed.Describe()}. "
+              + "The calls that could be read were run; their results are above. Write that call again as valid JSON."
+            : null;
+    }
 
     // The prompt's lines are cut at this width, continued with two spaces.
     private const int PromptWidth = 110;
@@ -367,8 +435,12 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
         ArgumentOutOfRangeException.ThrowIfNegative(_options.Nudges, nameof(AgentOptions.Nudges));
         ArgumentOutOfRangeException.ThrowIfNegative(_options.FailedCallNudges, nameof(AgentOptions.FailedCallNudges));
         ArgumentOutOfRangeException.ThrowIfNegative(_options.NoToolNudges, nameof(AgentOptions.NoToolNudges));
+        ArgumentOutOfRangeException.ThrowIfNegative(_options.NoChangeNudges, nameof(AgentOptions.NoChangeNudges));
+        ArgumentOutOfRangeException.ThrowIfNegative(_options.LanguageNudges, nameof(AgentOptions.LanguageNudges));
         var unresolved = new FailedChanges(_options.ChangingTools);
-        int failureNudges = 0, noToolNudges = 0;
+        int failureNudges = 0, noToolNudges = 0, noChangeNudges = 0, languageNudges = 0, malformedNudges = 0;
+        bool changed = false;                                                 // a call of a changing tool succeeded
+        string request = messages[^1].Content;                                // the user's request, for LanguageNudges
         var registry = Registry(tools, _options.ExtraTools);
         var definitions = ToolDefinitions(tools, _options.ExtraTools);
         var callContext = CallContext(_options.Template ?? (model as ChatGenerator)?.Template, definitions);
@@ -379,7 +451,7 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         limit.CancelAfter(_options.TimeLimit);
         CodingAgentRun Result(CodingAgentEnd end, string note) =>
-            new(messages, definitions, _options.Think, end, note, rounds, calls, errors, generated, modelTime, toolTime, tools.Workspace) { Nudges = nudges, FailureNudges = failureNudges, NoToolNudges = noToolNudges };
+            new(messages, definitions, _options.Think, end, note, rounds, calls, errors, generated, modelTime, toolTime, tools.Workspace) { Nudges = nudges, FailureNudges = failureNudges, NoToolNudges = noToolNudges, NoChangeNudges = noChangeNudges, LanguageNudges = languageNudges };
 
         try
         {
@@ -420,6 +492,7 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
                 }
 
                 messages.Add(reply);
+                string? foreign = languageNudges < _options.LanguageNudges ? ReplyScripts.Foreign(reply.Content, request, callContext) : null;
                 if (reply.ToolCalls is not { Count: > 0 })
                 {
                     if (final.DoneReason == "length")
@@ -429,7 +502,21 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
 
                     if (Correction(reply, callContext) is not { } correction)
                     {
-                        if (noToolNudges < _options.NoToolNudges && nudges == 0 && !messages.Any(m => m.ToolCalls is { Count: > 0 }))   // no call in the conversation, no correction sent
+                        if (foreign is not null)
+                        {
+                            messages.Add(new ChatMessage("user", LanguageReminder(foreign)));
+                            languageNudges++;
+                            continue;
+                        }
+
+                        if (noChangeNudges < _options.NoChangeNudges && !changed && reply.Content.Contains("```", StringComparison.Ordinal))
+                        {
+                            messages.Add(new ChatMessage("user", NoChangeReminder(_options.ChangingTools)));
+                            noChangeNudges++;
+                            continue;
+                        }
+
+                        if (noToolNudges < _options.NoToolNudges && noChangeNudges == 0 && nudges == 0 && !messages.Any(m => m.ToolCalls is { Count: > 0 }))   // no call in the conversation, no correction sent
                         {
                             messages.Add(new ChatMessage("user", NoToolReminder));
                             noToolNudges++;
@@ -469,12 +556,27 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
                 if (turn.Key != previousCalls)                       // a repeated turn ran nothing: its notes are not failures
                 {
                     unresolved.Add(turn.Results);
+                    changed = changed || turn.Results.Any(r => r.Succeeded && !r.Content.StartsWith("Error:", StringComparison.Ordinal)
+                                                               && _options.ChangingTools.Contains(r.Call.Name, StringComparer.Ordinal));
                 }
 
                 previousCalls = turn.Key;
                 calls += turn.Results.Count;
                 errors += turn.Errors;
                 messages.AddRange(turn.Messages);
+                // A call among the read ones that could not be read itself, then the reply's language: each told after the results.
+                if (malformedNudges < _options.Nudges && MalformedCallCorrection(reply, callContext) is { } malformedCall)
+                {
+                    messages.Add(new ChatMessage("user", malformedCall));
+                    malformedNudges++;
+                    nudges++;
+                }
+
+                if (foreign is not null)
+                {
+                    messages.Add(new ChatMessage("user", LanguageReminder(foreign)));
+                    languageNudges++;
+                }
 
                 toolTime += watch.Elapsed;
             }
@@ -608,7 +710,8 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
                   + (format.List ? "[" + call + "]" : call)
                 : $"To call a tool, write the call itself between {format.Open} and {format.Close}, not in a code block and not as a description, one block per call:\n"
                   + format.Open + "\n" + (format.List ? "[" + call + "]" : call) + "\n" + format.Close;
-        return "Your last reply has no tool call that could be read, so nothing in it was run and no file was changed. " + how
+        string why = ToolCallText.MalformedCall(reply.Content, context) is { } malformed ? char.ToUpperInvariant(malformed.Describe()[0]) + malformed.Describe()[1..] + ". " : "";
+        return "Your last reply has no tool call that could be read, so nothing in it was run and no file was changed. " + why + how
                + "\nThe tools: " + string.Join(", ", tools.Select(t => t.Name)) + ".\nIf the task is done, answer in words, without any JSON or tool call.";
     }
 

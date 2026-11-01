@@ -4156,6 +4156,14 @@ public static class Idrak.Abstraction.Generation.KeyValueLayouts
   public static string? Origin(string name)
   public static void Register(Idrak.Abstraction.Generation.IKeyValueLayout layout)
 
+public sealed record Idrak.Abstraction.Generation.MalformedToolCall : System.IEquatable<Idrak.Abstraction.Generation.MalformedToolCall>
+  public MalformedToolCall(string? Name, int Position, string Error, string Hint)
+  public int Position { get; init; }
+  public string Describe()
+  public string Error { get; init; }
+  public string Hint { get; init; }
+  public string? Name { get; init; }
+
 public abstract class Idrak.Abstraction.Generation.MarkedToolCallParser : Idrak.Abstraction.Generation.IToolCallParser
   protected Idrak.Abstraction.Generation.ToolCallContext Context { get; }
   protected MarkedToolCallParser(Idrak.Abstraction.Generation.ToolCallContext context)
@@ -4522,6 +4530,7 @@ public sealed record Idrak.Abstraction.Generation.ToolCallProbe : System.IEquata
 
 public static class Idrak.Abstraction.Generation.ToolCallText
   public const string PythonTag = "<|python_tag|>"
+  public static Idrak.Abstraction.Generation.MalformedToolCall? MalformedCall(System.ReadOnlySpan<char> text, Idrak.Abstraction.Generation.ToolCallContext context)
   public static System.Collections.Generic.List<Idrak.Abstraction.Generation.ToolCall>? CallsInText(System.ReadOnlySpan<char> text, Idrak.Abstraction.Generation.ToolCallContext context)
   public static System.Collections.Generic.List<Idrak.Abstraction.Generation.ToolCall>? JsonCallSequence(string text, string argumentsKey, Idrak.Abstraction.Generation.ToolCallContext? names)
   public static System.Collections.Generic.List<Idrak.Abstraction.Generation.ToolCall>? JsonCalls(string json, string argumentsKey, Idrak.Abstraction.Generation.ToolCallContext? names)

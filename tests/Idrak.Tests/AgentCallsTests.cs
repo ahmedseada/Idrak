@@ -244,9 +244,15 @@ internal abstract partial class DesktopTests
             var fake = FakeChatModel.Script(FakeChatModel.Answer("```csharp\nclass Calculator { }\n```"),
                 FakeChatModel.ToolCall("write_file", new JsonObject { ["path"] = "Calculator.cs", ["content"] = "class Calculator { }\n" }), FakeChatModel.Answer("Wrote Calculator.cs."));
             var run = new CodingAgent(fake).RunAsync("Add a Calculator class", new CodingTools(root)).GetAwaiter().GetResult();
-            Check(run is { End: CodingAgentEnd.Answered, NoToolNudges: 1, ToolCalls: 1 } && fake.Requests[1].Messages[^1] is { Role: "user" } note && note.Content == CodingAgent.NoToolReminder
-                  && File.Exists(Path.Combine(root, "Calculator.cs")) && run.ToJson()["no_tool_nudges"]?.GetValue<int>() == 1,
-                $"an answer without any call is reminded once, in English, and the model then acts ({run.End}, {run.NoToolNudges})");
+            Check(run is { End: CodingAgentEnd.Answered, NoChangeNudges: 1, NoToolNudges: 0, ToolCalls: 1 } && fake.Requests[1].Messages[^1] is { Role: "user" } note
+                  && note.Content == CodingAgent.NoChangeReminder(["edit_file", "write_file"]) && File.Exists(Path.Combine(root, "Calculator.cs")),
+                $"code in an answer without any call gets the no-change reminder (not the no-tool one too), and the model then acts ({run.End}, {run.NoChangeNudges}, {run.NoToolNudges})");
+            var plain = FakeChatModel.Script(FakeChatModel.Answer("I will add it."),
+                FakeChatModel.ToolCall("write_file", new JsonObject { ["path"] = "Calculator.cs", ["content"] = "class Calculator { }\n" }), FakeChatModel.Answer("Wrote Calculator.cs."));
+            var plainRun = new CodingAgent(plain).RunAsync("Add a Calculator class", new CodingTools(root)).GetAwaiter().GetResult();
+            Check(plainRun is { End: CodingAgentEnd.Answered, NoToolNudges: 1, ToolCalls: 1 } && plain.Requests[1].Messages[^1] is { Role: "user" } plainNote && plainNote.Content == CodingAgent.NoToolReminder
+                  && plainRun.ToJson()["no_tool_nudges"]?.GetValue<int>() == 1,
+                $"an answer without any call is reminded once, in English, and the model then acts ({plainRun.End}, {plainRun.NoToolNudges})");
 
             // At most one a run; a model that answers again ends the run; 0 sends none.
             var words = FakeChatModel.Script(FakeChatModel.Answer("Nothing to change."), FakeChatModel.Answer("Nothing to change."));
