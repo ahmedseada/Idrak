@@ -1077,6 +1077,49 @@ public sealed record FineTuningProgress(int Step, int TotalSteps, int Epoch, flo
 public static class FineTuner
 {
     /// <summary>
+    /// The batch size in tokens that a training step of <paramref name="model"/> fits on its device now:
+    /// <paramref name="options"/>' <see cref="FineTuningOptions.BatchTokens"/> (at least <paramref name="longest"/>), halved
+    /// while the step's estimated peak (rows of <paramref name="longest"/> positions, on the activation rung the options
+    /// start from, with the gradients the trained parameters have yet to make) is more than the device can still give
+    /// (its reported free memory and the blocks its pool keeps, within a configured limit), never below one row of
+    /// <paramref name="longest"/> positions. The options' value when the device reports neither its free memory nor a
+    /// limit. Card-agnostic: the room is what the device reports at run time; an estimate, so the out-of-memory ladder
+    /// of the steps stays behind it.
+    /// </summary>
+    /// <param name="model">The model to tune, on its device (its adapters added or not).</param>
+    /// <param name="options">The tune's settings (the batch to start from, the rung, the loss's chunk of rows).</param>
+    /// <param name="longest">The longest sequence the batches hold, in tokens.</param>
+    public static int BatchTokensThatFit(PretrainedModel model, FineTuningOptions options, int longest)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        ArgumentNullException.ThrowIfNull(options);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(longest);
+        int batch = Math.Max(options.BatchTokens, longest);
+        var backend = model.Device.Backend;
+        var usage = backend.GetMemoryUsage();
+        long? reported = backend.AvailableMemory(), capped = usage.Limit is { } limit ? limit - usage.InUse : null;
+        if ((reported is { } r && capped is { } c ? Math.Min(r, c) : reported ?? capped) is not { } room)
+        {
+            return batch;
+        }
+
+        long pending = 0;
+        foreach (var parameter in model.Network.TrainableParameters())
+        {
+            pending += parameter.Grad is null ? parameter.Size : 0;
+        }
+
+        var rung = ActivationRung.Of(options);
+        long Bytes(int tokens) => ActivationEstimate.Bytes(model.Spec, backend.Capabilities, Math.Max(1, tokens / longest), longest, rung, options.LossChunkRows, pending);
+        while (batch / 2 >= longest && Bytes(batch) > room)
+        {
+            batch /= 2;
+        }
+
+        return batch;
+    }
+
+    /// <summary>
     /// Evens out how often each answer is trained when the answers come from a short list (labels, yes / no, one of a few
     /// choices): sequences are grouped by their trained tokens, and a group smaller than the largest is repeated, at most
     /// <paramref name="maxRepeats"/> times in all, towards the largest one's size. A rare answer then weighs more in the

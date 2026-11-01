@@ -317,6 +317,32 @@ public static class ModuleExtensions
         return new AdapterRestore(detached);
     }
 
+    /// <summary>
+    /// Removes every adapter inside <paramref name="model"/> and frees its tensors and their gradients, so a model tuned in
+    /// place (a copy other users share) goes back to its base model without keeping the adapters' memory; the base weights
+    /// stay as they are (frozen, when the adapters were added with the base frozen). Returns how many were removed. Use
+    /// <see cref="DisableAdapters"/> instead to lift adapters off for a while and put them back.
+    /// </summary>
+    public static int RemoveAdapters(this Module model)
+    {
+        ArgumentNullException.ThrowIfNull(model);
+        int removed = 0;
+        foreach (var linear in model.Descendants().OfType<IAdaptableLinear>().Where(l => l.Adapter is not null).ToList())
+        {
+            var adapter = linear.Adapter!;
+            linear.Adapter = null;
+            foreach (var parameter in adapter.Parameters)
+            {
+                parameter.Dispose();                                     // its gradient with it
+            }
+
+            (adapter as IDisposable)?.Dispose();
+            removed++;
+        }
+
+        return removed;
+    }
+
     private sealed class AdapterRestore(List<(IAdaptableLinear Layer, ILinearAdapter? Adapter)> detached) : IDisposable
     {
         public void Dispose()

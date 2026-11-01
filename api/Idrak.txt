@@ -1216,6 +1216,7 @@ public static class Idrak.Layers.ModuleExtensions
   public static int MergeLora(this Idrak.Abstraction.Module model)
   public static int QuantizeInt4(this Idrak.Abstraction.Module model, System.Func<Idrak.Abstraction.Modules.IPackableLinear, bool>? targets = null)
   public static int QuantizeInt8(this Idrak.Abstraction.Module model, System.Func<Idrak.Abstraction.Modules.IPackableLinear, bool>? targets = null)
+  public static int RemoveAdapters(this Idrak.Abstraction.Module model)
   public static int ToBFloat16(this Idrak.Abstraction.Module model, System.Func<Idrak.Abstraction.Modules.IPackableLinear, bool>? targets = null)
   public static int ToFloat32(this Idrak.Abstraction.Module model, bool trainable = true)
   public static void LoadTrainable(this Idrak.Abstraction.Module module, System.IO.Stream stream)

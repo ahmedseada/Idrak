@@ -553,6 +553,7 @@ public static class Idrak.Text.FineTuner
   public static System.Collections.Generic.List<int[]> Batches(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, int batchTokens, System.Random? random)
   public static System.Collections.Generic.List<int[][]> PackedBatches(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, int length, int rows, System.Random? random)
   public static float Evaluate(Idrak.Models.PretrainedModel model, System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.TrainingSequence> sequences, int batchTokens = 4096, int chunkRows = 512, System.Action<string>? trace = null, Idrak.Text.TuningVision? vision = null, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ISoftPartSource>? parts = null)
+  public static int BatchTokensThatFit(Idrak.Models.PretrainedModel model, Idrak.Text.FineTuningOptions options, int longest)
 
 public sealed class Idrak.Text.FineTuningLossInput
   public FineTuningLossInput(Idrak.Abstraction.Tensor logProbabilities, System.Collections.Generic.IReadOnlyList<int> tokenCounts, Idrak.Abstraction.Tensor? referenceLogProbabilities = null, bool pairs = false, int stepTokens = 0, int stepSequences = 0, System.Func<float, float[]>? teacherDivergence = null, Idrak.Abstraction.Tensor? sequenceValues = null, Idrak.Abstraction.Tensor? tokenValues = null, Idrak.Abstraction.Tensor? behaviorLogProbabilities = null)

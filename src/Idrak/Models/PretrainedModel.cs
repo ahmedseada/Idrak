@@ -1084,6 +1084,14 @@ public sealed class PretrainedModel : IDisposable
         }
 
         PeftAdapterConfig.CheckAllUsed(reader, used, folder);                   // before any layer changes
+        // A model that had no adapter gets its base frozen, as AddAdapters leaves it: the loaded weights come trainable, so a
+        // tune going on from this adapter (a FineTuningSession, which adds none when the model has some) trained every
+        // weight of the model, not the adapter (Craft's learning plug-in, its second round: the whole model's optimizer state).
+        if (found.Count > 0 && !Network.Descendants().OfType<IAdaptableLinear>().Any(l => l.Adapter is not null))
+        {
+            Network.Freeze();
+        }
+
         foreach (var (module, linear, a, b, magnitude) in found)
         {
             int rank = reader.Tensors[a].Shape[0];

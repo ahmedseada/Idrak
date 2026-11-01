@@ -34,6 +34,7 @@ internal abstract partial class Tests
         ("fine-tuning: the activation estimate per rung grows with rows × positions and falls down the ladder (held, recomputed feed-forward, also bfloat16, checkpointing); a rung round-trips through the stop state", ActivationEstimatePerRung),
         ("fine-tuning: the activation estimate of each rung is not short of a step's measured peak (a decoder with query and key norms, activations above the loss's logits; the CPU counts every byte)", ActivationEstimateAgainstPeak),
         ("fine-tuning: with the activation estimate the first step starts at the rung that fits a small device (no out-of-memory step-down); with it off the ladder steps down; a resumed session starts at the saved rung", ActivationEstimateFirstRung),
+        ("fine-tuning: a model tuned in place goes back as found: a loaded adapter leaves the base frozen (a session over it trains the adapter alone), RemoveAdapters frees every adapter and its gradients and the model scores as its base again; BatchTokensThatFit halves the batch until the estimate fits the device's room, never below one sequence", AdaptersInPlace),
         ("models: a Hugging Face model id is downloaded (only the files the library reads, sharded weights) into the cache, loads, and works offline", ModelDownload),
         ("models: offline, a model id takes the newest finished download, never a folder a pull left unfinished (its pull marker, or a partial file); a download that fails keeps its marker", OfflineSkipsUnfinished),
         ("fine-tuning: agent transcripts through the chat template, assistant-only tokens, LoRA and QLoRA training, PEFT adapters, merged export", AgentFineTuning),
@@ -743,6 +744,92 @@ internal abstract partial class Tests
         Check(ActivationEstimate.Bytes(spec, capabilities, 1, 256, ladder[0], 512, pendingGradients: 1000) == Bytes(1, 256, ladder[0]) + 4000,
             "the gradients a first step makes are counted");
         Check(ActivationRung.FromJson(null) is null, "a stop state from before rungs were kept holds none");
+    }
+
+    // A model tuned in place, as an app that shares one copy between its users does (Craft's learning plug-in, B7): the
+    // adapter it goes on from loads with the base frozen, the round's adapters are removed with their memory, and the batch
+    // is sized to the room the device reports.
+    internal static void AdaptersInPlace(Device device)
+    {
+        var spec = new DecoderSpec
+        {
+            Vocabulary = 260, Dim = 64, Layers = 2, Heads = 2, KvHeads = 1, HeadDim = 32, FfDim = 128, MaxPositions = 256,
+            Rope = new RopeSettings(10000f), NormEpsilon = 1e-6f, QkNorm = true, TieEmbeddings = true,
+        };
+        string folder = WriteChatModel(spec);
+        string adapter = Path.Combine(Path.GetTempPath(), "ns-inplace-" + Guid.NewGuid().ToString("N"));
+        var random = new Random(5);
+        var sequences = Enumerable.Range(0, 4).Select(_ =>
+            new TrainingSequence([.. Enumerable.Range(0, 33).Select(_ => random.Next(256))], [.. Enumerable.Range(0, 33).Select(i => i > 16)])).ToList();
+        var options = new FineTuningOptions { Rank = 4, Alpha = 8, BatchTokens = 256, LearningRate = 1e-2f, Seed = 1 };
+        try
+        {
+            using (var model = PretrainedModel.Load(folder, new PretrainedOptions { Device = device }))
+            {
+                using (var session = new FineTuningSession(model, options, totalSteps: 2))
+                {
+                    session.Step(sequences);
+                }
+
+                model.SaveAdapter(adapter);
+            }
+
+            using var reloaded = PretrainedModel.Load(folder, new PretrainedOptions { Device = device });
+            Check(reloaded.Network.TrainableParameters().Any(), "a loaded model's weights come trainable");
+            int loaded = reloaded.LoadAdapter(adapter);
+            var adapters = reloaded.Network.Descendants().OfType<Idrak.Abstraction.Modules.IAdaptableLinear>().Where(l => l.Adapter is not null)
+                .SelectMany(l => l.Adapter!.Parameters).ToHashSet();
+            var trainable = reloaded.Network.TrainableParameters().ToList();
+            Check(loaded > 0 && trainable.Count == adapters.Count && trainable.All(adapters.Contains),
+                $"after LoadAdapter only the adapters train ({trainable.Count} trainable tensors, {adapters.Count} adapter tensors; before, every weight trained)");
+            long held = ComputeResources.GetMemoryUsage(device).InUse;
+            using (var session = new FineTuningSession(reloaded, options, totalSteps: 1))
+            {
+                session.Step(sequences);
+            }
+
+            Check(reloaded.Network.TrainableParameters().All(adapters.Contains), "a session over the loaded adapter trains the adapter alone");
+            int removed = reloaded.Network.RemoveAdapters();
+            long after = ComputeResources.GetMemoryUsage(device).InUse;
+            Check(removed == loaded && !reloaded.Network.Descendants().OfType<Idrak.Abstraction.Modules.IAdaptableLinear>().Any(l => l.Adapter is not null),
+                $"every adapter removed ({removed} of {loaded})");
+            Check(after < held, $"the adapters' tensors and gradients are freed ({held:N0} → {after:N0} bytes in use)");
+            using (var fresh = PretrainedModel.Load(folder, new PretrainedOptions { Device = device }))
+            {
+                AssertClose([FineTuner.Evaluate(fresh, sequences)], [FineTuner.Evaluate(reloaded, sequences)], 1e-5f, "without its adapters the model scores as its base model");
+            }
+
+            if (device.Type != DeviceType.Cpu)
+            {
+                return;                                                          // the CPU memory limit makes a small device
+            }
+
+            // The batch: halved while the estimate is above the room (a CPU limit just above what is in use), one sequence at least.
+            var run = options with { BatchTokens = 4096 };
+            long Bytes(int tokens) => ActivationEstimate.Bytes(reloaded.Spec, device.Backend.Capabilities, tokens / 64, 64, ActivationRung.Of(run), run.LossChunkRows);
+            long inUse = ComputeResources.GetMemoryUsage(device).InUse;
+            try
+            {
+                ComputeResources.CpuMemoryLimit = inUse + Bytes(1024) + 1;
+                int fits = FineTuner.BatchTokensThatFit(reloaded, run, 64);
+                Check(fits == 1024, $"a room of the 1,024-token estimate fits 1,024 tokens ({fits}; estimates {Bytes(4096):N0}, {Bytes(2048):N0}, {Bytes(1024):N0} bytes)");
+                ComputeResources.CpuMemoryLimit = inUse + 1;
+                Check(FineTuner.BatchTokensThatFit(reloaded, run, 64) == 64, "no room: one sequence, never less (the out-of-memory ladder stays behind it)");
+                ComputeResources.CpuMemoryLimit = inUse + Bytes(4096) * 2;
+                Check(FineTuner.BatchTokensThatFit(reloaded, run, 64) == 4096, "with room the batch is the options' own");
+            }
+            finally
+            {
+                ComputeResources.CpuMemoryLimit = null;
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(adapter))
+            {
+                Directory.Delete(adapter, recursive: true);
+            }
+        }
     }
 
     // The automatic-checkpointing model and data: a CPU budget only checkpointed training fits (found with the estimate
