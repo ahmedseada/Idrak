@@ -784,6 +784,7 @@ public sealed record Idrak.Abstraction.CommandLimits : System.IEquatable<Idrak.A
   public int MaxProcesses { get; init; }
   public long MaxMemoryBytes { get; init; }
   public string Requester { get; init; }
+  public string? Purpose { get; init; }
   public string? Root { get; init; }
 
 public sealed record Idrak.Abstraction.CommandResult : System.IEquatable<Idrak.Abstraction.CommandResult>

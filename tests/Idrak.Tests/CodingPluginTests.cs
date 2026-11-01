@@ -29,7 +29,7 @@ internal abstract partial class DesktopTests : Tests
     [
         ("command sandboxes: process is Idrak.Text's in CommandSandboxes; it runs a program without a shell, enforces the programs allowed, its time, output and memory limits (stopping the command), hands each line of output to CommandLimits.Output as it is written, refuses network off, processes and CPUs naming container, and stops on cancellation; the coding tools run every command through the sandbox their options name", d => { if (d == Device.Cpu) ProcessSandboxLimits(); }),
         ("command sandboxes: interactive start: process starts a command with its standard input, output and error as streams (a child of this program echoes each line sent to it on its output, an error line on its error stream, and exits with its code at the end of its input; its variables set); the memory stays flat over thousands of lines; Stop and a dispose end its whole process tree, the time limit stops it; a program not allowed or not found is a refused start, a limit it cannot keep throws naming container, a cancelled start throws; a sandbox without an interactive start (container, an app's) refuses with the reason", d => { if (d == Device.Cpu) ProcessSandboxInteractive(); }),
-        ("command sandboxes: requester: CommandLimits.Requester (who asks, as the words of a sentence, for a sandbox that asks the user first) is \"the agent\" by default and in the coding tools' limits, a copy keeps the one given, and it changes nothing about the run (the process sandbox runs the same command with another requester)", d => { if (d == Device.Cpu) CommandRequester(); }),
+        ("command sandboxes: requester: CommandLimits.Requester (who asks, as the words of a sentence, for a sandbox that asks the user first) is \"the agent\" by default and in the coding tools' limits, Purpose (what the command is for) is none by default; a copy keeps the ones given, and they change nothing about the run (the process sandbox runs the same command with another requester)", d => { if (d == Device.Cpu) CommandRequester(); }),
         ("command sandboxes: container refuses when no program is found or no image is set (naming IDRAK_SANDBOX_PROGRAM and IDRAK_SANDBOX_IMAGE), and builds its command line: the workspace mounted, the network off unless allowed, the memory, CPU and process limits, the user, the variables, the image, then the command", d => { if (d == Device.Cpu) ContainerSandboxCommandLine(); }),
         ("plugins: coding: CodingPlugin is the plug-in \"coding\" of ReinforcementPlugins.All; Register twice registers the coding environment, its four rewards and the container sandbox once, from Idrak.Reinforcement.Plugins; Unregister leaves the registries as found; the rewards pass the reward suite", d => { if (d == Device.Cpu) CodingPluginRegisters(); }),
         ("plugins: coding: on a C# suite (a project, a hidden test, a restore) and a scripted model: a seeded episode replays the same; the reward follows verification (solved, not solved, out of rounds); setup runs once per task and is reused; a broken setup is left out and reported; a test edit is overwritten by the hidden tests and reported, and refused when asked", d => { if (d == Device.Cpu) CodingEpisodes(); }),
@@ -396,8 +396,9 @@ internal abstract partial class DesktopTests : Tests
     private static void CommandRequester()
     {
         Check(new CommandLimits().Requester == "the agent", $"the default requester: {new CommandLimits().Requester}");
-        var npm = new CommandLimits { Requester = "the npm plug-in", Programs = ["dotnet"] };
-        Check((npm with { Time = TimeSpan.FromSeconds(30) }).Requester == "the npm plug-in", "a copy keeps the requester given");
+        Check(new CommandLimits().Purpose is null, "no purpose by default: the command line says it");
+        var npm = new CommandLimits { Requester = "the npm plug-in", Purpose = "the script build: ng build", Programs = ["dotnet"] };
+        Check((npm with { Time = TimeSpan.FromSeconds(30) }) is { Requester: "the npm plug-in", Purpose: "the script build: ng build" }, "a copy keeps the requester and the purpose given");
         Check(npm != new CommandLimits { Programs = npm.Programs }, "the requester is part of the limits' equality");
         string root = CodingTemp();
         Directory.CreateDirectory(root);
@@ -405,7 +406,7 @@ internal abstract partial class DesktopTests : Tests
         {
             Check(new CodingTools(root, new CodingToolOptions()).Limits.Requester == "the agent", "the coding tools ask as the agent");
             var sandbox = new ProcessCommandSandbox { PollInterval = TimeSpan.FromMilliseconds(1) };
-            var asAgent = sandbox.RunAsync(["dotnet", "--version"], root, npm with { Requester = "the agent" }).AsTask().GetAwaiter().GetResult();
+            var asAgent = sandbox.RunAsync(["dotnet", "--version"], root, npm with { Requester = "the agent", Purpose = null }).AsTask().GetAwaiter().GetResult();
             var asNpm = sandbox.RunAsync(["dotnet", "--version"], root, npm).AsTask().GetAwaiter().GetResult();
             Check(asAgent.Succeeded && asNpm.Succeeded && asAgent.Output == asNpm.Output, $"the same run whoever asks: {asAgent.Output} / {asNpm.Output}");
         }

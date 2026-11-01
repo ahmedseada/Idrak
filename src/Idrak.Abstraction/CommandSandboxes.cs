@@ -74,6 +74,13 @@ public sealed record CommandLimits
     /// listing may name it. It changes nothing about how the command runs. Default "the agent" (the coding tools').
     /// </summary>
     public string Requester { get; init; } = "the agent";
+
+    /// <summary>
+    /// What the command is for, in the requester's words, when its command line does not say it plainly (a package
+    /// manager's script: "the script build: ng build --configuration production"): a sandbox that asks the user first shows
+    /// it with the command. It changes nothing about how the command runs. Null: the command line says it.
+    /// </summary>
+    public string? Purpose { get; init; }
 }
 
 /// <summary>
