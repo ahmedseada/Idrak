@@ -27,8 +27,11 @@ internal sealed record GcnKernelDescriptor
 
     public ushort Properties { get; init; }
 
-    /// <summary>VGPRs a wave has: the granulated count of RSRC1 in blocks of 4 (wave64).</summary>
-    public int Vgprs => (int)((Rsrc1 & 0x3F) + 1) * 4;
+    /// <summary>The registers a block of RSRC1's vector count holds: 4 on gfx9, 8 on RDNA in wave64 (as LLVM 18 writes it).</summary>
+    public int VgprGranule { get; init; } = 4;
+
+    /// <summary>VGPRs a wave has: the granulated count of RSRC1 in blocks of <see cref="VgprGranule"/> (wave64).</summary>
+    public int Vgprs => (int)((Rsrc1 & 0x3F) + 1) * VgprGranule;
 
     /// <summary>SGPRs a wave is allocated: the granulated count of RSRC1 in blocks of 8 (VCC and the xnack mask among them).</summary>
     public int SgprBlocks => (int)(((Rsrc1 >> 6) & 0xF) + 1) * 8;
@@ -98,10 +101,10 @@ internal sealed record GcnKernelDescriptor
 internal sealed record GcnKernelImage(string Name, GcnCpu Cpu, byte[] Code, int Entry, GcnKernelDescriptor Descriptor, bool Xnack)
 {
     /// <summary>
-    /// The SGPRs the code may use as s0..: the allocated blocks less VCC's two and, where xnack may be on, the xnack
-    /// mask's two (gfx9 keeps them at the top of the wave's allocation).
+    /// The SGPRs the code may use as s0..: on gfx9 the allocated blocks less VCC's two and, where xnack may be on, the
+    /// xnack mask's two (gfx9 keeps them at the top of the wave's allocation); on RDNA all 106 (no scalar blocks).
     /// </summary>
-    public int UsableSgprs => Descriptor.SgprBlocks - (Xnack ? 4 : 2);
+    public int UsableSgprs => Cpu >= GcnCpu.Gfx1010 ? 106 : Descriptor.SgprBlocks - (Xnack ? 4 : 2);
 }
 
 /// <summary>Reads a gfx9 code object (an ELF shared object for EM_AMDGPU) by itself: its kernels' code and descriptors.</summary>
@@ -109,7 +112,7 @@ internal static class GcnCodeObjectReader
 {
     private readonly record struct Section(string Name, uint Type, ulong Address, ulong Offset, ulong Size, uint Link);
 
-    /// <summary>The processor of a gfx9 code object's ELF flags.</summary>
+    /// <summary>The processor of a code object's ELF flags (LLVM 18's machine values).</summary>
     /// <exception cref="InvalidDataException">The flags name a processor the interpreter does not decode for.</exception>
     public static GcnCpu CpuOf(uint flags) => (flags & 0xFF) switch
     {
@@ -117,7 +120,11 @@ internal static class GcnCodeObjectReader
         0x2F => GcnCpu.Gfx906,
         0x30 => GcnCpu.Gfx908,
         0x32 => GcnCpu.Gfx90c,
-        var m => throw new InvalidDataException($"ELF flags 0x{flags:X}: machine 0x{m:X2} is not a processor the interpreter decodes for (gfx900, gfx906, gfx908, gfx90c)"),
+        0x33 => GcnCpu.Gfx1010,
+        0x36 => GcnCpu.Gfx1030,
+        0x41 => GcnCpu.Gfx1100,
+        0x47 => GcnCpu.Gfx1102,
+        var m => throw new InvalidDataException($"ELF flags 0x{flags:X}: machine 0x{m:X2} is not a processor the interpreter decodes for (gfx900, gfx906, gfx908, gfx90c, gfx1010, gfx1030, gfx1100, gfx1102)"),
     };
 
     /// <summary>The kernel <paramref name="name"/> of a code object.</summary>
@@ -164,7 +171,7 @@ internal static class GcnCodeObjectReader
 
         var holder = sections.First(s => s.Type != 8 && descriptorAddress >= s.Address && descriptorAddress + 64 <= s.Address + s.Size && s.Address != 0);
         var descriptorBytes = span.Slice((int)(holder.Offset + (descriptorAddress - holder.Address)), 64);
-        var descriptor = GcnKernelDescriptor.Read(descriptorBytes);
+        var descriptor = GcnKernelDescriptor.Read(descriptorBytes) with { VgprGranule = cpu >= GcnCpu.Gfx1010 ? 8 : 4 };
         long entryAddress = (long)descriptorAddress + BinaryPrimitives.ReadInt64LittleEndian(descriptorBytes[16..]);
         var text = sections.FirstOrDefault(s => s.Name == ".text");
         if (text.Name is null || entryAddress < (long)text.Address || entryAddress >= (long)(text.Address + text.Size))

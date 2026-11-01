@@ -43,6 +43,8 @@ public static partial class GcnTargets
 
         protected override FrozenDictionary<string, GcnInstruction>.AlternateLookup<ReadOnlySpan<char>> ByMnemonic => Index.ByMnemonic;
 
+        protected override FrozenDictionary<string, string>.AlternateLookup<ReadOnlySpan<char>> Aliases => Index.Aliases;
+
         // s_waitcnt: expcnt at 2:0, lgkmcnt (six bits) at 9:4, vmcnt (six bits) at 15:10.
         public override ushort WaitBits(int vmcnt, int expcnt, int lgkmcnt) => (ushort)((expcnt & 7) | (lgkmcnt & 0x3F) << 4 | (vmcnt & 0x3F) << 10);
 
@@ -54,6 +56,31 @@ public static partial class GcnTargets
 
             public static readonly FrozenDictionary<string, GcnInstruction>.AlternateLookup<ReadOnlySpan<char>> ByMnemonic =
                 Instructions.ToFrozenDictionary(i => i.Mnemonic, StringComparer.Ordinal).GetAlternateLookup<ReadOnlySpan<char>>();
+
+            // gfx9's names of the instructions gfx11 renamed: LLVM 18's gfx11 aliases (llvm-mc -mcpu=gfx1100 takes each and
+            // prints the right-hand name, 2026-11-02), the ones Idrak's kernels write.
+            public static readonly FrozenDictionary<string, string>.AlternateLookup<ReadOnlySpan<char>> Aliases = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["v_add_u32"] = "v_add_nc_u32",
+                ["v_sub_u32"] = "v_sub_nc_u32",
+                ["v_subrev_u32"] = "v_subrev_nc_u32",
+                ["s_load_dword"] = "s_load_b32",
+                ["s_load_dwordx2"] = "s_load_b64",
+                ["s_load_dwordx4"] = "s_load_b128",
+                ["s_load_dwordx8"] = "s_load_b256",
+                ["global_load_dword"] = "global_load_b32",
+                ["global_load_dwordx4"] = "global_load_b128",
+                ["global_load_ubyte"] = "global_load_u8",
+                ["global_store_dword"] = "global_store_b32",
+                ["global_store_dwordx4"] = "global_store_b128",
+                ["global_store_byte"] = "global_store_b8",
+                ["global_store_short"] = "global_store_b16",
+                ["global_atomic_add"] = "global_atomic_add_u32",
+                ["ds_read_b32"] = "ds_load_b32",
+                ["ds_read_b128"] = "ds_load_b128",
+                ["ds_write_b32"] = "ds_store_b32",
+                ["s_andn2_b64"] = "s_and_not1_b64",
+            }.ToFrozenDictionary(StringComparer.Ordinal).GetAlternateLookup<ReadOnlySpan<char>>();
         }
     }
 }

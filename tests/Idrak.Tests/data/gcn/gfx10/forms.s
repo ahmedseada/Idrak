@@ -100,6 +100,7 @@ s_waitcnt vmcnt(0) lgkmcnt(0)
 s_barrier
 s_waitcnt lgkmcnt(0)
 s_barrier
+s_sleep 1
 s_branch loop_top
 s_branch loop_end
 s_cbranch_scc0 loop_top
@@ -126,6 +127,7 @@ s_load_dwordx4 s[0:3], s[4:5], 0x0
 s_load_dwordx4 s[8:11], s[4:5], 0x20
 s_load_dwordx8 s[8:15], s[4:5], 0x0
 s_load_dwordx8 s[16:23], s[4:5], 0x40
+s_dcache_inv
 v_mov_b32_e32 v0, v1
 v_mov_b32_e32 v0, s1
 v_mov_b32_e32 v0, 0

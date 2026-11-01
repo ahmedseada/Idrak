@@ -7,55 +7,55 @@
 # such CPU's records are one block of its own. The wave64 forms are those Idrak's kernels emit; a form's wave32
 # spelling follows it in forms.s, and each wave size lists the other's lines among those it rejects.
 #
-# gfx10/forms.s: 424 instruction lines. CPUs: gfx1010-w32, gfx1010-w64, gfx1030-w32, gfx1030-w64.
-# gfx1010-w32: 382 forms, 42 rejected
-# gfx1010-w64: 424 forms, 0 rejected
-# gfx1030-w32: 382 forms, 42 rejected
-# gfx1030-w64: 424 forms, 0 rejected
+# gfx10/forms.s: 426 instruction lines. CPUs: gfx1010-w32, gfx1010-w64, gfx1030-w32, gfx1030-w64.
+# gfx1010-w32: 384 forms, 42 rejected
+# gfx1010-w64: 426 forms, 0 rejected
+# gfx1030-w32: 384 forms, 42 rejected
+# gfx1030-w64: 426 forms, 0 rejected
 
-# rejected: gfx1010-w32 (42 of 424)
-#	205	v_cndmask_b32_e32 v0, v1, v2, vcc	operands are not valid for this GPU or mode
-#	207	v_cndmask_b32_e32 v0, 0, v2, vcc	operands are not valid for this GPU or mode
-#	209	v_cndmask_b32_e32 v0, 1.0, v2, vcc	operands are not valid for this GPU or mode
-#	212	v_cmp_lt_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	214	v_cmp_eq_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	216	v_cmp_le_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	218	v_cmp_gt_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	220	v_cmp_ge_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	222	v_cmp_u_f32_e32 vcc, v1, v1	operands are not valid for this GPU or mode
-#	224	v_cmp_neq_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	226	v_cmp_lt_f32_e32 vcc, 0, v2	operands are not valid for this GPU or mode
-#	228	v_cmp_gt_f32_e32 vcc, s1, v2	operands are not valid for this GPU or mode
-#	230	v_cmp_lt_f32_e32 vcc, 0.5, v2	operands are not valid for this GPU or mode
-#	232	v_cmp_eq_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	234	v_cmp_ne_u32_e32 vcc, 0, v2	operands are not valid for this GPU or mode
-#	236	v_cmp_lt_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	238	v_cmp_gt_u32_e32 vcc, s1, v2	operands are not valid for this GPU or mode
-#	240	v_cmp_le_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	242	v_cmp_ge_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	244	v_cmp_lt_i32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	246	v_cmp_gt_i32_e32 vcc, 0, v2	operands are not valid for this GPU or mode
-#	248	v_cmp_class_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	250	v_cmp_class_f32_e64 vcc, v1, 3	invalid operand for instruction
-#	252	v_cmp_class_f32_e64 s[0:1], v1, s2	invalid operand for instruction
-#	254	v_cmp_lt_f32_e64 s[0:1], v1, v2	invalid operand for instruction
-#	256	v_cmp_lt_f32_e64 s[0:1], v1, s2	invalid operand for instruction
-#	258	v_cmp_lt_f32_e64 s[0:1], v1, 1.0	invalid operand for instruction
-#	260	v_cmp_lt_f32_e64 s[0:1], |v1|, v2	invalid operand for instruction
-#	262	v_cmp_lt_f32_e64 s[0:1], -v1, v2	invalid operand for instruction
-#	264	v_cmp_gt_u32_e64 s[0:1], s2, v1	invalid operand for instruction
-#	266	v_cmp_eq_u32_e64 s[2:3], v1, 0	invalid operand for instruction
-#	268	v_cmp_ne_u32_e64 vcc, v1, s2	invalid operand for instruction
-#	270	v_cmp_eq_u32_e64 s[0:1], s2, s2	invalid operand for instruction
-#	319	v_cndmask_b32_e64 v0, v1, v2, s[0:1]	invalid operand for instruction
-#	321	v_cndmask_b32_e64 v0, 0, 1.0, vcc	invalid operand for instruction
-#	323	v_cndmask_b32_e64 v0, -v1, v2, s[0:1]	invalid operand for instruction
-#	327	v_div_scale_f32 v0, vcc, v1, v2, v1	invalid operand for instruction
-#	329	v_div_scale_f32 v0, vcc, v2, v2, v1	invalid operand for instruction
-#	331	v_div_scale_f32 v0, s[2:3], v1, v2, v1	invalid operand for instruction
-#	378	v_cmp_gt_u32_e32 vcc, s2, v0	operands are not valid for this GPU or mode
-#	387	v_cmp_lt_f32_e32 vcc, 0, v1	operands are not valid for this GPU or mode
-#	402	v_cmp_ge_u32_e32 vcc, v3, v4	operands are not valid for this GPU or mode
+# rejected: gfx1010-w32 (42 of 426)
+#	207	v_cndmask_b32_e32 v0, v1, v2, vcc	operands are not valid for this GPU or mode
+#	209	v_cndmask_b32_e32 v0, 0, v2, vcc	operands are not valid for this GPU or mode
+#	211	v_cndmask_b32_e32 v0, 1.0, v2, vcc	operands are not valid for this GPU or mode
+#	214	v_cmp_lt_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	216	v_cmp_eq_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	218	v_cmp_le_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	220	v_cmp_gt_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	222	v_cmp_ge_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	224	v_cmp_u_f32_e32 vcc, v1, v1	operands are not valid for this GPU or mode
+#	226	v_cmp_neq_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	228	v_cmp_lt_f32_e32 vcc, 0, v2	operands are not valid for this GPU or mode
+#	230	v_cmp_gt_f32_e32 vcc, s1, v2	operands are not valid for this GPU or mode
+#	232	v_cmp_lt_f32_e32 vcc, 0.5, v2	operands are not valid for this GPU or mode
+#	234	v_cmp_eq_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	236	v_cmp_ne_u32_e32 vcc, 0, v2	operands are not valid for this GPU or mode
+#	238	v_cmp_lt_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	240	v_cmp_gt_u32_e32 vcc, s1, v2	operands are not valid for this GPU or mode
+#	242	v_cmp_le_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	244	v_cmp_ge_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	246	v_cmp_lt_i32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	248	v_cmp_gt_i32_e32 vcc, 0, v2	operands are not valid for this GPU or mode
+#	250	v_cmp_class_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	252	v_cmp_class_f32_e64 vcc, v1, 3	invalid operand for instruction
+#	254	v_cmp_class_f32_e64 s[0:1], v1, s2	invalid operand for instruction
+#	256	v_cmp_lt_f32_e64 s[0:1], v1, v2	invalid operand for instruction
+#	258	v_cmp_lt_f32_e64 s[0:1], v1, s2	invalid operand for instruction
+#	260	v_cmp_lt_f32_e64 s[0:1], v1, 1.0	invalid operand for instruction
+#	262	v_cmp_lt_f32_e64 s[0:1], |v1|, v2	invalid operand for instruction
+#	264	v_cmp_lt_f32_e64 s[0:1], -v1, v2	invalid operand for instruction
+#	266	v_cmp_gt_u32_e64 s[0:1], s2, v1	invalid operand for instruction
+#	268	v_cmp_eq_u32_e64 s[2:3], v1, 0	invalid operand for instruction
+#	270	v_cmp_ne_u32_e64 vcc, v1, s2	invalid operand for instruction
+#	272	v_cmp_eq_u32_e64 s[0:1], s2, s2	invalid operand for instruction
+#	321	v_cndmask_b32_e64 v0, v1, v2, s[0:1]	invalid operand for instruction
+#	323	v_cndmask_b32_e64 v0, 0, 1.0, vcc	invalid operand for instruction
+#	325	v_cndmask_b32_e64 v0, -v1, v2, s[0:1]	invalid operand for instruction
+#	329	v_div_scale_f32 v0, vcc, v1, v2, v1	invalid operand for instruction
+#	331	v_div_scale_f32 v0, vcc, v2, v2, v1	invalid operand for instruction
+#	333	v_div_scale_f32 v0, s[2:3], v1, v2, v1	invalid operand for instruction
+#	380	v_cmp_gt_u32_e32 vcc, s2, v0	operands are not valid for this GPU or mode
+#	389	v_cmp_lt_f32_e32 vcc, 0, v1	operands are not valid for this GPU or mode
+#	404	v_cmp_ge_u32_e32 vcc, v3, v4	operands are not valid for this GPU or mode
 # gfx1010-w32
 gfx1010-w32	s_mov_b32 s0, s1	010380be
 gfx1010-w32	s_mov_b32 s0, 0	800380be
@@ -155,14 +155,15 @@ gfx1010-w32	s_waitcnt vmcnt(0) lgkmcnt(0)	70008cbf
 gfx1010-w32	s_barrier	00008abf
 gfx1010-w32	s_waitcnt lgkmcnt(0)	7fc08cbf
 gfx1010-w32	s_barrier	00008abf
-gfx1010-w32	s_branch loop_top	eaff82bf
+gfx1010-w32	s_sleep 1	01008ebf
+gfx1010-w32	s_branch loop_top	e9ff82bf
 gfx1010-w32	s_branch loop_end	090082bf
-gfx1010-w32	s_cbranch_scc0 loop_top	e8ff84bf
+gfx1010-w32	s_cbranch_scc0 loop_top	e7ff84bf
 gfx1010-w32	s_cbranch_scc1 loop_end	070085bf
-gfx1010-w32	s_cbranch_vccz loop_top	e6ff86bf
+gfx1010-w32	s_cbranch_vccz loop_top	e5ff86bf
 gfx1010-w32	s_cbranch_vccnz loop_end	050087bf
 gfx1010-w32	s_cbranch_execz loop_end	040088bf
-gfx1010-w32	s_cbranch_execnz loop_top	e3ff89bf
+gfx1010-w32	s_cbranch_execnz loop_top	e2ff89bf
 gfx1010-w32	s_branch 0	000082bf
 gfx1010-w32	s_branch -1	ffff82bf
 gfx1010-w32	s_cbranch_scc0 3	030084bf
@@ -181,6 +182,7 @@ gfx1010-w32	s_load_dwordx4 s[0:3], s[4:5], 0x0	020008f4000000fa
 gfx1010-w32	s_load_dwordx4 s[8:11], s[4:5], 0x20	020208f4200000fa
 gfx1010-w32	s_load_dwordx8 s[8:15], s[4:5], 0x0	02020cf4000000fa
 gfx1010-w32	s_load_dwordx8 s[16:23], s[4:5], 0x40	02040cf4400000fa
+gfx1010-w32	s_dcache_inv	000080f400000000
 gfx1010-w32	v_mov_b32_e32 v0, v1	0103007e
 gfx1010-w32	v_mov_b32_e32 v0, s1	0102007e
 gfx1010-w32	v_mov_b32_e32 v0, 0	8002007e
@@ -446,7 +448,7 @@ gfx1010-w32	s_mov_b32 null, 0	8003fdbe
 gfx1010-w32	buffer_gl0_inv	0000c4e100000000
 gfx1010-w32	buffer_gl1_inv	0000c8e100000000
 
-# rejected: gfx1010-w64 (0 of 424)
+# rejected: gfx1010-w64 (0 of 426)
 # gfx1010-w64
 gfx1010-w64	s_mov_b32 s0, s1	010380be
 gfx1010-w64	s_mov_b32 s0, 0	800380be
@@ -546,14 +548,15 @@ gfx1010-w64	s_waitcnt vmcnt(0) lgkmcnt(0)	70008cbf
 gfx1010-w64	s_barrier	00008abf
 gfx1010-w64	s_waitcnt lgkmcnt(0)	7fc08cbf
 gfx1010-w64	s_barrier	00008abf
-gfx1010-w64	s_branch loop_top	eaff82bf
+gfx1010-w64	s_sleep 1	01008ebf
+gfx1010-w64	s_branch loop_top	e9ff82bf
 gfx1010-w64	s_branch loop_end	090082bf
-gfx1010-w64	s_cbranch_scc0 loop_top	e8ff84bf
+gfx1010-w64	s_cbranch_scc0 loop_top	e7ff84bf
 gfx1010-w64	s_cbranch_scc1 loop_end	070085bf
-gfx1010-w64	s_cbranch_vccz loop_top	e6ff86bf
+gfx1010-w64	s_cbranch_vccz loop_top	e5ff86bf
 gfx1010-w64	s_cbranch_vccnz loop_end	050087bf
 gfx1010-w64	s_cbranch_execz loop_end	040088bf
-gfx1010-w64	s_cbranch_execnz loop_top	e3ff89bf
+gfx1010-w64	s_cbranch_execnz loop_top	e2ff89bf
 gfx1010-w64	s_branch 0	000082bf
 gfx1010-w64	s_branch -1	ffff82bf
 gfx1010-w64	s_cbranch_scc0 3	030084bf
@@ -572,6 +575,7 @@ gfx1010-w64	s_load_dwordx4 s[0:3], s[4:5], 0x0	020008f4000000fa
 gfx1010-w64	s_load_dwordx4 s[8:11], s[4:5], 0x20	020208f4200000fa
 gfx1010-w64	s_load_dwordx8 s[8:15], s[4:5], 0x0	02020cf4000000fa
 gfx1010-w64	s_load_dwordx8 s[16:23], s[4:5], 0x40	02040cf4400000fa
+gfx1010-w64	s_dcache_inv	000080f400000000
 gfx1010-w64	v_mov_b32_e32 v0, v1	0103007e
 gfx1010-w64	v_mov_b32_e32 v0, s1	0102007e
 gfx1010-w64	v_mov_b32_e32 v0, 0	8002007e
@@ -879,49 +883,49 @@ gfx1010-w64	s_mov_b32 null, 0	8003fdbe
 gfx1010-w64	buffer_gl0_inv	0000c4e100000000
 gfx1010-w64	buffer_gl1_inv	0000c8e100000000
 
-# rejected: gfx1030-w32 (42 of 424)
-#	205	v_cndmask_b32_e32 v0, v1, v2, vcc	operands are not valid for this GPU or mode
-#	207	v_cndmask_b32_e32 v0, 0, v2, vcc	operands are not valid for this GPU or mode
-#	209	v_cndmask_b32_e32 v0, 1.0, v2, vcc	operands are not valid for this GPU or mode
-#	212	v_cmp_lt_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	214	v_cmp_eq_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	216	v_cmp_le_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	218	v_cmp_gt_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	220	v_cmp_ge_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	222	v_cmp_u_f32_e32 vcc, v1, v1	operands are not valid for this GPU or mode
-#	224	v_cmp_neq_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	226	v_cmp_lt_f32_e32 vcc, 0, v2	operands are not valid for this GPU or mode
-#	228	v_cmp_gt_f32_e32 vcc, s1, v2	operands are not valid for this GPU or mode
-#	230	v_cmp_lt_f32_e32 vcc, 0.5, v2	operands are not valid for this GPU or mode
-#	232	v_cmp_eq_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	234	v_cmp_ne_u32_e32 vcc, 0, v2	operands are not valid for this GPU or mode
-#	236	v_cmp_lt_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	238	v_cmp_gt_u32_e32 vcc, s1, v2	operands are not valid for this GPU or mode
-#	240	v_cmp_le_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	242	v_cmp_ge_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	244	v_cmp_lt_i32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	246	v_cmp_gt_i32_e32 vcc, 0, v2	operands are not valid for this GPU or mode
-#	248	v_cmp_class_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
-#	250	v_cmp_class_f32_e64 vcc, v1, 3	invalid operand for instruction
-#	252	v_cmp_class_f32_e64 s[0:1], v1, s2	invalid operand for instruction
-#	254	v_cmp_lt_f32_e64 s[0:1], v1, v2	invalid operand for instruction
-#	256	v_cmp_lt_f32_e64 s[0:1], v1, s2	invalid operand for instruction
-#	258	v_cmp_lt_f32_e64 s[0:1], v1, 1.0	invalid operand for instruction
-#	260	v_cmp_lt_f32_e64 s[0:1], |v1|, v2	invalid operand for instruction
-#	262	v_cmp_lt_f32_e64 s[0:1], -v1, v2	invalid operand for instruction
-#	264	v_cmp_gt_u32_e64 s[0:1], s2, v1	invalid operand for instruction
-#	266	v_cmp_eq_u32_e64 s[2:3], v1, 0	invalid operand for instruction
-#	268	v_cmp_ne_u32_e64 vcc, v1, s2	invalid operand for instruction
-#	270	v_cmp_eq_u32_e64 s[0:1], s2, s2	invalid operand for instruction
-#	319	v_cndmask_b32_e64 v0, v1, v2, s[0:1]	invalid operand for instruction
-#	321	v_cndmask_b32_e64 v0, 0, 1.0, vcc	invalid operand for instruction
-#	323	v_cndmask_b32_e64 v0, -v1, v2, s[0:1]	invalid operand for instruction
-#	327	v_div_scale_f32 v0, vcc, v1, v2, v1	invalid operand for instruction
-#	329	v_div_scale_f32 v0, vcc, v2, v2, v1	invalid operand for instruction
-#	331	v_div_scale_f32 v0, s[2:3], v1, v2, v1	invalid operand for instruction
-#	378	v_cmp_gt_u32_e32 vcc, s2, v0	operands are not valid for this GPU or mode
-#	387	v_cmp_lt_f32_e32 vcc, 0, v1	operands are not valid for this GPU or mode
-#	402	v_cmp_ge_u32_e32 vcc, v3, v4	operands are not valid for this GPU or mode
+# rejected: gfx1030-w32 (42 of 426)
+#	207	v_cndmask_b32_e32 v0, v1, v2, vcc	operands are not valid for this GPU or mode
+#	209	v_cndmask_b32_e32 v0, 0, v2, vcc	operands are not valid for this GPU or mode
+#	211	v_cndmask_b32_e32 v0, 1.0, v2, vcc	operands are not valid for this GPU or mode
+#	214	v_cmp_lt_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	216	v_cmp_eq_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	218	v_cmp_le_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	220	v_cmp_gt_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	222	v_cmp_ge_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	224	v_cmp_u_f32_e32 vcc, v1, v1	operands are not valid for this GPU or mode
+#	226	v_cmp_neq_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	228	v_cmp_lt_f32_e32 vcc, 0, v2	operands are not valid for this GPU or mode
+#	230	v_cmp_gt_f32_e32 vcc, s1, v2	operands are not valid for this GPU or mode
+#	232	v_cmp_lt_f32_e32 vcc, 0.5, v2	operands are not valid for this GPU or mode
+#	234	v_cmp_eq_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	236	v_cmp_ne_u32_e32 vcc, 0, v2	operands are not valid for this GPU or mode
+#	238	v_cmp_lt_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	240	v_cmp_gt_u32_e32 vcc, s1, v2	operands are not valid for this GPU or mode
+#	242	v_cmp_le_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	244	v_cmp_ge_u32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	246	v_cmp_lt_i32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	248	v_cmp_gt_i32_e32 vcc, 0, v2	operands are not valid for this GPU or mode
+#	250	v_cmp_class_f32_e32 vcc, v1, v2	operands are not valid for this GPU or mode
+#	252	v_cmp_class_f32_e64 vcc, v1, 3	invalid operand for instruction
+#	254	v_cmp_class_f32_e64 s[0:1], v1, s2	invalid operand for instruction
+#	256	v_cmp_lt_f32_e64 s[0:1], v1, v2	invalid operand for instruction
+#	258	v_cmp_lt_f32_e64 s[0:1], v1, s2	invalid operand for instruction
+#	260	v_cmp_lt_f32_e64 s[0:1], v1, 1.0	invalid operand for instruction
+#	262	v_cmp_lt_f32_e64 s[0:1], |v1|, v2	invalid operand for instruction
+#	264	v_cmp_lt_f32_e64 s[0:1], -v1, v2	invalid operand for instruction
+#	266	v_cmp_gt_u32_e64 s[0:1], s2, v1	invalid operand for instruction
+#	268	v_cmp_eq_u32_e64 s[2:3], v1, 0	invalid operand for instruction
+#	270	v_cmp_ne_u32_e64 vcc, v1, s2	invalid operand for instruction
+#	272	v_cmp_eq_u32_e64 s[0:1], s2, s2	invalid operand for instruction
+#	321	v_cndmask_b32_e64 v0, v1, v2, s[0:1]	invalid operand for instruction
+#	323	v_cndmask_b32_e64 v0, 0, 1.0, vcc	invalid operand for instruction
+#	325	v_cndmask_b32_e64 v0, -v1, v2, s[0:1]	invalid operand for instruction
+#	329	v_div_scale_f32 v0, vcc, v1, v2, v1	invalid operand for instruction
+#	331	v_div_scale_f32 v0, vcc, v2, v2, v1	invalid operand for instruction
+#	333	v_div_scale_f32 v0, s[2:3], v1, v2, v1	invalid operand for instruction
+#	380	v_cmp_gt_u32_e32 vcc, s2, v0	operands are not valid for this GPU or mode
+#	389	v_cmp_lt_f32_e32 vcc, 0, v1	operands are not valid for this GPU or mode
+#	404	v_cmp_ge_u32_e32 vcc, v3, v4	operands are not valid for this GPU or mode
 # gfx1030-w32
 gfx1030-w32	s_mov_b32 s0, s1	010380be
 gfx1030-w32	s_mov_b32 s0, 0	800380be
@@ -1021,14 +1025,15 @@ gfx1030-w32	s_waitcnt vmcnt(0) lgkmcnt(0)	70008cbf
 gfx1030-w32	s_barrier	00008abf
 gfx1030-w32	s_waitcnt lgkmcnt(0)	7fc08cbf
 gfx1030-w32	s_barrier	00008abf
-gfx1030-w32	s_branch loop_top	eaff82bf
+gfx1030-w32	s_sleep 1	01008ebf
+gfx1030-w32	s_branch loop_top	e9ff82bf
 gfx1030-w32	s_branch loop_end	090082bf
-gfx1030-w32	s_cbranch_scc0 loop_top	e8ff84bf
+gfx1030-w32	s_cbranch_scc0 loop_top	e7ff84bf
 gfx1030-w32	s_cbranch_scc1 loop_end	070085bf
-gfx1030-w32	s_cbranch_vccz loop_top	e6ff86bf
+gfx1030-w32	s_cbranch_vccz loop_top	e5ff86bf
 gfx1030-w32	s_cbranch_vccnz loop_end	050087bf
 gfx1030-w32	s_cbranch_execz loop_end	040088bf
-gfx1030-w32	s_cbranch_execnz loop_top	e3ff89bf
+gfx1030-w32	s_cbranch_execnz loop_top	e2ff89bf
 gfx1030-w32	s_branch 0	000082bf
 gfx1030-w32	s_branch -1	ffff82bf
 gfx1030-w32	s_cbranch_scc0 3	030084bf
@@ -1047,6 +1052,7 @@ gfx1030-w32	s_load_dwordx4 s[0:3], s[4:5], 0x0	020008f4000000fa
 gfx1030-w32	s_load_dwordx4 s[8:11], s[4:5], 0x20	020208f4200000fa
 gfx1030-w32	s_load_dwordx8 s[8:15], s[4:5], 0x0	02020cf4000000fa
 gfx1030-w32	s_load_dwordx8 s[16:23], s[4:5], 0x40	02040cf4400000fa
+gfx1030-w32	s_dcache_inv	000080f400000000
 gfx1030-w32	v_mov_b32_e32 v0, v1	0103007e
 gfx1030-w32	v_mov_b32_e32 v0, s1	0102007e
 gfx1030-w32	v_mov_b32_e32 v0, 0	8002007e
@@ -1312,7 +1318,7 @@ gfx1030-w32	s_mov_b32 null, 0	8003fdbe
 gfx1030-w32	buffer_gl0_inv	0000c4e100000000
 gfx1030-w32	buffer_gl1_inv	0000c8e100000000
 
-# rejected: gfx1030-w64 (0 of 424)
+# rejected: gfx1030-w64 (0 of 426)
 # gfx1030-w64
 gfx1030-w64	s_mov_b32 s0, s1	010380be
 gfx1030-w64	s_mov_b32 s0, 0	800380be
@@ -1412,14 +1418,15 @@ gfx1030-w64	s_waitcnt vmcnt(0) lgkmcnt(0)	70008cbf
 gfx1030-w64	s_barrier	00008abf
 gfx1030-w64	s_waitcnt lgkmcnt(0)	7fc08cbf
 gfx1030-w64	s_barrier	00008abf
-gfx1030-w64	s_branch loop_top	eaff82bf
+gfx1030-w64	s_sleep 1	01008ebf
+gfx1030-w64	s_branch loop_top	e9ff82bf
 gfx1030-w64	s_branch loop_end	090082bf
-gfx1030-w64	s_cbranch_scc0 loop_top	e8ff84bf
+gfx1030-w64	s_cbranch_scc0 loop_top	e7ff84bf
 gfx1030-w64	s_cbranch_scc1 loop_end	070085bf
-gfx1030-w64	s_cbranch_vccz loop_top	e6ff86bf
+gfx1030-w64	s_cbranch_vccz loop_top	e5ff86bf
 gfx1030-w64	s_cbranch_vccnz loop_end	050087bf
 gfx1030-w64	s_cbranch_execz loop_end	040088bf
-gfx1030-w64	s_cbranch_execnz loop_top	e3ff89bf
+gfx1030-w64	s_cbranch_execnz loop_top	e2ff89bf
 gfx1030-w64	s_branch 0	000082bf
 gfx1030-w64	s_branch -1	ffff82bf
 gfx1030-w64	s_cbranch_scc0 3	030084bf
@@ -1438,6 +1445,7 @@ gfx1030-w64	s_load_dwordx4 s[0:3], s[4:5], 0x0	020008f4000000fa
 gfx1030-w64	s_load_dwordx4 s[8:11], s[4:5], 0x20	020208f4200000fa
 gfx1030-w64	s_load_dwordx8 s[8:15], s[4:5], 0x0	02020cf4000000fa
 gfx1030-w64	s_load_dwordx8 s[16:23], s[4:5], 0x40	02040cf4400000fa
+gfx1030-w64	s_dcache_inv	000080f400000000
 gfx1030-w64	v_mov_b32_e32 v0, v1	0103007e
 gfx1030-w64	v_mov_b32_e32 v0, s1	0102007e
 gfx1030-w64	v_mov_b32_e32 v0, 0	8002007e

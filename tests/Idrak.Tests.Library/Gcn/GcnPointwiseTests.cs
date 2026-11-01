@@ -68,13 +68,13 @@ internal abstract partial class Tests
         return
         [
             ("gcn kernels: element-wise: GcnKernels.All (fill_f32, the element-wise and the row kernels) assembles into one code object for gfx900, gfx906, gfx908 and gfx90c, every kernel found in it by name; each element-wise kernel declares its argument list, its block of 256 and the dispatch packet, and its printed text reads back to the same bytes", PointwiseAll),
-            .. cases.Select(c => ($"gcn kernels: element-wise {c.Kernel}, {c.What}: in the interpreter for gfx90c and gfx906 over 1, 255, 1,000 and about 70,000 elements (grids of 1 to 5 blocks) and about 4,100 misaligned ones, special values included, against the CPU backend {(c.Exact ? "bit for bit" : string.Create(CultureInfo.InvariantCulture, $"within {c.Tolerance:G}"))}; no missing wait, race or access out of range, nothing outside the count written",
+            .. cases.Select(c => ($"gcn kernels: element-wise {c.Kernel}, {c.What}: in the interpreter for gfx90c, gfx906, gfx1030 and gfx1100 over 1, 255, 1,000 and about 70,000 elements (grids of 1 to 5 blocks) and about 4,100 misaligned ones, special values included, against the CPU backend {(c.Exact ? "bit for bit" : string.Create(CultureInfo.InvariantCulture, $"within {c.Tolerance:G}"))}; no missing wait, race or access out of range, nothing outside the count written",
                 (Action<Device>)(device => PointwiseCheck(device, c)))),
         ];
     }
 
     // The processors the kernels run on in the interpreter: the one this plan is checked against and another of the family.
-    private static readonly string[] PointwiseIsas = ["gfx90c", "gfx906"];
+    private static readonly string[] PointwiseIsas = ["gfx90c", "gfx906", "gfx1030", "gfx1100"];
 
     // Special values: NaN, ±∞, ±0, denormals, the smallest normal, large magnitudes, and the functions' edges (e^x's
     // overflow and underflow, tanh's saturation, the trig functions' larger turns).
@@ -95,7 +95,7 @@ internal abstract partial class Tests
         foreach (string processor in new[] { "gfx900", "gfx906", "gfx908", "gfx90c" })
         {
             var isa = GcnIsaVersion.Parse(processor);
-            var target = GcnTargets.For(isa);
+            var target = KernelTarget(isa);
             var codes = new List<GcnKernelCode>();
             foreach (var source in all)
             {
@@ -155,7 +155,7 @@ internal abstract partial class Tests
         foreach (string processor in PointwiseIsas)
         {
             var isa = GcnIsaVersion.Parse(processor);
-            var target = GcnTargets.For(isa);
+            var target = KernelTarget(isa);
             GcnKernelCode code;
             using (var asm = new GcnAssembler(target, isa))
             {

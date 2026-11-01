@@ -8,7 +8,7 @@ using Idrak.Gpu.Hip;
 using Idrak.Tests.Gcn;
 
 // HIP's rows kernels in GCN (GcnKernels.Rows), each run by the GCN interpreter and proven against the CPU (plan 35, G3b).
-// Every kernel is assembled for gfx90c and gfx908, run over rows of 1 column, fewer than a wave, between a wave and the
+// Every kernel is assembled for gfx90c, gfx908 and gfx1100 (gfx1030 when ISA 10 takes their offsets), run over rows of 1 column, fewer than a wave, between a wave and the
 // block, more than the block and 2,333 (a multiple of nothing), several rows a run, with special values; compared to
 // the CPU backend within the device-against-CPU tolerance (OnBoth's); run again on another grid and another wave order
 // to give the same bits (each row's sums in a fixed tree); and the interpreter reports no missing wait, race or
@@ -18,7 +18,7 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] GcnRowsGroup =
     [
-        ("gcn kernels: rows: every row kernel assembles for gfx90c and gfx908 with its block of 256 declared, within its register budget, its printed text reading back to its bytes; GcnKernels.All lists each once", GcnRowsAssembled),
+        ("gcn kernels: rows: every row kernel assembles for gfx90c, gfx908 and gfx1100 with its block of 256 declared, within its register budget, its printed text reading back to its bytes; GcnKernels.All lists each once", GcnRowsAssembled),
         ("gcn kernels: rows: rms_norm_f32 (y and inv) and rms_norm_affine_f32 equal the CPU's over rows of 1, 37, 200, 1,000 and 2,333 columns (large magnitudes in a row), the same bits on two grids and wave orders", GcnRowsRmsNorm),
         ("gcn kernels: rows: layernorm_fused_f32 and layernorm_train_f32 (y and the stats) equal the CPU's over rows of 1 to 2,333 columns (large magnitudes in a row), the same bits on two grids and wave orders", GcnRowsLayerNorm),
         ("gcn kernels: rows: layernorm_bwd_f32 (dx added to), layernorm_bwd_params_f32 with one chunk (into dgamma and dbeta, a null one skipped) and with three (partials folded by fold_chunks_f32) equal the CPU's gradients, the same bits on two grids and wave orders", GcnRowsLayerNormBackward),
@@ -28,7 +28,7 @@ internal abstract partial class Tests
         ("gcn kernels: rows: CUDA's order: rms_norm_f32 (y and inv), layernorm_train_f32 (y and the stats) and softmax_f32 (and log-softmax) equal a C# model of CUDA's BlockReduce grouping bit for bit (rows of 1, 37, 1,000 and 2,333 columns), the interpreter's own reciprocal, square root, exponential and logarithm in the model", GcnRowsCudaOrder),
     ];
 
-    private static readonly GcnIsaVersion[] RowsIsas = [GcnIsaVersion.Parse("gfx90c"), GcnIsaVersion.Parse("gfx908")];
+    private static readonly GcnIsaVersion[] RowsIsas = [GcnIsaVersion.Parse("gfx90c"), GcnIsaVersion.Parse("gfx908"), GcnIsaVersion.Parse("gfx1100")];
 
     private static readonly int[] RowsLengths = [1, 37, 200, 1000, 2333];
 
@@ -48,7 +48,7 @@ internal abstract partial class Tests
             }
 
             var source = GcnKernels.Rows.Single(k => k.Name == name);
-            var target = GcnTargets.For(isa);
+            var target = KernelTarget(isa);
             using var asm = new GcnAssembler(target, isa);
             var code = asm.AssembleKernel(source.Text);
             string printed = asm.PrintedText;
