@@ -30,6 +30,7 @@ internal abstract partial class Tests
         ("hip: no vendor ids or card names in the code of src/Idrak.Gpu/Hip, and GPU targets (gfx names) only in its instruction-set tables, GcnTargets*.cs (comments may name them)", HipNoVendorNames),
         ("hip profiler and telemetry: HipBackend times its kernels (IKernelProfiler) as CUDA does; a runtime without the event functions times nothing and says why; on HIP devices fill_f32's launches are timed under its name or a label with its floating-point operations, a refused code object reaches the telemetry, and a host fallback carries why the kernels are unavailable", HipProfilerAndTelemetry),
         ("hip device: memory, uploads, downloads, copies and fills on the device, and every operation matches the CPU: the row, element-wise, attention, shape and product operations (float32, few-row, packed int8, int4, bfloat16 and float16, the expansions and bfloat16 packing) and the decoding ones (the fused packed products, attention over rows and packed sequences, penalties, rotary embeddings, the element-wise operations with parameters, the float32 products of one input, the norm and rotation of queries and keys and of the attention heads into a cache with NormRopeHeads true, the sampler's three paths with the CPU's tokens), the training ones, and the convolutions (composed and depthwise), pooling, resampling, CTC and recurrent steps on the GCN kernels (kernels loaded: none of them through the host fallback; on HIP devices)", HipDeviceMatchesCpu),
+        ("hip device: parity with CUDA (plan 35): UploadRange, the pinned host staging (at a slot's start and anywhere in it), the packed product's epilogue (bias, residual, GELU), the token cross-entropy rows, the packed gated activation, the convolution's composed path and both implicit products (these two the same bits), the measured attention path kept, no quantized operand to reuse; none of it through the host fallback (on HIP devices)", HipDeviceParity),
     ];
 
     // G7a's logic without a device: the candidates, the choice by CUDA's comparison under a made-up timer, the table and its
@@ -337,9 +338,9 @@ internal abstract partial class Tests
         var all = GcnKernels.All;
         Check(all.Select(k => k.Name).Distinct().Count() == all.Count
               && all.Count == 1 + GcnKernels.Pointwise.Count + GcnKernels.Rows.Count + GcnKernels.Products.Count + GcnKernels.Attention.Count + GcnKernels.Shapes.Count
-                 + GcnKernels.Decoding.Count + GcnKernels.Training.Count + GcnKernels.Convolution.Count + GcnKernels.Ctc.Count + GcnKernels.Recurrent.Count
+                 + GcnKernels.Decoding.Count + GcnKernels.Training.Count + GcnKernels.Convolution.Count + GcnKernels.Ctc.Count + GcnKernels.Recurrent.Count + GcnKernels.Parity.Count
               && all[0].Name == "fill_f32",
-            $"GcnKernels.All: fill_f32, then the element-wise, row, product, attention, shape, decoding, training, convolution, CTC and recurrent kernels, each once ({all.Count})");
+            $"GcnKernels.All: fill_f32, then the element-wise, row, product, attention, shape, decoding, training, convolution, CTC, recurrent and parity kernels, each once ({all.Count})");
         foreach (string processor in new[] { "gfx900", "gfx906", "gfx908", "gfx90c" })
         {
             var isa = GcnIsaVersion.Parse(processor);

@@ -56,6 +56,8 @@ internal sealed unsafe partial class HipBackend
         "int4_dequant_f32" => (1, 4.5),
         "bf16_dequant_f32" or "f16_dequant_f32" => (0, 6),
         "bf16_pack_f32" => (0, 6),                                              // per float
+        "softmax_ce_rows_f32" => (8, 12),                                       // per logit (GcnKernels.Parity.cs)
+        "gated_act_bf16_f32" => (30, 16),                                       // per element
         "int8_gemv_finish_f32" => (k, 4.0 * (k + 1)),                            // per output; k: the splits
         _ => AttentionShapeCost(kernel, variant) is { Bytes: > 0 } cost ? cost : DecodingCost(kernel, k),
     };
