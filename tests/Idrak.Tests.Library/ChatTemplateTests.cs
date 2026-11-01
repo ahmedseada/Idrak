@@ -302,6 +302,19 @@ internal abstract partial class Tests
             var template = JinjaChatTemplate.Load(folder, tokenizer) ?? throw new InvalidOperationException("no template");
             Check(template.StopSequences.SequenceEqual(["<|im_end|>", "<|endoftext|>"]), $"stop sequences: {string.Join(", ", template.StopSequences)}");
 
+            // The next turn's opener, read from the template and the tokenizer, stops a reply too (a quantized model wrote
+            // "<|im_start|>" in place of its end-of-turn token and repeated its answer turn after turn).
+            var withOpener = BpeTokenizer.FromJson(new JsonObject
+            {
+                ["added_tokens"] = new JsonArray(
+                    new JsonObject { ["id"] = 1, ["content"] = "<|endoftext|>", ["special"] = true },
+                    new JsonObject { ["id"] = 2, ["content"] = "<|im_end|>", ["special"] = true },
+                    new JsonObject { ["id"] = 3, ["content"] = "<|im_start|>", ["special"] = true }),
+                ["model"] = new JsonObject { ["type"] = "BPE", ["vocab"] = new JsonObject { ["a"] = 0 }, ["merges"] = new JsonArray() },
+            });
+            var opened = JinjaChatTemplate.Load(folder, withOpener) ?? throw new InvalidOperationException("no template");
+            Check(opened.StopSequences.SequenceEqual(["<|im_end|>", "<|endoftext|>", "<|im_start|>"]), $"the turn's opener stops a reply: {string.Join(", ", opened.StopSequences)}");
+
             var tools = new List<ToolDefinition>
             {
                 new("read_file", "Read a file — \"quoted\"", JsonNode.Parse("""{"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}""")),

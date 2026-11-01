@@ -391,10 +391,73 @@ public sealed class JinjaChatTemplate : ChatTemplate
             }
         }
 
-        return new JinjaChatTemplate(source, stops, bos, eos, toolSource)
+        bool addBos = config?["add_bos_token"] is JsonValue add && add.TryGetValue(out bool adds) && adds;
+        if (tokenizer is not null)
         {
-            AddBosToken = config?["add_bos_token"] is JsonValue add && add.TryGetValue(out bool adds) && adds,
-        };
+            foreach (var marker in TurnMarkers(new JinjaChatTemplate(source, stops, bos, eos, toolSource), tokenizer))
+            {
+                if (!stops.Contains(marker))
+                {
+                    stops.Add(marker);
+                }
+            }
+        }
+
+        return new JinjaChatTemplate(source, stops, bos, eos, toolSource) { AddBosToken = addBos };
+    }
+
+    /// <summary>
+    /// The special tokens this template writes between one message and the next (rendered from a user, an assistant and a
+    /// user message): the end-of-turn token and the next turn's opener. A model that writes the opener instead of its
+    /// end-of-turn token has ended its reply all the same, so both stop it (a quantized model wrote the next turn's opener
+    /// and repeated its answer turn after turn). Read from the template and the tokenizer, for any family; none when the
+    /// template does not render such a conversation.
+    /// </summary>
+    public static IReadOnlyList<string> TurnMarkers(JinjaChatTemplate template, ITokenizer tokenizer)
+    {
+        ArgumentNullException.ThrowIfNull(template);
+        ArgumentNullException.ThrowIfNull(tokenizer);
+        const string First = "\u0001first\u0001", Second = "\u0001second\u0001";
+        string text;
+        try
+        {
+            text = template.RenderValues([Message("user", First), Message("assistant", Second), Message("user", First)], [], null, addGenerationPrompt: false);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or ArgumentException or FormatException or KeyNotFoundException or InvalidCastException)
+        {
+            return [];
+        }
+
+        int from = text.IndexOf(Second, StringComparison.Ordinal);
+        int to = from < 0 ? -1 : text.IndexOf(First, from + Second.Length, StringComparison.Ordinal);
+        if (to < 0)
+        {
+            return [];
+        }
+
+        // Which tokens are special is known to a pretrained tokenizer (its added tokens); another gives no markers.
+        if (tokenizer is not IPretrainedTokenizer pretrained)
+        {
+            return [];
+        }
+
+        // The special tokens found in the text between the two messages, in the order they stand there (read once per load:
+        // no encoding of the text, which a tokenizer without every character in its vocabulary may refuse).
+        string between = text[(from + Second.Length)..to];
+        var found = new List<(int At, string Token)>(2);
+        for (int id = 0; id < tokenizer.VocabularySize; id++)
+        {
+            if (pretrained.IsSpecial(id) && tokenizer.TokenOf(id) is { Length: > 0 } token && between.IndexOf(token, StringComparison.Ordinal) is var at and >= 0
+                && !found.Exists(f => f.Token == token))
+            {
+                found.Add((at, token));
+            }
+        }
+
+        found.Sort(static (a, b) => a.At.CompareTo(b.At));
+        return found.ConvertAll(static f => f.Token);
+
+        static Dictionary<string, object?> Message(string role, string content) => new() { ["role"] = role, ["content"] = content };
     }
 
     private static (string? Default, string? Tools) Choose(JsonNode node)

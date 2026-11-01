@@ -981,6 +981,7 @@ public sealed class Idrak.Text.JinjaChatTemplate : Idrak.Abstraction.Generation.
   public override string ToolCallFormatName { get; }
   public override void Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think, System.Text.StringBuilder prompt)
   public static Idrak.Text.JinjaChatTemplate? Load(string folder, Idrak.Abstraction.Generation.ITokenizer? tokenizer = null)
+  public static System.Collections.Generic.IReadOnlyList<string> TurnMarkers(Idrak.Text.JinjaChatTemplate template, Idrak.Abstraction.Generation.ITokenizer tokenizer)
   public string BosToken { get; }
   public string EosToken { get; }
   public string Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think, bool addGenerationPrompt)
