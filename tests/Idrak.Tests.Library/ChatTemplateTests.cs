@@ -18,6 +18,7 @@ internal abstract partial class Tests
         ("chat templates: each family's tool-call format is read off its template (tags, bare JSON, lists) and parsed from streamed output", ToolCallFormats),
         ("chat templates: tool-call formats (pythonic, Qwen3-Coder XML, Mistral, harmony, DeepSeek) detected from published templates, parsed streamed and round-tripped", ToolCallFormatsDetectAndParse),
         ("chat templates: tool-call formats can be registered, detected from a probe call, named, unregistered, or made by a template", ToolCallFormatsRegistry),
+        ("chat templates: tool calls written as text (markdown fences, bare JSON, one '}' too many) are read when they name an offered tool; examples naming none stay text; text with no call allocates nothing", ToolCallsWrittenAsText),
     ];
 
     // Llama 3.1's tool-call layout (its published template, cut to the parts that render messages and calls): the

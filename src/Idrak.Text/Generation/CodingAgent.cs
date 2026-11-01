@@ -38,6 +38,30 @@ public sealed record AgentOptions
     /// another silently).
     /// </summary>
     public IReadOnlyList<ITool> ExtraTools { get; init; } = [];
+
+    /// <summary>
+    /// Whether tool calls a reply writes as text instead of in its template's format (markdown fences, JSON in the
+    /// prose) are read after the turn and run (<see cref="ToolCallText.CallsInText"/>: only values naming an offered tool):
+    /// true by default; false reads calls only as the template writes them (a reply of calls as text then gets a
+    /// correction, <see cref="Nudges"/>).
+    /// </summary>
+    public bool CallsInText { get; init; } = true;
+
+    /// <summary>
+    /// Corrections in a row the agent sends when a reply has no call it could read but looks like calls
+    /// (<see cref="ToolCallText.LooksLikeCall"/>: a JSON fence, <c>"name"</c> with an offered tool's name): the model is
+    /// told how its template writes a call, with an example (<see cref="CodingAgent.Correction"/>), and the run goes on.
+    /// One more such reply ends the run with <see cref="CodingAgentEnd.CallsNotRead"/>; a reply whose calls are read
+    /// starts the count again. 2 by default; 0 sends none (the run ends on the first such reply).
+    /// </summary>
+    public int Nudges { get; init; } = 2;
+
+    /// <summary>
+    /// The chat template the model's prompts are rendered with, for reading calls written as text (its arguments key)
+    /// and for the corrections' example (its tool-call format); null (the default): the model's own when it is a
+    /// <see cref="ChatGenerator"/>, else none (the correction's example is a generic one).
+    /// </summary>
+    public IChatTemplate? Template { get; init; }
 }
 
 /// <summary>How the agent's loop ended (<see cref="CodingAgentRun.End"/>).</summary>
@@ -51,6 +75,13 @@ public enum CodingAgentEnd
 
     /// <summary>The model failed (for example the server was unreachable).</summary>
     Error,
+
+    /// <summary>
+    /// The model kept writing calls the agent could not read (in a shape its template's format does not read, naming no
+    /// offered tool, or JSON that does not parse) after every correction (<see cref="AgentOptions.Nudges"/>): nothing
+    /// from its last reply was run; the note says so.
+    /// </summary>
+    CallsNotRead,
 }
 
 /// <summary>One run of the agent's loop on a prompt: the conversation and its figures (no task, no verification).</summary>
@@ -69,6 +100,9 @@ public enum CodingAgentEnd
 public sealed record CodingAgentRun(IReadOnlyList<ChatMessage> Messages, IReadOnlyList<ToolDefinition> Tools, bool? Think, CodingAgentEnd End, string Note,
     int Rounds, int ToolCalls, int ToolErrors, int GeneratedTokens, TimeSpan ModelTime, TimeSpan ToolTime, string Workspace)
 {
+    /// <summary>Corrections sent because a reply's calls could not be read (<see cref="AgentOptions.Nudges"/>); each is a user message in <see cref="Messages"/>.</summary>
+    public int Nudges { get; init; }
+
     /// <summary>The run as one JSON line: the conversation in the chat format with the figures as extra fields.</summary>
     public JsonObject ToJson()
     {
@@ -87,6 +121,10 @@ public sealed record CodingAgentRun(IReadOnlyList<ChatMessage> Messages, IReadOn
         json["generated_tokens"] = GeneratedTokens;
         json["model_seconds"] = Math.Round(ModelTime.TotalSeconds, 2);
         json["tool_seconds"] = Math.Round(ToolTime.TotalSeconds, 2);
+        if (Nudges > 0)
+        {
+            json["nudges"] = Nudges;
+        }
     }
 }
 
@@ -242,7 +280,10 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
     /// <summary>
     /// Runs the agent on <paramref name="prompt"/> with <paramref name="tools"/> as they are: the model replies, its tool
     /// calls run (a call repeated right after itself is not run again), until it answers without a call, uses its rounds
-    /// (<see cref="AgentOptions.MaxRounds"/>) or its time (<see cref="AgentOptions.TimeLimit"/>), or fails.
+    /// (<see cref="AgentOptions.MaxRounds"/>) or its time (<see cref="AgentOptions.TimeLimit"/>), or fails. Calls a reply
+    /// writes as text are read after the turn (<see cref="AgentOptions.CallsInText"/>); a reply that looks like calls but
+    /// has none that can be read gets a correction and the run goes on, at most <see cref="AgentOptions.Nudges"/> in a row
+    /// (then it ends with <see cref="CodingAgentEnd.CallsNotRead"/>).
     /// </summary>
     public Task<CodingAgentRun> RunAsync(string prompt, CodingTools tools, CancellationToken cancellationToken = default)
     {
@@ -276,16 +317,18 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
 
     private async Task<CodingAgentRun> LoopAsync(List<ChatMessage> messages, CodingTools tools, CancellationToken cancellationToken)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(_options.Nudges, nameof(AgentOptions.Nudges));
         var registry = Registry(tools, _options.ExtraTools);
         var definitions = ToolDefinitions(tools, _options.ExtraTools);
-        int rounds = 0, calls = 0, errors = 0, generated = 0;
+        var callContext = CallContext(_options.Template ?? (model as ChatGenerator)?.Template, definitions);
+        int rounds = 0, calls = 0, errors = 0, generated = 0, nudges = 0, inRow = 0;
         var modelTime = TimeSpan.Zero;
         var toolTime = TimeSpan.Zero;
         string? previousCalls = null;
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         limit.CancelAfter(_options.TimeLimit);
         CodingAgentRun Result(CodingAgentEnd end, string note) =>
-            new(messages, definitions, _options.Think, end, note, rounds, calls, errors, generated, modelTime, toolTime, tools.Workspace);
+            new(messages, definitions, _options.Think, end, note, rounds, calls, errors, generated, modelTime, toolTime, tools.Workspace) { Nudges = nudges };
 
         try
         {
@@ -320,11 +363,38 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
                 rounds++;
                 var reply = final?.Message ?? throw new InvalidOperationException("The model ended without a final message.");
                 generated += final.Stats?.GeneratedTokens ?? 0;
+                if (reply.ToolCalls is not { Count: > 0 } && _options.CallsInText)
+                {
+                    reply = ReadCallsInText(reply, callContext);
+                }
+
                 messages.Add(reply);
                 if (reply.ToolCalls is not { Count: > 0 })
                 {
-                    return Result(final.DoneReason == "length" ? CodingAgentEnd.OutOfBudget : CodingAgentEnd.Answered, "");
+                    if (final.DoneReason == "length")
+                    {
+                        return Result(CodingAgentEnd.OutOfBudget, "");
+                    }
+
+                    if (Correction(reply, callContext) is not { } correction)
+                    {
+                        return Result(CodingAgentEnd.Answered, "");
+                    }
+
+                    if (inRow >= _options.Nudges)
+                    {
+                        return Result(CodingAgentEnd.CallsNotRead, inRow == 0
+                            ? "the model wrote tool calls that could not be read (no correction allowed); nothing from its last reply was run"
+                            : $"the model wrote tool calls that could not be read, after {inRow} correction{(inRow == 1 ? "" : "s")}; nothing from its last reply was run");
+                    }
+
+                    messages.Add(new ChatMessage("user", correction));
+                    nudges++;
+                    inRow++;
+                    continue;
                 }
+
+                inRow = 0;
 
                 watch.Restart();
                 var turn = await RunToolCallsAsync(registry, reply, previousCalls, limit.Token).ConfigureAwait(false);
@@ -382,6 +452,99 @@ public sealed class CodingAgent(IChatModel model, AgentOptions? options = null)
         }
 
         return new CodingToolTurn(results, messages, errors, key);
+    }
+
+    /// <summary>
+    /// What the agent reads calls written as text with (<see cref="ReadCallsInText"/>, <see cref="Correction"/>):
+    /// <paramref name="template"/> (null when it is not known: the correction's example is then a generic one) and the
+    /// request's <paramref name="tools"/>, whose names are the only ones a call may have. Made once per run.
+    /// </summary>
+    public static ToolCallContext CallContext(IChatTemplate? template, IReadOnlyList<ToolDefinition> tools)
+    {
+        ArgumentNullException.ThrowIfNull(tools);
+        return new ToolCallContext(template ?? UnknownTemplate.Instance, tools, tools.Select(t => t.Name).ToHashSet(StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// <paramref name="reply"/> with the calls its text holds (<see cref="ToolCallText.CallsInText"/>: fenced or bare JSON
+    /// naming an offered tool) when its template's parser found none; the reply itself otherwise. Its text is kept as the
+    /// model wrote it. Used after each turn by the agent's loop and by any loop that steps it (the CLI's agent).
+    /// </summary>
+    public static ChatMessage ReadCallsInText(ChatMessage reply, ToolCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(reply);
+        ArgumentNullException.ThrowIfNull(context);
+        return reply.ToolCalls is not { Count: > 0 } && ToolCallText.CallsInText(reply.Content, context) is { } calls ? reply with { ToolCalls = calls } : reply;
+    }
+
+    /// <summary>
+    /// The correction to send after <paramref name="reply"/> when it has no call but its text looks like calls
+    /// (<see cref="ToolCallText.LooksLikeCall"/>): that nothing in it was run, how the template writes a call with an
+    /// example (in its markers for the "json" format, the bare JSON for a template whose answer is the call, else a
+    /// generic line), the offered tools, and how to say the task is done. Null when the reply has calls or looks like
+    /// none.
+    /// </summary>
+    public static string? Correction(ChatMessage reply, ToolCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(reply);
+        ArgumentNullException.ThrowIfNull(context);
+        if (reply.ToolCalls is { Count: > 0 } || !ToolCallText.LooksLikeCall(reply.Content, context))
+        {
+            return null;
+        }
+
+        var tools = context.Tools;
+        var example = tools.FirstOrDefault(t => t.Name == "write_file") ?? tools.FirstOrDefault();
+        string call = new JsonObject
+        {
+            ["name"] = example?.Name ?? "tool_name",
+            [context.Template.ToolCalls.ArgumentsKey] = ExampleArguments(example),
+        }.ToJsonString();
+        var format = context.Template.ToolCalls;
+        string how = context.Template is UnknownTemplate || context.Template.ToolCallFormatName != ToolCallFormats.Json
+            ? "To call a tool, write the call in your chat template's own tool-call format, as you were trained to, never inside a markdown code block. "
+              + "As JSON, a call reads:\n" + call
+            : format.Open.Length == 0
+                ? "To call a tool, write the call itself as your whole reply, with nothing before or after it and not in a code block:\n"
+                  + (format.List ? "[" + call + "]" : call)
+                : $"To call a tool, write the call itself between {format.Open} and {format.Close}, not in a code block and not as a description, one block per call:\n"
+                  + format.Open + "\n" + (format.List ? "[" + call + "]" : call) + "\n" + format.Close;
+        return "Your last reply has no tool call that could be read, so nothing in it was run and no file was changed. " + how
+               + "\nThe tools: " + string.Join(", ", tools.Select(t => t.Name)) + ".\nIf the task is done, answer in words, without any JSON or tool call.";
+    }
+
+    // The example call's arguments: the tool's required parameters (all of them when it lists none), each "...".
+    private static JsonObject ExampleArguments(ToolDefinition? tool)
+    {
+        var arguments = new JsonObject();
+        if (tool?.Parameters is not JsonObject schema || schema["properties"] is not JsonObject properties)
+        {
+            return arguments;
+        }
+
+        var required = schema["required"] is JsonArray list ? list.Select(n => n?.ToString()).ToHashSet(StringComparer.Ordinal) : null;
+        foreach (var (name, _) in properties)
+        {
+            if (required is null || required.Count == 0 || required.Contains(name))
+            {
+                arguments[name] = "...";
+            }
+        }
+
+        return arguments;
+    }
+
+    // A template that is not known: calls are read with the common "arguments" key, and the correction's example is generic.
+    private sealed class UnknownTemplate : ChatTemplate
+    {
+        public static readonly UnknownTemplate Instance = new();
+
+        public override IReadOnlyList<string> StopSequences => [];
+
+        public override string ToolCallFormatName => "";
+
+        public override void Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think, StringBuilder prompt) =>
+            throw new NotSupportedException("The agent's template is not known; it renders nothing.");
     }
 
     private static IReadOnlyList<ToolDefinition> ToolDefinitions(CodingTools tools, IReadOnlyList<ITool> extra) =>

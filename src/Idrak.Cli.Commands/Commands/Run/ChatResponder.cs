@@ -4,6 +4,7 @@
 using System.Text.Json.Nodes;
 using Idrak.Cli.Shared;
 using Idrak.Generation;
+using Idrak.Text.Generation;
 
 namespace Idrak.Cli.Commands.Run;
 
@@ -35,6 +36,12 @@ internal sealed record ChatAnswer(ChatMessage Message, string? DoneReason, int R
         ["rounds"] = Rounds,
         ["tool_calls"] = ToolResults.Count,
     };
+
+    /// <summary>Corrections sent because a reply's calls could not be read (<see cref="ChatResponder.Nudges"/>).</summary>
+    public int Nudges { get; init; }
+
+    /// <summary>The last reply looked like calls that could not be read, after every correction: nothing from it was run.</summary>
+    public bool CallsNotRead { get; init; }
 
     /// <summary>One line for people: "[12 tokens, 34.5 tokens/s, prompt 20 tokens in 0.05 s]".</summary>
     public string Summary(int context) =>
@@ -68,13 +75,26 @@ internal sealed class ChatResponder(IChatModel model, ToolRegistry? tools)
     public bool Color { get; init; }
 
     /// <summary>
+    /// The template and tools calls written as text are read with, after each turn whose template parser found none
+    /// (the agent's, <see cref="CodingAgent.CallContext"/>); null (chat, run): calls only as the template writes them, no
+    /// corrections.
+    /// </summary>
+    public ToolCallContext? TextCalls { get; init; }
+
+    /// <summary>Whether calls written as text (fences, bare JSON) are read and run (<see cref="CodingAgent.ReadCallsInText"/>); with <see cref="TextCalls"/> only.</summary>
+    public bool ReadCallsInText { get; init; }
+
+    /// <summary>Corrections in a row for replies that look like calls that could not be read (<see cref="CodingAgent.Correction"/>); with <see cref="TextCalls"/> only.</summary>
+    public int Nudges { get; init; }
+
+    /// <summary>
     /// Answers <paramref name="messages"/> (the reply, tool calls and tool results are appended to it) with the
     /// sampling of <paramref name="settings"/> and a context window of <paramref name="context"/> tokens.
     /// </summary>
     public ChatAnswer Answer(List<ChatMessage> messages, GenerationSettings settings, int context, CancellationToken cancellationToken = default)
     {
         var results = new List<ToolResult>();
-        int rounds = 0, generated = 0, resets = 0;
+        int rounds = 0, generated = 0, resets = 0, nudges = 0, inRow = 0;
         double promptSeconds = 0, generationSeconds = 0;
         while (true)
         {
@@ -123,8 +143,43 @@ internal sealed class ChatResponder(IChatModel model, ToolRegistry? tools)
                 resets += stats.ContextResets;
             }
 
+            bool notRead = false;
+            if (message.ToolCalls is not { Count: > 0 } && TextCalls is { } textCalls && final.DoneReason != "length")
+            {
+                if (ReadCallsInText)
+                {
+                    message = CodingAgent.ReadCallsInText(message, textCalls);
+                }
+
+                if (message.ToolCalls is not { Count: > 0 } && CodingAgent.Correction(message, textCalls) is { } correction)
+                {
+                    if (inRow < Nudges && rounds < MaxToolRounds)
+                    {
+                        if (wrote)
+                        {
+                            Stream?.WriteLine();
+                        }
+
+                        messages.Add(message);
+                        messages.Add(new ChatMessage("user", correction));
+                        rounds++;
+                        nudges++;
+                        inRow++;
+                        Stream?.WriteLine(Paint("> no tool call could be read from that reply; the model is told how to write one", "33"));
+                        continue;
+                    }
+
+                    notRead = true;
+                }
+            }
+
             messages.Add(message);
             rounds++;
+            if (message.ToolCalls is { Count: > 0 })
+            {
+                inRow = 0;
+            }
+
             if (message.ToolCalls is not { Count: > 0 } calls || Tools is null || rounds > MaxToolRounds)
             {
                 if (wrote)
@@ -133,7 +188,7 @@ internal sealed class ChatResponder(IChatModel model, ToolRegistry? tools)
                 }
 
                 return new ChatAnswer(message, final.DoneReason, rounds, results, final.Stats?.PromptTokens ?? 0, generated, promptSeconds,
-                    generationSeconds, resets);
+                    generationSeconds, resets) { Nudges = nudges, CallsNotRead = notRead };
             }
 
             if (wrote)

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Buffers;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -356,6 +357,285 @@ public static class ToolCallText
         return items.Count > 1 ? Calls(items, argumentsKey, names) : null;
     }
 
+    private const string Fence = "```";
+
+    // Models that write calls as text also write trailing commas and comments in them.
+    private static readonly JsonReaderOptions LenientReader = new() { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip };
+    private static readonly JsonDocumentOptions LenientDocument = new() { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip };
+
+    /// <summary>
+    /// The tool calls a reply wrote as text instead of in its template's format (a small model's habit: markdown code
+    /// fences, or JSON in its prose), read after the turn when the template's parser found none. Fenced blocks first, in
+    /// order: each one whose body opens as a call does (```json, a bare ``` or another language's fence); when no
+    /// fence holds a call, each value in the text that opens as a call does (<c>{"</c> or <c>[{</c>), in order (inside an
+    /// object that is not a call too, so a call nested in a wrapper is found; a list that is not calls stays text whole). A value
+    /// runs from its opening brace to where it closes (what follows, such as one '}' too many, is ignored), trailing
+    /// commas and comments allowed; it is a call (<c>{"name": …, "arguments": {…}}</c>, the template's arguments key or
+    /// "parameters" too) or a list of calls, and it is taken only when every name is a tool of
+    /// <paramref name="context"/>'s request that it allows (<see cref="ToolCallContext.Allows"/>): an example naming
+    /// another tool, or no tool, stays text. Null when the text holds no call. Text with no value naming an offered tool
+    /// allocates nothing (its values are checked as UTF-8 in a pooled buffer); only the calls taken are built.
+    /// </summary>
+    public static List<ToolCall>? CallsInText(ReadOnlySpan<char> text, ToolCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        List<ToolCall>? calls = null;
+        int at = 0;
+        while (NextFence(text, at, out _, out int body))
+        {
+            int open = body + (text[body..].Length - text[body..].TrimStart().Length);
+            int end = open < text.Length && text[open] is '{' or '[' && OpensLikeCall(text, open) ? JsonValueEnd(text, open) : -1;
+            if (end > 0)
+            {
+                TakeCalls(text[open..end], context, ref calls);
+            }
+
+            at = FenceEnd(text, Math.Max(body, end));
+        }
+
+        if (calls is not null)
+        {
+            return calls;
+        }
+
+        for (at = 0; at < text.Length;)
+        {
+            int open = text[at..].IndexOfAny('{', '[');
+            if (open < 0)
+            {
+                break;
+            }
+
+            open += at;
+            int end = OpensLikeCall(text, open) ? JsonValueEnd(text, open) : -1;
+            // A list not taken stays text whole (one of its items naming an offered tool is not a call of its own); an
+            // object not taken is searched inside (a call nested in a wrapper: {"function": {"name": …}}).
+            at = end > 0 && (TakeCalls(text[open..end], context, ref calls) || text[open] == '[') ? end : open + 1;
+        }
+
+        return calls;
+    }
+
+    /// <summary>
+    /// Whether text with no call read from it still looks like calls the model meant to make: a fenced block of JSON
+    /// (```json or a bare ```) whose body opens with '{' or '[', or <c>"name"</c> followed by the name of one of
+    /// <paramref name="context"/>'s tools it allows (<c>"name": "write_file"</c>). What a coding agent asks the model to
+    /// write again in its template's format. Allocates nothing.
+    /// </summary>
+    public static bool LooksLikeCall(ReadOnlySpan<char> text, ToolCallContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        int at = 0;
+        while (NextFence(text, at, out var info, out int body))
+        {
+            var language = text[info].Trim();
+            var rest = text[body..].TrimStart();
+            if ((language.IsEmpty || language.Equals("json", StringComparison.OrdinalIgnoreCase)) && rest.Length > 0 && rest[0] is '{' or '[')
+            {
+                return true;
+            }
+
+            at = FenceEnd(text, body);
+        }
+
+        var tools = context.Tools;
+        for (at = 0; at < text.Length;)
+        {
+            int key = text[at..].IndexOf("\"name\"", StringComparison.Ordinal);
+            if (key < 0)
+            {
+                return false;
+            }
+
+            at += key + 6;
+            var rest = text[at..].TrimStart();
+            if (rest.Length == 0 || rest[0] != ':')
+            {
+                continue;
+            }
+
+            rest = rest[1..].TrimStart();
+            if (rest.Length == 0 || rest[0] != '"')
+            {
+                continue;
+            }
+
+            rest = rest[1..];
+            for (int i = 0; i < tools.Count; i++)
+            {
+                string name = tools[i].Name;
+                if (rest.Length > name.Length && rest[name.Length] == '"' && rest.StartsWith(name, StringComparison.Ordinal) && context.Allows(name))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // The next fence at or after `at`: its info string (the language) and where its body starts (after the fence's line).
+    private static bool NextFence(ReadOnlySpan<char> text, int at, out Range info, out int body)
+    {
+        (info, body) = (default, -1);
+        if (at >= text.Length)
+        {
+            return false;
+        }
+
+        int fence = text[at..].IndexOf(Fence, StringComparison.Ordinal);
+        if (fence < 0)
+        {
+            return false;
+        }
+
+        int infoStart = at + fence + Fence.Length;
+        int line = text[infoStart..].IndexOf('\n');
+        int infoEnd = line < 0 ? text.Length : infoStart + line;
+        (info, body) = (infoStart..infoEnd, line < 0 ? text.Length : infoEnd + 1);
+        return true;
+    }
+
+    // Just past the fence that closes a block, searched from `from`; the end of the text when it is not closed.
+    private static int FenceEnd(ReadOnlySpan<char> text, int from)
+    {
+        if (from >= text.Length)
+        {
+            return text.Length;
+        }
+
+        int close = text[from..].IndexOf(Fence, StringComparison.Ordinal);
+        return close < 0 ? text.Length : from + close + Fence.Length;
+    }
+
+    // '{' then a key, or '[' then an object: the way a call or a list of calls opens.
+    private static bool OpensLikeCall(ReadOnlySpan<char> text, int open)
+    {
+        var rest = text[(open + 1)..].TrimStart();
+        return rest.Length > 0 && rest[0] == (text[open] == '{' ? '"' : '{');
+    }
+
+    // The calls in one JSON value when every one names an offered tool: checked on the UTF-8 bytes first, so a value
+    // that is not calls builds nothing.
+    private static bool TakeCalls(ReadOnlySpan<char> json, ToolCallContext context, ref List<ToolCall>? calls)
+    {
+        byte[] utf8 = ArrayPool<byte>.Shared.Rent(Encoding.UTF8.GetMaxByteCount(json.Length));
+        try
+        {
+            int length = Encoding.UTF8.GetBytes(json, utf8);
+            var bytes = utf8.AsSpan(0, length);
+            if (!NamesOfferedTools(bytes, context))
+            {
+                return false;
+            }
+
+            var node = JsonNode.Parse(bytes, null, LenientDocument);
+            if (Calls(node is JsonArray array ? [.. array] : [node], context.Template.ToolCalls.ArgumentsKey, context) is not { } taken)
+            {
+                return false;
+            }
+
+            (calls ??= []).AddRange(taken);
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(utf8);
+        }
+    }
+
+    // Whether the value is a call object, or a non-empty list of them, each naming one of the request's tools it allows.
+    private static bool NamesOfferedTools(ReadOnlySpan<byte> json, ToolCallContext context)
+    {
+        var reader = new Utf8JsonReader(json, LenientReader);
+        if (!reader.Read())
+        {
+            return false;
+        }
+
+        bool list = reader.TokenType == JsonTokenType.StartArray;
+        if (list && !reader.Read())
+        {
+            return false;
+        }
+
+        int items = 0;
+        while (true)
+        {
+            if (list && reader.TokenType == JsonTokenType.EndArray)
+            {
+                return items > 0;
+            }
+
+            if (reader.TokenType != JsonTokenType.StartObject)
+            {
+                return false;
+            }
+
+            bool named = false;
+            while (reader.Read() && reader.TokenType == JsonTokenType.PropertyName)
+            {
+                bool isName = reader.ValueTextEquals("name"u8);
+                if (!reader.Read())
+                {
+                    return false;
+                }
+
+                if (isName)
+                {
+                    if (reader.TokenType != JsonTokenType.String || !Offered(ref reader, context))
+                    {
+                        return false;
+                    }
+
+                    named = true;
+                }
+                else
+                {
+                    reader.Skip();
+                }
+            }
+
+            if (reader.TokenType != JsonTokenType.EndObject || !named)
+            {
+                return false;
+            }
+
+            items++;
+            if (!list)
+            {
+                return true;
+            }
+
+            if (!reader.Read())
+            {
+                return false;
+            }
+        }
+    }
+
+    private static bool Offered(ref Utf8JsonReader reader, ToolCallContext context)
+    {
+        var tools = context.Tools;
+        for (int i = 0; i < tools.Count; i++)
+        {
+            if (reader.ValueTextEquals(tools[i].Name))
+            {
+                return context.Allows(tools[i].Name);
+            }
+        }
+
+        return false;
+    }
+
     private static List<ToolCall>? Calls(List<JsonNode?> items, string argumentsKey, ToolCallContext? names)
     {
         var calls = new List<ToolCall>();
@@ -380,7 +660,10 @@ public static class ToolCallText
     }
 
     /// <summary>The index just past the JSON object or array that starts at <paramref name="start"/>, or -1 when it does not close there.</summary>
-    public static int JsonValueEnd(string text, int start)
+    public static int JsonValueEnd(string text, int start) => JsonValueEnd(text.AsSpan(), start);
+
+    /// <summary>The index just past the JSON object or array that starts at <paramref name="start"/>, or -1 when it does not close there.</summary>
+    public static int JsonValueEnd(ReadOnlySpan<char> text, int start)
     {
         if (start >= text.Length || text[start] is not ('{' or '['))
         {

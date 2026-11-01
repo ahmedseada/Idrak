@@ -683,11 +683,14 @@ public sealed record Idrak.Text.FineTuningStepStats : System.IEquatable<Idrak.Te
 public sealed record Idrak.Text.Generation.AgentOptions : System.IEquatable<Idrak.Text.Generation.AgentOptions>
   public AgentOptions()
   public Idrak.Abstraction.Generation.GenerationOptions? Sampling { get; init; }
+  public Idrak.Abstraction.Generation.IChatTemplate? Template { get; init; }
   public Idrak.Text.Generation.CodingToolOptions Tools { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ITool> ExtraTools { get; init; }
   public System.TimeSpan TimeLimit { get; init; }
+  public bool CallsInText { get; init; }
   public bool? Think { get; init; }
   public int MaxRounds { get; init; }
+  public int Nudges { get; init; }
   public string? SystemPrompt { get; init; }
 
 public enum Idrak.Text.Generation.BatchFit : int
@@ -735,13 +738,17 @@ public sealed class Idrak.Text.Generation.CodingAgent
   public System.Threading.Tasks.Task<Idrak.Text.Generation.CodingAgentRun> ContinueAsync(Idrak.Text.Generation.CodingAgentRun earlier, string prompt, Idrak.Text.Generation.CodingTools tools, System.Threading.CancellationToken cancellationToken = default)
   public System.Threading.Tasks.Task<Idrak.Text.Generation.CodingAgentRun> RunAsync(string prompt, Idrak.Text.Generation.CodingTools tools, System.Threading.CancellationToken cancellationToken = default)
   public int PendingNotes { get; }
+  public static Idrak.Abstraction.Generation.ChatMessage ReadCallsInText(Idrak.Abstraction.Generation.ChatMessage reply, Idrak.Abstraction.Generation.ToolCallContext context)
+  public static Idrak.Abstraction.Generation.ToolCallContext CallContext(Idrak.Abstraction.Generation.IChatTemplate? template, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools)
   public static System.Threading.Tasks.Task<Idrak.Text.Generation.CodingToolTurn> RunToolCallsAsync(Idrak.Abstraction.Generation.IToolRegistry registry, Idrak.Abstraction.Generation.ChatMessage reply, string? previousCalls, System.Threading.CancellationToken cancellationToken = default)
   public static string DefaultSystemPrompt { get; }
   public static string SystemPrompt(System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.ICodingLanguage> languages)
+  public static string? Correction(Idrak.Abstraction.Generation.ChatMessage reply, Idrak.Abstraction.Generation.ToolCallContext context)
   public void Steer(string note)
 
 public enum Idrak.Text.Generation.CodingAgentEnd : int
   Answered = 0
+  CallsNotRead = 3
   Error = 2
   OutOfBudget = 1
 
@@ -755,6 +762,7 @@ public sealed record Idrak.Text.Generation.CodingAgentRun : System.IEquatable<Id
   public System.TimeSpan ToolTime { get; init; }
   public bool? Think { get; init; }
   public int GeneratedTokens { get; init; }
+  public int Nudges { get; init; }
   public int Rounds { get; init; }
   public int ToolCalls { get; init; }
   public int ToolErrors { get; init; }

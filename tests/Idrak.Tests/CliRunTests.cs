@@ -382,6 +382,11 @@ internal abstract partial class DesktopTests : Tests
             Check(code == 0 && (int)json["tasks"]! == 1 && ((string)json["messages"]![0]!["content"]!).Length > 100, $"agent: {text}");
             (code, text, _) = RunIdrakOn(device, "first task\n/exit\n", "agent", CliModel, "--workspace", workspace, "--max-tokens", "3");
             Check(code == 0 && text.Contains("tool calls"), "agent reads tasks from the input");
+            (code, text, _) = RunIdrakOn(device, null, "agent", CliModel, "list the files", "--workspace", workspace, "--read-only", "--max-tokens", "4", "--nudges", "1", "--strict-calls", "-j");
+            json = JsonOf(text, "agent --nudges --strict-calls --json");
+            Check(code == 0 && json["nudges"] is not null && json["calls_not_read"] is not null, $"agent --nudges 1 --strict-calls: {text}");
+            (code, _, _) = RunIdrakOn(device, null, "agent", CliModel, "x", "--workspace", workspace, "--nudges", "-1");
+            Check(code == 2, "agent: --nudges below 0 is refused");
             (code, _, _) = RunIdrakOn(device, null, "agent", CliModel, "x", "--workspace", Path.Combine(workspace, "missing"));
             Check(code == 2, "agent: a missing workspace");
         }

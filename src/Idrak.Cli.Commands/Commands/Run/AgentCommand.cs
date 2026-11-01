@@ -28,13 +28,18 @@ internal sealed class AgentCommand : Command
         the plug-in to register. With a task it works on it and exits; without one it reads tasks line by line,
         as chat does, keeping the conversation (/exit ends). Every command the model wants to run is shown and
         asked about (y to run it) unless --yes is given; without a terminal and without --yes, commands are
-        refused.
+        refused. Calls the model writes as text (markdown json fences, JSON in its prose) naming an offered tool
+        are read and run unless --strict-calls is given; a reply that looks like calls none of which can be read
+        gets a correction showing the template's call format, at most --nudges in a row, then the task ends
+        saying so.
 
         Options:
               --workspace DIR    the folder to work in (default: the current folder)
           -y, --yes              run commands without asking
               --read-only        only the reading tools (no edits, writes or commands)
               --rounds N         model replies allowed per task (default 40)
+              --nudges N         corrections in a row for calls that could not be read (default 2; 0: none)
+              --strict-calls     read calls only as the chat template writes them, not from fences or bare JSON
               --languages LIST   the coding languages: all, detected, none or names such as csharp,typescript
                                  (default: IDRAK_CODING_LANGUAGES, else all)
           -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: as stored)
@@ -50,9 +55,9 @@ internal sealed class AgentCommand : Command
           idrak agent qwen -y --context 16384
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--workspace", "--rounds", "--languages"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--workspace", "--rounds", "--languages", "--nudges"];
 
-    public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--yes", "--read-only"];
+    public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--yes", "--read-only", "--strict-calls"];
 
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
         new Dictionary<string, string>(ModelChoices.ShortForms.Concat(GenerationSettings.ShortForms).Append(KeyValuePair.Create("-y", "--yes")));
@@ -67,6 +72,11 @@ internal sealed class AgentCommand : Command
         }
 
         int rounds = context.IntOption("--rounds", 40);
+        int nudges = context.IntOption("--nudges", 2);
+        if (nudges < 0)
+        {
+            throw new UsageException($"--nudges takes 0 or more corrections, not {nudges}.");
+        }
         var settings = GenerationSettings.From(context);
         string? task = context.Positional.Count > 1 ? string.Join(' ', context.Positional.Skip(1)) : null;
         var input = StandardInput.Reader;
@@ -118,6 +128,9 @@ internal sealed class AgentCommand : Command
             Stream = context.Json ? null : context.Output,
             ThinkingStream = context.Json || context.Quiet ? null : context.Output,
             Color = color,
+            TextCalls = CodingAgent.CallContext(loaded.Chat.Template, registry.Definitions),
+            ReadCallsInText = !context.Flag("--strict-calls"),
+            Nudges = nudges,
         };
         var messages = new List<ChatMessage> { new("system", settings.System ?? CodingAgent.SystemPrompt(coding.Languages)) };
         var answers = new List<ChatAnswer>();
@@ -126,8 +139,14 @@ internal sealed class AgentCommand : Command
             messages.Add(new ChatMessage("user", text));
             var answer = responder.Answer(messages, settings, loaded.Context);
             answers.Add(answer);
+            if (answer.CallsNotRead)
+            {
+                context.Error($"The model wrote tool calls that could not be read{(answer.Nudges > 0 ? $", after {answer.Nudges} correction{(answer.Nudges == 1 ? "" : "s")}" : "")}; "
+                              + "nothing from its last reply was run.");
+            }
+
             context.Write($"[{answer.Rounds} replies, {answer.ToolResults.Count} tool calls ({answer.ToolResults.Count(r => !r.Succeeded)} errors), "
-                          + $"{answer.GeneratedTokens} tokens at {answer.TokensPerSecond:F1} tokens/s]");
+                          + $"{(answer.Nudges > 0 ? $"{answer.Nudges} corrections, " : "")}{answer.GeneratedTokens} tokens at {answer.TokensPerSecond:F1} tokens/s]");
         }
 
         if (task is not null)
@@ -168,6 +187,8 @@ internal sealed class AgentCommand : Command
             ["tool_calls"] = answers.Sum(a => a.ToolResults.Count),
             ["tool_errors"] = answers.Sum(a => a.ToolResults.Count(r => !r.Succeeded)),
             ["generated_tokens"] = answers.Sum(a => a.GeneratedTokens),
+            ["nudges"] = answers.Sum(a => a.Nudges),
+            ["calls_not_read"] = answers.Count(a => a.CallsNotRead),
             ["messages"] = ChatJson.Messages(messages),
         });
         return ExitCodes.Ok;

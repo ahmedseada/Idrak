@@ -4429,10 +4429,13 @@ public sealed record Idrak.Abstraction.Generation.ToolCallProbe : System.IEquata
 
 public static class Idrak.Abstraction.Generation.ToolCallText
   public const string PythonTag = "<|python_tag|>"
+  public static System.Collections.Generic.List<Idrak.Abstraction.Generation.ToolCall>? CallsInText(System.ReadOnlySpan<char> text, Idrak.Abstraction.Generation.ToolCallContext context)
   public static System.Collections.Generic.List<Idrak.Abstraction.Generation.ToolCall>? JsonCallSequence(string text, string argumentsKey, Idrak.Abstraction.Generation.ToolCallContext? names)
   public static System.Collections.Generic.List<Idrak.Abstraction.Generation.ToolCall>? JsonCalls(string json, string argumentsKey, Idrak.Abstraction.Generation.ToolCallContext? names)
   public static System.Text.Json.Nodes.JsonNode? TryParse(string text)
   public static System.Text.Json.Nodes.JsonObject? Arguments(System.Text.Json.Nodes.JsonNode? node)
+  public static bool LooksLikeCall(System.ReadOnlySpan<char> text, Idrak.Abstraction.Generation.ToolCallContext context)
+  public static int JsonValueEnd(System.ReadOnlySpan<char> text, int start)
   public static int JsonValueEnd(string text, int start)
   public static int SafeLength(System.ReadOnlySpan<char> text, string tag)
 

@@ -22,7 +22,140 @@ internal abstract partial class DesktopTests : Tests
         ("coding agent: a steering note given while it runs is read before its next request and stays in the conversation", AgentReadsSteeringNotes),
         ("coding agent: extra tools are offered after the coding tools and called; one with a coding tool's name is refused", AgentOffersExtraTools),
         ("coding agent: ContinueAsync keeps the earlier run's conversation (its task, replies and tool results) and adds the next message after it", AgentContinuesConversation),
+        ("coding agent: calls written in fences are read and run (the owner's House reply: the file is written, read back, the build asked for)", AgentReadsFencedCalls),
+        ("coding agent: a malformed call is nudged, the scripted model answers properly and the file is written; strict calls nudge a fenced one", AgentNudgesMalformedCall),
+        ("coding agent: the nudge limit ends the run with CallsNotRead; an answer in words or with a code fence ends as answered", AgentNudgeLimit),
     ];
+
+    // A workspace for one agent test, deleted after it.
+    private static void InAgentWorkspace(Action<string> test)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "idrak-calls-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            test(root);
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
+    // A json fence whose call does not close: what the agent cannot read and corrects.
+    private const string UnclosedFencedCall = "I'll create the file.\n```json\n{\"name\": \"write_file\", \"arguments\": {\"path\": \"House.cs\", \"content\": \"class House {}\"}\n```\nThe file is created.";
+
+    private static void AgentReadsFencedCalls(Device device)
+    {
+        _ = device;
+        InAgentWorkspace(root =>
+        {
+            // The owner's reply: the agent reads write_file, read_file and run_command from the fences and runs them in
+            // order (the build goes to a recording sandbox, so no build runs here).
+            var fake = FakeChatModel.Script(FakeChatModel.Answer(HouseReplyWithFencedCalls), FakeChatModel.Answer("House.cs is written with Width, Length, Height and Price."));
+            var sandbox = new RecordingSandbox(new CommandResult(0, false, "Build succeeded.", TimeSpan.Zero, false));
+            var tools = new CodingTools(root, null, sandbox);
+            var run = new CodingAgent(fake).RunAsync("Create C# class For House with float 3 props and + float price", tools).GetAwaiter().GetResult();
+            Check(sandbox.Calls.Count == 1 && string.Join(' ', sandbox.Calls[0].Command) == "dotnet build", $"the fenced run_command asked for the build: {string.Join(" | ", sandbox.Calls.Select(c => string.Join(' ', c.Command)))}");
+            string house = Path.Combine(root, "House.cs");
+            Check(File.Exists(house) && File.ReadAllText(house).Contains("public float Price { get; set; }", StringComparison.Ordinal),
+                $"the fenced write_file ran: House.cs {(File.Exists(house) ? "holds " + File.ReadAllText(house) : "is missing")}");
+            var reply = run.Messages.First(m => m.Role == "assistant");
+            Check(reply.ToolCalls is { Count: 3 } calls && calls[0].Name == "write_file" && calls[1].Name == "read_file" && calls[2].Name == "run_command"
+                  && reply.Content == HouseReplyWithFencedCalls,
+                $"the reply keeps its text and carries the three calls read from it: {(reply.ToolCalls is null ? "none" : Show(reply.ToolCalls))}");
+            Check(run is { End: CodingAgentEnd.Answered, Rounds: 2, ToolCalls: 3, Nudges: 0 },
+                $"the run goes on after the calls and ends with the answer ({run.End}, {run.Rounds} rounds, {run.ToolCalls} calls, {run.Nudges} nudges, {run.Note})");
+            var sent = fake.Requests[1].Messages;
+            Check(sent.Count(m => m.Role == "tool") == 3 && sent.Any(m => m.Role == "tool" && m.Content.Contains("public float Price", StringComparison.Ordinal)),
+                "the model's next request carries the three results, read_file's showing the class");
+
+            // Off: the same reply is not read; it looks like calls, so it is corrected, and the answer after it ends the run.
+            File.Delete(house);
+            var strict = FakeChatModel.Script(FakeChatModel.Answer(HouseReplyWithFencedCalls), FakeChatModel.Answer("I cannot call tools."));
+            var off = new CodingAgent(strict, new AgentOptions { CallsInText = false }).RunAsync("Create the House class", tools).GetAwaiter().GetResult();
+            Check(!File.Exists(house) && off is { End: CodingAgentEnd.Answered, Nudges: 1, ToolCalls: 0 },
+                $"CallsInText off: nothing run, one correction ({off.End}, {off.Nudges} nudges, {off.ToolCalls} calls)");
+        });
+    }
+
+    private static void AgentNudgesMalformedCall(Device device)
+    {
+        _ = device;
+        InAgentWorkspace(root =>
+        {
+            var fake = FakeChatModel.Script(
+                FakeChatModel.Answer(UnclosedFencedCall),
+                FakeChatModel.ToolCall("write_file", new JsonObject { ["path"] = "House.cs", ["content"] = "public class House { public float Price { get; set; } }\n" }),
+                FakeChatModel.Answer("House.cs is written."));
+            var tools = new CodingTools(root);
+            var run = new CodingAgent(fake, new AgentOptions { Template = new ChatMLTemplate() }).RunAsync("Create the House class", tools).GetAwaiter().GetResult();
+            string house = Path.Combine(root, "House.cs");
+            Check(File.Exists(house) && File.ReadAllText(house).Contains("float Price", StringComparison.Ordinal), "after the correction the model's proper call wrote House.cs");
+            Check(run is { End: CodingAgentEnd.Answered, Rounds: 3, ToolCalls: 1, Nudges: 1 },
+                $"one correction, then the call and the answer ({run.End}, {run.Rounds} rounds, {run.ToolCalls} calls, {run.Nudges} nudges)");
+            var correction = fake.Requests[1].Messages[^1];
+            Check(correction.Role == "user" && correction.Content.Contains("nothing in it was run", StringComparison.Ordinal)
+                  && correction.Content.Contains("<tool_call>\n{\"name\":\"write_file\",\"arguments\":{\"path\":\"...\",\"content\":\"...\"}}\n</tool_call>", StringComparison.Ordinal)
+                  && correction.Content.Contains("run_command", StringComparison.Ordinal),
+                $"the correction says nothing ran and shows the template's own call format with an offered tool: {correction.Content}");
+            Check(fake.Requests[1].Messages[^2] is { Role: "assistant", Content: UnclosedFencedCall }, "the malformed reply stays in the conversation before the correction");
+
+            // A template whose answer is the call (bare JSON) and one with no known template: the example follows each.
+            var llama = CodingAgent.Correction(FakeChatModel.Answer(UnclosedFencedCall),
+                new ToolCallContext(new FixedCallsTemplate(new ToolCallFormat("", "", false, "parameters")), tools.All.Select(t => t.Definition).ToList(), null));
+            Check(llama is not null && llama.Contains("as your whole reply", StringComparison.Ordinal) && llama.Contains("\"parameters\":", StringComparison.Ordinal) && !llama.Contains("<tool_call>", StringComparison.Ordinal),
+                $"a bare-JSON template's correction: {llama}");
+            var generic = CodingAgent.Correction(FakeChatModel.Answer(UnclosedFencedCall), CodingAgent.CallContext(null, [.. tools.All.Select(t => t.Definition)]));
+            Check(generic is not null && generic.Contains("own tool-call format", StringComparison.Ordinal), $"no known template: a generic correction: {generic}");
+            Check(CodingAgent.Correction(FakeChatModel.Answer("Done: House.cs has three floats and a price."), CodingAgent.CallContext(null, [.. tools.All.Select(t => t.Definition)])) is null,
+                "an answer in words needs no correction");
+        });
+    }
+
+    private static void AgentNudgeLimit(Device device)
+    {
+        _ = device;
+        InAgentWorkspace(root =>
+        {
+            var tools = new CodingTools(root);
+            var fake = FakeChatModel.Script(FakeChatModel.Answer(UnclosedFencedCall), FakeChatModel.Answer(UnclosedFencedCall), FakeChatModel.Answer(UnclosedFencedCall));
+            var run = new CodingAgent(fake).RunAsync("Create the House class", tools).GetAwaiter().GetResult();
+            Check(run is { End: CodingAgentEnd.CallsNotRead, Rounds: 3, Nudges: 2, ToolCalls: 0 } && run.Note.Contains("after 2 corrections", StringComparison.Ordinal)
+                  && run.Messages[^1].Role == "assistant",
+                $"two corrections (the default), then the run ends saying why ({run.End}, {run.Rounds} rounds, {run.Nudges} nudges: {run.Note})");
+            Check(!File.Exists(Path.Combine(root, "House.cs")), "nothing was written");
+            Check((int?)run.ToJson()["nudges"] == 2, "the transcript's figures count the corrections");
+
+            var none = new CodingAgent(FakeChatModel.Script(FakeChatModel.Answer(UnclosedFencedCall)), new AgentOptions { Nudges = 0 }).RunAsync("x", tools).GetAwaiter().GetResult();
+            Check(none is { End: CodingAgentEnd.CallsNotRead, Rounds: 1, Nudges: 0 } && none.Note.Contains("no correction", StringComparison.Ordinal),
+                $"Nudges 0: the first such reply ends the run ({none.End}, {none.Rounds}: {none.Note})");
+
+            // A correction in a row is counted again after a reply whose calls were read.
+            var reset = FakeChatModel.Script(FakeChatModel.Answer(UnclosedFencedCall), FakeChatModel.ToolCall("list_files", []), FakeChatModel.Answer(UnclosedFencedCall), FakeChatModel.Answer("Done."));
+            var again = new CodingAgent(reset, new AgentOptions { Nudges = 1 }).RunAsync("x", tools).GetAwaiter().GetResult();
+            Check(again is { End: CodingAgentEnd.Answered, Nudges: 2, Rounds: 4 }, $"the count restarts after a call ({again.End}, {again.Nudges} nudges, {again.Rounds} rounds)");
+
+            foreach (var answer in new[] { "Done: House.cs has three floats and a price.", "Here is the class:\n```csharp\npublic class House { public float Price { get; set; } }\n```" })
+            {
+                var plain = new CodingAgent(FakeChatModel.Script(FakeChatModel.Answer(answer))).RunAsync("x", tools).GetAwaiter().GetResult();
+                Check(plain is { End: CodingAgentEnd.Answered, Rounds: 1, Nudges: 0 }, $"no call-like text, no correction: '{answer[..20]}…' ended {plain.End} after {plain.Rounds} rounds");
+            }
+
+            ThrowsNaming<ArgumentOutOfRangeException>(() => new CodingAgent(FakeChatModel.Script(), new AgentOptions { Nudges = -1 }).RunAsync("x", tools).GetAwaiter().GetResult(),
+                "a negative Nudges", "Nudges");
+        });
+    }
+
+    // A template with a fixed tool-call shape and the "json" format (for the correction's example).
+    private sealed class FixedCallsTemplate(ToolCallFormat calls) : ChatTemplate
+    {
+        public override ToolCallFormat ToolCalls => calls;
+
+        public override IReadOnlyList<string> StopSequences => [];
+
+        public override void Render(IReadOnlyList<ChatMessage> messages, IReadOnlyList<ToolDefinition> tools, bool? think, System.Text.StringBuilder prompt) => throw new NotSupportedException();
+    }
 
     private static void AgentContinuesConversation(Device device)
     {

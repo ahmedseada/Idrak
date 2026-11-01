@@ -163,7 +163,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.AttentionPositionBiases` | registry | public | — |  | bucketed, relative | Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.ChatPart` | abstract class | public | — | ChatAudio, ChatImage, ChatText, PendingImage, PendingPart |  | Abstraction, AspNetCore, Audio, Idrak, Imaging, Mcp, Reinforcement.Plugins, Text, Text.Plugins, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.ChatParts` | registry | public | — |  | audio, image, text | Abstraction, AspNetCore, Audio, Mcp, Text | Abstraction |
-| `Idrak.Abstraction.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, JinjaChatTemplate |  | Text | Abstraction |
+| `Idrak.Abstraction.Generation.ChatTemplate` | abstract class | public | — | ChatMLTemplate, CodingAgent.UnknownTemplate, JinjaChatTemplate |  | Text | Abstraction |
 | `Idrak.Abstraction.Generation.ChatTemplates` | registry | public | — |  | jinja | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.CtcDecoders` | registry | public | Tensor |  | beam, greedy | Audio, Audio.Plugins, Vision | Abstraction |
 | `Idrak.Abstraction.Generation.DistancePositionBias` | abstract class | public | Device, Tensor | BucketedPositionBias, RelativePositionBias |  | Text.Plugins | Abstraction |
@@ -173,7 +173,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Generation.IBinaryPartKind` | interface | public | — | AudioPartKind, ChatParts.GuardedBinaryKind |  | Abstraction, AspNetCore, Audio, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IChatModel` | interface | public | — | ChatEngineModel, ChatGenerator, ChatTools.ToolRunningChatModel, FakeChatModel |  | Abstraction, AspNetCore, Audio, Mcp, Text | Abstraction |
 | `Idrak.Abstraction.Generation.IChatPartKind` | interface | public | — | AudioPartKind, ChatParts.GuardedBinaryKind, ChatParts.GuardedKind, ChatParts.ImageKind, ChatParts.TextKind |  | Abstraction, AspNetCore, Audio, Mcp, Text | Abstraction |
-| `Idrak.Abstraction.Generation.IChatTemplate` | interface | public | — | ChatMLTemplate, JinjaChatTemplate |  | Abstraction, Idrak, Text, Text.Plugins | Abstraction |
+| `Idrak.Abstraction.Generation.IChatTemplate` | interface | public | — | ChatMLTemplate, CodingAgent.UnknownTemplate, JinjaChatTemplate |  | Abstraction, Idrak, Text, Text.Plugins | Abstraction |
 | `Idrak.Abstraction.Generation.IChatTemplateReader` | interface | public | — | ChatTemplates.GuardedReader, JinjaTemplateReader |  | Abstraction, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Generation.ICtcDecoder` | interface | public | — | CtcDecoders.BuiltInDecoder, CtcDecoders.GuardedDecoder |  | Abstraction, Audio, Audio.Plugins, Vision | Abstraction |
 | `Idrak.Abstraction.Generation.IDecodingStep` | interface | public | — | DecodingContext.StepScope |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
