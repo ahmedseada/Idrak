@@ -1657,7 +1657,7 @@ internal static partial class GcnKernels
                 v_fma_f32 {acc}, {x}, {x}, {acc}
                 """);
         });
-        w.Reduce(RowWriter.Add, acc);
+        w.ReduceAdd(acc);                                                    // CUDA's BlockReduce order (plan 35's training order)
         w.StoreFirstLane((w.ElementAddress(a.Pointer("partials"), w.Row), acc));
         w.EndRows();
         return w.Source();
@@ -1958,7 +1958,7 @@ internal static partial class GcnKernels
         {
             string total = a.Pointer("total"), before = w.V();
             w.L($"global_load_dword {before}, {w.Zero}, {total}");
-            w.Reduce(RowWriter.Add, acc);
+            w.ReduceAdd(acc);                                                    // CUDA's BlockReduce order (plan 35's training order)
             w.L($"s_cmp_eq_u32 {a.Scalar("direct")}, 0");
             w.L($"s_cbranch_scc1 .Lpart");
             w.L($"v_add_f32_e32 {before}, {before}, {acc}");
@@ -2005,7 +2005,7 @@ internal static partial class GcnKernels
                 v_add_f32_e32 {acc}, {acc}, {value}
                 """);
         });
-        w.Reduce(RowWriter.Add, acc);
+        w.ReduceAdd(acc);                                                    // CUDA's BlockReduce order (plan 35's training order)
         w.L($"""
             v_mul_f32_e32 {scaled}, {a.Scalar("scale")}, {acc}
             v_add_f32_e32 {sum}, {before}, {scaled}
