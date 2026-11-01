@@ -34,6 +34,11 @@ internal abstract partial class Tests
         ("gcn code object: formats 5 and 4 differ only in the ABI version and amdhsa.version; format 6, a target the family does not handle and kernels it cannot describe are refused with their reason", GcnCodeObjectFormats),
         ("gcn assembler: each gfx9 form fill_f32 uses, encoded from typed operands (scalar and vector registers, VCC, EXEC, M0, off, inline and literal constants, offsets, glc), equals its forms.golden record for gfx90c; branches reach their labels; operands a form cannot take are refused, naming them; nothing is allocated per instruction", GcnAssemblerForms),
         ("gcn assembler: every forms.golden record of each registered CPU (gfx900, gfx906, gfx908, gfx90c), its text parsed from UTF-8 and encoded as one block, equals llvm-mc's bytes, labels and branches included, and each form alone too; forms.s itself (LLVM's input syntax: no suffixes, bound_ctrl:0, s_waitcnt 0) less each CPU's rejected lines gives the same block", GcnAssemblerGolden),
+        ("gcn assembler: gfx10 (RDNA 1 and 2): every forms.golden record of gfx1010 and gfx1030 in wave64, its text parsed from UTF-8 and encoded by the unregistered gfx10 family (ISA 10's SMEM, VOP3, DS and global layouts, its renumbered opcodes, its waits, wave32's one-register lane masks taken as llvm-mc takes them), equals llvm-mc's bytes as one block and each form alone; forms.s gives the same block", GcnAssemblerGfx10Golden),
+        ("gcn assembler: gfx11 (RDNA 3): every forms.golden record of gfx1100 and gfx1102 in wave64, in gfx11's own names (s_load_b32, global_load_b32, ds_load_b32, v_add_nc_u32), encoded by the unregistered gfx11 family (ISA 11's layouts, M0 125 and null 124, its s_waitcnt fields), equals llvm-mc's bytes as one block and each form alone; forms.s gives the same block", GcnAssemblerGfx11Golden),
+        ("gcn interpreter: gfx10 and gfx11 opcode sets (the interpreter's own, probed from LLVM's disassembler in wave64): every wave64 forms.golden record of gfx1010, gfx1030, gfx1100 and gfx1102 is located by its family's word layout (ISA 10's and 11's SMEM, VOP3, VOP3P, DS, FLAT and MUBUF) to an opcode whose mnemonic is the one llvm-mc printed", GcnInterpreterRdnaOpcodes),
+        ("gcn assembler: gfx10 and gfx11 waits: the stores count apart on vscnt (two loads around a store: vmcnt(1) for the first load's use, where gfx9 waits vmcnt(2)); s_barrier after an LDS write and a store gets lgkmcnt(0) and s_waitcnt_vscnt null, 0x0; lgkmcnt and vmcnt to 63; the printed text, in each family's names, reads back to the same bytes", GcnAssemblerRdnaWaits),
+        ("gcn assembler: gfx10 and gfx11 hazards fixed with instructions, where llc 18 puts them: ISA 10.1 (gfx1010, not gfx1030): SMEM read an SGPR a VALU then writes (s_mov_b32 null, 0 before; an SALU between clears it), vector memory read an SGPR an SALU then writes (s_waitcnt_depctr 0xffe3 before; a VALU between clears it); ISA 11 (gfx1100, gfx1102): a transcendental's result read within 5 VALUs (s_waitcnt_depctr 0xfff before; 6 VALUs or 2 transcendentals clear it), an SALU writes a lane mask a VALU read (s_waitcnt_depctr 0xfffe right after; a VALU reading another SGPR clears it); gfx9 none; the printed text reads back to the same bytes", GcnAssemblerRdnaHazards),
         ("gcn assembler: every line forms.golden lists as rejected for a registered CPU is refused for that CPU's version, naming the instruction, feature or operand (features decided by the reported version: v_fmac_f32 on 9.0.6, not 9.0.0 or 9.0.12; without a version, none)", GcnAssemblerRejected),
         ("gcn assembler: malformed or impossible text (unknown mnemonics, operands and modifiers, missing operands, bad ranges, virtual registers, directives, literals in VOP3, two scalar reads, labels defined twice or never) is refused with its line and column", GcnAssemblerMalformed),
         ("gcn assembler: assembling a whole forms block (gfx90c's 759 forms, labels and branches) allocates nothing once warm, and its code array alone after; fill_f32 written as text equals the typed fill_f32", GcnAssemblerAllocations),
@@ -623,14 +628,14 @@ internal abstract partial class Tests
     // One CPU's block of forms.golden: its records (llvm-mc's text and bytes, labels with none) and the forms.s lines it rejects.
     private sealed record GcnFormsBlock(List<(string Text, byte[] Bytes)> Records, List<(int Line, string Text)> Rejected);
 
-    private static string FormsPath(string file) => RepositoryPath("tests", "Idrak.Tests", "data", "gcn", "gfx9", file);
+    private static string FormsPath(string file, string family = "gfx9") => RepositoryPath("tests", "Idrak.Tests", "data", "gcn", family, file);
 
-    private static Dictionary<string, GcnFormsBlock> ReadFormsGolden()
+    private static Dictionary<string, GcnFormsBlock> ReadFormsGolden(string family = "gfx9")
     {
         var blocks = new Dictionary<string, GcnFormsBlock>(StringComparer.Ordinal);
         GcnFormsBlock Block(string cpu) => blocks.TryGetValue(cpu, out var block) ? block : blocks[cpu] = new([], []);
         string? rejecting = null;
-        foreach (string line in File.ReadLines(FormsPath("forms.golden")))
+        foreach (string line in File.ReadLines(FormsPath("forms.golden", family)))
         {
             if (line.StartsWith("# rejected: ", StringComparison.Ordinal))
             {
@@ -670,13 +675,236 @@ internal abstract partial class Tests
     internal static void GcnAssemblerGolden(Device device)
     {
         _ = device;
-        var golden = ReadFormsGolden();
-        string[] source = File.ReadAllLines(FormsPath("forms.s"));
-        foreach (string cpu in GcnRegisteredCpus)
+        GcnFamilyGolden("gfx9", GcnRegisteredCpus, GcnTargets.For);
+    }
+
+    // The RDNA families are not registered yet (plan 35, G8a: they are once their kernels run): their goldens are checked
+    // with the family itself, in wave64, the waves Idrak's kernels run in.
+    internal static void GcnAssemblerGfx10Golden(Device device)
+    {
+        _ = device;
+        GcnFamilyGolden("gfx10", ["gfx1010-w64", "gfx1030-w64"], _ => GcnTargets.Gfx10Family);
+    }
+
+    internal static void GcnInterpreterRdnaOpcodes(Device device)
+    {
+        _ = device;
+        foreach (var (family, cpus) in new[]
+                 {
+                     ("gfx10", new[] { ("gfx1010-w64", GcnCpu.Gfx1010), ("gfx1030-w64", GcnCpu.Gfx1030) }),
+                     ("gfx11", new[] { ("gfx1100-w64", GcnCpu.Gfx1100), ("gfx1102-w64", GcnCpu.Gfx1102) }),
+                 })
+        {
+            var golden = ReadFormsGolden(family);
+            foreach (var (block, cpu) in cpus)
+            {
+                int located = 0;
+                var wrong = new List<string>();
+                foreach (var (text, bytes) in golden[block].Records.Where(r => r.Bytes.Length > 0))
+                {
+                    uint w0 = System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(bytes);
+                    var at = Idrak.Tests.Gcn.GcnOpcodeTable.Locate(family == "gfx11", w0);
+                    var opcode = at is { } where ? Idrak.Tests.Gcn.GcnOpcodeTable.Find(cpu, where.Format, where.Code) : null;
+                    if (opcode is not null && Stem(opcode.Name) == Stem(text.Split(' ', 2)[0]))
+                    {
+                        located++;
+                    }
+                    else if (wrong.Count < 12)
+                    {
+                        wrong.Add($"'{text}' ({Convert.ToHexStringLower(bytes)}): {(at is { } a ? $"{a.Format} 0x{a.Code:X}" : "no format")} is {opcode?.Name ?? "no opcode"}");
+                    }
+                }
+
+                int forms = golden[block].Records.Count(r => r.Bytes.Length > 0);
+                Check(located == forms && forms > 380, $"{block}: {located} of {forms} forms located to llvm-mc's mnemonic: {string.Join("; ", wrong)}");
+            }
+        }
+
+        static string Stem(string name)
+        {
+            foreach (string suffix in (string[])["_e32", "_e64", "_dpp", "_sdwa"])
+            {
+                if (name.EndsWith(suffix, StringComparison.Ordinal))
+                {
+                    return name[..^suffix.Length];
+                }
+            }
+
+            return name;
+        }
+    }
+
+    internal static void GcnAssemblerGfx11Golden(Device device)
+    {
+        _ = device;
+        GcnFamilyGolden("gfx11", ["gfx1100-w64", "gfx1102-w64"], _ => GcnTargets.Gfx11Family);
+    }
+
+    internal static void GcnAssemblerRdnaWaits(Device device)
+    {
+        _ = device;
+        const string Kernel = """
+            .kernel stores
+            .arg x, 8, global
+            .arg out, 8, global
+            .lds 256
+            .reqd_workgroup_size 64, 1, 1
+            .user_sgpr kernarg_segment_ptr
+              LOAD4 %s[0:3], s[0:1], 0x0
+              v_lshlrev_b32_e32 %v0, 2, v0
+              GLOAD %v1, %v0, %s[0:1]
+              GSTORE %v0, %v0, %s[2:3]
+              GLOAD %v2, %v0, %s[0:1] offset:256
+              v_mul_f32_e32 %v3, %v1, %v1
+              v_add_f32_e32 %v4, %v3, %v2
+              DSTORE %v0, %v4
+              s_barrier
+              DLOAD %v5, %v0
+              GSTORE %v0, %v5, %s[2:3] offset:256
+              s_endpgm
+            """;
+        foreach (var (target, cpu, names) in new[]
+                 {
+                     (GcnTargets.Gfx10Family, "gfx1030", (Load4: "s_load_dwordx4", Load: "global_load_dword", Store: "global_store_dword", DsStore: "ds_write_b32", DsLoad: "ds_read_b32")),
+                     (GcnTargets.Gfx11Family, "gfx1100", (Load4: "s_load_b128", Load: "global_load_b32", Store: "global_store_b32", DsStore: "ds_store_b32", DsLoad: "ds_load_b32")),
+                 })
+        {
+            var isa = GcnIsaVersion.Parse(cpu);
+            string text = Kernel.Replace("LOAD4", names.Load4, StringComparison.Ordinal).Replace("GLOAD", names.Load, StringComparison.Ordinal)
+                .Replace("GSTORE", names.Store, StringComparison.Ordinal).Replace("DSTORE", names.DsStore, StringComparison.Ordinal).Replace("DLOAD", names.DsLoad, StringComparison.Ordinal);
+            using var asm = new GcnAssembler(target, isa);
+            var code = asm.AssembleKernel(Encoding.UTF8.GetBytes(text), null);
+            string printed = asm.PrintedText;
+            Check(Before(printed, "v_mul_f32") == "s_waitcnt vmcnt(1)" && Before(printed, "v_add_f32") == "s_waitcnt vmcnt(0)",
+                $"{cpu}: the store counts on vscnt, so the first load's use waits vmcnt(1) and the second's vmcnt(0):\n{printed}");
+            Check(Before(printed, "s_barrier").StartsWith("s_waitcnt_vscnt null, ", StringComparison.Ordinal) && Before(printed, "s_waitcnt_vscnt") == "s_waitcnt lgkmcnt(0)",
+                $"{cpu}: s_barrier after an LDS write and a store waits lgkmcnt(0) and vscnt 0:\n{printed}");
+            byte[] again = AssembleGcn(target, isa, printed);
+            Check(again.AsSpan().SequenceEqual(code.Code.Span), $"{cpu}: the printed text reads back to {Convert.ToHexStringLower(again)}, not {Convert.ToHexStringLower(code.Code.Span)}:\n{printed}");
+            Check(Convert.ToHexStringLower(AssembleGcn(target, isa, "s_waitcnt vmcnt(40) lgkmcnt(33)")) == (cpu == "gfx1030" ? "78a18cbf" : "17a289bf")
+                  && Throws<GcnSyntaxException>(() => AssembleGcn(target, isa, "s_waitcnt lgkmcnt(64)")), $"{cpu}: lgkmcnt and vmcnt hold 0 to 63");
+        }
+
+        // gfx9 counts the store with the loads: the first load's use waits for it too.
+        var (_, gfx9Text) = KernelOf(Kernel.Replace("LOAD4", "s_load_dwordx4", StringComparison.Ordinal).Replace("GLOAD", "global_load_dword", StringComparison.Ordinal)
+            .Replace("GSTORE", "global_store_dword", StringComparison.Ordinal).Replace("DSTORE", "ds_write_b32", StringComparison.Ordinal).Replace("DLOAD", "ds_read_b32", StringComparison.Ordinal));
+        Check(Before(gfx9Text, "v_mul_f32") == "s_waitcnt vmcnt(2)" && Before(gfx9Text, "s_barrier") == "s_waitcnt lgkmcnt(0)",
+            $"gfx9: one counter for loads and stores (the store retired with the second load, before the barrier):\n{gfx9Text}");
+    }
+
+    // The hazards ISA 10.1 and 11 fix with instructions (GcnHazardFixes), each where llc 18's post-RA-hazard-rec puts its
+    // fix for the same lines (tools/gcn/measure_hazard_windows.py): before the second instruction, or right after an SALU
+    // write of a lane mask; none where what clears it is between, and none on gfx1030.
+    internal static void GcnAssemblerRdnaHazards(Device device)
+    {
+        _ = device;
+        const string Rdna1 = """
+            .kernel hazards
+            .arg x, 8, global
+            .reqd_workgroup_size 64, 1, 1
+            .user_sgpr kernarg_segment_ptr
+              s_mov_b32 %s7, 1
+              s_load_dwordx2 %s[2:3], s[0:1], 0x0
+              global_load_dword %v1, v0, %s[2:3]
+              s_mov_b64 %s[2:3], 0
+              global_load_dword %v2, v0, %s[2:3]
+              v_mov_b32_e32 %v3, 0
+              s_mov_b64 %s[2:3], 1
+              s_load_dword %s4, %s[2:3], 0x4
+              v_cmp_gt_f32_e64 %s[2:3], v0, 0
+              s_load_dword %s5, %s[2:3], 0x8
+              s_add_u32 %s6, %s7, 1
+              v_cmp_gt_f32_e64 %s[2:3], v0, 1.0
+              s_endpgm
+            """;
+        foreach (string cpu in (string[])["gfx1010", "gfx1030"])
+        {
+            var isa = GcnIsaVersion.Parse(cpu);
+            bool fixes = cpu == "gfx1010";
+            using var asm = new GcnAssembler(GcnTargets.Gfx10Family, isa);
+            var code = asm.AssembleKernel(Encoding.UTF8.GetBytes(Rdna1), null);
+            string printed = asm.PrintedText;
+            Check((Before(printed, "v_cmp_gt_f32_e64") == "s_mov_b32 null, 0") == fixes,
+                $"{cpu}: SMEM read an SGPR pair, then a VALU writes it: s_mov_b32 null, 0 between on 10.1 only:\n{printed}");
+            Check((Before(printed, "s_mov_b64", ", 0") == "s_waitcnt_depctr 0xffe3") == fixes,
+                $"{cpu}: a global load read its scalar address, then an SALU writes it: s_waitcnt_depctr 0xffe3 between on 10.1 only:\n{printed}");
+            Check(Before(printed, "s_mov_b64", ", 1").StartsWith("v_mov_b32", StringComparison.Ordinal) && Before(printed, "v_cmp_gt_f32_e64", occurrence: 1).StartsWith("s_add_u32", StringComparison.Ordinal),
+                $"{cpu}: a VALU between clears the first, an SALU the second:\n{printed}");
+            byte[] again = AssembleGcn(GcnTargets.Gfx10Family, isa, printed);
+            Check(again.AsSpan().SequenceEqual(code.Code.Span), $"{cpu}: the printed text reads back to the same bytes:\n{printed}");
+        }
+
+        const string Rdna3 = """
+            .kernel hazards
+            .arg x, 8, global
+            .reqd_workgroup_size 64, 1, 1
+            .user_sgpr kernarg_segment_ptr
+              v_exp_f32_e32 %v1, v0
+              v_add_f32_e32 %v2, %v1, %v1
+              v_exp_f32_e32 %v3, v0
+              v_mov_b32_e32 %v20, 0
+              v_mov_b32_e32 %v21, 0
+              v_mov_b32_e32 %v22, 0
+              v_mov_b32_e32 %v23, 0
+              v_mov_b32_e32 %v24, 0
+              v_add_f32_e32 %v4, %v3, %v3
+              v_exp_f32_e32 %v5, v0
+              v_mov_b32_e32 %v20, 0
+              v_mov_b32_e32 %v21, 0
+              v_mov_b32_e32 %v22, 0
+              v_mov_b32_e32 %v23, 0
+              v_mov_b32_e32 %v24, 0
+              v_mov_b32_e32 %v25, 0
+              v_add_f32_e32 %v6, %v5, %v5
+              v_exp_f32_e32 %v7, v0
+              v_sqrt_f32_e32 %v8, v0
+              v_sqrt_f32_e32 %v9, v0
+              v_add_f32_e32 %v10, %v7, %v7
+              s_mov_b64 %s[4:5], -1
+              s_mov_b64 %s[6:7], -1
+              s_mov_b32 %s8, 3
+              v_cndmask_b32_e64 %v11, %v1, %v2, %s[4:5]
+              s_mov_b32 %s20, 7
+              s_mov_b64 %s[4:5], 0
+              v_cndmask_b32_e64 %v12, %v1, %v2, %s[6:7]
+              v_add_nc_u32_e32 %v13, %s8, v0
+              s_mov_b64 %s[6:7], 0
+              s_endpgm
+            """;
+        foreach (string cpu in (string[])["gfx1100", "gfx1102"])
+        {
+            var isa = GcnIsaVersion.Parse(cpu);
+            using var asm = new GcnAssembler(GcnTargets.Gfx11Family, isa);
+            var code = asm.AssembleKernel(Encoding.UTF8.GetBytes(Rdna3), null);
+            string printed = asm.PrintedText;
+            Check(Before(printed, "v_add_f32_e32") == "s_waitcnt_depctr 0xfff" && Before(printed, "v_add_f32_e32", occurrence: 1) == "s_waitcnt_depctr 0xfff",
+                $"{cpu}: a transcendental's result read next, and 5 VALUs later: s_waitcnt_depctr 0xfff before the reader:\n{printed}");
+            Check(Before(printed, "v_add_f32_e32", occurrence: 2).StartsWith("v_mov_b32", StringComparison.Ordinal) && Before(printed, "v_add_f32_e32", occurrence: 3).StartsWith("v_sqrt_f32", StringComparison.Ordinal),
+                $"{cpu}: 6 VALUs, or 2 transcendentals, between clear it:\n{printed}");
+            Check(Before(printed, "v_cndmask_b32_e64", occurrence: 1) == "s_waitcnt_depctr 0xfffe" && Before(printed, "s_mov_b64", ", 0").StartsWith("s_mov_b32", StringComparison.Ordinal),
+                $"{cpu}: an SALU writes the lane mask a VALU read: s_waitcnt_depctr 0xfffe right after the write:\n{printed}");
+            Check(Before(printed, "s_endpgm").StartsWith("s_mov_b64", StringComparison.Ordinal),
+                $"{cpu}: a VALU reading another SGPR between clears it:\n{printed}");
+            byte[] again = AssembleGcn(GcnTargets.Gfx11Family, isa, printed);
+            Check(again.AsSpan().SequenceEqual(code.Code.Span), $"{cpu}: the printed text reads back to the same bytes:\n{printed}");
+        }
+
+        // gfx9 has none of them: the same transcendental shape gets no fix.
+        var (_, gfx9Text) = KernelOf(Rdna3.Replace("v_add_nc_u32_e32", "v_add_u32_e32", StringComparison.Ordinal));
+        Check(!gfx9Text.Contains("depctr", StringComparison.Ordinal), $"gfx9: no s_waitcnt_depctr:\n{gfx9Text}");
+    }
+
+    // Each CPU's block of a family's forms.golden (a CPU field "<mcpu>-w64" is that processor in wave64): the block as one
+    // text, each form alone, and forms.s less the CPU's rejected lines, all equal to llvm-mc's bytes.
+    private static void GcnFamilyGolden(string family, string[] cpus, Func<GcnIsaVersion, IGcnTarget> targetOf)
+    {
+        var golden = ReadFormsGolden(family);
+        string[] source = File.ReadAllLines(FormsPath("forms.s", family));
+        foreach (string cpu in cpus)
         {
             var block = golden[cpu];
-            var isa = GcnIsaVersion.Parse(cpu);
-            var target = GcnTargets.For(isa);
+            var isa = GcnIsaVersion.Parse(cpu.Split('-')[0]);
+            var target = targetOf(isa);
             byte[] expected = [.. block.Records.SelectMany(r => r.Bytes)];
             int forms = block.Records.Count(r => r.Bytes.Length > 0), labels = block.Records.Count - forms, branches = block.Records.Count(r => IsLabelBranch(r.Text));
 

@@ -85,11 +85,36 @@ internal sealed partial class GcnAssembler
             case GcnRole.WaitCounts:
                 {
                     var (vm, exp, lgkm) = _set.WaitCounts((ushort)operand.Value);
-                    bool all = vm == 63 && exp == 7 && lgkm == 15;
+                    int vmAll = _set.CounterLimit(GcnCounter.Vm), expAll = _set.CounterLimit(GcnCounter.Exp), lgkmAll = _set.CounterLimit(GcnCounter.Lgkm);
+                    bool all = vm == vmAll && exp == expAll && lgkm == lgkmAll;
                     bool space = false;
-                    PrintCount("vmcnt("u8, vm, all || vm != 63, ref space);
-                    PrintCount("expcnt("u8, exp, all || exp != 7, ref space);
-                    PrintCount("lgkmcnt("u8, lgkm, all || lgkm != 15, ref space);
+                    PrintCount("vmcnt("u8, vm, all || vm != vmAll, ref space);
+                    PrintCount("expcnt("u8, exp, all || exp != expAll, ref space);
+                    PrintCount("lgkmcnt("u8, lgkm, all || lgkm != lgkmAll, ref space);
+                    return;
+                }
+
+            case GcnRole.DelayAlu:
+                {
+                    int bits = (int)operand.Value, id0 = bits & 15, skip = bits >> 4 & 7, id1 = bits >> 7 & 15;
+                    if (id0 >= GcnAssembler.DelayIds.Length || skip >= GcnAssembler.DelaySkips.Length || id1 >= GcnAssembler.DelayIds.Length || bits >> 11 != 0)
+                    {
+                        PrintInt(bits);
+                        return;
+                    }
+
+                    PrintAscii("instid0(");
+                    PrintAscii(GcnAssembler.DelayIds[id0]);
+                    PrintAscii(")");
+                    if (skip != 0 || id1 != 0)
+                    {
+                        PrintAscii(" | instskip(");
+                        PrintAscii(GcnAssembler.DelaySkips[skip]);
+                        PrintAscii(") | instid1(");
+                        PrintAscii(GcnAssembler.DelayIds[id1]);
+                        PrintAscii(")");
+                    }
+
                     return;
                 }
 
@@ -113,6 +138,9 @@ internal sealed partial class GcnAssembler
 
             case GcnRole.Literal32 or GcnRole.Constant32:
                 PrintHex(operand.Value);
+                return;
+            case GcnRole.Immediate16 when _ins.Op == GcnOp.SWaitcntDepctr:
+                PrintHex(operand.Value);   // llvm-mc prints its 16 bits in hex
                 return;
             case GcnRole.MemoryOffset when operand.Kind is GcnOperandKind.Immediate or GcnOperandKind.Constant or GcnOperandKind.Literal:
                 PrintHex(operand.Value);
@@ -225,6 +253,7 @@ internal sealed partial class GcnAssembler
         {
             case GcnFormat.Smem:
                 PrintFlag(_m.Glc, " glc"u8);
+                PrintFlag(_m.Dlc, " dlc"u8);
                 return;
             case GcnFormat.Ds:
                 if (_ins.Has(GcnInstructionFlags.TwoOffsets))
@@ -243,6 +272,7 @@ internal sealed partial class GcnAssembler
                 PrintNumber(_m.Offset != 0, " offset:"u8, _m.Offset);
                 PrintFlag(_m.Glc, " glc"u8);
                 PrintFlag(_m.Slc, " slc"u8);
+                PrintFlag(_m.Dlc, " dlc"u8);
                 return;
             case GcnFormat.Vop1 or GcnFormat.Vop2 or GcnFormat.Vopc or GcnFormat.Vop3 or GcnFormat.Vop3p:
                 break;

@@ -9,6 +9,12 @@
 # also be left zero, since LLVM refuses an unused field that is not), disassembled with llvm-mc for each CPU, and the
 # probe that LLVM reads with the most fields gives the opcode's operand template: which fields it prints, in what
 # order, of what width and register class. Made with Ubuntu LLVM 18.1.3.
+#
+# The RDNA families (plan 35, G8a) the same way, each into its own file, in wave64 (Idrak's kernels' waves), with each
+# family's own word layouts (ISA 10's and 11's SMEM, VOP3, VOP3P, DS, global and MUBUF); made with LLVM 18.1.8:
+#
+#   python3 -I tests/Idrak.Tests/data/gcn/interpreter/make_opcode_table.py --family gfx10
+#   python3 -I tests/Idrak.Tests/data/gcn/interpreter/make_opcode_table.py --family gfx11
 import itertools
 import os
 import re
@@ -17,6 +23,9 @@ import subprocess
 import sys
 
 CPUS = ["gfx900", "gfx906", "gfx908", "gfx90c"]
+# The family being probed: None for gfx9; "gfx10" or "gfx11" (--family), with its CPUs and its own output file.
+FAMILY = None
+FAMILIES = {"gfx10": ["gfx1010", "gfx1030"], "gfx11": ["gfx1100", "gfx1102"]}
 LITERAL = 0x000000F0
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "..", "..", "..", "Idrak.Tests.Library", "Gcn", "GcnInterpreter.Opcodes.cs")
@@ -29,7 +38,8 @@ def le(words):
 def disassemble(cpu, probes):
     """probes: list of word lists. Returns, per probe, (text, bytes consumed) or None."""
     lines = [le(p + [LITERAL]) for p in probes]
-    run = subprocess.run(["llvm-mc", "--disassemble", "-triple=amdgcn", "-mcpu=" + cpu, "-show-encoding"],
+    mattr = ["-mattr=+wavefrontsize64"] if FAMILY else []
+    run = subprocess.run(["llvm-mc", "--disassemble", "-triple=amdgcn", "-mcpu=" + cpu, "-show-encoding"] + mattr,
                          input="\n".join(lines) + "\n", capture_output=True, text=True)
     warnings = set()
     for m in re.finditer(r"<stdin>:(\d+):(\d+): warning", run.stderr):
@@ -116,7 +126,7 @@ def template(text, fields, sizes, consumed, base):
             if start not in fields:
                 return None
             tokens.append("%s:%s%d" % (fields[start], cls, width))
-        elif o in ("vcc", "exec", "off", "m0", "vcc_lo", "exec_lo", "scc"):
+        elif o in ("vcc", "exec", "off", "m0", "vcc_lo", "exec_lo", "scc", "null"):
             tokens.append("=" + o)
         elif o.startswith("hwreg("):
             tokens.append("K:hwreg")
@@ -124,13 +134,17 @@ def template(text, fields, sizes, consumed, base):
             tokens.append("K:sendmsg")
         elif o.startswith("gpr_idx("):
             tokens.append("S1:gpridx")
-        elif o in ("0x1234", "0xf0", "0x1"):
+        elif o in ("0x1234", "0xf0", "0x1", "0xffe3"):
             if consumed > base and o == "0xf0":
                 tokens.append("K:lit")
             elif o == "0x1":
                 tokens.append("O:hex")
             else:
                 tokens.append("K:hex16")
+        elif o.startswith("instid0(") or o.startswith("instskip(") or o.startswith("instid1("):
+            tokens.append("K:delay")
+        elif o.startswith("depctr_") or (FAMILY and re.match(r"^0x[0-9a-f]+$", o)):
+            tokens.append("K:hex16")
         elif re.match(r"^-?\d+$", o):
             tokens.append("K:dec")
         elif o.startswith("vmcnt("):
@@ -147,7 +161,7 @@ def template(text, fields, sizes, consumed, base):
             tokens.append("O:swz")
         elif mod.startswith("op_sel_hi:"):
             tokens.append("mix")
-        elif mod in ("glc", "slc"):
+        elif mod in ("glc", "slc", "dlc"):
             pass
         elif mod.startswith("vmcnt") or mod.startswith("expcnt") or mod.startswith("lgkmcnt"):
             pass
@@ -158,6 +172,9 @@ def template(text, fields, sizes, consumed, base):
 
 def probe_sets(encoding, op):
     """Yields (words, fields, base size) probes for one opcode."""
+    if FAMILY:
+        yield from family_probe_sets(encoding, op)
+        return
     if encoding == "sop1":
         for d, s in itertools.product([10, None], [20, None]):
             w = 0xBE800000 | ((d or 0) << 16) | (op << 8) | (s or 0)
@@ -230,13 +247,71 @@ def probe_sets(encoding, op):
                 yield [w0, w1], dict(f for f in ((10, "D"), (20, "A"), (30, "S0")) if f[0] in (d, a, x)), 8 + glc * 1000
 
 
+def family_probe_sets(encoding, op):
+    """The RDNA families' probes: the scalar and VOP1/VOP2/VOPC words as gfx9's; ISA 10's and 11's own SMEM, VOP3, VOP3P,
+    DS, global and MUBUF layouts (null, 125 on gfx10 and 124 on gfx11, for no scalar offset or address)."""
+    null = 0x7D if FAMILY == "gfx10" else 0x7C
+    if encoding == "sopp":
+        # s_waitcnt_depctr prints its bits in hex only when they name no counters' defaults (0xffe3 does).
+        for k in (3, 0, 0xFFE3):
+            yield [0xBF800000 | (op << 16) | k], {}, 4
+    elif encoding == "smem":
+        for d, b in itertools.product([40, None], [10, None]):
+            w = 0xF4000000 | (op << 18) | ((d or 0) << 6) | (b or 0)
+            yield [w, 1 | (null << 25)], dict(x for x in ((40, "D"), (20, "B")) if (x[0] == 40 and d) or (x[0] == 20 and b)), 8
+    elif encoding in ("vop3", "vop3p"):
+        choices = [256 + 20, 20, None]
+        for d, sd, a, b, c in itertools.product([10, None], [50, None] if encoding == "vop3" else [None], choices, [256 + 30, 30, None], [256 + 40, 40, None]):
+            if encoding == "vop3":
+                w0 = 0xD4000000 | (op << 16) | ((sd or 0) << 8) | (d or 0)
+                w1 = (a or 0) | ((b or 0) << 9) | ((c or 0) << 18)
+            else:
+                w0 = 0xCC000000 | (op << 16) | (1 << 14) | (d or 0)
+                w1 = (a or 0) | ((b or 0) << 9) | ((c or 0) << 18) | (3 << 27)
+            fields = {}
+            for value, name in ((d, "D"), (sd, "SD"), (a, "S0"), (b, "S1"), (c, "S2")):
+                if value:
+                    fields[value % 256] = name
+            yield [w0, w1], fields, 8
+    elif encoding == "ds":
+        for d, a, x, y in itertools.product([10, None], [20, None], [30, None], [40, None]):
+            w0 = 0xD8000000 | (op << 18) | 1 | (2 << 8)
+            w1 = (a or 0) | ((x or 0) << 8) | ((y or 0) << 16) | ((d or 0) << 24)
+            yield [w0, w1], dict(f for f in ((10, "D"), (20, "A"), (30, "S0"), (40, "S1")) if f[0] in (d, a, x, y)), 8
+    elif encoding in ("flat", "global", "scratch"):
+        segment = {"flat": 0, "scratch": 1, "global": 2}[encoding]
+        for glc in (0, 1):
+            for d, a, x in itertools.product([10, None], [20, None], [30, None]):
+                if FAMILY == "gfx10":
+                    w0 = 0xDC000000 | (op << 18) | (glc << 16) | (segment << 14) | 1
+                else:
+                    w0 = 0xDC000000 | (op << 18) | (segment << 16) | (glc << 14) | 1
+                w1 = (a or 0) | ((x or 0) << 8) | (null << 16) | ((d or 0) << 24)
+                yield [w0, w1], dict(f for f in ((10, "D"), (20, "A"), (30, "S0")) if f[0] in (d, a, x)), 8 + glc * 1000
+    elif encoding == "mubuf":
+        yield [0xE0000000 | (op << 18), 0], {}, 8
+    else:
+        yield from gfx9_probe_sets(encoding, op)
+
+
+def gfx9_probe_sets(encoding, op):
+    global FAMILY
+    family, FAMILY = FAMILY, None
+    try:
+        yield from probe_sets(encoding, op)
+    finally:
+        FAMILY = family
+
+
 ENCODINGS = [("sop1", 256), ("sop2", 0x60), ("sopk", 0x1D), ("sopc", 128), ("sopp", 128), ("smem", 256), ("vop1", 256), ("vop2", 0x3E),
              ("vopc", 256), ("vop3", 0x380), ("vop3p", 128), ("ds", 256), ("flat", 128), ("global", 128), ("scratch", 128)]
+FAMILY_ENCODINGS = [("sop1", 256), ("sop2", 0x60), ("sopk", 0x20), ("sopc", 128), ("sopp", 128), ("smem", 256), ("vop1", 256), ("vop2", 0x40),
+                    ("vopc", 256), ("vop3", 0x400), ("vop3p", 128), ("ds", 256), ("flat", 128), ("global", 128), ("mubuf", 128)]
 
 
 def table(cpu):
     rows = {}
-    for encoding, count in ENCODINGS:
+    for encoding, count in (FAMILY_ENCODINGS if FAMILY else ENCODINGS):
         probes = []
         owners = []
         for op in range(count):
@@ -271,6 +346,12 @@ def table(cpu):
 
 
 def main():
+    global FAMILY, CPUS, OUT
+    if len(sys.argv) == 3 and sys.argv[1] == "--family" and sys.argv[2] in FAMILIES:
+        FAMILY = sys.argv[2]
+        CPUS = FAMILIES[FAMILY]
+        OUT = OUT.replace("Opcodes.cs", "Opcodes.%s.cs" % FAMILY.capitalize())
+    encodings = FAMILY_ENCODINGS if FAMILY else ENCODINGS
     merged = {}
     for cpu in CPUS:
         print("probing", cpu, file=sys.stderr)
@@ -279,7 +360,7 @@ def main():
             merged.setdefault(entry, []).append(cpu)
     version = subprocess.run(["llvm-mc", "--version"], capture_output=True, text=True).stdout
     version = re.search(r"LLVM version (\S+)", version).group(1)
-    rows = sorted(merged.items(), key=lambda e: (ENCODINGS.index(next(x for x in ENCODINGS if x[0] == e[0][0])), e[0][1], e[0][2]))
+    rows = sorted(merged.items(), key=lambda e: (encodings.index(next(x for x in encodings if x[0] == e[0][0])), e[0][1], e[0][2]))
     lines = []
     for (encoding, op, name, tokens, glc), cpus in rows:
         mask = "".join("1" if c in cpus else "0" for c in CPUS)
@@ -295,9 +376,12 @@ def main():
         f.write("// script. One opcode a line: the encoding, the opcode (hex), the CPUs that have it (%s, 1 or 0 each), the mnemonic\n" % ", ".join(CPUS))
         f.write("// as LLVM prints it, and the operand template in print order (a field, its register class and width; '=' a fixed\n")
         f.write("// operand; K an immediate and its kind; O the offset's kind); after '|', FLAT's template when glc is set.\n")
+        if FAMILY:
+            f.write("// The %s family in wave64, in its own word layouts (plan 35, G8a).\n" % FAMILY)
         f.write("internal static partial class GcnOpcodeTable\n{\n")
-        f.write("    internal const string Cpus = \"%s\";\n\n" % " ".join(CPUS))
-        f.write("    internal const string Text = \"\"\"\n")
+        prefix = FAMILY.capitalize() if FAMILY else ""
+        f.write("    internal const string %sCpus = \"%s\";\n\n" % (prefix, " ".join(CPUS)))
+        f.write("    internal const string %sText = \"\"\"\n" % prefix)
         for line in lines:
             f.write("        " + line + "\n")
         f.write("        \"\"\";\n}\n")
