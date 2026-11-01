@@ -40,6 +40,10 @@ namespace Idrak.Gpu.Hip;
 //   adds them in split order (and scales them for int8) in the same launch; with counters 0, int8_gemv_finish_f32 does
 //   in a second launch. Four rows of k a step, the four words in flight, each row's four inputs read by the scalar unit.
 //   int4: a group's eight scales read once for its 32 rows; `chunk` a multiple of 32 (CUDA's splits start on 64).
+// - {int8,int4,bf16,f16}_gemv[_rR]_k8_f32 (plan 35, G6a): the same products taking eight rows of k a step, the eight
+//   words in flight and each row's eight inputs read by one s_load_dwordx8, then a row at a time. Every accumulator takes
+//   the same multiply-adds in the same order (k increasing, then the splits in split order), so the results are the
+//   four-row kernels' bit for bit; which is faster is the device's to say (IDRAK_HIP_GEMV_DEPTH, `--bench-hip products`).
 // - int8_gemv_finish_f32: y[i] = Σ_split part[split · size + i] in split order, times s[i mod cols] (s = 0: unscaled,
 //   for int4, bfloat16 and float16, which CUDA sums in the product kernel).
 // - int8_matmul_f32: many rows through int8 weights (CUDA's m > 8 path): a thread a (row, word), k in order.
@@ -60,7 +64,7 @@ namespace Idrak.Gpu.Hip;
 // | gemv_nn_f32            | a, b, c, m, n, k, beta, sa, sb, sc                               | ⌈n/64⌉ × ⌈m/8⌉ × b (256)        | 2·m·n·k·b        | 4·b·(m·k + ⌈m/8⌉·k·n + m·n)                   |
 // | gemv_nt_f32            | a, b, c, m, n, k, beta, sa, sb, sc                               | ⌈n/4⌉ × ⌈m/8⌉ × b (256)         | 2·m·n·k·b        | 4·b·(m·k + ⌈m/8⌉·k·n + m·n)                   |
 // | gemv_multi_f32         | a, m, k; 3 × (w, bias, y, n)                                     | ⌈max n/64⌉ × products (256)     | 2·m·n·k          | 4·(m·k + k·n + m·n + n)                       |
-// | int8_gemv[_rR]_f32     | x, q, s, y, part, m, n, k, n4, chunk, splits, counters           | ⌈w/64⌉ × s (64)                 | 2·m·n·k          | 4·k·w + 4·m·k + 4n + 4·m·n·(s > 1 ? s : 1)    |
+// | int8_gemv[_rR][_k8]_f32| x, q, s, y, part, m, n, k, n4, chunk, splits, counters           | ⌈w/64⌉ × s (64)                 | 2·m·n·k          | 4·k·w + 4·m·k + 4n + 4·m·n·(s > 1 ? s : 1)    |
 // | int4_gemv[_rR]_f32     | (the same)                                                       | ⌈w/64⌉ × s (64)                 | 2·m·n·k + k·n    | 4·k·w + 32·g·w + 4·m·k + 4·m·n·(s > 1 ? s : 1)|
 // | bf16_gemv[_rR]_f32     | (the same; s unused)                                             | ⌈w/64⌉ × s (64)                 | 2·m·n·k          | 4·k·w + 4·m·k + 4·m·n·(s > 1 ? s : 1)         |
 // | f16_gemv[_rR]_f32      | (the same; s unused)                                             | ⌈w/64⌉ × s (64)                 | 2·m·n·k          | 4·k·w + 4·m·k + 4·m·n·(s > 1 ? s : 1)         |
@@ -72,6 +76,7 @@ namespace Idrak.Gpu.Hip;
 // | f16_dequant_f32        | q, w, words, cols, n (n = k·words)                               | ⌈n/256⌉ or fewer (256)          | 0                | 4·k·w + 4·k·n                                 |
 // | bf16_pack_f32          | x, y, count, n (n = ⌈count/2⌉)                                   | ⌈n/256⌉ or fewer (256)          | 0                | 4·count + 4n                                  |
 //
+// (The _k8 variants of the int4, bfloat16 and float16 products cost as their four-row kernels.)
 // (n in a row's Bytes is that kernel's own argument: the output columns for the products, the words for the expansions;
 // for gemv_multi_f32, the products' columns together.)
 internal static partial class GcnKernels
@@ -133,11 +138,37 @@ internal static partial class GcnKernels
         "f16_gemv_r1_f32", "f16_gemv_r2_f32", "f16_gemv_r4_f32", "f16_gemv_f32",
     ];
 
-    /// <summary>The packed few-row product for <paramref name="m"/> rows (1 to 8) of <paramref name="format"/>'s weights.</summary>
-    internal static string PackedGemvKernel(PackedWeights format, int m)
+    // The eight-row-step variants (G6a), by the same index.
+    private static readonly string[] PackedGemvDeepNames =
+    [
+        "int8_gemv_r1_k8_f32", "int8_gemv_r2_k8_f32", "int8_gemv_r4_k8_f32", "int8_gemv_k8_f32",
+        "int4_gemv_r1_k8_f32", "int4_gemv_r2_k8_f32", "int4_gemv_r4_k8_f32", "int4_gemv_k8_f32",
+        "bf16_gemv_r1_k8_f32", "bf16_gemv_r2_k8_f32", "bf16_gemv_r4_k8_f32", "bf16_gemv_k8_f32",
+        "f16_gemv_r1_k8_f32", "f16_gemv_r2_k8_f32", "f16_gemv_r4_k8_f32", "f16_gemv_k8_f32",
+    ];
+
+    /// <summary>
+    /// The rows of k a packed few-row product takes a step (G6a): 4, the kernels G4a wrote and the default, or 8 (the
+    /// _k8 variants); both give the same bits.
+    /// </summary>
+    internal static ReadOnlySpan<int> PackedGemvDepths => [4, 8];
+
+    /// <summary>The rows of k a step of the default packed few-row products.</summary>
+    internal const int PackedGemvDefaultDepth = 4;
+
+    /// <summary>
+    /// The packed few-row product for <paramref name="m"/> rows (1 to 8) of <paramref name="format"/>'s weights, taking
+    /// <paramref name="depth"/> rows of k a step (<see cref="PackedGemvDepths"/>).
+    /// </summary>
+    internal static string PackedGemvKernel(PackedWeights format, int m, int depth = PackedGemvDefaultDepth)
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(m, 1);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(m, GemvRows);
+        if (depth != 4 && depth != 8)
+        {
+            throw new ArgumentOutOfRangeException(nameof(depth), depth, "A packed few-row product takes 4 or 8 rows of k a step.");
+        }
+
         var counts = PackedGemvRowCounts;
         int i = 0;
         while (counts[i] < m)
@@ -145,7 +176,7 @@ internal static partial class GcnKernels
             i++;
         }
 
-        return PackedGemvNames[(int)format * 4 + i];
+        return (depth == 8 ? PackedGemvDeepNames : PackedGemvNames)[(int)format * 4 + i];
     }
 
     /// <summary>Columns a packed word holds in <paramref name="format"/>.</summary>
@@ -388,6 +419,16 @@ internal static partial class GcnKernels
         kernels.Add(HalfDequant(half: false));
         kernels.Add(HalfDequant(half: true));
         kernels.Add(PackBFloat16());
+
+        // G6a: the eight-row-step variants, after G4a's kernels so theirs keep their places in the set.
+        foreach (var format in (PackedWeights[])[PackedWeights.Int8, PackedWeights.Int4, PackedWeights.BFloat16, PackedWeights.Float16])
+        {
+            foreach (int rows in PackedGemvRowCounts)
+            {
+                kernels.Add(PackedGemv(format, rows, depth: 8));
+            }
+        }
+
         return [.. kernels];
     }
 
@@ -1026,14 +1067,20 @@ internal static partial class GcnKernels
 
     // A packed few-row product (see the file's remarks), or one of its fused forms (GcnKernels.Decoding.cs): the gated
     // products, whose input row is act(gate) · up made as it is read, and the multi-output products, a product of grid z
-    // each with its own weights, width, output and bias.
-    private static GcnKernelSource PackedGemv(PackedWeights format, int rows, PackedGemvVariant variant = PackedGemvVariant.Plain)
+    // each with its own weights, width, output and bias. `depth`: the rows of k a step of the main loop (4, or 8 for the
+    // plain products' _k8 variants, G6a); every accumulator's multiply-adds stay in k order, so the bits do not change.
+    private static GcnKernelSource PackedGemv(PackedWeights format, int rows, PackedGemvVariant variant = PackedGemvVariant.Plain, int depth = PackedGemvDefaultDepth)
     {
         int cpw = ColumnsPerWord(format);
         var counts = PackedGemvRowCounts;
         bool gated = variant is PackedGemvVariant.Silu or PackedGemvVariant.Gelu, multi = variant == PackedGemvVariant.Multi;
         bool addNorm = variant == PackedGemvVariant.AddNorm;
-        string name = variant == PackedGemvVariant.Plain ? PackedGemvNames[(int)format * 4 + counts.IndexOf(rows)] : FusedGemvKernel(format, variant, rows);
+        if (depth != PackedGemvDefaultDepth && (depth != 8 || variant != PackedGemvVariant.Plain))
+        {
+            throw new ArgumentOutOfRangeException(nameof(depth), depth, "Only the plain packed few-row products have an eight-row-step variant.");
+        }
+
+        string name = variant == PackedGemvVariant.Plain ? PackedGemvKernel(format, rows, depth) : FusedGemvKernel(format, variant, rows);
         var w = new ProductWriter(name);
         if (multi)
         {
@@ -1100,7 +1147,7 @@ internal static partial class GcnKernels
         GatedInputs? inputs = gated ? GatedInputs.Begin(w, variant, rows, xPtr, w.Offset64(w.Pointer("up"), kStart), k, lastRow) : null;
         string rowBytes = w.S(), stepBytes = w.S(), qOffset = w.V();
         w.L($"s_lshl_b32 {rowBytes}, {words}, 2");
-        w.L($"s_lshl_b32 {stepBytes}, {words}, 4");
+        w.L($"s_lshl_b32 {stepBytes}, {words}, {int.Log2(4 * depth)}");
         w.L($"s_mul_i32 {t}, {kStart}, {words}");
         w.L($"v_add_u32_e32 {qOffset}, {t}, {wordc}");
         w.L($"v_lshlrev_b32_e32 {qOffset}, 2, {qOffset}");
@@ -1138,18 +1185,31 @@ internal static partial class GcnKernels
             w.L($"global_load_dwordx4 %v[{scales + 4}:{scales + 7}], {scaleOffset}, {sp} offset:16");
         }
 
-        // Four rows of k a step: the four words in flight, each row's four inputs read by the scalar unit.
+        // `depth` rows of k a step: the words in flight, each row's inputs read by the scalar unit (four: s_load_dwordx4;
+        // eight: s_load_dwordx8).
         w.Label(".Lmain");
-        w.L($"s_add_u32 {end}, {kk}, 4");
+        w.L($"s_add_u32 {end}, {kk}, {depth}");
         w.L($"s_cmp_gt_u32 {end}, {stop}");
         w.L($"s_cbranch_scc1 .Ltail");
-        string[] at = [qOffset, w.V(), w.V(), w.V()], packed = [w.V(), w.V(), w.V(), w.V()];
-        for (int u = 1; u < 4; u++)
+        // The addresses' registers first, then the words' (G4a's order: the four-row kernels' text is unchanged).
+        string[] at = new string[depth], packed = new string[depth];
+        at[0] = qOffset;
+        for (int u = 1; u < depth; u++)
+        {
+            at[u] = w.V();
+        }
+
+        for (int u = 0; u < depth; u++)
+        {
+            packed[u] = w.V();
+        }
+
+        for (int u = 1; u < depth; u++)
         {
             w.L($"v_add_u32_e32 {at[u]}, {rowBytes}, {at[u - 1]}");
         }
 
-        for (int u = 0; u < 4; u++)
+        for (int u = 0; u < depth; u++)
         {
             w.L($"global_load_dword {packed[u]}, {at[u]}, {qp}");
         }
@@ -1157,15 +1217,15 @@ internal static partial class GcnKernels
         int[] xs = new int[rows];
         for (int r = 0; r < rows; r++)
         {
-            xs[r] = w.SRange(4);
+            xs[r] = w.SRange(depth);
             if (inputs is null)
             {
-                w.L($"s_load_dwordx4 %s[{xs[r]}:{xs[r] + 3}], {xPtr}, {rowOffsets[r]}");
+                w.L($"s_load_dwordx{depth} %s[{xs[r]}:{xs[r] + depth - 1}], {xPtr}, {rowOffsets[r]}");
             }
         }
 
         inputs?.Step(xs);
-        for (int u = 0; u < 4; u++)
+        for (int u = 0; u < depth; u++)
         {
             string[] decoded = Decode(w, format, packed[u], scales);
             for (int r = 0; r < rows; r++)
@@ -1178,7 +1238,7 @@ internal static partial class GcnKernels
         }
 
         w.L($"v_add_u32_e32 {qOffset}, {stepBytes}, {qOffset}");
-        w.Add64(xPtr, "16");
+        w.Add64(xPtr, (4 * depth).ToString(CultureInfo.InvariantCulture));
         inputs?.Advance("16");
         w.L($"s_mov_b32 {kk}, {end}");
         w.L($"s_branch .Lmain");

@@ -28,6 +28,10 @@ internal abstract partial class Tests
         ("gcn kernels: products: int4_gemv_r1/_r2/_r4_f32 and int4_gemv_f32 equal the CPU's Int4MatMul for 1, 2, 3, 5 and 8 rows, n = 523, k = 96 (three groups) in one split and in two of 64 rows; the same bits on a second run and finish grid", _ => GcnProductsPacked(GcnWeights.Int4)),
         ("gcn kernels: products: bf16_gemv_r1/_r2/_r4_f32 and bf16_gemv_f32 equal the CPU's BFloat16MatMul for 1, 2, 3, 5 and 8 rows, n = 131, k = 70 in one split and in three; the same bits on a second run and finish grid", _ => GcnProductsPacked(GcnWeights.BFloat16)),
         ("gcn kernels: products: f16_gemv_r1/_r2/_r4_f32 and f16_gemv_f32 equal the CPU's Float16MatMul for 1, 2, 3, 5 and 8 rows, n = 131, k = 70 in one split and in three; the same bits on a second run and finish grid", _ => GcnProductsPacked(GcnWeights.Float16)),
+        ("gcn kernels: products: G6a's int8_gemv[_rR]_k8_f32 (eight rows of k a step) give int8_gemv[_rR]_f32's bits for 1, 2, 3, 5 and 8 rows, k = 70 (eight-row steps and a tail) in one split and in three (each finish), and the CPU's within its tolerance", _ => GcnProductsDepths(GcnWeights.Int8)),
+        ("gcn kernels: products: G6a's int4_gemv[_rR]_k8_f32 give int4_gemv[_rR]_f32's bits for 1, 2, 3, 5 and 8 rows, k = 100 (groups of 32 in eight-row steps, a short last group) in one split and in two of 64 rows (each finish), and the CPU's within its tolerance", _ => GcnProductsDepths(GcnWeights.Int4)),
+        ("gcn kernels: products: G6a's bf16_gemv[_rR]_k8_f32 give bf16_gemv[_rR]_f32's bits for 1, 2, 3, 5 and 8 rows, k = 70 in one split and in three (each finish), and the CPU's within its tolerance", _ => GcnProductsDepths(GcnWeights.BFloat16)),
+        ("gcn kernels: products: G6a's f16_gemv[_rR]_k8_f32 give f16_gemv[_rR]_f32's bits for 1, 2, 3, 5 and 8 rows, k = 70 in one split and in three (each finish), and the CPU's within its tolerance", _ => GcnProductsDepths(GcnWeights.Float16)),
         ("gcn kernels: products: int8_matmul_f32 (many rows) equals the CPU's Int8MatMul over 11 x 75 x 37 and 1 x 1 x 1, the same bits on another grid", GcnProductsInt8MatMul),
         ("gcn kernels: products: int8_dequant_f32, int4_dequant_f32, bf16_dequant_f32, f16_dequant_f32 (NaN payloads, infinities, subnormals) and bf16_pack_f32 (ties to even, NaN, overflow, an odd count) equal the CPU's bit for bit, on two grids", GcnProductsExpansions),
     ];
@@ -110,17 +114,23 @@ internal abstract partial class Tests
     {
         _ = device;
         var names = GcnKernels.Products.Select(k => k.Name).ToArray();
-        Check(names.Length == 27 && names.Distinct().Count() == names.Length, $"27 product kernels, each once: {string.Join(", ", names)}");
+        Check(names.Length == 43 && names.Distinct().Count() == names.Length, $"43 product kernels (G4a's 27 and G6a's 16 eight-row-step variants), each once: {string.Join(", ", names)}");
         foreach (var format in (GcnWeights[])[GcnWeights.Int8, GcnWeights.Int4, GcnWeights.BFloat16, GcnWeights.Float16])
         {
             for (int m = 1; m <= GcnKernels.GemvRows; m++)
             {
-                string kernel = GcnKernels.PackedGemvKernel(format, m);
+                string kernel = GcnKernels.PackedGemvKernel(format, m), deep = GcnKernels.PackedGemvKernel(format, m, 8);
                 int rows = m <= 1 ? 1 : m <= 2 ? 2 : m <= 4 ? 4 : 8;
                 string prefix = format switch { GcnWeights.Int8 => "int8", GcnWeights.Int4 => "int4", GcnWeights.BFloat16 => "bf16", _ => "f16" };
                 Check(kernel == (rows == 8 ? $"{prefix}_gemv_f32" : $"{prefix}_gemv_r{rows}_f32") && names.Contains(kernel), $"{format}, {m} rows: {kernel}");
+                Check(deep == (rows == 8 ? $"{prefix}_gemv_k8_f32" : $"{prefix}_gemv_r{rows}_k8_f32") && names.Contains(deep), $"{format}, {m} rows, depth 8: {deep}");
+                Check(kernel == GcnKernels.PackedGemvKernel(format, m, GcnKernels.PackedGemvDefaultDepth), $"{format}, {m} rows: the default depth is G4a's kernel");
             }
         }
+
+        Check(HipBackend.ProductCost("int4_gemv_r2_k8_f32", 2, 300, 128, 2) == HipBackend.ProductCost("int4_gemv_r2_f32", 2, 300, 128, 2)
+              && HipBackend.ProductCost("int8_gemv_k8_f32", 8, 300, 128) == HipBackend.ProductCost("int8_gemv_f32", 8, 300, 128),
+            "a _k8 variant's profile cost is its four-row kernel's");
 
         foreach (string name in names)
         {
@@ -337,6 +347,80 @@ internal abstract partial class Tests
                     {
                         ProductsCase(what, [x, packed, scales, y, part, counters], [3], [x, packed, scales, expected, part, counters],
                             (mem, at, second, seed) => Run(mem, at, second, seed, false), worst, kernel);
+                    }
+                }
+            }
+        }
+
+        RowsReport(worst);
+    }
+
+    // G6a: each eight-row-step variant against its four-row kernel, bit for bit, on the same inputs, grid and finish
+    // (one split; several, added by the last block and by int8_gemv_finish_f32), then against the CPU within the
+    // tolerance; k leaves a tail after the eight-row steps (int4: a short last group), so every path of the loop runs.
+    internal static void GcnProductsDepths(GcnWeights format)
+    {
+        int n = format switch { GcnWeights.Int8 => 301, GcnWeights.Int4 => 523, _ => 131 };
+        int k = format == GcnWeights.Int4 ? 100 : 70, splitChunk = format == GcnWeights.Int4 ? 64 : 32;
+        int cpw = GcnKernels.ColumnsPerWord(format), words = (n + cpw - 1) / cpw;
+        bool scaled = format == GcnWeights.Int8, halves = format is GcnWeights.BFloat16 or GcnWeights.Float16;
+        var worst = new Dictionary<string, float>();
+        var random = new Random(53 + (int)format);
+        var (packed, scales) = ProductsWeights(format, random, k, n);
+        int columnBlocks = (words + GcnKernels.PackedGemvWords - 1) / GcnKernels.PackedGemvWords;
+        foreach (int m in (int[])[1, 2, 3, 5, 8])
+        {
+            string kernel = GcnKernels.PackedGemvKernel(format, m), deep = GcnKernels.PackedGemvKernel(format, m, 8);
+            float[] x = RowsRandom(random, m * k, 1f);
+            float[] expected = RowsOnCpu([x, packed, scales, new float[m * n]], (cpu, s) =>
+            {
+                switch (format)
+                {
+                    case GcnWeights.Int8:
+                        cpu.Int8MatMulKernel(s[0], s[1], s[2], s[3], m, n, k);
+                        break;
+                    case GcnWeights.Int4:
+                        cpu.Int4MatMulKernel(s[0], s[1], s[2], s[3], m, n, k);
+                        break;
+                    case GcnWeights.BFloat16:
+                        cpu.BFloat16MatMulKernel(s[0], s[1], s[3], m, n, k);
+                        break;
+                    default:
+                        cpu.Float16MatMulKernel(s[0], s[1], s[3], m, n, k);
+                        break;
+                }
+            })[3];
+            foreach (int chunk in (int[])[k, splitChunk])
+            {
+                int splits = (k + chunk - 1) / chunk;
+                foreach (var isa in ProductIsas)
+                {
+                    foreach (bool lastBlock in splits > 1 ? (bool[])[true, false] : [false])
+                    {
+                        float[][] On(string name, ulong seed) => RowsOnGcn([x, packed, scales, new float[m * n], new float[splits * m * n], new float[columnBlocks]], (memory, at) =>
+                        {
+                            ProductDispatch(name, isa, memory, (columnBlocks, splits, 1), GcnKernels.PackedGemvWords, seed,
+                                args => GcnKernels.PackPackedGemv(args.AsSpan(0, GcnKernels.PackedGemvArgumentBytes), at[0], at[1], halves ? 0UL : at[2], at[3], at[4],
+                                    (uint)m, (uint)n, (uint)k, (uint)words, (uint)chunk, (uint)splits, lastBlock ? at[5] : 0UL));
+                            if (splits > 1 && !lastBlock)
+                            {
+                                ProductDispatch("int8_gemv_finish_f32", isa, memory, ((m * n + GcnKernels.ExpansionBlock - 1) / GcnKernels.ExpansionBlock, 1, 1), GcnKernels.ExpansionBlock,
+                                    seed, args => GcnKernels.PackGemvFinish(args.AsSpan(0, GcnKernels.GemvFinishArgumentBytes), at[4], scaled ? at[2] : 0UL, at[3], (uint)n, (uint)(m * n),
+                                        (uint)splits));
+                            }
+                        });
+
+                        string what = $"{deep} against {kernel}, {m} rows, {k} x {n}, {splits} split{(splits > 1 ? "s" : "")}{(splits > 1 ? lastBlock ? " (last block)" : " (finish launch)" : "")} ({isa})";
+                        float[][] four = On(kernel, 1), eight = On(deep, 1), eightAgain = On(deep, 7);
+                        var want = MemoryMarshal.Cast<float, uint>(four[3]);
+                        var have = MemoryMarshal.Cast<float, uint>(eight[3]);
+                        for (int i = 0; i < want.Length; i++)
+                        {
+                            Check(want[i] == have[i], $"{what}: element {i} is 0x{have[i]:x8}, the four-row kernel's 0x{want[i]:x8} (the same multiply-adds in the same order must give the same bits)");
+                        }
+
+                        RowsSameBits(eight, eightAgain, $"{what}, another wave order");
+                        worst[deep] = MathF.Max(worst.GetValueOrDefault(deep), RowsCompare(expected, eight[3], $"{what}, against the CPU"));
                     }
                 }
             }

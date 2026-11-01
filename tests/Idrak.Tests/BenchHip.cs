@@ -30,7 +30,9 @@ using GcnWeights = Idrak.Gpu.Hip.GcnKernels.PackedWeights;
 //            products (int8, int4, bfloat16, float16; 1, 4 and 8 rows; the leftover-8.10 shapes int8 1 x 3072 -> 1024 and
 //            int4 1 x 1024 -> 32000), more int8 rows, the expansions and bfloat16 packing: the first call apart from the
 //            warm ones, GB/s and GFLOP/s from GcnKernels.Products.cs's table (HipBackend.ProductCost, Cost), the k splits
-//            each packed product took (IDRAK_HIP_GEMV_SPLITS forces them), none through the host fallback
+//            each packed product took (IDRAK_HIP_GEMV_SPLITS forces them), then each packed shape's variants (G6a): 4 and 8
+//            rows of k a step (IDRAK_HIP_GEMV_DEPTH) with every k split count, the fastest named against the default; none
+//            through the host fallback
 //   attention decoding over float32, bfloat16 and int8 caches (one row a head, the cache's positions split), the tiled
 //            form with the log-sum-exp, attention over causal key ranges with grouped heads, and the int8 cache's scores
 //            and weighted values (BenchHip.Attention.cs): cold apart from warm, GB/s and GFLOP/s from
@@ -361,7 +363,8 @@ internal abstract partial class DesktopTests
 
     // One operation timed: its first call (cold, with a wait) and the warm average, its rate from flops and bytes per
     // element over `elements`.
-    private static void BenchOperation(HipBench b, string name, long elements, (double Flops, double Bytes) cost, Action run)
+    // Returns the warm time in µs (the products' variants compare it).
+    private static double BenchOperation(HipBench b, string name, long elements, (double Flops, double Bytes) cost, Action run)
     {
         b.Device.Synchronize();
         long start = Stopwatch.GetTimestamp();
@@ -371,6 +374,7 @@ internal abstract partial class DesktopTests
         double warm = b.Micros(run, b.Repeats);
         b.Row(name, string.Create(CultureInfo.InvariantCulture,
             $"cold {cold:F1} µs, warm {warm:F1} µs: {cost.Bytes * elements / (warm * 1e3):F1} GB/s, {cost.Flops * elements / (warm * 1e3):F1} GFLOP/s"));
+        return warm;
     }
 
     private static void BenchHipRows(HipBench b)
@@ -498,7 +502,7 @@ internal abstract partial class DesktopTests
 internal abstract partial class DesktopTests
 {
     // One product timed: its first call apart from the warm ones, its rates from the whole call's flops and bytes.
-    private static void BenchProduct(HipBench b, string name, (double Flops, double Bytes) cost, Action run) => BenchOperation(b, name, 1, cost, run);
+    private static double BenchProduct(HipBench b, string name, (double Flops, double Bytes) cost, Action run) => BenchOperation(b, name, 1, cost, run);
 
     private static void BenchHipProducts(HipBench b)
     {
@@ -573,26 +577,69 @@ internal abstract partial class DesktopTests
             [
                 (GcnWeights.Int8, 3072, 1024), (GcnWeights.Int8, k, n), (GcnWeights.Int4, 1024, 32000), (GcnWeights.Int4, k, n), (GcnWeights.BFloat16, k, n), (GcnWeights.Float16, k, n),
             ];
-            foreach (var (format, kk, nn) in shapes)
+            // Each packed shape on the kernel the settings pick (IDRAK_HIP_GEMV_DEPTH, IDRAK_HIP_GEMV_SPLITS: the row the
+            // run takes), then G6a's variants: each depth of k a step (4, G4a's; 8, the _k8 kernels) with each k split
+            // count from 1 to min(64, k / 64), the fastest named against the default (depth 4, the formula's splits). All
+            // give the same bits for a split count (GcnProductsDepths); the owner sets the faster one.
+            var (keptDepth, keptSplits) = (HipBackend.GemvDepth, HipBackend.ForcedGemvSplits);
+            int Formula(long words, int kk) => HipBackend.GemvSplitCount(hip.DeviceLimits.ComputeUnits, (int)((words + 63) / 64), kk);
+            try
             {
-                int perWord = GcnKernels.ColumnsPerWord(format);
-                long words = (nn + perWord - 1) / perWord;
-                Storage packed = Packed(kk * words, format is GcnWeights.BFloat16 or GcnWeights.Float16);
-                Storage scales = On(format == GcnWeights.Int4 ? (kk + 31) / 32 * 8 * words : nn);
-                foreach (int m in new[] { 1, 4, 8 })
+                foreach (var (format, kk, nn) in shapes)
                 {
-                    string kernel = GcnKernels.PackedGemvKernel(format, m);
-                    int splits = HipBackend.GemvSplitCount(hip.DeviceLimits.ComputeUnits, (int)((words + 63) / 64), kk, HipBackend.GemvSplitsSetting(Environment.GetEnvironmentVariable(HipBackend.GemvSplitsVariable)));
-                    var cost = HipBackend.ProductCost(kernel, m, nn, kk, splits);
-                    Action run = format switch
+                    int perWord = GcnKernels.ColumnsPerWord(format);
+                    long words = (nn + perWord - 1) / perWord;
+                    Storage packed = Packed(kk * words, format is GcnWeights.BFloat16 or GcnWeights.Float16);
+                    Storage scales = On(format == GcnWeights.Int4 ? (kk + 31) / 32 * 8 * words : nn);
+                    foreach (int m in new[] { 1, 4, 8 })
                     {
-                        GcnWeights.Int8 => () => hip.Int8MatMul(x, packed, scales, y, m, nn, kk),
-                        GcnWeights.Int4 => () => hip.Int4MatMul(x, packed, scales, y, m, nn, kk),
-                        GcnWeights.BFloat16 => () => hip.BFloat16MatMul(x, packed, y, m, nn, kk),
-                        _ => () => hip.Float16MatMul(x, packed, y, m, nn, kk),
-                    };
-                    BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{kernel} {m}x{kk}->{nn} (about {splits} splits)"), cost, run);
+                        Action run = format switch
+                        {
+                            GcnWeights.Int8 => () => hip.Int8MatMul(x, packed, scales, y, m, nn, kk),
+                            GcnWeights.Int4 => () => hip.Int4MatMul(x, packed, scales, y, m, nn, kk),
+                            GcnWeights.BFloat16 => () => hip.BFloat16MatMul(x, packed, y, m, nn, kk),
+                            _ => () => hip.Float16MatMul(x, packed, y, m, nn, kk),
+                        };
+
+                        (HipBackend.GemvDepth, HipBackend.ForcedGemvSplits) = (keptDepth, keptSplits);
+                        string kernel = GcnKernels.PackedGemvKernel(format, m, keptDepth);
+                        int splits = HipBackend.GemvSplitCount(hip.DeviceLimits.ComputeUnits, (int)((words + 63) / 64), kk, keptSplits);
+                        BenchProduct(b, string.Create(CultureInfo.InvariantCulture, $"{kernel} {m}x{kk}->{nn} (about {splits} splits)"),
+                            HipBackend.ProductCost(kernel, m, nn, kk, splits), run);
+
+                        int standard = Formula(words, kk), most = Math.Max(1, Math.Min(64, kk / 64));
+                        double current = double.NaN, best = double.PositiveInfinity;
+                        string bestName = "";
+                        foreach (int depth in GcnKernels.PackedGemvDepths)
+                        {
+                            for (int count = 1; count <= most; count *= 2)
+                            {
+                                (HipBackend.GemvDepth, HipBackend.ForcedGemvSplits) = (depth, count);
+                                string variant = GcnKernels.PackedGemvKernel(format, m, depth);
+                                double warm = BenchProduct(b, string.Create(CultureInfo.InvariantCulture,
+                                        $"  {variant} {m}x{kk}->{nn}, depth {depth}, {count} split{(count > 1 ? "s" : "")}{(depth == GcnKernels.PackedGemvDefaultDepth && count == standard ? " (the default)" : "")}"),
+                                    HipBackend.ProductCost(variant, m, nn, kk, count), run);
+                                if (depth == GcnKernels.PackedGemvDefaultDepth && count == standard)
+                                {
+                                    current = warm;
+                                }
+
+                                if (warm < best)
+                                {
+                                    (best, bestName) = (warm, string.Create(CultureInfo.InvariantCulture, $"depth {depth}, {count} split{(count > 1 ? "s" : "")}"));
+                                }
+                            }
+                        }
+
+                        b.Row(string.Create(CultureInfo.InvariantCulture, $"  fastest for {format} {m}x{kk}->{nn}"),
+                            string.Create(CultureInfo.InvariantCulture,
+                                $"{bestName}: {best:F1} µs; the default (depth 4, {standard} splits): {current:F1} µs ({current / best:F2}x) (IDRAK_HIP_GEMV_DEPTH, IDRAK_HIP_GEMV_SPLITS)"));
+                    }
                 }
+            }
+            finally
+            {
+                (HipBackend.GemvDepth, HipBackend.ForcedGemvSplits) = (keptDepth, keptSplits);
             }
 
             int rows = 64;

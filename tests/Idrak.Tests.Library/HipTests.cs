@@ -335,6 +335,9 @@ internal abstract partial class Tests
         Check(HipBackend.FinishByLastBlockSetting(null) && HipBackend.FinishByLastBlockSetting("block") && !HipBackend.FinishByLastBlockSetting("launch")
               && !HipBackend.FinishByLastBlockSetting(" Launch ") && HipBackend.FinishByLastBlockSetting("x"),
             "IDRAK_HIP_FINISH: the last block finishes split sums and the fused kernels' tails (one launch) unless it is launch");
+        Check(HipBackend.GemvDepthSetting(null) == 4 && HipBackend.GemvDepthSetting("8") == 8 && HipBackend.GemvDepthSetting("4") == 4
+              && HipBackend.GemvDepthSetting("16") == 4 && HipBackend.GemvDepthSetting("x") == 4 && GcnKernels.PackedGemvDepths.SequenceEqual([4, 8]),
+            "IDRAK_HIP_GEMV_DEPTH: the packed few-row products take 4 rows of k a step (G4a's kernels) unless it says 8 (G6a's _k8 variants)");
         Check(HipBackend.AttentionRowsSetting(null) is null && HipBackend.AttentionRowsSetting("4") == 4 && HipBackend.AttentionRowsSetting("x") is null
               && HipBackend.AttentionTiledRowsFor(512, 65536, null) == 8 && HipBackend.AttentionTiledRowsFor(512, 65536, 5) == 4
               && HipBackend.AttentionTiledRowsFor(3, 65536, null) == 2 && HipBackend.AttentionTiledRowsFor(1, 65536, null) == 1
