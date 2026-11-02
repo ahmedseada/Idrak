@@ -73,8 +73,10 @@ for `idrak new`.
   the same task kept apart as DPO pairs.
 - **Resumable and counted**: a run folder under `test-output\` with a manifest (rows asked, kept, rejected and why,
   tokens, dollars, time left); Ctrl+C keeps what is done; `--max-dollars` stops a run at a budget.
-- **The key**: the Anthropic SDK reads `ANTHROPIC_API_KEY` from the environment; the generator never takes a key on
-  the command line, never writes one to a file or a log, and fails with the variable's name when it is unset.
+- **The key** (the owner, 2026-11-02): `RLS_ANTHROPIC_API_KEY`, read by the generator and given to the SDK's client,
+  not `ANTHROPIC_API_KEY` (which Claude Code also reads: set, it bills every `claude` run to the key and refuses Remote
+  Control). The generator never takes a key on the command line, never writes one to a file or a log, and fails with
+  the variable's name when it is unset.
 - **Every setting has an `RLS_*` variable** and a flag: model, effort, concurrency, budget, the source clones' paths,
   the sandbox (`IDRAK_SANDBOX`, `container` with an SDK image recommended), the split seed.
 
