@@ -35,7 +35,7 @@ public sealed partial class Tensor : IDisposable
     private Tensor(int[] shape, Storage storage, Device device, bool track)
     {
         _shape = shape;
-        Storage = storage;
+        _storage = storage;
         Device = device;
         Size = storage.Length;
         if (track)
@@ -44,8 +44,187 @@ public sealed partial class Tensor : IDisposable
         }
     }
 
+    // A view (plan 37, V1): `layout` over `storage` (another tensor's, referenced once more by the caller), its values read
+    // through the layout until something takes its storage directly (Materialize).
+    private Tensor(TensorLayout layout, Storage storage, Device device)
+    {
+        _shape = layout.Shape.ToArray();
+        _storage = storage;
+        _layout = layout;
+        _pending = true;
+        Device = device;
+        Size = checked((int)layout.Elements);
+        TensorScope.Track(this);
+    }
+
     /// <summary>Returns device memory to the pool if the tensor was never disposed.</summary>
-    ~Tensor() => Storage.Release();
+    ~Tensor() => _storage.Release();
+
+    // The storage this tensor holds: its own, or (a view not copied yet) the one it reads through _layout.
+    private Storage _storage;
+
+    // The layout: null for a contiguous tensor from element 0 (made on demand by Layout), else a view's.
+    private TensorLayout? _layout;
+
+    // A view whose values still sit in another tensor's storage (read through _layout).
+    private volatile bool _pending;
+
+    // The version the storage a view read had when the view was copied to its own (see VersionOf).
+    private int _versionOffset;
+
+    /// <summary>
+    /// Where the elements sit in <see cref="Storage"/> (plan 37, V0): contiguous from element 0 for every tensor but a view
+    /// not copied yet, whose elements sit in another tensor's storage along its strides (see <see cref="IsView"/>).
+    /// </summary>
+    public TensorLayout Layout => _layout ??= TensorLayout.Contiguous(_shape);
+
+    /// <summary>
+    /// Whether this tensor is a view not copied yet (<see cref="Permute"/>, <see cref="Narrow"/>, <see cref="Select"/>,
+    /// <see cref="Expand"/> on a device that reads strides): its elements are another tensor's, read through
+    /// <see cref="Layout"/>. Reading <see cref="Storage"/> copies them to a block of its own once (what the copies before
+    /// views were); operations that read strides do not.
+    /// </summary>
+    public bool IsView => _pending;
+
+    /// <summary>
+    /// This tensor as a contiguous one: itself when it is (every tensor but a strided view), else a copy of its elements in
+    /// row-major order, made by the device's strided copy, through which gradients flow back to this tensor.
+    /// </summary>
+    public Tensor Contiguous()
+    {
+        ThrowIfDisposed();
+        if (!_pending || _layout!.IsContiguousFromStart)
+        {
+            return this;
+        }
+
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var y = Empty(_shape, Device);
+        var layout = _layout;
+        Backend.StridedCopy(_storage, layout.Offset, layout.Shape, layout.Strides, y.Storage);
+        TensorViews.CountScratch((long)Size * sizeof(float));
+        if (WillRecord(this))
+        {
+            var x = this;
+            y.Record("contiguous", g => x.Backend.Axpy(g.Storage, x.GradStorage(), x.Size, 1f), x);
+        }
+
+        return Traced("contiguous", y, start);
+    }
+
+    // Whether views are made on this tensor's device: on (TensorViews.Enabled) where its kernels read strides.
+    internal bool MakesViews => TensorViews.Enabled && Backend.Capabilities.StridedInputs.Contains(Operations.Ops.StridedCopy);
+
+    // A view of this tensor's elements through `layout` (over the storage this tensor's elements sit in); not tracked for
+    // gradients here (the caller records its backward step).
+    internal Tensor View(TensorLayout layout)
+    {
+        var storage = _storage;
+        storage.AddRef();
+        var view = new Tensor(layout, storage, Device);
+        lock (storage)
+        {
+            var pending = storage.PendingViews ??= [];
+            if (pending.Count >= 32)
+            {
+                pending.RemoveAll(w => !w.TryGetTarget(out var t) || !t._pending);   // views copied or gone
+            }
+
+            pending.Add(new WeakReference<Tensor>(view));
+        }
+
+        TensorViews.CountMade();
+        return view;
+    }
+
+    // This tensor's layout over the storage its elements sit in: its own when contiguous, a view's otherwise.
+    internal TensorLayout SourceLayout => _pending ? _layout! : Layout;
+
+    // Copies a view's elements to a storage of its own, once: from now on it is an ordinary contiguous tensor.
+    private Storage Materialize()
+    {
+        lock (this)
+        {
+            if (!_pending)
+            {
+                return _storage;
+            }
+
+            var source = _storage;
+            var layout = _layout!;
+            var own = Backend.Allocate(Size, zeroed: false);
+            Backend.StridedCopy(source, layout.Offset, layout.Shape, layout.Strides, own);
+            _versionOffset = source.Version;
+            _storage = own;
+            _layout = null;
+            _pending = false;
+            source.Release();
+            TensorViews.CountMaterialized((long)Size * sizeof(float));
+            return own;
+        }
+    }
+
+    // Before a tensor hands out a storage with views of it not copied yet (a direct access may write it): the views copy
+    // their elements first, so each keeps the values it was made with.
+    private static void FlushViews(Storage storage)
+    {
+        List<WeakReference<Tensor>>? pending;
+        lock (storage)
+        {
+            pending = storage.PendingViews;
+            storage.PendingViews = null;
+        }
+
+        if (pending is null)
+        {
+            return;
+        }
+
+        foreach (var weak in pending)
+        {
+            if (weak.TryGetTarget(out var view) && view._pending && view._disposed == 0)
+            {
+                view.Materialize();
+            }
+        }
+    }
+
+    /// <summary>
+    /// A storage holding this tensor's elements contiguous from element 0, for an operation that only reads them: its own
+    /// storage (no views copied first: reading leaves them as they are), a view's source when the view is contiguous from
+    /// its start, else a short-lived copy given in <paramref name="scratch"/>, which the caller releases after the operation.
+    /// </summary>
+    internal Storage ReadStorage(out Storage? scratch)
+    {
+        scratch = null;
+        if (!_pending)
+        {
+            return _storage;
+        }
+
+        var layout = _layout!;
+        if (layout.IsContiguousFromStart)
+        {
+            return _storage;
+        }
+
+        lock (this)
+        {
+            if (!_pending)
+            {
+                return _storage;
+            }
+
+            scratch = Backend.Allocate(Size, zeroed: false);
+            Backend.StridedCopy(_storage, layout.Offset, layout.Shape, layout.Strides, scratch);
+        }
+
+        TensorViews.CountScratch((long)Size * sizeof(float));
+        return scratch;
+    }
+
+    // The in-place writes counted on the storage this tensor's values are in (see Storage.Version), stable across a view's copy.
+    private long VersionOf => _storage.Version + _versionOffset;
 
     /// <summary>The device this tensor's data lives on.</summary>
     public Device Device { get; }
@@ -73,7 +252,7 @@ public sealed partial class Tensor : IDisposable
                 throw new InvalidOperationException("RequiresGrad can only be changed on leaf tensors (ones not produced by an operation). Use Detach() first.");
             }
 
-            if (field != value && Storage is { } storage && storage.Backend.Offload is not null)
+            if (field != value && _storage is { } storage && storage.Backend.Offload is not null)
             {
                 TensorOffloading.Hooks?.TrainableChanged(this, value);                  // frozen weights move to system memory first
             }
@@ -88,8 +267,29 @@ public sealed partial class Tensor : IDisposable
     /// <summary>True when this tensor was created directly rather than as the output of a recorded operation.</summary>
     public bool IsLeaf => _backward is null;
 
-    /// <summary>The device memory holding the values (shared by views of the same values), for code that runs kernels on it.</summary>
-    public Storage Storage { get; }
+    /// <summary>
+    /// The device memory holding the values contiguous from element 0 (shared by reshapes of the same values), for code that
+    /// runs kernels on it. A view not copied yet (<see cref="IsView"/>) copies its elements to a block of its own first; a
+    /// tensor whose storage has such views makes them copy theirs first (the access may write it).
+    /// </summary>
+    public Storage Storage
+    {
+        get
+        {
+            if (_pending)
+            {
+                return Materialize();
+            }
+
+            var storage = _storage;
+            if (storage.PendingViews is not null)
+            {
+                FlushViews(storage);
+            }
+
+            return storage;
+        }
+    }
 
     /// <summary>The backend of <see cref="Device"/>, which runs kernels on <see cref="Storage"/>.</summary>
     public Backend Backend => Device.Backend;
@@ -253,7 +453,16 @@ public sealed partial class Tensor : IDisposable
     {
         ThrowIfDisposed();
         var result = GC.AllocateUninitializedArray<float>(Size);
-        Backend.Download(Storage, result);
+        var storage = ReadStorage(out var scratch);
+        try
+        {
+            Backend.Download(storage, result);
+        }
+        finally
+        {
+            scratch?.Release();
+        }
+
         return result;
     }
 
@@ -281,7 +490,16 @@ public sealed partial class Tensor : IDisposable
 
         ThrowIfDisposed();
         Span<float> value = stackalloc float[1];
-        Backend.Download(Storage, value);
+        var storage = ReadStorage(out var scratch);
+        try
+        {
+            Backend.Download(storage, value);
+        }
+        finally
+        {
+            scratch?.Release();
+        }
+
         return value[0];
     }
 
@@ -305,7 +523,16 @@ public sealed partial class Tensor : IDisposable
     {
         ThrowIfDisposed();
         var t = Empty(_shape, Device);
-        Backend.Copy(Storage, t.Storage, Size);
+        var storage = ReadStorage(out var scratch);
+        try
+        {
+            Backend.Copy(storage, t.Storage, Size);
+        }
+        finally
+        {
+            scratch?.Release();
+        }
+
         return t;
     }
 
@@ -349,7 +576,11 @@ public sealed partial class Tensor : IDisposable
         Grad = null;
         _parents = null;
         _backward = null;
-        Storage.Release();
+        lock (this)
+        {
+            _pending = false;                                            // a view's source is no longer read through it
+            _storage.Release();
+        }
     }
 
     /// <inheritdoc />
@@ -468,17 +699,17 @@ public sealed partial class Tensor : IDisposable
             return;                                                      // a view passes its gradient on, reading no values
         }
 
-        if (!ReferenceEquals(node.Storage.RecomputedFor, node) && !OwnValuesUnread.Contains(node._operation ?? ""))
+        if (!ReferenceEquals(node._storage.RecomputedFor, node) && !OwnValuesUnread.Contains(node._operation ?? ""))
         {
-            reads.Add(node.Storage);
+            reads.Add(node._storage);
         }
 
         bool packedInputs = ReadsPackedInputs.Contains(node._operation ?? "");
         foreach (var parent in node._parents ?? [])
         {
-            if (!(packedInputs && parent.Storage.Evicted && parent.Storage.Packed is not null))
+            if (!(packedInputs && parent._storage.Evicted && parent._storage.Packed is not null))
             {
-                reads.Add(parent.Storage);
+                reads.Add(parent._storage);
             }
         }
     }
@@ -854,10 +1085,10 @@ public sealed partial class Tensor : IDisposable
 
     private static long VersionSum(Tensor node, Tensor[] inputs)
     {
-        long sum = node.Storage.Version;
+        long sum = node.VersionOf;
         foreach (var input in inputs)
         {
-            sum += input.Storage.Version;
+            sum += input.VersionOf;
         }
 
         return sum;

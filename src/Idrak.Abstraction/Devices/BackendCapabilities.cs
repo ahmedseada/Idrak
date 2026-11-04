@@ -32,4 +32,15 @@ public sealed record BackendCapabilities
     /// that mask. Default: every head size (a device that does not say keeps its own kernel, or its fallback, for all).
     /// </summary>
     public int SpanAttentionHeadDim { get; init; } = int.MaxValue;
+
+    /// <summary>
+    /// The operations whose kernels on this device read strided input (plan 37, V0): a view's storage through its layout
+    /// rather than a contiguous copy. A device that lists <see cref="Operations.Ops.StridedCopy"/> keeps views
+    /// (<see cref="TensorViews"/>): permutes, narrows, selects and expands share their input's storage, and an operation
+    /// not listed here reads a view through one contiguous copy made by that device's own strided copy (counted:
+    /// <see cref="TensorViews.Scratch"/>, <see cref="TensorViews.Materialized"/>). <see cref="Operations.Ops.BatchedMatMul"/>
+    /// listed: a product reads a transposed view in place (its transpose flags). Default: none (every tensor a copy, as
+    /// before views).
+    /// </summary>
+    public IReadOnlySet<Operations.Operation> StridedInputs { get; init; } = new HashSet<Operations.Operation>();
 }

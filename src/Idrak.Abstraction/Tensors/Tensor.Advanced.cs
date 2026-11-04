@@ -108,6 +108,25 @@ public sealed partial class Tensor
         return Traced("matmul_bias", y, start);
     }
 
+    // A matrix product's left operand: a transposed view of contiguous elements read in place with its transpose flag turned
+    // over (the device's products read strides that way: BackendCapabilities.StridedInputs), else its elements contiguous
+    // (a short-lived copy for another view, released by the caller).
+    private (Storage Source, bool Transposed, Storage? Scratch) ProductOperand(bool transposed)
+    {
+        if (_pending && Rank >= 2 && _layout!.Offset == 0 && Backend.Capabilities.StridedInputs.Contains(Operations.Ops.BatchedMatMul))
+        {
+            var layout = _layout;
+            int[] dims = [.. Enumerable.Range(0, Rank)];
+            (dims[^1], dims[^2]) = (dims[^2], dims[^1]);
+            if (layout.Permute(dims).IsContiguousFromStart)
+            {
+                return (_storage, !transposed, null);                   // the elements of the transpose, contiguous
+            }
+        }
+
+        return (ReadStorage(out var scratch), transposed, scratch);
+    }
+
     private static Tensor MatMulCore(Tensor a, Tensor b, int batch, bool transA, bool transB)
     {
         int ra = a._shape[^2], ca = a._shape[^1], rb = b._shape[^2], cb = b._shape[^1];
@@ -120,7 +139,20 @@ public sealed partial class Tensor
 
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var c = Empty(a.Rank == 3 ? [batch, m, n] : [m, n], a.Device);
-        a.Backend.BatchedMatMul(a.Storage, b.Storage, c.Storage, batch, m, n, k, transA, transB, 0f);
+        var (aSource, aTrans, aScratch) = a.ProductOperand(transA);
+        // The right operand as it is (a short-lived copy for a view): its transpose flag turned over could take a few-row
+        // product through the kernel that sums in vector lanes, whose last bits differ (CpuMatMul), and results stay the copies'.
+        var (bSource, bTrans, bScratch) = (b.ReadStorage(out var bCopy), transB, bCopy);
+        try
+        {
+            a.Backend.BatchedMatMul(aSource, bSource, c.Storage, batch, m, n, k, aTrans, bTrans, 0f);
+        }
+        finally
+        {
+            aScratch?.Release();
+            bScratch?.Release();
+        }
+
         if (WillRecord(a, b))
         {
             c.Record("matmul", g =>
@@ -170,7 +202,16 @@ public sealed partial class Tensor
         int cols = _shape[^1], rows = cols == 0 ? 0 : Size / cols;
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(_shape, Device);
-        Backend.Softmax(Storage, y.Storage, rows, cols, log);
+        var xs = ReadStorage(out var scratch);
+        try
+        {
+            Backend.Softmax(xs, y.Storage, rows, cols, log);
+        }
+        finally
+        {
+            scratch?.Release();
+        }
+
         string name = log ? "log_softmax" : "softmax";
         if (WillRecord(this))
         {
@@ -272,7 +313,10 @@ public sealed partial class Tensor
 
     // ---------------------------------------------------------------- shape operations
 
-    /// <summary>Reorders dimensions: output dimension k is input dimension <paramref name="dims"/>[k]. Copies the data.</summary>
+    /// <summary>
+    /// Reorders dimensions: output dimension k is input dimension <paramref name="dims"/>[k]. A view sharing this tensor's
+    /// storage where the device reads strides (<see cref="TensorViews"/>), else a copy.
+    /// </summary>
     public Tensor Permute(params ReadOnlySpan<int> dims)
     {
         ThrowIfDisposed();
@@ -318,16 +362,25 @@ public sealed partial class Tensor
             return Reshape(outShape);
         }
 
-        var strides = Strides(_shape);
-        var inStrides = new int[Rank];
-        for (int k = 0; k < Rank; k++)
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        Tensor y;
+        if (MakesViews)
         {
-            inStrides[k] = strides[perm[k]];
+            y = View(SourceLayout.Permute(perm));                     // no element moves (plan 37, V1)
+        }
+        else
+        {
+            var strides = Strides(_shape);
+            var inStrides = new int[Rank];
+            for (int k = 0; k < Rank; k++)
+            {
+                inStrides[k] = strides[perm[k]];
+            }
+
+            y = Empty(outShape, Device);
+            Backend.Permute(Storage, y.Storage, outShape, inStrides, accumulate: false);
         }
 
-        long start = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Empty(outShape, Device);
-        Backend.Permute(Storage, y.Storage, outShape, inStrides, accumulate: false);
         if (WillRecord(this))
         {
             var x = this;
@@ -350,7 +403,7 @@ public sealed partial class Tensor
         return Traced("permute", y, start);
     }
 
-    /// <summary>Swaps two dimensions (copies the data).</summary>
+    /// <summary>Swaps two dimensions (a view where the device reads strides, else a copy; see <see cref="Permute"/>).</summary>
     public Tensor Transpose(int dim0 = -2, int dim1 = -1)
     {
         int[] perm = [.. Enumerable.Range(0, Rank)];
@@ -365,7 +418,7 @@ public sealed partial class Tensor
         return Reshape([.. _shape[..startDim], -1]);
     }
 
-    /// <summary>The slice [start, start + length) along <paramref name="dim"/> (copied).</summary>
+    /// <summary>The slice [start, start + length) along <paramref name="dim"/> (a view where the device reads strides, else a copy).</summary>
     public Tensor Narrow(int dim, int start, int length)
     {
         ThrowIfDisposed();
@@ -379,8 +432,17 @@ public sealed partial class Tensor
         int[] shape = [.. _shape];
         shape[dim] = length;
         long t0 = Telemetry.Start(TelemetryLevel.Operations);
-        var y = Empty(shape, Device);
-        Backend.Copy2D(Storage, start * inner, size * inner, y.Storage, 0, length * inner, outer, length * inner, accumulate: false);
+        Tensor y;
+        if (MakesViews)
+        {
+            y = View(SourceLayout.Narrow(dim, start, length));          // no element moves (plan 37, V1)
+        }
+        else
+        {
+            y = Empty(shape, Device);
+            Backend.Copy2D(Storage, start * inner, size * inner, y.Storage, 0, length * inner, outer, length * inner, accumulate: false);
+        }
+
         if (WillRecord(this))
         {
             var x = this;
@@ -388,6 +450,102 @@ public sealed partial class Tensor
         }
 
         return Traced("narrow", y, t0);
+    }
+
+    /// <summary>
+    /// The elements at position <paramref name="index"/> along <paramref name="dim"/>, that dimension dropped
+    /// ([B, T, D].Select(1, t) is [B, D]): a view where the device reads strides, else a copy.
+    /// </summary>
+    public Tensor Select(int dim, int index)
+    {
+        ThrowIfDisposed();
+        dim = NormalizeDim(dim);
+        if (index < 0 || index >= _shape[dim])
+        {
+            throw new ArgumentOutOfRangeException(nameof(index), $"Select {index} is outside dimension {dim} of size {_shape[dim]}.");
+        }
+
+        if (!MakesViews)
+        {
+            return Narrow(dim, index, 1).Reshape([.. _shape[..dim], .. _shape[(dim + 1)..]]);
+        }
+
+        var (outer, size, inner) = Split(dim);
+        long t0 = Telemetry.Start(TelemetryLevel.Operations);
+        var y = View(SourceLayout.Select(dim, index));
+        if (WillRecord(this))
+        {
+            var x = this;
+            y.Record("select", g => x.Backend.Copy2D(g.Storage, 0, inner, x.GradStorage(), index * inner, size * inner, outer, inner, accumulate: true), x);
+        }
+
+        return Traced("select", y, t0);
+    }
+
+    /// <summary>
+    /// This tensor broadcast to <paramref name="shape"/> (as many or more dimensions, the new ones leading; a dimension of
+    /// size 1 grows, others keep their size): a view reading each element again where the device reads strides, else a
+    /// copy. Its gradient is the sum over the grown dimensions.
+    /// </summary>
+    public Tensor Expand(params ReadOnlySpan<int> shape)
+    {
+        ThrowIfDisposed();
+        int extra = shape.Length - Rank;
+        bool fits = extra >= 0;
+        for (int d = 0; fits && d < Rank; d++)
+        {
+            fits = _shape[d] == shape[extra + d] || _shape[d] == 1 && shape[extra + d] >= 0;
+        }
+
+        if (!fits)
+        {
+            throw new ArgumentException($"Cannot expand {FormatShape(_shape)} to {FormatShape(shape)}: a dimension grows only from size 1, and new ones lead.");
+        }
+
+        long t0 = Telemetry.Start(TelemetryLevel.Operations);
+        var layout = SourceLayout.Expand(shape);
+        Tensor y;
+        if (MakesViews)
+        {
+            y = View(layout);
+        }
+        else
+        {
+            y = Empty(shape, Device);
+            var source = ReadStorage(out var scratch);
+            try
+            {
+                var own = TensorLayout.Contiguous(_shape).Expand(shape);   // over this tensor's contiguous elements
+                Backend.StridedCopy(source, own.Offset, own.Shape, own.Strides, y.Storage);
+            }
+            finally
+            {
+                scratch?.Release();
+            }
+        }
+
+        if (WillRecord(this))
+        {
+            var x = this;
+            int[] target = [.. shape];
+            int[] grown = [.. Enumerable.Range(0, target.Length).Where(d => d < extra || x._shape[d - extra] != target[d])];
+            y.Record("expand", g =>
+            {
+                using var noGrad = Autograd.NoGrad();
+                var sum = g;
+                var made = new List<Tensor>();
+                foreach (int d in grown)
+                {
+                    sum = sum.Sum(d, keepDim: true);
+                    made.Add(sum);
+                }
+
+                x.Backend.Axpy(sum.Storage, x.GradStorage(), x.Size, 1f);
+                made.ForEach(t => t.Dispose());
+            }, x);
+        }
+
+        return Traced("expand", y, t0);
     }
 
     /// <summary>Joins tensors along an existing dimension; all other dimensions must match.</summary>
@@ -425,7 +583,15 @@ public sealed partial class Tensor
             var t = tensors[i];
             offsets[i] = offset;
             int width = t._shape[dim] * inner;
-            first.Backend.Copy2D(t.Storage, 0, width, y.Storage, offset * inner, total * inner, outer, width, accumulate: false);
+            var source = t.ReadStorage(out var scratch);                  // a view read as it is (plan 37, V1)
+            try
+            {
+                first.Backend.Copy2D(source, 0, width, y.Storage, offset * inner, total * inner, outer, width, accumulate: false);
+            }
+            finally
+            {
+                scratch?.Release();
+            }
             offset += t._shape[dim];
         }
 

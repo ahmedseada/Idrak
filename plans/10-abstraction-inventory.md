@@ -137,7 +137,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Devices.ISlotStaging` | interface | public | Storage | CudaBackend.HostStaging, HipBackend.HostStaging |  | Gpu, Network | Abstraction |
 | `Idrak.Abstraction.Devices.ITensorOffloadingHooks` | interface | public | Device, Module, Tensor | Offloading.TensorHooks |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.MeasuredChoiceProviders` | registry | public | Backend |  | cuda, hip, vulkan | Cluster, Gpu | Abstraction |
-| `Idrak.Abstraction.Devices.Storage` | abstract class | public | Backend | CpuStorage, CudaStorage, DeferredStorage, HipStorage, VulkanBackend.VulkanStorage |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Devices.Storage` | abstract class | public | Backend, Tensor | CpuStorage, CudaStorage, DeferredStorage, HipStorage, VulkanBackend.VulkanStorage |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Devices.TensorOffloading` | registry | public | Device, Module, Storage |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Diagnostics.IProfileProbe` | interface | public | Device | ClusterProbe, McpProbe, NetworkProbe, ProfileProbes.BandwidthProbe, ProfileProbes.CpuProbe, ProfileProbes.FallbacksProbe, +10 |  | Abstraction, Cluster, Mcp, Network | Abstraction |
 | `Idrak.Abstraction.Diagnostics.IProfileWriter` | interface | public | — | ProfileWriters.CsvWriter, ProfileWriters.JsonWriter, ProfileWriters.TableWriter |  | — | Abstraction |
@@ -626,17 +626,17 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 138 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `DeferredBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (157, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 139 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `DeferredBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (158, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 132 of 148 |
-| `CudaBackend` | 137 of 148 |
-| `DeferredBackend` | 11 of 148 |
-| `HipBackend` | 138 of 148 |
-| `VulkanBackend` | 125 of 148 |
+| `CpuBackend` | 133 of 149 |
+| `CudaBackend` | 137 of 149 |
+| `DeferredBackend` | 11 of 149 |
+| `HipBackend` | 138 of 149 |
+| `VulkanBackend` | 125 of 149 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
 |---|---|---|---|---|---|---|
@@ -773,6 +773,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `SoftmaxBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `SoftmaxCrossEntropyRowsKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `SoftmaxKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `StridedCopyKernel(5)` | virtual | ✓ |  |  |  |  |
 | `SumAxisKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `SumColumnsKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `SumKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |

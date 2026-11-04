@@ -321,8 +321,9 @@ internal abstract partial class Tests
         catch (NotSupportedException e)
         {
             Check(e.Message.Contains($"No architecture '{QwenVisionFamily.Qwen25VlArchitecture}' is registered", StringComparison.Ordinal), e.Message);
-            Check(e.Message.Contains("Idrak.Vision.Plugins", StringComparison.Ordinal) && e.Message.Contains("Idrak.Text.Plugins", StringComparison.Ordinal),
-                $"the message names the plug-in packages to reference: {e.Message}");
+            // The package that declares the family (PluginPackageCatalogs), never another package's.
+            Check(e.Message.Contains("Idrak.Vision.Plugins declares it", StringComparison.Ordinal) && !e.Message.Contains("Idrak.Text.Plugins", StringComparison.Ordinal),
+                $"the message names the plug-in package that declares the family: {e.Message}");
         }
 
         QwenVisionPlugin.Register();

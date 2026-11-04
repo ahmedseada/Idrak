@@ -1675,6 +1675,7 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   public virtual void SoftmaxBackwardKernel(Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int rows, int cols, bool log)
   public virtual void SoftmaxCrossEntropyRowsKernel(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage losses, int rows, int vocabulary, float scale)
   public virtual void SoftmaxKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int rows, int cols, bool log)
+  public virtual void StridedCopyKernel(Idrak.Abstraction.Devices.Storage x, long offset, System.ReadOnlySpan<int> shape, System.ReadOnlySpan<long> strides, Idrak.Abstraction.Devices.Storage y)
   public virtual void SumAxisKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int outer, int dim, int inner, float scale, bool accumulate)
   public virtual void SumColumnsKernel(Idrak.Abstraction.Devices.Storage x, long offset, int ld, Idrak.Abstraction.Devices.Storage y, int rows, int cols)
   public virtual void SumKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage result, int n, float scale)
@@ -1805,6 +1806,7 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   public void Softmax(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int rows, int cols, bool log)
   public void SoftmaxBackward(Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int rows, int cols, bool log)
   public void SoftmaxCrossEntropyRows(Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage losses, int rows, int vocabulary, float scale)
+  public void StridedCopy(Idrak.Abstraction.Devices.Storage x, long offset, System.ReadOnlySpan<int> shape, System.ReadOnlySpan<long> strides, Idrak.Abstraction.Devices.Storage y)
   public void Sum(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage result, int n, float scale)
   public void SumAxis(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int outer, int dim, int inner, float scale, bool accumulate)
   public void SumColumns(Idrak.Abstraction.Devices.Storage x, long offset, int ld, Idrak.Abstraction.Devices.Storage y, int rows, int cols)
@@ -1819,6 +1821,7 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
 
 public sealed record Idrak.Abstraction.Devices.BackendCapabilities : System.IEquatable<Idrak.Abstraction.Devices.BackendCapabilities>
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public BackendCapabilities()
+  public System.Collections.Generic.IReadOnlySet<Idrak.Abstraction.Operations.Operation> StridedInputs { get; init; }
   public int SpanAttentionHeadDim { get; init; }
   public required int DecodeAttentionHeadDim { get; init; }
   public required int FewRows { get; init; }
@@ -5151,6 +5154,7 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.Softmax (below)
   nested Idrak.Abstraction.Operations.OperationKernels.SoftmaxBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.SoftmaxCrossEntropyRows (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.StridedCopy (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Sum (below)
   nested Idrak.Abstraction.Operations.OperationKernels.SumAxis (below)
   nested Idrak.Abstraction.Operations.OperationKernels.SumColumns (below)
@@ -5455,6 +5459,8 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.SoftmaxBackwa
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.SoftmaxCrossEntropyRows(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage logits, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage losses, int rows, int vocabulary, float scale)
 
+public delegate void Idrak.Abstraction.Operations.OperationKernels.StridedCopy(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, long offset, System.ReadOnlySpan<int> shape, System.ReadOnlySpan<long> strides, Idrak.Abstraction.Devices.Storage y)
+
 public delegate void Idrak.Abstraction.Operations.OperationKernels.Sum(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage result, int n, float scale)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.SumAxis(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int outer, int dim, int inner, float scale, bool accumulate)
@@ -5628,6 +5634,7 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.Softmax> Softmax
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.SoftmaxBackward> SoftmaxBackward
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.SoftmaxCrossEntropyRows> SoftmaxCrossEntropyRows
+  public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.StridedCopy> StridedCopy
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.Sum> Sum
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.SumAxis> SumAxis
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.SumColumns> SumColumns
@@ -6357,6 +6364,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Tensor Clamp(float min, float max)
   public Idrak.Abstraction.Tensor Clone()
   public Idrak.Abstraction.Tensor Col2Im(in Idrak.Abstraction.Devices.ConvGeometry geometry)
+  public Idrak.Abstraction.Tensor Contiguous()
   public Idrak.Abstraction.Tensor Convolution(Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Tensor? bias, in Idrak.Abstraction.Devices.ConvGeometry geometry, int groups = 1, Idrak.Abstraction.Devices.ConvActivation activation = (Idrak.Abstraction.Devices.ConvActivation)0)
   public Idrak.Abstraction.Tensor ConvolutionTranspose(Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Tensor? bias, in Idrak.Abstraction.Devices.ConvGeometry geometry, int groups = 1)
   public Idrak.Abstraction.Tensor Cos()
@@ -6365,6 +6373,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Tensor Dropout(float p, uint seed)
   public Idrak.Abstraction.Tensor EmbeddingLookup(Idrak.Abstraction.Tensor indices)
   public Idrak.Abstraction.Tensor Exp()
+  public Idrak.Abstraction.Tensor Expand(scoped params System.ReadOnlySpan<int> shape)
   public Idrak.Abstraction.Tensor Flatten(int startDim = 1)
   public Idrak.Abstraction.Tensor Flip(int dim)
   public Idrak.Abstraction.Tensor Gelu()
@@ -6398,6 +6407,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Tensor RmsNormalize(float eps)
   public Idrak.Abstraction.Tensor Rope(Idrak.Abstraction.Tensor cos, Idrak.Abstraction.Tensor sin, Idrak.Abstraction.Tensor positions, int half, bool interleaved)
   public Idrak.Abstraction.Tensor ScaleMaskSoftmax(float scale, Idrak.Abstraction.Tensor? mask)
+  public Idrak.Abstraction.Tensor Select(int dim, int index)
   public Idrak.Abstraction.Tensor Sigmoid()
   public Idrak.Abstraction.Tensor SigmoidFocalLoss(Idrak.Abstraction.Tensor targets, float alpha = 0.25f, float gamma = 2f)
   public Idrak.Abstraction.Tensor Sign()
@@ -6412,10 +6422,12 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Tensor To(Idrak.Abstraction.Device device)
   public Idrak.Abstraction.Tensor Transpose(int dim0 = -2, int dim1 = -1)
   public Idrak.Abstraction.Tensor? Grad { get; }
+  public Idrak.Abstraction.TensorLayout Layout { get; }
   public System.ReadOnlySpan<int> Shape { get; }
   public T[] ToArray<T>() where T : System.Numerics.INumberBase<T>
   public bool IsDisposed { get; }
   public bool IsLeaf { get; }
+  public bool IsView { get; }
   public bool RequiresGrad { get; set; }
   public float Item()
   public float[,] ToArray2D()
@@ -6511,12 +6523,38 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public void ThrowIfDisposed()
   public void ZeroGrad()
 
+public sealed class Idrak.Abstraction.TensorLayout
+  public Idrak.Abstraction.TensorLayout Expand(System.ReadOnlySpan<int> shape)
+  public Idrak.Abstraction.TensorLayout Narrow(int dim, int start, int length)
+  public Idrak.Abstraction.TensorLayout Permute(System.ReadOnlySpan<int> dims)
+  public Idrak.Abstraction.TensorLayout Select(int dim, int index)
+  public System.ReadOnlySpan<int> Shape { get; }
+  public System.ReadOnlySpan<long> Strides { get; }
+  public TensorLayout(System.ReadOnlySpan<int> shape, System.ReadOnlySpan<long> strides, long offset)
+  public bool IsContiguous { get; }
+  public bool IsContiguousFromStart { get; }
+  public long ElementAt(System.ReadOnlySpan<int> index)
+  public long Elements { get; }
+  public long Offset { get; }
+  public override string ToString()
+  public static Idrak.Abstraction.TensorLayout Contiguous(System.ReadOnlySpan<int> shape)
+  public static long[] RowMajor(System.ReadOnlySpan<int> shape)
+
 public sealed class Idrak.Abstraction.TensorScope : System.IDisposable
   public Idrak.Abstraction.Tensor Keep(Idrak.Abstraction.Tensor tensor)
   public TensorScope()
   public bool Owns(Idrak.Abstraction.Tensor tensor)
   public static Idrak.Abstraction.Tensor Untrack(Idrak.Abstraction.Tensor tensor)
   public void Dispose()
+
+public static class Idrak.Abstraction.TensorViews
+  public const string EnvironmentVariable = "IDRAK_VIEWS"
+  public static bool Enabled { get; set; }
+  public static long Made { get; }
+  public static long Materialized { get; }
+  public static long MaterializedBytes { get; }
+  public static long Scratch { get; }
+  public static long ScratchBytes { get; }
 
 public static class Idrak.Abstraction.Text.UnicodeNormalization
   public const string UnicodeVersion = "18.0.0"

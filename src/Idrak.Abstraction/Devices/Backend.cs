@@ -275,6 +275,11 @@ public abstract class Storage
 
     /// <summary>Whether a tensor still holds the storage (it has not been released for good).</summary>
     public bool Alive => Volatile.Read(ref _refs) > 0;
+
+    // The views reading this storage through their layouts that were not copied yet (plan 37, V1), or null: a tensor that
+    // hands this storage out for a direct access (Tensor.Storage, which may write it) copies them first, so they keep the
+    // values they were made with, as the copies before views did.
+    internal List<WeakReference<Tensor>>? PendingViews;
 }
 
 /// <summary>

@@ -141,8 +141,20 @@ public sealed partial class Tensor
             throw new ArgumentException($"Cannot reshape {FormatShape(_shape)} ({Size} elements) to {FormatShape(shape)}.");
         }
 
-        Storage.AddRef();
-        var y = new Tensor(resolved, Storage, Device, track: true);
+        Tensor y;
+        if (_pending && _layout!.IsContiguous)
+        {
+            // A view whose elements sit one after another (a slice along its first dimensions): the reshape is a view too.
+            y = View(new TensorLayout(resolved, TensorLayout.RowMajor(resolved), _layout.Offset));
+        }
+        else
+        {
+            // The storage shared as it is: a write through the reshape takes it from Storage, which copies pending views first.
+            var storage = _pending ? Storage : _storage;
+            storage.AddRef();
+            y = new Tensor(resolved, storage, Device, track: true);
+        }
+
         if (WillRecord(this))
         {
             var x = this;
@@ -161,7 +173,16 @@ public sealed partial class Tensor
         ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(_shape, Device);
-        Backend.Unary(op, Storage, y.Storage, Size);
+        var xs = ReadStorage(out var scratch);                         // a view read as it is (plan 37, V1)
+        try
+        {
+            Backend.Unary(op, xs, y.Storage, Size);
+        }
+        finally
+        {
+            scratch?.Release();
+        }
+
         if (WillRecord(this))
         {
             var x = this;
@@ -177,7 +198,16 @@ public sealed partial class Tensor
         ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty(_shape, Device);
-        Backend.Affine(Storage, y.Storage, Size, alpha, beta);
+        var xs = ReadStorage(out var scratch);
+        try
+        {
+            Backend.Affine(xs, y.Storage, Size, alpha, beta);
+        }
+        finally
+        {
+            scratch?.Release();
+        }
+
         if (WillRecord(this))
         {
             var x = this;
@@ -192,7 +222,16 @@ public sealed partial class Tensor
         ThrowIfDisposed();
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty([], Device);
-        Backend.Sum(Storage, y.Storage, Size, scale);
+        var xs = ReadStorage(out var scratch);
+        try
+        {
+            Backend.Sum(xs, y.Storage, Size, scale);
+        }
+        finally
+        {
+            scratch?.Release();
+        }
+
         if (WillRecord(this))
         {
             var x = this;
@@ -218,7 +257,17 @@ public sealed partial class Tensor
         int cols = b.Size;
         int rows = cols == 0 ? 0 : a.Size / cols;
         var c = Empty(a._shape, a.Device);
-        a.Backend.AddRowVector(a.Storage, b.Storage, c.Storage, rows, cols);
+        var (aSource, bSource) = (a.ReadStorage(out var aScratch), b.ReadStorage(out var bScratch));
+        try
+        {
+            a.Backend.AddRowVector(aSource, bSource, c.Storage, rows, cols);
+        }
+        finally
+        {
+            aScratch?.Release();
+            bScratch?.Release();
+        }
+
         if (WillRecord(a, b))
         {
             c.Record("add_bias", g =>
@@ -246,7 +295,17 @@ public sealed partial class Tensor
         CheckSameShape(a, b);
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var c = Empty(a._shape, a.Device);
-        a.Backend.Binary(op, a.Storage, b.Storage, c.Storage, a.Size);
+        var (aSource, bSource) = (a.ReadStorage(out var aScratch), b.ReadStorage(out var bScratch));
+        try
+        {
+            a.Backend.Binary(op, aSource, bSource, c.Storage, a.Size);
+        }
+        finally
+        {
+            aScratch?.Release();
+            bScratch?.Release();
+        }
+
         if (WillRecord(a, b))
         {
             c.Record(BinaryNames[(int)op], g =>
