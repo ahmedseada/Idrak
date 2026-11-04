@@ -28,7 +28,7 @@ internal abstract partial class DesktopTests : Tests
         ("cluster: gradient synchronisations are a registry (all-reduce from Idrak.Network); a step's draws go round the ranks while their shares are equal and in proportion once measured", ClusterDrawShares),
         ("cluster: the all-reduce sync gives every rank the token-weighted gradient and loss, bucket by bucket with a parameter cut across buckets, on f32 and bf16 wires; a rank with no rows adds nothing and gets the gradients it lacked; normalized losses are summed; a step no rank had rows in ends it", ClusterSyncWeighted),
         ("cluster: the starting state: rank 0's values sent to every rank, or every rank's hash checked and a rank that differs named", ClusterStartingState),
-        ("cluster: data parallel 2 ranks on sim matches the ddp fixture: each rank's losses, the step 1 gradients within 1e-4 of the largest, three SGD and folded AdamW steps' losses within 1e-5 and weights within 1e-5 (AdamW: the fixture's measured growth of the gradient gap)", ClusterDdpTrainer),
+        ("cluster: data parallel 2 ranks on sim matches the ddp fixture: each rank's losses, the step 1 gradients within 1e-4 of the largest, three SGD and AdamW (torch's own) steps' losses within 1e-5 and weights within 1e-5 (AdamW: the fixture's measured growth of the gradient gap)", ClusterDdpTrainer),
         ("cluster: bf16 wire within the fixture's tolerance: the step 1 gradients, three SGD steps' losses and weights against bf16/ within its measured gaps", ClusterDdpBFloat16),
         ("cluster: 2 ranks equal one process with the global batch (rule 71, Idrak against Idrak): the Trainer, the fine-tuner (accumulation 1 on 2 ranks as 2 in one) and the pretrainer", ClusterEqualsOneProcess),
         ("cluster: 3 ranks with unequal token counts give the token-weighted gradient: the pretrainer's losses and weights as one process's", ClusterUnequalRanks),
@@ -211,16 +211,12 @@ internal abstract partial class DesktopTests : Tests
             foreach (var (run, make, file) in new (string, Func<IReadOnlyList<Tensor>, Optimizer>, string)[]
                      {
                          ("sgd", ps => new Sgd(ps, 0.2f), "ddp/weights-step3.safetensors"),
-                         ("adamw_folded", ps => new AdamW(ps, 1e-3f, 0.9f, 0.95f, 1e-8f, 0.1f), "ddp/adamw-folded/weights-step3.safetensors"),
+                         ("adamw", ps => new AdamW(ps, 1e-3f, 0.9f, 0.95f, 1e-8f, 0.1f), "ddp/adamw/weights-step3.safetensors"),     // torch's own AdamW
                      })
             {
                 var (losses, rankLosses, saved) = DdpTrain(device, windows, folder, run, 3, make);
                 var expected = ddp[run]!["losses"]!.AsArray().Select(l => (float)(double)l!).ToArray();
                 AssertClose(expected, losses, 1e-5f, $"{run}: the three steps' losses (the ranks' mean)");
-                if (run == "adamw_folded")
-                {
-                    AssertClose([.. ddp["adamw"]!["losses"]!.AsArray().Select(l => (float)(double)l!)], losses, 1e-5f, "adamw: torch's own AdamW losses");
-                }
 
                 for (int r = 0; r < 2; r++)
                 {
@@ -229,10 +225,10 @@ internal abstract partial class DesktopTests : Tests
 
                 // SGD's weights move with the gradients: 1e-5. AdamW divides by the root of the second moment, so a last-bit
                 // gradient difference grows where that moment is small: the fixture measured it (its own DDP against one
-                // process, vs_single: step 1 gradients 1.3e-7 apart gave folded AdamW weights 6.7e-6 apart), so the bound is
+                // process, vs_single: step 1 gradients 1.3e-7 apart gave torch's AdamW weights 2.3e-6 apart), so the bound is
                 // that measured growth applied to this run's measured gradient gap, never below 1e-5.
                 var single = ddp["vs_single"]!;
-                float growth = (float)((double)single["adamw_folded"]!["weights-step3"]! / (double)single["sgd"]!["grads-step1"]!);
+                float growth = (float)((double)single[run]!["weights-step3"]! / (double)single["sgd"]!["grads-step1"]!);
                 float tolerance = run == "sgd" ? 1e-5f : Math.Max(1e-5f, growth * gradientGap);
                 var after = ReadTensors(Path.Combine(saved, "model.safetensors"));
                 float gap = ReadTensors(ClusterData(file)).Max(t => Gap(t.Value.Values, after[t.Key].Values));

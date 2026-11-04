@@ -6,6 +6,8 @@
     <AssemblyName>Idrak.Diffusion.Plugins</AssemblyName>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Idrak.Diffusion.Plugins</PackageId>
+    <!-- Reserved, nothing implemented: not packed or published until it holds something (plan 36, P7). -->
+    <IsPackable>false</IsPackable>
     <Description>Reserved for the diffusion model families as plug-ins on Idrak.Diffusion, one namespace per family, as Idrak.Text.Plugins and Idrak.Vision.Plugins hold theirs. Nothing is implemented in this version: the package holds no types yet.</Description>
   </PropertyGroup>
 

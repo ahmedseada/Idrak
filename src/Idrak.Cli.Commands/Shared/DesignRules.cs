@@ -593,8 +593,8 @@ internal static class DesignRules
             if (memory is { } m)
             {
                 precision = bf16 <= 0.8 * m ? "bf16" : "int4";
-                string fits = bf16 <= 0.8 * m ? "bfloat16 base with LoRA fits; QLoRA not needed"
-                    : int4 <= 0.8 * m ? "bfloat16 does not fit; 4-bit base (QLoRA)" : "even a 4-bit base may not fit: add --offload to the tune run";
+                string fits = bf16 <= 0.8 * m ? "bfloat16 base with LoRA fits; a frozen int4 base is not needed"
+                    : int4 <= 0.8 * m ? "bfloat16 does not fit; a frozen int4 base (QLoRA-style, not NF4)" : "even a 4-bit base may not fit: add --offload to the tune run";
                 design.Lines.Add(("Memory", $"{options.Device} offers {Units.Bytes(m)}; the setup needs about {Units.Bytes(precision == "bf16" ? bf16 : int4)} -> {fits}"));
                 if (int4 > 0.8 * m)
                 {
@@ -637,7 +637,7 @@ internal static class DesignRules
         design.Lines.Add(("Training", $"AdamW {lr:0e0} · cosine with 3% warm-up · {epochs} epoch{(epochs == 1 ? "" : "s")} · {batchTokens:N0} tokens per batch" + (dpo ? " · DPO beta 0.1" : "")));
         design.Why("setup", $"LoRA rank {rank}", "rank 8 under 1,000 rows, 16 under 20,000, 32 above; alpha twice the rank");
         design.Why("setup", $"{maxLength:N0} tokens", "the next power of two at or above the 99th percentile of tokens per row, between 256 and the model's context");
-        design.Why("setup", precision == "int4" ? "4-bit base (QLoRA)" : "bfloat16 base", "bfloat16 when the base (2 bytes per parameter), adapters and one batch fit 80% of the device's memory, else 4 bits");
+        design.Why("setup", precision == "int4" ? "frozen int4 base (QLoRA-style, not NF4)" : "bfloat16 base", "bfloat16 when the base (2 bytes per parameter), adapters and one batch fit 80% of the device's memory, else 4 bits");
         design.Why("training", $"{epochs} epochs, learning rate {lr:0e0}", "3 epochs under 1,000 rows, 2 under 10,000, else 1; 2e-4 for fine-tuning, 5e-5 for DPO");
         return design;
     }

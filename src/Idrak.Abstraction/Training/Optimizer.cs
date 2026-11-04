@@ -176,6 +176,20 @@ public abstract class Optimizer : IOptimizer
             : null;
     }
 
+    /// <summary>
+    /// What Adam's step <paramref name="step"/> (from 1) gives the device's Adam kernels, which update
+    /// p -= stepSize · m / (sqrt(v) + epsilon) on the raw moments: PyTorch's update,
+    /// p -= lr · m̂ / (sqrt(v̂) + ε) with m̂ = m / (1 - β1^t) and v̂ = v / (1 - β2^t), multiplied through by sqrt(1 - β2^t), so
+    /// stepSize = lr · sqrt(1 - β2^t) / (1 - β1^t) and epsilon = ε · sqrt(1 - β2^t) (the same identity bitsandbytes' 8-bit
+    /// Adam uses). ε added to the raw sqrt(v) unscaled (the "epsilon hat" form) would differ from PyTorch's while 1 - β2^t
+    /// is small, in the first thousands of steps.
+    /// </summary>
+    protected static (float StepSize, float Epsilon) AdamCorrection(float learningRate, float beta1, float beta2, float epsilon, int step)
+    {
+        double second = Math.Sqrt(1 - Math.Pow(beta2, step));
+        return ((float)(learningRate * second / (1 - Math.Pow(beta1, step))), (float)(epsilon * second));
+    }
+
     /// <summary>A state tensor's values as a saved value.</summary>
     protected static OptimizerStateValue StateOf(Tensor tensor) => new([.. tensor.Shape], tensor.ToArray());
 

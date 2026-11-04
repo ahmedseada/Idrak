@@ -96,7 +96,7 @@ internal sealed class DistillCommand : Command
               --spread NAME         with --on-policy: blocks (runs of prompts, the default) or interleaved (IDRAK_RL_SPREAD)
               --teacher-weights F   the teacher's weights: int8, int4 or bf16 (default: auto)
               --teacher-device D    the teacher's device (default: the student's), e.g. cpu, cuda:1
-          -w, --weights F           the student's base weights: int8, int4 (QLoRA) or bf16
+          -w, --weights F           the student's base weights, kept frozen: int8, int4 (QLoRA-style, not NF4) or bf16
           and these options of idrak tune train: --rank, --lora-alpha (tune's --alpha), --lr, --epochs, --max-length,
           --batch-tokens, --accumulate, --targets, --optimizer, --weight-decay, --momentum, --schedule, --warmup, --min-lr,
           --decay, --adapter-type, --adapter, --context, --matmul, --gpu-memory, --eval, --eval-fraction, --eval-every,

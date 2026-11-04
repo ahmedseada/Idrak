@@ -6,6 +6,8 @@
     <AssemblyName>Idrak.HarfBuzz</AssemblyName>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Idrak.HarfBuzz</PackageId>
+    <!-- Reserved, nothing implemented: not packed or published until it holds something (plan 36, P7). -->
+    <IsPackable>false</IsPackable>
     <Description>Reserved for HarfBuzz as a second text shaper beside the library's own, registered by name, for checking fonts against it and for apps that want it to shape. Nothing is implemented in this version: the package holds no types yet.</Description>
   </PropertyGroup>
 

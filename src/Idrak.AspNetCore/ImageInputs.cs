@@ -34,49 +34,92 @@ public sealed class ImageInputOptions
     /// <summary>
     /// Whether an http(s) <c>image_url</c> may reach a loopback, link-local, private (RFC 1918, carrier-grade NAT, unique
     /// local IPv6), multicast, unspecified or reserved address (false unless set): off, the server resolves each address
-    /// (and each redirect's) and connects only to the public ones it checked, so a client cannot make it read its own
-    /// network (a 400 naming the URL and the address).
+    /// (and each redirect's) once and connects only to a public one it checked, directly or through a tunnel it opens
+    /// to that address across the proxy, so a client cannot make it read its own network (a 400 naming the URL and the
+    /// address). Through a proxy only https addresses are downloaded then: a plain http request would let the proxy look
+    /// the name up again.
     /// </summary>
     public bool AllowPrivateUrls { get; set; }
+
+    /// <summary>
+    /// Whether every image URL is refused while a proxy would carry it (false unless set): for a server that must never
+    /// fetch through the proxy it is given, whatever the address. Off, an https download goes through a tunnel the server
+    /// opens to the address it checked (<see cref="AllowPrivateUrls"/>).
+    /// </summary>
+    public bool RefuseThroughProxy { get; set; }
+
+    /// <summary>The proxy downloads go through (null unless set: the system's, <see cref="HttpClient.DefaultProxy"/>).</summary>
+    public IWebProxy? Proxy { get; set; }
+
+    /// <summary>
+    /// How a host name is looked up (null unless set: the system's DNS, <see cref="Dns.GetHostAddressesAsync(string, CancellationToken)"/>),
+    /// for an app with its own resolver. Each download looks its host up once and connects to the address checked.
+    /// </summary>
+    public Func<string, CancellationToken, Task<IPAddress[]>>? Resolver { get; set; }
 }
 
 /// <summary>The checks every chat endpoint applies to a request's images, and the downloads of http(s) image URLs.</summary>
 internal static class ImageRequests
 {
-    // One client for public addresses only and one for any (ImageInputOptions.AllowPrivateUrls). Redirects are followed
-    // here, each hop's host checked; the connection itself goes to an address checked when it is made, so a name that
-    // resolves to another address the second time (DNS rebinding) still cannot reach a private one.
-    private static readonly Lazy<HttpClient> PublicDownloads = new(() => Client(allowPrivate: false));
-    private static readonly Lazy<HttpClient> AnyDownloads = new(() => Client(allowPrivate: true));
+    // Downloads held to the addresses checked (AllowPrivateUrls off): no proxy of the handler's own, each connection made by
+    // Connect to an address CheckHost checked, directly or through a tunnel opened here across the proxy. Redirects are
+    // followed here, each hop checked again.
+    private static readonly Lazy<HttpClient> PinnedDownloads = new(() => new HttpClient(new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        UseProxy = false,
+        ConnectCallback = Connect,
+    })
+    { Timeout = Timeout.InfiniteTimeSpan });
+
+    // Downloads that may reach any address (AllowPrivateUrls): through the proxy the options name, else the system's.
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<IWebProxy, HttpClient> ProxiedDownloads = [];
+    private static readonly Lazy<HttpClient> AnyDownloads = new(() => new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
+    { Timeout = Timeout.InfiniteTimeSpan });
 
     // Redirects one download follows at most.
     private const int MaxRedirects = 5;
 
-    private static HttpClient Client(bool allowPrivate) => new(new SocketsHttpHandler
-    {
-        AllowAutoRedirect = false,
-        ConnectCallback = (context, token) => Connect(context, allowPrivate, token),
-    })
-    { Timeout = Timeout.InfiniteTimeSpan };
+    // The addresses checked for a request, and the proxy whose tunnel reaches them (null: directly).
+    private sealed record Pin(IPAddress[] Addresses, Uri? Proxy, ICredentials? Credentials);
 
-    // Connects to the host's first reachable address; refuses a private one unless allowed. Through a proxy (the
-    // endpoint is the proxy, not the request's host) the proxy is connected to as it is: the request's host was checked
-    // before the request (CheckHost).
-    private static async ValueTask<Stream> Connect(SocketsHttpConnectionContext context, bool allowPrivate, CancellationToken token)
+    private static readonly HttpRequestOptionsKey<Pin> PinKey = new("idrak.image-url.pin");
+
+    // Connects to an address the request's pin holds (checked when the host was looked up, never looked up again): directly,
+    // or through a tunnel across the proxy (CONNECT to the checked address; TLS then runs over it with the URL's host name,
+    // so the certificate is still checked against that name).
+    private static async ValueTask<Stream> Connect(SocketsHttpConnectionContext context, CancellationToken token)
     {
-        var endpoint = context.DnsEndPoint;
-        string? requested = context.InitialRequestMessage.RequestUri?.IdnHost.Trim('[', ']');
-        bool proxied = requested is not null && !string.Equals(requested, endpoint.Host.Trim('[', ']'), StringComparison.OrdinalIgnoreCase);
-        var addresses = await Resolve(endpoint.Host, token);
-        if (!proxied && !allowPrivate && addresses.FirstOrDefault(a => PrivateKind(a) is not null) is { } refused)
+        if (!context.InitialRequestMessage.Options.TryGetValue(PinKey, out var pin))
         {
-            throw new PrivateAddressException(refused);
+            throw new InvalidOperationException("An image download without the address it was checked for.");
         }
 
+        int port = context.DnsEndPoint.Port;
+        if (pin.Proxy is not { } proxy)
+        {
+            return await Open(pin.Addresses, port, token);
+        }
+
+        var stream = await Open(await Dns.GetHostAddressesAsync(proxy.IdnHost, token), proxy.Port, token);
+        try
+        {
+            await Tunnel(stream, proxy, pin.Credentials, pin.Addresses[0], port, token);
+            return stream;
+        }
+        catch
+        {
+            await stream.DisposeAsync();
+            throw;
+        }
+    }
+
+    private static async Task<Stream> Open(IPAddress[] addresses, int port, CancellationToken token)
+    {
         var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
         try
         {
-            await socket.ConnectAsync(addresses, endpoint.Port, token);
+            await socket.ConnectAsync(addresses, port, token);
             return new NetworkStream(socket, ownsSocket: true);
         }
         catch
@@ -86,8 +129,78 @@ internal static class ImageRequests
         }
     }
 
-    private static async ValueTask<IPAddress[]> Resolve(string host, CancellationToken token) =>
-        IPAddress.TryParse(host.Trim('[', ']'), out var literal) ? [literal] : await Dns.GetHostAddressesAsync(host, token);
+    // Asks the proxy for a tunnel to address:port (HTTP CONNECT) and reads its answer's head; anything but 2xx is refused.
+    private static async Task Tunnel(Stream stream, Uri proxy, ICredentials? credentials, IPAddress address, int port, CancellationToken token)
+    {
+        string target = address.AddressFamily == AddressFamily.InterNetworkV6 ? $"[{address}]:{port.ToString(CultureInfo.InvariantCulture)}"
+            : $"{address}:{port.ToString(CultureInfo.InvariantCulture)}";
+        var head = new System.Text.StringBuilder().Append("CONNECT ").Append(target).Append(" HTTP/1.1\r\nHost: ").Append(target).Append("\r\n");
+        if (Basic(proxy, credentials) is { } authorization)
+        {
+            head.Append("Proxy-Authorization: Basic ").Append(authorization).Append("\r\n");
+        }
+
+        byte[] request = System.Text.Encoding.ASCII.GetBytes(head.Append("\r\n").ToString());
+        await stream.WriteAsync(request, token);
+
+        // The answer's head, byte by byte up to its blank line: nothing after it is read, so TLS starts on a clean stream.
+        var answer = new List<byte>(128);
+        var one = new byte[1];
+        while (answer.Count < 16 * 1024 && !(answer.Count >= 4 && answer[^4] == '\r' && answer[^3] == '\n' && answer[^2] == '\r' && answer[^1] == '\n'))
+        {
+            if (await stream.ReadAsync(one, token) == 0)
+            {
+                throw new ProxyTunnelException(proxy, target, "closed the connection");
+            }
+
+            answer.Add(one[0]);
+        }
+
+        string status = System.Text.Encoding.ASCII.GetString([.. answer]).Split("\r\n")[0];
+        var parts = status.Split(' ', 3);
+        if (parts.Length < 2 || !int.TryParse(parts[1], NumberStyles.None, CultureInfo.InvariantCulture, out int code))
+        {
+            throw new ProxyTunnelException(proxy, target, "did not answer as an HTTP proxy");
+        }
+
+        if (code is < 200 or > 299)
+        {
+            throw new ProxyTunnelException(proxy, target, string.Create(CultureInfo.InvariantCulture, $"answered HTTP {code}"));
+        }
+    }
+
+    // The proxy's user and password (in its address, or the proxy's credentials) for Basic authentication, or null.
+    private static string? Basic(Uri proxy, ICredentials? credentials)
+    {
+        string? user = null, password = null;
+        if (proxy.UserInfo is { Length: > 0 } info)
+        {
+            int colon = info.IndexOf(':');
+            (user, password) = colon < 0 ? (Uri.UnescapeDataString(info), "") : (Uri.UnescapeDataString(info[..colon]), Uri.UnescapeDataString(info[(colon + 1)..]));
+        }
+        else if (credentials?.GetCredential(proxy, "Basic") is { UserName.Length: > 0 } credential)
+        {
+            (user, password) = (credential.UserName, credential.Password);
+        }
+
+        return user is null ? null : Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes($"{user}:{password}"));
+    }
+
+    // A tunnel the proxy would not open (its status only: nothing it sent is repeated).
+    private sealed class ProxyTunnelException(Uri proxy, string target, string what)
+        : IOException($"the proxy {proxy.GetLeftPart(UriPartial.Authority)} {what} for a tunnel to {target}");
+
+    private static async Task<IPAddress[]> Resolve(string host, ImageInputOptions options, CancellationToken token)
+    {
+        string name = host.Trim('[', ']');
+        if (IPAddress.TryParse(name, out var literal))
+        {
+            return [literal];
+        }
+
+        var addresses = options.Resolver is { } resolve ? await resolve(name, token) : await Dns.GetHostAddressesAsync(name, token);
+        return addresses.Length > 0 ? addresses : throw new SocketException((int)SocketError.HostNotFound);
+    }
 
     /// <summary>
     /// What kind of address <paramref name="address"/> is when it is not a public one (loopback, link-local, private,
@@ -134,30 +247,46 @@ internal static class ImageRequests
             : null;
     }
 
-    // A connection refused because its address is not public.
-    private sealed class PrivateAddressException(IPAddress address) : IOException($"{address} is a {PrivateKind(address)} address")
+    // The proxy that would carry a request to `uri` (the options' or the system's), or null when it goes directly.
+    private static Uri? ProxyFor(Uri uri, ImageInputOptions options)
     {
-        public IPAddress Address { get; } = address;
+        var proxy = options.Proxy ?? HttpClient.DefaultProxy;
+        if (proxy.IsBypassed(uri))
+        {
+            return null;
+        }
+
+        var through = proxy.GetProxy(uri);
+        return through is null || through == uri ? null : through;
     }
 
-    // The request's host (each hop's): an http(s) address whose every resolved address is public, unless allowed.
-    private static async Task CheckHost(Uri uri, string url, ImageInputOptions options, CancellationToken token)
+    // The request's host (each hop's): an http(s) address, refused through a proxy when the options say so; then (private
+    // addresses not allowed) looked up once, every address public, and the pin the connection is held to: those addresses,
+    // directly or through the proxy's tunnel (https only: a plain http request through a proxy cannot be held to them).
+    private static async Task<Pin?> CheckHost(Uri uri, string url, ImageInputOptions options, CancellationToken token)
     {
-        string hop = uri.OriginalString == url ? "" : $" (redirected to {Shorten(uri.OriginalString)})";
+        string hop = Hop(uri, url);
         if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
         {
             throw new ArgumentException($"image_url: {Shorten(url)}{hop} is not an http(s) address.");
         }
 
+        var proxy = ProxyFor(uri, options);
+        if (proxy is not null && options.RefuseThroughProxy)
+        {
+            throw new ArgumentException($"image_url: {Shorten(url)}{hop} would be downloaded through the proxy {proxy.GetLeftPart(UriPartial.Authority)}, "
+                + "which this server does not do (ImageInputOptions.RefuseThroughProxy; idrak serve --refuse-proxied-image-urls).");
+        }
+
         if (options.AllowPrivateUrls)
         {
-            return;
+            return null;
         }
 
         IPAddress[] addresses;
         try
         {
-            addresses = await Resolve(uri.IdnHost, token);
+            addresses = await Resolve(uri.IdnHost, options, token);
         }
         catch (SocketException e)
         {
@@ -168,29 +297,48 @@ internal static class ImageRequests
         {
             throw new ArgumentException(Refusal(url, hop, refused));
         }
+
+        if (proxy is not null && uri.Scheme == Uri.UriSchemeHttp)
+        {
+            throw new ArgumentException($"image_url: {Shorten(url)}{hop} is a plain http address and a proxy ({proxy.GetLeftPart(UriPartial.Authority)}) "
+                + "would carry it, looking the name up again, so the server could not hold it to the address it checked: give an https address.");
+        }
+
+        return new Pin(addresses, proxy, proxy is null ? null : (options.Proxy ?? HttpClient.DefaultProxy).Credentials);
     }
+
+    private static string Hop(Uri uri, string url) => uri.OriginalString == url ? "" : $" (redirected to {Shorten(uri.OriginalString)})";
 
     private static string Refusal(string url, string hop, IPAddress address) =>
         $"image_url: {Shorten(url)}{hop} reaches {address}, a {PrivateKind(address)} address, which this server does not download from "
         + "(loopback, link-local, private, multicast and reserved addresses are refused). The server's owner can allow them "
         + "(ImageInputOptions.AllowPrivateUrls; idrak serve --allow-private-image-urls).";
 
-    // The answer of the URL after its redirects (at most MaxRedirects, each hop's host checked).
+    // The answer of the URL after its redirects (at most MaxRedirects, each hop's host checked and pinned).
     private static async Task<HttpResponseMessage> Fetch(string url, ImageInputOptions options, CancellationToken token)
     {
-        var client = (options.AllowPrivateUrls ? AnyDownloads : PublicDownloads).Value;
         var current = new Uri(url);
         for (int hop = 0; ; hop++)
         {
-            await CheckHost(current, url, options, token);
+            var pin = await CheckHost(current, url, options, token);
+            var client = pin is not null ? PinnedDownloads.Value
+                : options.Proxy is { } proxy ? ProxiedDownloads.GetValue(proxy, p => new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false, Proxy = p, UseProxy = true })
+                { Timeout = Timeout.InfiniteTimeSpan })
+                : AnyDownloads.Value;
+            using var request = new HttpRequestMessage(HttpMethod.Get, current);
+            if (pin is not null)
+            {
+                request.Options.Set(PinKey, pin);
+            }
+
             HttpResponseMessage response;
             try
             {
-                response = await client.GetAsync(current, HttpCompletionOption.ResponseHeadersRead, token);
+                response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
             }
-            catch (HttpRequestException e) when (e.InnerException is PrivateAddressException refused)
+            catch (HttpRequestException e) when (e.InnerException is ProxyTunnelException tunnel)
             {
-                throw new ArgumentException(Refusal(url, current.OriginalString == url ? "" : $" (redirected to {Shorten(current.OriginalString)})", refused.Address));
+                throw new ArgumentException($"image_url: {Shorten(url)}{Hop(current, url)} could not be downloaded: {tunnel.Message}.");
             }
 
             if ((int)response.StatusCode is 301 or 302 or 303 or 307 or 308 && response.Headers.Location is { } location)
@@ -198,7 +346,7 @@ internal static class ImageRequests
                 response.Dispose();
                 if (hop >= MaxRedirects)
                 {
-                    throw new ArgumentException($"image_url: {Shorten(url)} redirects more than {MaxRedirects} times.");
+                    throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"image_url: {Shorten(url)} redirects more than {MaxRedirects} times."));
                 }
 
                 current = location.IsAbsoluteUri ? location : new Uri(current, location);

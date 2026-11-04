@@ -179,7 +179,7 @@ public sealed partial class Tensor
 
     /// <summary>
     /// [..., k] × <paramref name="weight"/> ([k, n], 4-bit) → [..., n]. Few rows read the nibbles directly; more expand
-    /// them to float32 once. Gradients flow to this tensor (the weights are fixed), so LoRA adapters on it train (QLoRA).
+    /// them to float32 once. Gradients flow to this tensor (the weights are fixed), so LoRA adapters on it train (QLoRA-style: the library's int4, not NF4 with double quantization).
     /// </summary>
     internal Tensor MatMulInt4(Int4Weight weight)
     {

@@ -165,6 +165,7 @@ internal sealed class ServeHost
             ["max_images"] = Settings.MaxImages,
             ["image_urls"] = Settings.AllowImageUrls,
             ["private_image_urls"] = Settings.AllowImageUrls && Settings.AllowPrivateImageUrls,
+            ["proxied_image_urls"] = Settings.AllowImageUrls && !Settings.RefuseProxiedImageUrls,
             ["ui"] = url + "/ui",
             ["device"] = _context.Device.ToString(),
             ["keep_alive"] = Settings.KeepAliveText,
@@ -278,6 +279,7 @@ internal sealed class ServeHost
         images.MaxImages = Settings.MaxImages;
         images.AllowUrls = Settings.AllowImageUrls;
         images.AllowPrivateUrls = Settings.AllowPrivateImageUrls;
+        images.RefuseThroughProxy = Settings.RefuseProxiedImageUrls;
         images.MaxUrlBytes = Settings.MaxRequestBytes;
         images.UrlTimeout = ImageUrlTimeout;
     }

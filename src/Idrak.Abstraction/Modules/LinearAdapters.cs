@@ -119,7 +119,7 @@ public interface ILinearAdapter
 /// <c>(x·W + s·x·A·B) ⊙ m / ‖W + s·A·B‖ + b</c>. As in the paper (section 4.3) and peft, the norm is treated as a constant
 /// in the backward pass (no gradient through it), which saves memory and changes the gradients only slightly. The norm
 /// is computed each forward pass without forming W + s·A·B: ‖W‖² (once, the base is frozen) + 2s·Σ_r B ⊙ (Aᵀ·W) +
-/// s²·Σ_r B ⊙ (AᵀA·B), so a packed (QLoRA) base is read through its own product, never expanded. The magnitude starts as
+/// s²·Σ_r B ⊙ (AᵀA·B), so a packed base (a frozen int4 or int8 one, QLoRA-style) is read through its own product, never expanded. The magnitude starts as
 /// ‖W‖ and B at zero, so adding the adapter does not change the outputs.
 /// </summary>
 public sealed class DoraAdapter : IPeftAdapter, IDisposable

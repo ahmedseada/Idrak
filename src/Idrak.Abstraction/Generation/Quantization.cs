@@ -660,7 +660,7 @@ public delegate void ColumnBlockReader(int firstColumn, int count, Span<float> d
 /// The 4-bit weights of a <c>Linear</c> layer: each group of 32 input rows of a column shares one float scale and
 /// every weight is a signed nibble in -8..7 (the scale is searched per group for the least squared error), about
 /// 5 bits per weight; decoding reads 8× less than float32. Created by <c>ModuleExtensions.QuantizeInt4</c> or when
-/// loading with 4-bit weights; inputs, outputs, biases and LoRA adapters stay float32 (QLoRA-style fine-tuning).
+/// loading with 4-bit weights; inputs, outputs, biases and LoRA adapters stay float32 (QLoRA-style fine-tuning over this frozen int4 base; not QLoRA's NF4 with double quantization).
 /// </summary>
 public sealed class Int4Weight : PackedWeight, IKernelPackedWeight
 {

@@ -6,6 +6,8 @@
     <AssemblyName>Idrak.Data.Plugins</AssemblyName>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Idrak.Data.Plugins</PackageId>
+    <!-- Reserved, nothing implemented: not packed or published until it holds something (plan 36, P7). -->
+    <IsPackable>false</IsPackable>
     <Description>Reserved for document formats as plug-ins on Idrak.Data, starting with Office (Word, Excel, PowerPoint) on the document contract. Nothing is implemented in this version: the package holds no types yet.</Description>
   </PropertyGroup>
 

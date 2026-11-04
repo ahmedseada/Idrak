@@ -6,6 +6,8 @@
     <AssemblyName>Idrak.Video.Plugins</AssemblyName>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Idrak.Video.Plugins</PackageId>
+    <!-- Reserved, nothing implemented: not packed or published until it holds something (plan 36, P7). -->
+    <IsPackable>false</IsPackable>
     <Description>Reserved for the video model families as plug-ins on Idrak.Video, one namespace per family, as Idrak.Text.Plugins and Idrak.Vision.Plugins hold theirs. Nothing is implemented in this version: the package holds no types yet.</Description>
   </PropertyGroup>
 

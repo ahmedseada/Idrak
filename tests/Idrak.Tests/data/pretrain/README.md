@@ -15,7 +15,7 @@ the same bytes on the same machine and library versions; other machines or versi
 | `step/grads-step1.safetensors` | every parameter's gradient at step 1 (transformers' names; linear weights `[out, in]`) |
 | `step/weights-step3.safetensors` | the weights after three plain SGD steps (rate 0.2, no momentum, decay or clipping) |
 | `step/adamw/` | the same with AdamW (rate 1e-3, betas 0.9 and 0.95, epsilon 1e-8, weight decay 0.1, no clipping): the weights and the moments (`NAME.exp_avg`, `NAME.exp_avg_sq`) after three steps |
-| `step/adamw-folded/` | the same AdamW with both bias corrections folded into the step size (`p -= lr·√(1-β2^t)/(1-β1^t) · m/(√v + ε)`), as Idrak's AdamW computes it: epsilon is then ε/√(1-β2^t) of torch's, which moves weights whose gradients are near ε (embedding rows reached only through the tied head) |
+| `step/adamw-folded/` | the same AdamW with both bias corrections folded into the step size (`p -= lr·√(1-β2^t)/(1-β1^t) · m/(√v + ε)`), as Idrak's AdamW computed it before it took torch's update (plan 36, C11; kept for the record, no test reads it): epsilon is then ε/√(1-β2^t) of torch's, which moves weights whose gradients are near ε (embedding rows reached only through the tied head) |
 
 ## How the C# tests read it
 
@@ -23,8 +23,8 @@ the same bytes on the same machine and library versions; other machines or versi
   vocabulary (ids included) and the same merges in the same order, exactly, and encodes the sample texts to the same ids.
 - `"pretrain:"`: `tiny-llama/` loads; the pretraining loop's first step on the four windows matches the loss within
   1e-4 and every gradient within 1e-4 of the largest; three SGD steps' losses within 1e-4 and the weights within 5e-5;
-  three AdamW steps' losses within 1e-4 of torch's AdamW and the weights within 1e-5 of `adamw-folded` (the formula
-  Idrak's AdamW uses); a run resumed after step 2 matches the uninterrupted one bit for bit.
+  three AdamW steps' losses within 1e-4 of torch's AdamW and the weights within 1e-5 of `adamw/` (torch's own update,
+  which Idrak's AdamW computes); a run resumed after step 2 matches the uninterrupted one bit for bit.
 
 ## Regenerate
 

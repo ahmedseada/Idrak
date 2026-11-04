@@ -25,6 +25,7 @@ internal abstract partial class DesktopTests : Tests
     private static readonly (string Name, Action<Device> Run)[] HostileInputGroup =
     [
         ("cli images: an image URL that reaches a loopback, private, link-local, multicast or reserved address (a literal or a name) is refused naming the URL and the address; AllowPrivateUrls downloads it and follows redirects; a failed download names the status, never the remote body; serve's --allow-private-image-urls and IDRAK_SERVE_PRIVATE_IMAGE_URLS set it", d => { CpuOnly(d); ImageUrlAddresses(); }),
+        ("cli images: through a proxy an https image URL goes by a tunnel to the address checked (CONNECT to it, never a second lookup); a proxy's refusal names its status; a plain http URL through a proxy and any URL under RefuseThroughProxy are refused; serve's --refuse-proxied-image-urls and IDRAK_SERVE_REFUSE_PROXIED_IMAGE_URLS set it", d => { CpuOnly(d); ImageUrlProxyTunnel(); }),
         ("gguf: a hostile header fails naming the cause before anything is sized by it: too many dimensions, a duplicate tensor name, a tensor count or a string longer than the file", d => { CpuOnly(d); GgufHostileHeaders(); }),
         ("hip cache: a kept code object carries its hash; one changed on disk, cut short or without a hash is refused, deleted and named, never loaded", d => { CpuOnly(d); HipCacheTampered(); }),
         ("matmul bias: a weight that is not a matrix (rank 1) takes MatMul's path and its shape message, not an index error; a matrix weight gives x·w + bias", MatMulBiasShapes),

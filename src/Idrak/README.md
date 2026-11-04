@@ -157,7 +157,7 @@ has one with 2,500 rows).
 This package loads decoder models from Hugging Face folders or GGUF files, with their own tokenizers
 (`PretrainedModel`); the families (Llama, Qwen, Mistral, their mixtures of experts, Gemma, …) are registered by the
 plug-in package `Idrak.Text.Plugins` (`TextPlugins.RegisterAll()`). The companion package `Idrak.Text` generates and chats with them (using
-each model's own chat template), fine-tunes them (LoRA, DoRA, QLoRA, preference losses, distillation) and answers from
+each model's own chat template), fine-tunes them (LoRA, DoRA, LoRA over a frozen int4 or int8 base, preference losses, distillation) and answers from
 documents (RAG); Hugging Face ids are downloaded by `Idrak.Data`, which it brings along:
 
 ```csharp

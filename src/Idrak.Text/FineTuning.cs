@@ -1067,8 +1067,8 @@ public sealed record FineTuningProgress(int Step, int TotalSteps, int Epoch, flo
 }
 
 /// <summary>
-/// Fine-tunes a pretrained model with LoRA adapters: the base weights stay as loaded (int4, int8 or bfloat16 for QLoRA,
-/// or float32) and frozen; only the adapters train, on the assistant tokens of chat transcripts (see
+/// Fine-tunes a pretrained model with LoRA adapters: the base weights stay as loaded (float32, bfloat16, or the library's
+/// int4 or int8: QLoRA-style, a frozen quantized base, but not QLoRA's NF4 with double quantization) and frozen; only the adapters train, on the assistant tokens of chat transcripts (see
 /// <see cref="ChatTranscriptEncoder"/>), or on preference pairs. By default AdamW with a linear warm-up and cosine decay,
 /// gradient accumulation and clipping, and a token loss that never stores the full logits
 /// (<see cref="Losses.TokenCrossEntropy"/>); the optimizer, the schedule and the loss can be replaced

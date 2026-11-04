@@ -15,7 +15,7 @@ position. Tensors carry transformers' names (linear weights `[out, in]`; the hea
 | `ddp/grads-step1.safetensors` | the averaged gradient every rank holds after step 1's backward, before the update (DDP's average: each rank's gradient of its own mean loss, summed, divided by 2) |
 | `ddp/weights-step3.safetensors` | the weights after three plain SGD steps (rate 0.2, no momentum, decay or clipping) |
 | `ddp/adamw/` | the same with AdamW (rate 1e-3, betas 0.9 and 0.95, epsilon 1e-8, weight decay 0.1, no clipping): the weights and the moments (`NAME.exp_avg`, `NAME.exp_avg_sq`) after three steps |
-| `ddp/adamw-folded/` | the same AdamW with both bias corrections folded into the step size, as Idrak's AdamW computes it (plan 19's `adamw-folded`, the class reused from `make_tiny_pretrain.py`): the weights after three steps |
+| `ddp/adamw-folded/` | the same AdamW with both bias corrections folded into the step size and epsilon added to the raw moments, as Idrak's AdamW computed it before it took torch's update (plan 36, C11; kept for the record, no test reads it) (plan 19's `adamw-folded`, the class reused from `make_tiny_pretrain.py`): the weights after three steps |
 | `single/` | the same three steps in one process on all eight windows at once (batch 8): `single.json` (losses), `grads-step1`, `weights-step3`, `adamw/`, `adamw-folded/`, laid out as `ddp/` |
 | `bf16/` | the SGD run of `ddp/` again with each rank's gradients rounded to bfloat16 (round to nearest even) before the all-reduce, the sum done in float32 and then divided by 2 (a DDP communication hook): `bf16.json` (losses per rank and their mean; `vs_ddp`: the largest differences against `ddp/`), `grads-step1`, `weights-step3` |
 | `manifest.json` | the versions, the sources' SHA-256, each tensor file's names, dtypes and shapes, and every file's size and SHA-256 |
@@ -46,7 +46,7 @@ its gradients are only good to about 2⁻⁹ of their size; these numbers are th
 - `"cluster: data parallel 2 ranks on sim matches the ddp fixture"` (later, C1 onward): Idrak's `Trainer` with two
   ranks on the `sim` transport, the same windows per rank, matches `ddp/`: every gradient at step 1 within 1e-4 of the
   largest, the losses (per rank and their mean) and the weights after three steps within 1e-5; AdamW is held to
-  `ddp/adamw-folded/` (the formula Idrak's AdamW uses), the losses also to `ddp/adamw/`. A run with a bf16 wire is held to
+  `ddp/adamw/` (torch's own update, which Idrak's AdamW computes). A run with a bf16 wire is held to
   `bf16/` within the tolerances above.
 
 ## Regenerate

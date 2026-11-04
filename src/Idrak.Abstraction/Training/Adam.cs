@@ -57,8 +57,8 @@ public class Adam(IEnumerable<Tensor> parameters, float learningRate = 0.001f, f
             }
         }
 
-        // Fold both bias corrections into the step size: lr * sqrt(1 - β2^t) / (1 - β1^t).
-        float correctedLr = (float)(LearningRate * Math.Sqrt(1 - Math.Pow(Beta2, _step)) / (1 - Math.Pow(Beta1, _step)));
+        // PyTorch's update with both bias corrections folded into the step size and epsilon (AdamCorrection).
+        var (correctedLr, epsilon) = AdamCorrection(LearningRate, Beta1, Beta2, Epsilon, _step);
         for (int i = 0; i < Parameters.Count; i++)
         {
             var p = Parameters[i];
@@ -69,7 +69,7 @@ public class Adam(IEnumerable<Tensor> parameters, float learningRate = 0.001f, f
 
             var m = _m[i] ??= CreateState(p);
             var v = _v[i] ??= CreateState(p);
-            p.Backend.AdamStep(p.Storage, p.Grad.Storage, m.Storage, v.Storage, p.Size, correctedLr, Beta1, Beta2, Epsilon);
+            p.Backend.AdamStep(p.Storage, p.Grad.Storage, m.Storage, v.Storage, p.Size, correctedLr, Beta1, Beta2, epsilon);
         }
     }
 
@@ -100,9 +100,9 @@ public class Adam(IEnumerable<Tensor> parameters, float learningRate = 0.001f, f
         }
 
         int step = _step + 1;
-        float correctedLr = (float)(LearningRate * Math.Sqrt(1 - Math.Pow(Beta2, step)) / (1 - Math.Pow(Beta1, step)));
+        var (correctedLr, epsilon) = AdamCorrection(LearningRate, Beta1, Beta2, Epsilon, step);
         float decay = WeightDecay != 0f ? 1f - LearningRate * WeightDecay : 1f;
-        if (!Parameters[withGrad[0]].Backend.FusedAdamW(tensors, ref _fused, maxNorm, correctedLr, decay, Beta1, Beta2, Epsilon, zeroGradients: true))
+        if (!Parameters[withGrad[0]].Backend.FusedAdamW(tensors, ref _fused, maxNorm, correctedLr, decay, Beta1, Beta2, epsilon, zeroGradients: true))
         {
             base.ClipAndStep(maxNorm);
             return;

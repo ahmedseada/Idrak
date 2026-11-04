@@ -111,6 +111,13 @@ internal sealed record ServeSettings(string Host, int Port, string? ApiKey, IRea
     /// </summary>
     public bool AllowPrivateImageUrls { get; init; }
 
+    /// <summary>
+    /// Whether every image URL a proxy would carry is refused (--refuse-proxied-image-urls,
+    /// <see cref="ServeOptions.RefuseProxiedImageUrlsVariable"/>); off, an https download goes through a tunnel the server
+    /// opens to the address it checked, and a plain http one through a proxy is refused.
+    /// </summary>
+    public bool RefuseProxiedImageUrls { get; init; }
+
     /// <summary>An encoder-decoder's beams for every request that gives none (--beams; 1: the sampler).</summary>
     public int Beams { get; init; } = 1;
 
@@ -142,7 +149,7 @@ internal static class ServeOptions
         "--max-request-mb", "--max-images", ModelChoices.VisionOption, ModelChoices.ImageTransformOption, Seq2SeqRun.BeamsOption, Seq2SeqRun.LengthPenaltyOption];
 
     /// <summary>The flags of serve and ui.</summary>
-    public static readonly string[] Flags = ["--metrics", "--log-content", "--grayscale", "--allow-image-urls", "--allow-private-image-urls", "--require-key", "--any-content-type"];
+    public static readonly string[] Flags = ["--metrics", "--log-content", "--grayscale", "--allow-image-urls", "--allow-private-image-urls", "--refuse-proxied-image-urls", "--require-key", "--any-content-type"];
 
     /// <summary>The environment variable giving the key when <c>--api-key</c> is not given.</summary>
     public const string ApiKeyVariable = "IDRAK_API_KEY";
@@ -158,6 +165,9 @@ internal static class ServeOptions
 
     /// <summary>The environment variable turning <c>--allow-private-image-urls</c> on (1, true, on or yes) or off (0, false, off or no).</summary>
     public const string PrivateImageUrlsVariable = "IDRAK_SERVE_PRIVATE_IMAGE_URLS";
+
+    /// <summary>The environment variable turning <c>--refuse-proxied-image-urls</c> on (1, true, on or yes) or off (0, false, off or no).</summary>
+    public const string RefuseProxiedImageUrlsVariable = "IDRAK_SERVE_REFUSE_PROXIED_IMAGE_URLS";
 
     /// <summary>The largest request body when --max-request-mb is not given, in MB (a phone photo as a data URL fits).</summary>
     public const int DefaultMaxRequestMegabytes = 32;
@@ -261,6 +271,7 @@ internal static class ServeOptions
             AllowPrivateImageUrls = Switch(context, "--allow-private-image-urls", PrivateImageUrlsVariable) && (context.Flag("--allow-image-urls")
                 ? true : context.Flag("--allow-private-image-urls") ? throw new UsageException("--allow-private-image-urls lets image URL downloads reach private addresses; "
                     + "downloads are off without --allow-image-urls.") : false),
+            RefuseProxiedImageUrls = Switch(context, "--refuse-proxied-image-urls", RefuseProxiedImageUrlsVariable),
             Beams = beams,
             LengthPenalty = penalty,
             LogContent = context.Flag("--log-content") && (context.Option("--log-requests") is not null

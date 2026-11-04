@@ -6,6 +6,8 @@
     <AssemblyName>Idrak.Diffusion</AssemblyName>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Idrak.Diffusion</PackageId>
+    <!-- Reserved, nothing implemented: not packed or published until it holds something (plan 36, P7). -->
+    <IsPackable>false</IsPackable>
     <Description>Reserved for image and audio generation by denoising: UNet and DiT denoisers, noise schedules and samplers, latent codecs (VAE) and text conditioning, with the contracts the diffusion families plug into. Nothing is implemented in this version: the package holds no types yet.</Description>
   </PropertyGroup>
 

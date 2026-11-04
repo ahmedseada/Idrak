@@ -27,7 +27,7 @@ Idrak is a neural network library for **.NET 10**, written entirely in C#.
 - **Run real models.** Language, vision-language, speech, encoder and encoder-decoder models from Hugging Face folders
   or GGUF files, with their own tokenizers and chat templates. The model families live in three plug-in packages
   (`Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins`) that the `idrak` tool registers for you.
-- **Tune, serve and ship.** LoRA, QLoRA and DoRA fine-tuning, distillation and evaluation; an inference engine with
+- **Tune, serve and ship.** LoRA (also over a frozen int4 or int8 base) and DoRA fine-tuning, distillation and evaluation; an inference engine with
   batching, an OpenAI-style `/v1` API and MCP front ends; retrieval and RAG; ONNX export and import; and one command-line tool,
   `idrak`, over all of it.
 - **Open by contract.** Every behaviour goes through a contract with a registry, so a model family, a file format, a
@@ -51,7 +51,7 @@ along; the GPU devices are `dotnet add package Idrak.Gpu`, and the others are ad
 | `Idrak.Network` | The real transports and collectives of a cluster: shared memory, TCP with a keyed rendezvous, a direct cable, host-staged and peer copies between the GPUs of one process; naive, ring and hierarchical all-reduce, all-gather, reduce-scatter and broadcast over any transport; the fastest-first transport selector and the `network` profiler probe. Built on `Idrak.Abstraction`'s cluster contracts. |
 | `Idrak.Cluster` | A cluster of GPUs and machines simulated on one machine: devices carved from a physical one with hard memory caps, the `sim` transport charged on a virtual clock from link profiles, the built-in link profiles, the topology builder and the `cluster` profiler probe. Built on `Idrak.Abstraction`'s cluster contracts; `Idrak.Network` holds the real transports. |
 | `Idrak.Data` | Row datasets: JSON Lines, JSON, CSV, TSV, text, code and Parquet; archives and compressed files; sources file, folder, http, Hugging Face, GitHub, Kaggle, Zenodo; filter, map, shuffle, deduplicate, split, mix; chat transcripts for fine-tuning; the Hugging Face model downloader. |
-| `Idrak.Text` | Text generation and chat with tools, the models' own Jinja chat templates, tool-call formats, LLM fine-tuning (LoRA, QLoRA, DoRA, full), distillation, evaluation, retrieval and RAG, synthetic training pages, the coding agent, the engine's text and chat models. |
+| `Idrak.Text` | Text generation and chat with tools, the models' own Jinja chat templates, tool-call formats, LLM fine-tuning (LoRA, LoRA on a frozen int4 or int8 base, DoRA, full), distillation, evaluation, retrieval and RAG, synthetic training pages, the coding agent, the engine's text and chat models. |
 | `Idrak.Imaging` | PNG, JPEG, BMP and Netpbm codecs; Pillow's resampling, filters and enhancements byte for byte; model preprocessors on the device; a font engine (TrueType, CFF, OpenType shaping, bidi) for rendering text; image transforms and augmentations; image-folder datasets. |
 | `Idrak.Vision` | Image model families (classifiers, detectors, segmenters), region classification in batches, content framing, channel statistics, detection and segmentation over any network, CTC decoding for OCR. |
 | `Idrak.Audio` | WAV, FLAC and MP3 decoding and WAV and MP3 encoding in C#; resampling, STFT and log-mel features; speech recognition and synthesis contracts; vocoders, speaker encoders, voice conversion and voice stores; speech training (CTC, seq2seq, TTS, adversarial synthesis) with the library's HiFi-GAN, WaveNet and flow layers. |
@@ -68,8 +68,9 @@ along; the GPU devices are `dotnet add package Idrak.Gpu`, and the others are ad
 
 ### Reserved packages
 
-These names are kept on NuGet and GitHub for packages that are planned. Each is published with the release's version
-but holds no types yet; installing one adds nothing beyond its dependency.
+These names are kept for packages that are planned. Each holds no types yet, so none is packed or published with a
+release (`IsPackable` false) until something is built in it; versions already on NuGet add nothing beyond their
+dependency.
 
 | Package | Reserved for |
 |---|---|
@@ -144,7 +145,8 @@ but holds no types yet; installing one adds nothing beyond its dependency.
   repetition penalties; the kit checks every device's draws against the CPU's.
 - Chat: the model's own Jinja template, tool calling in the `json`, `pythonic`, `qwen3-coder`, `mistral`, `harmony`
   and `deepseek` formats, server-side tool rounds for any chat model, MCP tools, conversations with memory.
-- Fine-tuning: LoRA, QLoRA (int4 base), DoRA, full tuning; chat and completion objectives; distillation from a
+- Fine-tuning: LoRA, LoRA over a frozen int4 or int8 base (QLoRA-style: the library's own int4 and int8 formats, not
+  QLoRA's NF4 with double quantization), DoRA, full tuning; chat and completion objectives; distillation from a
   teacher model or saved distributions; `idrak tune`, `idrak distill`, `idrak merge`, `idrak quantize`.
 - Pre-training from scratch: `idrak pretrain` over the decoder spec, with `idrak data tokens`.
 - Evaluation: perplexity, answer metrics (exact match, F1, CER, WER, contains), `idrak eval`, `idrak perplexity`,

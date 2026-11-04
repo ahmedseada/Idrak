@@ -19,7 +19,8 @@ using Idrak.Abstraction.Generation;
 namespace Idrak.Cli.Commands.Train;
 
 /// <summary>
-/// The fine-tuning tool: LoRA / QLoRA / DoRA adapters on any dataset, preference losses, evaluation, chat, export,
+/// The fine-tuning tool: LoRA and DoRA adapters (over a float, bfloat16, or frozen int4 or int8 base: QLoRA-style, not
+/// NF4 with double quantization) on any dataset, preference losses, evaluation, chat, export,
 /// downloads and model information, run by <c>idrak tune</c> (<see cref="TuneCommand"/>, which turns idrak's options
 /// into these). <see cref="Parse"/> reads the arguments (an <see cref="ArgumentException"/> or
 /// <see cref="FormatException"/> for a bad one) and <see cref="Execute"/> runs the command.
@@ -27,7 +28,8 @@ namespace Idrak.Cli.Commands.Train;
 internal sealed class TuneTool(ToolConsole console)
 {
     public const string Usage = """
-        Fine-tune pretrained language models (LoRA / QLoRA) on any dataset, evaluate, chat and export.
+        Fine-tune pretrained language models (LoRA, also over a frozen int4 or int8 base: QLoRA-style, not NF4) on any
+        dataset, evaluate, chat and export.
 
           idrak tune train <model> <data…> --out <dir>    tune adapters on the data and write them (PEFT format) with
                                                           idrak-tuning.json (base model, system prompt, max length)

@@ -6,6 +6,8 @@
     <AssemblyName>Idrak.Video</AssemblyName>
     <IsAotCompatible>true</IsAotCompatible>
     <PackageId>Idrak.Video</PackageId>
+    <!-- Reserved, nothing implemented: not packed or published until it holds something (plan 36, P7). -->
+    <IsPackable>false</IsPackable>
     <Description>Reserved for video in and out: decoding and encoding frames, frame sampling and video datasets, with the contracts the video model families plug into. Nothing is implemented in this version: the package holds no types yet.</Description>
   </PropertyGroup>
 

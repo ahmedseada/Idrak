@@ -66,7 +66,7 @@ public sealed class AdamW8Bit : Optimizer, IStatefulOptimizer, IScaledGradientSt
         float scale = _gradientScale;
         _gradientScale = 1f;
         _step++;
-        float correctedLr = (float)(LearningRate * Math.Sqrt(1 - Math.Pow(Beta2, _step)) / (1 - Math.Pow(Beta1, _step)));
+        var (correctedLr, epsilon) = AdamCorrection(LearningRate, Beta1, Beta2, Epsilon, _step);       // PyTorch's (and bitsandbytes') update
         for (int i = 0; i < Parameters.Count; i++)
         {
             var p = Parameters[i];
@@ -90,7 +90,7 @@ public sealed class AdamW8Bit : Optimizer, IStatefulOptimizer, IScaledGradientSt
 
                 var m = _m[i] ??= CreateState(p);
                 var v = _v[i] ??= CreateState(p);
-                p.Backend.AdamStep(p.Storage, p.Grad.Storage, m.Storage, v.Storage, p.Size, correctedLr, Beta1, Beta2, Epsilon);
+                p.Backend.AdamStep(p.Storage, p.Grad.Storage, m.Storage, v.Storage, p.Size, correctedLr, Beta1, Beta2, epsilon);
                 continue;
             }
 
@@ -100,7 +100,7 @@ public sealed class AdamW8Bit : Optimizer, IStatefulOptimizer, IScaledGradientSt
             var scales = _scales[i] ??= CreateState([2 * blocks], p.Device);
             _map ??= Tensor.Persistent([.. DynamicMap(signed: true), .. DynamicMap(signed: false)], [512], p.Device, requiresGrad: false);
             p.Backend.AdamStep8Bit(p.Storage, p.Grad.Storage, m8.Storage, v8.Storage, scales.Storage, _map.Storage, p.Size,
-                correctedLr, Beta1, Beta2, Epsilon, scale, decay);
+                correctedLr, Beta1, Beta2, epsilon, scale, decay);
         }
     }
 

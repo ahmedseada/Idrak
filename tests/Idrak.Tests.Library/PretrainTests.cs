@@ -65,14 +65,14 @@ internal abstract partial class Tests
                 }
             }
 
-            foreach (var (kind, rate, weightsFile, tolerance) in new[] { ("sgd", 0.2f, "step/weights-step3.safetensors", 5e-5f), ("adamw", 1e-3f, "step/adamw-folded/weights-step3.safetensors", 1e-5f) })
+            foreach (var (kind, rate, weightsFile, tolerance) in new[] { ("sgd", 0.2f, "step/weights-step3.safetensors", 5e-5f), ("adamw", 1e-3f, "step/adamw/weights-step3.safetensors", 1e-5f) })
             {
                 using var model = PretrainedModel.Load(TinyLlama, new PretrainedOptions { Device = device });
                 var result = Pretrainer.Train(model, TextStage(windows, 3, kind, rate), Path.Combine(folder, kind));
                 var expected = step[kind]!["losses"]!.AsArray().Select(l => (float)l!).ToArray();
                 AssertClose(expected, [.. result.Losses], 1e-4f, $"{kind}: three steps' losses (torch's)");
-                // AdamW's weights against the reference computed with Idrak's formula (the bias corrections folded into the
-                // step size, so epsilon sits elsewhere than in torch's: see the fixture's README).
+                // AdamW's weights against torch's own AdamW (Idrak's update is PyTorch's, epsilon included: the fixture's
+                // folded run, epsilon added to the raw moments, is 3.5e-4 away after three steps).
                 var after = ReadTensors(Path.Combine(result.LastCheckpoint!, "model.safetensors"));
                 foreach (var (name, (_, w)) in ReadTensors(PretrainData(weightsFile)))
                 {

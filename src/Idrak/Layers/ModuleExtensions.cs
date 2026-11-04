@@ -210,7 +210,7 @@ public static class ModuleExtensions
     /// Those weights take a quarter of the memory and are read 4× faster when generating token by token; the outputs
     /// change slightly (see the tests and the Quantization sample for measured differences). Biases, LoRA adapters,
     /// normalization, embeddings and convolutions stay float32. The quantized weights are fixed (not trainable), but
-    /// gradients still flow through them, so LoRA adapters added afterwards can be trained (QLoRA-style fine-tuning).
+    /// gradients still flow through them, so LoRA adapters added afterwards can be trained (QLoRA-style fine-tuning over a frozen int8 base; not NF4).
     /// Save and load the model as usual (quantize a freshly built model before loading a quantized file). Returns the
     /// number of layers quantized.
     /// </summary>
@@ -244,7 +244,8 @@ public static class ModuleExtensions
     /// Stores the weights of every linear layer that can hold packed weights (<see cref="IPackableLinear"/>), or those
     /// <paramref name="targets"/> selects, as 4-bit values
     /// with one scale per 32 rows and column (see <see cref="Int4Weight"/>): about 5 bits per weight, and token-by-token
-    /// decoding reads 8× less than float32. The weights become fixed; LoRA adapters on them still train (QLoRA). Returns
+    /// decoding reads 8× less than float32. The weights become fixed; LoRA adapters on them still train (QLoRA-style: this int4 format, not NF4 with double
+    /// quantization). Returns
     /// how many layers changed.
     /// </summary>
     public static int QuantizeInt4(this Module model, Func<IPackableLinear, bool>? targets = null) => Pack(model, PackedFormat.Int4, targets);

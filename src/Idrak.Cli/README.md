@@ -251,6 +251,7 @@ the answer is one JSON object. On `/v1` no repetition penalty applies unless the
 | `--max-images N` | The most images in one request (default 8); more is a 400 |
 | `--allow-image-urls` | Let `image_url` parts give `http(s)` addresses the server downloads (off by default; each download is held to `--max-request-mb` and 30 s). Loopback, link-local, private, multicast and reserved addresses are refused, after redirects too, with a 400 naming the URL |
 | `--allow-private-image-urls` | With `--allow-image-urls`, let downloads reach those addresses too (`IDRAK_SERVE_PRIVATE_IMAGE_URLS`) |
+| `--refuse-proxied-image-urls` | Refuse every image URL a proxy would carry (`IDRAK_SERVE_REFUSE_PROXIED_IMAGE_URLS`). Without it, an https download through a proxy goes through a tunnel the server opens to the address it checked (`CONNECT` to that address, the certificate still checked against the host name), and a plain http one through a proxy is refused |
 
 The upload form's fields: `image` (one or more files), `prompt` (text), and optionally `system`, `stream`
 (`true`/`false`), `max_tokens`, `temperature`, `top_p`, `top_k`, `seed`, `grayscale` (`true`/`false`) and `model`
@@ -365,7 +366,7 @@ Fine-tuning language models (`tune`) and training networks from the builder's JS
 
 | Command | What it does |
 |---|---|
-| `idrak tune` | Fine-tune language models (LoRA, QLoRA, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info |
+| `idrak tune` | Fine-tune language models (LoRA, LoRA on a frozen int4 or int8 base, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info |
 | `idrak tune init` | Write a commented tune.json (model, data, adapter and training settings) for idrak tune --config |
 | `idrak reinforce` | Reinforcement learning of a language model's adapters in an environment (`prompts`, `coding`, a plug-in's): GRPO, PPO, REINFORCE, a teacher term beside the reward, or on-policy distillation alone; in an environment of numbers (`bandit`, `cartpole`, `pendulum`, `mountain-car`) a small policy with no model: PPO, REINFORCE, GRPO or DQN; `--list` names every registered environment, reward, algorithm, estimator, sandbox and divergence |
 | `idrak train` | Train a builder JSON network, or fine-tune an image model, on a CSV, image folders or annotated images |
@@ -406,8 +407,10 @@ voc) and `--eval`; a fine-tuned model's weights go to an .ikw that `idrak predic
 
 #### Fine-tuning with `idrak tune`
 
-`idrak tune` trains LoRA / QLoRA / DoRA adapters for any model the library loads (Hugging Face ids, folders, .gguf
-files, aliases) on any data `idrak data` reads, then evaluates, chats with and exports them. Nothing in it is specific
+`idrak tune` trains LoRA and DoRA adapters for any model the library loads (Hugging Face ids, folders, .gguf
+files, aliases) on any data `idrak data` reads, then evaluates, chats with and exports them. The base can stay float32 or
+bfloat16, or be frozen in the library's int4 or int8 (`-w int4`, `-w int8`): QLoRA-style, a frozen quantized base under
+the adapters, but not QLoRA's NF4 with double quantization. Nothing in it is specific
 to a model family or an application: a project that needs a tuned model runs it with its data instead of writing its
 own tuner. Its commands are `train`, `evaluate`, `chat`, `export`, `download` and `info`; `idrak help tune` lists
 every option.
@@ -450,7 +453,7 @@ idrak tune export adapters/qa -o merged
 - **Speed.** Sequence packing, graph replay of the training step where the backend records graphs, fused LoRA products
   on matrix units (a frozen bfloat16 or 4-bit base read as stored in both directions), the optimizer over every adapter
   matrix in three passes; `--fp8` for the frozen base's forward products (checked against bfloat16 first), `-w int4` /
-  `-w int8` for QLoRA. `train --time-steps` times a few steps per kernel instead of training.
+  `-w int8` for a frozen int4 or int8 base (QLoRA-style, not NF4). `train --time-steps` times a few steps per kernel instead of training.
 - **Memory.** Results no backward step reads are released during the forward pass. The activations' ladder, each rung
   at a small cost: feed-forward activations recomputed in the backward pass (`--recompute`), then activations held as
   bfloat16 between the passes (`--bf16-activations`), then activation checkpointing (`--checkpointing`, a third more

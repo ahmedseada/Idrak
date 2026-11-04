@@ -133,7 +133,7 @@ internal sealed class ReinforceCommand : Command
           -o, --out DIR           where the adapter and the checkpoints go
               --list              the registered environments, rewards, algorithms, estimators, sandboxes, divergences,
                                   pair sources and preference losses
-          -w, --weights F         the model's base weights: int8, int4 (QLoRA) or bf16
+          -w, --weights F         the model's base weights, kept frozen: int8, int4 (QLoRA-style, not NF4) or bf16
               --shards N          the shards a rollout is cut into: a shard's episodes act together, and on a cluster each
                                   rank plays its shards' episodes; the same count gives the same episodes on any number
                                   of ranks (default 0: one per rank, so one in one process; IDRAK_RL_SHARDS)

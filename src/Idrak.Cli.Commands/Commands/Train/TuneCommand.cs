@@ -29,7 +29,7 @@ internal sealed class TuneCommand : Command
 
     public override string Name => "tune";
 
-    public override string Summary => "Fine-tune language models (LoRA, QLoRA, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info";
+    public override string Summary => "Fine-tune language models (LoRA, LoRA on a frozen int4 or int8 base, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info";
 
     public override string Usage => "COMMAND MODEL [DATA...] [options]\n\n"
         + TuneTool.Usage + "\n" + """
@@ -37,7 +37,8 @@ internal sealed class TuneCommand : Command
         Options:
           -b, --base MODEL     the model as an option (then every argument after the command is data)
               --data FILE      data as an option (repeatable); with no command given, train
-          -w, --weights F      base weights: int8, int4 (QLoRA) or bf16 (as --int8, --int4, --bf16)
+          -w, --weights F      base weights, kept frozen: int8, int4 or bf16 (as --int8, --int4, --bf16); int4/int8
+                               is QLoRA-style (the library's int4 or int8, not NF4 with double quantization)
           -k, --kv F           the KV cache format (chat, evaluate)
           -o, --out DIR        where train writes the adapter, export the merged model, evaluate the answers
           -s, --system TEXT    a system message for conversations without one
@@ -283,8 +284,8 @@ internal sealed class TuneInitCommand : Command
           -o, --out FILE         where to write the settings (default tune.json)
               --adapter-out DIR  where idrak tune writes the adapter (default adapters/<model name>)
               --loss NAME        sft (default), or dpo, orpo, simpo for preference rows
-          -w, --weights F        base weights: int8, int4 (QLoRA) or bf16
-          -f, --force            overwrite an existing file
+          -w, --weights F        base weights, kept frozen: int8, int4 (QLoRA-style, not NF4) or bf16
+          -f, --force           overwrite an existing file
 
         The values are the library's defaults (rank, alpha, learning rate, lengths); the device given with -d is written
         too. Sizing them to the data and the device's memory is what idrak suggest does, when it is available. With a
@@ -390,7 +391,7 @@ internal sealed class TuneInitCommand : Command
               "out": {{Json(adapters)}},
               // The device: cpu, cuda:0, vulkan:0, hip:0 (left out: the best GPU found, else the CPU).
               {{(device is null ? "// \"device\": \"cuda:0\"," : $"\"device\": {Json(device)},")}}
-              // Base weights: int8, int4 (QLoRA) or bf16 (left out: float32).
+              // Base weights, kept frozen: int8, int4 (QLoRA-style, not NF4) or bf16 (left out: float32).
               {{(weights is null ? "// \"weights\": \"int4\"," : $"\"weights\": {Json(weights)},")}}
               // The loss: sft (conversations and texts), or dpo, orpo, simpo (rows with prompt, chosen and rejected).
               "loss": {{Json(loss)}},

@@ -86,10 +86,14 @@ internal sealed class ServeCommand : Command
               --allow-image-urls     let image_url parts name http(s) addresses the server downloads (off: data
                                      URLs and uploads only; each download is held to --max-request-mb and 30 s);
                                      loopback, link-local, private, multicast and reserved addresses are refused,
-                                     redirects included
+                                     redirects included; through a proxy, https only, by a tunnel to the address
+                                     checked
               --allow-private-image-urls
                                      with --allow-image-urls, let downloads reach those addresses too (default
                                      IDRAK_SERVE_PRIVATE_IMAGE_URLS)
+              --refuse-proxied-image-urls
+                                     refuse every image URL a proxy would carry (default
+                                     IDRAK_SERVE_REFUSE_PROXIED_IMAGE_URLS)
               --beams N              an encoder-decoder's beam search for every request (default 1: the sampler); a
                                      /v1/completions request or an MCP generate call gives its own as num_beams
               --length-penalty F     the beams' length penalty (default 1: the mean log-probability; 0: the sum)

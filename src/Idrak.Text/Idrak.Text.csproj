@@ -7,7 +7,7 @@
     <IsAotCompatible>true</IsAotCompatible>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <PackageId>Idrak.Text</PackageId>
-    <Description>Natural language processing for Idrak (no dependencies beyond Idrak and Idrak.Data): text generation and chat with tools, the models' own Jinja chat templates, an inference engine's text and chat models, LLM fine-tuning (LoRA, QLoRA, DoRA, distillation) and evaluation, retrieval and RAG, and a coding agent.</Description>
+    <Description>Natural language processing for Idrak (no dependencies beyond Idrak and Idrak.Data): text generation and chat with tools, the models' own Jinja chat templates, an inference engine's text and chat models, LLM fine-tuning (LoRA, also over a frozen int4 or int8 base, DoRA, distillation) and evaluation, retrieval and RAG, and a coding agent.</Description>
   </PropertyGroup>
 
   <ItemGroup>

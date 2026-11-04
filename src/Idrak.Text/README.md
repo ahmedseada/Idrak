@@ -1,6 +1,6 @@
 # Idrak.Text
 
-Natural language processing for Idrak (no dependencies beyond Idrak and Idrak.Data): generate text and chat with tools, using each model's own Jinja chat template; host text and chat models in the inference engine; fine-tune language models (LoRA, DoRA, QLoRA, DPO / ORPO / SimPO, distillation from a teacher model), evaluate them and score their answers; search documents (BM25, vectors, rerankers) and answer from them with citations (RAG); run a coding agent with file and shell tools.
+Natural language processing for Idrak (no dependencies beyond Idrak and Idrak.Data): generate text and chat with tools, using each model's own Jinja chat template; host text and chat models in the inference engine; fine-tune language models (LoRA, DoRA, LoRA over a frozen int4 or int8 base: QLoRA-style, not NF4 with double quantization; DPO / ORPO / SimPO, distillation from a teacher model), evaluate them and score their answers; search documents (BM25, vectors, rerankers) and answer from them with citations (RAG); run a coding agent with file and shell tools.
 
 Loading the models themselves (by Hugging Face id, folder or GGUF file, with their BPE tokenizers; the families, Llama, Qwen, Mistral, Gemma and the others, from `Idrak.Text.Plugins`) is in the core package, `Idrak` (`Idrak.Models`); this package adds `CreateGenerator` and `CreateChat` to a loaded `PretrainedModel`.
 

@@ -465,8 +465,8 @@ internal static partial class Messages
             "تقطير نموذج معلم في نموذج طالب: احتمالات رموزه (أثناء التدريب أو محسوبة مسبقا) أو إجاباته",
         ["Reinforcement learning of a model's adapters: GRPO, PPO, on-policy distillation, DPO, ORPO, SimPO"] =
             "التعلم المعزز لمحولات نموذج: GRPO و PPO والتقطير على إجابات النموذج نفسه و DPO و ORPO و SimPO",
-        ["Fine-tune language models (LoRA, QLoRA, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info"] =
-            "الضبط الدقيق لنماذج اللغة (LoRA و QLoRA و DoRA و DPO/ORPO/SimPO)؛ والتقييم والمحادثة والتصدير والتنزيل والمعلومات",
+        ["Fine-tune language models (LoRA, LoRA on a frozen int4 or int8 base, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info"] =
+            "الضبط الدقيق لنماذج اللغة (LoRA و LoRA على أساس مجمد int4 أو int8 و DoRA و DPO/ORPO/SimPO)؛ والتقييم والمحادثة والتصدير والتنزيل والمعلومات",
         ["Write a commented tune.json (model, data, adapter and training settings) for idrak tune --config"] =
             "كتابة ملف tune.json بتعليقات (النموذج والبيانات والمحول وإعدادات التدريب) للأمر idrak tune --config",
         ["Versions of the tool, the libraries, the .NET runtime and the device drivers"] = "إصدارات الأداة والمكتبات وبيئة .NET ومشغلات الأجهزة",

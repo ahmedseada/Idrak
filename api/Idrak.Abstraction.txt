@@ -6551,6 +6551,7 @@ public static class Idrak.Abstraction.Training.LearningRateSchedules
 public abstract class Idrak.Abstraction.Training.Optimizer : Idrak.Abstraction.Training.IOptimizer, System.IDisposable
   protected Optimizer(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> parameters, float learningRate)
   protected bool GradientsZeroed { get; set; }
+  protected static (float, float) AdamCorrection(float learningRate, float beta1, float beta2, float epsilon, int step)
   protected static Idrak.Abstraction.Tensor CreateState(Idrak.Abstraction.Tensor parameter)
   protected static Idrak.Abstraction.Tensor CreateState(System.ReadOnlySpan<int> shape, Idrak.Abstraction.Device device)
   protected static Idrak.Abstraction.Tensor? LoadStateTensor(System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Abstraction.Training.OptimizerStateValue> state, string name, Idrak.Abstraction.Tensor? target, System.Func<Idrak.Abstraction.Tensor> create)

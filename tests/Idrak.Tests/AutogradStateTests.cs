@@ -15,6 +15,7 @@ internal abstract partial class DesktopTests : Tests
     private static readonly (string Name, Action<Device> Run)[] AutogradStateGroup =
     [
         ("autograd: a second Backward through a result an earlier pass freed throws naming it (its gradient is never dropped silently); Backward(retainGraph: true) keeps the graph and both passes add up", AutogradSecondPass),
+        ("optimizer: Adam and AdamW take PyTorch's update, lr·m̂/(√v̂ + ε) with the bias-corrected moments (not ε added to the raw √v), through Step and the fused ClipAndStep, within 1e-5 of a double-precision reference where the two forms differ by far more", AdamMatchesPyTorch),
         ("optimizer state: the step count is saved as an exact integer past 2^24 (the low 24 bits and the rest), an earlier one-float state still loads, and a step that is not a whole number is refused naming it", d => { CpuOnly(d); OptimizerStepState(); }),
         ("tuning cache: 0, false, off and no turn tuning and its caches off for every backend; a save waits for another process's lock and keeps both processes' choices; threads saving the CPU's tuning file at once keep every line", d => { CpuOnly(d); TuningCacheSettings(); }),
     ];
@@ -65,6 +66,76 @@ internal abstract partial class DesktopTests : Tests
         }
 
         Check(again, "a pass after the last one that kept the graph throws again");
+    }
+
+    // PyTorch's Adam (torch.optim.Adam / AdamW, single-tensor), in double: the reference the update must equal.
+    private static double[] TorchAdam(double[] start, double[][] gradients, double lr, double beta1, double beta2, double eps, double weightDecay, bool decoupled, bool torchEpsilon)
+    {
+        var p = (double[])start.Clone();
+        var m = new double[p.Length];
+        var v = new double[p.Length];
+        for (int t = 1; t <= gradients.Length; t++)
+        {
+            double bias1 = 1 - Math.Pow(beta1, t), bias2 = 1 - Math.Pow(beta2, t);
+            for (int i = 0; i < p.Length; i++)
+            {
+                double g = gradients[t - 1][i];
+                if (decoupled)
+                {
+                    p[i] *= 1 - lr * weightDecay;
+                }
+                else
+                {
+                    g += weightDecay * p[i];
+                }
+
+                m[i] = beta1 * m[i] + (1 - beta1) * g;
+                v[i] = beta2 * v[i] + (1 - beta2) * g * g;
+                p[i] -= torchEpsilon
+                    ? lr * (m[i] / bias1) / (Math.Sqrt(v[i] / bias2) + eps)                         // torch: eps added to sqrt(v̂)
+                    : lr * Math.Sqrt(bias2) / bias1 * m[i] / (Math.Sqrt(v[i]) + eps);             // the earlier form: eps added to sqrt(v)
+            }
+        }
+
+        return p;
+    }
+
+    private static void AdamMatchesPyTorch(Device device)
+    {
+        double[] start = [0.5, -1.0, 2.0, 1e-3];
+        double[][] gradients = [[1e-3, -2e-3, 5e-4, 1e-3], [2e-3, -1e-3, 1e-3, -5e-4], [-1e-3, 3e-3, 2e-3, 1e-3]];      // near ε: the forms differ
+        const float Lr = 1e-2f, Beta1 = 0.9f, Beta2 = 0.999f, Eps = 1e-3f, Decay = 0.1f;
+        foreach (bool decoupled in new[] { false, true })
+        {
+            double[] torch = TorchAdam(start, gradients, Lr, Beta1, Beta2, Eps, decoupled ? Decay : 0, decoupled, torchEpsilon: true);
+            double[] earlier = TorchAdam(start, gradients, Lr, Beta1, Beta2, Eps, decoupled ? Decay : 0, decoupled, torchEpsilon: false);
+            double apart = torch.Zip(earlier).Max(x => Math.Abs(x.First - x.Second));
+            Check(apart > 1e-4, $"the reference tells the two forms apart ({apart:G3})");
+            foreach (bool fused in new[] { false, true })
+            {
+                var p = Tensor.From([.. start.Select(x => (float)x)], [start.Length], device, requiresGrad: true);
+                using Optimizer optimizer = decoupled ? new AdamW([p], Lr, Beta1, Beta2, Eps, Decay) : new Adam([p], Lr, Beta1, Beta2, Eps);
+                foreach (var g in gradients)
+                {
+                    optimizer.ZeroGrad();
+                    using var weights = Tensor.From([.. g.Select(x => (float)x)], [g.Length], device);
+                    (p * weights).Sum().Backward();                                    // dp = g
+                    if (fused)
+                    {
+                        optimizer.ClipAndStep(1e6f);                                   // a norm no gradient reaches: the fused pass, no clipping
+                    }
+                    else
+                    {
+                        optimizer.Step();
+                    }
+                }
+
+                float[] got = p.ToArray();
+                double gap = got.Zip(torch).Max(x => Math.Abs(x.First - x.Second));
+                Check(gap <= 1e-5, $"{(decoupled ? "AdamW" : "Adam")}, {(fused ? "ClipAndStep" : "Step")}: within 1e-5 of PyTorch's update ({gap:G3}; the earlier form is {apart:G3} away): "
+                    + $"[{string.Join(", ", got)}] vs [{string.Join(", ", torch.Select(x => x.ToString("G7", System.Globalization.CultureInfo.InvariantCulture)))}]");
+            }
+        }
     }
 
     private static void OptimizerStepState()
