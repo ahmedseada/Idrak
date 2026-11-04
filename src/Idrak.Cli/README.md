@@ -366,7 +366,7 @@ Fine-tuning language models (`tune`) and training networks from the builder's JS
 
 | Command | What it does |
 |---|---|
-| `idrak tune` | Fine-tune language models (LoRA, LoRA on a frozen int4 or int8 base, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info |
+| `idrak tune` | Fine-tune language models (LoRA, QLoRA, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info |
 | `idrak tune init` | Write a commented tune.json (model, data, adapter and training settings) for idrak tune --config |
 | `idrak reinforce` | Reinforcement learning of a language model's adapters in an environment (`prompts`, `coding`, a plug-in's): GRPO, PPO, REINFORCE, a teacher term beside the reward, or on-policy distillation alone; in an environment of numbers (`bandit`, `cartpole`, `pendulum`, `mountain-car`) a small policy with no model: PPO, REINFORCE, GRPO or DQN; `--list` names every registered environment, reward, algorithm, estimator, sandbox and divergence |
 | `idrak train` | Train a builder JSON network, or fine-tune an image model, on a CSV, image folders or annotated images |

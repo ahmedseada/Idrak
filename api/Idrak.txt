@@ -1564,6 +1564,7 @@ public sealed record Idrak.Models.Abstractions.DecoderBuildOptions : System.IEqu
   public bool BFloat16 { get; init; }
   public bool Int4 { get; init; }
   public bool Int8 { get; init; }
+  public bool LazyLayers { get; init; }
   public float? InitStd { get; init; }
   public int Seed { get; init; }
   public int? DeviceLayers { get; init; }
@@ -1759,6 +1760,7 @@ public interface Idrak.Models.Abstractions.IVisionFamily
   public string Name { get; }
 
 public interface Idrak.Models.Abstractions.IWeightPlacement : Idrak.Abstraction.IKind
+  public (default) int Adjust(Idrak.Models.Abstractions.WeightPlacementRequest request, int current)
   public Idrak.Models.Abstractions.WeightPlan Place(Idrak.Models.Abstractions.WeightPlacementRequest request)
 
 public interface Idrak.Models.Abstractions.IWeightSource
@@ -2063,15 +2065,20 @@ public static class Idrak.Models.Abstractions.WeightPlacements
   public const string Auto = "auto"
   public const string DeviceLayersVariable = "IDRAK_DEVICE_LAYERS"
   public const string EnvironmentVariable = "IDRAK_WEIGHT_PLACEMENT"
+  public const string GrowVariable = "IDRAK_WEIGHT_GROW"
+  public const string LazyVariable = "IDRAK_LAZY_LOAD"
   public const string Split = "split"
   public const string Stream = "stream"
   public static Idrak.Models.Abstractions.IWeightPlacement Get(string name)
   public static Idrak.Models.Abstractions.IWeightPlacement? Default(string name)
   public static Idrak.Models.Abstractions.IWeightPlacement? Find(string name)
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool DefaultGrow { get; }
+  public static bool DefaultLazy { get; }
   public static bool Unregister(string name)
   public static double MeasureBus(Idrak.Abstraction.Device device, long probeBytes)
   public static double MeasureCpu(long probeBytes)
+  public static int Follow(Idrak.Models.Abstractions.WeightPlacementRequest request, int current)
   public static int? DefaultDeviceLayers { get; }
   public static int? ParseDeviceLayers(string? value, string where)
   public static string DefaultName { get; }
@@ -2305,8 +2312,10 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public int AddAdapters(int rank, float alpha, System.Collections.Generic.IEnumerable<string>? targets, int seed = 0, bool dora = false)
   public int KeepTrainedParts(System.Collections.Generic.IEnumerable<(string, int[], float[])> tensors)
   public int KeepTrainedVision(Idrak.Abstraction.Generation.IVisionEncoder encoder, System.Collections.Generic.IEnumerable<string> parts)
+  public int LayersBuilt { get; }
   public int LoadAdapter(string folder)
   public int MaxPositions { get; }
+  public int? DeviceLayersNow { get; }
   public long? BytesRead { get; }
   public static Idrak.Models.PretrainedModel Create(string folder, Idrak.Abstraction.Generation.DecoderSpec spec, string architecture, Idrak.Models.ModelFiles files, Idrak.Models.CreateOptions? options = null)
   public static Idrak.Models.PretrainedModel Load(string folder, Idrak.Models.PretrainedOptions? options = null)
@@ -2330,6 +2339,8 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public bool Deferred { get; init; }
   public bool Int4 { get; init; }
   public bool Int8 { get; init; }
+  public bool? FollowMemory { get; init; }
+  public bool? LazyLayers { get; init; }
   public bool? PackedCache { get; init; }
   public double AutoWeightsHeadroom { get; init; }
   public double SuggestionHeadroom { get; init; }

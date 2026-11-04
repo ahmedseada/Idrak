@@ -126,6 +126,8 @@ internal static class EnvironmentVariables
         new("IDRAK_WINDOW_KERNELS", Devices, "on", "0 or false: sliding-window and soft-capped attention through basic operations over the whole cache instead of the attention kernels (to compare or isolate them)", OnDevice),
         new("IDRAK_WEIGHT_PLACEMENT", Devices, "auto (stream while IDRAK_OFFLOAD=1)", "Where a decoder's layers go on a GPU (WeightPlacements): device (all there; a model that does not fit fails), split (the first layers there as its free memory allows, the rest computed by the CPU from system memory), stream (all there, what does not fit staged from system memory each pass) or auto (the device when it fits, else split or stream by the bus and the CPU measured at load)", OnDevice),
         new("IDRAK_DEVICE_LAYERS", Devices, "auto", "The decoder layers a split keeps on the GPU: a count, or auto (as its measured free memory allows); --device-layers on run, serve, ui and tune wins", OnDevice),
+        new("IDRAK_WEIGHT_GROW", Devices, "on", "0, false, off or no: a split or auto placement keeps its layers where the load put them instead of moving them between the GPU and the CPU at step boundaries as the GPU's free memory changes", OnDevice),
+        new("IDRAK_LAZY_LOAD", Devices, "off", "1, true, on or yes: each decoder layer is read and built on its first use, so a model of any size starts at once (the checkpoint stays open while the model is loaded)", OnDevice),
         new("IDRAK_MOE_ROUTING", Devices, "device where it can", "host: mixture-of-experts blocks read their routing back to the host and run each expert on its rows, as on a device without the routing kernels, instead of routing where the tensors are (MixtureOfExperts.RoutesOnDevice; the same results, to compare or isolate them)", OnDevice),
         new("IDRAK_POWER_SOURCE", Devices, "as the system reports", "ac or battery: the power source tuning choices are measured and kept under", OnDevice),
 
@@ -535,12 +537,35 @@ internal static class EnvironmentVariables
             int width = variables.Count == 0 ? 0 : variables.Max(v => v.Name.Length);
             foreach (var v in variables)
             {
-                text.Append("  ").Append(v.Name.PadRight(width)).Append("  ").Append(v.Meaning).Append('\n');
+                Row(text, v.Name.PadRight(width), v.Meaning);
             }
         }
 
         Names(text, Messages.T("Every command"), All.Where(v => v.Commands.Contains(Every)).Select(v => v.Name));
         return text.ToString();
+    }
+
+    // "  NAME  meaning" wrapped at the help's width (118, as Names), continuation lines indented under the meaning.
+    private static void Row(StringBuilder text, string name, string meaning)
+    {
+        const int Width = 118;
+        string indent = new(' ', name.Length + 4);
+        var line = new StringBuilder("  ").Append(name).Append("  ");
+        int start = line.Length;
+        foreach (string word in meaning.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (line.Length > start && line.Length + 1 + word.Length > Width)
+            {
+                text.Append(line).Append('\n');
+                line.Clear().Append(indent).Append(word);
+                start = line.Length - word.Length;
+                continue;
+            }
+
+            line.Append(line.Length > start ? " " : "").Append(word);
+        }
+
+        text.Append(line).Append('\n');
     }
 
     // "  Label: A, B, C" wrapped at the help's width, continuation lines indented under the first name.

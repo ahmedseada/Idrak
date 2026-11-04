@@ -32,8 +32,40 @@ internal static class Offloading
         public void MarkFrozen(Module model) => Offloading.MarkFrozen(model);
     }
 
-    // Module.Forward's hook: a scope only when the layer was entered (boxed then; nothing is allocated otherwise).
-    private static IDisposable? EnterForward(Module module, Tensor input) => Enter(module, input) is { Entered: true } scope ? scope : null;
+    // Module.Forward's hook: a scope only when the layer was entered, from this thread's pool (no allocation per layer once
+    // warm); nothing otherwise.
+    private static IDisposable? EnterForward(Module module, Tensor input) => Enter(module, input) is { Entered: true } scope ? ForwardScope.Of(scope) : null;
+
+    // A layer's scope as Module.Forward disposes it: pooled per thread, each given back when its forward ends.
+    private sealed class ForwardScope : IDisposable
+    {
+        [ThreadStatic]
+        private static Stack<ForwardScope>? t_pool;
+
+        private LayerScope _scope;
+        private bool _open;
+
+        public static ForwardScope Of(LayerScope scope)
+        {
+            var pool = t_pool ??= new Stack<ForwardScope>();
+            var taken = pool.Count > 0 ? pool.Pop() : new ForwardScope();
+            (taken._scope, taken._open) = (scope, true);
+            return taken;
+        }
+
+        public void Dispose()
+        {
+            if (!_open)
+            {
+                return;
+            }
+
+            var scope = _scope;
+            (_scope, _open) = (default, false);
+            scope.Dispose();
+            (t_pool ??= new Stack<ForwardScope>()).Push(this);
+        }
+    }
 
     // The layer whose forward runs on this thread (tagged on the autograd nodes it records, for the backward pass), and
     // the layer staged before it (to learn which layer follows which).
@@ -90,7 +122,13 @@ internal static class Offloading
     /// </summary>
     public static LayerScope Enter(Module module, Tensor input)
     {
-        if (input.Device.Backend.Offload is not { } offload || !Active(offload) || module.Children().Any())
+        if (input.Device.Backend.Offload is not { } offload || !Active(offload))
+        {
+            return default;
+        }
+
+        var weights = WeightsOf(module, mark: true);
+        if (!weights.Leaf)
         {
             return default;
         }
@@ -101,7 +139,7 @@ internal static class Offloading
             return default;
         }
 
-        return Enter(module, ReadOnlyStorages(module, mark: true), offload);
+        return Enter(module, weights.Storages, offload);
     }
 
     // Staging off (--bench-offload): the layer's offloaded weights are read over the bus as it computes (W0's telemetry).
@@ -113,7 +151,7 @@ internal static class Offloading
         }
 
         long bytes = 0;
-        foreach (var storage in ReadOnlyStorages(module, mark: false))
+        foreach (var storage in WeightsOf(module, mark: false).Storages)
         {
             if (offload.IsOffloaded(storage))
             {
@@ -163,21 +201,22 @@ internal static class Offloading
         }
 
         var group = GroupOf(layers);
-        return Enter(group, ReadOnlyStorages(group, mark: true), offload);
+        return Enter(group, WeightsOf(group, mark: true).Storages, offload);
     }
 
-    private static LayerScope Enter(object layer, List<Storage> storages, IMemoryOffload offload)
+    private static LayerScope Enter(object layer, Storage[] storages, IMemoryOffload offload)
     {
-        if (storages.Count == 0)
+        if (storages.Length == 0)
         {
             return default;                                                // no weights (activations, dropout): not a step in the order
         }
 
         var previous = TensorOffloading.CurrentLayer;
         TensorOffloading.CurrentLayer = layer;
-        if (t_previous is { } before && !ReferenceEquals(before, layer))
+        if (t_previous is { } before && !ReferenceEquals(before, layer)
+            && (!NextLayer.TryGetValue(before, out var known) || !ReferenceEquals(known, layer)))
         {
-            NextLayer.AddOrUpdate(before, layer);
+            NextLayer.AddOrUpdate(before, layer);                          // only when the order changed: nothing a pass once warm
         }
 
         t_previous = layer;
@@ -197,7 +236,7 @@ internal static class Offloading
 
         if (NextLayer.TryGetValue(layer, out var next))
         {
-            offload.Prefetch(ReadOnlyStorages(next, mark: false));
+            offload.Prefetch(WeightsOf(next, mark: false).Storages);
         }
 
         return new LayerScope(token, previous, entered: true);
@@ -254,24 +293,24 @@ internal static class Offloading
     // linear layer's int8 / int4 / bfloat16 weights, as the layer says (IOffloadableLayer; else its parameters). Embedding
     // tables are left out: a lookup reads only the rows it needs, which system memory serves without copying the whole
     // table. With `mark`, frozen ones are marked cold.
-    private static List<Storage> ReadOnlyStorages(object layer, bool mark)
+    private static List<(Tensor Tensor, Storage Storage)> ReadOnlyTensors(object layer, bool mark)
     {
-        var storages = new List<Storage>();
+        var tensors = new List<(Tensor, Storage)>();
         if (layer is LayerGroup group)
         {
             foreach (var member in group.Layers)
             {
-                storages.AddRange(ReadOnlyStorages(member, mark));
+                tensors.AddRange(ReadOnlyTensors(member, mark));
             }
 
-            return storages;
+            return tensors;
         }
 
         var module = (Module)layer;
         var offloadable = module as IOffloadableLayer;
         foreach (var p in offloadable?.StagedParameters() ?? module.Parameters())
         {
-            storages.Add(p.Storage);
+            tensors.Add((p, p.Storage));
             if (mark && !p.RequiresGrad)
             {
                 MarkCold(p.Storage, OffloadPriority.Frozen);
@@ -280,14 +319,57 @@ internal static class Offloading
 
         foreach (var b in offloadable?.StagedBuffers() ?? [])
         {
-            storages.Add(b.Storage);
+            tensors.Add((b, b.Storage));
             if (mark)
             {
                 MarkCold(b.Storage, OffloadPriority.Frozen);
             }
         }
 
-        return storages;
+        return tensors;
+    }
+
+    // A layer's read-only tensors and their storages, found once (rule 75: no list a layer and token once warm) and checked
+    // on each use: every tensor alive with the same storage, else found again (a weight replaced: quantized, merged, moved).
+    // Leaf: the layer has no sub-layers (only those stage their own weights); a group's members are leaves.
+    private sealed class LayerWeights(Tensor[] tensors, Storage[] storages, bool leaf, bool marked)
+    {
+        public readonly Tensor[] Tensors = tensors;
+        public readonly Storage[] Storages = storages;
+        public readonly bool Leaf = leaf;
+
+        // Whether its frozen weights were marked cold when found (a layer first met as the next one, to prefetch, is not).
+        public readonly bool Marked = marked;
+
+        public bool Current()
+        {
+            for (int i = 0; i < Tensors.Length; i++)
+            {
+                if (Tensors[i].IsDisposed || !ReferenceEquals(Tensors[i].Storage, Storages[i]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    }
+
+    private static readonly ConditionalWeakTable<object, LayerWeights> Weights = new();
+
+    // The layer's read-only storages (cached, see LayerWeights); with `mark`, frozen ones are marked cold when found.
+    private static LayerWeights WeightsOf(object layer, bool mark)
+    {
+        if (Weights.TryGetValue(layer, out var known) && (known.Marked || !mark) && known.Current())
+        {
+            return known;
+        }
+
+        bool leaf = layer is LayerGroup || !((Module)layer).Children().Any();
+        var found = leaf ? ReadOnlyTensors(layer, mark) : new List<(Tensor Tensor, Storage Storage)>();
+        known = new LayerWeights([.. found.Select(t => t.Tensor)], [.. found.Select(t => t.Storage)], leaf, mark || !leaf);
+        Weights.AddOrUpdate(layer, known);
+        return known;
     }
 
     // Marks the frozen weights of every layer of `root` cold, as staging a layer does when it first computes (before any
@@ -298,7 +380,7 @@ internal static class Offloading
         {
             if (module is IOffloadableLayer || !module.Children().Any())
             {
-                ReadOnlyStorages(module, mark: true);
+                ReadOnlyTensors(module, mark: true);
             }
         }
     }
@@ -371,12 +453,12 @@ internal static class Offloading
             }
 
             _token?.Dispose();
-            _token = offload.Stage(ReadOnlyStorages(groups[_group].Layer, mark: false));
+            _token = offload.Stage(WeightsOf(groups[_group].Layer, mark: false).Storages);
             for (int g = _group + 1; g < groups.Count; g++)
             {
                 if (!ReferenceEquals(groups[g].Layer, groups[_group].Layer))
                 {
-                    offload.Prefetch(ReadOnlyStorages(groups[g].Layer, mark: false));
+                    offload.Prefetch(WeightsOf(groups[g].Layer, mark: false).Storages);
                     break;
                 }
             }

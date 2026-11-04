@@ -181,6 +181,17 @@ public sealed record DecoderBuildOptions
     public Device? HostDevice { get; init; }
 
     /// <summary>
+    /// Build each decoder layer on its first use (plan 37, W2): until then it holds no memory and its weights are not read,
+    /// so the build's time does not grow with the layers. Needs weights to read from, which must stay readable until every
+    /// layer is built. False (the default): every layer built now.
+    /// </summary>
+    public bool LazyLayers { get; init; }
+
+    // The placement the layers follow the memory with at step boundaries, with its request at load (PretrainedModel.Load
+    // sets it when the placement may move layers), or null: they stay where they are built.
+    internal (IWeightPlacement Placement, WeightPlacementRequest Request)? FollowMemory { get; init; }
+
+    /// <summary>
     /// Store every Linear layer (attention, feed-forward and output head) as int8: each weight is quantized on the host as
     /// it is read, so a large model never exists as float32 on the device.
     /// </summary>

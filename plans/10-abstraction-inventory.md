@@ -250,7 +250,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.IOptionSchema` | interface | public | — | CSharpRewards.BuildReward, CSharpRewards.TestsReward, ClassicControlPlugin.ClassicKind, ClippedRatioLoss, CodingRewards.RoundsReward, CodingRewards.TestsPassedReward, +18 |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.IRecordable` | interface | public | — | BFloat16Weight, Float16Weight, Int4Weight, Int8Weight, KeyValueLayouts.BFloat16Layout, KeyValueLayouts.Float32Layout, +1 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.ITiedWeights` | interface | public | Module | Linear |  | Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +75 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Module` | abstract class | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +76 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Modules.IAdaptableLinear` | interface | public | Device | Linear |  | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Modules.IAttentionCacheInfo` | interface | public | Backend | CausalSelfAttention, MultiHeadAttention |  | Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Modules.ICheckpointable` | interface | public | — | DecoderBlock |  | Idrak, Text | Abstraction |
@@ -259,7 +259,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Modules.IPackableLinear` | interface | public | — | Linear |  | Audio.Plugins, Idrak, Text | Abstraction |
 | `Idrak.Abstraction.Modules.IPeftAdapter` | interface | public | Tensor | DoraAdapter, LoraAdapter |  | Idrak | Abstraction |
 | `Idrak.Abstraction.Modules.IPositionLimit` | interface | public | — | CausalSelfAttention, PositionEmbedding |  | Idrak, Text | Abstraction |
-| `Idrak.Abstraction.Modules.ITensorOwner` | interface | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +75 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.Modules.ITensorOwner` | interface | public | Device, Tensor | AdaptiveAvgPool2d, AdaptiveMaxPool2d, AvgPool2d, BatchNorm, BucketedPositionBias, CausalSelfAttention, +76 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Operations.Kernels` | registry | public | Backend |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Operations.PluginOperations` | registry | public | — |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.OptionSpec` | abstract class | public | — | OptionSpec<T> |  | Abstraction, Audio, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
@@ -320,7 +320,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Datasets.Abstractions.IShardableBatchSource` | interface | public | Device | DataLoader |  | Idrak | Idrak |
 | `Idrak.Datasets.Abstractions.IStepShares` | interface | public | — | DataLoader |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.GraphOps` | registry | public | — |  | abs, add, cast, clip, concat, div, elu, exp, +28 | Idrak | Idrak |
-| `Idrak.Layers.Abstractions.ICachedModule` | interface | public | Tensor | CausalSelfAttention, CrossAttention, DecoderBlock, MultiHeadAttention, PipelineBoundary, PositionEmbedding, +3 |  | Idrak | Idrak |
+| `Idrak.Layers.Abstractions.ICachedModule` | interface | public | Tensor | CausalSelfAttention, CrossAttention, DecoderBlock, LazyLayer, MultiHeadAttention, PipelineBoundary, +4 |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.IDecoderBlock` | interface | public | — | DecoderBlock |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.IFusedRecurrentCell` | interface | public | Tensor | GRU.GruCell, LSTM.LstmCell |  | Idrak | Idrak |
 | `Idrak.Layers.Abstractions.IGraphOp` | interface | public | Tensor | GraphOps.FunctionOp, GraphOps.GuardedOp |  | Idrak | Idrak |

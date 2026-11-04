@@ -40,6 +40,19 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
     /// <summary>Appends a layer.</summary>
     public void Add(Module module) => _modules.Add(module ?? throw new ArgumentNullException(nameof(module)));
 
+    // Puts `module` where `stand` stands (a lazy layer replaced by the layer it built, DecoderLayers); false when it is not here.
+    internal bool Replace(Module stand, Module module)
+    {
+        int index = _modules.IndexOf(stand);
+        if (index < 0)
+        {
+            return false;
+        }
+
+        _modules[index] = module;
+        return true;
+    }
+
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input) => Run(input, _modules.Count);
 

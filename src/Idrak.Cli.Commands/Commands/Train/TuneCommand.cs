@@ -29,7 +29,7 @@ internal sealed class TuneCommand : Command
 
     public override string Name => "tune";
 
-    public override string Summary => "Fine-tune language models (LoRA, LoRA on a frozen int4 or int8 base, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info";
+    public override string Summary => "Fine-tune language models (LoRA, QLoRA, DoRA, DPO/ORPO/SimPO); evaluate, chat, export, download, info";
 
     public override string Usage => "COMMAND MODEL [DATA...] [options]\n\n"
         + TuneTool.Usage + "\n" + """

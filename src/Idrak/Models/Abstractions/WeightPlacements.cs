@@ -76,6 +76,14 @@ public interface IWeightPlacement : IKind
     /// <summary>The plan for <paramref name="request"/>.</summary>
     /// <exception cref="NotSupportedException">The placement cannot run on the request's device (stream without offload support).</exception>
     WeightPlan Place(WeightPlacementRequest request);
+
+    /// <summary>
+    /// At a step boundary of a run (plan 37, W2): the layers to keep on the device now, given <paramref name="current"/> of
+    /// them there and <paramref name="request"/> measured now (<see cref="WeightPlacementRequest.AvailableBytes"/>: the
+    /// device's free memory now; the layer and cache sizes as held). The first layers stay the device's: more of them when
+    /// memory freed, fewer under pressure. By default the layers stay where they are.
+    /// </summary>
+    int Adjust(WeightPlacementRequest request, int current) => current;
 }
 
 /// <summary>
@@ -131,6 +139,21 @@ public static class WeightPlacements
     /// <summary>The layers <see cref="DeviceLayersVariable"/> puts on the device, or null when it is not set or "auto".</summary>
     /// <exception cref="ArgumentException">Neither a count of 0 or more nor "auto".</exception>
     public static int? DefaultDeviceLayers => ParseDeviceLayers(Environment.GetEnvironmentVariable(DeviceLayersVariable), DeviceLayersVariable);
+
+    /// <summary>The variable that turns off layers following the memory during a run when "0", "false", "off" or "no": "IDRAK_WEIGHT_GROW".</summary>
+    public const string GrowVariable = "IDRAK_WEIGHT_GROW";
+
+    /// <summary>The variable that builds each layer on its first use when "1", "true", "on" or "yes": "IDRAK_LAZY_LOAD".</summary>
+    public const string LazyVariable = "IDRAK_LAZY_LOAD";
+
+    /// <summary>
+    /// Whether a split or auto placement moves layers between the device and the CPU at a run's step boundaries as the
+    /// measured free memory changes (<see cref="IWeightPlacement.Adjust"/>): on unless <see cref="GrowVariable"/> turns it off.
+    /// </summary>
+    public static bool DefaultGrow => Environment.GetEnvironmentVariable(GrowVariable)?.Trim().ToLowerInvariant() is not ("0" or "false" or "off" or "no");
+
+    /// <summary>Whether a load builds each decoder layer on its first use: off unless <see cref="LazyVariable"/> turns it on.</summary>
+    public static bool DefaultLazy => Environment.GetEnvironmentVariable(LazyVariable)?.Trim().ToLowerInvariant() is "1" or "true" or "on" or "yes";
 
     /// <summary>A device-layers setting: a count of 0 or more, or null for "auto" (or nothing given); <paramref name="where"/> names it in the error.</summary>
     /// <exception cref="ArgumentException">Neither a count of 0 or more nor "auto".</exception>
@@ -278,6 +301,30 @@ public static class WeightPlacements
             $"{layers} of {r.Layers} layers on {r.Device}, {r.Layers - layers} computed by the CPU from system memory ({sized}{(why is null ? "" : "; " + why)})");
     }
 
+    /// <summary>
+    /// The device layers a run follows the memory with (split and auto, <see cref="IWeightPlacement.Adjust"/>): as many
+    /// more as the free memory holds beside the working memory, each with its cache, when it holds at least one; under
+    /// pressure (less free than the working memory) as many fewer as give it back; else as they are. A count the user gave
+    /// stays.
+    /// </summary>
+    public static int Follow(WeightPlacementRequest request, int current)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.DeviceLayers is not null || request.AvailableBytes is not { } free)
+        {
+            return current;
+        }
+
+        long each = Math.Max(1, request.LayerBytes + request.LayerCacheBytes);
+        long room = free - request.WorkingBytes;
+        if (room < 0)
+        {
+            return Math.Max(0, current - (int)Math.Min(current, (-room + each - 1) / each));
+        }
+
+        return Math.Min(request.Layers, current + (int)Math.Min(request.Layers, room / each));
+    }
+
     private sealed class DevicePlacement : IWeightPlacement
     {
         public string Name => AllOnDevice;
@@ -295,6 +342,8 @@ public static class WeightPlacements
         public string Summary => "the first layers on the device as its free memory allows (or IDRAK_DEVICE_LAYERS), the rest computed by the CPU from system memory";
 
         public WeightPlan Place(WeightPlacementRequest request) => SplitPlan(request, Name);
+
+        public int Adjust(WeightPlacementRequest request, int current) => Follow(request, current);
     }
 
     private sealed class StreamPlacement : IWeightPlacement
@@ -316,6 +365,8 @@ public static class WeightPlacements
         public string Name => Auto;
 
         public string Summary => "the device when the model fits; else split or stream, whichever the bus and the CPU measured at load make faster";
+
+        public int Adjust(WeightPlacementRequest request, int current) => Follow(request, current);
 
         public WeightPlan Place(WeightPlacementRequest request)
         {

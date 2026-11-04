@@ -249,11 +249,32 @@ public static class DecoderBuilder
                 created.Add(new Dropout(spec.Dropout, new Random(random.Next())) { Name = "embed_drop" });
             }
 
-            for (int i = 0; i < spec.Layers; i++)
+            if (options.LazyLayers && weights is null)
             {
-                device = split && i >= deviceLayers ? hostDevice : mainDevice;
+                throw new ArgumentException("A lazy build (LazyLayers) reads each layer's weights on its first use: give the weights.", nameof(options));
+            }
+
+            // Layer i made on `on`; its attention norm made already (a lazy build makes the norms at once: the block before
+            // reads its successor's), else first, as before.
+            var norms = new Module?[spec.Layers];
+            DecoderBlock MakeBlock(int i, Device on)
+            {
+                var outer = device;
+                device = on;
+                try
+                {
+                    return MakeBlockOn(i);
+                }
+                finally
+                {
+                    device = outer;
+                }
+            }
+
+            DecoderBlock MakeBlockOn(int i)
+            {
                 string p = $"layers.{i}";
-                var attentionNorm = Normalization($"{p}.attn_norm", spec.Dim);
+                var attentionNorm = norms[i] ?? Normalization($"{p}.attn_norm", spec.Dim);
                 var attention = new CausalSelfAttention(
                     Projection($"{p}.attn.q", spec.Dim, spec.Heads * spec.HeadDim, spec.QkvBias),
                     Projection($"{p}.attn.k", spec.Dim, spec.KvHeads * spec.HeadDim, spec.QkvBias),
@@ -285,10 +306,30 @@ public static class DecoderBuilder
                         spec.SharedExpertFfDim > 0 ? Dense($"{p}.mlp.shared", spec.SharedExpertFfDim) : null,
                         spec.SharedExpertFfDim > 0 ? Float($"{p}.mlp.shared_gate", 1) : null)
                     : Dense($"{p}.mlp", spec.FfDim);
-                created.Add(new DecoderBlock(attentionNorm, attention, feedForwardNorm, feedForward,
+                return new DecoderBlock(attentionNorm, attention, feedForwardNorm, feedForward,
                     spec.PostNorms ? Normalization($"{p}.post_attn_norm", spec.Dim) : null,
                     spec.PostNorms ? Normalization($"{p}.post_mlp_norm", spec.Dim) : null,
-                    spec.Dropout > 0f ? new Dropout(spec.Dropout, new Random(random.Next())) : null) { Name = p, PlacedOn = split && i >= deviceLayers ? hostDevice : null });
+                    spec.Dropout > 0f ? new Dropout(spec.Dropout, new Random(random.Next())) : null) { Name = p };
+            }
+
+            Device Target(int i) => split && i >= deviceLayers ? hostDevice : mainDevice;
+            var slots = new Module[spec.Layers];
+            for (int i = 0; i < spec.Layers; i++)
+            {
+                if (options.LazyLayers)
+                {
+                    var outer = device;
+                    device = Target(i);
+                    norms[i] = Normalization($"layers.{i}.attn_norm", spec.Dim);
+                    device = outer;
+                    slots[i] = new LazyLayer(i) { Name = $"layers.{i}" };
+                }
+                else
+                {
+                    slots[i] = MakeBlock(i, Target(i));
+                }
+
+                created.Add(slots[i]);
             }
 
             device = mainDevice;                                         // the final norm and the head: on the device
@@ -302,20 +343,34 @@ public static class DecoderBuilder
             head.Name = "head";
             head.OutputSoftcap = spec.LogitSoftcap;
             created.Add(head);
-            var blocks = created.OfType<DecoderBlock>().ToList();
-            for (int i = 0; i < blocks.Count; i++)
+            // Where each layer computes, the norms computed ahead with a block, a split's crossings (DecoderLayers.Relink); the
+            // layers' manager stays with them when they are split, built lazily or follow the memory.
+            var layers = new DecoderLayers(slots, norms, norm, mainDevice, split ? hostDevice : mainDevice, split ? deviceLayers : spec.Layers,
+                options.LazyLayers ? (i, on) => MakeBlock(i, on) : null)
             {
-                // A norm on another device is not computed ahead with the block (its gain lives there).
-                bool sameDevice = !split || (i + 1 < blocks.Count ? (i + 1 >= deviceLayers) == (i >= deviceLayers) : i < deviceLayers);
-                blocks[i].NextNorm = sameDevice ? (i + 1 < blocks.Count ? blocks[i + 1].AttentionNorm : norm) as RMSNorm : null;
+                Follows = options.FollowMemory is { } follows && hostDevice != mainDevice ? follows : null,
+            };
+            if (layers.Follows is not null && !split)
+            {
+                // Following the memory from every layer on the device: the host is where the layers it gives back go.
+                layers = new DecoderLayers(slots, norms, norm, mainDevice, hostDevice, spec.Layers, options.LazyLayers ? (i, on) => MakeBlock(i, on) : null)
+                {
+                    Follows = options.FollowMemory,
+                };
             }
 
-            if (split)
+            layers.Relink();
+            bool managed = split || options.LazyLayers || layers.Follows is not null;
+            if (!managed)
             {
-                blocks[^1].OutputTo = mainDevice;                       // back to the device for the final norm and the head
+                foreach (var block in slots.OfType<DecoderBlock>())
+                {
+                    block.Layers = null;                                  // nothing moves or builds later
+                }
             }
 
             var model = new Sequential(created) { Name = "decoder" };
+            layers.Model = model;
             spec.Describe(model);
             return model;
         }

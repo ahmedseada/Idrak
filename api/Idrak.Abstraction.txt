@@ -2135,6 +2135,7 @@ public static class Idrak.Abstraction.Devices.OffloadTraffic
   public static void CountBoundary(long bytes)
   public static void CountLayer(string layer, bool staged, bool mapped)
   public static void CountMapped(long bytes)
+  public static void CountMoved(long bytes)
   public static void CountPrefetched(long bytes)
   public static void CountStaged(long bytes)
 
@@ -2148,8 +2149,10 @@ public sealed record Idrak.Abstraction.Devices.OffloadTrafficCounts : System.IEq
   public long BoundaryCrossings { get; init; }
   public long BusBytes { get; }
   public long LayersMapped { get; init; }
+  public long LayersMoved { get; init; }
   public long LayersStaged { get; init; }
   public long MappedBytes { get; init; }
+  public long MovedBytes { get; init; }
   public long PrefetchedBytes { get; init; }
   public long StagedBytes { get; init; }
   public string Describe(int tokens)
@@ -3500,7 +3503,8 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public Idrak.Abstraction.Generation.IKeyValueLayout Layout { get; }
   public Idrak.Abstraction.Generation.KeyValueCache CacheFor(object owner, int rows, int headDim)
   public Idrak.Abstraction.Generation.KeyValueCache CacheFor(object owner, int rows, int headDim, int window)
-  public Idrak.Abstraction.Generation.KeyValueCache? this[Idrak.Abstraction.Module? layer] { get; }
+  public Idrak.Abstraction.Generation.KeyValueCache? FindCache(Idrak.Abstraction.Module layer)
+  public Idrak.Abstraction.Generation.KeyValueCache? this[Idrak.Abstraction.Module layer] { get; }
   public Idrak.Abstraction.Generation.KeyValueFormat Format { get; }
   public Idrak.Abstraction.Tensor Position { get; }
   public Idrak.Abstraction.Tensor PositionOf(Idrak.Abstraction.Generation.KeyValueCache cache)
@@ -3521,6 +3525,7 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public bool Recordable { get; }
   public bool Reserve(int positions)
   public const string GrowVariable = "IDRAK_KV_GROW"
+  public event System.Action<Idrak.Abstraction.Generation.DecodingContext>? StepEnded
   public int Batch { get; }
   public int CacheGrowths { get; }
   public int CacheSlots { get; }
@@ -3532,6 +3537,7 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public int SlotsFor(int positions)
   public long CacheBytes { get; }
   public long MemoryBytes { get; }
+  public long MoveCache(Idrak.Abstraction.Module layer, Idrak.Abstraction.Device device)
   public static bool DefaultGrowCaches { get; set; }
   public static int DefaultGrowthStart { get; set; }
   public void BeginStep(int steps)

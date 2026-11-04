@@ -772,6 +772,16 @@ public sealed class CausalSelfAttention : Module, ICachedModule, IAttentionCache
             RopeTables.Release(Rope, HeadDim, MaxPositions, _cos.Device);
             (_cos, _sin) = RopeTables.Acquire(Rope, HeadDim, MaxPositions, device);
         }
+
+        // The masks and positions made on the old device are made again on the new one when needed.
+        foreach (var mask in _masks.Values)
+        {
+            mask.Dispose();
+        }
+
+        _masks.Clear();
+        _iota?.Dispose();
+        _iota = null;
     }
 
     /// <inheritdoc />
@@ -1081,7 +1091,14 @@ public sealed class DecoderBlock : Module, ICachedModule, IDecoderBlock
     protected override Tensor ForwardCore(Tensor input) => PlacedOn is null ? Run(input, null) : Placed(input, null);
 
     /// <inheritdoc />
-    public Tensor ForwardCached(Tensor input, DecodingContext context) => PlacedOn is null ? Run(input, context) : Placed(input, context);
+    public Tensor ForwardCached(Tensor input, DecodingContext context)
+    {
+        Layers?.Watch(context);                                          // a placement that follows the memory moves layers at its step boundaries
+        return PlacedOn is null ? Run(input, context) : Placed(input, context);
+    }
+
+    // The decoder's layers this block belongs to when they are placed, built lazily or moved (DecoderLayers), or null.
+    internal DecoderLayers? Layers { get; set; }
 
     // A block of a split model: the activation crosses to its device (and on to the next part's), counted as bus traffic
     // (OffloadTraffic); the cache is the context's counterpart on its device. Inference only: a crossing is a copy that

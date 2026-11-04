@@ -161,6 +161,34 @@ public sealed class KeyValueCache : IDisposable
         }
     }
 
+    // A copy of this cache on `device`, every slot and scale as it is (a layer moved to another device between steps).
+    internal KeyValueCache CopyTo(Device device)
+    {
+        var copy = new KeyValueCache(Keys.Shape[0], Capacity, HeadDim, device, Layout);
+        try
+        {
+            Copy(Keys, copy.Keys);
+            Copy(Values, copy.Values);
+            Copy(KeyScales, copy.KeyScales);
+            Copy(ValueScales, copy.ValueScales);
+        }
+        catch
+        {
+            copy.Dispose();
+            throw;
+        }
+
+        return copy;
+
+        static void Copy(Tensor? from, Tensor? to)
+        {
+            if (from is not null && to is not null)
+            {
+                to.Load(from.ToArray());
+            }
+        }
+    }
+
     // The window this cache slides with (DecodingContext.SlidingWindowSteps), or null for a cache of the context's capacity.
     internal SlidingWindow? Sliding { get; init; }
 
@@ -265,7 +293,11 @@ public sealed class DecodingContext : IDisposable
     /// </summary>
     /// <exception cref="InvalidOperationException">Asked after positions were decoded (the other device's caches would lack them).</exception>
     /// <exception cref="NotSupportedException">The context holds cross-attention memories, which are not mirrored.</exception>
-    public DecodingContext On(Device device)
+    public DecodingContext On(Device device) => On(device, join: false);
+
+    // On, and with `join` a counterpart made after positions were decoded (between steps), for a layer moved there with
+    // its cache (MoveCache).
+    internal DecodingContext On(Device device, bool join)
     {
         ArgumentNullException.ThrowIfNull(device);
         if (device == Device)
@@ -289,12 +321,27 @@ public sealed class DecodingContext : IDisposable
             throw new NotSupportedException($"Layers on {device} beside {Device}: a context holding cross-attention memories is not mirrored to another device.");
         }
 
-        if (Length > 0)
+        if (Length > 0 && !join)
         {
             throw new InvalidOperationException($"Layers on {device} joined a context that has decoded {Length} positions on {Device}: their caches would lack them. Reset the context first.");
         }
 
+        if (Length > 0 && _windows.Count > 0)
+        {
+            throw new NotSupportedException($"A layer moved to {device} after {Length} positions: sliding windows' caches (SlidingWindowSteps) are not moved between devices.");
+        }
+
         var mirror = new DecodingContext(device, Batch, Capacity, Layout) { SlidingWindowSteps = _slidingSteps, GrowCaches = _grow, GrowthStart = _growthStart };
+        if (Length > 0)
+        {
+            // Joined between steps after positions were decoded: the same position and cache size; the moved layers bring
+            // their caches (MoveCache).
+            mirror.Length = Length;
+            mirror.Position.FillInPlace(Length);
+            mirror._slots = _slots;
+            mirror._rotaryPasses.AddRange(_rotaryPasses);
+        }
+
         if (RowStarts is { } starts)
         {
             mirror.SetRowStarts(starts);
@@ -302,7 +349,14 @@ public sealed class DecodingContext : IDisposable
 
         if (_rotary is { } offsets)
         {
-            mirror.SetRotaryOffsets(offsets, 0);
+            if (Length == 0)
+            {
+                mirror.SetRotaryOffsets(offsets, 0);
+            }
+            else
+            {
+                mirror.ApplyRotary([.. offsets]);
+            }
         }
 
         if (InStep)
@@ -1104,6 +1158,8 @@ public sealed class DecodingContext : IDisposable
                 }
             }
         }
+
+        StepEnded?.Invoke(this);
     }
 
     /// <summary>
@@ -1241,6 +1297,100 @@ public sealed class DecodingContext : IDisposable
 
         Length = length;
         ForMirrors(m => m.Truncate(length));
+    }
+
+    /// <summary>
+    /// Raised after a step ended (<see cref="EndStep"/>; the counterparts on other devices ended theirs too): a step boundary,
+    /// where nothing of a step is open, at which a split model moves layers between devices as memory frees or fills.
+    /// </summary>
+    public event Action<DecodingContext>? StepEnded;
+
+    /// <summary>The key/value cache of <paramref name="layer"/> in this context or in one of its counterparts on other devices (<see cref="On(Device)"/>), or null.</summary>
+    public KeyValueCache? FindCache(Module layer)
+    {
+        ArgumentNullException.ThrowIfNull(layer);
+        if (_caches.TryGetValue(layer, out var cache))
+        {
+            return cache;
+        }
+
+        if (_mirrors is { } mirrors)
+        {
+            foreach (var (_, mirror) in mirrors)
+            {
+                if (mirror._caches.TryGetValue(layer, out cache))
+                {
+                    return cache;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Moves the key/value cache of <paramref name="layer"/> (a layer of a split model moved between devices, plan 37 W2)
+    /// to this context's counterpart on <paramref name="device"/> (this context on its own device; a counterpart made at
+    /// the current position when there is none yet), between steps, every slot as it is. Returns the bytes moved: 0 when no
+    /// context of this run holds a cache for it, or it is there already.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">A step is open.</exception>
+    /// <exception cref="NotSupportedException">The cache slides with a window (<see cref="SlidingWindowSteps"/>).</exception>
+    public long MoveCache(Module layer, Device device)
+    {
+        ArgumentNullException.ThrowIfNull(layer);
+        ArgumentNullException.ThrowIfNull(device);
+        DecodingContext? holder = _caches.ContainsKey(layer) ? this : null;
+        if (holder is null && _mirrors is { } mirrors)
+        {
+            foreach (var (_, mirror) in mirrors)
+            {
+                if (mirror._caches.ContainsKey(layer))
+                {
+                    holder = mirror;
+                    break;
+                }
+            }
+        }
+
+        if (holder is null || holder.Device == device)
+        {
+            return 0;
+        }
+
+        return holder.MoveCacheTo(layer, device == Device ? this : On(device, join: true));
+    }
+
+    // Moves the cache of `owner` (a layer moved between devices) from this context to `to` (a counterpart of the same
+    // run, kept at the same position and size), between steps; nothing when this context holds none for it.
+    private long MoveCacheTo(object owner, DecodingContext to)
+    {
+        if (InStep || to.InStep)
+        {
+            throw new InvalidOperationException("A layer's cache moves between steps.");
+        }
+
+        if (!_caches.Remove(owner, out var cache))
+        {
+            return 0;
+        }
+
+        if (cache.Sliding is not null)
+        {
+            _caches[owner] = cache;
+            throw new NotSupportedException("A sliding window's cache is not moved between devices.");
+        }
+
+        var moved = cache.CopyTo(to.Device);
+        long bytes = cache.Bytes;
+        cache.Dispose();
+        to._caches[owner] = moved;
+        if (to._slots == 0)
+        {
+            to._slots = moved.Capacity;
+        }
+
+        return bytes;
     }
 
     // Applies a change made between steps to the contexts of layers on other devices (On).

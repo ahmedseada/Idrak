@@ -17,13 +17,13 @@ namespace Idrak.Abstraction.Devices;
 /// </summary>
 public static class OffloadTraffic
 {
-    private static long s_staged, s_prefetched, s_mapped, s_layersStaged, s_layersMapped, s_boundary, s_crossings;
+    private static long s_staged, s_prefetched, s_mapped, s_layersStaged, s_layersMapped, s_boundary, s_crossings, s_moved, s_layersMoved;
     private static readonly ConcurrentDictionary<string, long> s_mappedLayers = new(StringComparer.Ordinal);
 
     /// <summary>The counts so far.</summary>
     public static OffloadTrafficCounts Read() => new(Interlocked.Read(ref s_staged), Interlocked.Read(ref s_prefetched), Interlocked.Read(ref s_mapped),
         Interlocked.Read(ref s_layersStaged), Interlocked.Read(ref s_layersMapped), Interlocked.Read(ref s_boundary), Interlocked.Read(ref s_crossings),
-        new Dictionary<string, long>(s_mappedLayers, StringComparer.Ordinal));
+        new Dictionary<string, long>(s_mappedLayers, StringComparer.Ordinal)) { MovedBytes = Interlocked.Read(ref s_moved), LayersMoved = Interlocked.Read(ref s_layersMoved) };
 
     /// <summary>The bytes read in place so far (<see cref="OffloadTrafficCounts.MappedBytes"/>), without a snapshot: a caller tells whether a call read any.</summary>
     public static long MappedBytes => Interlocked.Read(ref s_mapped);
@@ -56,6 +56,16 @@ public static class OffloadTraffic
         }
     }
 
+    /// <summary>
+    /// A layer of a split model moved between the device and the CPU at a step boundary (plan 37, W2: memory freed or
+    /// filled), its weights and its key/value cache taking <paramref name="bytes"/> across the bus.
+    /// </summary>
+    public static void CountMoved(long bytes)
+    {
+        Interlocked.Add(ref s_moved, bytes);
+        Interlocked.Increment(ref s_layersMoved);
+    }
+
     /// <summary>An activation of <paramref name="bytes"/> crossed between layers placed on different devices.</summary>
     public static void CountBoundary(long bytes)
     {
@@ -76,11 +86,17 @@ public static class OffloadTraffic
 public sealed record OffloadTrafficCounts(long StagedBytes, long PrefetchedBytes, long MappedBytes, long LayersStaged, long LayersMapped, long BoundaryBytes,
     long BoundaryCrossings, IReadOnlyDictionary<string, long> MappedLayers)
 {
-    /// <summary>Every byte that crossed the bus: weights staged, prefetched and read in place, and activations at boundaries.</summary>
-    public long BusBytes => StagedBytes + PrefetchedBytes + MappedBytes + BoundaryBytes;
+    /// <summary>The bytes of layers moved between the device and the CPU at step boundaries (weights and caches).</summary>
+    public long MovedBytes { get; init; }
+
+    /// <summary>The layers moved between the device and the CPU at step boundaries.</summary>
+    public long LayersMoved { get; init; }
+
+    /// <summary>Every byte that crossed the bus: weights staged, prefetched and read in place, activations at boundaries and layers moved.</summary>
+    public long BusBytes => StagedBytes + PrefetchedBytes + MappedBytes + BoundaryBytes + MovedBytes;
 
     /// <summary>Whether nothing crossed.</summary>
-    public bool IsEmpty => BusBytes == 0 && LayersStaged == 0 && LayersMapped == 0 && BoundaryCrossings == 0;
+    public bool IsEmpty => BusBytes == 0 && LayersStaged == 0 && LayersMapped == 0 && BoundaryCrossings == 0 && LayersMoved == 0;
 
     /// <summary>What crossed after <paramref name="before"/> (an earlier snapshot).</summary>
     public OffloadTrafficCounts Since(OffloadTrafficCounts before)
@@ -97,7 +113,11 @@ public sealed record OffloadTrafficCounts(long StagedBytes, long PrefetchedBytes
         }
 
         return new OffloadTrafficCounts(StagedBytes - before.StagedBytes, PrefetchedBytes - before.PrefetchedBytes, MappedBytes - before.MappedBytes,
-            LayersStaged - before.LayersStaged, LayersMapped - before.LayersMapped, BoundaryBytes - before.BoundaryBytes, BoundaryCrossings - before.BoundaryCrossings, layers);
+            LayersStaged - before.LayersStaged, LayersMapped - before.LayersMapped, BoundaryBytes - before.BoundaryBytes, BoundaryCrossings - before.BoundaryCrossings, layers)
+        {
+            MovedBytes = MovedBytes - before.MovedBytes,
+            LayersMoved = LayersMoved - before.LayersMoved,
+        };
     }
 
     /// <summary>
@@ -111,6 +131,10 @@ public sealed record OffloadTrafficCounts(long StagedBytes, long PrefetchedBytes
         string line = string.Create(CultureInfo.InvariantCulture,
             $"bus: {Bytes(BusBytes)}, {Bytes(BusBytes / n)} a token (weights staged {Bytes(StagedBytes)}, prefetched {Bytes(PrefetchedBytes)}, read in place {Bytes(MappedBytes)}; "
             + $"activations {Bytes(BoundaryBytes)} in {BoundaryCrossings} crossings); {LayersStaged / (double)n:0.#} layers staged a token, {LayersMapped / (double)n:0.#} read in place a token");
+        if (LayersMoved > 0)
+        {
+            line += string.Create(CultureInfo.InvariantCulture, $"; {LayersMoved} layers moved ({Bytes(MovedBytes)})");
+        }
         if (MappedLayers.Count > 0)
         {
             line += " (" + string.Join(", ", MappedLayers.OrderByDescending(p => p.Value).Take(4).Select(p => $"{p.Key} ×{p.Value}")) + (MappedLayers.Count > 4 ? ", …" : "") + ")";
@@ -141,6 +165,8 @@ public sealed record OffloadTrafficCounts(long StagedBytes, long PrefetchedBytes
             ["layers_staged"] = LayersStaged,
             ["layers_staged_per_token"] = Math.Round(LayersStaged / (double)n, 2),
             ["layers_mapped"] = LayersMapped,
+            ["layers_moved"] = LayersMoved,
+            ["moved_bytes"] = MovedBytes,
             ["mapped_layers"] = layers,
             ["tokens"] = tokens,
         };

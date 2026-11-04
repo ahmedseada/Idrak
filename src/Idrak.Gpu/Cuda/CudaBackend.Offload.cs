@@ -476,63 +476,80 @@ internal sealed unsafe partial class CudaBackend : IOffloadingBackend, IMemoryOf
             }
         }
 
-        List<CudaStorage>? staged = null;
+        // The pool's lock once for the layer's storages, not two or three times each (the locks inside are the same one,
+        // taken again by this thread at no cost); the token and its list reused from the last layers (no allocation per
+        // layer once warm).
+        StageToken? token = null;
         PrefetchBatch? waited = null;
-        foreach (var storage in storages)
+        lock (_pool)
         {
-            if (Mine(storage) is not { } s)
+            foreach (var storage in storages)
             {
-                continue;
-            }
-
-            ulong block;
-            int capacity;
-            lock (_pool)
-            {
-                if (!s.Alive || s.Evicted || s.Pointer == 0 || s.Home != 0 || !_hostBlocks.ContainsKey(s.Pointer))
+                if (Mine(storage) is not { } s)
                 {
                     continue;
                 }
 
-                if (_prefetched.Remove(s, out var prefetched))
+                ulong block;
+                int capacity;
+                lock (_pool)
                 {
-                    // Copied in the background: the work stream waits for the copy, the host does not.
-                    if (!ReferenceEquals(waited, prefetched.Batch))
+                    if (!s.Alive || s.Evicted || s.Pointer == 0 || s.Home != 0 || !_hostBlocks.ContainsKey(s.Pointer))
                     {
-                        Check(cuStreamWaitEvent(_stream, prefetched.Batch.Done, 0), nameof(cuStreamWaitEvent));
-                        waited = prefetched.Batch;
+                        continue;
                     }
 
-                    FinishPrefetchLocked(prefetched.Batch);
-                    StageLocked(s, prefetched.Pointer, prefetched.Capacity);
-                    (staged ??= []).Add(s);
-                    continue;
+                    if (_prefetched.Remove(s, out var prefetched))
+                    {
+                        // Copied in the background: the work stream waits for the copy, the host does not.
+                        if (!ReferenceEquals(waited, prefetched.Batch))
+                        {
+                            Check(cuStreamWaitEvent(_stream, prefetched.Batch.Done, 0), nameof(cuStreamWaitEvent));
+                            waited = prefetched.Batch;
+                        }
+
+                        FinishPrefetchLocked(prefetched.Batch);
+                        StageLocked(s, prefetched.Pointer, prefetched.Capacity);
+                        (token ??= TakeToken()).Staged.Add(s);
+                        continue;
+                    }
                 }
-            }
 
-            block = TryDeviceBlock(s.Length, 0, useCache: true, out capacity);
-            if (block == 0)
-            {
-                OffloadTraffic.CountMapped(BlockBytes(s.Length));            // no room: the layer's kernels read it over the bus
-                continue;
-            }
-
-            lock (_pool)
-            {
-                if (!s.Alive || s.Evicted || s.Home != 0 || !_hostBlocks.TryGetValue(s.Pointer, out IntPtr host))
+                block = TryDeviceBlock(s.Length, 0, useCache: true, out capacity);
+                if (block == 0)
                 {
-                    ReturnDeviceBlockLocked(block, capacity);
+                    OffloadTraffic.CountMapped(BlockBytes(s.Length));            // no room: the layer's kernels read it over the bus
                     continue;
                 }
 
-                Check(cuMemcpyHtoDAsync(block, (void*)host, (nuint)BlockBytes(s.Length), _stream), nameof(cuMemcpyHtoDAsync));
-                OffloadTraffic.CountStaged(BlockBytes(s.Length));
-                StageLocked(s, block, capacity);
-                (staged ??= []).Add(s);
+                lock (_pool)
+                {
+                    if (!s.Alive || s.Evicted || s.Home != 0 || !_hostBlocks.TryGetValue(s.Pointer, out IntPtr host))
+                    {
+                        ReturnDeviceBlockLocked(block, capacity);
+                        continue;
+                    }
+
+                    Check(cuMemcpyHtoDAsync(block, (void*)host, (nuint)BlockBytes(s.Length), _stream), nameof(cuMemcpyHtoDAsync));
+                    OffloadTraffic.CountStaged(BlockBytes(s.Length));
+                    StageLocked(s, block, capacity);
+                    (token ??= TakeToken()).Staged.Add(s);
+                }
             }
         }
 
-        return staged is null ? null : new StageToken(this, staged);
+        return token;
+    }
+
+    // Stage tokens given back (Unstage), reused under the pool's lock.
+    private readonly Stack<StageToken> _tokens = new();
+
+    // Under the pool's lock: a token with an empty list, reused when one was given back.
+    private StageToken TakeToken()
+    {
+        var token = _tokens.Count > 0 ? _tokens.Pop() : new StageToken(this);
+        token.Open();
+        return token;
     }
 
     // Kernels read the GPU copy from now on; Home keeps the system block.
@@ -565,15 +582,29 @@ internal sealed unsafe partial class CudaBackend : IOffloadingBackend, IMemoryOf
         }
     }
 
-    private sealed class StageToken(CudaBackend backend, List<CudaStorage> staged) : IDisposable
+    private sealed class StageToken(CudaBackend backend) : IDisposable
     {
-        private int _disposed;
+        private int _disposed = 1;
+
+        public List<CudaStorage> Staged { get; } = [];
+
+        // Taken again (under the pool's lock): open, with nothing staged yet.
+        public void Open()
+        {
+            Staged.Clear();
+            Volatile.Write(ref _disposed, 0);
+        }
 
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 0)
             {
-                backend.Unstage(staged);
+                backend.Unstage(Staged);
+                Staged.Clear();
+                lock (backend._pool)
+                {
+                    backend._tokens.Push(this);                         // reused by the next layer's Stage
+                }
             }
         }
     }

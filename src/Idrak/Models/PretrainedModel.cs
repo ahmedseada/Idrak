@@ -265,6 +265,22 @@ public sealed record PretrainedOptions
     /// </summary>
     public int? DeviceLayers { get; init; }
 
+    /// <summary>
+    /// Whether a split or auto placement moves layers between the device and the CPU at a run's step boundaries as the
+    /// device's measured free memory changes (more on the device when memory frees, fewer under pressure; plan 37 W2):
+    /// null takes <see cref="WeightPlacements.DefaultGrow"/> (IDRAK_WEIGHT_GROW; on).
+    /// </summary>
+    public bool? FollowMemory { get; init; }
+
+    /// <summary>
+    /// Build each decoder layer on its first use (plan 37 W2): the load reads the token table, the final norm, the head and
+    /// each layer's attention norm, and each layer's weights are read when it first computes, so a model of any size starts
+    /// at once; the checkpoint stays open until the model is disposed. Not with <see cref="Deferred"/>, a merged adapter,
+    /// or a family that builds its own network (those load whole). Null takes <see cref="WeightPlacements.DefaultLazy"/>
+    /// (IDRAK_LAZY_LOAD; off). <see cref="PretrainedModel.LayersBuilt"/> counts the layers built so far.
+    /// </summary>
+    public bool? LazyLayers { get; init; }
+
     // Whether the options name a weights' format (which wins over the choice).
     internal bool NamesFormat => Int8 || Int4 || BFloat16 || PackedFormatName is not null;
 }
@@ -448,6 +464,7 @@ public sealed class PretrainedModel : IDisposable
         }
 
         WeightPlan? plan = null;
+        WeightPlacementRequest? placedRequest = null;
         if (placement is not null)
         {
             string placedFormat = options.PackedFormatName ?? (options.Int8 ? "int8" : options.Int4 ? "int4" : options.BFloat16 ? "bfloat16" : "float32");
@@ -455,6 +472,7 @@ public sealed class PretrainedModel : IDisposable
             var request = AutoWeights.PlacementRequest(spec, placedFormat, context, placementTarget, options.AutoWeightsBudget ?? placementTarget.Backend.AvailableMemory(),
                 options.DeviceLayers ?? WeightPlacements.DefaultDeviceLayers, options.AutoWeightsHeadroom);
             plan = placement.Place(request);
+            placedRequest = request;
             if (plan.Split && architecture is INetworkBuildingArchitecture)
             {
                 notes.Add($"placement {plan.Placement}: {name} builds its own network, which is not split; every layer stays on {placementTarget}.");
@@ -476,7 +494,20 @@ public sealed class PretrainedModel : IDisposable
         weights.Progress?.Begin();
         var buildDevice = options.Deferred ? DeferredTensors.Device : options.Device;
         var packedCache = PackedWeightCache.For(options, folder);
-        var buildOptions = new DecoderBuildOptions { Device = buildDevice, DeviceLayers = plan is { Split: true } ? plan.DeviceLayers : null, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions, PackedCache = packedCache };
+        // W2: layers built on first use (the checkpoint kept open for them), and layers following the memory at step boundaries.
+        bool buildsOwnNetwork = architecture is INetworkBuildingArchitecture;
+        bool lazy = (options.LazyLayers ?? WeightPlacements.DefaultLazy) && !options.Deferred && options.MergeAdapter is null && !buildsOwnNetwork;
+        if ((options.LazyLayers ?? WeightPlacements.DefaultLazy) && !lazy)
+        {
+            notes.Add("lazy layers: this load reads every layer now (a deferred load, a merged adapter, or a family that builds its own network).");
+        }
+
+        bool follow = placement is not null && placedRequest is not null && plan is { Stream: false } && mayLeaveDevice && !buildsOwnNetwork
+            && placedRequest.DeviceLayers is null && (options.FollowMemory ?? WeightPlacements.DefaultGrow);
+        var lazyReader = lazy ? format.Open(folder) : null;
+        var buildWeights = lazyReader is not null ? new CheckpointWeights(lazyReader, architecture) : weights;
+        var buildOptions = new DecoderBuildOptions { Device = buildDevice, DeviceLayers = plan is { Split: true } ? plan.DeviceLayers : null,
+            LazyLayers = lazy, FollowMemory = follow ? (placement!, placedRequest!) : null, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions, PackedCache = packedCache };
         long building = Stopwatch.GetTimestamp();
         var fileTime = reader.ReadTime;
         Sequential network;
@@ -491,7 +522,7 @@ public sealed class PretrainedModel : IDisposable
                     Sequential built => built,
                     var layers => new Sequential(layers) { Name = "decoder" },
                 }
-                : spec.Build(weights, buildOptions);
+                : spec.Build(buildWeights, buildOptions);
         }
 
         long buildEnded = Stopwatch.GetTimestamp();
@@ -520,7 +551,7 @@ public sealed class PretrainedModel : IDisposable
             weights.Used.UnionWith(owned);
         }
 
-        var unused = reader.Names.Where(k => !weights.Used.Contains(k) && !k.EndsWith("rotary_emb.inv_freq", StringComparison.Ordinal)).ToList();
+        var unused = lazy ? new List<string>() : reader.Names.Where(k => !weights.Used.Contains(k) && !k.EndsWith("rotary_emb.inv_freq", StringComparison.Ordinal)).ToList();
         if (unused.Count > 0)
         {
             notes.Add($"{unused.Count} checkpoint tensors were not used (for example {string.Join(", ", unused.Take(3))}).");
@@ -571,6 +602,7 @@ public sealed class PretrainedModel : IDisposable
         model._loadBytes = reader.BytesRead;
         model.Weights = weightsChoice;
         model.Placement = plan;
+        model._lazyReader = lazyReader;
         try
         {
             model.RecommendedSampling = Abstraction.Generation.SamplingSettings.Read(folder);
@@ -1381,5 +1413,20 @@ public sealed class PretrainedModel : IDisposable
         Network.Dispose();
         _source?.Dispose();
         _source = null;
+        _lazyReader?.Dispose();
+        _lazyReader = null;
     }
+
+    // The checkpoint a lazy load's layers are read from on first use (PretrainedOptions.LazyLayers), open until disposed.
+    private IDisposable? _lazyReader;
+
+    /// <summary>
+    /// The decoder layers built so far: every layer, unless the load is lazy (<see cref="PretrainedOptions.LazyLayers"/>),
+    /// where a layer is built on its first use.
+    /// </summary>
+    public int LayersBuilt => Network.Descendants().Count(m => m is DecoderBlock);
+
+    /// <summary>The decoder layers on the device now (<see cref="Placement"/> at load; a placement following the memory moves them at step boundaries), or null when not placed.</summary>
+    public int? DeviceLayersNow => Network.Children().Select(m => m switch { DecoderBlock b => b.Layers, LazyLayer l => l.Layers, _ => null })
+        .FirstOrDefault(l => l is not null)?.DeviceLayers;
 }
