@@ -40,13 +40,12 @@ internal abstract partial class Tests
         const float Scale = 0.125f;
         int rows = Heads * Steps;
         float[] q = TrainingRandom(random, rows * Dim, -1, 1), k = TrainingRandom(random, Heads * Steps * Dim, -1, 1), v = TrainingRandom(random, Heads * Steps * Dim, -1, 1);
-        float[][] forward = RowsOnCpu([q, k, v, [0f], new float[rows * Dim], new float[rows]],
-            (b, s) => b.AttentionTiledKernel(s[0], s[1], s[2], s[3], s[4], s[5], Heads, Steps, Steps, Steps, Dim, Scale));
+        float[][] forward = CausalForward(q, k, v, Heads, Steps, Dim, Scale);
         float[] dout = TrainingRandom(random, rows * Dim, -1, 1);
         double work = (double)Heads * Steps * Steps * Dim;
         var runs = new GcnRunResult[2];
         float[][] transposed = [HeadsTransposed(q, Heads, Steps, Dim), HeadsTransposed(dout, Heads, Steps, Dim), HeadsTransposed(k, Heads, Steps, Dim), HeadsTransposed(v, Heads, Steps, Dim)];
-        float[][] tiled = RowsOnGcn([q, k, v, forward[4], forward[5], dout, new float[rows * Dim], new float[Heads * Steps * Dim], new float[Heads * Steps * Dim], new float[rows],
+        float[][] tiled = RowsOnGcn([q, k, v, forward[0], forward[1], dout, new float[rows * Dim], new float[Heads * Steps * Dim], new float[Heads * Steps * Dim], new float[rows],
             .. transposed], (m, a) =>
         {
             TrainingDispatch("attn_bwd_d_f32", isa, m, (rows, 1), 1, a[3], a[5], a[9], Dim, (ulong)rows);
@@ -60,7 +59,7 @@ internal abstract partial class Tests
         // Over key ranges: the same shape, causal ranges in one table.
         float[] starts = new float[Steps], ends = [.. Enumerable.Range(1, Steps).Select(i => (float)i)];
         var spans = new GcnRunResult[1];
-        float[][] spanned = RowsOnGcn([q, k, v, starts, ends, dout, forward[5], new float[rows], new float[rows * Dim], new float[Heads * Steps * Dim], new float[Heads * Steps * Dim],
+        float[][] spanned = RowsOnGcn([q, k, v, starts, ends, dout, forward[1], new float[rows], new float[rows * Dim], new float[Heads * Steps * Dim], new float[Heads * Steps * Dim],
             .. transposed], (m, a) =>
         {
             ulong[] Args(int n) => [a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7], a[8], a[9], a[10], a[11], a[12], a[13], a[14], Steps, Steps, Dim, Bits(Scale), 1, Heads, 0,
@@ -80,9 +79,8 @@ internal abstract partial class Tests
         CountsLine($"sum_rows_f32, {SumRows} x {SumCols} ({isa}; per element)", SumRows * SumCols, sums[0]);
         CountsLine($"sum_cols_strided_f32, {SumRows} x {SumCols}, one chunk ({isa}; per element)", SumRows * SumCols, sums[1]);
 
-        // The outputs' bits, against the kernels before G6b's (the same inputs, run on the build before it; the tiled dq and
-        // dk re-pinned when Δ took CUDA's order): the dot products' order is kept and the skipped rows' terms were exact
-        // zeros, the sums' rows are added in order.
+        // The outputs' bits, pinned (see the constants): the dot products' order is kept and the skipped rows' terms are
+        // exact zeros, the sums' rows are added in order; the dense causal pass's dv and the causal ranges' dv are the same.
         (string What, float[] Values, string Before)[] outputs =
         [
             ("attn_bwd_q_f32's dq", tiled[6], TiledDqBefore), ("attn_bwd_kv_f32's dk", tiled[7], TiledDkBefore), ("attn_bwd_kv_f32's dv", tiled[8], TiledDvBefore),
@@ -101,6 +99,53 @@ internal abstract partial class Tests
         }
 
         Check(changed.Count == 0, $"the outputs' bits differ from the pinned ones (the same bits expected): {string.Join("; ", changed)}");
+    }
+
+    // The causal attention forward pass the backward passes above start from (row r of a head over positions 0..r): the
+    // output and each row's log-sum-exp, in one order, from IEEE float arithmetic and the interpreter's own 2^x and log2
+    // (GcnFloat), so the inputs, and the outputs pinned below, are the same bits on every machine (rule 70). The CPU
+    // backend's forward pass is not used here: its exponentials and logarithms are the C runtime's (MathF), and its vector
+    // width is the machine's, which change the last bits from one platform to another.
+    private static float[][] CausalForward(float[] q, float[] k, float[] v, int heads, int steps, int dim, float scale)
+    {
+        const float Log2E = 1.44269504f, Ln2 = 0.693147182f;
+        int rows = heads * steps;
+        float[] output = new float[rows * dim], logSumExp = new float[rows], scores = new float[steps];
+        for (int row = 0; row < rows; row++)
+        {
+            int head = row / steps, count = row % steps + 1;
+            float max = float.NegativeInfinity;
+            for (int c = 0; c < count; c++)
+            {
+                float dot = 0f;
+                for (int d = 0; d < dim; d++)
+                {
+                    dot += q[row * dim + d] * k[(head * steps + c) * dim + d];
+                }
+
+                scores[c] = dot * scale;
+                max = MathF.Max(max, scores[c]);
+            }
+
+            float sum = 0f;
+            for (int c = 0; c < count; c++)
+            {
+                scores[c] = GcnFloat.Exp(Log2E * (scores[c] - max));
+                sum += scores[c];
+            }
+
+            logSumExp[row] = max + GcnFloat.Log(sum) * Ln2;
+            for (int c = 0; c < count; c++)
+            {
+                float weight = scores[c] / sum;
+                for (int d = 0; d < dim; d++)
+                {
+                    output[row * dim + d] += weight * v[(head * steps + c) * dim + d];
+                }
+            }
+        }
+
+        return [output, logSumExp];
     }
 
     internal static void GcnDecodingCounts(Device device)
@@ -234,9 +279,12 @@ internal abstract partial class Tests
         CountsLine($"topk_greedy_f32, its last block of a row samples it, {Rows} rows of {Vocabulary} ({isa}; per score)", Rows * Vocabulary, one);
     }
 
-    // The outputs' hashes (SHA-256, first 8 bytes) of the kernels before G6b on the inputs above (main 52bf7e3, gfx90c);
-    // the tiled dq and dk since plan 35's training order, part 2 (their Δ, attn_bwd_d_f32, a work-item a row in CUDA's
-    // order instead of a block's tree: 5BFEC5852875DA06 and FDE698702F1A9276 before it).
-    private const string TiledDqBefore = "2632187ADDA4F94D", TiledDkBefore = "8D7A729AA31841F4", TiledDvBefore = "469EE866F5BE35EE", SpansDkBefore = "854FD126B19FA304",
-        SpansDvBefore = "469EE866F5BE35EE", SumRowsBefore = "97D0E68B9FD831CB", SumColsBefore = "97D0E68B9FD831CB";
+    // The outputs' hashes (SHA-256, first 8 bytes) on the inputs above. The column sums' are the kernels' before G6b (main
+    // 52bf7e3, gfx90c). The attention passes' were too (the tiled dq and dk re-pinned when Δ took CUDA's order) until plan
+    // 36's C14 fix: their forward inputs came from the CPU backend (the C runtime's expf and logf, the machine's vector
+    // width) and the interpreter's 2^x and log2 from the C runtime's pow and log2, so the bits were Windows' and differed
+    // on Linux; with CausalForward and GcnFloat's own series the inputs and outputs are the same on every machine, and
+    // these are the G6b kernels' outputs on them (Linux x64, 2026-11-04).
+    private const string TiledDqBefore = "E97002280B93A02C", TiledDkBefore = "B743179460E67D11", TiledDvBefore = "EA63DCB6D1585684", SpansDkBefore = "591C1DFC63CD8E1D",
+        SpansDvBefore = "EA63DCB6D1585684", SumRowsBefore = "97D0E68B9FD831CB", SumColsBefore = "97D0E68B9FD831CB";
 }

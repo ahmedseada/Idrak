@@ -12,6 +12,12 @@ namespace Idrak.Tests.Gcn;
 /// device-against-CPU tolerance covers. v_mad_f32 and v_mac_f32 round the product before the add and flush
 /// denormals, as gfx9 does.
 /// </summary>
+/// <remarks>
+/// 2^x, log2 x, sin and cos are the interpreter's own series in double precision (exact reductions, a fixed number of
+/// terms), not the C runtime's: the runtime's pow, log2, sin and cos differ between platforms in their last bits, which
+/// a rounding to float32 now and then keeps, and a kernel's outputs pinned bit for bit must be the same on every machine
+/// (rule 70). Reciprocals and square roots are IEEE operations, the same everywhere.
+/// </remarks>
 internal static class GcnFloat
 {
     internal static float F(ulong bits) => BitConverter.UInt32BitsToSingle((uint)bits);
@@ -92,13 +98,94 @@ internal static class GcnFloat
 
     internal static float MulLegacy(float a, float b) => a == 0 || b == 0 ? 0f : a * b;
 
-    internal static float Exp(float x) => (float)Math.Pow(2, x);
+    internal static float Exp(float x) => (float)Exp2(x);
 
-    internal static float Log(float x) => x == 0 ? float.NegativeInfinity : x < 0 ? float.NaN : (float)Math.Log2(x);
+    internal static float Log(float x) => x == 0 ? float.NegativeInfinity : x < 0 ? float.NaN : (float)Log2(x);
 
-    internal static float Sin(float x) => float.IsFinite(x) ? (float)Math.Sin(2 * Math.PI * (x - Math.Round((double)x))) : float.NaN;
+    internal static float Sin(float x) => float.IsFinite(x) ? (float)SinTurns(x - Math.Round((double)x)) : float.NaN;
 
-    internal static float Cos(float x) => float.IsFinite(x) ? (float)Math.Cos(2 * Math.PI * (x - Math.Round((double)x))) : float.NaN;
+    internal static float Cos(float x) => float.IsFinite(x) ? (float)SinTurns(0.25 - Math.Abs(x - Math.Round((double)x))) : float.NaN;
+
+    private const double Ln2 = 0.6931471805599453;
+
+    // 2^x for a float x: 2^⌊x⌋ exactly (ScaleB), times e^(f·ln 2) for the fraction f ∈ [0, 1) by its Taylor series to
+    // 1e-18 (30 terms, in a fixed order).
+    internal static double Exp2(double x)
+    {
+        if (double.IsNaN(x))
+        {
+            return x;
+        }
+
+        if (x >= 1024)
+        {
+            return double.PositiveInfinity;
+        }
+
+        if (x <= -1100)
+        {
+            return 0;
+        }
+
+        double whole = Math.Floor(x), t = (x - whole) * Ln2, term = 1, sum = 1;
+        for (int k = 1; k <= 30; k++)
+        {
+            term *= t / k;
+            sum += term;
+        }
+
+        return Math.ScaleB(sum, (int)whole);
+    }
+
+    // log2 x for x > 0: x = m · 2^e with m ∈ [√½, √2) from its bits, ln m = 2 · atanh(s), s = (m − 1) / (m + 1), by the
+    // series of atanh (|s| ≤ 0.172: 40 terms), in a fixed order.
+    internal static double Log2(double x)
+    {
+        if (double.IsNaN(x) || double.IsPositiveInfinity(x))
+        {
+            return x;
+        }
+
+        int e = Math.ILogB(x);
+        double m = Math.ScaleB(x, -e);
+        if (m > 1.4142135623730951)
+        {
+            m /= 2;
+            e++;
+        }
+
+        double s = (m - 1) / (m + 1), s2 = s * s, power = s, sum = 0;
+        for (int k = 0; k < 40; k++)
+        {
+            sum += power / (2 * k + 1);
+            power *= s2;
+        }
+
+        return e + 2 * sum / Ln2;
+    }
+
+    // sin(2πr) for r ∈ [-0.5, 0.75] (exact differences of a float and a whole number): folded to |2πr| ≤ π/2, then the
+    // Taylor series (24 terms), in a fixed order.
+    internal static double SinTurns(double r)
+    {
+        if (r > 0.25)
+        {
+            r = 0.5 - r;                                                    // sin(π − a) = sin a
+        }
+        else if (r < -0.25)
+        {
+            r = -0.5 - r;
+        }
+
+        double a = 2 * Math.PI * r, a2 = a * a, term = a, sum = a;
+        for (int k = 1; k <= 24; k++)
+        {
+            term *= -a2 / ((2 * k) * (2 * k + 1));
+            sum += term;
+        }
+
+        return sum;
+    }
 
     internal static float Rcp(float x) => (float)(1.0 / x);
 
