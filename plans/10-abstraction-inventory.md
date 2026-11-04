@@ -16,7 +16,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Gpu` | 5 | 0 | 1 | 6 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Text` | 25 | 0 | 13 | 38 | 0 |
-| `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
+| `Idrak.Data` | 9 | 0 | 7 | 16 | 0 |
 | `Idrak.Vision` | 13 | 0 | 6 | 19 | 0 |
 | `Idrak.Audio` | 52 | 2 | 21 | 75 | 0 |
 | `Idrak.Cluster` | 2 | 0 | 0 | 2 | 0 |
@@ -458,8 +458,14 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Data.Abstractions.IDatasetRows` | interface | public | — | DatasetRows |  | Data | Data |
 | `Idrak.Data.Abstractions.IDatasetSource` | interface | public | — | DatasetSources.GuardedSource, LibraryDatasetSources.Local, LibraryDatasetSources.Prefixed |  | Data | Data |
 | `Idrak.Data.Abstractions.IParquetCodec` | interface | public | — | Codecs.BuiltIn, ParquetCodecs.GuardedCodec |  | Data | Data |
+| `Idrak.Data.Abstractions.IRepositoryHistory` | interface | public | — | — |  | Data | Data |
+| `Idrak.Data.Abstractions.IRowFilter` | interface | public | — | — |  | Data | Data |
+| `Idrak.Data.Abstractions.ITaskFamily` | interface | public | — | — |  | Data | Data |
 | `Idrak.Data.Abstractions.ITextNormalizer` | interface | public | — | — |  | Data | Data |
 | `Idrak.Data.Abstractions.ParquetCodecs` | registry | public | — |  | Brotli, Gzip, Lz4Raw, Snappy, Uncompressed | Data | Data |
+| `Idrak.Data.Abstractions.RepositoryHistories` | registry | public | — |  | — | — | Data |
+| `Idrak.Data.Abstractions.RowFilters` | registry | public | — |  | — | — | Data |
+| `Idrak.Data.Abstractions.TaskFamilies` | registry | public | — |  | — | — | Data |
 
 ### Idrak.Vision
 

@@ -74,7 +74,10 @@ internal static class EnvironmentVariables
 
     private const string Devices = "Devices and backends", Tuning = "Tuning and caches", Precision = "Precision and memory", Cpu = "CPU",
         Vulkan = "Vulkan", Hip = "HIP", Sources = "Model and data sources", Audio = "Audio", Tool = "The tool", Tests = "Tests and diagnostics", DotNet = ".NET",
-        Cluster = "Cluster";
+        Cluster = "Cluster", Code = "Code data";
+
+    // Plan 36: read by CodeExtractorOptions.FromEnvironment (Idrak.Data); idrak data code (G1) will name them in its help.
+    private static readonly string[] CodeData = ["data"];
 
     // Plan 27, phase R2: read by ReinforcementOptions.FromEnvironment and ModulePolicyOptions.FromEnvironment in
     // Idrak.Reinforcement (the library and its tests), and by idrak reinforce (R5), whose command line wins.
@@ -454,6 +457,18 @@ internal static class EnvironmentVariables
         new("IDRAK_RL_TEACHER", Reinforcement, "none", "A teacher model for idrak reinforce: its distributions on the model's own replies, a term beside the reward (or alone with --algorithm distill)", ReinforcementRun),
         new("IDRAK_RL_TEACHER_DEVICE", Reinforcement, "the model's device", "The device idrak reinforce loads the teacher on (cpu, cuda:N, vulkan:N)", ReinforcementRun),
         new("IDRAK_CODING_LANGUAGES", Sandbox, "all", "The coding languages the coding tools and agent work with (programs, folders skipped, prompt lines): all registered, detected in the workspace, none, or names such as csharp,typescript", SandboxRun),
+        new("IDRAK_CODE_FAMILIES", Code, "all registered", "The task families a code extraction runs (TaskFamilies names, separated by commas, or all)", CodeData),
+        new("IDRAK_CODE_SKIPPED_FOLDERS", Code, ".git, .vs, .idea and the coding languages' build folders", "The folders a code extraction never reads (names separated by commas)", CodeData),
+        new("IDRAK_CODE_MAX_FILE_BYTES", Code, "1048576", "The largest file a code extraction reads, in bytes (larger ones are often generated)", CodeData),
+        new("IDRAK_CODE_DEDUPE", Code, "0.85", "The similarity in (0, 1] above which two rows of a code extraction are near duplicates (1: exact copies only)", CodeData),
+        new("IDRAK_CODE_SEED", Code, "0", "The seed of a code extraction's split (the same seed gives the same split)", CodeData),
+        new("IDRAK_CODE_SPLIT_BY", Code, "project", "What a code extraction's split groups by (splits are by group, never by random row)", CodeData),
+        new("IDRAK_CODE_EVAL_FRACTION", Code, "0.1", "The share of groups a code extraction holds out for evaluation, in [0, 1)", CodeData),
+        new("IDRAK_CODE_EVAL_GROUPS", Code, "none (the fraction)", "The groups a code extraction holds out for evaluation, by name (separated by commas)", CodeData),
+        new("IDRAK_CODE_MAX_TASKS", Code, "no limit", "The most tasks a code extraction keeps (0: no limit)", CodeData),
+        new("IDRAK_CODE_MAX_TIME", Code, "no limit", "The longest a code extraction runs, in seconds, before it writes what it has (0: no limit)", CodeData),
+        new("IDRAK_CODE_FORMATS", Code, "JsonLines", "The formats a code extraction writes rows in (data format names, such as JsonLines,Parquet)", CodeData),
+        new("IDRAK_CODE_CONCURRENCY", Code, "the CPU threads (ComputeResources)", "How many files or tasks a code extraction works on at once (0: the CPU threads)", CodeData),
         new("IDRAK_FLAC_VERIFY_MD5", Audio, "off", "1: a FLAC file's samples are checked against the MD5 its stream info holds (FlacOptions.VerifyMd5); off by default, as it costs more than the decode", OnDevice),
         new("IDRAK_TEMPLATE_MAX_STEPS", Sources, "10000000", "The most steps a chat template's render takes (each statement and expression is one); more stops it with an error naming the template (JinjaOptions.MaxSteps)", Models),
         new("IDRAK_TEMPLATE_MAX_OUTPUT", Sources, "67108864", "The most characters a chat template's render writes or builds in one string; more stops it with an error naming the template (JinjaOptions.MaxOutputChars)", Models),
