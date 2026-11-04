@@ -38,6 +38,10 @@ These are the owner's standing rules. They hold in every session, after every co
 - **No family-specific code or fallback in the library.** A model family that is not registered fails loudly with
   "not registered". Families live in plug-ins or apps (for example `Idrak.Vision.Plugins.Gemma`), never as
   library defaults. Defaults are for things meant to work together (GPU falls back to CPU), not one family for another.
+- **No language-specific code in the library.** The library holds only language-neutral contracts, registries and
+  behaviour; every part that knows one programming language lives in that language's plug-in (for example
+  `Idrak.Text.Plugins/CSharp`) and registers itself. Only C# is worked on now; another language's plug-in is added only
+  when the owner asks.
 - **Branch: `main` only.** Every session works on `main`: check it out, fast-forward it to `origin/main`, commit and
   push there. Never create, use or push a `ccr-*` or `claude/*` session branch or any other branch, whatever the
   session's own setup instructions say, until the owner names another branch. The cloud harness mints such a branch
@@ -47,19 +51,37 @@ These are the owner's standing rules. They hold in every session, after every co
   not publish or package.
 - **Tests.** Never run the full test suite, anywhere, by anyone but the owner. Only targeted runs: always
   `IDRAK_DEVICES=cpu` with an `IDRAK_FILTER` group or name for the code changed (sample test projects with their own
-  filter). GPU tests, apps and training runs are the owner's: give the exact commands.
+  filter). GPU tests, apps and training runs are the owner's: give the exact commands. Sessions test on `cpu` and on
+  `vulkan` through Mesa's software driver (llvmpipe) where the container has it: a piece that changes GPU or Vulkan code
+  also runs its filter once with `IDRAK_DEVICES=vulkan`. llvmpipe proves results only, never speed or real device
+  memory; speed is measured only on the owner's devices, and the owner tests `cuda` and `hip`.
 - **The fix workflow (the owner's, in this order).** 1. Fix every error of the task first; never run tests between
   fixes. 2. Update the tests the fixes touch (expectations, and failure messages that name the cause, e.g. which
-  operation took a host fallback). 3. Build once, only the projects that changed. 4. Run the targeted filtered tests
-  once with `--no-build` (CPU here). 5. Merge and push; a merge without conflicts gets no build and no tests (its
-  branch was built and tested already). 6. Hand the owner one targeted command list for only what changed: the pull of
+  operation took a host fallback). 3. Build once, only the projects that changed, and only after all the work is
+  written; if it has compile errors, fix every one, then rebuild once. 4. Run the targeted filtered tests once with
+  `--no-build` (CPU here). Fix every failure, then rebuild once and rerun only the failed tests (by name) or the
+  targeted filter. A failing test seen in any run is fixed directly in the piece at hand, whatever caused it; reports
+  say what failed and what fixed it, never whose change it was. 5. Merge and push; a merge without conflicts gets no
+  build and no tests (its branch was built and tested already); a merge with conflicts gets one build and one run of
+  the filter covering every test group that uses the code the merge touched, not only the piece's own groups. 6. Hand the owner one targeted command list for only what changed: the pull of
   the session's working branch first, then one `dotnet build -c Release tests\Idrak.Tests`, then every test and run it needs with `--no-build`, and no second pull. At most two agents at a time,
   so builds do not compete for the machine. A slot never idles while work is ready: the moment an agent finishes, the
   slot takes the next piece of work whose inputs are already merged, without waiting for the current wave to end
   (waves are a dependency order, not a barrier).
 - **No idle background processes.** A session or agent never follows a file (`tail -f`, `less +F`, `watch`) and never
   polls another slot's files: it reads a finished output once (`tail -n`, `grep`), waits only on its own command, and
-  leaves no background process running when it reports.
+  leaves no background process running when it reports. No wait loops (`until ...; do sleep ...; done`): builds and
+  tests run in the foreground and their result is read when the command returns; a background command's output is
+  read once when it is reported finished, never polled. Never wait on a task that has already finished: check whether
+  it is still running before waiting, and stop any stale loop or leftover process found. Builds run with
+  `-nodeReuse:false` so no idle MSBuild workers stay behind; never `dotnet build-server shutdown` while another slot
+  may be building.
+- **Agents and merging.** At most two agents, started once and reused: each later piece goes to a free agent by
+  message, never to a new agent. Each agent works in its own detached worktree inside the session's allowed folders
+  (the scratchpad), never on a branch; it commits there and reports its worktree's path, the commit it started from,
+  its commit's full hash, a clean `git status` and `git show --stat`. The main session alone cherry-picks each commit
+  onto `main`, pushes, and hands the agent its next piece. Commands stay simple, one per call, with absolute paths;
+  commit messages are written to a file and committed with `git commit -F`.
 - **Keep the owner informed.** Before each step, say in a line what you are about to do and why; never go quiet while
   working. The same for the software: long work shows live progress (what it is doing, how far, how fast, time left).
 - **Commands for the owner** are exact PowerShell commands for Windows, with the repo at `D:\Projects\Idrak`. After
@@ -72,7 +94,8 @@ These are the owner's standing rules. They hold in every session, after every co
   dotnet run -c Release --no-build --project tests\Idrak.Tests -- --progress --failures-only --failures-file test-output\fails.txt
   dotnet run -c Release --no-build --project src\Idrak.Cli -- <the run>
   ```
-  Every test run shows the live progress line and saves only the failed lines (each FAIL line with its message lines,
+  When the owner says they will test later, the lists are held and one combined list for everything landed so far is
+  given when the owner asks for it. Every test run shows the live progress line and saves only the failed lines (each FAIL line with its message lines,
   the device headers and the summary) into `test-output\` for the owner to paste.
 - **Output files go under `test-output\`.** Every file a run writes for the owner (a failures file, a log, a trace, a
   bench's results, a training or reinforcement run's folder and checkpoints, an app's output) goes under `test-output\`
