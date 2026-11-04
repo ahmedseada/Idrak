@@ -66,11 +66,14 @@ public sealed partial class Tensor
     /// </summary>
     public static Tensor MatMulBias(Tensor x, Tensor w, Tensor bias)
     {
-        int k = x._shape[^1], n = w._shape[1], m = x.Size / Math.Max(1, k);
-        if (w.Rank != 2 || w._shape[0] != k || bias.Size != n)
+        // The shapes first (the weight's rank before its second dimension is read): any other is MatMul's, which takes
+        // or refuses it with its own message, then the bias added.
+        if (x.Rank == 0 || w.Rank != 2 || w._shape[0] != x._shape[^1] || bias.Size != w._shape[1])
         {
             return x.MatMul(w) + bias;
         }
+
+        int k = x._shape[^1], n = w._shape[1], m = x.Size / Math.Max(1, k);
 
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty([.. x._shape[..^1], n], x.Device);

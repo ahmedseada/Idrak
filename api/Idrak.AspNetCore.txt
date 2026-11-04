@@ -138,6 +138,7 @@ public static class Idrak.AspNetCore.IdrakServiceCollectionExtensions
 public sealed class Idrak.AspNetCore.ImageInputOptions
   public ImageInputOptions()
   public System.TimeSpan UrlTimeout { get; set; }
+  public bool AllowPrivateUrls { get; set; }
   public bool AllowUrls { get; set; }
   public int MaxImages { get; set; }
   public long MaxUrlBytes { get; set; }

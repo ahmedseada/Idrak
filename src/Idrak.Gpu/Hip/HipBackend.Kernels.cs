@@ -230,6 +230,11 @@ internal sealed unsafe partial class HipBackend
         {
             string key = HipKernelCache.KeyOf(all, [$"format={format}"], isa.ToString(), device, versions);
             byte[]? image = cache.Load(key, reported);
+            if (cache.LastRefusal is { } stale)
+            {
+                refused.Append(refused.Length > 0 ? "; " : "").Append("the kept code object: ").Append(stale);     // reported with the load
+            }
+
             bool cached = image is not null;
             while (true)
             {

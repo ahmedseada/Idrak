@@ -105,6 +105,12 @@ internal sealed record ServeSettings(string Host, int Port, string? ApiKey, IRea
     /// <summary>Whether image_url parts may give http(s) addresses the server downloads (--allow-image-urls).</summary>
     public bool AllowImageUrls { get; init; }
 
+    /// <summary>
+    /// Whether those downloads may reach loopback, link-local, private, multicast and reserved addresses
+    /// (--allow-private-image-urls, <see cref="ServeOptions.PrivateImageUrlsVariable"/>; off: refused, a 400 naming the URL).
+    /// </summary>
+    public bool AllowPrivateImageUrls { get; init; }
+
     /// <summary>An encoder-decoder's beams for every request that gives none (--beams; 1: the sampler).</summary>
     public int Beams { get; init; } = 1;
 
@@ -136,7 +142,7 @@ internal static class ServeOptions
         "--max-request-mb", "--max-images", ModelChoices.VisionOption, ModelChoices.ImageTransformOption, Seq2SeqRun.BeamsOption, Seq2SeqRun.LengthPenaltyOption];
 
     /// <summary>The flags of serve and ui.</summary>
-    public static readonly string[] Flags = ["--metrics", "--log-content", "--grayscale", "--allow-image-urls", "--require-key", "--any-content-type"];
+    public static readonly string[] Flags = ["--metrics", "--log-content", "--grayscale", "--allow-image-urls", "--allow-private-image-urls", "--require-key", "--any-content-type"];
 
     /// <summary>The environment variable giving the key when <c>--api-key</c> is not given.</summary>
     public const string ApiKeyVariable = "IDRAK_API_KEY";
@@ -149,6 +155,9 @@ internal static class ServeOptions
 
     /// <summary>The environment variable turning <c>--any-content-type</c> on (1, true, on or yes) or off (0, false, off or no).</summary>
     public const string AnyContentTypeVariable = "IDRAK_SERVE_ANY_CONTENT_TYPE";
+
+    /// <summary>The environment variable turning <c>--allow-private-image-urls</c> on (1, true, on or yes) or off (0, false, off or no).</summary>
+    public const string PrivateImageUrlsVariable = "IDRAK_SERVE_PRIVATE_IMAGE_URLS";
 
     /// <summary>The largest request body when --max-request-mb is not given, in MB (a phone photo as a data URL fits).</summary>
     public const int DefaultMaxRequestMegabytes = 32;
@@ -249,6 +258,9 @@ internal static class ServeOptions
             MaxRequestBytes = requestMb * 1024L * 1024,
             MaxImages = images,
             AllowImageUrls = context.Flag("--allow-image-urls"),
+            AllowPrivateImageUrls = Switch(context, "--allow-private-image-urls", PrivateImageUrlsVariable) && (context.Flag("--allow-image-urls")
+                ? true : context.Flag("--allow-private-image-urls") ? throw new UsageException("--allow-private-image-urls lets image URL downloads reach private addresses; "
+                    + "downloads are off without --allow-image-urls.") : false),
             Beams = beams,
             LengthPenalty = penalty,
             LogContent = context.Flag("--log-content") && (context.Option("--log-requests") is not null

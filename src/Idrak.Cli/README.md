@@ -249,7 +249,8 @@ the answer is one JSON object. On `/v1` no repetition penalty applies unless the
 | `--grayscale` | Read every image grey (Pillow's `convert("L")`, as the OCR fine-tune asks); an alias can keep it. Per request: `"grayscale": true` in a JSON body, `grayscale=true` in a form |
 | `--max-request-mb N` | The largest request body, images included (default 32); larger is a 413 |
 | `--max-images N` | The most images in one request (default 8); more is a 400 |
-| `--allow-image-urls` | Let `image_url` parts give `http(s)` addresses the server downloads (off by default; each download is held to `--max-request-mb` and 30 s) |
+| `--allow-image-urls` | Let `image_url` parts give `http(s)` addresses the server downloads (off by default; each download is held to `--max-request-mb` and 30 s). Loopback, link-local, private, multicast and reserved addresses are refused, after redirects too, with a 400 naming the URL |
+| `--allow-private-image-urls` | With `--allow-image-urls`, let downloads reach those addresses too (`IDRAK_SERVE_PRIVATE_IMAGE_URLS`) |
 
 The upload form's fields: `image` (one or more files), `prompt` (text), and optionally `system`, `stream`
 (`true`/`false`), `max_tokens`, `temperature`, `top_p`, `top_k`, `seed`, `grayscale` (`true`/`false`) and `model`

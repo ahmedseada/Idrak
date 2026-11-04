@@ -3,7 +3,9 @@
 
 using System.Buffers;
 using System.Globalization;
+using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Text.Json.Nodes;
 using Idrak.Imaging;
 
@@ -28,12 +30,184 @@ public sealed class ImageInputOptions
 
     /// <summary>How long one download may take (30 seconds unless set); a slower one is a 400.</summary>
     public TimeSpan UrlTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Whether an http(s) <c>image_url</c> may reach a loopback, link-local, private (RFC 1918, carrier-grade NAT, unique
+    /// local IPv6), multicast, unspecified or reserved address (false unless set): off, the server resolves each address
+    /// (and each redirect's) and connects only to the public ones it checked, so a client cannot make it read its own
+    /// network (a 400 naming the URL and the address).
+    /// </summary>
+    public bool AllowPrivateUrls { get; set; }
 }
 
 /// <summary>The checks every chat endpoint applies to a request's images, and the downloads of http(s) image URLs.</summary>
 internal static class ImageRequests
 {
-    private static readonly Lazy<HttpClient> Downloads = new(() => new HttpClient { Timeout = Timeout.InfiniteTimeSpan });
+    // One client for public addresses only and one for any (ImageInputOptions.AllowPrivateUrls). Redirects are followed
+    // here, each hop's host checked; the connection itself goes to an address checked when it is made, so a name that
+    // resolves to another address the second time (DNS rebinding) still cannot reach a private one.
+    private static readonly Lazy<HttpClient> PublicDownloads = new(() => Client(allowPrivate: false));
+    private static readonly Lazy<HttpClient> AnyDownloads = new(() => Client(allowPrivate: true));
+
+    // Redirects one download follows at most.
+    private const int MaxRedirects = 5;
+
+    private static HttpClient Client(bool allowPrivate) => new(new SocketsHttpHandler
+    {
+        AllowAutoRedirect = false,
+        ConnectCallback = (context, token) => Connect(context, allowPrivate, token),
+    })
+    { Timeout = Timeout.InfiniteTimeSpan };
+
+    // Connects to the host's first reachable address; refuses a private one unless allowed. Through a proxy (the
+    // endpoint is the proxy, not the request's host) the proxy is connected to as it is: the request's host was checked
+    // before the request (CheckHost).
+    private static async ValueTask<Stream> Connect(SocketsHttpConnectionContext context, bool allowPrivate, CancellationToken token)
+    {
+        var endpoint = context.DnsEndPoint;
+        string? requested = context.InitialRequestMessage.RequestUri?.IdnHost.Trim('[', ']');
+        bool proxied = requested is not null && !string.Equals(requested, endpoint.Host.Trim('[', ']'), StringComparison.OrdinalIgnoreCase);
+        var addresses = await Resolve(endpoint.Host, token);
+        if (!proxied && !allowPrivate && addresses.FirstOrDefault(a => PrivateKind(a) is not null) is { } refused)
+        {
+            throw new PrivateAddressException(refused);
+        }
+
+        var socket = new Socket(SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+        try
+        {
+            await socket.ConnectAsync(addresses, endpoint.Port, token);
+            return new NetworkStream(socket, ownsSocket: true);
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
+
+    private static async ValueTask<IPAddress[]> Resolve(string host, CancellationToken token) =>
+        IPAddress.TryParse(host.Trim('[', ']'), out var literal) ? [literal] : await Dns.GetHostAddressesAsync(host, token);
+
+    /// <summary>
+    /// What kind of address <paramref name="address"/> is when it is not a public one (loopback, link-local, private,
+    /// carrier-grade NAT, multicast, unspecified, reserved, an IPv6 site-local or unique local one), or null when public.
+    /// An IPv4 address mapped into IPv6 is judged as IPv4.
+    /// </summary>
+    internal static string? PrivateKind(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6)
+        {
+            address = address.MapToIPv4();
+        }
+
+        if (address.AddressFamily == AddressFamily.InterNetwork)
+        {
+            Span<byte> b = stackalloc byte[4];
+            address.TryWriteBytes(b, out _);
+            return b[0] switch
+            {
+                0 => "unspecified",
+                10 => "private",
+                127 => "loopback",
+                100 when (b[1] & 0xC0) == 64 => "carrier-grade NAT",
+                169 when b[1] == 254 => "link-local",
+                172 when (b[1] & 0xF0) == 16 => "private",
+                192 when b[1] == 168 => "private",
+                192 when b[1] == 0 && b[2] == 0 => "reserved",
+                198 when (b[1] & 0xFE) == 18 => "reserved",
+                >= 224 and <= 239 => "multicast",
+                >= 240 => "reserved",
+                _ => null,
+            };
+        }
+
+        if (address.Equals(IPAddress.IPv6Any) || address.Equals(IPAddress.IPv6None))
+        {
+            return "unspecified";
+        }
+
+        return IPAddress.IsLoopback(address) ? "loopback"
+            : address.IsIPv6LinkLocal ? "link-local"
+            : address.IsIPv6SiteLocal || address.IsIPv6UniqueLocal ? "private"
+            : address.IsIPv6Multicast ? "multicast"
+            : null;
+    }
+
+    // A connection refused because its address is not public.
+    private sealed class PrivateAddressException(IPAddress address) : IOException($"{address} is a {PrivateKind(address)} address")
+    {
+        public IPAddress Address { get; } = address;
+    }
+
+    // The request's host (each hop's): an http(s) address whose every resolved address is public, unless allowed.
+    private static async Task CheckHost(Uri uri, string url, ImageInputOptions options, CancellationToken token)
+    {
+        string hop = uri.OriginalString == url ? "" : $" (redirected to {Shorten(uri.OriginalString)})";
+        if (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps)
+        {
+            throw new ArgumentException($"image_url: {Shorten(url)}{hop} is not an http(s) address.");
+        }
+
+        if (options.AllowPrivateUrls)
+        {
+            return;
+        }
+
+        IPAddress[] addresses;
+        try
+        {
+            addresses = await Resolve(uri.IdnHost, token);
+        }
+        catch (SocketException e)
+        {
+            throw new ArgumentException($"image_url: {Shorten(url)}{hop}: the host {uri.IdnHost} does not resolve ({e.SocketErrorCode}).");
+        }
+
+        if (addresses.FirstOrDefault(a => PrivateKind(a) is not null) is { } refused)
+        {
+            throw new ArgumentException(Refusal(url, hop, refused));
+        }
+    }
+
+    private static string Refusal(string url, string hop, IPAddress address) =>
+        $"image_url: {Shorten(url)}{hop} reaches {address}, a {PrivateKind(address)} address, which this server does not download from "
+        + "(loopback, link-local, private, multicast and reserved addresses are refused). The server's owner can allow them "
+        + "(ImageInputOptions.AllowPrivateUrls; idrak serve --allow-private-image-urls).";
+
+    // The answer of the URL after its redirects (at most MaxRedirects, each hop's host checked).
+    private static async Task<HttpResponseMessage> Fetch(string url, ImageInputOptions options, CancellationToken token)
+    {
+        var client = (options.AllowPrivateUrls ? AnyDownloads : PublicDownloads).Value;
+        var current = new Uri(url);
+        for (int hop = 0; ; hop++)
+        {
+            await CheckHost(current, url, options, token);
+            HttpResponseMessage response;
+            try
+            {
+                response = await client.GetAsync(current, HttpCompletionOption.ResponseHeadersRead, token);
+            }
+            catch (HttpRequestException e) when (e.InnerException is PrivateAddressException refused)
+            {
+                throw new ArgumentException(Refusal(url, current.OriginalString == url ? "" : $" (redirected to {Shorten(current.OriginalString)})", refused.Address));
+            }
+
+            if ((int)response.StatusCode is 301 or 302 or 303 or 307 or 308 && response.Headers.Location is { } location)
+            {
+                response.Dispose();
+                if (hop >= MaxRedirects)
+                {
+                    throw new ArgumentException($"image_url: {Shorten(url)} redirects more than {MaxRedirects} times.");
+                }
+
+                current = location.IsAbsoluteUri ? location : new Uri(current, location);
+                continue;
+            }
+
+            return response;
+        }
+    }
 
     /// <summary>
     /// Replaces each http(s) <c>image_url</c> of an OpenAI-style body with a data URL of the image downloaded, when
@@ -83,10 +257,11 @@ internal static class ImageRequests
         timeout.CancelAfter(options.UrlTimeout);
         try
         {
-            using var response = await Downloads.Value.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            using var response = await Fetch(url, options, timeout.Token);
             if (!response.IsSuccessStatusCode)
             {
-                throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"image_url: {Shorten(url)} answered {(int)response.StatusCode} {response.ReasonPhrase}."));
+                // The status alone: the remote reason phrase and body are not repeated to the client.
+                throw new ArgumentException(string.Create(CultureInfo.InvariantCulture, $"image_url: {Shorten(url)} answered HTTP {(int)response.StatusCode}."));
             }
 
             if (response.Content.Headers.ContentLength > options.MaxUrlBytes)
@@ -134,7 +309,12 @@ internal static class ImageRequests
         }
         catch (HttpRequestException ex)
         {
-            throw new ArgumentException($"image_url: {Shorten(url)} could not be downloaded ({ex.Message}).");
+            // The kind of failure, not the message (which may carry what the remote end sent).
+            throw new ArgumentException($"image_url: {Shorten(url)} could not be downloaded ({ex.HttpRequestError}).");
+        }
+        catch (UriFormatException)
+        {
+            throw new ArgumentException($"image_url: {Shorten(url)} is not a valid address.");
         }
     }
 

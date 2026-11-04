@@ -84,7 +84,12 @@ internal sealed class ServeCommand : Command
                                      crops of a tall or wide page); a request gives its own as "vision_options":
                                      {"KEY": VALUE}, over these
               --allow-image-urls     let image_url parts name http(s) addresses the server downloads (off: data
-                                     URLs and uploads only; each download is held to --max-request-mb and 30 s)
+                                     URLs and uploads only; each download is held to --max-request-mb and 30 s);
+                                     loopback, link-local, private, multicast and reserved addresses are refused,
+                                     redirects included
+              --allow-private-image-urls
+                                     with --allow-image-urls, let downloads reach those addresses too (default
+                                     IDRAK_SERVE_PRIVATE_IMAGE_URLS)
               --beams N              an encoder-decoder's beam search for every request (default 1: the sampler); a
                                      /v1/completions request or an MCP generate call gives its own as num_beams
               --length-penalty F     the beams' length penalty (default 1: the mean log-probability; 0: the sum)

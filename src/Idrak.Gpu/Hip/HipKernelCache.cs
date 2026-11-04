@@ -13,13 +13,25 @@ namespace Idrak.Gpu.Hip;
 /// code depends on: every kernel's GCN text (<see cref="KeyOf"/>: HIP's whole kernel set, one code object), the options
 /// (the code object format), the target, the runtime and driver versions, the device's identity and the library's
 /// version. No compiler version: Idrak is the compiler, so the library's version stands for it. A file of another key is
-/// never read, and a file the runtime refuses (or whose metadata does not read) is deleted and assembled again. IDRAK_HIP_KERNEL_CACHE=0 keeps nothing,
-/// IDRAK_HIP_KERNEL_CACHE=folder moves it.
+/// never read, and a file the runtime refuses (or whose metadata does not read) is deleted and assembled again. Each file
+/// holds the SHA-256 of its code object before it (<see cref="Store"/>): one whose contents no longer match (changed on
+/// disk, cut short, or written by an older format) is deleted and assembled again, never loaded. IDRAK_HIP_KERNEL_CACHE=0
+/// keeps nothing, IDRAK_HIP_KERNEL_CACHE=folder moves it.
 /// </summary>
 internal sealed class HipKernelCache(string? folder)
 {
-    /// <summary>Bumped when the way a key is formed changes.</summary>
-    private const int FormatVersion = 1;
+    /// <summary>Bumped when the way a key is formed, or a file is laid out, changes (2: the content hash before the code).</summary>
+    private const int FormatVersion = 2;
+
+    // A file: this magic, the SHA-256 of the code object, then the code object.
+    private static ReadOnlySpan<byte> Magic => "IDRKHCO2"u8;
+
+    private const int HashBytes = 32;
+
+    private static int HeaderBytes => Magic.Length + HashBytes;
+
+    /// <summary>Why the last <see cref="Load"/> refused a kept file (its contents did not match its hash), or null.</summary>
+    public string? LastRefusal { get; private set; }
 
     /// <summary>The folder code objects are kept in (null: none kept).</summary>
     public string? Folder { get; } = folder;
@@ -103,12 +115,39 @@ internal sealed class HipKernelCache(string? folder)
         return Path.Combine(Folder, $"{name}-{key}.co");
     }
 
-    /// <summary>The kept code object of a key, or null.</summary>
+    /// <summary>
+    /// The kept code object of a key, or null: none kept, or one whose contents do not match the hash stored with it
+    /// (deleted, so it is assembled again; <see cref="LastRefusal"/> says why).
+    /// </summary>
     public byte[]? Load(string key, string architecture)
     {
+        LastRefusal = null;
         try
         {
-            return PathOf(key, architecture) is { } path && File.Exists(path) ? File.ReadAllBytes(path) : null;
+            if (PathOf(key, architecture) is not { } path || !File.Exists(path))
+            {
+                return null;
+            }
+
+            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            long length = file.Length;
+            Span<byte> header = stackalloc byte[Magic.Length + HashBytes];
+            if (length < HeaderBytes || length - HeaderBytes > Array.MaxLength)
+            {
+                return Refuse(path, $"{length} bytes, not a code object with its hash");
+            }
+
+            file.ReadExactly(header);
+            if (!header[..Magic.Length].SequenceEqual(Magic))
+            {
+                return Refuse(path, "no content hash (another format)");
+            }
+
+            byte[] code = GC.AllocateUninitializedArray<byte>((int)(length - HeaderBytes));
+            file.ReadExactly(code);
+            Span<byte> hash = stackalloc byte[HashBytes];
+            SHA256.HashData(code, hash);
+            return hash.SequenceEqual(header[Magic.Length..]) ? code : Refuse(path, "its contents do not match the hash stored with them");
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -116,7 +155,25 @@ internal sealed class HipKernelCache(string? folder)
         }
     }
 
-    /// <summary>Keeps a code object (written to a temporary file, then moved: a reader never sees half a file); errors are ignored.</summary>
+    // A kept file that must not be loaded: deleted (assembled again by the caller), the reason kept for diagnostics.
+    private byte[]? Refuse(string path, string reason)
+    {
+        LastRefusal = $"{path}: {reason}; assembled again";
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Keeps a code object with the SHA-256 of its contents before it (written to a temporary file, then moved: a reader
+    /// never sees half a file); errors are ignored.
+    /// </summary>
     public void Store(string key, string architecture, byte[] code)
     {
         if (PathOf(key, architecture) is not { } path)
@@ -128,7 +185,15 @@ internal sealed class HipKernelCache(string? folder)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             string temporary = $"{path}.{Environment.ProcessId}.tmp";
-            File.WriteAllBytes(temporary, code);
+            Span<byte> header = stackalloc byte[Magic.Length + HashBytes];
+            Magic.CopyTo(header);
+            SHA256.HashData(code, header[Magic.Length..]);
+            using (var file = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                file.Write(header);
+                file.Write(code);
+            }
+
             File.Move(temporary, path, overwrite: true);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

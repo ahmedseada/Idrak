@@ -570,6 +570,10 @@ public sealed class GgufFile : IDisposable
         }
 
         long tensors = checked((long)U64()), keys = checked((long)U64());
+        // Each count bounded by the bytes left before anything is sized by it: a key has at least its name's length,
+        // a type and one byte; a tensor at least its name's length, a dimension count, a type and an offset.
+        CheckEntries(keys, 13, "metadata keys");
+        CheckEntries(tensors, 24, "tensors");
         for (long i = 0; i < keys; i++)
         {
             string key = Str();
@@ -577,14 +581,27 @@ public sealed class GgufFile : IDisposable
         }
 
         var infos = new List<(string Name, int Type, long[] Dims, long Offset)>();
+        var names = new HashSet<string>(StringComparer.Ordinal);
         for (long i = 0; i < tensors; i++)
         {
             string name = Str();
-            int dims = (int)U32();
-            var shape = new long[dims];
-            for (int d = 0; d < dims; d++)
+            if (!names.Add(name))
             {
-                shape[d] = checked((long)U64());
+                throw new InvalidDataException($"{Path}: the tensor '{name}' is listed twice (a GGUF names each tensor once).");
+            }
+
+            uint dims = U32();
+            if (dims > MaxDimensions)
+            {
+                throw new InvalidDataException($"{Path}: the tensor '{name}' has {dims} dimensions; GGUF tensors have at most {MaxDimensions}.");
+            }
+
+            var shape = new long[dims];
+            for (int d = 0; d < shape.Length; d++)
+            {
+                ulong size = U64();
+                shape[d] = size <= long.MaxValue ? (long)size
+                    : throw new InvalidDataException($"{Path}: the tensor '{name}' has a dimension of {size} elements.");
             }
 
             int type = (int)U32();
@@ -689,6 +706,19 @@ public sealed class GgufFile : IDisposable
         return array;
     }
 
+    // The most dimensions a GGUF tensor has (ggml's GGML_MAX_DIMS).
+    private const int MaxDimensions = 4;
+
+    // A header count of entries of at least itemBytes bytes each must fit in the rest of the file.
+    private void CheckEntries(long count, int itemBytes, string what)
+    {
+        long left = _file.Length - _position;
+        if (count < 0 || count > left / itemBytes)
+        {
+            throw new InvalidDataException($"{Path}: the header lists {count} {what}, which do not fit in the {left} bytes left.");
+        }
+    }
+
     // An array of count items of at least itemBytes bytes each must fit in the rest of the file.
     private void CheckCount(long count, int itemBytes)
     {
@@ -713,10 +743,10 @@ public sealed class GgufFile : IDisposable
 
     private string Str()
     {
-        long length = checked((long)U64());
-        if (length > 1 << 28)
+        ulong length = U64();
+        if (length > 1 << 28 || length > (ulong)(_file.Length - _position))
         {
-            throw new InvalidDataException($"{Path}: a string of {length} bytes in the metadata.");
+            throw new InvalidDataException($"{Path}: a string of {length} bytes at byte {_position} (the file has {_file.Length - _position} bytes left).");
         }
 
         // Read into the stack or a pooled buffer: only the string is kept.
@@ -726,7 +756,7 @@ public sealed class GgufFile : IDisposable
         try
         {
             ReadAt(bytes[..count], _position);
-            _position += length;
+            _position += count;
             return Encoding.UTF8.GetString(bytes[..count]);
         }
         finally

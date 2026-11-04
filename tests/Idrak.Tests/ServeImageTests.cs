@@ -118,7 +118,7 @@ internal abstract partial class DesktopTests : Tests
             }))
             .ChatModel("text", () => { var (m, t) = TinyLanguageModel(device); return new TextGenerator(m, t, 32); }));
         var app = builder.Build();
-        app.MapCompletionsApi("/v1", o => o.Images(i => { i.MaxImages = 2; i.AllowUrls = true; }));
+        app.MapCompletionsApi("/v1", o => o.Images(i => { i.MaxImages = 2; i.AllowUrls = true; i.AllowPrivateUrls = true; }));   // this same (loopback) server
         app.MapChatApi("/api", "vlm", o => o.Tools(ToolExecution.Client).Images(i => i.MaxImages = 2));
         app.MapGet("/files/image.png", () => Results.File(File.ReadAllBytes(png), "image/png"));
         app.MapGet("/files/missing.png", () => Results.NotFound());
@@ -154,7 +154,7 @@ internal abstract partial class DesktopTests : Tests
                   && StreamedText(Text(together[1].Result), "concurrent streamed") == answer
                   && (string?)JsonNode.Parse(Text(together[2].Result))!["choices"]![0]!["message"]!["content"] == answer, "three requests at once");
 
-            // An http URL, allowed here (downloaded from this same server); a failed download is a 400.
+            // An http URL, allowed here (downloaded from this same server, a loopback address AllowPrivateUrls allows); a failed download is a 400.
             var fetched = JsonNode.Parse(Text(Post("/v1/chat/completions", VlmChatBody(DataUrlPart(url + "/files/image.png"), false, "vlm"))))!;
             Check((string?)fetched["choices"]?[0]?["message"]?["content"] == answer, $"an allowed http image URL: {fetched}");
             var missing = Post("/v1/chat/completions", VlmChatBody(DataUrlPart(url + "/files/missing.png"), false, "vlm"));
