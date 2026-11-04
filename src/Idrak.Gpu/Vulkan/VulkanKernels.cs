@@ -14,7 +14,9 @@ namespace Idrak.Gpu.Vulkan;
 /// a grid stride: any number of groups works; ⌈n / width⌉ capped at the device's group count is the natural choice;</item>
 /// <item>row kernels (one workgroup per row) loop over the rows with a stride of the group count: min(rows, the device's
 /// group count) groups;</item>
-/// <item>single-group kernels (<c>sum</c>, <c>sum_squares</c>, <c>axpy_at</c>, <c>clip_factor</c>) take exactly one group;</item>
+/// <item>single-group kernels (<c>sum</c> and <c>sum_squares</c> up to a width of elements, <c>sum_partials_finish</c>,
+/// <c>axpy_at</c>, <c>clip_factor</c>) take exactly one group; the first passes of larger sums (<c>sum_partials</c>,
+/// <c>sum_squares_partials</c>) take a number of groups fixed by n;</item>
 /// <item>the tiled products (<c>batched_matmul</c>, <c>batched_matmul_tile</c>) take one group per block of c along x and
 /// y and the batches along z;</item>
 /// <item>the packed products (<c>int8_gemv_R</c>, …) take column blocks × splits of k × row blocks, and the attention
@@ -486,7 +488,8 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
-        // result[0] = scale · Σ x: one workgroup. TODO(tuning): partial sums over many groups, then a second pass.
+        // result[0] = scale · Σ x: one workgroup, for a sum of at most a width of elements (one load per invocation). Larger
+        // sums take sum_partials over groups fixed by n, then sum_partials_finish (VulkanBackend.SumKernel).
         yield return ("sum", () =>
         {
             var k = new KernelBuilder("sum", Block);
@@ -500,7 +503,8 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
-        // total[0] += Σ x²: one workgroup.
+        // total[0] += Σ x²: one workgroup, for at most a width of elements; larger ones take sum_squares_partials (its
+        // groups fixed by n) and sum_partials_finish.
         yield return ("sum_squares", () =>
         {
             var k = new KernelBuilder("sum_squares", Block);
@@ -511,6 +515,39 @@ internal static partial class VulkanKernels
             k.For(k.LocalX, n, Block, i => acc.V = k.Fma(x[i], x[i], acc.V));
             var sum = k.ReduceSum(scratch, acc.V);
             k.If(k.LocalX.Eq(0), () => total[k.Int(0)] = total[k.Int(0)] + sum);
+            return k.Build();
+        });
+
+        // part[g] = Σ x[i] over i ≡ g · width + lane (mod groups · width), each lane's terms in order and then the group's
+        // tree: the first pass of a large sum. The groups are fixed by n (VulkanBackend.SumGroups), never by the device, so
+        // the order is the same on every run (rule 86); consecutive lanes read consecutive addresses (rule 83).
+        yield return ("sum_partials", () =>
+        {
+            var k = new KernelBuilder("sum_partials", Block);
+            var (x, part) = (k.Buffer("x"), k.Buffer("part"));
+            var n = k.PushInt("n");
+            var scratch = k.Shared("scratch", Block);
+            var acc = k.Local(0f);
+            k.For(k.GroupX * Block + k.LocalX, n, i => acc.V = acc.V + x[i], k.GridStrideX);
+            var sum = k.ReduceSum(scratch, acc.V);
+            k.If(k.LocalX.Eq(0), () => part[k.GroupX] = sum);
+            return k.Build();
+        });
+
+        // The second pass of a large sum: one workgroup adds part[0 … count) lane-strided (each lane's in order), then through
+        // its fixed tree; out[0] = scale · Σ, or with accumulate ≠ 0 out[0] += scale · Σ (a sum of squares: scale 1).
+        yield return ("sum_partials_finish", () =>
+        {
+            var k = new KernelBuilder("sum_partials_finish", Block);
+            var (part, output) = (k.Buffer("part"), k.Buffer("result"));
+            var (count, scale, accumulate) = (k.PushInt("count"), k.PushFloat("scale"), k.PushInt("accumulate"));
+            var scratch = k.Shared("scratch", Block);
+            var acc = k.Local(0f);
+            k.For(k.LocalX, count, Block, i => acc.V = acc.V + part[i]);
+            var sum = k.ReduceSum(scratch, acc.V);
+            k.If(k.LocalX.Eq(0), () => k.If(accumulate.Ne(0),
+                () => output[k.Int(0)] = output[k.Int(0)] + sum * scale,
+                () => output[k.Int(0)] = sum * scale));
             return k.Build();
         });
     }

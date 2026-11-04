@@ -278,21 +278,31 @@ internal static partial class VulkanKernels
     // c, staging S × S tiles of a and b in workgroup memory (fewer registers, more workgroups: better where the blocks of
     // batched_matmul are too few or too large for the device).
     //
-    // Workgroup memory: tileA[ty · S + tx], tileB[ty · S + tx] written by invocation (tx, ty) only, between the barrier
-    // ending the previous step's reads and the barrier before this step's reads.
+    // Loads are coalesced for every layout (rule 83): consecutive invocations (tx) read consecutive addresses, along k for
+    // untransposed a and transposed b, along m or n for the others; the tiles are stored transposed where the load was, so
+    // the multiply-adds read them alike. Every output adds its k terms in order, as before.
+    //
+    // Workgroup memory: tileA[r · (S + 1) + kk] (op(a)'s row r, step column kk) and tileB[kk · (S + 1) + col] (rows padded
+    // by one: a transposed store's column falls in different banks), each element written by exactly one invocation,
+    // between the barrier ending the previous step's reads and the barrier before this step's reads.
     private static SpirvKernel BatchedMatMulTile()
     {
-        int side = MatSide(Block);
+        int side = MatSide(Block), stride = side + 1;
         var k = new KernelBuilder("batched_matmul_tile", side, side);
         var (a, b, c) = (k.Buffer("a"), k.Buffer("b"), k.Buffer("c"));
         var (batch, m, n, depth) = (k.PushInt("batch"), k.PushInt("m"), k.PushInt("n"), k.PushInt("k"));
         var (transA, transB, beta) = (k.PushInt("transA"), k.PushInt("transB"), k.PushFloat("beta"));
-        var tileA = k.Shared("tileA", side * side);
-        var tileB = k.Shared("tileB", side * side);
+        var tileA = k.Shared("tileA", side * stride);
+        var tileB = k.Shared("tileB", side * stride);
         var (tx, ty) = (k.LocalX, k.LocalY);
-        var row = k.GroupY * side + ty;
-        var col = k.GroupX * side + tx;
-        var at = ty * side + tx;
+        var (ta, tb) = (transA.Ne(0), transB.Ne(0));
+        var (rowBase, colBase) = (k.GroupY * side, k.GroupX * side);
+        var row = rowBase + ty;
+        var col = colBase + tx;
+        // Invocation (tx, ty) loads op(a)[rowBase + aR, t + aK] and op(b)[t + bK, colBase + bC]: tx runs along the stored rows.
+        var (aR, aK) = (k.Select(ta, tx, ty), k.Select(ta, ty, tx));
+        var (bK, bC) = (k.Select(tb, tx, ty), k.Select(tb, ty, tx));
+        var (aAt, bAt) = (aR * stride + aK, bK * stride + bC);
         k.For(k.GroupZ, batch, bi =>
         {
             var aBase = bi * m * depth;
@@ -300,19 +310,20 @@ internal static partial class VulkanKernels
             var acc = k.Local(0f);
             k.For(k.Int(0), depth, side, t =>
             {
-                // tileA[ty, tx] = op(a)[row, t + tx]; tileB[ty, tx] = op(b)[t + ty, col]; zeros outside.
-                var (ka, kb) = (t + tx, t + ty);
+                // tileA[r, kk] = op(a)[rowBase + r, t + kk]; tileB[kk, j] = op(b)[t + kk, colBase + j]; zeros outside.
+                var (aRow, ka) = (rowBase + aR, t + aK);
                 var va = k.Local(0f);
-                k.If((row < m) & (ka < depth), () => va.V = a[aBase + k.Select(transA.Ne(0), ka * m + row, row * depth + ka)]);
-                tileA[at] = va.V;
+                k.If((aRow < m) & (ka < depth), () => va.V = a[aBase + k.Select(ta, ka * m + aRow, aRow * depth + ka)]);
+                tileA[aAt] = va.V;
+                var (kb, bCol) = (t + bK, colBase + bC);
                 var vb = k.Local(0f);
-                k.If((kb < depth) & (col < n), () => vb.V = b[bBase + k.Select(transB.Ne(0), col * depth + kb, kb * n + col)]);
-                tileB[at] = vb.V;
+                k.If((kb < depth) & (bCol < n), () => vb.V = b[bBase + k.Select(tb, bCol * depth + kb, kb * n + bCol)]);
+                tileB[bAt] = vb.V;
                 k.Barrier();
                 var sum = acc.V;
                 for (int e = 0; e < side; e++)
                 {
-                    sum = k.Fma(tileA[ty * side + e], tileB[k.Int(e * side) + tx], sum);
+                    sum = k.Fma(tileA[ty * stride + e], tileB[k.Int(e * stride) + tx], sum);
                 }
 
                 acc.V = sum;

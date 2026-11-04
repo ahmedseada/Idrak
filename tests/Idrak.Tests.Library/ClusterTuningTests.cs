@@ -106,6 +106,10 @@ internal abstract partial class Tests
         }
     }
 
+    // The runs here keep the ranks' carved devices (ReleaseDevices off): the tests set choices on them before the runs and
+    // read them across runs, then release them at the end.
+    private static ClusterOptions KeepingDevices(ClusterOptions options) => options with { Simulation = options.Simulation with { ReleaseDevices = false } };
+
     internal static void ClusterTuningContract(Device device)
     {
         if (!FirstRun(nameof(ClusterTuningContract)))
@@ -115,7 +119,9 @@ internal abstract partial class Tests
 
         _ = device;
         var topology = DpTopology(["cpu", "cpu", "cpu"]);
-        var backends = Enumerable.Range(0, 3).Select(r => SimulatedDevices.Carve(Device.Parse("cpu"), null, r).Backend).ToArray();
+        var carved = Enumerable.Range(0, 3).Select(r => SimulatedDevices.Carve(Device.Parse("cpu"), null, r)).ToArray();
+        var backends = carved.Select(d => d.Backend).ToArray();
+        ClusterOptions Options() => KeepingDevices(DpOptions());
         var provider = new TestChoices();
         // Rank 1 measured another choice than rank 0 on the same device; rank 2 is another device (its own identity).
         provider.Tables.Add(backends[0], new TestChoices.Table("device A", new() { ["path"] = "spans", ["splits"] = "4" }));
@@ -137,7 +143,7 @@ internal abstract partial class Tests
             string[] seen;
             using (Telemetry.Subscribe(hook))
             {
-                var ran = DpRun(topology, DpOptions(), rank => (Seen: Run(rank), rank.SharedChoices));
+                var ran = DpRun(topology, Options(), rank => (Seen: Run(rank), rank.SharedChoices));
                 (seen, results) = ([.. ran.Select(r => r.Seen)], [.. ran.Select(r => r.SharedChoices)]);
             }
 
@@ -151,22 +157,22 @@ internal abstract partial class Tests
                 $"followed before the ranks ran (rank 0 never follows), given back after: {provider.Follows} follows, {provider.Leaves} leaves");
 
             // Off: each rank its own, by the option and by its variable.
-            var off = DpRun(topology, DpOptions() with { ShareTuning = false }, rank => (Seen: Run(rank), rank.SharedChoices));
+            var off = DpRun(topology, Options() with { ShareTuning = false }, rank => (Seen: Run(rank), rank.SharedChoices));
             Check(off[1].Seen == "path=composed,splits=2" && off.All(r => r.SharedChoices is null) && provider.Follows == 2,
                 $"ShareTuning off: rank 1 runs its own: {string.Join(" | ", off.Select(r => r.Seen))}");
             ClusterOptions? fromVariable = null;
-            WithEnvironment(new Dictionary<string, string?> { ["IDRAK_CLUSTER_SHARE_TUNING"] = "0" }, () => fromVariable = ClusterOptions.FromEnvironment(DpOptions()));
+            WithEnvironment(new Dictionary<string, string?> { ["IDRAK_CLUSTER_SHARE_TUNING"] = "0" }, () => fromVariable = ClusterOptions.FromEnvironment(Options()));
             Check(fromVariable is { ShareTuning: false }, "IDRAK_CLUSTER_SHARE_TUNING=0 turns it off");
             var offByVariable = DpRun(topology, fromVariable!, rank => Run(rank));
             Check(offByVariable[1] == "path=composed,splits=2" && provider.Follows == 2, $"IDRAK_CLUSTER_SHARE_TUNING=0: rank 1 runs its own: {offByVariable[1]}");
 
             // Between processes: rank 0 sends its choices over the transport as the ranks join, each rank takes them.
-            var exchanged = DpRun(topology, DpOptions() with { ShareTuning = false }, rank => (Result: ChoiceSharing.Exchange(rank.Transport, rank.Device, DpOptions()), Seen: Run(rank)));
+            var exchanged = DpRun(topology, Options() with { ShareTuning = false }, rank => (Result: ChoiceSharing.Exchange(rank.Transport, rank.Device, DpOptions()), Seen: Run(rank)));
             Check(exchanged[0].Result is null && exchanged[1].Result is { Taken: true } && exchanged[1].Seen == "path=spans,splits=4" && exchanged[2].Result is { Taken: false }
                   && exchanged[2].Seen == "path=composed,splits=2" && provider.Imports == 2,
                 $"the exchange between processes: rank 1 takes rank 0's, rank 2 keeps its own: {string.Join(" | ", exchanged.Select(e => $"{e.Result} {e.Seen}"))}");
             provider.Leave(backends[1]);
-            var silent = DpRun(topology, DpOptions() with { ShareTuning = false }, rank => ChoiceSharing.Exchange(rank.Transport, rank.Device, DpOptions() with { ShareTuning = false }));
+            var silent = DpRun(topology, Options() with { ShareTuning = false }, rank => ChoiceSharing.Exchange(rank.Transport, rank.Device, DpOptions() with { ShareTuning = false }));
             Check(silent.All(r => r is null) && provider.Imports == 2, "with sharing off rank 0 sends nothing and no rank takes anything (no rank waits either)");
 
             // The bytes between processes.
@@ -186,6 +192,11 @@ internal abstract partial class Tests
                 {
                     (table.Leader, table.Imported) = (null, null);
                 }
+            }
+
+            foreach (var rank in carved)
+            {
+                SimulatedDevices.Release(rank);
             }
         }
     }
@@ -223,7 +234,9 @@ internal abstract partial class Tests
         }
 
         var topology = DpTopology(device, 2);
-        var ranks = Enumerable.Range(0, 2).Select(r => (VulkanBackend)SimulatedDevices.Carve(device, null, r).Backend).ToArray();
+        var carved = Enumerable.Range(0, 2).Select(r => SimulatedDevices.Carve(device, null, r)).ToArray();
+        var ranks = carved.Select(d => (VulkanBackend)d.Backend).ToArray();
+        var keep = KeepingDevices(DpOptions());
         string? savedCache = VulkanBackend.TuningCacheFile;
         var savedForced = AttentionPaths.Forced;
         string cache = Path.Combine(Path.GetTempPath(), $"idrak-cluster-tuning-{Environment.ProcessId}.tsv");
@@ -243,7 +256,7 @@ internal abstract partial class Tests
             // Rank 0 measured the key ranges, rank 1 the composed scores (its own choice, as a rank measuring alone could).
             ranks[0].SetTunedForTests(key, 0);
             ranks[1].SetTunedForTests(key, 1);
-            var shared = DpRun(topology, DpOptions(), rank =>
+            var shared = DpRun(topology, keep, rank =>
             {
                 var backend = (VulkanBackend)rank.Device.Backend;
                 bool known = backend.TryTunedForTests(key, out int choice);
@@ -261,7 +274,7 @@ internal abstract partial class Tests
 
             // Sharing off: rank 1 runs its own choice.
             ranks[1].SetTunedForTests(key, 1);
-            var own = DpRun(topology, DpOptions() with { ShareTuning = false }, rank =>
+            var own = DpRun(topology, keep with { ShareTuning = false }, rank =>
             {
                 ((VulkanBackend)rank.Device.Backend).TryTunedForTests(key, out int choice);
                 return (Choice: choice, Run: Attention(rank.Device), rank.SharedChoices);
@@ -277,7 +290,7 @@ internal abstract partial class Tests
             VulkanBackend.TuningCacheFile = cache;
             File.Delete(cache);
             ranks[1].SetTunedForTests(key, 1);
-            var exchanged = DpRun(topology, DpOptions() with { ShareTuning = false }, rank =>
+            var exchanged = DpRun(topology, keep with { ShareTuning = false }, rank =>
             {
                 var result = ChoiceSharing.Exchange(rank.Transport, rank.Device, DpOptions());
                 var backend = (VulkanBackend)rank.Device.Backend;
@@ -309,6 +322,11 @@ internal abstract partial class Tests
             foreach (var backend in ranks)
             {
                 backend.ResetTuningForTests();                             // read again from the cache file (not this test's) when next needed
+            }
+
+            foreach (var rank in carved)
+            {
+                SimulatedDevices.Release(rank);
             }
         }
     }

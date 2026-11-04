@@ -549,6 +549,10 @@ internal abstract partial class Tests
             b.SumRows(s[2], s[3], 37, 301);
         });
         Case("sum", [R(N), new float[1]], (b, s) => b.Sum(s[0], s[1], N, 0.5f), 1e-4f);
+        // One workgroup for up to a width of elements, groups fixed by n and a second pass past it (plan 36, G8).
+        Case("sum within a width", [R(61), new float[1]], (b, s) => b.Sum(s[0], s[1], 61, 0.5f), 1e-5f);
+        Case("sum of squares, added to the total", [R(N), [3f]], (b, s) => b.SumSquares(s[0], s[1], N), 1e-4f);
+        Case("sum of squares within a width, added to the total", [R(61), [3f]], (b, s) => b.SumSquares(s[0], s[1], 61), 1e-5f);
         foreach (int cols in new[] { 33, 700 })                              // narrow (one invocation per row) and wide rows
         {
             int rows = 40;

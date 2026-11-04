@@ -7,6 +7,7 @@ using Idrak.Abstraction;
 using Idrak.Abstraction.Cluster;
 using Idrak.Abstraction.Devices;
 using Idrak.Cluster;
+using Idrak.Gpu.Vulkan;
 
 // A separate backend is disposable (plan 36, G-1b, item G6): its memory, kernels and streams go back to the device, a
 // call after that fails naming it, the device's own backend lives for the process, and a simulated cluster gives its
@@ -19,7 +20,7 @@ internal abstract partial class DesktopTests : Tests
         ("backend dispose: a separate CPU backend gives its pool back; Allocate, Upload, Download and an operation after it throw ObjectDisposedException naming the backend; Return is a no-op and a second Dispose does nothing; the device's own backend ignores Dispose", d => { CpuOnly(d); SeparateCpuBackendDisposes(); }),
         ("backend dispose: a simulated cluster disposes every rank's carved backend when the run ends (counted), a failed rank's as it leaves, a tensor kept past the run fails naming its device; ReleaseDevices=false keeps them until SimulatedDevices.Release", d => { CpuOnly(d); SimulatedClusterReleasesDevices(); }),
         ("backend dispose: a carved device released before its first use refuses to start a backend, naming the release; Release refuses a device that is not carved, and carving alike afterwards gives a new device", d => { CpuOnly(d); ReleasedCarvedDevice(); }),
-        ("backend dispose: creating, using and disposing a separate backend of the GPU again and again leaves the driver's free memory where it started (within its granularity), and each disposed one refuses calls", SeparateGpuBackendReturnsMemory),
+        ("backend dispose: creating, using and disposing a separate backend of the GPU again and again leaves the driver's free memory where it started (within its granularity; not measured where the driver reports a CPU device, whose free memory is the host's), and each disposed one refuses calls", SeparateGpuBackendReturnsMemory),
     ];
 
     private static void SeparateCpuBackendDisposes()
@@ -149,17 +150,30 @@ internal abstract partial class DesktopTests : Tests
             Skip($"a GPU's driver memory: checked on cuda, hip and vulkan (not on {device})");
         }
 
-        var report = device.Backend as IMemoryReport;
-        if (report?.FreeMemory() is null)
-        {
-            Skip($"{device.Backend.Name} reports no free memory from its driver, so its return cannot be measured");
-        }
-
         const int Cycles = 6;
         const int Floats = 16 << 20;                                       // 64 MiB a cycle: a leak shows past any granularity
+
+        // A device the driver reports as a CPU (a software Vulkan driver) has no memory of its own: its "free memory" is
+        // the host's free memory, which every process on the machine moves, so it measures nothing about this backend.
+        // The cycles and the refusals after each dispose still run.
+        string? unmeasured = device.Kind == "vulkan" && VulkanBackend.DeviceKind(device.Ordinal).Type == VulkanDriver.DeviceTypeCpu
+            ? "the Vulkan driver reports a CPU device, whose free memory is the host's (moved by every process)"
+            : (device.Backend as IMemoryReport)?.FreeMemory() is null ? $"{device.Backend.Name} reports no free memory from its driver" : null;
+        if (unmeasured is not null)
+        {
+            for (int i = 0; i <= Cycles; i++)
+            {
+                Cycle(device, Floats, i);
+            }
+
+            Console.WriteLine($"    {Cycles + 1} separate backends of {device} created, used and disposed, each refusing calls after; free memory not measured: {unmeasured}");
+            return;
+        }
+
+        var report = (IMemoryReport)device.Backend;
         // One cycle first, so what the driver keeps for the process (its context, the first module loads) is in the start.
         Cycle(device, Floats, 0);
-        long start = report!.FreeMemory()!.Value;
+        long start = report.FreeMemory()!.Value;
         long lowest = start;
         for (int i = 1; i <= Cycles; i++)
         {

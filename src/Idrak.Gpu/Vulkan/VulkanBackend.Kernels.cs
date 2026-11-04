@@ -369,8 +369,18 @@ internal sealed partial class VulkanBackend : IKernelAvailability
             return;
         }
 
-        Span<byte> b = stackalloc byte[8];
-        Run("sum", 1, 1, 1, [x, result], new Push(b).I(n).F(scale).Bytes);
+        int groups = SumGroups(n);
+        if (groups == 1)
+        {
+            Span<byte> b = stackalloc byte[8];
+            Run("sum", 1, 1, 1, [x, result], new Push(b).I(n).F(scale).Bytes);
+            return;
+        }
+
+        var part = _sumPartials.Get(this, MostSumGroups);
+        Span<byte> first = stackalloc byte[4];
+        Run("sum_partials", (uint)groups, 1, 1, [x, part], new Push(first).I(n).Bytes);
+        FinishSum(part, result, groups, scale, accumulate: false);
     }
 
     public override void SumSquaresKernel(Storage x, Storage total, int n)
@@ -381,9 +391,37 @@ internal sealed partial class VulkanBackend : IKernelAvailability
             return;
         }
 
-        Span<byte> b = stackalloc byte[4];
-        Run("sum_squares", 1, 1, 1, [x, total], new Push(b).I(n).Bytes);
+        int groups = SumGroups(n);
+        if (groups == 1)
+        {
+            Span<byte> b = stackalloc byte[4];
+            Run("sum_squares", 1, 1, 1, [x, total], new Push(b).I(n).Bytes);
+            return;
+        }
+
+        var part = _sumPartials.Get(this, MostSumGroups);
+        Span<byte> first = stackalloc byte[8];
+        Run("sum_squares_partials", (uint)groups, 1, 1, [x, part], new Push(first).I(n).I(0).Bytes);
+        FinishSum(part, total, groups, 1f, accumulate: true);
     }
+
+    // The most groups a whole sum's first pass takes (as CUDA's SumBlocks and HIP's): any device filled, the grid stride
+    // covering the rest. A fixed number, so a sum's order depends on n and the width alone (rule 86).
+    private const int MostSumGroups = 1024;
+
+    // Groups of a whole sum's first pass: one per width of elements (one load per invocation), at most MostSumGroups; a
+    // sum of at most a width of elements takes one group and no second pass (the single-group kernels, rule 82).
+    private int SumGroups(int n) => (int)Math.Min(Math.Max(1L, ((long)n + Width - 1) / Width), Math.Min(MostSumGroups, Limits.MaxGroupsX));
+
+    // The second pass: one workgroup adds the groups' partial sums in order.
+    private void FinishSum(Storage part, Storage output, int groups, float scale, bool accumulate)
+    {
+        Span<byte> b = stackalloc byte[12];
+        Run("sum_partials_finish", 1, 1, 1, [part, output], new Push(b).I(groups).F(scale).I(accumulate ? 1 : 0).Bytes);
+    }
+
+    // The partial sums of whole sums (SumKernel, SumSquaresKernel), kept between calls and reused in queue order.
+    private readonly KeptScratch _sumPartials = new();
 
     public override void AxpyAtKernel(Storage x, Storage y, int offset, float alpha)
     {
