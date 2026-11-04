@@ -124,6 +124,7 @@ internal static class EnvironmentVariables
         new("IDRAK_STFT_PATH", Devices, "auto (the host on the CPU, composed device operations elsewhere)", "host or composed: how the short-time Fourier transform of audio features is computed, over the options' auto", ["transcribe", "data mel"]),
         new("IDRAK_ATTENTION_PATH", Devices, "measured", "spans or composed: attention that can run either way (a bidirectional pass, ranges with a dense mask) through the key-range kernel or through the full scores, instead of the faster as measured on the device (composed only where the device's free memory holds the scores)", OnDevice),
         new("IDRAK_WINDOW_KERNELS", Devices, "on", "0 or false: sliding-window and soft-capped attention through basic operations over the whole cache instead of the attention kernels (to compare or isolate them)", OnDevice),
+        new("IDRAK_MOE_ROUTING", Devices, "device where it can", "host: mixture-of-experts blocks read their routing back to the host and run each expert on its rows, as on a device without the routing kernels, instead of routing where the tensors are (MixtureOfExperts.RoutesOnDevice; the same results, to compare or isolate them)", OnDevice),
         new("IDRAK_POWER_SOURCE", Devices, "as the system reports", "ac or battery: the power source tuning choices are measured and kept under", OnDevice),
 
         new("IDRAK_CACHE", Tuning, "~/.cache/idrak", "The cache folder: downloaded models, tuning choices, compiled kernels (--cache wins for the tool; an app sets ComputeResources.CacheFolder)", [Every]),
@@ -162,6 +163,7 @@ internal static class EnvironmentVariables
         new("IDRAK_CPU_KCHUNK", Cpu, "from the cache sizes", "Forces the k chunk of the CPU's few-row kernels (tests; every chunk gives the same results)", OnDevice),
         new("IDRAK_CPU_PARALLEL_ELEMENTS", Cpu, "measured", "Overrides the element-wise parallel cut-over (tests and benchmarks)", OnDevice),
         new("IDRAK_CPU_PARALLEL_FLOPS", Cpu, "measured", "Overrides the product parallel cut-over in m*n*k (tests and benchmarks)", OnDevice),
+        new("IDRAK_CPU_SPLIT_K", Cpu, "0 (never split)", "A length: CPU matrix products whose inner dimension passes it run in chunks of k, in parallel, their partial sums added in chunk order (ComputeResources.CpuProductKChunk; a fixed order on every machine, not the unsplit bits; for long-k products with few rows and columns)", OnDevice),
         new("IDRAK_CPU_VECTORS", Cpu, "auto", "The vector paths of the CPU's kernels: auto, native, portable or scalar (ComputeResources.CpuVectors; every path gives the same results)", OnDevice),
         new("IDRAK_MEMORY_REFRESH_MS", Cpu, "250", "How long a reading of the system's memory is kept before it is read again, in ms; 0: read on every call", OnDevice),
         new("IDRAK_REFUSED_KERNELS", Devices, "fall back", "throw: a kernel the driver refuses reaches the caller instead of falling back (to find the fault)", OnDevice),

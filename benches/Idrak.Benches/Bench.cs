@@ -291,7 +291,7 @@ internal sealed class Census : ITelemetryHook
 /// <summary>The sections by name.</summary>
 internal static class Sections
 {
-    public static readonly string[] All = ["ops", "matmul", "launch", "train-decoder", "infer-decoder", "train-speech", "seq2seq", "audio-process", "memory"];
+    public static readonly string[] All = ["ops", "matmul", "launch", "train-decoder", "infer-decoder", "train-speech", "seq2seq", "audio-process", "moe", "memory"];
 
     public static void Run(string section, Device device, Settings settings, Report report)
     {
@@ -320,6 +320,9 @@ internal static class Sections
                 break;
             case "audio-process":
                 AudioBench.Run(device, settings, report);
+                break;
+            case "moe":
+                MoeBench.Run(device, settings, report);
                 break;
             case "memory":
                 MemoryBench.Run(device, settings, report);

@@ -18,7 +18,109 @@ internal abstract partial class Tests
         ("cpu tuning: the CPU's memory is the system's (/proc/meminfo, the lowest cgroup v1 or v2 limit above the process with its usage less inactive file cache) where the runtime's figure is its heap budget (Mono), held to the runtime's heap limit where it has one (CoreCLR: unchanged), the runtime's where the system reports none; both listed, labelled", CpuSystemMemory),
         ("cpu tuning: the cores are named by their groups from /proc/cpuinfo and cpufreq (part numbers and highest frequencies, raw; the system's name where given; x86's model name as before)", CpuCoreGroups),
         ("cpu tuning: the vector paths (IDRAK_CPU_VECTORS auto, native, portable, scalar) choose the kernels the runtime's report allows; portable 128-bit vectors where it reports no NEON; lane shifts equal their multiplies; the description says what runs", CpuVectorPathsChosen),
+        ("cpu tuning: the k-split product (ComputeResources.CpuProductKChunk, off by default) sums its chunks in chunk order: every transpose and beta, the same bits at 1 and every thread, the chunks' own products added in order, close to the unsplit product", CpuProductSplitK),
     ];
+
+    internal static void CpuProductSplitK(Device device)
+    {
+        if (device.Backend is not CpuBackend || !FirstRun(nameof(CpuProductSplitK)))
+        {
+            return;
+        }
+
+        Check(ComputeResources.CpuProductKChunk == 0 || Environment.GetEnvironmentVariable("IDRAK_CPU_SPLIT_K") is { Length: > 0 }, "off unless IDRAK_CPU_SPLIT_K sets it");
+        var random = new Random(17);
+        int chunkBefore = ComputeResources.CpuProductKChunk, threadsBefore = ComputeResources.MaxCpuThreads;
+        try
+        {
+            foreach (var (m, n, k, chunk) in new[] { (3, 5, 37, 8), (17, 33, 1000, 128), (64, 48, 4099, 1024), (9, 1, 300, 299) })
+            {
+                foreach (bool transA in new[] { false, true })
+                {
+                    foreach (bool transB in new[] { false, true })
+                    {
+                        foreach (float beta in new[] { 0f, 1f })
+                        {
+                            float[] a = [.. Enumerable.Range(0, m * k).Select(_ => random.NextSingle() - 0.5f)];
+                            float[] b = [.. Enumerable.Range(0, k * n).Select(_ => random.NextSingle() - 0.5f)];
+                            float[] c0 = [.. Enumerable.Range(0, m * n).Select(_ => random.NextSingle())];
+                            float[] Run(int chunkLength, int threads)
+                            {
+                                ComputeResources.CpuProductKChunk = chunkLength;
+                                ComputeResources.MaxCpuThreads = threads;
+                                var c = (float[])c0.Clone();
+                                CpuMatMul.Multiply(a, b, c, m, n, k, transA, transB, beta);
+                                return c;
+                            }
+
+                            string what = $"{m}x{n}x{k} in chunks of {chunk}, transA {transA}, transB {transB}, beta {beta}";
+                            var whole = Run(0, Environment.ProcessorCount);
+                            var split = Run(chunk, Environment.ProcessorCount);
+                            Check(split.SequenceEqual(Run(chunk, 1)), $"{what}: the same bits on one thread and on every one");
+
+                            // The order: each chunk's own product (a product of its k), added in chunk order, then + beta · C.
+                            var expected = new float[m * n];
+                            for (int k0 = 0; k0 < k; k0 += chunk)
+                            {
+                                int kc = Math.Min(chunk, k - k0);
+                                // The chunk's slices in A's and B's own layouts ([m, kc] or [kc, m]; [kc, n] or [n, kc]).
+                                float[] ac = new float[m * kc], bc = new float[kc * n], part = new float[m * n];
+                                for (int i = 0; i < m; i++)
+                                {
+                                    for (int p = 0; p < kc; p++)
+                                    {
+                                        if (transA)
+                                        {
+                                            ac[p * m + i] = a[(k0 + p) * m + i];
+                                        }
+                                        else
+                                        {
+                                            ac[i * kc + p] = a[i * k + k0 + p];
+                                        }
+                                    }
+                                }
+
+                                for (int p = 0; p < kc; p++)
+                                {
+                                    for (int j = 0; j < n; j++)
+                                    {
+                                        if (transB)
+                                        {
+                                            bc[j * kc + p] = b[j * k + k0 + p];
+                                        }
+                                        else
+                                        {
+                                            bc[p * n + j] = b[(k0 + p) * n + j];
+                                        }
+                                    }
+                                }
+
+                                ComputeResources.CpuProductKChunk = 0;
+                                CpuMatMul.Multiply(ac, bc, part, m, n, kc, transA, transB, 0f);
+                                for (int i = 0; i < m * n; i++)
+                                {
+                                    expected[i] = k0 == 0 ? part[i] : expected[i] + part[i];
+                                }
+                            }
+
+                            for (int i = 0; i < m * n; i++)
+                            {
+                                expected[i] = beta == 0f ? expected[i] : expected[i] + beta * c0[i];
+                            }
+
+                            Check(split.SequenceEqual(expected), $"{what}: the chunks' products added in chunk order");
+                            AssertClose(whole, split, 1e-4f, $"{what}: close to the unsplit product");
+                        }
+                    }
+                }
+            }
+        }
+        finally
+        {
+            ComputeResources.CpuProductKChunk = chunkBefore;
+            ComputeResources.MaxCpuThreads = threadsBefore;
+        }
+    }
 
     internal static void CpuTuningFormulas(Device device)
     {

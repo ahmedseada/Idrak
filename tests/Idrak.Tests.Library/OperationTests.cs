@@ -160,20 +160,25 @@ internal abstract partial class Tests
         Check(kernels.Count == OperationIndex.Count && Ops.All.Count == OperationIndex.Count,
             $"{kernels.Count} NameKernel methods, {Ops.All.Count} descriptors, {OperationIndex.Count} slots: run python3 tools/operations/generate.py");
 
+        // Matched by name, not by place: Backend's operations are declared over several partial files (Backend.cs, then
+        // Backend.Routing.cs: the generator's order), whose members reflection may list in another file order. Overloads
+        // share a file, so their numbers follow their order there.
         static Type[] Parameters(MethodInfo m) => [.. m.GetParameters().Select(p => p.ParameterType)];
         var seen = new Dictionary<string, int>(StringComparer.Ordinal);
+        var matched = new HashSet<int>();
         for (int i = 0; i < kernels.Count; i++)
         {
             var kernel = kernels[i];
             string name = kernel.Name[..^"Kernel".Length];
             int overload = seen[name] = seen.GetValueOrDefault(name) + 1;
-            var operation = Ops.All[i];
-            Check(operation.Index == i && operation.Name == (overload == 1 ? name : name + overload), $"descriptor {i} is {operation.Name}, Backend declares {kernel.Name} there");
+            string expected = overload == 1 ? name : name + overload;
+            var operation = Ops.All.FirstOrDefault(o => o.Name == expected);
+            Check(operation is not null && Ops.All[operation.Index] == operation && matched.Add(operation.Index), $"Backend declares {kernel.Name}: no descriptor {expected} (or one met twice)");
 
             var dispatch = methods.SingleOrDefault(m => m.Name == name && !m.IsVirtual && Parameters(m).SequenceEqual(Parameters(kernel)));
             Check(dispatch is not null && dispatch.ReturnType == kernel.ReturnType, $"no dispatching {name} with the parameters of {kernel.Name}");
 
-            var invoke = operation.KernelType.GetMethod("Invoke")!;
+            var invoke = operation!.KernelType.GetMethod("Invoke")!;
             Check(invoke.ReturnType == kernel.ReturnType && Parameters(invoke).SequenceEqual([typeof(Backend), .. Parameters(kernel)]),
                 $"the delegate of {operation.Name} does not match {kernel.Name}");
         }

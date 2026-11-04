@@ -97,6 +97,66 @@ internal static class OpsBench
 
     private static Tensor WeightNormGain(Tensor direction) => Tensor.Ones([direction.Shape[0]], direction.Device);
 
+    /// <summary>
+    /// The CPU's products with a long k, whole (one FMA chain over k: the default) and split into chunks of k
+    /// (ComputeResources.CpuProductKChunk; IDRAK_BENCH_SPLIT_K the chunk length, default 4096): warm ms of each, the
+    /// speed-up and the largest relative difference. A weight's gradient (Aᵀ·B, few rows and columns) and a plain product.
+    /// The default stays whole: the owner's runs decide.
+    /// </summary>
+    private static void RunSplitK(Device device, Settings settings, Report report, Random random)
+    {
+        const string Section = "matmul";
+        int chunk = Environment.GetEnvironmentVariable("IDRAK_BENCH_SPLIT_K") is { Length: > 0 } s ? int.Parse(s, System.Globalization.CultureInfo.InvariantCulture) : 4096;
+        (int M, int K, int N, bool TransposeA)[] shapes = settings.Size switch
+        {
+            BenchSize.Small => [(64, 65536, 64, true), (256, 32768, 256, true), (128, 32768, 128, false)],
+            BenchSize.Medium => [(64, 262144, 64, true), (512, 65536, 512, true), (256, 131072, 256, false)],
+            _ => [(128, 1048576, 128, true), (1024, 131072, 1024, true), (512, 262144, 512, false)],
+        };
+        Console.WriteLine(Bench.Line($"long k on the CPU, whole vs chunks of {chunk}", ("ms whole", ""), ("ms split", ""), ("speed-up", ""), ("max rel diff", "")));
+        int before = ComputeResources.CpuProductKChunk;
+        try
+        {
+            foreach (var (m, k, n, transposeA) in shapes)
+            {
+                using var a = transposeA ? Bench.RandomTensor(random, [k, m], device, 0.5f) : Bench.RandomTensor(random, [m, k], device, 0.5f);
+                using var b = Bench.RandomTensor(random, [k, n], device, 0.5f);
+                Tensor Product() => a.MatMul(b, transposeA: transposeA);
+                ComputeResources.CpuProductKChunk = 0;
+                var (_, whole) = Bench.Time(device, () => Product(), settings.Repeats, settings.Warmup);
+                float[] reference;
+                using (var t = Product())
+                {
+                    reference = t.ToArray();
+                }
+
+                ComputeResources.CpuProductKChunk = chunk;
+                var (_, split) = Bench.Time(device, () => Product(), settings.Repeats, settings.Warmup);
+                float[] chunked;
+                using (var t = Product())
+                {
+                    chunked = t.ToArray();
+                }
+
+                ComputeResources.CpuProductKChunk = before;
+                double scale = reference.Max(v => Math.Abs((double)v)), diff = 0;
+                for (int i = 0; i < reference.Length; i++)
+                {
+                    diff = Math.Max(diff, Math.Abs((double)reference[i] - chunked[i]) / Math.Max(scale, 1e-30));
+                }
+
+                string label = $"{(transposeA ? "Aᵀ·B " : "")}{m} x {k} x {n}, chunks of {chunk}";
+                Console.WriteLine(Bench.Line(label, ("", Bench.F(whole, "0.000")), ("", Bench.F(split, "0.000")), ("", Bench.F(whole / split, "0.00") + "x"), ("", diff.ToString("0.0e0", System.Globalization.CultureInfo.InvariantCulture))));
+                report.Add(Section, label, device, "whole warm", whole, "ms");
+                report.Add(Section, label, device, "split warm", split, "ms");
+            }
+        }
+        finally
+        {
+            ComputeResources.CpuProductKChunk = before;
+        }
+    }
+
     /// <summary>Matrix products and convolutions at the shapes training and decoding run: TFLOPS and milliseconds a call.</summary>
     public static void RunProducts(Device device, Settings settings, Report report)
     {
@@ -119,6 +179,11 @@ internal static class OpsBench
             Console.WriteLine(Bench.Line(label, ("", Bench.F(warm, "0.000")), ("", Bench.F(tflops, "0.00")), ("", Bench.F(cold, "0.0"))));
             report.Add(ProductsSection, label, device, "warm", warm, "ms");
             report.Add(ProductsSection, label, device, "rate", tflops, "TFLOPS");
+        }
+
+        if (device.Type == DeviceType.Cpu)
+        {
+            RunSplitK(device, settings, report, random);
         }
 
         // Convolutions as networks run them: a backbone's 3 x 3, a stem's strided 7 x 7, and a speech decoder's long 1-D filters.

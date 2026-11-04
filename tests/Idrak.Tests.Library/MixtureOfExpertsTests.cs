@@ -4,6 +4,7 @@
 using System.Runtime.InteropServices;
 using System.Text.Json.Nodes;
 using Idrak;
+using Idrak.Abstraction.Operations;
 using Idrak.Generation;
 using Idrak.Layers;
 using Idrak.Models;
@@ -21,6 +22,7 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] MixtureOfExpertsGroup =
     [
         ("mixture of experts: routing takes the k most probable experts (ties to the lowest index, as torch.topk), renormalized when configured; a known routing on the device", ExpertRouting),
+        ("mixture of experts: routing where the tensors are (RouteTopK, ExpertGatedPair, ExpertMatMul) gives the host routing's values bit for bit (biases, odd widths, experts with many rows and few, every activation, a shared expert); RouteTopK matches the layer's host routing; a device without the kernels routes on the host, counted as a host fallback of RouteTopK; IDRAK_MOE_ROUTING=host turns it off", ExpertRoutingOnDevice),
         ("mixture of experts: Mixtral-, Qwen2-MoE- and Qwen3-MoE-shaped decoders match the loop reference (prompt, training, cached decoding, batches); packed experts; recording falls back; JSON and parameter counts", ExpertDecoders),
         ("mixture of experts: gradients of router, experts, shared expert and input match finite differences; load-balancing loss; LoRA on attention fine-tunes a model with experts", ExpertTraining),
         ("pretrained: Mixtral, Qwen2-MoE and Qwen3-MoE configs and checkpoints (their tensor names) load and match the reference; GGUF files with experts (qwen2moe, qwen3moe, llama as Mixtral) too", ExpertCheckpoints),
@@ -118,6 +120,115 @@ internal abstract partial class Tests
             using var input = Tensor.From(x, [1, T, Dim], device);
             AssertClose(expected2, moe.Forward(input).ToArray(), 1e-5f, "the known routing");
         }
+    }
+
+    internal static void ExpertRoutingOnDevice(Device device)
+    {
+        var backend = device.Backend;
+        var random = new Random(11);
+
+        // The operation against the layer's host routing (MixtureOfExperts.Route), ties included, bit for bit.
+        foreach (var (tokens, experts, k, normalize) in new[] { (50, 7, 3, true), (33, 5, 1, false), (8, 4, 4, true), (1, 3, 2, true) })
+        {
+            float[] rows = [.. Enumerable.Range(0, tokens * experts).Select(_ => (float)Math.Round(random.NextDouble(), 1) + 0.05f)];
+            var (choices, weights) = MixtureOfExperts.Route(rows, tokens, experts, k, normalize);
+            int slots = tokens * k;
+            using var probabilities = Tensor.From(rows, [tokens, experts], device);
+            using var routed = Tensor.Empty([slots], device, track: false);
+            using var offsets = Tensor.Empty([experts + 1], device, track: false);
+            using var tokenOfRow = Tensor.Empty([slots], device, track: false);
+            using var slotRow = Tensor.Empty([slots], device, track: false);
+            backend.RouteTopK(probabilities.Storage, routed.Storage, offsets.Storage, tokenOfRow.Storage, slotRow.Storage, tokens, experts, k, normalize);
+            var expectedOffsets = new float[experts + 1];
+            var expectedTokens = new float[slots];
+            var expectedRows = new float[slots];
+            int next = 0;
+            for (int e = 0; e < experts; e++)
+            {
+                expectedOffsets[e] = next;
+                for (int slot = 0; slot < slots; slot++)
+                {
+                    if (choices[slot] == e)
+                    {
+                        expectedTokens[next] = slot / k;
+                        expectedRows[slot] = next++;
+                    }
+                }
+            }
+
+            expectedOffsets[experts] = slots;
+            string what = $"{tokens} tokens, {experts} experts, k {k}";
+            Check(Bits(routed.ToArray()).SequenceEqual(Bits(weights)), $"{what}: the weights of Route, bit for bit");
+            Check(offsets.ToArray().SequenceEqual(expectedOffsets) && tokenOfRow.ToArray().SequenceEqual(expectedTokens) && slotRow.ToArray().SequenceEqual(expectedRows),
+                $"{what}: offsets {string.Join(",", offsets.ToArray())}, expected {string.Join(",", expectedOffsets)}");
+        }
+
+        // Whole layers: the device routing against the host routing (RoutesOnDevice off), bit for bit. 40 tokens over 4 to 6
+        // experts give each many rows; 3 tokens give each a few (the few-row products).
+        var cases = new (string Name, int Dim, int Hidden, int Experts, int K, bool Normalize, int Shared, FeedForwardActivation Activation, bool Bias, int Tokens)[]
+        {
+            ("Mixtral-like, SiLU", 16, 24, 4, 2, true, 0, FeedForwardActivation.Silu, false, 40),
+            ("odd widths, biases, GELU, a shared expert", 9, 13, 6, 3, false, 7, FeedForwardActivation.Gelu, true, 40),
+            ("ReLU, few rows an expert", 8, 6, 5, 2, true, 0, FeedForwardActivation.Relu, true, 3),
+            ("tanh · sigmoid, every expert a token", 7, 5, 3, 3, true, 0, FeedForwardActivation.TanhSigmoid, false, 11),
+        };
+        bool own = backend.RoutesExperts;
+        Check(own == (device.Type == DeviceType.Cpu), $"{backend.Name}: RoutesExperts {own} (the CPU has the kernels; the GPUs fall back until plan 37's R0)");
+        bool before = MixtureOfExperts.RoutesOnDevice;
+        try
+        {
+            foreach (var c in cases)
+            {
+                using var moe = new MixtureOfExperts(c.Dim, c.Hidden, c.Experts, c.K, c.Normalize, c.Shared, c.Activation, c.Bias, device, new Random(c.Dim * 31 + c.Hidden));
+                if (c.Bias)
+                {
+                    foreach (var layer in moe.Experts.SelectMany(e => new[] { e.Gate!, e.Up, e.Down }))
+                    {
+                        layer.Bias!.CopyFrom(Uniform(random, layer.OutFeatures));
+                    }
+                }
+
+                using var input = Tensor.From(Uniform(random, 2 * c.Tokens * c.Dim), [2, c.Tokens, c.Dim], device);
+                float[] Run(bool onDevice, out long routeCalls, out long hostFallbacks)
+                {
+                    MixtureOfExperts.RoutesOnDevice = onDevice;
+                    using var trace = Kernels.Trace(backend);
+                    using var scope = new TensorScope();
+                    using (Autograd.NoGrad())
+                    {
+                        var output = moe.Forward(input).ToArray();
+                        routeCalls = trace.Calls(Ops.RouteTopK);
+                        hostFallbacks = trace.HostCallsByOperation.GetValueOrDefault(nameof(Ops.RouteTopK));
+                        return output;
+                    }
+                }
+
+                var onDevice = Run(true, out long deviceCalls, out long deviceFallbacks);
+                var onHost = Run(false, out long hostCalls, out long hostFallbacks);
+                Check(Bits(onDevice).SequenceEqual(Bits(onHost)), $"{c.Name}: the device routing gives the host routing's values bit for bit (largest difference {onDevice.Zip(onHost, (a, b) => MathF.Abs(a - b)).Max()})");
+                Check(own ? deviceCalls == 1 && deviceFallbacks == 0 && hostCalls == 0 && hostFallbacks == 0 : deviceCalls == 0 && deviceFallbacks == 1 && hostFallbacks == 1,
+                    $"{c.Name} on {backend.Name}: RouteTopK called {deviceCalls} times on the device path and {hostCalls} with it off; host fallbacks of RouteTopK {deviceFallbacks} and {hostFallbacks}");
+            }
+
+            // Training keeps the host routing (its gradients and load-balancing loss read the host's choices).
+            MixtureOfExperts.RoutesOnDevice = true;
+            using var trained = new MixtureOfExperts(8, 6, 4, 2, device: device, random: new Random(2));
+            trained.Train();
+            using var x = Tensor.From(Uniform(random, 5 * 8), [5, 8], device);
+            using (var trace = Kernels.Trace(backend))
+            using (new TensorScope())
+            {
+                trained.Forward(x).Sum().Backward();
+                Check(trace.Calls(Ops.RouteTopK) == 0 && trained.LoadBalancingLoss is not null, "training routes on the host, with its load-balancing loss");
+            }
+        }
+        finally
+        {
+            MixtureOfExperts.RoutesOnDevice = before;
+        }
+
+        static int[] Bits(float[] values) => [.. values.Select(BitConverter.SingleToInt32Bits)];
+        static float[] Uniform(Random random, int count) => [.. Enumerable.Range(0, count).Select(_ => random.NextSingle() * 2 - 1)];
     }
 
     internal static void ExpertDecoders(Device device)

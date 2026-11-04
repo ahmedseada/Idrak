@@ -11,7 +11,9 @@
 // Sections (default: all):
 //   ops            element-wise, reductions, softmax, layer norm: µs a call (IDRAK_BENCH_CALLS back to back, one sync),
 //                  GB/s, launches; forward and backward
-//   matmul         products and convolutions at several shapes: TFLOPS, ms a call
+//   matmul         products and convolutions at several shapes: TFLOPS, ms a call; on the CPU, products with a long k
+//                  whole and split into chunks of k (ComputeResources.CpuProductKChunk, off by default;
+//                  IDRAK_BENCH_SPLIT_K the chunk length, default 4096): ms each, speed-up, largest relative difference
 //   launch         the host's cost a launch: thousands of calls on 32 elements queued without a sync, µs a call at each
 //                  layer (the backend on existing storages, the tensor operation, with its gradient recorded, a product)
 //   train-decoder  a decoder's training step (size by IDRAK_BENCH_SIZE): ms a step, launches a step, peak memory,
@@ -28,6 +30,10 @@
 //   audio-process  every registered audio processor (the library's and the plug-ins', rnnoise when its model file is
 //                  found) alone on 10 s of speech-like sound at 16 kHz mono and 48 kHz stereo: ms cold, the warm median,
 //                  times real time; IDRAK_BENCH_AUDIO (steps such as "lowpass, rnnoise mix=0.8") chooses them instead
+//   moe            mixture-of-experts blocks at inference (size by IDRAK_BENCH_SIZE), the routing read back to the host
+//                  against the routing where the tensors are (MixtureOfExperts.RoutesOnDevice): ms a token cold and warm,
+//                  host reads a layer, launches a layer, one token and a prompt (a device without the routing kernels
+//                  routes on the host in both rows)
 //   memory         stress: the pool over thousands of varied shapes (rule 77: device memory does not grow), long
 //                  sequences, the largest batch the device takes before it runs out
 //
@@ -37,7 +43,8 @@
 // (untimed calls first, default 30), IDRAK_BENCH_CALLS (calls a timed round in the ops section, default 8: one device
 // sync a round, so a driver's submission latency does not stand for a 10 µs kernel), IDRAK_BENCH_SECONDS (the most a
 // stress section runs, default 60), IDRAK_BENCH_OUT, IDRAK_BENCH_MODEL, IDRAK_BENCH_CLIPS, IDRAK_BENCH_SEQ2SEQ,
-// IDRAK_BENCH_AUDIO (comma-separated steps for audio-process; a bare name takes its defaults).
+// IDRAK_BENCH_AUDIO (comma-separated steps for audio-process; a bare name takes its defaults), IDRAK_BENCH_SPLIT_K (the
+// k chunk length the matmul section's split products use on the CPU).
 
 using Idrak.Benches;
 

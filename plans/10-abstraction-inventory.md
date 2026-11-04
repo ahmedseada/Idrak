@@ -624,17 +624,17 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 134 virtual methods, 5 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `DeferredBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (154, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 137 virtual methods, 5 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `DeferredBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (157, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 128 of 144 |
-| `CudaBackend` | 136 of 144 |
-| `DeferredBackend` | 11 of 144 |
-| `HipBackend` | 137 of 144 |
-| `VulkanBackend` | 124 of 144 |
+| `CpuBackend` | 131 of 147 |
+| `CudaBackend` | 136 of 147 |
+| `DeferredBackend` | 11 of 147 |
+| `HipBackend` | 137 of 147 |
+| `VulkanBackend` | 124 of 147 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
 |---|---|---|---|---|---|---|
@@ -693,6 +693,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `DownloadRange(3)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `DropoutBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `DropoutKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `ExpertGatedPairKernel(8)` | virtual | ✓ |  |  |  |  |
+| `ExpertMatMulKernel(7)` | virtual | ✓ |  |  |  |  |
 | `ExtremumBackwardKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `FillKernel(3)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Float16DequantizeKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
@@ -758,6 +760,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `RmsNormRopeKernel(14)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `RmsNormRopePairKernel(21)` | virtual |  | ✓ |  | ✓ | ✓ |
 | `RopeKernel(12)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `RouteTopKKernel(9)` | virtual | ✓ |  |  |  |  |
 | `SampleRowsKernel(13)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ScaleMaskSoftmaxKernel(7)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `ScatterAddKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |

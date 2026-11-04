@@ -1204,6 +1204,7 @@ public sealed class Idrak.Layers.MixtureOfExperts : Idrak.Abstraction.Module, Id
   public int ExpertsPerToken { get; }
   public override System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Children()
   public override string ToString()
+  public static bool RoutesOnDevice { get; set; }
 
 public static class Idrak.Layers.ModuleExtensions
   public static Idrak.Abstraction.Tensor ForwardCheckpointed(this Idrak.Abstraction.Module module, Idrak.Abstraction.Tensor input)

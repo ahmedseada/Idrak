@@ -31,9 +31,106 @@ internal static class CpuMatMul
     public static void Multiply(float[] a, float[] b, float[] c, int m, int n, int k, bool transA, bool transB, float beta) =>
         Multiply(a, 0, b, 0, c, 0, m, n, k, transA, transB, beta);
 
-    /// <summary>Multiplies the matrices starting at the given element offsets of each array.</summary>
-    public static void Multiply(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, bool transB, float beta) =>
+    /// <summary>
+    /// Multiplies the matrices starting at the given element offsets of each array; over chunks of k when
+    /// <see cref="ComputeResources.CpuProductKChunk"/> is set and k passes it (<see cref="SplitK"/>).
+    /// </summary>
+    public static void Multiply(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, bool transB, float beta)
+    {
+        int chunk = ComputeResources.CpuProductKChunk;
+        if (chunk > 0 && k > chunk && m > 0 && n > 0)
+        {
+            SplitK(a, aOffset, b, bOffset, c, cOffset, m, n, k, transA, transB, beta, chunk);
+            return;
+        }
+
         Multiply(a, aOffset, b, bOffset, c, cOffset, m, n, k, transA, transB, beta, CpuTuning.ProductCutover((long)m * n * k), ComputeResources.ParallelOptions);
+    }
+
+    // One thread a chunk's product: the chunks are what runs in parallel.
+    private static readonly ParallelOptions OneThread = new() { MaxDegreeOfParallelism = 1 };
+
+    /// <summary>
+    /// The product over k in chunks of <paramref name="chunk"/> (the last one shorter): each chunk's product on its own
+    /// (one FMA chain over its part of k from zero), the chunks in parallel, then for each element the partial sums added
+    /// in chunk order and + beta · C. The order of every sum follows from k and the chunk length alone (rule 86), whatever
+    /// the threads. A chunk's slice of A or B that is not contiguous (A stored [m, k], B stored [n, k]) is copied out
+    /// first; A stored [k, m] and B stored [k, n] (a weight's gradient) are read in place.
+    /// </summary>
+    private static void SplitK(float[] a, int aOffset, float[] b, int bOffset, float[] c, int cOffset, int m, int n, int k, bool transA, bool transB, float beta, int chunk)
+    {
+        int chunks = (k + chunk - 1) / chunk, mn = m * n;
+        float[] partial = ArrayPool<float>.Shared.Rent(checked(chunks * mn));
+        var options = ComputeResources.ParallelOptions;
+        try
+        {
+            Parallel.For(0, chunks, options, index =>
+            {
+                int k0 = index * chunk, kc = Math.Min(chunk, k - k0);
+                float[]? packedA = null, packedB = null;
+                try
+                {
+                    float[] ac = a, bc = b;
+                    int ao = aOffset + k0 * m, bo = bOffset + k0 * n;          // [k, m] and [k, n]: rows k0 on, in place
+                    if (!transA)
+                    {
+                        packedA = ArrayPool<float>.Shared.Rent(m * kc);          // [m, k]: columns k0 on of each row
+                        for (int r = 0; r < m; r++)
+                        {
+                            Array.Copy(a, aOffset + (long)r * k + k0, packedA, r * kc, kc);
+                        }
+
+                        (ac, ao) = (packedA, 0);
+                    }
+
+                    if (transB)
+                    {
+                        packedB = ArrayPool<float>.Shared.Rent(n * kc);          // [n, k]: columns k0 on of each row
+                        for (int j = 0; j < n; j++)
+                        {
+                            Array.Copy(b, bOffset + (long)j * k + k0, packedB, j * kc, kc);
+                        }
+
+                        (bc, bo) = (packedB, 0);
+                    }
+
+                    Multiply(ac, ao, bc, bo, partial, index * mn, m, n, kc, transA, transB, 0f, long.MaxValue, OneThread);
+                }
+                finally
+                {
+                    if (packedA is not null)
+                    {
+                        ArrayPool<float>.Shared.Return(packedA);
+                    }
+
+                    if (packedB is not null)
+                    {
+                        ArrayPool<float>.Shared.Return(packedB);
+                    }
+                }
+            });
+
+            // Each element: its chunks' sums in chunk order, then + beta · C (rows in parallel; no element's order changes).
+            Parallel.For(0, m, options, r =>
+            {
+                for (int j = r * n, end = j + n; j < end; j++)
+                {
+                    float sum = partial[j];
+                    for (int index = 1; index < chunks; index++)
+                    {
+                        sum += partial[index * mn + j];
+                    }
+
+                    ref float dst = ref c[cOffset + j];
+                    dst = beta == 0f ? sum : sum + beta * dst;
+                }
+            });
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(partial);
+        }
+    }
 
     /// <summary>
     /// The product with an explicit parallel cut-over in m·n·k (<paramref name="parallelWork"/>) and thread options: what

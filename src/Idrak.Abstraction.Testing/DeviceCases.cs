@@ -40,6 +40,7 @@ public static partial class DeviceCases
         new("packed weights: int8, 4-bit and bfloat16 products, dequantization and packing", PackedWeights, random: true),
         new("packed weights: fused products (many, gated, with the residual norm, low-rank, transposed, FP8)", FusedPackedProducts, random: true),
         new("gated activations: SiLU, GELU and ReLU gates, their gradients and bfloat16 forms", GatedActivations, random: true),
+        new("mixture of experts: routing (ties to the lowest index, one and every expert a token, normalized or not) and the experts' gated pairs and products over rows grouped by expert (biases on some, every activation), against plain loops", Experts, random: true),
         new("decoding: masks and key/value caches in float32, int8 and bfloat16", KeyValueCaches, random: true),
         new("attention: decoding, tiled, int8 and bfloat16 caches, rows, segments, strided, windows and soft-caps", Attention, random: true),
         new("attention over key ranges: bidirectional, causal, windows, segments, image blocks, grouped heads, empty ranges", SpanAttention, random: true),

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Operations;
 using Idrak.Layers.Abstractions;
 
 namespace Idrak.Layers;
@@ -13,9 +14,19 @@ namespace Idrak.Layers;
 /// ("experts.j") that runs only on the tokens routed to it. Optionally a shared expert ("shared") runs on every token and
 /// is added, scaled by sigmoid of a gate ("shared_gate", [dim, 1]) when there is one (Qwen2-MoE).
 /// <para>
-/// The routing is read back to the host on every call (a few values per token), so the experts run on exactly the tokens
-/// they were given on every backend. A recorded graph (<see cref="ComputeGraph"/>) cannot read results back: recording a
-/// step through this block fails cleanly and the step runs as it is on every replay.
+/// At inference (no gradients recorded), on a device that runs the routing operations itself (<see cref="Backend.RoutesExperts"/>:
+/// the CPU), with float32 gated experts and no forward hooks, the routing stays where it is: <see cref="Backend.RouteTopK"/>
+/// writes each token's weights and the rows grouped by expert, and <see cref="Backend.ExpertGatedPair"/> and
+/// <see cref="Backend.ExpertMatMul"/> run every expert over its rows as their offsets say, with the same values as the
+/// experts' own layers (nothing is read back to the host). Otherwise (training, packed or adapted experts, a device
+/// without those kernels, or <see cref="RoutesOnDevice"/> off) the routing is read back to the host on every call (a few
+/// values per token) and each expert runs on its own rows, on a device without the kernels counted as a host fallback of
+/// <see cref="Backend.RouteTopK"/>. A recorded graph (<see cref="ComputeGraph"/>) cannot read results back: recording a
+/// step through the host routing fails cleanly and the step runs as it is on every replay.
+/// </para>
+/// <para>
+/// The indices the routing writes are floats, as every gather of the library reads them (integer index tensors are a
+/// later plan's).
 /// </para>
 /// </summary>
 public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
@@ -140,19 +151,44 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
         }
     }
 
+    /// <summary>
+    /// Whether a mixture-of-experts block routes on the device where it can (see the class remarks): on unless the
+    /// environment variable <c>IDRAK_MOE_ROUTING</c> is <c>host</c> when the process starts. Off, every block reads its
+    /// routing back to the host (the path a device without the routing kernels takes), with the same results: to compare
+    /// the two or to isolate one.
+    /// </summary>
+    public static bool RoutesOnDevice { get; set; } =
+        Environment.GetEnvironmentVariable("IDRAK_MOE_ROUTING") is not { } routing || !routing.Trim().Equals("host", StringComparison.OrdinalIgnoreCase);
+
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input)
     {
-        if (ComputeGraph.IsCapturing)
-        {
-            throw new NotSupportedException("Mixture-of-experts routing reads the router's choices back to the host, which a recorded graph cannot; the step runs as it is.");
-        }
-
         int dim = Router.InFeatures, tokens = input.Size / dim, experts = Experts.Count, k = ExpertsPerToken;
         var device = input.Device;
+        var backend = input.Backend;
+        bool kernels = backend.RoutesExperts;
+        bool onDevice = kernels && RoutesOnDevice && !Autograd.IsEnabled && ExpertsOnDevice(input);
+        if (!onDevice && ComputeGraph.IsCapturing)
+        {
+            throw new NotSupportedException("Mixture-of-experts routing reads the router's choices back to the host here (the device has no routing kernels, or the experts or the pass need the host routing), which a recorded graph cannot; the step runs as it is.");
+        }
+
         var x = input.Reshape(tokens, dim);
         var probabilities = Router.Forward(x).Softmax();                             // [tokens, experts]
-        var (choices, weights) = Route(probabilities.ToArray(), tokens, experts, k, NormalizeTopK);
+        if (onDevice)
+        {
+            return RouteOnDevice(input, x, probabilities);
+        }
+
+        if (!kernels)
+        {
+            backend.CountHostFallback(Ops.RouteTopK);                                 // the routing this device has no kernel for
+        }
+
+        long readStart = Telemetry.Start(TelemetryLevel.Operations);
+        var routed = probabilities.ToArray();
+        Tensor.Traced("route_on_host", probabilities, readStart);                    // the host read, for a census of them
+        var (choices, weights) = Route(routed, tokens, experts, k, NormalizeTopK);
 
         // The rows routed to each expert, expert by expert (each token's experts are distinct, so an expert given every token
         // has them in order and reads the input as it is); slot (token i, its s-th expert) is row slotRow[i·k + s] of the
@@ -217,6 +253,100 @@ public sealed class MixtureOfExperts : Module, IRoutedLayer, IHostRoundTrip
         }
 
         return output.Reshape(input.Shape);
+    }
+
+    // Whether every expert is a gated block of float32 layers of its own (no adapter, tie or soft-cap) of one hidden width on
+    // the input's device, with nothing listening to the forward passes (a sharded run's gathers, offloaded weights): what
+    // ExpertGatedPair and ExpertMatMul compute as the experts' own layers do. A plain loop: it runs on every forward.
+    private bool ExpertsOnDevice(Tensor input)
+    {
+        if (ForwardHooks.Listening || input.Backend.Offload is not null)
+        {
+            return false;
+        }
+
+        int hidden = Experts[0].Up.OutFeatures;
+        var activation = Experts[0].Activation;
+        foreach (var expert in Experts)
+        {
+            if (expert.Gate is not { } gate || expert.Activation != activation || !Linear.PlainFloat(gate) || !Linear.PlainFloat(expert.Up) || !Linear.PlainFloat(expert.Down)
+                || gate.OutFeatures != hidden || expert.Up.OutFeatures != hidden || expert.Down.InFeatures != hidden
+                || gate.Weight.Device != input.Device || expert.Up.Weight.Device != input.Device || expert.Down.Weight.Device != input.Device
+                || gate.Bias is { } gb && gb.Device != input.Device || expert.Up.Bias is { } ub && ub.Device != input.Device
+                || expert.Down.Bias is { } db && db.Device != input.Device)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    // The routing and the experts where the tensors are (inference): RouteTopK writes the weights and the rows grouped by
+    // expert; the rows are gathered once, every expert's gate and up projections and gated activation run over its rows
+    // (ExpertGatedPair), then its down projection (ExpertMatMul), each reading its rows from the offsets where they are;
+    // the outputs go back to slot order and are weighted as the host routing does. The same values as that path: the same
+    // gathers, products and activation per expert, and the same weighting product.
+    private Tensor RouteOnDevice(Tensor input, Tensor x, Tensor probabilities)
+    {
+        int dim = Router.InFeatures, tokens = x.Shape[0], experts = Experts.Count, k = ExpertsPerToken, slots = tokens * k;
+        int hidden = Experts[0].Up.OutFeatures;
+        var device = input.Device;
+        var backend = input.Backend;
+        long start = Telemetry.Start(TelemetryLevel.Operations);
+        var weights = Tensor.Empty([tokens, 1, k], device, track: false);
+        var offsets = Tensor.Empty([experts + 1], device, track: false);
+        var tokenOfRow = Tensor.Empty([slots], device, track: false);
+        var slotRow = Tensor.Empty([slots], device, track: false);
+        Tensor? rows = null, gated = null, outputs = null, slotOrder = null;
+        try
+        {
+            backend.RouteTopK(probabilities.Storage, weights.Storage, offsets.Storage, tokenOfRow.Storage, slotRow.Storage, tokens, experts, k, NormalizeTopK);
+            Tensor.Traced("route_top_k", weights, start);
+
+            rows = x.EmbeddingLookup(tokenOfRow);                                     // [slots, dim], expert by expert
+            var pairs = new (Storage Gate, Storage? GateBias, Storage Up, Storage? UpBias)[experts];
+            var downs = new (Storage Weight, Storage? Bias)[experts];
+            for (int e = 0; e < experts; e++)
+            {
+                var expert = Experts[e];
+                pairs[e] = (expert.Gate!.Weight.Storage, expert.Gate.Bias?.Storage, expert.Up.Weight.Storage, expert.Up.Bias?.Storage);
+                downs[e] = (expert.Down.Weight.Storage, expert.Down.Bias?.Storage);
+            }
+
+            start = Telemetry.Start(TelemetryLevel.Operations);
+            gated = Tensor.Empty([slots, hidden], device, track: false);
+            backend.ExpertGatedPair(rows.Storage, offsets.Storage, pairs, gated.Storage, slots, dim, hidden, (int)Experts[0].Activation);
+            Tensor.Traced("expert_gated_pair", gated, start);
+
+            start = Telemetry.Start(TelemetryLevel.Operations);
+            outputs = Tensor.Empty([slots, dim], device, track: false);
+            backend.ExpertMatMul(gated.Storage, offsets.Storage, downs, outputs.Storage, slots, hidden, dim);
+            Tensor.Traced("expert_matmul", outputs, start);
+
+            slotOrder = outputs.EmbeddingLookup(slotRow);                             // [slots, dim], token by token
+            var output = weights.MatMul(slotOrder.Reshape(tokens, k, dim));           // Σ weight · expert output, [tokens, 1, dim]
+            if (SharedExpert is not null)
+            {
+                var shared = SharedExpert.Forward(x).Reshape(tokens, 1, dim);
+                output += SharedExpertGate is null ? shared : SharedExpertGate.Forward(x).Sigmoid().Reshape(tokens, 1, 1).MatMul(shared);
+            }
+
+            LoadBalancingLoss = null;
+            return output.Reshape(input.Shape);
+        }
+        finally
+        {
+            // Read by the operations above only (on a device with a queue, freed after them in its order).
+            weights.Dispose();
+            offsets.Dispose();
+            tokenOfRow.Dispose();
+            slotRow.Dispose();
+            rows?.Dispose();
+            gated?.Dispose();
+            outputs?.Dispose();
+            slotOrder?.Dispose();
+        }
     }
 
     // The chosen experts' probabilities as [tokens, 1, k], with gradients to the router: gathered from the softmax and,
