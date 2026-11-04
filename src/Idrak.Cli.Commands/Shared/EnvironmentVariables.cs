@@ -76,8 +76,8 @@ internal static class EnvironmentVariables
         Vulkan = "Vulkan", Hip = "HIP", Sources = "Model and data sources", Audio = "Audio", Tool = "The tool", Tests = "Tests and diagnostics", DotNet = ".NET",
         Cluster = "Cluster", Code = "Code data";
 
-    // Plan 36: read by CodeExtractorOptions.FromEnvironment (Idrak.Data); idrak data code (G1) will name them in its help.
-    private static readonly string[] CodeData = ["data"];
+    // Plan 36: read by CodeExtractorOptions.FromEnvironment (Idrak.Data); idrak data code names them in its help, its flags win.
+    private static readonly string[] CodeData = ["data code"];
 
     // Plan 27, phase R2: read by ReinforcementOptions.FromEnvironment and ModulePolicyOptions.FromEnvironment in
     // Idrak.Reinforcement (the library and its tests), and by idrak reinforce (R5), whose command line wins.
@@ -479,6 +479,7 @@ internal static class EnvironmentVariables
         new("IDRAK_CODE_MAX_TIME", Code, "no limit", "The longest a code extraction runs, in seconds, before it writes what it has (0: no limit)", CodeData),
         new("IDRAK_CODE_FORMATS", Code, "JsonLines", "The formats a code extraction writes rows in (data format names, such as JsonLines,Parquet)", CodeData),
         new("IDRAK_CODE_CONCURRENCY", Code, "the CPU threads (ComputeResources)", "How many files or tasks a code extraction works on at once (0: the CPU threads)", CodeData),
+        new("IDRAK_CODE_VERIFIER", Code, "the first registered (coding)", "The verifier that proves a code extraction's drafts (TaskVerifiers name), or none to write them unproven", CodeData),
         new("IDRAK_FLAC_VERIFY_MD5", Audio, "off", "1: a FLAC file's samples are checked against the MD5 its stream info holds (FlacOptions.VerifyMd5); off by default, as it costs more than the decode", OnDevice),
         new("IDRAK_TEMPLATE_MAX_STEPS", Sources, "10000000", "The most steps a chat template's render takes (each statement and expression is one); more stops it with an error naming the template (JinjaOptions.MaxSteps)", Models),
         new("IDRAK_TEMPLATE_MAX_OUTPUT", Sources, "67108864", "The most characters a chat template's render writes or builds in one string; more stops it with an error naming the template (JinjaOptions.MaxOutputChars)", Models),

@@ -26,5 +26,6 @@ internal static class DataCommands
         new DataTokensCommand(),
         new DataAudioCommand(),
         new DataMelCommand(),
+        new DataCodeCommand(),
     ];
 }

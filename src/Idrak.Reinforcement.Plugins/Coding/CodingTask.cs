@@ -8,7 +8,7 @@ namespace Idrak.Reinforcement.Plugins.Coding;
 
 /// <summary>
 /// A coding task: a prompt, the project it starts from, and the commands that decide whether it was done. On disk a task
-/// is a folder with <c>task.json</c> (<c>{"prompt", "language", "base", "setup": [...], "verify": [...], "tags": [...]}</c>), a
+/// is a folder with <c>task.json</c> (<c>{"prompt", "language", "base", "setup": [...], "verify": [...], "environment": {...}, "tags": [...]}</c>), a
 /// <c>workspace/</c> folder with the starting files (laid over <c>base</c>, a shared project folder relative to the task),
 /// optionally a <c>verify/</c> folder whose files (hidden tests) are copied in after the agent finishes, and a
 /// <c>solution/</c> folder with a reference solution laid over the workspace (<see cref="CodingVerifier.CheckTaskAsync"/>
@@ -24,8 +24,10 @@ namespace Idrak.Reinforcement.Plugins.Coding;
 /// <param name="Verify">Commands that must all exit with 0 for the task to count as done.</param>
 /// <param name="Tags">Free-form labels.</param>
 /// <param name="Solution">A reference solution laid over the workspace, or null.</param>
+/// <param name="Environment">Variables its setup and verification commands run with (task.json's <c>"environment"</c>: a test runner's filter), over the tools' own; null for none.</param>
 public sealed record CodingTask(string Id, string Prompt, string? Language = null, string? Base = null, string? Workspace = null, string? VerifyFiles = null,
-    IReadOnlyList<string>? Setup = null, IReadOnlyList<string>? Verify = null, IReadOnlyList<string>? Tags = null, string? Solution = null)
+    IReadOnlyList<string>? Setup = null, IReadOnlyList<string>? Verify = null, IReadOnlyList<string>? Tags = null, string? Solution = null,
+    IReadOnlyDictionary<string, string>? Environment = null)
 {
     /// <summary>The task in <paramref name="folder"/> (its <c>task.json</c>), named <paramref name="id"/> (null: its "id", else the folder's name).</summary>
     /// <exception cref="InvalidDataException">task.json is not an object, or has no prompt.</exception>
@@ -44,10 +46,13 @@ public sealed record CodingTask(string Id, string Prompt, string? Language = nul
             throw new DirectoryNotFoundException($"{folder}/task.json: base folder '{baseFolder}' does not exist.");
         }
 
+        var environment = json["environment"] is JsonObject variables && variables.Count > 0
+            ? variables.ToDictionary(p => p.Key, p => (string?)p.Value ?? "", StringComparer.Ordinal)
+            : null;
         return new CodingTask(id ?? (string?)json["id"] ?? Path.GetFileName(folder),
             (string?)json["prompt"] ?? throw new InvalidDataException($"{folder}/task.json has no prompt."),
             (string?)json["language"], Folder(baseFolder), Folder("workspace"), Folder("verify"),
-            List(json["setup"]), List(json["verify"]), List(json["tags"]), Folder("solution"));
+            List(json["setup"]), List(json["verify"]), List(json["tags"]), Folder("solution"), environment);
     }
 }
 

@@ -50,6 +50,9 @@ public sealed record CodeExtractorOptions
     /// <summary>The variable of <see cref="Concurrency"/>: "IDRAK_CODE_CONCURRENCY" (a count above 0, or 0 for the CPU threads).</summary>
     public const string ConcurrencyVariable = "IDRAK_CODE_CONCURRENCY";
 
+    /// <summary>The variable of <see cref="Verifier"/>: "IDRAK_CODE_VERIFIER" (a registered verifier's name, or "none").</summary>
+    public const string VerifierVariable = "IDRAK_CODE_VERIFIER";
+
     /// <summary>
     /// The near-duplicate threshold unless set: 0.85, the similarity (Jaccard over shingles) above which code
     /// deduplication commonly counts two files as one; 1 keeps all but exact copies.
@@ -103,6 +106,12 @@ public sealed record CodeExtractorOptions
 
     /// <summary>The concurrency a run uses now: <see cref="Concurrency"/>, or the CPU threads <see cref="ComputeResources"/> allows.</summary>
     public int EffectiveConcurrency => Concurrency > 0 ? Concurrency : ComputeResources.MaxCpuThreads;
+
+    /// <summary>
+    /// The verifier that proves drafts (<see cref="TaskVerifiers"/>), by name; "none" writes every draft as unproven; null
+    /// (the default): the first registered, or none when nobody registered one. A draft becomes a task only when proven.
+    /// </summary>
+    public string? Verifier { get; init; }
 
     /// <summary>
     /// <paramref name="defaults"/> (or the defaults) with what the <c>IDRAK_CODE_*</c> variables set; a variable that is
@@ -193,6 +202,11 @@ public sealed record CodeExtractorOptions
             {
                 Concurrency = int.TryParse(concurrency, NumberStyles.Integer, CultureInfo.InvariantCulture, out int c) && c >= 0 ? c : throw Bad(ConcurrencyVariable, concurrency, "a count above 0, or 0 for the CPU threads"),
             };
+        }
+
+        if (Set(variable, VerifierVariable) is { } verifier)
+        {
+            options = options with { Verifier = verifier };
         }
 
         return options;

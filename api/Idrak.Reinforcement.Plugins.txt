@@ -246,7 +246,8 @@ public static class Idrak.Reinforcement.Plugins.Coding.CodingSuite
   public static System.Collections.Generic.IReadOnlyList<Idrak.Reinforcement.Plugins.Coding.CodingTask> Load(string folder, string? filter = null, System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.ICodingLanguage>? languages = null)
 
 public sealed record Idrak.Reinforcement.Plugins.Coding.CodingTask : System.IEquatable<Idrak.Reinforcement.Plugins.Coding.CodingTask>
-  public CodingTask(string Id, string Prompt, string? Language = null, string? Base = null, string? Workspace = null, string? VerifyFiles = null, System.Collections.Generic.IReadOnlyList<string>? Setup = null, System.Collections.Generic.IReadOnlyList<string>? Verify = null, System.Collections.Generic.IReadOnlyList<string>? Tags = null, string? Solution = null)
+  public CodingTask(string Id, string Prompt, string? Language = null, string? Base = null, string? Workspace = null, string? VerifyFiles = null, System.Collections.Generic.IReadOnlyList<string>? Setup = null, System.Collections.Generic.IReadOnlyList<string>? Verify = null, System.Collections.Generic.IReadOnlyList<string>? Tags = null, string? Solution = null, System.Collections.Generic.IReadOnlyDictionary<string, string>? Environment = null)
+  public System.Collections.Generic.IReadOnlyDictionary<string, string>? Environment { get; init; }
   public System.Collections.Generic.IReadOnlyList<string>? Setup { get; init; }
   public System.Collections.Generic.IReadOnlyList<string>? Tags { get; init; }
   public System.Collections.Generic.IReadOnlyList<string>? Verify { get; init; }
@@ -265,6 +266,13 @@ public sealed record Idrak.Reinforcement.Plugins.Coding.CodingTaskCheck : System
   public bool StartFails { get; init; }
   public string Output { get; init; }
 
+public sealed class Idrak.Reinforcement.Plugins.Coding.CodingTaskVerifier : Idrak.Abstraction.IKind, Idrak.Data.Abstractions.ITaskVerifier
+  public CodingTaskVerifier(Idrak.Reinforcement.Plugins.Coding.CodingVerifierOptions? options = null)
+  public System.Threading.Tasks.Task<Idrak.Data.Abstractions.TaskProof> ProveAsync(string taskFolder, string workFolder, System.Threading.CancellationToken cancellationToken = default)
+  public const string VerifierName = "coding"
+  public string Name { get; }
+  public string Summary { get; }
+
 public sealed record Idrak.Reinforcement.Plugins.Coding.CodingVerification : System.IEquatable<Idrak.Reinforcement.Plugins.Coding.CodingVerification>
   public CodingVerification(bool Passed, int Commands, int PassedCommands, string Output)
   public bool Passed { get; init; }
@@ -277,11 +285,13 @@ public sealed class Idrak.Reinforcement.Plugins.Coding.CodingVerifier
   public CodingVerifier(Idrak.Reinforcement.Plugins.Coding.CodingVerifierOptions? options = null)
   public Idrak.Reinforcement.Plugins.Coding.CodingVerifierOptions Options { get; }
   public Idrak.Text.Generation.CodingTools Checks(string workspace)
+  public Idrak.Text.Generation.CodingTools Checks(string workspace, Idrak.Reinforcement.Plugins.Coding.CodingTask task)
   public System.Action<string>? OnStatus { get; init; }
   public System.Threading.Tasks.Task<Idrak.Reinforcement.Plugins.Coding.CodingRun> RunAsync(Idrak.Text.Generation.CodingAgent agent, Idrak.Reinforcement.Plugins.Coding.CodingTask task, string workFolder, System.Threading.CancellationToken cancellationToken = default)
   public System.Threading.Tasks.Task<Idrak.Reinforcement.Plugins.Coding.CodingTaskCheck> CheckTaskAsync(Idrak.Reinforcement.Plugins.Coding.CodingTask task, string workFolder, System.Threading.CancellationToken cancellationToken = default)
   public System.Threading.Tasks.Task<Idrak.Reinforcement.Plugins.Coding.CodingVerification> SetupAsync(Idrak.Reinforcement.Plugins.Coding.CodingTask task, Idrak.Text.Generation.CodingTools checks, System.Threading.CancellationToken cancellationToken = default)
   public System.Threading.Tasks.Task<Idrak.Reinforcement.Plugins.Coding.CodingVerification> VerifyAsync(Idrak.Reinforcement.Plugins.Coding.CodingTask task, Idrak.Text.Generation.CodingTools checks, System.Threading.CancellationToken cancellationToken = default)
+  public static Idrak.Text.Generation.CodingToolOptions WithVariables(Idrak.Text.Generation.CodingToolOptions tools, Idrak.Reinforcement.Plugins.Coding.CodingTask task)
 
 public sealed record Idrak.Reinforcement.Plugins.Coding.CodingVerifierOptions : System.IEquatable<Idrak.Reinforcement.Plugins.Coding.CodingVerifierOptions>
   public CodingVerifierOptions()

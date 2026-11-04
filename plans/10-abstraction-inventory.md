@@ -16,7 +16,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak.Gpu` | 5 | 0 | 1 | 6 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Text` | 25 | 0 | 13 | 38 | 0 |
-| `Idrak.Data` | 9 | 0 | 7 | 16 | 0 |
+| `Idrak.Data` | 10 | 0 | 8 | 18 | 0 |
 | `Idrak.Vision` | 13 | 0 | 6 | 19 | 0 |
 | `Idrak.Audio` | 52 | 2 | 21 | 75 | 0 |
 | `Idrak.Cluster` | 2 | 0 | 0 | 2 | 0 |
@@ -141,7 +141,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Devices.TensorOffloading` | registry | public | Device, Module, Storage |  | — | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Diagnostics.IProfileProbe` | interface | public | Device | ClusterProbe, McpProbe, NetworkProbe, ProfileProbes.BandwidthProbe, ProfileProbes.CpuProbe, ProfileProbes.FallbacksProbe, +10 |  | Abstraction, Cluster, Mcp, Network | Abstraction |
 | `Idrak.Abstraction.Diagnostics.IProfileWriter` | interface | public | — | ProfileWriters.CsvWriter, ProfileWriters.JsonWriter, ProfileWriters.TableWriter |  | — | Abstraction |
-| `Idrak.Abstraction.Diagnostics.IProgressReporter` | interface | public | — | JsonProgressReporter, LineProgressReporter, QuietProgressReporter |  | Reinforcement | Abstraction |
+| `Idrak.Abstraction.Diagnostics.IProgressReporter` | interface | public | — | JsonProgressReporter, LineProgressReporter, QuietProgressReporter |  | Data, Reinforcement | Abstraction |
 | `Idrak.Abstraction.Diagnostics.IProgressReporterKind` | interface | public | — | ProgressReporters.BuiltInKind |  | — | Abstraction |
 | `Idrak.Abstraction.Diagnostics.ISettingAdvisor` | interface | public | — | ClusterSettingAdvisor, ImageReaderAdvisor, PretrainedModelAdvisor, SettingAdvisors.GuardedAdvisor |  | Abstraction, Idrak, Network, Text | Abstraction |
 | `Idrak.Abstraction.Diagnostics.ISettingAdvisor<TSubject>` | interface | public | — | ClusterSettingAdvisor, ImageReaderAdvisor, PretrainedModelAdvisor |  | Idrak, Network, Text | Abstraction |
@@ -244,7 +244,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.ICommandSandbox` | interface | public | — | ContainerSandbox, ProcessCommandSandbox |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.ICommandSession` | interface | public | — | ProcessCommandSession |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.IConfigurableKind` | interface | public | — | AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, BandPassProcessor, +108 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Data, Idrak, Imaging, Mcp, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, +150 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, +154 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.IKind<TRequest, T>` | interface | public | — | AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, BoxesScoresDecoder, ChatTemplates.GuardedReader, ClassicControlPlugin.ClassicKind, CodingEnvironmentKind, +38 |  | Abstraction, Audio, Audio.Plugins, Data, Idrak, Imaging, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.ILibraryRegistrations` | interface | public | — | LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, +6 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.IOptionSchema` | interface | public | — | CSharpRewards.BuildReward, CSharpRewards.TestsReward, ClassicControlPlugin.ClassicKind, ClippedRatioLoss, CodingRewards.RoundsReward, CodingRewards.TestsPassedReward, +18 |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
@@ -464,12 +464,14 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Data.Abstractions.IParquetCodec` | interface | public | — | Codecs.BuiltIn, ParquetCodecs.GuardedCodec |  | Data | Data |
 | `Idrak.Data.Abstractions.IRepositoryHistory` | interface | public | — | — |  | Data | Data |
 | `Idrak.Data.Abstractions.IRowFilter` | interface | public | — | — |  | Data | Data |
-| `Idrak.Data.Abstractions.ITaskFamily` | interface | public | — | — |  | Data | Data |
+| `Idrak.Data.Abstractions.ITaskFamily` | interface | public | — | CSharpTaskFamilies.MethodBodyFamily, CSharpTaskFamilies.TestSubjectFamily, FileTextFamily |  | Data, Text.Plugins | Data |
+| `Idrak.Data.Abstractions.ITaskVerifier` | interface | public | — | CodingTaskVerifier |  | Data, Reinforcement.Plugins | Data |
 | `Idrak.Data.Abstractions.ITextNormalizer` | interface | public | — | — |  | Data | Data |
 | `Idrak.Data.Abstractions.ParquetCodecs` | registry | public | — |  | Brotli, Gzip, Lz4Raw, Snappy, Uncompressed | Data | Data |
 | `Idrak.Data.Abstractions.RepositoryHistories` | registry | public | — |  | — | — | Data |
-| `Idrak.Data.Abstractions.RowFilters` | registry | public | — |  | — | — | Data |
-| `Idrak.Data.Abstractions.TaskFamilies` | registry | public | — |  | — | — | Data |
+| `Idrak.Data.Abstractions.RowFilters` | registry | public | — |  | — | Data | Data |
+| `Idrak.Data.Abstractions.TaskFamilies` | registry | public | — |  | file-text | Data, Text.Plugins | Data |
+| `Idrak.Data.Abstractions.TaskVerifiers` | registry | public | — |  | — | Data, Reinforcement.Plugins | Data |
 
 ### Idrak.Vision
 

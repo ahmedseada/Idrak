@@ -150,14 +150,15 @@ internal abstract partial class DesktopTests : Tests
             CodeExtractorOptions.FamiliesVariable, CodeExtractorOptions.SkippedFoldersVariable, CodeExtractorOptions.MaxFileBytesVariable, CodeExtractorOptions.DedupeVariable,
             CodeExtractorOptions.SeedVariable, CodeExtractorOptions.SplitByVariable, CodeExtractorOptions.EvalFractionVariable, CodeExtractorOptions.EvalGroupsVariable,
             CodeExtractorOptions.MaxTasksVariable, CodeExtractorOptions.MaxTimeVariable, CodeExtractorOptions.FormatsVariable, CodeExtractorOptions.ConcurrencyVariable,
+            CodeExtractorOptions.VerifierVariable,
         ];
-        Check(variables.All(v => v.StartsWith("IDRAK_CODE_", StringComparison.Ordinal)) && variables.Distinct().Count() == 12, "twelve IDRAK_CODE_* variables");
+        Check(variables.All(v => v.StartsWith("IDRAK_CODE_", StringComparison.Ordinal)) && variables.Distinct().Count() == 13, "thirteen IDRAK_CODE_* variables");
 
         var unset = variables.ToDictionary(v => v, _ => (string?)null);
         WithEnvironment(unset, () =>
         {
             var defaults = CodeExtractorOptions.FromEnvironment();
-            Check(defaults == new CodeExtractorOptions() || defaults is { Families: null, SkippedFolders: null, Seed: 0, EvalGroups.Count: 0, MaxTasks: null, MaxTime: null, Concurrency: 0 },
+            Check(defaults == new CodeExtractorOptions() || defaults is { Families: null, SkippedFolders: null, Seed: 0, EvalGroups.Count: 0, MaxTasks: null, MaxTime: null, Concurrency: 0, Verifier: null },
                 "unset: the defaults");
             Check(defaults is { MaxFileBytes: 1L << 20, DedupeThreshold: CodeExtractorOptions.DefaultDedupeThreshold, SplitBy: "project", EvalFraction: CodeExtractorOptions.DefaultEvalFraction }
                   && defaults.Formats.SequenceEqual(["JsonLines"]) && defaults.EffectiveConcurrency == ComputeResources.MaxCpuThreads,
@@ -170,13 +171,14 @@ internal abstract partial class DesktopTests : Tests
             [CodeExtractorOptions.DedupeVariable] = "0.9", [CodeExtractorOptions.SeedVariable] = "7", [CodeExtractorOptions.SplitByVariable] = "test-group",
             [CodeExtractorOptions.EvalFractionVariable] = "0.25", [CodeExtractorOptions.EvalGroupsVariable] = "g1,g2", [CodeExtractorOptions.MaxTasksVariable] = "50",
             [CodeExtractorOptions.MaxTimeVariable] = "90", [CodeExtractorOptions.FormatsVariable] = "JsonLines, Parquet", [CodeExtractorOptions.ConcurrencyVariable] = "3",
+            [CodeExtractorOptions.VerifierVariable] = "none",
         };
         WithEnvironment(set, () =>
         {
             var o = CodeExtractorOptions.FromEnvironment();
             Check(o.Families!.SequenceEqual(["a", "b"]) && o.SkippedFolders!.SequenceEqual(["bin", "obj"]) && o.MaxFileBytes == 4096 && o.DedupeThreshold == 0.9 && o.Seed == 7
                   && o.SplitBy == "test-group" && o.EvalFraction == 0.25 && o.EvalGroups.SequenceEqual(["g1", "g2"]) && o.MaxTasks == 50 && o.MaxTime == TimeSpan.FromSeconds(90)
-                  && o.Formats.SequenceEqual(["JsonLines", "Parquet"]) && o.Concurrency == 3 && o.EffectiveConcurrency == 3, $"each variable sets its setting: {o}");
+                  && o.Formats.SequenceEqual(["JsonLines", "Parquet"]) && o.Concurrency == 3 && o.EffectiveConcurrency == 3 && o.Verifier == "none", $"each variable sets its setting: {o}");
         });
 
         WithEnvironment(new Dictionary<string, string?>(unset) { [CodeExtractorOptions.FamiliesVariable] = "all", [CodeExtractorOptions.MaxTasksVariable] = "0", [CodeExtractorOptions.MaxTimeVariable] = "0" }, () =>

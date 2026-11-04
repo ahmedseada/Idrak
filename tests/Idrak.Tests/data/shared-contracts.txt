@@ -14,7 +14,6 @@ Idrak.Abstraction.Data.ITextShaper | how text becomes positioned glyphs, per scr
 Idrak.Abstraction.Data.TextShapers | the shapers by script, overridable once for every package that draws text
 Idrak.Abstraction.Cluster.IFailureModel | which faults a run injects (slow, dropped, lost links, partitions, late joins), for every package that runs ranks: the simulator (Idrak.Cluster) and, from C5, Idrak.Network's real transports under test, so a seeded fault plan replays the same on both
 Idrak.Abstraction.Cluster.FailureModels | the failure models by name, overridable once (IDRAK_CLUSTER_FAILURES) for every package that runs ranks
-Idrak.Abstraction.Diagnostics.IProgressReporter | the live progress of any long work (a download, a load, a training run, a rollout), shown the same way by every package that reports it; made through ProgressReporters
 Idrak.Abstraction.Reinforcement.AdvantageEstimators | the estimators by name, overridable once for every package that trains a policy
 Idrak.Abstraction.Reinforcement.PolicyLosses | the policy losses by name, overridable once for every package whose policy trains with them
 Idrak.Abstraction.Reinforcement.RewardFunctions | the rewards by name for every package that scores text (Idrak.Text's, R3; the coding plug-in's, R4)

@@ -553,7 +553,7 @@ internal sealed class CodingSuiteRun
         }
 
         CodingWorkspace.Prepare(task, folder, Languages);
-        var setup = await Verifier.SetupAsync(task, Verifier.Checks(folder)).ConfigureAwait(false);
+        var setup = await Verifier.SetupAsync(task, Verifier.Checks(folder, task)).ConfigureAwait(false);
         if (!setup.Passed)
         {
             Broken[task.Id] = setup.Output;
@@ -585,7 +585,7 @@ internal sealed class CodingSuiteRun
         try
         {
             var clock = Stopwatch.StartNew();
-            await Verifier.VerifyAsync(task, new CodingTools(copy, Tools with { CommandTimeout = CodingSettings.MostVerify }, Sandbox)).ConfigureAwait(false);
+            await Verifier.VerifyAsync(task, new CodingTools(copy, CodingVerifier.WithVariables(Tools, task) with { CommandTimeout = CodingSettings.MostVerify }, Sandbox)).ConfigureAwait(false);
             return clock.Elapsed;
         }
         finally
@@ -757,7 +757,7 @@ public sealed class CodingEnvironment : IEnvironment<ChatObservation, ChatMessag
             await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                verification = await _run.Verifier.VerifyAsync(task, new CodingTools(workspace, _run.Tools with { CommandTimeout = _verifyLimit }, _run.Sandbox),
+                verification = await _run.Verifier.VerifyAsync(task, new CodingTools(workspace, CodingVerifier.WithVariables(_run.Tools, task) with { CommandTimeout = _verifyLimit }, _run.Sandbox),
                     cancellationToken).ConfigureAwait(false);
             }
             finally

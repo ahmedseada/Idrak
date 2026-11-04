@@ -199,4 +199,24 @@ default), the agent's prompt, its programs and the tools' descriptions are what 
 moved out; `detected` keeps those the workspace shows. A workspace no chosen language detects gets a notice
 (`CodingTools.LanguageNotice`) naming the plug-in to register.
 
+### C# task families (`idrak data code`)
+
+`CSharpLanguagePlugin.Register()` also registers the C# task families of plan 36 into `TaskFamilies` (Idrak.Data), both
+declaring `csharp` (`CSharpTaskFamilies`):
+
+| Family | Draft | Check |
+|---|---|---|
+| `method-body` | a method's body removed (it throws `NotImplementedException`), its signature and `///` documentation kept | the project's tests that reach the method (up to 8) |
+| `test-subject` | the code a named test entry `("group: what it checks", d => …)` reaches removed | that test, run by its name through the runner's filter variable (`IDRAK_FILTER`, with `IDRAK_DEVICES=cpu`) |
+
+A test reaches a method it calls by name, directly or through a helper of its test files, when no other method of the
+source has that name. Named entries run with `dotnet run --project` on the program that runs their test list; attribute
+tests (`[Fact]`, `[Theory]`, `[Test]`, `[TestCase]`, `[TestMethod]`) with `dotnet test --filter`. The commands, the
+filter variable, the test variables, the tests per method and the smallest body are `CSharpTaskOptions`
+(`CSharpTaskFamilies.CreateMethodBody`, `CreateTestSubject`).
+
+**Dependency:** the families read C# with Roslyn, `Microsoft.CodeAnalysis.CSharp` 5.6.0 (pinned), as syntax trees only:
+each file is parsed once for both families, with no compilation and no semantic model. This package is the only one
+that references it; the library packages (Idrak.Data among them) do not.
+
 License: Apache 2.0.

@@ -18,6 +18,23 @@ public static class Idrak.Text.Plugins.CSharp.CSharpLanguagePlugin
   public static void Register()
   public static void Unregister()
 
+public static class Idrak.Text.Plugins.CSharp.CSharpTaskFamilies
+  public const string MethodBodyName = "method-body"
+  public const string TestSubjectName = "test-subject"
+  public static Idrak.Data.Abstractions.ITaskFamily CreateMethodBody(Idrak.Text.Plugins.CSharp.CSharpTaskOptions options)
+  public static Idrak.Data.Abstractions.ITaskFamily CreateTestSubject(Idrak.Text.Plugins.CSharp.CSharpTaskOptions options)
+  public static Idrak.Data.Abstractions.ITaskFamily MethodBody { get; }
+  public static Idrak.Data.Abstractions.ITaskFamily TestSubject { get; }
+
+public sealed record Idrak.Text.Plugins.CSharp.CSharpTaskOptions : System.IEquatable<Idrak.Text.Plugins.CSharp.CSharpTaskOptions>
+  public CSharpTaskOptions()
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> TestVariables { get; init; }
+  public int MaxTests { get; init; }
+  public int MinBodySize { get; init; }
+  public string AttributeTestCommand { get; init; }
+  public string FilterVariable { get; init; }
+  public string NamedTestCommand { get; init; }
+
 public static class Idrak.Text.Plugins.DeepSeek.DeepSeekPlugin
   public const string FillInMiddleFormat = "deepseek"
   public const string PreTokenizer = "deepseek-r1-qwen"

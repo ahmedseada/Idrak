@@ -14,4 +14,11 @@
     <ProjectReference Include="..\Idrak.Text\Idrak.Text.csproj" />
   </ItemGroup>
 
+  <!-- Plan 36, G1: the C# task families (CSharp/CSharpTaskFamilies.cs) read C# as Roslyn syntax trees (syntax only: no
+       compilation, no semantic model). The C# plug-in alone uses it; no library package references Roslyn. Pinned to an
+       exact release (5.6.0, 2026-07-02). -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
+  </ItemGroup>
+
 </Project>

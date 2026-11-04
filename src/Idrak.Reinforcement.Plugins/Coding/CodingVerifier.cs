@@ -93,6 +93,28 @@ public sealed class CodingVerifier(CodingVerifierOptions? options = null)
     /// <summary>The tools setup and verification commands run with in <paramref name="workspace"/> (the options' tools with the verification time limit).</summary>
     public CodingTools Checks(string workspace) => new(workspace, Options.Tools with { CommandTimeout = Options.Timeout });
 
+    /// <summary>The tools <paramref name="task"/>'s setup and verification commands run with in <paramref name="workspace"/>: <see cref="Checks(string)"/>, with the task's own variables over the tools'.</summary>
+    public CodingTools Checks(string workspace, CodingTask task) => new(workspace, WithVariables(Options.Tools, task) with { CommandTimeout = Options.Timeout });
+
+    /// <summary><paramref name="tools"/> with <paramref name="task"/>'s variables (<see cref="CodingTask.Environment"/>) set over its own; the same options when the task has none.</summary>
+    public static CodingToolOptions WithVariables(CodingToolOptions tools, CodingTask task)
+    {
+        ArgumentNullException.ThrowIfNull(tools);
+        ArgumentNullException.ThrowIfNull(task);
+        if (task.Environment is not { Count: > 0 } variables)
+        {
+            return tools;
+        }
+
+        var environment = new Dictionary<string, string>(tools.Environment ?? new Dictionary<string, string>(), StringComparer.Ordinal);
+        foreach (var (name, value) in variables)
+        {
+            environment[name] = value;
+        }
+
+        return tools with { Environment = environment };
+    }
+
     /// <summary>Runs the task's setup commands in order with <paramref name="checks"/>, stopping at the first that fails.</summary>
     public async Task<CodingVerification> SetupAsync(CodingTask task, CodingTools checks, CancellationToken cancellationToken = default)
     {
@@ -152,7 +174,7 @@ public sealed class CodingVerifier(CodingVerifierOptions? options = null)
         ArgumentNullException.ThrowIfNull(task);
         CodingWorkspace.Prepare(task, workFolder);
         var tools = new CodingTools(workFolder, agent.Options.Tools);
-        var checks = Checks(workFolder);
+        var checks = Checks(workFolder, task);
         var setup = await SetupAsync(task, checks, cancellationToken).ConfigureAwait(false);
         if (!setup.Passed)
         {
@@ -193,7 +215,7 @@ public sealed class CodingVerifier(CodingVerifierOptions? options = null)
                 CodingWorkspace.Overlay(solution, folder);
             }
 
-            var checks = Checks(folder);
+            var checks = Checks(folder, task);
             var setup = await SetupAsync(task, checks, cancellationToken).ConfigureAwait(false);
             if (!setup.Passed)
             {

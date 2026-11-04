@@ -45,12 +45,22 @@ public sealed record Idrak.Data.Abstractions.CodeFile : System.IEquatable<Idrak.
   public static Idrak.Data.Abstractions.CodeFile Removed(string path)
   public string Path { get; init; }
 
+public static class Idrak.Data.Abstractions.CodeRows
+  public static System.Collections.Generic.IAsyncEnumerable<System.Text.Json.Nodes.JsonObject> None(System.Threading.CancellationToken cancellationToken = default)
+
 public sealed record Idrak.Data.Abstractions.CodeSource : System.IEquatable<Idrak.Data.Abstractions.CodeSource>
   public CodeSource(string Root)
   public Idrak.Data.Abstractions.IRepositoryHistory? History { get; init; }
   public Idrak.Data.Abstractions.ReadOptions ReadOptions { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Data.Abstractions.CodeSourceFile> Files { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> Languages { get; init; }
   public string Root { get; init; }
+
+public sealed record Idrak.Data.Abstractions.CodeSourceFile : System.IEquatable<Idrak.Data.Abstractions.CodeSourceFile>
+  public CodeSourceFile(string Path, string? Language, long Length)
+  public long Length { get; init; }
+  public string Path { get; init; }
+  public string? Language { get; init; }
 
 public static class Idrak.Data.Abstractions.DataFileFormats
   public static Idrak.Data.Abstractions.IDataFileFormat Get(string name)
@@ -147,9 +157,13 @@ public interface Idrak.Data.Abstractions.IRowFilter : Idrak.Abstraction.IKind
   public System.Collections.Generic.IEnumerable<System.Text.Json.Nodes.JsonObject> Apply(System.Collections.Generic.IEnumerable<System.Text.Json.Nodes.JsonObject> rows, Idrak.Data.Abstractions.RowFilterContext context)
 
 public interface Idrak.Data.Abstractions.ITaskFamily : Idrak.Abstraction.IKind
+  public (default) System.Collections.Generic.IAsyncEnumerable<System.Text.Json.Nodes.JsonObject> RowsAsync(Idrak.Data.Abstractions.CodeSource source, System.Threading.CancellationToken cancellationToken = default)
   public (default) System.Collections.Generic.IReadOnlyList<string> Languages { get; }
   public (default) bool NeedsHistory { get; }
   public System.Collections.Generic.IAsyncEnumerable<Idrak.Data.Abstractions.TaskDraft> DraftAsync(Idrak.Data.Abstractions.CodeSource source, System.Threading.CancellationToken cancellationToken = default)
+
+public interface Idrak.Data.Abstractions.ITaskVerifier : Idrak.Abstraction.IKind
+  public System.Threading.Tasks.Task<Idrak.Data.Abstractions.TaskProof> ProveAsync(string taskFolder, string workFolder, System.Threading.CancellationToken cancellationToken = default)
 
 public interface Idrak.Data.Abstractions.ITextNormalizer
   public string Normalize(string text)
@@ -210,6 +224,7 @@ public static class Idrak.Data.Abstractions.RowFilters
 
 public sealed record Idrak.Data.Abstractions.TaskDraft : System.IEquatable<Idrak.Data.Abstractions.TaskDraft>
   public Idrak.Data.Abstractions.TaskProvenance Provenance { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> Environment { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Data.Abstractions.CodeFile> Solution { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Data.Abstractions.CodeFile> Verify { get; init; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Data.Abstractions.CodeFile> Workspace { get; init; }
@@ -232,12 +247,32 @@ public static class Idrak.Data.Abstractions.TaskFamilies
   public static string? Origin(string name)
   public static void Register(Idrak.Data.Abstractions.ITaskFamily family)
 
+public sealed record Idrak.Data.Abstractions.TaskProof : System.IEquatable<Idrak.Data.Abstractions.TaskProof>
+  public TaskProof(bool StartFails, bool SolutionPasses, string Output)
+  public bool Proven { get; }
+  public bool SolutionPasses { get; init; }
+  public bool StartFails { get; init; }
+  public string Output { get; init; }
+  public string? Reason { get; }
+
 public sealed record Idrak.Data.Abstractions.TaskProvenance : System.IEquatable<Idrak.Data.Abstractions.TaskProvenance>
   public TaskProvenance()
   public string? Commit { get; init; }
   public string? Group { get; init; }
   public string? Path { get; init; }
   public string? Test { get; init; }
+
+public static class Idrak.Data.Abstractions.TaskVerifiers
+  public const string None = "none"
+  public static Idrak.Data.Abstractions.ITaskVerifier Get(string name)
+  public static Idrak.Data.Abstractions.ITaskVerifier? Choose(string? name)
+  public static Idrak.Data.Abstractions.ITaskVerifier? Default(string name)
+  public static Idrak.Data.Abstractions.ITaskVerifier? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Data.Abstractions.ITaskVerifier verifier)
 
 public enum Idrak.Data.Abstractions.TextRows : int
   Document = 2
@@ -266,6 +301,34 @@ public sealed class Idrak.Data.CocoFormat : Idrak.Data.Abstractions.IAnnotationF
   public string Summary { get; }
   public void Write(Idrak.Abstraction.Data.AnnotatedDataset dataset, string path)
 
+public sealed record Idrak.Data.Code.CodeExtraction : System.IEquatable<Idrak.Data.Code.CodeExtraction>
+  public CodeExtraction(string Output, string ManifestPath, System.Text.Json.Nodes.JsonObject Manifest)
+  public System.Text.Json.Nodes.JsonObject Manifest { get; init; }
+  public long Drafts { get; }
+  public long Rejected { get; }
+  public long Rows { get; }
+  public long Tasks { get; }
+  public long Unproven { get; }
+  public string ManifestPath { get; init; }
+  public string Output { get; init; }
+  public string? Stopped { get; }
+
+public sealed class Idrak.Data.Code.CodeExtractor
+  public CodeExtractor(Idrak.Data.CodeExtractorOptions? options = null)
+  public Idrak.Abstraction.Diagnostics.IProgressReporter? Progress { get; init; }
+  public Idrak.Data.CodeExtractorOptions Options { get; }
+  public System.Threading.Tasks.Task<Idrak.Data.Code.CodeExtraction> RunAsync(Idrak.Data.Abstractions.CodeSource source, string output, System.Threading.CancellationToken cancellationToken = default)
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Data.Abstractions.CodeSourceFile> Walk(Idrak.Data.Abstractions.CodeSource source, System.Collections.Generic.IReadOnlyCollection<string>? skippedFolders = null, long? maxFileBytes = null)
+  public static string SafeName(string name)
+
+public sealed class Idrak.Data.Code.FileTextFamily : Idrak.Abstraction.IKind, Idrak.Data.Abstractions.ITaskFamily
+  public FileTextFamily()
+  public System.Collections.Generic.IAsyncEnumerable<Idrak.Data.Abstractions.TaskDraft> DraftAsync(Idrak.Data.Abstractions.CodeSource source, System.Threading.CancellationToken cancellationToken = default)
+  public System.Collections.Generic.IAsyncEnumerable<System.Text.Json.Nodes.JsonObject> RowsAsync(Idrak.Data.Abstractions.CodeSource source, System.Threading.CancellationToken cancellationToken = default)
+  public const string FamilyName = "file-text"
+  public string Name { get; }
+  public string Summary { get; }
+
 public sealed record Idrak.Data.CodeExtractorOptions : System.IEquatable<Idrak.Data.CodeExtractorOptions>
   public CodeExtractorOptions()
   public System.Collections.Generic.IReadOnlyList<string> EvalGroups { get; init; }
@@ -288,6 +351,7 @@ public sealed record Idrak.Data.CodeExtractorOptions : System.IEquatable<Idrak.D
   public const string SeedVariable = "IDRAK_CODE_SEED"
   public const string SkippedFoldersVariable = "IDRAK_CODE_SKIPPED_FOLDERS"
   public const string SplitByVariable = "IDRAK_CODE_SPLIT_BY"
+  public const string VerifierVariable = "IDRAK_CODE_VERIFIER"
   public double DedupeThreshold { get; init; }
   public double EvalFraction { get; init; }
   public int Concurrency { get; init; }
@@ -297,6 +361,7 @@ public sealed record Idrak.Data.CodeExtractorOptions : System.IEquatable<Idrak.D
   public long MaxFileBytes { get; init; }
   public static Idrak.Data.CodeExtractorOptions FromEnvironment(Idrak.Data.CodeExtractorOptions? defaults = null)
   public string SplitBy { get; init; }
+  public string? Verifier { get; init; }
 
 public sealed class Idrak.Data.ConsoleStatus
   public ConsoleStatus()

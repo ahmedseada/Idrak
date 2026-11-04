@@ -22,7 +22,19 @@ public sealed record CodeSource(string Root)
 
     /// <summary>How its files are read (skipped folders, the largest file).</summary>
     public ReadOptions ReadOptions { get; init; } = ReadOptions.Default;
+
+    /// <summary>
+    /// The files the extractor walked once for every family (rule 72: the tree walked once), in the order walked; empty: a
+    /// family walks <see cref="Root"/> itself (<c>CodeExtractor.Walk</c> in Idrak.Data walks as the extractor does).
+    /// </summary>
+    public IReadOnlyList<CodeSourceFile> Files { get; init; } = [];
 }
+
+/// <summary>A file of a <see cref="CodeSource"/>: where it is, what it is in, and its size; its bytes are read by whoever needs them.</summary>
+/// <param name="Path">The path relative to the root, with '/'.</param>
+/// <param name="Language">The language its extension names (<c>DataFiles.LanguageOf</c>), or null for none.</param>
+/// <param name="Length">Its size in bytes.</param>
+public sealed record CodeSourceFile(string Path, string? Language, long Length);
 
 /// <summary>
 /// A file a task writes, by its path relative to the task's workspace, as bytes (rule 74: read and written as bytes, never
@@ -80,6 +92,9 @@ public sealed record TaskDraft(string Id, string Family, string Prompt)
 
     /// <summary>The check's commands, in order: all exit with 0 when the task is solved.</summary>
     public IReadOnlyList<string> VerifyCommands { get; init; } = [];
+
+    /// <summary>Variables the setup and check commands run with (a test runner's filter), over the tools' own; empty for none.</summary>
+    public IReadOnlyDictionary<string, string> Environment { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
 
     /// <summary>Tags (the family's kind of task, "weak" for a pair that is not proven by a check).</summary>
     public IReadOnlyList<string> Tags { get; init; } = [];
@@ -168,6 +183,25 @@ public interface ITaskFamily : IKind
     /// <param name="source">The repository or project.</param>
     /// <param name="cancellationToken">Stops the walk (the enumeration throws <see cref="OperationCanceledException"/>).</param>
     IAsyncEnumerable<TaskDraft> DraftAsync(CodeSource source, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// The rows it writes for pretraining or tuning (JSON objects, such as <c>{"text", "path", "language"}</c>), in a stable
+    /// order, streamed; none by default (a family of tasks only). The extractor passes them through the row filters
+    /// (<see cref="RowFilters"/>) and writes them under its output's rows folder.
+    /// </summary>
+    IAsyncEnumerable<JsonObject> RowsAsync(CodeSource source, CancellationToken cancellationToken = default) => CodeRows.None(cancellationToken);
+}
+
+/// <summary>Helpers for <see cref="ITaskFamily.RowsAsync"/>.</summary>
+public static class CodeRows
+{
+    /// <summary>No rows: the default of a family of tasks only.</summary>
+    public static async IAsyncEnumerable<JsonObject> None([EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await Task.CompletedTask.ConfigureAwait(false);
+        yield break;
+    }
 }
 
 /// <summary>
@@ -179,6 +213,9 @@ public static class TaskFamilies
 {
     private static readonly SlotTable<string, ITaskFamily> Table = new(nameof(TaskFamilies), comparer: StringComparer.OrdinalIgnoreCase,
         unguarded: "a family's drafts are streamed into a dataset: falling back to another family's would change what the dataset holds");
+
+    // The library's language-neutral families, on first use: file-text (Idrak.Data.Code.FileTextFamily).
+    static TaskFamilies() => Overrides.AsLibraryDefaults(() => Register(new Idrak.Data.Code.FileTextFamily()));
 
     /// <summary>Registers <paramref name="family"/> under its <see cref="IKind.Name"/> (over the library's of that name, which stays behind it).</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]   // the caller is the registering assembly (its Origin)

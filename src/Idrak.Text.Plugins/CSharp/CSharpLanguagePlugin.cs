@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using Idrak.Abstraction.Plugins;
+using Idrak.Data.Abstractions;
 using Idrak.Text.Abstractions;
 
 namespace Idrak.Text.Plugins.CSharp;
@@ -12,7 +13,8 @@ namespace Idrak.Text.Plugins.CSharp;
 /// <c>dotnet</c>, its build and test runner, by default (as every language's defaults, the build and test runners only;
 /// <c>CodingToolOptions.Commands</c> or IDRAK_AGENT_COMMANDS name others); the agent checks its work with
 /// <c>dotnet build</c> and <c>dotnet test</c>; <c>bin</c>, <c>obj</c> and <c>.vs</c> are skipped; a coding task that
-/// names no commands restores, builds and tests with dotnet.
+/// names no commands restores, builds and tests with dotnet. It also registers the C# task families of
+/// <c>idrak data code</c> into <see cref="TaskFamilies"/>: "method-body" and "test-subject" (<see cref="CSharpTaskFamilies"/>).
 /// </summary>
 public static class CSharpLanguagePlugin
 {
@@ -50,6 +52,11 @@ public static class CSharpLanguagePlugin
 
     private sealed class CSharpLanguageRegistration() : IdrakPlugin("csharp-language")
     {
-        protected override void RegisterParts() => Part(() => CodingLanguages.Register(Language), () => CodingLanguages.Unregister(LanguageName));
+        protected override void RegisterParts()
+        {
+            Part(() => CodingLanguages.Register(Language), () => CodingLanguages.Unregister(LanguageName));
+            Part(() => TaskFamilies.Register(CSharpTaskFamilies.MethodBody), () => TaskFamilies.Unregister(CSharpTaskFamilies.MethodBodyName));
+            Part(() => TaskFamilies.Register(CSharpTaskFamilies.TestSubject), () => TaskFamilies.Unregister(CSharpTaskFamilies.TestSubjectName));
+        }
     }
 }

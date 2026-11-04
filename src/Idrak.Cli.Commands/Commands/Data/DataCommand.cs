@@ -14,7 +14,7 @@ internal sealed class DataCommand : Command
 {
     public override string Name => "data";
 
-    public override string Summary => "Datasets: show, count, download, build, preview, stats, convert, split, mix, text, fonts, synth, audio, mel";
+    public override string Summary => "Datasets: show, download, build, preview, stats, convert, split, mix, text, fonts, synth, audio, mel, code";
 
     public override string Usage => "show|count|download|build|cache SPEC... [options]\n\n"
         + DataTool.Usage + """
@@ -28,6 +28,7 @@ internal sealed class DataCommand : Command
           idrak data text -n N --unit pages -o OUT.txt  random text in a language (-l ar, en, ...) to draw pages from
           idrak data fonts DIR [--harfbuzz REFS.json]   check fonts: characters, layout features, shaping against HarfBuzz
           idrak data synth IN -o OUT --fonts DIR        tuning pages drawn from text, made to look scanned
+          idrak data code REPO -o OUT                   a code repository as pretraining rows and proven coding tasks
 
         Examples:
           idrak data show "hf:owner/qa-set?config=main"
