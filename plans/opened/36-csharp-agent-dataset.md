@@ -1,5 +1,21 @@
 # Plan 36: a C# agent dataset made with Claude, and a project generator on it
 
+**Status (2026-11-04):** planned, nothing built. Decisions taken by the owner on 2026-11-04 (they override the
+text below where it differs; the body is kept as written until the owner asks for the rewrite):
+
+- **The tool lives in Idrak**, not in the samples repository: the no-model extractor in Idrak.Data (a task-family
+  contract and `SlotTable` registry in `Idrak.Data.Abstractions`, a data command that writes under `test-output\`),
+  the model-driven transcript step in Idrak.Text beside `CodingAgent` and `TeacherData`. `ahmedseada/Rl-Samples-` only
+  stores what the tool writes out.
+- **Craft is out of scope.** It was an app on Idrak, not part of it: no Craft clone, plug-ins, tests or namespaces in
+  any track; the namespace coverage check covers Idrak's own abstraction namespaces only.
+- **Any model, or none.** The teacher is any `IChatModel` (local or served) or no model at all for the mechanical
+  families (every file as a pretraining row, a test's subject removed, a commit reverted with its message as the
+  prompt, a method body dropped). No Claude Code, no Anthropic client, no provider named in the library; the
+  `RLS_*` settings become library options and `IDRAK_*` variables.
+- **Bugs reported by users are part of this plan** (the section "Bugs reported by users" below, phase G-1): they are in
+  the paths the tool and the trained agent run on (`CodingTools`, `serve`, the device and autograd core).
+
 **Status (2026-11-01):** planned, nothing built. Written from the owner's request (2026-11-01): "using claude api key and
 sdk ... create as many samples as possible ... 1. samples for fine-tuning a C# model, agent; 2. convert all test cases to
 reusable RL and fine-tune samples from Idrak and Craft, also the samples and apps folders and plug-in projects, so the
@@ -150,12 +166,33 @@ Each contract gets, as it applies: a non-default implementation registered in it
 - Measured by an eval set of descriptions (from T2-projects' held-out projects): builds, tests pass, uses the
   registries rather than hard-coded types.
 
+## Bugs reported by users (2026-11-04)
+
+Reported by the owner's friends using the library in an app and in another session; each checked against `main`
+on 2026-11-04 (line numbers of that day). "Read" means the fault is visible in the source as described; "reviewer only"
+means the report is plausible from the source but not yet reproduced here. Fixed first, as phase G-1, by Idrak's rules
+(the fix workflow, targeted tests, nothing family-specific).
+
+| # | Where | Issue | Checked | Fix shape |
+|---|---|---|---|---|
+| B1 | `src/Idrak.Cli.Commands/Commands/Serve/ServeOptions.cs:75`, `:196`; `src/Idrak.Cli/Commands/Serve/ServeHost.cs:488` | An empty `--api-key ""` or `IDRAK_API_KEY=` sets `ApiKey` to `""`, so `NeedsKey` is true and the server looks protected, yet an empty bearer compares equal to the empty key and **every request is accepted** | Read | An empty key is a configuration error at startup (fail loudly, name the flag and the variable), and `Authorize` never accepts an empty `given` |
+| B2 | `src/Idrak.Text/Generation/CodingTools.cs:753-773` (`WriteFile`), `:822-833` (`ExecuteAsync`), `:837-843` (`Resolve`) | The agent's `write_file` and `edit_file` never ask; the allowed programs are every registered coding language's (`CodingLanguages`, so `node`, `npx`, `dotnet`, `git`), which run any code; `Resolve` checks the textual path only, so a symlink inside the workspace reaches outside it; the default sandbox is `process` (a plain process) | Reviewer only (the allow list, the path check and the default sandbox are read; the symlink escape not reproduced) | `Resolve` resolves links (`ResolveLinkTarget` / `FileSystemInfo.LinkTarget`) and refuses a target outside the root; the allowed programs become an option with a conservative default per language and an `IDRAK_*` variable; the sandbox default stays a setting, documented as unsafe for untrusted models; an optional confirmation hook on writes (a contract in `Idrak.Text.Abstractions`) for apps that want to ask |
+| B3 | `src/Idrak.Cli/Commands/Serve/ServeHost.cs:185-199`, `:246-250` | `serve` has no Origin check: `/idrak/stop`, `/idrak/load`, `/idrak/unload` are plain POSTs, so any web page a user opens can call them on a local server (CORS only governs what the page may read, not what reaches the server; without `--cors` a simple cross-site POST still lands) | Reviewer only (the endpoints and the CORS setup are read; a cross-site POST not reproduced) | Control endpoints require a key always, or an `Origin`/`Sec-Fetch-Site` check that refuses a browser origin not in `--cors`; a setting for the policy |
+| B4 | `src/Idrak.Gpu/Cuda/CudaBackend.cs:191-197` (`TensorCoreKernels`), `:226-232`, `:2092` (`LaunchGrid`) | First-use race: `_tensorCoreTried` is check-then-set without a lock when reached through `TensorCoreFunction` (only `TensorCoresUnavailable` takes `lock (_signatures)`), two threads can load the module twice; `_signatures` is written under that lock but read in `LaunchGrid` without it, so a launch during the first tensor-core load reads a dictionary being resized | Read | One lock (or `Lazy<T>`) around the tensor-core load for every entry point; `_signatures` becomes a frozen or copy-on-write map once a module is loaded, so launches read without a lock |
+| B5 | `src/Idrak.Abstraction/Tensors/TensorScope.cs:116-119` | `Dispose` sets `_disposed = true` before the ordering check throws, so after the throw the scope is dead but still `t_current`: the thread stays on it, and later tensors are added to a disposed scope and leak | Read | Check the order first, set `_disposed` only on the path that really disposes; a test that disposes out of order and asserts the current scope and a later tensor's owner |
+| B6 | `src/Idrak.Text/Jinja.cs:1087` vs `:1107` | `caller()` is set on the call block's scope (`callScope`), but a macro's body runs in a scope chained to its definition scope (`MakeMacro`), so `caller` is undefined inside the macro: `{% call %}` blocks in chat templates fail | Read | Pass `caller` into the macro invocation (a per-call binding in `MakeMacro`'s local scope, as Jinja does), with a template test using `{% call m() %}...{% endcall %}` |
+| B7 | `src/Idrak.Abstraction/Tensors/Tensor.cs:620`, `:660` | `Backward` clears each node's `_backward` after use (`:660`), so a second `Backward` through a reused activation skips those nodes (`:620`) and silently drops their gradients; PyTorch throws ("Trying to backward through the graph a second time") | Reviewer only (the clearing and the skip are read; the drop not reproduced) | A node whose `_backward` was consumed but whose inputs still require grad throws with the cause named, unless a `retain_graph`-style option is set; a test with two backward passes through one activation |
+
+G-1 is done when each row has a fix with a targeted test (`IDRAK_DEVICES=cpu` with the group's `IDRAK_FILTER`), the
+failure messages name the cause, and the owner has the GPU run command for B4.
+
 ## Phases
 
 At most two agents at a time in Idrak (Idrak's limit; the Rl-Samples work counts against it while this plan runs).
 
 | Phase | What | Done when | Needs |
 |---|---|---|---|
+| G-1 | The user-reported bugs B1-B7 (the section above), each with its targeted test | Every row fixed and tested; the owner has the GPU command for B4 | - |
 | G0 | `RlSamples.Extract`: the catalog of every test entry, contract, registry, sample, app and plug-in of both repos, with what each needs (CPU, GPU, a model, a window) | The catalog's counts match the inventory and the test lists; no API call | - |
 | G1 | `RlSamples.Generator`'s core: the client, cached prefixes, batches, the run manifest, the budget, the verifier on `CodingVerifier` | A 20-task pilot runs end to end on the owner's machine with its cost measured | G0 |
 | G2 | Track 1 at volume: T1-tasks, T1-sft, T1-pref | Targets of decision 3 reached; every row verified | G1, pilot cost approved |
