@@ -1,4 +1,11 @@
-# Plan 36: `idrak data code`, a tool that turns a C# repository into training, tuning and reinforcement data
+# Plan 36: `idrak data code`, a tool that turns a code repository into training, tuning and reinforcement data
+
+**Languages (the owner, 2026-11-04):** the library holds only language-neutral contracts, registries and families
+(file text, commit revert, weak pairs); every language-specific part lives in a plug-in. The tool gets one plug-in,
+C#, in `src/Idrak.Text.Plugins/CSharp`: its families (method body, test subject) are `ITaskFamily` implementations
+that declare `csharp` and register into `TaskFamilies`. Only C# is worked on now; the owner adds another language's
+plug-in later if and when wanted, with no change to the library. A language with no
+registered family gets only the neutral families; a family named that is not registered fails with "not registered".
 
 **Status (2026-11-04):** planned, nothing built. Rewritten on the owner's decisions of 2026-11-04: the tool lives in
 Idrak; the samples repository (`ahmedseada/Rl-Samples-`) only stores its output; Craft is out of scope (an app on
