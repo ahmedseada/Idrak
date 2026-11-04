@@ -1229,6 +1229,8 @@ public sealed record Idrak.Audio.FlacOptions : System.IEquatable<Idrak.Audio.Fla
   public FlacOptions()
   public bool CheckCrc { get; init; }
   public bool KeepCutEnd { get; init; }
+  public bool? VerifyMd5 { get; init; }
+  public const string VerifyMd5Variable = "IDRAK_FLAC_VERIFY_MD5"
   public int FramesPerTask { get; init; }
 
 public sealed class Idrak.Audio.FolderVoiceStore : Idrak.Audio.Abstractions.ICheckpointVoiceStore, Idrak.Audio.Abstractions.IVoiceStore

@@ -41,7 +41,11 @@ public sealed record TextStyle(IFontFace Font, float Size)
     /// <summary>The text's language, a BCP 47 tag ("ar"), or null.</summary>
     public string? Language { get; init; }
 
-    /// <summary>OpenType features turned on ("+smcp") or off ("-liga") over the shapers' defaults; null for the defaults.</summary>
+    /// <summary>
+    /// OpenType features turned on ("+smcp") or off ("-liga") over the shapers' defaults, or given a value as HarfBuzz
+    /// reads it ("salt=2": for an alternate substitution, the second alternate; 1, the default, the first; 0 off); null
+    /// for the defaults.
+    /// </summary>
     public IReadOnlyCollection<string>? Features { get; init; }
 
     /// <summary>Pixels per font unit of <paramref name="font"/> at this size.</summary>

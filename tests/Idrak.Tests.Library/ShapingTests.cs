@@ -15,6 +15,7 @@ internal abstract partial class Tests
         ("shaping: the bidirectional algorithm gives python-bidi's visual order for mixed paragraphs (Arabic with Latin, European and Arabic digits, separators, brackets, a URL, Hebrew, trailing spaces, RLM), each direction given and found", BidiMatchesReference),
         ("shaping: a paragraph is cut into runs of one script and one direction, spaces and punctuation taking their neighbours' script", ItemizerRuns),
         ("shaping: the shapers by script: arabic for the joining scripts, general for the others and for scripts with none of their own; an app's shaper replaces the library's for its script only", ShapingRegistry),
+        ("shaping: an alternate substitution (GSUB type 3) takes the alternate the feature's value names, as HarfBuzz does: salt and salt=1 the first, salt=2 the second, salt=3 the third, past the last none, salt=0 off, without the feature none; a bad value is refused naming it", ShapingAlternates),
     ];
 
     internal static void ShapingMatchesHarfBuzz(Device device) => ShapingAgainst("shaping.json", TextClusters.Characters);   // made at HarfBuzz's character level
@@ -95,6 +96,64 @@ internal abstract partial class Tests
         }
 
         Check(TextShapers.Get("Hebr").Name == "general", "unregistered: general again");
+    }
+
+    internal static void ShapingAlternates(Device device)
+    {
+        _ = device;
+        var font = SubsetFace();
+        int a = font.Glyph('a'), upperA = font.Glyph('A'), upperB = font.Glyph('B'), upperC = font.Glyph('C');
+        Check(a > 0 && upperA > 0 && upperB > 0 && upperC > 0, "the subset has a, A, B and C");
+        var face = new WithLayout(font, AlternatesGsub(a, [upperA, upperB, upperC]));
+        int Shaped(params string[]? features) => TextShapers.Shape(face, "a", new TextRun(0, 1, "Latn", false), features).Single().Glyph;
+        Check(Shaped(null) == a && Shaped("salt") == upperA && Shaped("+salt=1") == upperA && Shaped("salt=2") == upperB && Shaped("salt=3") == upperC
+              && Shaped("salt=4") == a && Shaped("salt=0") == a,
+            $"none, salt, salt=1, 2, 3, 4, 0: {Shaped(null)} {Shaped("salt")} {Shaped("+salt=1")} {Shaped("salt=2")} {Shaped("salt=3")} {Shaped("salt=4")} {Shaped("salt=0")} (a {a}, A {upperA}, B {upperB}, C {upperC})");
+        ThrowsNaming<ArgumentException>(() => Shaped("salt=two"), "a feature value that is not a whole number", "'salt=two'");
+    }
+
+    // A GSUB of one feature, salt, for DFLT and latn: one alternate substitution (format 1) of `glyph` by `alternates`.
+    private static byte[] AlternatesGsub(int glyph, int[] alternates)
+    {
+        ushort[] words =
+        [
+            1, 0, 10, 36, 50,                                                    // version 1.0; ScriptList, FeatureList, LookupList
+            2, 0x4446, 0x4C54, 14, 0x6C61, 0x746E, 14,                           // ScriptList: DFLT and latn, one Script table
+            4, 0, 0, 0xFFFF, 1, 0,                                               // Script: its default LangSys (salt, feature 0)
+            1, 0x7361, 0x6C74, 8, 0, 1, 0,                                       // FeatureList: salt, lookup 0
+            1, 4, 3, 0, 1, 8,                                                    // LookupList: one lookup, type 3, one subtable
+            1, 8, 1, 14, 1, 1, (ushort)glyph,                                    // AlternateSubst 1, its coverage (the glyph)
+            (ushort)alternates.Length, .. alternates.Select(g => (ushort)g),     // the AlternateSet
+        ];
+        var bytes = new byte[words.Length * 2];
+        for (int i = 0; i < words.Length; i++)
+        {
+            System.Buffers.Binary.BinaryPrimitives.WriteUInt16BigEndian(bytes.AsSpan(2 * i), words[i]);
+        }
+
+        return bytes;
+    }
+
+    // A face with a GSUB of the test's own (no GDEF or GPOS), every other table and glyph the wrapped face's.
+    private sealed class WithLayout(IFontFace inner, byte[] gsub) : IFontFace
+    {
+        public string Family => inner.Family;
+
+        public string Style => inner.Style;
+
+        public string Format => inner.Format;
+
+        public FontMetrics Metrics => inner.Metrics;
+
+        public int GlyphCount => inner.GlyphCount;
+
+        public int Glyph(int codePoint) => inner.Glyph(codePoint);
+
+        public int Advance(int glyph) => inner.Advance(glyph);
+
+        public GlyphOutline Outline(int glyph) => inner.Outline(glyph);
+
+        public ReadOnlyMemory<byte> Table(string tag) => tag switch { "GSUB" => gsub, "GPOS" or "GDEF" => ReadOnlyMemory<byte>.Empty, _ => inner.Table(tag) };
     }
 
     internal sealed class FixedShaper : ITextShaper

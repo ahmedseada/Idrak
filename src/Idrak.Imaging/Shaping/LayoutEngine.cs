@@ -53,16 +53,20 @@ internal sealed class LayoutEngine(LayoutContext context, LayoutTable table, boo
     private Lookup _lookup;
     private uint _mask;
     private bool _autoZwj, _autoZwnj;
+    private int _alternate;
     private int _nesting;
 
     private List<ShapingGlyph> G => _c.Glyphs;
 
     private ReadOnlySpan<byte> T => _table.Data.Span;
 
-    /// <summary>Applies <paramref name="lookup"/> over the run to the glyphs carrying <paramref name="mask"/>.</summary>
-    public void Apply(Lookup lookup, uint mask, bool autoZwj = true, bool autoZwnj = true)
+    /// <summary>
+    /// Applies <paramref name="lookup"/> over the run to the glyphs carrying <paramref name="mask"/>; an alternate
+    /// substitution takes the alternate <paramref name="alternate"/> (0: the first; past the last: none, as HarfBuzz).
+    /// </summary>
+    public void Apply(Lookup lookup, uint mask, bool autoZwj = true, bool autoZwnj = true, int alternate = 0)
     {
-        (_lookup, _mask, _autoZwj, _autoZwnj) = (lookup, mask, autoZwj, autoZwnj);
+        (_lookup, _mask, _autoZwj, _autoZwnj, _alternate) = (lookup, mask, autoZwj, autoZwnj, alternate);
         if (!_positioning && lookup.Type == 8)
         {
             for (int i = G.Count - 1; i >= 0; i--)
@@ -379,12 +383,12 @@ internal sealed class LayoutEngine(LayoutContext context, LayoutTable table, boo
                 }
 
                 int set = sub + Bytes.U16(t, sub + 6 + 2 * index);
-                if (Bytes.U16(t, set) == 0)
+                if (_alternate >= Bytes.U16(t, set))
                 {
-                    return -1;
+                    return -1;                                                  // no alternate that far (or none at all)
                 }
 
-                Replace(i, Bytes.U16(t, set + 2));                              // the first alternate (feature value 1)
+                Replace(i, Bytes.U16(t, set + 2 + 2 * _alternate));             // the feature's value less one: 0, the first, by default
                 return i + 1;
             }
 

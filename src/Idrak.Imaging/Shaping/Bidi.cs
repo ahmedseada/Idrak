@@ -85,7 +85,8 @@ public enum BidiClass : byte
 /// marks after their base) and L4 (mirrored glyphs, <see cref="Mirror"/>) are left to the caller, as the standard leaves
 /// them to the renderer. <see cref="Levels"/> and <see cref="VisualOrder"/> work on code points and their classes (a
 /// terminal renderer); <see cref="Resolve"/> and <see cref="Reorder"/> on a string's UTF-16 indexes, a line at a time (text
-/// layout). Checked against the Unicode conformance files BidiTest.txt and BidiCharacterTest.txt.
+/// layout). Checked against every case of the Unicode conformance files BidiTest.txt and BidiCharacterTest.txt of
+/// <see cref="UnicodeVersion"/> (the test group "bidi:", which reads them from the repository's test data).
 /// </summary>
 public static class Bidi
 {

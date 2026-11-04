@@ -42,7 +42,8 @@ internal readonly record struct FeatureRequest(string Tag, int Stage, bool Globa
 /// <summary>The lookups to run for one script, language and set of features: GSUB by stage, then GPOS, each with its mask.</summary>
 internal sealed class ShapingPlan
 {
-    public required List<List<(Lookup Lookup, uint Mask, bool AutoZwj, bool AutoZwnj)>> SubstitutionStages { get; init; }
+    // Alternate: which alternate an alternate substitution (GSUB type 3) takes, from 0 (the feature's value less one).
+    public required List<List<(Lookup Lookup, uint Mask, bool AutoZwj, bool AutoZwnj, int Alternate)>> SubstitutionStages { get; init; }
 
     public required List<(Lookup Lookup, uint Mask)> PositionLookups { get; init; }
 
@@ -138,9 +139,9 @@ internal class OpenTypeShaper : ITextShaper
         var substitute = new LayoutEngine(context, layout.Substitutions, positioning: false);
         foreach (var stage in plan.SubstitutionStages)
         {
-            foreach (var (lookup, mask, autoZwj, autoZwnj) in stage)
+            foreach (var (lookup, mask, autoZwj, autoZwnj, alternate) in stage)
             {
-                substitute.Apply(lookup, mask, autoZwj, autoZwnj);
+                substitute.Apply(lookup, mask, autoZwj, autoZwnj, alternate);
             }
         }
 
@@ -597,15 +598,27 @@ internal class OpenTypeShaper : ITextShaper
 
         int lastStage = requests.Count == 0 ? 0 : requests.Values.Max(f => f.Stage);
         var positionTags = new List<string>(PositionFeatures(run.RightToLeft));
+
+        // A feature's value, as HarfBuzz reads "tag=value": 0 turns it off; for an alternate substitution it chooses the
+        // alternate (1, the default, the first; 2 the second; past the last, none), so "salt=2" takes a glyph's second.
+        var alternates = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (string change in features ?? [])
         {
-            string tag = change.TrimStart('+', '-');
-            if (tag.Length != 4)
+            int equals = change.IndexOf('=', StringComparison.Ordinal);
+            string tag = (equals < 0 ? change : change[..equals]).TrimStart('+', '-');
+            int value = 1;
+            if (tag.Length != 4 || equals >= 0 && (change.StartsWith('-')
+                    || !int.TryParse(change.AsSpan(equals + 1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out value)))
             {
-                throw new ArgumentException($"'{change}' is not an OpenType feature tag of four characters with + or -.", nameof(features));
+                throw new ArgumentException($"'{change}' is not an OpenType feature tag of four characters with + or -, or tag=value with a whole value (salt=2).", nameof(features));
             }
 
-            if (change.StartsWith('-'))
+            if (value > 1)
+            {
+                alternates[tag] = value - 1;
+            }
+
+            if (change.StartsWith('-') || value == 0)
             {
                 requests.Remove(tag);
                 positionTags.Remove(tag);
@@ -636,21 +649,21 @@ internal class OpenTypeShaper : ITextShaper
             }
         }
 
-        var stages = new List<List<(Lookup, uint, bool, bool)>>();
+        var stages = new List<List<(Lookup Lookup, uint Mask, bool AutoZwj, bool AutoZwnj, int Alternate)>>();
         var substitutionFeatures = new HashSet<string>(StringComparer.Ordinal);
         var gsub = layout.Substitutions;
         if (gsub.LanguageSystem(scriptTags, languageTag) is var (indices, required))
         {
             for (int stage = 0; stage <= lastStage; stage++)
             {
-                var byLookup = new SortedDictionary<int, (Lookup Lookup, uint Mask, bool AutoZwj, bool AutoZwnj)>();
+                var byLookup = new SortedDictionary<int, (Lookup Lookup, uint Mask, bool AutoZwj, bool AutoZwnj, int Alternate)>();
                 if (stage == 0 && required >= 0)
                 {
                     foreach (int l in gsub.FeatureLookups(required))
                     {
                         if (l < gsub.Lookups.Length)
                         {
-                            byLookup[l] = (gsub.Lookups[l], global, true, true);
+                            byLookup[l] = (gsub.Lookups[l], global, true, true, 0);
                         }
                     }
                 }
@@ -665,6 +678,7 @@ internal class OpenTypeShaper : ITextShaper
 
                     substitutionFeatures.Add(f.Tag);
                     uint mask = masks[f.Tag];
+                    int alternate = alternates.GetValueOrDefault(f.Tag);
                     foreach (int l in gsub.FeatureLookups(feature))
                     {
                         if (l >= gsub.Lookups.Length)
@@ -673,8 +687,8 @@ internal class OpenTypeShaper : ITextShaper
                         }
 
                         byLookup[l] = byLookup.TryGetValue(l, out var old)
-                            ? (old.Lookup, old.Mask | mask, old.AutoZwj && !f.ManualZwj, old.AutoZwnj && !f.ManualZwnj)
-                            : (gsub.Lookups[l], mask, !f.ManualZwj, !f.ManualZwnj);
+                            ? (old.Lookup, old.Mask | mask, old.AutoZwj && !f.ManualZwj, old.AutoZwnj && !f.ManualZwnj, Math.Max(old.Alternate, alternate))
+                            : (gsub.Lookups[l], mask, !f.ManualZwj, !f.ManualZwnj, alternate);
                     }
                 }
 
@@ -689,13 +703,13 @@ internal class OpenTypeShaper : ITextShaper
                         {
                             if (l < gsub.Lookups.Length && !byLookup.ContainsKey(l))
                             {
-                                byLookup[l] = (gsub.Lookups[l], global, true, true);
+                                byLookup[l] = (gsub.Lookups[l], global, true, true, alternates.GetValueOrDefault(tag));
                             }
                         }
                     }
                 }
 
-                stages.Add([.. byLookup.Values.Select(v => (v.Lookup, v.Mask, v.AutoZwj, v.AutoZwnj))]);
+                stages.Add([.. byLookup.Values]);
             }
         }
 
@@ -747,7 +761,7 @@ internal class OpenTypeShaper : ITextShaper
 
         return new ShapingPlan
         {
-            SubstitutionStages = stages.Select(s => s.Select(x => (x.Item1, x.Item2, x.Item3, x.Item4)).ToList()).ToList(),
+            SubstitutionStages = stages,
             PositionLookups = positionLookups, GlobalMask = global, Masks = masks, HasPositioning = positionLookups.Count > 0,
             HasMarkPositioning = hasMark, SubstitutionFeatures = substitutionFeatures,
         };

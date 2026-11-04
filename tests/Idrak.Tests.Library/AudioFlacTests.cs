@@ -18,6 +18,7 @@ internal abstract partial class Tests
         ("audio codecs: flac: a file cut inside a frame keeps its whole frames (refused with KeepCutEnd off), a flipped byte is refused naming the CRC and the file, an ID3v2 tag before the stream is skipped, a stream that does not say its length decodes the same, and one frame per task gives the samples of many", d => { if (d == Device.Cpu) AudioFlacDamaged(); }),
         ("audio codecs: flac: the test's writer (fixed orders 0 to 4, independent, left/side, side/right and mid/side channels, fixed and variable block sizes, 8 to 32 bits, a short last frame) round-trips exactly through the decoder", d => { if (d == Device.Cpu) AudioFlacRoundTrips(); }),
         ("audio codecs: flac: ten minutes decode into one block (the samples' bytes allocated, no more), the registry names flac from the library, and the codec suite passes on the fixture; the decode's speed", d => { if (d == Device.Cpu) AudioFlacLongAndSuite(); }),
+        ("audio codecs: flac: md5: every libFLAC file of the fixture holds an MD5 and its decoded samples hash to it with FlacOptions.VerifyMd5 on (off by default: it costs more than the decode; IDRAK_FLAC_VERIFY_MD5=1 turns it on); a wrong MD5 is refused naming the file and both hashes, and decodes with the check off; ten minutes decoded with and without the check (printed)", d => { if (d == Device.Cpu) AudioFlacMd5(); }),
     ];
 
     internal static (string Name, JsonObject Entry)[] FlacFixtureFiles()
@@ -183,6 +184,78 @@ internal abstract partial class Tests
             bytes => { var a = codec.Decode(bytes.Span); return new DecodedAudio(a.SampleRate, a.Channels, a.Samples); });
         var report = Conformance.CheckAudioCodec(under, samples);
         Check(report.Passed, $"the audio codec suite on flac: {report}");
+    }
+
+    internal static void AudioFlacMd5()
+    {
+        int withMd5 = 0;
+        foreach (var (name, _) in FlacFixtureFiles())
+        {
+            byte[] bytes = File.ReadAllBytes(AudioData($"flac/{name}.flac"));
+            bool has = bytes.AsSpan(26, 16).ContainsAnyExcept((byte)0);
+            withMd5 += has ? 1 : 0;
+            var checkedAudio = new FlacCodec(new FlacOptions { VerifyMd5 = true }).Decode(bytes);
+            var unchecked_ = new FlacCodec(new FlacOptions { VerifyMd5 = false }).Decode(bytes);
+            Check(checkedAudio.Samples.AsSpan().SequenceEqual(unchecked_.Samples), $"{name}: the check changes no sample");
+        }
+
+        Check(withMd5 >= 3, $"only {withMd5} fixture files hold an MD5: the check is not exercised");
+        Check(new FlacOptions().VerifyMd5 is null, "VerifyMd5 is not set by default (the variable decides, else off)");
+
+        // A wrong MD5 (one bit of the stream info's flipped): refused naming the file and both hashes; decoded with the option off.
+        byte[] file = File.ReadAllBytes(AudioData("flac/pcm16.flac"));
+        string expected = Convert.ToHexStringLower(file.AsSpan(26, 16));
+        file[30] ^= 0x01;
+        string wrong = Convert.ToHexStringLower(file.AsSpan(26, 16));
+        string folder = Path.Combine(Path.GetTempPath(), "idrak-flac-md5-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(folder);
+        try
+        {
+            string path = Path.Combine(folder, "wrong-md5.flac");
+            File.WriteAllBytes(path, file);
+            WithEnvironment(new Dictionary<string, string?> { [FlacOptions.VerifyMd5Variable] = "1" }, () =>
+                ThrowsNaming<InvalidDataException>(() => AudioCodecs.Decode(path), "a wrong MD5 with IDRAK_FLAC_VERIFY_MD5=1", "wrong-md5.flac", "MD5", expected, wrong, "VerifyMd5"));
+            ThrowsNaming<InvalidDataException>(() => new FlacCodec(new FlacOptions { VerifyMd5 = true }).Decode(file), "a wrong MD5 with VerifyMd5 on", expected, wrong);
+            WithEnvironment(new Dictionary<string, string?> { [FlacOptions.VerifyMd5Variable] = null }, () =>
+                Check(AudioCodecs.Decode(path).Length == 24000, "by default (the variable unset) the MD5 is not checked"));
+            Check(new FlacCodec(new FlacOptions { VerifyMd5 = false }).Decode(file).Samples.AsSpan().SequenceEqual(ReadNpyFloat32(AudioData("flac/pcm16.npy"))),
+                "with VerifyMd5 off the samples decode as before");
+        }
+        finally
+        {
+            Directory.Delete(folder, recursive: true);
+        }
+
+        // Its cost: ten minutes of 16-bit mono with its MD5 written in, decoded warm with and without the check.
+        const int Rate = 16000;
+        int length = Rate * 60 * 10;
+        var ints = new long[length];
+        var pcm = new byte[2 * length];
+        var random = new Random(9);
+        for (int i = 0; i < length; i++)
+        {
+            ints[i] = (long)Math.Round((0.5 * Math.Sin(2 * Math.PI * 440 * i / Rate) + 0.1 * (random.NextDouble() * 2 - 1)) * 32767);
+            System.Buffers.Binary.BinaryPrimitives.WriteInt16LittleEndian(pcm.AsSpan(2 * i), (short)ints[i]);
+        }
+
+        byte[] longFile = TestFlacWriter.Write([ints], Rate, 16, 4096, 2, 0, variable: false);
+        System.Security.Cryptography.MD5.HashData(pcm).CopyTo(longFile.AsSpan(26));
+        double Time(FlacCodec codec)
+        {
+            codec.Decode(longFile);                                             // warm
+            double best = double.MaxValue;
+            for (int run = 0; run < 3; run++)
+            {
+                var watch = Stopwatch.StartNew();
+                codec.Decode(longFile);
+                best = Math.Min(best, watch.Elapsed.TotalMilliseconds);
+            }
+
+            return best;
+        }
+
+        double on = Time(new FlacCodec(new FlacOptions { VerifyMd5 = true })), off = Time(new FlacCodec(new FlacOptions { VerifyMd5 = false }));
+        Console.WriteLine($"    ten minutes of 16-bit FLAC: {off:F0} ms without the MD5 check, {on:F0} ms with it (+{(on - off) / off * 100:F0}%)");
     }
 
     // A small FLAC writer for the tests: one fixed predictor of the order given for every subframe, one Rice partition with a

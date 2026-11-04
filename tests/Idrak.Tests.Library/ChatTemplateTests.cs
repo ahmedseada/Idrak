@@ -15,6 +15,7 @@ internal abstract partial class Tests
     [
         ("chat templates: Jinja expressions, filters, tests, loops, macros and whitespace control match jinja2", JinjaMatchesPython),
         ("chat templates: call blocks (caller() in the macro, with arguments and defaults, called twice) and recursive loops (loop(...), loop.depth, loop.depth0) render as jinja2 does; loop(...) outside a recursive loop is refused saying so", JinjaCallsAndRecursion),
+        ("chat templates: whitespace: spaces or a tab between two tags on one line are kept, while lstrip_blocks strips those that begin a line (the template's start, after a newline trim_blocks removed) and - and + act as before, as jinja2 renders them", JinjaWhitespaceBetweenTags),
         ("chat templates: limits: a render past JinjaOptions.MaxSteps (IDRAK_TEMPLATE_MAX_STEPS) or MaxOutputChars (IDRAK_TEMPLATE_MAX_OUTPUT) stops naming the template and the limit; a huge range or repeat stops before it is built; a macro that calls itself stops at the stack naming the template; the caller's text in the output is not counted; a bad variable is refused naming it", d => { if (d == Device.Cpu) JinjaLimits(); }),
         ("chat templates: a Qwen3 template read from a model folder renders tools, tool calls and reasoning as transformers does", ModelChatTemplate),
         ("chat templates: each family's tool-call format is read off its template (tags, bare JSON, lists) and parsed from streamed output", ToolCallFormats),
@@ -318,6 +319,29 @@ internal abstract partial class Tests
 
         ThrowsNaming<InvalidOperationException>(() => JinjaTemplate.Parse("{% for x in xs %}{{ loop(xs) }}{% endfor %}").Render(variables), "loop(...) in a loop that is not recursive",
             "needs a recursive loop");
+    }
+
+    // Checked against jinja2 3.1.6 (trim_blocks and lstrip_blocks, as Hugging Face renders).
+    internal static void JinjaWhitespaceBetweenTags(Device device)
+    {
+        _ = device;
+        var variables = new Dictionary<string, object?> { ["xs"] = new List<object?> { 3L, 1L, 2L } };
+        (string Template, string Expected)[] cases =
+        [
+            ("{% for x in xs %}{{ x }} {% endfor %}|{% for x in xs %}{% if x %}{{ x }}{% endif %} {% endfor %}", "3 1 2 |3 1 2 "),
+            ("{% if true %}a{% endif %}\t{% if true %}b{% endif %}", "a\tb"),
+            ("  {% if true %}x{% endif %}\n  {% if true %}y\n  {% endif %}.", "xy\n."),
+            ("{% if true %}\n  {% if true %}z{% endif %} {% endif %}.", "z ."),
+            ("{% set a = 1 %} {% set b = 2 %}{{ a }}{{ b }}", " 12"),
+            ("{# c #} {% if true %}k{% endif %}", " k"),
+            ("{%- if true %} a {% endif -%} {% if true %} b {%+ endif %}", " a  b "),
+            ("<{% for x in xs %}\n    {{ x }}{% if not loop.last %}, {% endif %}\n{% endfor %}>", "<    3,     1,     2>"),
+        ];
+        foreach (var (template, expected) in cases)
+        {
+            string actual = JinjaTemplate.Parse(template).Render(variables);
+            Check(actual == expected, $"{template.Replace("\n", "\\n", StringComparison.Ordinal)}\n  expected (jinja2): {expected.Replace("\n", "\\n", StringComparison.Ordinal)}\n  actual:            {actual.Replace("\n", "\\n", StringComparison.Ordinal)}");
+        }
     }
 
     internal static void JinjaLimits()

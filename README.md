@@ -28,7 +28,7 @@ Idrak is a neural network library for **.NET 10**, written entirely in C#.
   or GGUF files, with their own tokenizers and chat templates. The model families live in three plug-in packages
   (`Idrak.Text.Plugins`, `Idrak.Vision.Plugins`, `Idrak.Audio.Plugins`) that the `idrak` tool registers for you.
 - **Tune, serve and ship.** LoRA, QLoRA and DoRA fine-tuning, distillation and evaluation; an inference engine with
-  batching, OpenAI-compatible and MCP front ends; retrieval and RAG; ONNX export and import; and one command-line tool,
+  batching, an OpenAI-style `/v1` API and MCP front ends; retrieval and RAG; ONNX export and import; and one command-line tool,
   `idrak`, over all of it.
 - **Open by contract.** Every behaviour goes through a contract with a registry, so a model family, a file format, a
   device or a kernel is added from a plug-in without touching the library.
@@ -60,7 +60,7 @@ along; the GPU devices are `dotnet add package Idrak.Gpu`, and the others are ad
 | `Idrak.Vision.Plugins` | The vision model families (vision-language towers, image models, line recognizers) as plug-ins; `VisionPlugins.RegisterAll()`. |
 | `Idrak.Audio.Plugins` | The speech and voice model families (recognition, synthesis, voice conversion) as plug-ins; `AudioPlugins.RegisterAll()`. |
 | `Idrak.Reinforcement.Plugins` | The reinforcement-learning environment families (environments and their rewards) as plug-ins, one namespace per family; `ReinforcementPlugins.RegisterAll()`. |
-| `Idrak.AspNetCore` | Predictions, generation, chat and an OpenAI-compatible `/v1` API (chat completions, embeddings) as thin endpoints over the inference engine. |
+| `Idrak.AspNetCore` | Predictions, generation, chat and an OpenAI-style `/v1` API (chat completions, embeddings; a request field it does not implement is refused by name, never ignored) as thin endpoints over the inference engine. |
 | `Idrak.Mcp` | Model Context Protocol: MCP servers' tools in conversations, and the engine's models served as the MCP tools `generate`, `chat` and `embed`. |
 | `Idrak.Onnx.Runtime` | Runs ONNX models with ONNX Runtime as Idrak modules, so they serve through the same engine and endpoints. |
 | `Idrak.Abstraction.Testing` | The conformance and stress kit: checks a device, a sampler, a tokenizer, a RoPE scaling, a codec, a recognizer or a synthesizer against the library default on fixed and random cases, and replays saved regression cases. |
@@ -88,8 +88,8 @@ but holds no types yet; installing one adds nothing beyond its dependency.
 
 ### Tensors, autograd and devices
 
-- Float32 tensors with shapes, strides, slices, views, broadcasting, in-place updates and a reverse-mode autograd with
-  user-defined differentiable functions. Mixed precision (bfloat16 products on the devices that have tensor cores),
+- Float32 tensors, contiguous in memory (a reshape shares the storage; slices, transposes and permutations copy), with
+  broadcasting, in-place updates and a reverse-mode autograd with user-defined differentiable functions. Mixed precision (bfloat16 products on the devices that have tensor cores),
   activation checkpointing, scoped allocation (`TensorScope`) and pooled device memory that is measured, not guessed.
 - One `Backend` contract behind every device; every kernel has a CPU implementation (the host fallback), so any model
   runs anywhere .NET 10 runs and a device only has to be faster.
@@ -119,8 +119,11 @@ but holds no types yet; installing one adds nothing beyond its dependency.
 - A network builder and `GraphModule` for arbitrary graphs; 31 layer types and 36 graph operations are registered and
   any plug-in adds more.
 - Optimizers: SGD, Adam, AdamW, AdamW 8-bit, grouped and host optimizers; schedules step, exponential, cosine, lambda.
-- `Trainer` with callbacks, metrics, history, early stopping, checkpoints resumed bit for bit, out-of-memory recovery
-  (micro-batches halved and retried), sample sources and streams with transforms and bucketed batching.
+- `Trainer` with callbacks, metrics, history, early stopping, weight checkpoints, sample sources and streams with
+  transforms and bucketed batching; a stopped cluster run writes its weights, optimizer state and step, and
+  `ResumeFrom` goes on to the end the uninterrupted run reaches. Out-of-memory recovery is not `Trainer`'s: text
+  fine-tuning and pre-training fit their batches to the device's free memory and step down an activation ladder on an
+  out-of-memory failure, and the speech trainer halves its micro-batches and runs the step again.
 - Run tracking: `idrak runs list|show|compare`, `idrak resume`, `idrak report`.
 
 ### Language models
@@ -130,8 +133,9 @@ but holds no types yet; installing one adds nothing beyond its dependency.
   qwen3moe), Gemma, Gemma 2 and Gemma 3 (GGUF gemma, gemma2, gemma3), BERT and T5, one namespace each; the library
   registers none. A family nobody
   registered fails loudly with "not registered" and is added as a plug-in (`PretrainedFamilies`, `GgufArchitectures`).
-- Checkpoints: safetensors, GGUF (every ggml quantization dequantized or run packed), PyTorch zip read without running
-  it; PEFT adapter folders (LoRA, DoRA, rsLoRA) loaded or merged; packed weights bfloat16, int8, int4; KV caches in
+- Checkpoints: safetensors, GGUF (F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K to Q6_K, IQ4_NL and IQ4_XS
+  dequantized; another type, such as IQ1 to IQ3, TQ or MXFP4, is refused unless a plug-in registers it in `GgufTypes`),
+  PyTorch zip read without running it; PEFT adapter folders (LoRA, DoRA, rsLoRA) loaded or merged; packed weights bfloat16, int8, int4; KV caches in
   bfloat16, float32 or int8.
 - Tokenizers: BPE from `tokenizer.json` or GGUF with the registered normalizers, pre-tokenizers and decoders; a BPE
   trainer (`idrak data tokenizer`).
@@ -146,7 +150,11 @@ but holds no types yet; installing one adds nothing beyond its dependency.
 - Evaluation: perplexity, answer metrics (exact match, F1, CER, WER, contains), `idrak eval`, `idrak perplexity`,
   `idrak compare`.
 - Retrieval and RAG: embedders, BM25 and vector indexes, rerankers, chunking, fusion; `idrak rag index|search|ask|eval`.
-- A coding agent (`idrak agent`) with tools over the file system and shell.
+- A coding agent (`idrak agent`): tools that list, read, search, edit and write the files of one folder (no path or
+  link leads out of it, nothing is written in `.git`) and run allowlisted programs (the languages' build and test
+  runners and git's read-only commands) without a shell; it asks before each command, write and plug-in tool unless
+  `--yes`. Commands run in the `process` sandbox by default, a plain process with the user's rights that isolates
+  nothing; the `container` sandbox (Docker or Podman, `--sandbox container`) isolates them.
 
 ### Vision and vision-language
 
@@ -160,7 +168,8 @@ but holds no types yet; installing one adds nothing beyond its dependency.
   `/api/chat`).
 - OCR: CTC models, the Arabic OCR sample, `idrak vlm check`.
 - Synthetic training pages: the library's own font engine (TrueType and CFF outlines, every GSUB and GPOS lookup
-  kind, HarfBuzz-exact shaping on the checked strings, UAX #9 bidi), text layout with wrapping, justification and
+  kind, HarfBuzz-exact shaping on the checked strings, UAX #9 bidi passing Unicode's BidiTest.txt and
+  BidiCharacterTest.txt), text layout with wrapping, justification and
   fallback fonts, page layouts, and about fifty seeded scan and paper effects (`idrak data synth`, `idrak data text`,
   `idrak data fonts`).
 
@@ -187,7 +196,8 @@ but holds no types yet; installing one adds nothing beyond its dependency.
 
 - The inference engine: named models of any kind (`predictor`, `text`, `chat`, `embed`, or a plug-in's), leases,
   batchers, a model catalog, descriptions, keep-alive, status.
-- ASP.NET Core endpoints and the OpenAI-compatible `/v1` API; API keys (`idrak server keys`); `idrak serve`,
+- ASP.NET Core endpoints and the OpenAI-style `/v1` API, which refuses by name what it does not implement (n above 1, response_format other than text, json_schema, logprobs, top_logprobs, logit_bias, best_of, echo, suffix, audio output, a forced tool_choice);
+  API keys (`idrak server keys`); `idrak serve`,
   `idrak server load|unload|ps|stop`, `idrak api`, `idrak ui`.
 - MCP in both directions (`idrak mcp serve`, `idrak serve --mcp`, `idrak tools list|test`).
 - Model packages (`.ikm`) with `idrak package`, `idrak inspect`, `idrak verify`; ONNX export and import
@@ -310,7 +320,7 @@ Working rules for this repository are in `CLAUDE.md`; the performance rules in `
 | Path | Contents |
 |---|---|
 | `src/` | the 20 packages and the 8 reserved ones |
-| `tests/Idrak.Tests`, `tests/Idrak.Tests.Library`, `tests/Idrak.PluginTests` | the test program (824 tests, filtered by group), the groups and the runner it shares with an app (those that need no CLI, ASP.NET Core, native ONNX Runtime or child process) and the plug-in tests |
+| `tests/Idrak.Tests`, `tests/Idrak.Tests.Library`, `tests/Idrak.PluginTests` | the test program (filtered by group; `-- --list` prints the tests a filter keeps, so it counts them), the groups and the runner it shares with an app (those that need no CLI, ASP.NET Core, native ONNX Runtime or child process) and the plug-in tests |
 | `benches/Idrak.Benches` | the benches above |
 | `samples/` | 19 sample apps (Arabic OCR, chat, coding agent, GPT API and training, house prices and its API, OCR, ONNX import, an override checked with the testing kit, quantization, RAG, re-ranker, sentiment, shape recognition, spirals, summarizer, text generation, XOR), two of them with their own tests, and scripts (IdrakVision, OpenVoice, WhisperSpeech) |
 | `api/` | the public API dumps the guard test checks |

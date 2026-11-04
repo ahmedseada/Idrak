@@ -5,6 +5,7 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Numerics;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
 
 namespace Idrak.Audio;
 
@@ -22,6 +23,20 @@ public sealed record FlacOptions
 
     /// <summary>Frames a worker decodes at a time when the frames are decoded in parallel (1 or more).</summary>
     public int FramesPerTask { get; init; } = 8;
+
+    /// <summary>The variable that turns the MD5 check on when <see cref="VerifyMd5"/> is not set: "IDRAK_FLAC_VERIFY_MD5" (1 or true: on).</summary>
+    public const string VerifyMd5Variable = "IDRAK_FLAC_VERIFY_MD5";
+
+    /// <summary>
+    /// Whether the samples' MD5 the stream info holds is checked once the stream is decoded (the decoded samples, interleaved,
+    /// each a little-endian integer of whole bytes, as the encoder hashed them): a mismatch is refused naming both hashes
+    /// (and the file, read through <c>AudioCodecs</c>). Skipped for a stream with no MD5 (all zero), a cut one, and one of more
+    /// than 24 bits (whose integers the float samples do not hold exactly). Null (the default): <see cref="VerifyMd5Variable"/>
+    /// (IDRAK_FLAC_VERIFY_MD5), read at each decode, else off. Off by default because it was measured to cost more than the
+    /// decode itself (a sequential hash after a parallel decode; the FLAC tests print both), while every frame's CRCs are
+    /// checked anyway (<see cref="CheckCrc"/>).
+    /// </summary>
+    public bool? VerifyMd5 { get; init; }
 }
 
 /// <summary>
@@ -30,7 +45,7 @@ public sealed record FlacOptions
 /// before the stream is skipped. The frames are found by their sync code (each candidate's header CRC-8 and frame number
 /// checked) and decoded in parallel into one planar block; each frame's CRC-16 and length are checked, and a stream whose
 /// frames cannot be told apart that way is decoded again frame after frame, which names the damaged frame. The samples'
-/// MD5 in the stream info is not checked (the CRCs cover every frame).
+/// MD5 in the stream info is checked after them (<see cref="FlacOptions.VerifyMd5"/>).
 /// </summary>
 /// <param name="options">How it decodes (the defaults when null).</param>
 public sealed class FlacCodec(FlacOptions? options = null) : IAudioCodec
@@ -40,7 +55,7 @@ public sealed class FlacCodec(FlacOptions? options = null) : IAudioCodec
     private readonly FlacOptions _options = options ?? new FlacOptions();
 
     /// <summary>The stream info block's values.</summary>
-    private readonly record struct StreamInfo(int MinBlock, int MaxBlock, int MinFrame, int SampleRate, int Channels, int Bits, long Samples, int FramesStart);
+    private readonly record struct StreamInfo(int MinBlock, int MaxBlock, int MinFrame, int SampleRate, int Channels, int Bits, long Samples, int FramesStart, UInt128 Md5);
 
     /// <summary>A frame header's values; <see cref="Length"/> is the header's bytes, CRC-8 included.</summary>
     private readonly record struct FrameHeader(bool Variable, int BlockSize, int SampleRate, int Assignment, int Channels, int Bits, long Number, int Length);
@@ -129,7 +144,57 @@ public sealed class FlacCodec(FlacOptions? options = null) : IAudioCodec
             DecodeInOrder(file, info, frames, planar, total);                   // names the frame the parallel pass could not place
         }
 
+        bool verify = _options.VerifyMd5 ?? Environment.GetEnvironmentVariable(FlacOptions.VerifyMd5Variable)?.Trim() is "1" or "true" or "TRUE" or "True";
+        if (verify && info.Md5 != UInt128.Zero && !cut && total == info.Samples && info.Bits <= 24)
+        {
+            CheckMd5(planar, info, total);
+        }
+
         return new AudioData(planar, info.Channels, info.SampleRate);
+    }
+
+    // The decoded samples' MD5 against the stream info's: interleaved, each a little-endian integer of (bits + 7) / 8 bytes,
+    // as the encoder hashed them (exact from the floats up to 24 bits: a power-of-two scale of an integer the float holds).
+    private static void CheckMd5(float[] planar, in StreamInfo info, long total)
+    {
+        const int Chunk = 4096;                                                 // sample frames hashed at a time
+        int width = (info.Bits + 7) / 8, channels = info.Channels;
+        float scale = 1L << (info.Bits - 1);
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(Chunk * channels * width);
+        try
+        {
+            using var md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
+            for (long start = 0; start < total; start += Chunk)
+            {
+                int count = (int)Math.Min(Chunk, total - start), at = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    for (int c = 0; c < channels; c++)
+                    {
+                        int value = (int)(planar[c * total + start + i] * scale);
+                        for (int b = 0; b < width; b++)
+                        {
+                            buffer[at++] = (byte)(value >> (8 * b));
+                        }
+                    }
+                }
+
+                md5.AppendData(buffer, 0, at);
+            }
+
+            Span<byte> hash = stackalloc byte[16], expected = stackalloc byte[16];
+            md5.GetHashAndReset(hash);
+            BinaryPrimitives.WriteUInt128BigEndian(expected, info.Md5);
+            if (!hash.SequenceEqual(expected))
+            {
+                throw new InvalidDataException($"the samples' MD5 is {Convert.ToHexStringLower(hash)}, the stream info's {Convert.ToHexStringLower(expected)} "
+                                               + "(damaged data the frames' CRCs did not catch, or an encoder that hashed other samples; FlacOptions.VerifyMd5 off skips the check).");
+            }
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 
     // The byte after an ID3v2 tag at the start (0 without one), or -1 when the tag runs past the bytes given.
@@ -192,7 +257,7 @@ public sealed class FlacCodec(FlacOptions? options = null) : IAudioCodec
             return false;
         }
 
-        info = new StreamInfo(minBlock, maxBlock, minFrame, rate, channels, bits, samples, at);
+        info = new StreamInfo(minBlock, maxBlock, minFrame, rate, channels, bits, samples, at, BinaryPrimitives.ReadUInt128BigEndian(s[18..]));
         problem = null;
         return true;
     }

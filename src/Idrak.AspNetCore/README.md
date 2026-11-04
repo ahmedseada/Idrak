@@ -1,7 +1,8 @@
 # Idrak.AspNetCore
 
-Serve Idrak models over HTTP from an ASP.NET Core app: predictions, text generation, chat, and an OpenAI-compatible
-`/v1` API (chat completions, embeddings) that OpenAI clients can call. It is a thin layer over the inference engine:
+Serve Idrak models over HTTP from an ASP.NET Core app: predictions, text generation, chat, and an OpenAI-style `/v1`
+API (chat completions, embeddings) that OpenAI clients can call; a request field it does not implement (n above 1, response_format other than text, json_schema, logprobs, top_logprobs, logit_bias, best_of, echo, suffix, audio output, a forced tool_choice)
+is refused by name, never ignored. It is a thin layer over the inference engine:
 `AddIdrak()` registers the engine in dependency injection, and the `Map...` methods add the endpoints.
 
 The endpoints are a thin layer over the engine and the contracts of `Idrak.Abstraction`: `MapPredictor`

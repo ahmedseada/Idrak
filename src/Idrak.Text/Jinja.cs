@@ -273,10 +273,13 @@ public sealed partial class JinjaTemplate
             var text = new StringBuilder();
             bool trimNextText = false;           // "-" at the end of the previous tag
             bool afterBlock = false;             // trim_blocks: drop one newline after a block tag
+            bool lineStart = true;               // the text begins a line: the template's start (after a tag, see below)
             void FlushText(bool stripTrailing, bool lstripBlock)
             {
                 string t = text.ToString();
                 text.Clear();
+                bool startsLine = lineStart;
+                lineStart = false;
                 if (trimNextText)
                 {
                     t = t.TrimStart();
@@ -287,10 +290,12 @@ public sealed partial class JinjaTemplate
                     if (t.StartsWith("\r\n", StringComparison.Ordinal))
                     {
                         t = t[2..];
+                        startsLine = true;                                      // the tag ended its line (jinja2's line_starting)
                     }
                     else if (t.StartsWith('\n'))
                     {
                         t = t[1..];
+                        startsLine = true;
                     }
                 }
 
@@ -300,14 +305,15 @@ public sealed partial class JinjaTemplate
                 }
                 else if (lstripBlock)
                 {
-                    // lstrip_blocks: spaces and tabs between the line start and a block tag are removed.
+                    // lstrip_blocks: spaces and tabs between the line start and a block tag are removed; text that is only
+                    // spaces between two tags on one line ("{% endif %} {% endfor %}") begins no line, and is kept.
                     int end = t.Length;
                     while (end > 0 && (t[end - 1] == ' ' || t[end - 1] == '\t'))
                     {
                         end--;
                     }
 
-                    if (end == 0 || t[end - 1] == '\n')
+                    if (end == 0 ? startsLine : t[end - 1] == '\n')
                     {
                         t = t[..end];
                     }
