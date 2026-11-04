@@ -183,6 +183,110 @@ means the report is plausible from the source but not yet reproduced here. Fixed
 | B6 | `src/Idrak.Text/Jinja.cs:1087` vs `:1107` | `caller()` is set on the call block's scope (`callScope`), but a macro's body runs in a scope chained to its definition scope (`MakeMacro`), so `caller` is undefined inside the macro: `{% call %}` blocks in chat templates fail | Read | Pass `caller` into the macro invocation (a per-call binding in `MakeMacro`'s local scope, as Jinja does), with a template test using `{% call m() %}...{% endcall %}` |
 | B7 | `src/Idrak.Abstraction/Tensors/Tensor.cs:620`, `:660` | `Backward` clears each node's `_backward` after use (`:660`), so a second `Backward` through a reused activation skips those nodes (`:620`) and silently drops their gradients; PyTorch throws ("Trying to backward through the graph a second time") | Reviewer only (the clearing and the skip are read; the drop not reproduced) | A node whose `_backward` was consumed but whose inputs still require grad throws with the cause named, unless a `retain_graph`-style option is set; a test with two backward passes through one activation |
 
+### The full risk review (2026-11-04)
+
+The same friends' full review (70 risks, 7 areas, 17 re-read by its reviewer; `main` 4374037, read only, nothing built
+or run) was received on 2026-11-04. Its first seven items are B1-B7 above: S1 = B1; S2, S3, S4, S7 = B2; S8 = B3;
+G2, G3 = B4; C5 = B5; L1 = B6; C4 = B7. The rest are listed here with the review's ID and severity, its check
+("verified": its reviewer re-read the code; "reported": one reviewer's read), mine where I re-read the source on
+2026-11-04, and where each goes: **G-1** (a code fix with a targeted test, in this plan), **decision** (a design or
+process choice that is the owner's, not taken by this plan; where it conflicts with a standing rule in `CLAUDE.md`, the
+rule holds until the owner changes it), or **noted** (a scope limit or a known gap, recorded, nothing to do here).
+
+**Security (S5-S14)**
+
+| ID | Sev. | Risk | Where | Check | Goes to |
+|---|---|---|---|---|---|
+| S5 | Medium | `-y` approves every command; tools loaded with `--tools DLL` are added after the approval rule, so they skip it | `src/Idrak.Cli.Commands/Commands/Run/AgentCommand.cs:102-121` | reported; mine: read, both hold | G-1: extra tools go through the same approval rule; `--yes` stays a setting, documented |
+| S6 | Medium | Some "read-only" git subcommands can write or start programs through options (`git log --output`, `git diff --ext-diff`, pagers, `-c` settings) | `src/Idrak.Text/Generation/CodingTools.cs:37`, `:827-830` | reported (per git's docs, not tested); mine: the list read | G-1: refuse option forms that write or spawn, run git with `--no-pager` and `-c core.pager=` and `GIT_EXTERNAL_DIFF` cleared, as a setting |
+| S9 | Medium | `serve -H 0.0.0.0` with no key starts without a warning; MCP and the dashboard refuse the same setup | `src/Idrak.Cli/Commands/Serve/ServeHost.cs:181` | reported; mine: no warning in the source | G-1: warn (or refuse, a setting) on a public bind with no key, as MCP does |
+| S10 | Medium | `--allow-image-urls` fetches any URL, loopback and link-local included (SSRF), and echoes the remote reply in errors | `src/Idrak.AspNetCore/ImageInputs.cs:76-100` | reported | G-1: resolve and refuse loopback, link-local and private ranges unless a setting allows them; errors name the URL, not the reply |
+| S11 | Medium | Chat-template rendering has no step or output limit: a hostile template in a downloaded model can hang the process or exhaust memory | `src/Idrak.Text/Jinja.cs` | reported | G-1: a step budget and an output cap in the renderer, settings with defaults, a loud failure naming the template |
+| S12 | Low | The coding-agent sample runs model commands with no approval | `samples/Idrak.Samples.CodingAgent/Program.cs:337` | reported | G-1: the sample asks, or says in its first line that it does not |
+| S13 | Low | Hostile GGUF: the dimension count is not checked before the shape array is allocated; duplicate tensor names overwrite silently (denial of service only) | `Gguf.cs:583` | reported; mine: read, `new long[dims]` before any bound | G-1: bound `dims` by the format's maximum, refuse duplicates, by the allocation-failure rule (88-90) |
+| S14 | Low | Cached HIP code objects load with no content hash | `HipKernelCache.cs` | reported | G-1: hash the cached object as the CUDA cache does, or note why not |
+
+**CI and tests (T1-T11)**
+
+| ID | Sev. | Risk | Where | Check | Goes to |
+|---|---|---|---|---|---|
+| T1 | High | CI red on `main` since 2026-10-26 (25 of 192 runs green): the build passes, the CPU test step fails | `ci.yml` | verified | decision: the owner finds the failing group (the owner's run) and whether a green CI gates merges |
+| T2 | High | 85K lines of GPU code never run in CI; GPU tests are the owner's by hand | `ci.yml` | verified | decision: a self-hosted GPU runner (the tests rule in `CLAUDE.md` holds) |
+| T3 | Medium | Missing hardware counts as PASS: the Vulkan tests print "skipped" and return, though the runner has a SKIP state | `tests/Idrak.Tests.Library/VulkanTests.cs:101-108` | verified | G-1: report SKIP through the runner's state |
+| T4 | Medium | About 170 tests guarded by a CPU-only check pass with no work on other devices | `tests/` | reported | G-1 with T3: a guarded test on another device is a SKIP, never a PASS |
+| T5 | Medium | `Idrak.Maui` (30K lines) and its tests are not in the solution and never run in CI | `Idrak.slnx` | verified; mine: no `Maui` entry in the solution | decision: add it to the solution (needs the MAUI workloads on CI) or record it as built apart |
+| T6 | Medium | Most model families are tested on tiny random-weight models; real-checkpoint checks exist for T5 and BERT only, owner-run | `T5Tests.cs:991`, `BertTests.cs:599` | reported | noted: the owner's runs; the generator's eval (G5) adds real runs on the tuned model |
+| T7 | Low | "Bidi passes Unicode's suites" has no committed test (48 paragraphs against python-bidi are) | `Bidi.cs:88` | reported | G-1: commit the suite run as a filtered test, or soften the claim (README row below) |
+| T8 | Low | The MP3 encoder's fixtures come from itself, so its tests catch regressions, not wrong output | `AudioMp3EncodeTests.cs:19` | reported | noted: an external fixture (a reference encoder's output) when the owner has one |
+| T9 | Low | About 65 timing-based assertions, mostly cluster tests, may flake on busy runners | `tests/` (cluster groups) | reported | noted |
+| T10 | Low | The custom runner is single-threaded, no IDE or JUnit output, one hang ends the run; shared static registries can make tests order-dependent | `TestRunner.cs:174-401` | reported | decision: the runner is the owner's design |
+| T11 | Low | Finite-difference gradient checks are loose (step 1e-2, tolerance 2e-2); PyTorch fixtures at 1e-4 make up for it | `BasicTests.cs:470-505` | reported | noted |
+
+**GPU backends (G1, G4-G11)**
+
+| ID | Sev. | Risk | Where | Check | Goes to |
+|---|---|---|---|---|---|
+| G1 | High | HIP has never run its kernels on a real AMD GPU; every GCN kernel is proven in the C# interpreter only | `plans/opened/35-gcn.md` | reported | noted: plan 35's own status; the owner's hardware |
+| G4 | Medium | Per-thread launch settings (shared memory, cooperative) leak into the next launch when the argument check throws before they are reset | `src/Idrak.Gpu/Cuda/CudaBackend.cs:2092-2098` | verified; mine: read, the throw precedes the reset | G-1 with B4: reset in `finally` or before the check |
+| G5 | Medium | AMD has no matrix-core kernels (MFMA, WMMA); gfx90a, MI300 and RDNA4 fall back to the CPU; RDNA is wave64 only | `GcnTargets.Gfx9.cs:31` | reported | noted: plan 35's scope |
+| G6 | Low | GPU resources are never released: no module unload, stream destroy or context release; each backend leaks a stream and its modules | `CudaBackend.cs:272` | reported | G-1: dispose paths, with the device-memory rule (76) test |
+| G7 | Low | Three tuning implementations of uneven rigour: Vulkan times without pairing, "off" accepted for CUDA only | `VulkanBackend.KernelTuning.cs:316`, `TuningCache.cs:233` | reported | G-1: one tuning contract's behaviour across backends (paired timing, "off" everywhere) |
+| G8 | Low | Naive fallbacks remain: a 16×16 matmul, Vulkan's batched tile, a Vulkan sum in one workgroup (TODO) | `VulkanKernels.cs:489` | reported | noted: speed-first rule, measured when the owner runs the benches |
+| G9 | Low | PTX built from string templates with hand-numbered registers and no IR: mistakes show only when the driver compiles | `PtxKernels.cs:757` | reported | decision |
+| G10 | Low | AMD architecture found by scanning a 16 KiB buffer for "gfx"; tuning-cache merges across processes can lose entries | `HipDeviceLimits.cs:186` | reported | G-1: the cache merge; the detection stays until the owner has the hardware |
+| G11 | Low | The CUDA allocator weaves capture, chunks, offload and lookups together, hard to change safely | `CudaBackend.cs:497-620` | reported | noted |
+
+**Core: tensors, autograd, training, loading (C1-C3, C6-C14)**
+
+| ID | Sev. | Risk | Where | Check | Goes to |
+|---|---|---|---|---|---|
+| C1 | High | Tensors are float32 only: int8, int4 and bf16 are bit-packed into float storage, token indices travel as floats (exact below 2^24) | `Backend.cs:1540`, `AdamW8Bit.cs` | reported | decision: dtypes are a library-wide design choice |
+| C2 | High | No strides or offsets: Permute, Transpose and Narrow copy; MatMul broadcasting is limited | `Tensor.Advanced.cs:318-366` | verified | decision, with C1 |
+| C3 | Medium | Sizes are `int`: a tensor tops out at 2^31 elements and GPU index math is 32-bit | `Tensor.cs` | reported | decision, with C1 |
+| C6 | Low | `MatMulBias` reads the weight's second dimension before its rank check: a rank-1 weight fails with an index error | `src/Idrak.Abstraction/Tensors/Tensor.Advanced.cs:69` | reported; mine: read, `w._shape[1]` precedes `w.Rank != 2` | G-1: check the rank first, with a test |
+| C7 | Low | Some backward behaviour is chosen by matching operation names as strings | `Tensor.cs` ~450 | reported | noted |
+| C8 | Medium | The generic Trainer has no out-of-memory recovery and its checkpoint saves weights only; both live in text fine-tuning or the cluster-stop path | `Trainer.cs:626`, `TrainerCallbacks.cs:120` | reported | decision: move both into the generic trainer (README row below) |
+| C9 | Low | Cluster-simulation code (faults, late joins, replays) is woven into the core training loop | `Trainer.cs:380-470` | reported | noted |
+| C10 | Low | Mixed precision is a switch for matrix products only, not a full autocast | `MixedPrecision.cs` | reported | noted, with C1 |
+| C11 | Low | Adam uses the epsilon-hat form, so results differ slightly from PyTorch's | `CpuBackend.cs:1067` | reported | decision: match PyTorch or document the difference |
+| C12 | Low | The optimizer step count is saved as a float, exact to about 16.7M steps | `Optimizer.cs:183` | reported | G-1: save it as an integer, read both |
+| C13 | Low | The CPU matrix product never splits k: deterministic, likely slower than BLAS at large k (a guess) | `CpuTuning.cs:151` | reported | noted: measured when the owner runs the benches (rule 71) |
+| C14 | Low | GGUF reads 15 quantization types (no IQ1-IQ3, TQ, MXFP4); safetensors has no FP8 or int8 | `Gguf.cs:188`, `SafeTensors.cs:525` | reported | noted (README row below) |
+
+**LLM stack and serving (L2-L7)**
+
+| ID | Sev. | Risk | Where | Check | Goes to |
+|---|---|---|---|---|---|
+| L2 | Low | Jinja gaps: `recursive` accepted then ignored; no `loop.cycle`, `include`, `import` or `with` | `Jinja.cs:425` | reported | G-1 with B6: refuse `recursive` loudly rather than ignore it; the rest noted |
+| L3 | Medium | The OpenAI API is partial: `n>1` refused, `logprobs` always null, `response_format` and `json_schema` silently ignored, an object `tool_choice` likely fails | `CompletionsApi.cs:717`, `:757` | reported | G-1: a silently ignored field is refused with its name (nothing silent); the rest decision (README row below) |
+| L4 | Medium | MoE waits for the host in every layer, refuses graph capture, gathers with float indices | `MixtureOfExperts.cs:155` | reported | noted: speed-first; with C1 for the indices |
+| L5 | Low | "QLoRA" here is a frozen int4 or int8 base, not NF4 with double quantization | `FineTuning.cs:1070` | reported | decision: implement NF4 or rename |
+| L6 | Low | The command allow-list check lives in two places that can drift | `CodingTools.cs:822`, `ProcessCommandSandbox.cs:194` | reported; mine: read, both exist | G-1 with B2: one check, the sandbox's, called by the tools |
+| L7 | Low | Very large files: `FineTuning.cs` 3,220 lines, `TuneTool.cs` 1,610, `Jinja.cs` 1,250 | those files | verified | noted |
+
+**Media stacks (M1-M5)**: no hinting, variable fonts (CFF2 refused) or Indic shaper (M1); the first alternate always
+taken in OpenType alternate substitution (M2); MP3 constant bit rate and long blocks only (M3); FLAC MD5 not checked
+(M4); JPEG 12-bit, arithmetic, lossless and hierarchical refused (M5). All reported, all scope limits: noted; M2 and M4
+are small G-1 items if the owner wants them (a selector option for alternates; the MD5 check as a `ReadOptions` setting).
+
+**Process and scale (P1-P8)**
+
+| ID | Sev. | Risk | Where | Check | Goes to |
+|---|---|---|---|---|---|
+| P1 | High | 594K lines in 5 weeks, 96% of 1,444 commits by Claude, one owner reviewing: review is the bottleneck | `git log` | verified | decision |
+| P2 | High | Over-abstraction: 5,045 public members in `Idrak.Abstraction`, 145 of 351 interfaces with one implementation, 370 public members on `Backend` | `api/`, the inventory | reported | decision: conflicts with the standing rule "Abstraction always"; the rule holds until the owner changes it |
+| P3 | Medium | 303 `IDRAK_*` variables and 42 per-thread static fields make behaviour hard to reason about and test | `src/` | reported | decision: conflicts with "Nothing fixed that someone may need to adjust"; the rule holds |
+| P4 | Medium | Comments carry hundreds of plan and rule references ("plan 35", "rule 86", "G7a"), some already stale | `CudaBackend.cs:34`, `TuningCache.cs:216` | reported | decision |
+| P5 | Medium | A snapshot that did not compile was committed to `main` | commit 922fcc19 | verified | noted; with T1 |
+| P6 | Low | Only the owner runs the full suite or any GPU test, so no agent sees the whole picture | `CLAUDE.md` | verified | decision: the owner's rule; it holds |
+| P7 | Low | 8 empty "reserved" packages are packed and published with every release | `src/` | verified; mine: 8 READMEs say "Reserved, not implemented" | decision: keep publishing them or mark them not packable |
+| P8 | Low | 17 leftover `slot/*` branches on origin | `git branch -r` | verified; mine: 17 on origin | decision: the owner deletes them (a push to origin is the owner's) |
+
+**README claims the review calls overstated** (for the owner: fix the code or the sentence): strides, slices and views
+(C2); every ggml quantization (C14); Trainer OOM recovery and bit-for-bit resume (C8); an OpenAI-compatible `/v1` API
+(L3); a coding agent with a sandbox (B2, S4); bidi passing Unicode's official tests (T7); the test count (824 in the
+README, 1,563 in a plan, about 2,170 named checks counted by the review).
+
 G-1 is done when each row has a fix with a targeted test (`IDRAK_DEVICES=cpu` with the group's `IDRAK_FILTER`), the
 failure messages name the cause, and the owner has the GPU run command for B4.
 
@@ -192,7 +296,7 @@ At most two agents at a time in Idrak (Idrak's limit; the Rl-Samples work counts
 
 | Phase | What | Done when | Needs |
 |---|---|---|---|
-| G-1 | The user-reported bugs B1-B7 (the section above), each with its targeted test | Every row fixed and tested; the owner has the GPU command for B4 | - |
+| G-1 | The user-reported bugs B1-B7 and every "G-1" row of the full review, each with its targeted test | Every row fixed and tested; the owner has the GPU command for B4 | - |
 | G0 | `RlSamples.Extract`: the catalog of every test entry, contract, registry, sample, app and plug-in of both repos, with what each needs (CPU, GPU, a model, a window) | The catalog's counts match the inventory and the test lists; no API call | - |
 | G1 | `RlSamples.Generator`'s core: the client, cached prefixes, batches, the run manifest, the budget, the verifier on `CodingVerifier` | A 20-task pilot runs end to end on the owner's machine with its cost measured | G0 |
 | G2 | Track 1 at volume: T1-tasks, T1-sft, T1-pref | Targets of decision 3 reached; every row verified | G1, pilot cost approved |
