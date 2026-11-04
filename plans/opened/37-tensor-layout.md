@@ -62,7 +62,13 @@ on the benches, with the device's own reported limits (rule 84), never one card'
 | T1 | int64 and int32 indices: embeddings, gathers, scatters, MoE routing, token ids, top-k; the float-index paths removed | Indices exact above 2^24 (a test past it); MoE no longer gathers with floats | `element types`, the MoE and decoding groups |
 | T2 | bfloat16 and float16 storage for weights and activations, compute in the card's native type where it has one, float32 accumulation; the mixed-precision switch (C10) becomes this | Memory halved for bf16 runs on the benches; results within the tolerances the reference gives (Hugging Face / PyTorch in bf16) | the training and inference groups with `IDRAK_DEFAULT_DTYPE=bf16` |
 | T3 | int8 and int4 as real types: the packed formats, `AdamW8Bit`'s state and the quantized loaders move onto them; the bit-packing in float storage removed | Same results as the packed form, bit for bit | quantization groups |
+| R0 | MoE routing on the device (moved here from plan 36's L4 by the owner, 2026-11-04): plan 36's G-1b adds the routing and the row-offset expert product as backend operations with CPU kernels, GPUs falling back to host routing (counted). R0 adds the device kernels: top-k over the router's logits, per-expert counts, an exclusive scan into offsets, the permutation, and the expert product reading its rows through the offsets, on Vulkan, CUDA and HIP, with int32 indices from T1 and a fixed summation order (rule 86); graph capture then allowed for MoE. No host round trip per layer | The MoE groups unchanged on every device; host syncs per layer zero on the GPU benches; the owner's GPU runs | the MoE groups on `vulkan` here, `cuda` and `hip` by the owner |
 | S0 | 64-bit lengths: `Storage` and `Tensor.Size` as `long`; index math 64-bit where it can overflow, 32-bit where the size is proven small (measured: no slowdown on the benches) | A tensor above 2^31 elements on CPU; the benches unchanged in speed | `large tensors` (new; CPU, memory permitting, skipped with the reason otherwise) |
+
+**Where each device is tested (the owner, 2026-11-04):** the sessions test on `cpu` and on `vulkan` through Mesa's
+software driver (llvmpipe, installed in the cloud container; Idrak's Vulkan group passes on it), so every Vulkan kernel
+of this plan is proven before it lands. The owner tests `cuda` and `hip` on real cards, from the exact commands each
+piece hands over. llvmpipe proves results, never speed: speed is measured only on the owner's devices.
 
 V comes first: views pay off with float32 alone. T1 before T2: exact indices are a correctness fix. S0 last: it touches
 every kernel's index math and gains only for the largest tensors.
