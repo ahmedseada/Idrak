@@ -458,6 +458,7 @@ internal static class EnvironmentVariables
         new("IDRAK_RL_TEACHER", Reinforcement, "none", "A teacher model for idrak reinforce: its distributions on the model's own replies, a term beside the reward (or alone with --algorithm distill)", ReinforcementRun),
         new("IDRAK_RL_TEACHER_DEVICE", Reinforcement, "the model's device", "The device idrak reinforce loads the teacher on (cpu, cuda:N, vulkan:N)", ReinforcementRun),
         new("IDRAK_CODING_LANGUAGES", Sandbox, "all", "The coding languages the coding tools and agent work with (programs, folders skipped, prompt lines): all registered, detected in the workspace, none, or names such as csharp,typescript", SandboxRun),
+        new("IDRAK_OOM_POLICY", Precision, "split", "What a training step that runs out of memory does (OutOfMemoryPolicies): split (cut into twice as many parts after each failure, their gradients added up), none (the failure is thrown), or a plug-in's", OnDevice),
         new("IDRAK_CODE_FAMILIES", Code, "all registered", "The task families a code extraction runs (TaskFamilies names, separated by commas, or all)", CodeData),
         new("IDRAK_CODE_SKIPPED_FOLDERS", Code, ".git, .vs, .idea and the coding languages' build folders", "The folders a code extraction never reads (names separated by commas)", CodeData),
         new("IDRAK_CODE_MAX_FILE_BYTES", Code, "1048576", "The largest file a code extraction reads, in bytes (larger ones are often generated)", CodeData),

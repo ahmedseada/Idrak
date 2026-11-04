@@ -742,12 +742,13 @@ public static class SpeechTrainer
 
     // One optimizer step over its batches: each split into micro-batches of at most `micro` padded seconds, every loss
     // scaled by its utterances' share of the step, so the gradients added up are the step's mean. Out of device memory, the
-    // micro-batches are halved and the step runs again from zeroed gradients.
+    // micro-batches are halved and the step runs again from zeroed gradients (an allocation failure told by its type, and
+    // reported, as every trainer's: OutOfMemoryPolicies).
     private static double RunStep(SpeechTrainee model, ISpeechReader reader, Optimizer optimizer, List<Prepared[]> batches, SpeechTrainingOptions options, SpeechForwardOptions forward,
         int step, ref double micro, List<string> notes, Action<string>? trace)
     {
         double secondsPerFrame = model.Features.Options.HopSize / (double)model.Features.Options.SampleRate;
-        while (true)
+        for (int attempt = 1; ; attempt++)
         {
             double limit = micro;
             var groups = batches.SelectMany(b => Split(b, limit, secondsPerFrame)).ToList();
@@ -755,13 +756,15 @@ public static class SpeechTrainer
             {
                 return model.Step(reader, groups, optimizer, options, forward, step);
             }
-            catch (ResourceLimitExceededException e) when (groups.Any(g => g.Length > 1))
+            catch (Exception e) when (Idrak.Abstraction.Training.OutOfMemoryPolicies.IsAllocationFailure(e) && groups.Any(g => g.Length > 1))
             {
                 micro /= 2;
                 string note = string.Create(CultureInfo.InvariantCulture,
                     $"out of device memory ({e.Message.Split(':')[0]}): micro-batches of {micro:0.##} audio seconds from this step, their gradients added up (SpeechTrainingOptions.BatchSeconds to start smaller)");
                 notes.Add(note);
                 trace?.Invoke(note);
+                Idrak.Abstraction.Training.OutOfMemoryPolicies.Report(new OutOfMemoryRecovered("speech", "micro-batches halved", $"{e.GetType().Name}: {e.Message.Split(':')[0]}",
+                    groups.Sum(g => g.Length), 0, attempt, model.Device.ToString(), note));
             }
         }
     }

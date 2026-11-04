@@ -1661,31 +1661,36 @@ public static class FineTuner
 
                     return result;
                 }
-                catch (ResourceLimitExceededException ex) when (_probe == 2)
+                // An allocation failure is told by its type, and each step down the ladder reported, as every trainer's (OutOfMemoryPolicies).
+                catch (Exception ex) when (OutOfMemoryPolicies.IsAllocationFailure(ex) && _probe == 2)
                 {
+                    Recovered(ex, "checkpointing ran out of device memory: chosen again without it");
                     Choose(checkpointing: false, $"checkpointing ran out of device memory ({ex.Message.Split(':')[0]}{Short()})");
                 }
-                catch (ResourceLimitExceededException ex) when (_automaticRecompute && _options.RecomputeFeedForward != true && !Checkpointing)
+                catch (Exception ex) when (OutOfMemoryPolicies.IsAllocationFailure(ex) && _automaticRecompute && _options.RecomputeFeedForward != true && !Checkpointing)
                 {
                     _options = _options with { RecomputeFeedForward = true };
                     Reset();
                     StartProbe();
+                    Recovered(ex, "feed-forward activations recomputed in the backward pass from this step");
                     trace?.Invoke($"out of device memory ({ex.Message.Split(':')[0]}{Short()}): feed-forward activations are recomputed in the backward pass "
                                   + "from this step (RecomputeFeedForward / --recompute to start with it)");
                 }
-                catch (ResourceLimitExceededException ex) when (_automaticBFloat16 && _options.BFloat16Activations != true && !Checkpointing)
+                catch (Exception ex) when (OutOfMemoryPolicies.IsAllocationFailure(ex) && _automaticBFloat16 && _options.BFloat16Activations != true && !Checkpointing)
                 {
                     _options = _options with { BFloat16Activations = true };
                     Reset();
                     StartProbe();
+                    Recovered(ex, "activations held as bfloat16 between the passes from this step");
                     trace?.Invoke($"out of device memory ({ex.Message.Split(':')[0]}{Short()}): activations are held as bfloat16 between the passes "
                                   + "from this step (BFloat16Activations / --bf16-activations to start with it)");
                 }
-                catch (ResourceLimitExceededException ex) when (_automatic && !Checkpointing)
+                catch (Exception ex) when (OutOfMemoryPolicies.IsAllocationFailure(ex) && _automatic && !Checkpointing)
                 {
                     _options = _options with { Checkpointing = true };
                     Reset();
                     _probe = 3;                                                  // nothing lighter fits
+                    Recovered(ex, "activation checkpointing on from this step");
                     trace?.Invoke($"out of device memory without activation checkpointing ({ex.Message.Split(':')[0]}{Short()}): checkpointing is on from this step "
                                   + "(set Checkpointing / --checkpointing to start with it)");
                 }
@@ -1693,6 +1698,10 @@ public static class FineTuner
         }
 
         private bool _firstMeasured;
+
+        // A step of the activation ladder taken after an allocation failure, reported as every trainer's recovery is.
+        private void Recovered(Exception error, string action) =>
+            OutOfMemoryPolicies.Report(new OutOfMemoryRecovered("fine-tuning", "activation ladder", $"{error.GetType().Name}: {error.Message.Split(':')[0]}", 0, 0, 1, model.Device.ToString(), action));
 
         // The shapes (rows × positions) estimated, whether the rung was said, and the estimate of the step about to run
         // (said by the out-of-memory line when it was short).

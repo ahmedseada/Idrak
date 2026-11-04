@@ -2815,7 +2815,11 @@ public sealed class Idrak.Training.Trainer : System.IDisposable
   public double MinImprovement { get; init; }
   public float? MaxGradientNorm { get; init; }
   public float[,] Predict(Idrak.Abstraction.Data.ISampleSource data, int batchSize = 1024)
+  public int CheckpointEveryEpochs { get; init; }
+  public int CheckpointKeep { get; init; }
   public int? EarlyStoppingPatience { get; init; }
+  public string OutOfMemoryPolicy { get; init; }
+  public string? CheckpointFolder { get; init; }
   public string? ResumeFrom { get; init; }
   public string? StopFolder { get; init; }
   public void Dispose()

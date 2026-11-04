@@ -343,6 +343,21 @@ public readonly record struct InferenceStage(InferenceStageKind Stage, string De
 public readonly record struct SettingSuggestion(string Setting, string Value, string Reason, string Device, string Source);
 
 /// <summary>
+/// Published at <c>TelemetryLevel.Devices</c> (always shown by the built-in loggers): a training step ran out of memory and
+/// runs again another way (<c>Training.OutOfMemoryPolicies</c>): cut into parts, an activation rung lighter, smaller
+/// micro-batches.
+/// </summary>
+/// <param name="Where">The trainer ("Trainer", "fine-tuning", "speech").</param>
+/// <param name="Policy">The policy or way it recovers by ("split", the trainer's own).</param>
+/// <param name="Error">The allocation failure's type and the first part of its message.</param>
+/// <param name="Samples">The step's samples (0 when the trainer does not count them).</param>
+/// <param name="Parts">The parts the step runs in now (0 when the trainer cuts it otherwise).</param>
+/// <param name="Attempt">How many times the step has failed.</param>
+/// <param name="Device">The device it runs on.</param>
+/// <param name="Action">What changes, in words.</param>
+public readonly record struct OutOfMemoryRecovered(string Where, string Policy, string Error, int Samples, int Parts, int Attempt, string Device, string Action);
+
+/// <summary>
 /// Published when a device fails (<c>Devices.DeviceException</c>), to the hooks listening at
 /// <c>TelemetryLevel.Devices</c>: once when the error is raised, or once by the dispatcher when it retried the operation
 /// on the CPU (<c>Backend.RetryOnHost</c>).

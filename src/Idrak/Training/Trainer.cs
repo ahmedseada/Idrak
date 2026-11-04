@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Diagnostics;
+using System.Globalization;
 using Idrak.Abstraction.Cluster;
 using Idrak.Datasets;
 using Idrak.Datasets.Abstractions;
@@ -213,11 +214,42 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
     public string? StopFolder { get; init; }
 
     /// <summary>
-    /// A checkpoint a stop wrote (<see cref="StopFolder"/>) to go on from: its weights and optimizer state are loaded, and
-    /// the steps it finished are drawn as before but not trained, so the run ends as the uninterrupted one. Its
-    /// <see cref="Fit"/> must be the stopped run's (the same data, batches, epochs and seeds). Null: from the start.
+    /// A checkpoint to go on from: a <c>checkpoint-STEP</c> folder a stop (<see cref="StopFolder"/>) or a run's checkpoints
+    /// (<see cref="CheckpointFolder"/>) wrote. Its weights, the optimizer's state, the early-stopping state and each dropout
+    /// layer's place in its random source are loaded, and the steps it finished are drawn as before but not trained, so the
+    /// run ends bit for bit as the uninterrupted one. Its <see cref="Fit"/> must be the checkpointed run's (the same data,
+    /// batches, epochs and seeds, dropout from seeded sources). A weights-only checkpoint (a folder with <c>model.ikw</c> or
+    /// the <see cref="Checkpoint"/> callback's <c>last.ikw</c>, or an <c>.ikw</c> file) still loads: its weights alone, from
+    /// the first step. Null: from the start.
     /// </summary>
     public string? ResumeFrom { get; init; }
+
+    /// <summary>
+    /// Where the run writes a resumable checkpoint, <c>checkpoint-STEP</c>, every <see cref="CheckpointEveryEpochs"/> epochs:
+    /// the weights, the optimizer's state, the steps finished, the early-stopping state (the best loss and epoch, the
+    /// epochs since, the best weights it keeps) and each dropout layer's draws, which <see cref="ResumeFrom"/> goes on from.
+    /// Each is written whole under another name, then moved into place, so a crash never leaves half of one. Null (the
+    /// default): none (the <see cref="Checkpoint"/> callback writes weights alone).
+    /// </summary>
+    public string? CheckpointFolder { get; init; }
+
+    /// <summary>Every how many epochs <see cref="CheckpointFolder"/> gets a checkpoint (1 by default: each epoch).</summary>
+    public int CheckpointEveryEpochs { get; init; } = 1;
+
+    /// <summary>How many of the run's latest checkpoints <see cref="CheckpointFolder"/> keeps (1 by default: the newest; older ones are removed).</summary>
+    public int CheckpointKeep { get; init; } = 1;
+
+    /// <summary>
+    /// What a step that runs out of memory does (<see cref="OutOfMemoryPolicies"/>, by name): <see cref="OutOfMemoryPolicies.Split"/>
+    /// (the default unless IDRAK_OOM_POLICY names another) cuts the step's samples into twice as many parts after each
+    /// failure, down to one sample a part, and adds their gradients up, so the update is the whole step's (within the
+    /// rounding of a sum taken in another order; a loss that is not a mean over its samples, or dropout, which draws a mask a
+    /// part, gives another step); <see cref="OutOfMemoryPolicies.None"/> throws. The parts found stay for the rest of the
+    /// run, and each recovery is reported to the telemetry (<c>OutOfMemoryRecovered</c>). An allocation failure is told by
+    /// its type alone (<see cref="OutOfMemoryPolicies.IsAllocationFailure"/>); any other error is thrown as it is. A
+    /// data-parallel run (<see cref="Cluster"/>) does not split: its ranks would no longer run the same steps.
+    /// </summary>
+    public string OutOfMemoryPolicy { get; init; } = OutOfMemoryPolicies.DefaultName;
 
     /// <summary>The cluster settings a <see cref="Cluster"/> run uses (the synchronisation, the wire, the starting state), or null: <see cref="Abstraction.Cluster.ClusterOptions.FromEnvironment"/>.</summary>
     public ClusterOptions? ClusterOptions { get; init; }
@@ -236,6 +268,8 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
     public TrainingHistory Fit(IBatchSource train, int epochs, IBatchSource? validation = null, CancellationToken cancellationToken = default)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(epochs);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(CheckpointEveryEpochs);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(CheckpointKeep);
         var device = Device;
         var history = new TrainingHistory();
         var totalTime = Stopwatch.StartNew();
@@ -270,6 +304,8 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
         bool lead = sync is null || sync.Rank == 0;                         // the rank that publishes telemetry
         List<Tensor> buffers = sync is null ? [] : [.. Model.Buffers().Where(b => b.Size > 0)];
         using var seeds = sync is null ? null : Layers.Dropout.SeedsForRank(sync.Rank);
+        var outOfMemory = sync is null ? OutOfMemoryPolicies.Get(OutOfMemoryPolicy) : null;   // a name nobody registered fails here, before any step
+        int parts = 1;                                                      // one process: the parts a step runs in (more after running out of memory)
         long resumeStep = 0;
         if (ResumeFrom is { } from)
         {
@@ -278,7 +314,15 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
                 throw new NotSupportedException("A cluster run resumes from a stop's checkpoint with a DataLoader over a sample source (shared by step); this run's source is sharded by epoch.");
             }
 
-            resumeStep = ReadStop(from, sync);
+            var resumed = ReadStop(from, sync);
+            resumeStep = resumed.Step;
+            if (resumed.BestLoss is { } bestLoss)
+            {
+                history.BestLoss = bestLoss;                                // the early-stopping state the stopped run had
+                history.BestEpoch = resumed.BestEpoch;
+                epochsWithoutImprovement = resumed.SinceBest;
+                bestWeights = resumed.BestWeights;
+            }
         }
 
         if (sync is not null)
@@ -309,10 +353,14 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
             }
             catch (ClusterRunStoppedException) when (StopFolder is not null && at > resumeStep)
             {
-                WriteStop(StopFolder, at, sync!);
+                WriteState(StopFolder, at, sync, State(at), keep: null);
                 throw;
             }
         }
+
+        // The state a checkpoint keeps at `at` steps finished, beside the weights and the optimizer's.
+        TrainState State(long at) => new(at, double.IsFinite(history.BestLoss) ? history.BestLoss : null, history.BestEpoch, epochsWithoutImprovement, bestWeights,
+            [.. Dropouts(Model).Select(d => d.Draws)]);
 
         if (lead && Telemetry.IsEnabled(TelemetryLevel.Training))
         {
@@ -413,7 +461,13 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
                 long computeStart = Stopwatch.GetTimestamp();
 
                 Tensor? predictions = null, batchLoss = null;
-                if (batch is not null)
+                double stepLoss = double.NaN;                               // one process: the step's loss, read only when someone needs it
+                if (sync is null)
+                {
+                    stepLoss = TrainStep(batch!, sums, ref parts, outOfMemory!, perBatch || callbacksNeedLoss);
+                    samples += batch!.Size;
+                }
+                else if (batch is not null)
                 {
                     predictions = Model.Forward(batch.Features);
                     batchLoss = Loss.Compute(predictions, batch.Targets);
@@ -462,7 +516,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
                     Optimizer.Step();
                 }
 
-                if (batch is not null)
+                if (sync is not null && batch is not null)
                 {
                     Accumulate(sums, batchLoss!, predictions!, batch.Targets, batch.Size);
                     samples += batch.Size;
@@ -477,7 +531,7 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
                 {
                     // Reading the loss synchronizes (so compute time is real time); skipped when nobody needs it. With a
                     // cluster the loss is the step's over every rank, the same on each, so callbacks decide alike.
-                    double lossValue = sync is not null ? reducedLoss : perBatch || callbacksNeedLoss ? batchLoss!.Item() : double.NaN;
+                    double lossValue = sync is not null ? reducedLoss : stepLoss;
                     var completed = new BatchCompleted(epoch, batch is null ? epochStep : batch.Index + 1, train.BatchCount ?? 0, step, batch?.Size ?? 0,
                         lossValue, Optimizer.LearningRate, gradientNorm, dataTime, Stopwatch.GetElapsedTime(computeStart));
                     if (perBatch)
@@ -571,6 +625,11 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
             }
 
             Scheduler?.Step();
+            if (CheckpointFolder is { } checkpoints && epoch % CheckpointEveryEpochs == 0)
+            {
+                WriteState(checkpoints, step, sync, State(step), CheckpointKeep);     // after the scheduler's step: a resumed run steps it the same
+            }
+
             if (EarlyStoppingPatience is { } patience && epochsWithoutImprovement >= patience)
             {
                 history.StoppedEarly = true;
@@ -619,50 +678,224 @@ public sealed class Trainer(Module model, Optimizer optimizer, ILoss loss) : IDi
 
     private Action<EpochCompleted>? _epochCallback;
 
-    private const string StopStateFile = "train-state.json", StopWeightsFile = "model.ikw", StopOptimizerFile = "optimizer.safetensors";
+    private const string StopStateFile = "train-state.json", StopWeightsFile = "model.ikw", StopOptimizerFile = "optimizer.safetensors",
+        BestWeightsFile = "best-weights.safetensors", StateFormat = "idrak-train-state/2";
 
-    // The checkpoint of the steps finished before `step`: the weights, the optimizer's state (a sharded run's joined) and the
-    // step, written by rank 0 while every rank takes part; every rank waits for it.
-    private void WriteStop(string root, long step, IGradientSync sync)
+    // What a checkpoint keeps beside the weights and the optimizer's state: the steps finished, the early-stopping state
+    // (null best loss: none yet) and each dropout layer's draws, in the model's order.
+    private sealed record TrainState(long Step, double? BestLoss, int BestEpoch, int SinceBest, float[][]? BestWeights, long[] Draws);
+
+    // The dropout layers of `module`, depth first in the order its children are listed (the same in every copy of a model).
+    private static IEnumerable<Layers.Dropout> Dropouts(Module module)
+    {
+        if (module is Layers.Dropout dropout)
+        {
+            yield return dropout;
+        }
+
+        foreach (var child in module.Children())
+        {
+            foreach (var inner in Dropouts(child))
+            {
+                yield return inner;
+            }
+        }
+    }
+
+    // One process's step over `batch`, in `parts` (more after the step runs out of memory, as `policy` says): the gradients
+    // of the parts, each loss weighted by its share of the samples, add up to the step's; the loss and metrics go into
+    // `sums` once every part has run. The step's loss when `readLoss` (it waits for the device), else NaN.
+    private double TrainStep(Batch batch, Tensor sums, ref int parts, IOutOfMemoryPolicy policy, bool readLoss)
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            int cut = Math.Clamp(parts, 1, batch.Size);
+            try
+            {
+                using var scope = new TensorScope();                        // a failed attempt's tensors go with it
+                Optimizer.ZeroGrad();
+                if (cut == 1)
+                {
+                    var predictions = Model.Forward(batch.Features);
+                    var loss = Loss.Compute(predictions, batch.Targets);
+                    loss.Backward();
+                    Accumulate(sums, loss, predictions, batch.Targets, batch.Size);
+                    return readLoss ? loss.Item() : double.NaN;
+                }
+
+                var pieces = new (Tensor Loss, Tensor Predictions, Tensor Targets, int Size)[cut];
+                for (int k = 0, at = 0; k < cut; k++)
+                {
+                    int size = batch.Size / cut + (k < batch.Size % cut ? 1 : 0);
+                    var targets = batch.Targets.Narrow(0, at, size);
+                    var predictions = Model.Forward(batch.Features.Narrow(0, at, size));
+                    var loss = Loss.Compute(predictions, targets);
+                    (loss * ((float)size / batch.Size)).Backward();          // the part's share of the step's mean
+                    pieces[k] = (loss, predictions, targets, size);
+                    at += size;
+                }
+
+                double total = 0;
+                foreach (var (loss, predictions, targets, size) in pieces)
+                {
+                    Accumulate(sums, loss, predictions, targets, size);
+                    total += readLoss ? loss.Item() * size / batch.Size : 0;
+                }
+
+                return readLoss ? total : double.NaN;
+            }
+            catch (Exception error) when (OutOfMemoryPolicies.IsAllocationFailure(error))
+            {
+                int next = policy.NextParts(new OutOfMemoryFailure(error, batch.Size, cut, attempt, nameof(Trainer)));
+                if (next <= cut)
+                {
+                    throw;                                                  // the policy gives up: the failure as it was
+                }
+
+                parts = next;
+                Optimizer.ZeroGrad();
+                OutOfMemoryPolicies.Report(new OutOfMemoryRecovered(nameof(Trainer), policy.Name, $"{error.GetType().Name}: {error.Message.Split(':')[0]}", batch.Size, next, attempt,
+                    Device.ToString(), string.Create(CultureInfo.InvariantCulture,
+                        $"the step runs again in {next} parts of about {(batch.Size + next - 1) / next} samples, their gradients added up, and so do the steps after it (Trainer.OutOfMemoryPolicy, {OutOfMemoryPolicies.EnvironmentVariable})")));
+            }
+        }
+    }
+
+    // A checkpoint of the steps finished before `step` in `root`/checkpoint-STEP: the weights, the optimizer's state (a
+    // sharded run's joined), `state`; written by rank 0 (every rank of a cluster takes part in the gather, and waits for it)
+    // under another name, then moved into place. `keep`: the newest checkpoints kept in `root`, null to remove none.
+    private void WriteState(string root, long step, IGradientSync? sync, TrainState state, int? keep)
     {
         string folder = Path.Combine(root, $"checkpoint-{step}");
         var sharded = sync as IShardedGradientSync;
         using (sharded?.Gather())
         {
-            var state = sharded?.SaveOptimizerState() ?? Optimizer.RequireState().SaveState();
-            if (sync.Rank == 0)
+            var saved = sharded?.SaveOptimizerState() ?? (Optimizer as IStatefulOptimizer)?.SaveState();   // a stateless optimizer keeps none
+            if ((sync?.Rank ?? 0) == 0)
             {
-                Directory.CreateDirectory(folder);
-                Model.Save(Path.Combine(folder, StopWeightsFile));
-                Models.SafeTensorsWriter.Write(Path.Combine(folder, StopOptimizerFile), state.Select(e => (e.Key, e.Value.Shape, e.Value.Values)), Models.SafeTensorType.F32,
-                    new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = Optimizer.GetType().Name });
-                File.WriteAllText(Path.Combine(folder, StopStateFile), new System.Text.Json.Nodes.JsonObject { ["format"] = "idrak-train-state/1", ["step"] = step }.ToJsonString() + "\n");
+                string partial = folder + ".partial";
+                if (Directory.Exists(partial))
+                {
+                    Directory.Delete(partial, recursive: true);
+                }
+
+                Directory.CreateDirectory(partial);
+                Model.Save(Path.Combine(partial, StopWeightsFile));
+                if (saved is not null)
+                {
+                    Models.SafeTensorsWriter.Write(Path.Combine(partial, StopOptimizerFile), saved.Select(e => (e.Key, e.Value.Shape, e.Value.Values)), Models.SafeTensorType.F32,
+                        new Dictionary<string, string> { ["format"] = "idrak-optimizer", ["optimizer"] = Optimizer.GetType().Name });
+                }
+
+                if (state.BestWeights is { } best)
+                {
+                    Models.SafeTensorsWriter.Write(Path.Combine(partial, BestWeightsFile), best.Select((values, i) => (i.ToString(CultureInfo.InvariantCulture), (int[])[values.Length], values)),
+                        Models.SafeTensorType.F32, new Dictionary<string, string> { ["format"] = "idrak-best-weights" });
+                }
+
+                var json = new System.Text.Json.Nodes.JsonObject
+                {
+                    ["format"] = StateFormat, ["step"] = step, ["best_epoch"] = state.BestEpoch, ["since_best"] = state.SinceBest,
+                    ["dropout_draws"] = new System.Text.Json.Nodes.JsonArray([.. state.Draws.Select(d => (System.Text.Json.Nodes.JsonNode?)d)]),
+                };
+                if (state.BestLoss is { } bestLoss)
+                {
+                    json["best_loss"] = bestLoss;
+                }
+
+                File.WriteAllText(Path.Combine(partial, StopStateFile), json.ToJsonString() + "\n");
+                if (Directory.Exists(folder))
+                {
+                    Directory.Delete(folder, recursive: true);
+                }
+
+                Directory.Move(partial, folder);
+                if (keep is { } newest)
+                {
+                    Prune(root, newest);
+                }
             }
         }
 
-        sync.Barrier();
+        sync?.Barrier();
     }
 
-    // A stop's checkpoint into the model and the optimizer (a sharded run keeps its share); the steps it finished.
-    private long ReadStop(string folder, IGradientSync? sync)
+    // Removes all but the `keep` newest checkpoint-STEP folders of `root` (by step).
+    private static void Prune(string root, int keep)
     {
-        string state = Path.Combine(folder, StopStateFile);
-        if (!File.Exists(state))
+        var steps = new List<(long Step, string Folder)>();
+        foreach (string folder in Directory.EnumerateDirectories(root, "checkpoint-*"))
         {
-            throw new FileNotFoundException($"{folder} holds no stopped run's state ({StopStateFile}); give a checkpoint-STEP folder a stop wrote (Trainer.StopFolder).", state);
+            if (long.TryParse(Path.GetFileName(folder).AsSpan("checkpoint-".Length), NumberStyles.None, CultureInfo.InvariantCulture, out long at))
+            {
+                steps.Add((at, folder));
+            }
         }
 
-        long step = (long)System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(state))!["step"]!;
-        Model.Load(Path.Combine(folder, StopWeightsFile));
-        using var reader = Models.SafeTensorsReader.Open(Path.Combine(folder, StopOptimizerFile));
-        Abstraction.Formats.ITensorStore store = reader;
-        var saved = store.Names.ToDictionary(n => n, n => new OptimizerStateValue(store.ShapeOf(n), store.Read(n)), StringComparer.Ordinal);
-        if ((sync as IShardedGradientSync)?.LoadOptimizerState(saved) != true)
+        foreach (var (_, folder) in steps.OrderByDescending(s => s.Step).Skip(keep))
         {
-            Optimizer.RequireState().LoadState(saved);
+            Directory.Delete(folder, recursive: true);
+        }
+    }
+
+    // A checkpoint into the model and the optimizer (a sharded run keeps its share), each dropout layer moved on to its
+    // place; the steps it finished and the early-stopping state. A weights-only checkpoint gives its weights and step 0.
+    private TrainState ReadStop(string from, IGradientSync? sync)
+    {
+        string? weightsOnly = File.Exists(from) && from.EndsWith(".ikw", StringComparison.OrdinalIgnoreCase) ? from
+            : File.Exists(Path.Combine(from, StopStateFile)) ? null
+            : new[] { StopWeightsFile, "last.ikw" }.Select(f => Path.Combine(from, f)).FirstOrDefault(File.Exists);
+        if (weightsOnly is not null)
+        {
+            Model.Load(weightsOnly);                                        // an older checkpoint: weights alone, from the first step
+            return new TrainState(0, null, 0, 0, null, []);
         }
 
-        return step;
+        string statePath = Path.Combine(from, StopStateFile);
+        if (!File.Exists(statePath))
+        {
+            throw new FileNotFoundException($"{from} holds no checkpoint ({StopStateFile}, or weights: {StopWeightsFile}, last.ikw); give a checkpoint-STEP folder a run wrote "
+                + "(Trainer.CheckpointFolder, Trainer.StopFolder), a Checkpoint callback's folder or an .ikw file.", statePath);
+        }
+
+        var json = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllText(statePath))!;
+        long step = (long)json["step"]!;
+        Model.Load(Path.Combine(from, StopWeightsFile));
+        string optimizerPath = Path.Combine(from, StopOptimizerFile);
+        if (File.Exists(optimizerPath))
+        {
+            using var reader = Models.SafeTensorsReader.Open(optimizerPath);
+            Abstraction.Formats.ITensorStore store = reader;
+            var saved = store.Names.ToDictionary(n => n, n => new OptimizerStateValue(store.ShapeOf(n), store.Read(n)), StringComparer.Ordinal);
+            if ((sync as IShardedGradientSync)?.LoadOptimizerState(saved) != true)
+            {
+                Optimizer.RequireState().LoadState(saved);
+            }
+        }
+
+        // Each dropout layer on from where the checkpointed run's was (a first-format checkpoint, a stop's, has no draws).
+        var draws = json["dropout_draws"] is System.Text.Json.Nodes.JsonArray array ? array.Select(d => (long)d!).ToArray() : [];
+        var dropouts = Dropouts(Model).ToList();
+        if (draws.Length > 0 && draws.Length != dropouts.Count)
+        {
+            throw new InvalidDataException($"{from} was written for a model with {draws.Length} dropout layers; this one has {dropouts.Count}: resume the run with its own model.");
+        }
+
+        for (int i = 0; i < draws.Length; i++)
+        {
+            dropouts[i].Advance(Math.Max(0, draws[i] - dropouts[i].Draws));
+        }
+
+        float[][]? best = null;
+        string bestPath = Path.Combine(from, BestWeightsFile);
+        if (File.Exists(bestPath))
+        {
+            using var reader = Models.SafeTensorsReader.Open(bestPath);
+            Abstraction.Formats.ITensorStore store = reader;
+            best = [.. Enumerable.Range(0, store.Names.Count()).Select(i => store.Read(i.ToString(CultureInfo.InvariantCulture)))];
+        }
+
+        return new TrainState(step, json["best_loss"] is { } loss ? (double)loss : null, (int?)json["best_epoch"] ?? 0, (int?)json["since_best"] ?? 0, best, draws);
     }
 
     /// <summary>

@@ -196,6 +196,11 @@ public interface ITelemetryHook
     {
     }
 
+    /// <summary>A training step ran out of memory and runs again another way (<see cref="TelemetryLevel.Devices"/>).</summary>
+    void OnOutOfMemoryRecovered(in OutOfMemoryRecovered e)
+    {
+    }
+
     /// <summary>A transfer between two ranks completed (<see cref="TelemetryLevel.Network"/>).</summary>
     void OnTransfer(in TransferCompleted e)
     {
@@ -562,6 +567,18 @@ public static class Telemetry
             if ((h.Levels & TelemetryLevel.Engine) != 0)
             {
                 h.OnEngine(in e);
+            }
+        }
+    }
+
+    /// <summary>Reports a training step that ran out of memory and runs again another way, to the hooks listening at <see cref="TelemetryLevel.Devices"/>.</summary>
+    public static void OutOfMemoryRecovered(in OutOfMemoryRecovered e)
+    {
+        foreach (var h in s_hooks)
+        {
+            if ((h.Levels & TelemetryLevel.Devices) != 0)
+            {
+                h.OnOutOfMemoryRecovered(in e);
             }
         }
     }

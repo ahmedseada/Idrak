@@ -2231,6 +2231,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ChannelTelemetry : Idrak.Abstr
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnMcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
+  public void OnOutOfMemoryRecovered(in Idrak.Abstraction.Diagnostics.OutOfMemoryRecovered e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
   public void OnPipelineStep(in Idrak.Abstraction.Diagnostics.PipelineStepped e)
@@ -2278,6 +2279,7 @@ public sealed class Idrak.Abstraction.Diagnostics.ConsoleLogger : Idrak.Abstract
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnMcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
+  public void OnOutOfMemoryRecovered(in Idrak.Abstraction.Diagnostics.OutOfMemoryRecovered e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
   public void OnPipelineStep(in Idrak.Abstraction.Diagnostics.PipelineStepped e)
@@ -2428,6 +2430,7 @@ public interface Idrak.Abstraction.Diagnostics.ITelemetryHook
   public (default) void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public (default) void OnMcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public (default) void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
+  public (default) void OnOutOfMemoryRecovered(in Idrak.Abstraction.Diagnostics.OutOfMemoryRecovered e)
   public (default) void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public (default) void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
   public (default) void OnPipelineStep(in Idrak.Abstraction.Diagnostics.PipelineStepped e)
@@ -2500,6 +2503,7 @@ public sealed class Idrak.Abstraction.Diagnostics.JsonLinesLogger : Idrak.Abstra
   public void OnLayerForward(in Idrak.Abstraction.Diagnostics.LayerForward e)
   public void OnMcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
   public void OnOperation(in Idrak.Abstraction.Diagnostics.OperationCompleted e)
+  public void OnOutOfMemoryRecovered(in Idrak.Abstraction.Diagnostics.OutOfMemoryRecovered e)
   public void OnOverrideCompared(in Idrak.Abstraction.Diagnostics.OverrideCompared e)
   public void OnOverrideFailed(in Idrak.Abstraction.Diagnostics.OverrideFailed e)
   public void OnPipelineStep(in Idrak.Abstraction.Diagnostics.PipelineStepped e)
@@ -2592,6 +2596,17 @@ public readonly record struct Idrak.Abstraction.Diagnostics.OperationCompleted :
   public int Elements { get; init; }
   public int[] Shape { get; init; }
   public string Operation { get; init; }
+
+public readonly record struct Idrak.Abstraction.Diagnostics.OutOfMemoryRecovered : System.IEquatable<Idrak.Abstraction.Diagnostics.OutOfMemoryRecovered>
+  public OutOfMemoryRecovered(string Where, string Policy, string Error, int Samples, int Parts, int Attempt, string Device, string Action)
+  public int Attempt { get; init; }
+  public int Parts { get; init; }
+  public int Samples { get; init; }
+  public string Action { get; init; }
+  public string Device { get; init; }
+  public string Error { get; init; }
+  public string Policy { get; init; }
+  public string Where { get; init; }
 
 public readonly record struct Idrak.Abstraction.Diagnostics.OverrideCompared : System.IEquatable<Idrak.Abstraction.Diagnostics.OverrideCompared>
   public OverrideCompared(string Registry, string Slot, string Implementation, string Origin, bool Agreed, string? Difference, System.Exception? Exception, System.TimeSpan LibraryTime, System.TimeSpan OverrideTime, long LibraryBytes, long OverrideBytes)
@@ -2856,6 +2871,7 @@ public static class Idrak.Abstraction.Diagnostics.Telemetry
   public static void InferenceStage(Idrak.Abstraction.Diagnostics.InferenceStageKind stage, Idrak.Abstraction.Device? device, long start, long count = 0, long bytes = 0, int rows = 1, int pieces = 1, int pieceSize = 0)
   public static void KernelsLoaded(in Idrak.Abstraction.Diagnostics.KernelsLoaded e)
   public static void Mcp(in Idrak.Abstraction.Diagnostics.McpEvent e)
+  public static void OutOfMemoryRecovered(in Idrak.Abstraction.Diagnostics.OutOfMemoryRecovered e)
   public static void PipelineStep(in Idrak.Abstraction.Diagnostics.PipelineStepped e)
   public static void RankState(in Idrak.Abstraction.Diagnostics.RankStateChanged e)
   public static void Suggestion(in Idrak.Abstraction.Diagnostics.SettingSuggestion e)
@@ -6503,6 +6519,9 @@ public interface Idrak.Abstraction.Training.IOptimizer : System.IDisposable
 public interface Idrak.Abstraction.Training.IOptimizerKind : Idrak.Abstraction.IKind
   public Idrak.Abstraction.Training.Optimizer Create(Idrak.Abstraction.Training.OptimizerRequest request)
 
+public interface Idrak.Abstraction.Training.IOutOfMemoryPolicy : Idrak.Abstraction.IKind
+  public int NextParts(Idrak.Abstraction.Training.OutOfMemoryFailure failure)
+
 public interface Idrak.Abstraction.Training.IScaledGradientStep : Idrak.Abstraction.Training.IOptimizer, System.IDisposable
   public float GradientScale { get; set; }
 
@@ -6600,6 +6619,30 @@ public sealed record Idrak.Abstraction.Training.OptimizerStateValue : System.IEq
   public OptimizerStateValue(int[] Shape, float[] Values)
   public float[] Values { get; init; }
   public int[] Shape { get; init; }
+
+public sealed record Idrak.Abstraction.Training.OutOfMemoryFailure : System.IEquatable<Idrak.Abstraction.Training.OutOfMemoryFailure>
+  public OutOfMemoryFailure(System.Exception Error, int Samples, int Parts, int Attempt, string Where)
+  public System.Exception Error { get; init; }
+  public int Attempt { get; init; }
+  public int Parts { get; init; }
+  public int Samples { get; init; }
+  public string Where { get; init; }
+
+public static class Idrak.Abstraction.Training.OutOfMemoryPolicies
+  public const string EnvironmentVariable = "IDRAK_OOM_POLICY"
+  public const string None = "none"
+  public const string Split = "split"
+  public static Idrak.Abstraction.Training.IOutOfMemoryPolicy Get(string name)
+  public static Idrak.Abstraction.Training.IOutOfMemoryPolicy? Default(string name)
+  public static Idrak.Abstraction.Training.IOutOfMemoryPolicy? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool IsAllocationFailure(System.Exception? error)
+  public static bool Unregister(string name)
+  public static string DefaultName { get; }
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Abstraction.Training.IOutOfMemoryPolicy policy)
+  public static void Report(in Idrak.Abstraction.Diagnostics.OutOfMemoryRecovered recovered)
 
 public sealed class Idrak.Abstraction.Training.Sgd : Idrak.Abstraction.Training.Optimizer, Idrak.Abstraction.Training.IInPlaceOptimizer, Idrak.Abstraction.Training.IStatefulOptimizer
   public Sgd(System.Collections.Generic.IEnumerable<Idrak.Abstraction.Tensor> parameters, float learningRate = 0.01f, float momentum = 0f, float weightDecay = 0f)

@@ -121,7 +121,10 @@ public sealed class EarlyStopping(int patience, bool restoreBestWeights = true, 
 /// Saves the model's weights during training with <see cref="Idrak.ModuleFiles.Save(Module, string)"/>: <c>last.ikw</c> every
 /// <c>everyEpochs</c> epochs and, when <c>keepBest</c> is true, <c>best.ikw</c> whenever an epoch has the best monitored
 /// loss so far (<see cref="EpochCompleted.IsBest"/>). Load either file with <see cref="Idrak.ModuleFiles.Load(Module, string)"/>. Files are
-/// written next to their final name and then moved, so a crash never leaves half a file.
+/// written next to their final name and then moved, so a crash never leaves half a file. These are weights alone: a run
+/// that is to go on where it stopped, bit for bit (the optimizer's state, the step, the early-stopping state, the dropout
+/// layers' draws), writes <see cref="Trainer.CheckpointFolder"/>'s checkpoints; <see cref="Trainer.ResumeFrom"/> takes
+/// either, this folder's weights from the first step.
 /// </summary>
 /// <param name="directory">Where to write the files (created if missing).</param>
 /// <param name="everyEpochs">Save <c>last.ikw</c> after every this many epochs. Default 1.</param>

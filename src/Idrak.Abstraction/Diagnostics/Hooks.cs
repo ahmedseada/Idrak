@@ -163,6 +163,10 @@ public sealed class ConsoleLogger(TelemetryLevel levels = TelemetryLevel.Trainin
     public void OnSuggestion(in SettingSuggestion e) => _out.WriteLine($"Suggested for {e.Device}: {e.Setting} = {e.Value} ({e.Reason}) [{e.Source}]");
 
     /// <inheritdoc />
+    public void OnOutOfMemoryRecovered(in OutOfMemoryRecovered e) =>
+        _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"{e.Where} ran out of memory on {e.Device} ({e.Error}, attempt {e.Attempt}): {e.Action} [{e.Policy}]"));
+
+    /// <inheritdoc />
     public void OnTransfer(in TransferCompleted e) =>
         _out.WriteLine(string.Create(CultureInfo.InvariantCulture, $"Transfer {e.Transport} {e.From}->{e.To} (tag {e.Tag}): {e.Bytes:N0} B in {e.Wall.TotalMilliseconds:F3} ms") + Simulated(e.Simulated));
 
@@ -468,6 +472,9 @@ public sealed class ChannelTelemetry : ITelemetryHook
     public void OnSuggestion(in SettingSuggestion e) => Write(e);
 
     /// <inheritdoc />
+    public void OnOutOfMemoryRecovered(in OutOfMemoryRecovered e) => Write(e);
+
+    /// <inheritdoc />
     public void OnTransfer(in TransferCompleted e) => Write(e);
 
     /// <inheritdoc />
@@ -578,6 +585,9 @@ public sealed class JsonLinesLogger : ITelemetryHook, IDisposable, IAsyncDisposa
 
     /// <inheritdoc />
     public void OnSuggestion(in SettingSuggestion e) => _channel.OnSuggestion(in e);
+
+    /// <inheritdoc />
+    public void OnOutOfMemoryRecovered(in OutOfMemoryRecovered e) => _channel.OnOutOfMemoryRecovered(in e);
 
     /// <inheritdoc />
     public void OnTransfer(in TransferCompleted e) => _channel.OnTransfer(in e);
@@ -839,6 +849,17 @@ public static class TelemetryJson
                 w.WriteNumber("override_ms", e.OverrideTime.TotalMilliseconds);
                 w.WriteNumber("library_bytes", e.LibraryBytes);
                 w.WriteNumber("override_bytes", e.OverrideBytes);
+                break;
+            case OutOfMemoryRecovered e:
+                w.WriteString("event", "out_of_memory_recovered");
+                w.WriteString("where", e.Where);
+                w.WriteString("policy", e.Policy);
+                w.WriteString("error", e.Error);
+                w.WriteNumber("samples", e.Samples);
+                w.WriteNumber("parts", e.Parts);
+                w.WriteNumber("attempt", e.Attempt);
+                w.WriteString("device", e.Device);
+                w.WriteString("action", e.Action);
                 break;
             case SettingSuggestion e:
                 w.WriteString("event", "setting_suggestion");

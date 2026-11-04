@@ -61,6 +61,35 @@ public sealed class Dropout : Module
     public float Probability { get; }
 
     /// <summary>
+    /// The seeds this layer has drawn from its random source (not those an activation checkpoint replays): what a resumable
+    /// checkpoint records, so a resumed run draws on from the same place (<see cref="Advance"/>). A seeded source is needed
+    /// for that to give the same masks.
+    /// </summary>
+    internal long Draws { get; private set; }
+
+    /// <summary>Draws <paramref name="draws"/> seeds and drops them: the source goes on where a run that drew them would.</summary>
+    internal void Advance(long draws)
+    {
+        for (long i = 0; i < draws; i++)
+        {
+            _random.Next();
+        }
+
+        Draws += draws;
+    }
+
+    // The next mask's seed, counted when it comes from the source.
+    private uint NextSeed()
+    {
+        if (!DropoutSeeds.Replaying)
+        {
+            Draws++;
+        }
+
+        return DropoutSeeds.Next(_random);
+    }
+
+    /// <summary>
     /// Mixes the seeds of the masks drawn on this thread with <paramref name="rank"/> until disposed: the ranks of a
     /// data-parallel run (plan 23) drop different elements of their different rows; rank 0 drops what one process would.
     /// </summary>
@@ -68,11 +97,11 @@ public sealed class Dropout : Module
 
     /// <inheritdoc />
     protected override Tensor ForwardCore(Tensor input) =>
-        IsTraining && Probability > 0f ? input.Dropout(Probability, DropoutSeeds.Next(_random)) : input;
+        IsTraining && Probability > 0f ? input.Dropout(Probability, NextSeed()) : input;
 
     /// <summary>residual + this(x) in one pass (the seed drawn as <see cref="ForwardCore"/> draws it).</summary>
     internal Tensor AddTo(Tensor residual, Tensor x) =>
-        IsTraining && Probability > 0f ? Tensor.AddDropout(residual, x, Probability, DropoutSeeds.Next(_random)) : residual + x;
+        IsTraining && Probability > 0f ? Tensor.AddDropout(residual, x, Probability, NextSeed()) : residual + x;
 
     /// <inheritdoc />
     public override string ToString() => $"Dropout(p={Probability})";
@@ -175,6 +204,9 @@ internal static class DropoutSeeds
     // elements of their different rows; 0 (one process, or rank 0) leaves them as they are.
     [ThreadStatic]
     private static int t_rank;
+
+    /// <summary>Whether the next seed comes from a replay (an activation checkpoint's recomputed pass), not a source.</summary>
+    public static bool Replaying => t_replay is { Count: > 0 };
 
     public static uint Next(Random random)
     {
