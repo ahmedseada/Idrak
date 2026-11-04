@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Globalization;
+using Idrak.Models.Abstractions;
 
 namespace Idrak.Models;
 
@@ -134,6 +135,39 @@ public static class AutoWeights
             + $"{hint}. Give a shorter context, turn on offload (IDRAK_OFFLOAD=1, ComputeResources.OffloadToHostMemory) to keep part of it in system memory, "
             + "pick a smaller model, or free the device. Needed by format: "
             + string.Join(", ", tried.Select(c => $"{c.Format} {Gigabytes(c.NeededBytes)}")) + ".");
+    }
+
+    /// <summary>
+    /// What a weight placement is asked for <paramref name="spec"/> loaded as <paramref name="format"/> on
+    /// <paramref name="device"/> (<see cref="WeightPlacementRequest"/>), counted from the spec before any weight is read:
+    /// one decoder layer's weights (its share of the projections in the format's bytes a weight: float32 4, bfloat16 2, int8
+    /// 1 and its scales, int4 about 5 bits; a format of one's own is counted as bfloat16), the weights that stay on the
+    /// device (token table, head, final norm), one layer's float32 key/value cache for <paramref name="context"/> tokens, and
+    /// a step's scores with <paramref name="headroom"/> of the weights; <paramref name="available"/> is the device's free
+    /// memory (or a budget) and <paramref name="deviceLayers"/> the user's count, if any.
+    /// </summary>
+    public static WeightPlacementRequest PlacementRequest(DecoderSpec spec, string format, int context, Device device, long? available, int? deviceLayers,
+        double headroom = DefaultHeadroom)
+    {
+        ArgumentNullException.ThrowIfNull(spec);
+        ArgumentNullException.ThrowIfNull(format);
+        ArgumentNullException.ThrowIfNull(device);
+        string counted = Formats.Contains(format) ? format : "bfloat16";
+        double perWeight = counted switch
+        {
+            "float32" => 4,
+            "bfloat16" => 2,
+            "int8" => 1.0625,
+            _ => 0.625,
+        };
+        long table = (long)spec.Vocabulary * spec.Dim;
+        long layerParameters = Math.Max(0, spec.ParameterCount - (spec.TieEmbeddings ? table : 2 * table) - spec.Dim) / Math.Max(1, spec.Layers);
+        long layerBytes = (long)(layerParameters * perWeight);
+        long weights = WeightBytes(spec, counted);
+        long fixedBytes = Math.Max(0, weights - layerBytes * spec.Layers);
+        long layerCache = 2L * spec.KvHeads * spec.HeadDim * Math.Max(1, context) * sizeof(float);
+        long working = 2L * spec.Vocabulary * sizeof(float) + (long)(Math.Max(0, headroom) * weights);
+        return new WeightPlacementRequest(device, spec.Layers, layerBytes, fixedBytes, layerCache, working, available, deviceLayers, device.Backend.Offload is not null);
     }
 
     /// <summary>Bytes as gigabytes with one decimal ("8.1 GB", invariant culture).</summary>

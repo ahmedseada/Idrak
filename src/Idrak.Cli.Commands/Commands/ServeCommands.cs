@@ -104,6 +104,9 @@ internal sealed class ServeCommand : Command
               --context N            the longest context to allocate
               --adapter DIR          merge a LoRA or DoRA adapter into the weights (one tuned on images: its
                                      trained projector and image preparation too)
+              --device-layers N      decoder layers kept on the GPU when a model does not fit it; the rest are
+                                     computed by the CPU from system memory (auto: as the GPU's free memory allows;
+                                     IDRAK_DEVICE_LAYERS, IDRAK_WEIGHT_PLACEMENT)
         """;
 
     public override string Usage => $"""
@@ -162,7 +165,7 @@ internal sealed class ServeCommand : Command
           idrak serve qwen --mcp --transport http        # MCP for clients that connect to it (address and token printed)
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ServeOptions.ValueOptions, .. ModelChoices.ValueOptions, "--tools", .. McpServeCommand.TransportOptions];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ServeOptions.ValueOptions, .. ModelChoices.ValueOptions, ModelChoices.DeviceLayersOption, "--tools", .. McpServeCommand.TransportOptions];
 
     public override IReadOnlyCollection<string> Flags => [.. ServeOptions.Flags, "--mcp", .. McpServeCommand.TransportFlags];
 
@@ -212,7 +215,7 @@ internal sealed class UiCommand : Command
           idrak ui qwen -p 8080 --no-browser
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ServeOptions.ValueOptions, .. ModelChoices.ValueOptions];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ServeOptions.ValueOptions, .. ModelChoices.ValueOptions, ModelChoices.DeviceLayersOption];
 
     public override IReadOnlyCollection<string> Flags => [.. ServeOptions.Flags, "--no-browser"];
 

@@ -92,7 +92,9 @@ internal sealed class TuneTool(ToolConsole console)
         Chat:      --system S, --max-new N, --temperature T (0: greedy)
         Model:     --cuda | --gpu | --cpu | --device cuda:N | vulkan:N (default: the best GPU found, else the CPU; any CUDA
                    GPU works, the faster kernels load where the GPU has them), --int8 | --int4 | --bf16 (base weights), --context N,
-                   --kv8 | --kv16 | --kv FORMAT (float32, int8, bfloat16), --no-think, --matmul fp32|bf16|fp8, --offload, --gpu-memory GiB
+                   --kv8 | --kv16 | --kv FORMAT (float32, int8, bfloat16), --no-think, --matmul fp32|bf16|fp8, --offload, --gpu-memory GiB,
+                   --device-layers N | auto (chat and evaluate of a model larger than the GPU: N layers on it, the rest computed by
+                   the CPU from system memory; training keeps every layer on the device, --offload staging what does not fit)
         """;
 
     /// <summary>The commands, the first argument.</summary>
@@ -106,7 +108,7 @@ internal sealed class TuneTool(ToolConsole console)
         "--min-lr", "--decay", "--loss", "--beta", "--margin", "--adapter-type", "--gpu-memory", "--matmul", "--samples", "--batch", "--max-new",
         "--metric", "--choices", "--temperature", "--eval-fraction", "--system", "--kind", "--max-rows", "--seed", "--min-chars", "--max-chars",
         "--balance", "--data-format", "--images", "--image-transform", "--vision", "--vision-option", "--parts", "--feature-cache", "--metric-every",
-        "--metric-samples", "--audio", "--audio-prompt", "--resume-from",
+        "--metric-samples", "--audio", "--audio-prompt", "--resume-from", "--device-layers",
     ];
 
     /// <summary>The flags.</summary>
@@ -145,7 +147,7 @@ internal sealed class TuneTool(ToolConsole console)
     private long? gpuMemoryLimit;
     private int balance;
     private double evalFraction;
-    private string? output, evalFile, adapterFolder, systemPrompt, choices;
+    private string? output, evalFile, adapterFolder, systemPrompt, choices, deviceLayers;
     private float? temperature;
     private string metric = ChatEvaluation.Auto;
 
@@ -262,6 +264,7 @@ internal sealed class TuneTool(ToolConsole console)
                 case "--fp8": tuning = tuning with { Float8 = true }; break;
                 case "--time-steps": profileTraining = true; break;
                 case "--offload": offload = true; break;
+                case "--device-layers": deviceLayers = Next(); break;
                 case "--cpu-optimizer": tuning = tuning with { HostOptimizer = true }; break;
                 case "--optimizer": optimizerName = Next().ToLowerInvariant(); break;
                 case "--weight-decay": weightDecay = NextFloat(); break;
@@ -1461,9 +1464,14 @@ internal sealed class TuneTool(ToolConsole console)
     {
         string folder = ModelSource.Resolve(baseModel, downloader: downloads);
         var watch = Stopwatch.StartNew();
+        // Training keeps every layer on the device (a split model's crossings record no gradient): --offload stages what
+        // does not fit, as before. Chat and evaluate take the weight placement (a split with the CPU when it does not fit).
+        bool training = positional.Count > 0 && positional[0] == "train";
         var model = PretrainedModel.Load(folder, new PretrainedOptions
         {
             Device = device, Int8 = int8, BFloat16 = bf16, Int4 = int4, MaxPositions = context, MergeAdapter = merge ? adapterFolder : null,
+            WeightPlacement = training ? offload ? Idrak.Models.Abstractions.WeightPlacements.Stream : Idrak.Models.Abstractions.WeightPlacements.AllOnDevice : null,
+            DeviceLayers = training ? null : Idrak.Models.Abstractions.WeightPlacements.ParseDeviceLayers(deviceLayers, "--device-layers"),
         });
         _out.WriteLine($"loaded {model.Config["architectures"]?[0]} from {folder} in {watch.Elapsed.TotalSeconds:F1} s on {device}{(int8 ? ", int8 weights" : int4 ? ", int4 weights" : bf16 ? ", bf16 weights" : "")}");
         _out.WriteLine($"  {model.Spec.ParameterCount / 1e6:F0}M parameters, {model.Spec.Layers} layers, dim {model.Spec.Dim}, heads {model.Spec.Heads}/{model.Spec.KvHeads}, "

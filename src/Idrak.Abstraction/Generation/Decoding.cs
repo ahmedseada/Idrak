@@ -253,6 +253,67 @@ public sealed class DecodingContext : IDisposable
     private Tensor? _rowPositions;
     private bool _tokensOwned;
 
+    // The contexts of layers placed on other devices (On, WeightPlacements), kept in step with this one; null until one is.
+    private List<(Device Device, DecodingContext Context)>? _mirrors;
+
+    /// <summary>
+    /// This context's counterpart on <paramref name="device"/>, for layers placed there (a decoder split between a GPU and
+    /// the CPU, a weight placement's split): its key/value caches live on that device, and it is kept in step with this
+    /// one (steps begun, ended and withdrawn, <see cref="Reset"/>, <see cref="Truncate"/>, <see cref="SetRowStarts"/>,
+    /// <see cref="SetRotaryOffsets"/>, <see cref="ReorderRows"/>), made on first use and disposed with this context. This
+    /// context itself on its own device. A step through layers on several devices is not recordable (<see cref="Recordable"/>).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Asked after positions were decoded (the other device's caches would lack them).</exception>
+    /// <exception cref="NotSupportedException">The context holds cross-attention memories, which are not mirrored.</exception>
+    public DecodingContext On(Device device)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        if (device == Device)
+        {
+            return this;
+        }
+
+        if (_mirrors is not null)
+        {
+            foreach (var (on, context) in _mirrors)
+            {
+                if (on == device)
+                {
+                    return context;
+                }
+            }
+        }
+
+        if (_memories.Count > 0)
+        {
+            throw new NotSupportedException($"Layers on {device} beside {Device}: a context holding cross-attention memories is not mirrored to another device.");
+        }
+
+        if (Length > 0)
+        {
+            throw new InvalidOperationException($"Layers on {device} joined a context that has decoded {Length} positions on {Device}: their caches would lack them. Reset the context first.");
+        }
+
+        var mirror = new DecodingContext(device, Batch, Capacity, Layout) { SlidingWindowSteps = _slidingSteps, GrowCaches = _grow, GrowthStart = _growthStart };
+        if (RowStarts is { } starts)
+        {
+            mirror.SetRowStarts(starts);
+        }
+
+        if (_rotary is { } offsets)
+        {
+            mirror.SetRotaryOffsets(offsets, 0);
+        }
+
+        if (InStep)
+        {
+            mirror.BeginStep(_steps);
+        }
+
+        (_mirrors ??= []).Add((device, mirror));
+        return mirror;
+    }
+
     /// <summary>Creates an empty context.</summary>
     /// <param name="device">Where caches and counters live (the model's device).</param>
     /// <param name="batch">Sequences decoded together.</param>
@@ -554,6 +615,7 @@ public sealed class DecodingContext : IDisposable
             return;
         }
 
+        ForMirrors(m => m.ReorderRows(sources));
         foreach (var cache in _caches.Values)
         {
             int rows = cache.Keys.Shape[0];
@@ -754,6 +816,7 @@ public sealed class DecodingContext : IDisposable
         }
 
         RowStarts = starts?.ToArray();
+        ForMirrors(m => m.SetRowStarts(starts));
         _rowStarts?.Dispose();
         _rowPositions?.Dispose();
         (_rowStarts, _rowPositions) = (null, null);
@@ -822,6 +885,7 @@ public sealed class DecodingContext : IDisposable
 
         _rotaryPasses.Add((from, Length, _rotary));
         ApplyRotary(offsets is null ? null : [.. offsets]);
+        ForMirrors(m => m.SetRotaryOffsets(offsets, from));
     }
 
     // The offsets in effect from now on, and the device copy of a uniform one (written in place, so a recorded step adds
@@ -842,7 +906,7 @@ public sealed class DecodingContext : IDisposable
     /// positions and starts on the device), except with rotary offsets: their per-token rotary positions are computed on
     /// the host each step.
     /// </summary>
-    public bool Recordable => _recordableLayout && (_rotary is null || RowStarts is null && _rotary.All(o => o == _rotary[0]));
+    public bool Recordable => _recordableLayout && _mirrors is null && (_rotary is null || RowStarts is null && _rotary.All(o => o == _rotary[0]));
 
     /// <summary>
     /// Opens a step of <paramref name="steps"/> new positions, or joins the step already open (a module inside a network
@@ -967,6 +1031,14 @@ public sealed class DecodingContext : IDisposable
         {
             RotaryPositions = RotaryStep(offsets, steps);
         }
+
+        if (_mirrors is { } mirrors)
+        {
+            foreach (var (_, mirror) in mirrors)
+            {
+                mirror.BeginStep(steps);
+            }
+        }
     }
 
     // The step's rotary positions: on the device from Position for a uniform offset (the same graph valid at every
@@ -999,7 +1071,17 @@ public sealed class DecodingContext : IDisposable
     /// Withdraws the open step without counting its positions (a pass stopped part-way): <see cref="Length"/> stays where
     /// it was, and the next steps overwrite whatever the stopped one wrote to the caches.
     /// </summary>
-    public void CancelStep() => ClearStep();
+    public void CancelStep()
+    {
+        ClearStep();
+        if (_mirrors is { } mirrors)
+        {
+            foreach (var (_, mirror) in mirrors)
+            {
+                mirror.CancelStep();
+            }
+        }
+    }
 
     /// <summary>Marks <paramref name="steps"/> positions as processed (device counter and host mirror).</summary>
     public void EndStep(int steps)
@@ -1012,6 +1094,16 @@ public sealed class DecodingContext : IDisposable
 
         Length += steps;
         ClearStep();
+        if (_mirrors is { } mirrors)
+        {
+            foreach (var (_, mirror) in mirrors)
+            {
+                if (mirror.InStep)
+                {
+                    mirror.EndStep(steps);
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -1107,6 +1199,7 @@ public sealed class DecodingContext : IDisposable
         }
 
         Length = 0;
+        ForMirrors(m => m.Reset());
     }
 
     /// <summary>
@@ -1147,6 +1240,19 @@ public sealed class DecodingContext : IDisposable
         }
 
         Length = length;
+        ForMirrors(m => m.Truncate(length));
+    }
+
+    // Applies a change made between steps to the contexts of layers on other devices (On).
+    private void ForMirrors(Action<DecodingContext> change)
+    {
+        if (_mirrors is { } mirrors)
+        {
+            foreach (var (_, mirror) in mirrors)
+            {
+                change(mirror);
+            }
+        }
     }
 
     /// <summary>The cache for <paramref name="owner"/> (one per attention layer), created on first use.</summary>
@@ -1223,6 +1329,15 @@ public sealed class DecodingContext : IDisposable
         _rowStarts?.Dispose();
         _rowPositions?.Dispose();
         Position.Dispose();
+        if (_mirrors is { } mirrors)
+        {
+            foreach (var (_, mirror) in mirrors)
+            {
+                mirror.Dispose();
+            }
+
+            _mirrors = null;
+        }
     }
 }
 

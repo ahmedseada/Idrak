@@ -1067,11 +1067,53 @@ public sealed class DecoderBlock : Module, ICachedModule, IDecoderBlock
     public override IEnumerable<Module> Children() =>
         new Module?[] { AttentionNorm, Attention, CrossNorm, Cross, FeedForwardNorm, FeedForward, PostAttentionNorm, PostFeedForwardNorm, ResidualDropout }.OfType<Module>();
 
-    /// <inheritdoc />
-    protected override Tensor ForwardCore(Tensor input) => Run(input, null);
+    /// <summary>
+    /// The device this block computes on when its model is split between devices (<see cref="Models.Abstractions.WeightPlacements"/>: its
+    /// weights were made there, its input is moved there first and its key/value cache is the context's counterpart there,
+    /// <see cref="DecodingContext.On"/>), or null (the default): it computes where its input is.
+    /// </summary>
+    public Device? PlacedOn { get; internal set; }
+
+    // Where the block's output goes when the next part of the model is on another device (the last block of a part), or null.
+    internal Device? OutputTo { get; set; }
 
     /// <inheritdoc />
-    public Tensor ForwardCached(Tensor input, DecodingContext context) => Run(input, context);
+    protected override Tensor ForwardCore(Tensor input) => PlacedOn is null ? Run(input, null) : Placed(input, null);
+
+    /// <inheritdoc />
+    public Tensor ForwardCached(Tensor input, DecodingContext context) => PlacedOn is null ? Run(input, context) : Placed(input, context);
+
+    // A block of a split model: the activation crosses to its device (and on to the next part's), counted as bus traffic
+    // (OffloadTraffic); the cache is the context's counterpart on its device. Inference only: a crossing is a copy that
+    // records no gradient, and a recorded graph cannot read the activation back.
+    private Tensor Placed(Tensor input, DecodingContext? context)
+    {
+        var device = PlacedOn!;
+        bool crosses = input.Device != device || OutputTo is not null;
+        if (crosses && ComputeGraph.IsCapturing)
+        {
+            throw new NotSupportedException("A decoder split between devices moves its activations between them (through the host), which a recorded graph cannot; the step runs as it is.");
+        }
+
+        if (crosses && Autograd.IsEnabled && input.RequiresGrad)
+        {
+            throw new NotSupportedException($"{Name} computes on {device} apart from the rest of its model (a weight placement split): a split model runs inference; train it on one device.");
+        }
+
+        var output = Run(CrossTo(input, device), context?.On(device));
+        return OutputTo is { } next ? CrossTo(output, next) : output;
+    }
+
+    private static Tensor CrossTo(Tensor x, Device to)
+    {
+        if (x.Device == to)
+        {
+            return x;
+        }
+
+        OffloadTraffic.CountBoundary((long)x.Size * sizeof(float));
+        return x.To(to);
+    }
 
     // Attention, cached when there is a context (the context passed along rather than captured in delegates: no
     // allocation per block and step).

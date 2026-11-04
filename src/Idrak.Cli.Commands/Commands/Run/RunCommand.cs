@@ -22,7 +22,9 @@ internal sealed class RunCommand : Command
         The prompt is the arguments after MODEL, followed by the text of --input files and of piped standard input, so
         `cat notes.txt | idrak run MODEL "Summarize"` asks about the notes. The answer streams to the output; --json
         prints one document with the text, the token counts and the speed instead; -v adds the figures on the error output, with where the
-        device's memory went (weights by part, image encoder, KV cache, activations at the peak; with --json, a "memory" object).
+        device's memory went (weights by part, image encoder, KV cache, activations at the peak; with --json, a "memory" object)
+        and what crossed the bus a token (offloaded weights staged or read in place, activations between the GPU's layers
+        and the CPU's when the model is split; with --json, a "bus" object).
         --image gives a vision-language model (Gemma 3 4B and larger) images, before the prompt's text; --audio gives an
         audio-language model sounds (its audio family a plug-in, -P), after the images.
         An encoder-decoder (a folder whose architecture a plug-in registers as one) answers its source text
@@ -47,7 +49,8 @@ internal sealed class RunCommand : Command
               --context N        context window in tokens (default 4096, at most the model's)
               --adapter DIR      merge a LoRA adapter into the weights as they are read; one tuned on images
                                  (idrak tune) brings its trained projector and image preparation too
-              --schema FILE      ask for JSON matching this JSON schema and check the answer (exit 1 when it is not)
+        """ + "\n" + ModelChoices.DeviceLayersHelp + "\n" + """
+              --schema FILE     ask for JSON matching this JSON schema and check the answer (exit 1 when it is not)
               --mcp SERVER       let the model call an MCP server's tools (an http(s) URL or a command; repeatable)
               --mcp-token TOKEN  the bearer token sent to http(s) MCP servers (idrak mcp serve --transport http prints it)
         """ + "\n" + GenerationSettings.Help + Seq2SeqRun.Help + """
@@ -66,7 +69,7 @@ internal sealed class RunCommand : Command
         required properties and their types) instead of guaranteeing it while generating.
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--mcp-token", "--image", "--audio", ModelChoices.ImageTransformOption, "--out", ModelChoices.VisionOption,
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, ModelChoices.DeviceLayersOption, .. GenerationSettings.ValueOptions, "--input", "--schema", "--mcp", "--mcp-token", "--image", "--audio", ModelChoices.ImageTransformOption, "--out", ModelChoices.VisionOption,
         Seq2SeqRun.BeamsOption, Seq2SeqRun.LengthPenaltyOption];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--grayscale"];
@@ -133,6 +136,7 @@ internal sealed class RunCommand : Command
             ComputeResources.ResetPeakMemoryUsage(loaded.Model.Device);  // -v: the peak of answering (the breakdown's activations), not of loading
         }
 
+        var trafficBefore = Idrak.Abstraction.Devices.OffloadTraffic.Read();   // what crosses the bus while answering (plan 37, W0)
         ChatAnswer answer;
         try
         {
@@ -144,10 +148,16 @@ internal sealed class RunCommand : Command
             return ExitCodes.Failed;
         }
 
+        var traffic = Idrak.Abstraction.Devices.OffloadTraffic.Read().Since(trafficBefore);
         var memory = context.Verbose ? loaded.Memory() : default;
         if (context.Verbose && !context.Json)
         {
             context.ErrorOutput.WriteLine(answer.Summary(loaded.Context));
+            if (!traffic.IsEmpty)
+            {
+                context.ErrorOutput.WriteLine(traffic.Describe(answer.GeneratedTokens));
+            }
+
             foreach (string line in LoadedChat.MemoryLines(memory.Parts, memory.Usage))
             {
                 context.ErrorOutput.WriteLine(line);
@@ -194,6 +204,11 @@ internal sealed class RunCommand : Command
         if (context.Verbose)
         {
             json["memory"] = LoadedChat.MemoryJson(memory.Parts, memory.Usage);
+        }
+
+        if (context.Verbose || !traffic.IsEmpty)
+        {
+            json["bus"] = traffic.ToJson(answer.GeneratedTokens);                  // weights staged, read in place, activations crossing
         }
 
         if (schema is not null)

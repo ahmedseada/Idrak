@@ -38,7 +38,12 @@ public static class DecoderBuilder
             throw new ArgumentException($"{spec.ExpertsPerToken} experts per token of {spec.Experts}: each token goes to between 1 and {spec.Experts}.");
         }
 
-        var device = options.Device ?? Device.Default;
+        var mainDevice = options.Device ?? Device.Default;
+        var device = mainDevice;                                         // where the part being made goes (the local functions read it)
+        // A weight placement's split: the first DeviceLayers layers on the device, the rest on the host device.
+        var hostDevice = options.HostDevice ?? Device.Cpu;
+        int deviceLayers = Math.Clamp(options.DeviceLayers ?? spec.Layers, 0, spec.Layers);
+        bool split = deviceLayers < spec.Layers && hostDevice != mainDevice;
         int maxPositions = options.MaxPositions ?? spec.MaxPositions;
         var random = new Random(options.Seed);
         var created = new List<Module>();
@@ -246,6 +251,7 @@ public static class DecoderBuilder
 
             for (int i = 0; i < spec.Layers; i++)
             {
+                device = split && i >= deviceLayers ? hostDevice : mainDevice;
                 string p = $"layers.{i}";
                 var attentionNorm = Normalization($"{p}.attn_norm", spec.Dim);
                 var attention = new CausalSelfAttention(
@@ -282,9 +288,10 @@ public static class DecoderBuilder
                 created.Add(new DecoderBlock(attentionNorm, attention, feedForwardNorm, feedForward,
                     spec.PostNorms ? Normalization($"{p}.post_attn_norm", spec.Dim) : null,
                     spec.PostNorms ? Normalization($"{p}.post_mlp_norm", spec.Dim) : null,
-                    spec.Dropout > 0f ? new Dropout(spec.Dropout, new Random(random.Next())) : null) { Name = p });
+                    spec.Dropout > 0f ? new Dropout(spec.Dropout, new Random(random.Next())) : null) { Name = p, PlacedOn = split && i >= deviceLayers ? hostDevice : null });
             }
 
+            device = mainDevice;                                         // the final norm and the head: on the device
             var norm = Normalization("norm", spec.Dim);
             norm.Name = "norm";
             created.Add(norm);
@@ -298,7 +305,14 @@ public static class DecoderBuilder
             var blocks = created.OfType<DecoderBlock>().ToList();
             for (int i = 0; i < blocks.Count; i++)
             {
-                blocks[i].NextNorm = (i + 1 < blocks.Count ? blocks[i + 1].AttentionNorm : norm) as RMSNorm;
+                // A norm on another device is not computed ahead with the block (its gain lives there).
+                bool sameDevice = !split || (i + 1 < blocks.Count ? (i + 1 >= deviceLayers) == (i >= deviceLayers) : i < deviceLayers);
+                blocks[i].NextNorm = sameDevice ? (i + 1 < blocks.Count ? blocks[i + 1].AttentionNorm : norm) as RMSNorm : null;
+            }
+
+            if (split)
+            {
+                blocks[^1].OutputTo = mainDevice;                       // back to the device for the final norm and the head
             }
 
             var model = new Sequential(created) { Name = "decoder" };

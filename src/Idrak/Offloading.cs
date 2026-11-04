@@ -90,13 +90,51 @@ internal static class Offloading
     /// </summary>
     public static LayerScope Enter(Module module, Tensor input)
     {
-        if (input.Device.Backend.Offload is not { } offload || !Active(offload) || !StageWeights || module.Children().Any())
+        if (input.Device.Backend.Offload is not { } offload || !Active(offload) || module.Children().Any())
         {
+            return default;
+        }
+
+        if (!StageWeights)
+        {
+            CountMapped(module, offload);
             return default;
         }
 
         return Enter(module, ReadOnlyStorages(module, mark: true), offload);
     }
+
+    // Staging off (--bench-offload): the layer's offloaded weights are read over the bus as it computes (W0's telemetry).
+    private static void CountMapped(Module module, IMemoryOffload offload)
+    {
+        if (offload.OffloadedCount == 0)
+        {
+            return;
+        }
+
+        long bytes = 0;
+        foreach (var storage in ReadOnlyStorages(module, mark: false))
+        {
+            if (offload.IsOffloaded(storage))
+            {
+                bytes += (long)storage.Length * sizeof(float);
+            }
+        }
+
+        if (bytes > 0)
+        {
+            OffloadTraffic.CountMapped(bytes);
+            OffloadTraffic.CountLayer(LayerName(module), staged: false, mapped: true);
+        }
+    }
+
+    // A layer's name in the telemetry: its type and its name ("Linear gate"), the members' for layers one pass computes.
+    private static string LayerName(object layer) => layer switch
+    {
+        LayerGroup group => string.Join(" + ", group.Layers.Select(m => LayerName(m))),
+        Module m => string.IsNullOrEmpty(m.Name) ? m.GetType().Name : $"{m.GetType().Name} {m.Name}",
+        _ => layer.GetType().Name,
+    };
 
     /// <summary>
     /// <see cref="Enter(Module, Tensor)"/> for layers one fused pass computes together (q/k/v, gate/up, a projection with its
@@ -104,8 +142,18 @@ internal static class Offloading
     /// </summary>
     public static LayerScope EnterMany(IReadOnlyList<Module> layers, Tensor input)
     {
-        if (input.Device.Backend.Offload is not { } offload || !Active(offload) || !StageWeights || layers.Count == 0)
+        if (input.Device.Backend.Offload is not { } offload || !Active(offload) || layers.Count == 0)
         {
+            return default;
+        }
+
+        if (!StageWeights)
+        {
+            foreach (var layer in layers)
+            {
+                CountMapped(layer, offload);
+            }
+
             return default;
         }
 
@@ -138,7 +186,15 @@ internal static class Offloading
             return new LayerScope(null, previous, entered: true);
         }
 
+        // W0's telemetry (OffloadTraffic): whether this pass copied the layer's weights in or read them over the bus.
+        long mappedBefore = OffloadTraffic.MappedBytes;
         var token = offload.Stage(storages);
+        bool mapped = OffloadTraffic.MappedBytes != mappedBefore;
+        if (token is not null || mapped)
+        {
+            OffloadTraffic.CountLayer(mapped ? LayerName(layer) : "", token is not null, mapped);
+        }
+
         if (NextLayer.TryGetValue(layer, out var next))
         {
             offload.Prefetch(ReadOnlyStorages(next, mark: false));

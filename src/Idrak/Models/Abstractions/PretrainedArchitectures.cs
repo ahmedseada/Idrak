@@ -170,6 +170,17 @@ public sealed record DecoderBuildOptions
     public Device? Device { get; init; }
 
     /// <summary>
+    /// How many decoder layers, the first ones, are made on <see cref="Device"/> (a weight placement's split,
+    /// <see cref="WeightPlacements"/>): the others are made on <see cref="HostDevice"/> and computed there, their input
+    /// moved there and the last one's output moved back for the final norm and head (only activations cross). Null (the
+    /// default): every layer on <see cref="Device"/>.
+    /// </summary>
+    public int? DeviceLayers { get; init; }
+
+    /// <summary>Where the layers past <see cref="DeviceLayers"/> are made and computed: the CPU when null.</summary>
+    public Device? HostDevice { get; init; }
+
+    /// <summary>
     /// Store every Linear layer (attention, feed-forward and output head) as int8: each weight is quantized on the host as
     /// it is read, so a large model never exists as float32 on the device.
     /// </summary>

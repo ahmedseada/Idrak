@@ -12,7 +12,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | Assembly | Interfaces | Abstract classes | Registries | Total | Misplaced (decision 10) |
 |---|---|---|---|---|---|
 | `Idrak.Abstraction` | 186 | 18 | 60 | 264 | 0 |
-| `Idrak` | 54 | 5 | 20 | 79 | 0 |
+| `Idrak` | 55 | 5 | 21 | 81 | 0 |
 | `Idrak.Gpu` | 5 | 0 | 1 | 6 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
 | `Idrak.Text` | 25 | 0 | 13 | 38 | 0 |
@@ -244,7 +244,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.ICommandSandbox` | interface | public | — | ContainerSandbox, ProcessCommandSandbox |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.ICommandSession` | interface | public | — | ProcessCommandSession |  | Abstraction, Reinforcement.Plugins, Text | Abstraction |
 | `Idrak.Abstraction.IConfigurableKind` | interface | public | — | AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, BandPassProcessor, +108 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Data, Idrak, Imaging, Mcp, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
-| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, +146 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.IKind` | interface | public | — | AdamW8BitKind, AdvantageEstimators.GuardedEstimator, AgcProcessor, AnswerMatchMetric, AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, +150 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.IKind<TRequest, T>` | interface | public | — | AttentionPositionBiases.BuiltInKind, AudioFeatureExtractors.Kind, BoxesScoresDecoder, ChatTemplates.GuardedReader, ClassicControlPlugin.ClassicKind, CodingEnvironmentKind, +38 |  | Abstraction, Audio, Audio.Plugins, Data, Idrak, Imaging, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.ILibraryRegistrations` | interface | public | — | LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, LibraryRegistrations, +6 |  | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.IOptionSchema` | interface | public | — | CSharpRewards.BuildReward, CSharpRewards.TestsReward, ClassicControlPlugin.ClassicKind, ClippedRatioLoss, CodingRewards.RoundsReward, CodingRewards.TestsPassedReward, +18 |  | Abstraction, Reinforcement, Reinforcement.Plugins, Text | Abstraction |
@@ -371,6 +371,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Models.Abstractions.ITokenizerPostProcessor` | interface | public | — | PostProcessors.Bert, PostProcessors.ByteLevel, PostProcessors.Chain, PostProcessors.Roberta, PostProcessors.Template, TokenizerComponents.GuardedPostProcessor |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.ITokenizerTrainer` | interface | public | — | BpeTrainer, UnigramTrainer, WordPieceTrainer |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IVisionFamily` | interface | public | — | Gemma3VisionFamily, IdrakVisionFamily, LlavaVisionFamily, QwenVisionFamily |  | Idrak, Vision.Plugins | Idrak |
+| `Idrak.Models.Abstractions.IWeightPlacement` | interface | public | — | WeightPlacements.AutoPlacement, WeightPlacements.DevicePlacement, WeightPlacements.SplitPlacement, WeightPlacements.StreamPlacement |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.IWeightSource` | interface | public | Device | CheckpointWeights |  | Idrak | Idrak |
 | `Idrak.Models.Abstractions.PretrainedArchitecture` | abstract class | public | — | GemmaArchitectures.Gemma3VisionLanguageDecoder, IdrakAudioLanguageFamily.TextDecoderArchitecture, IdrakVisionPlugin.TextDecoderArchitecture, LlavaText.Decoder, PretrainedFamilies.CommonDecoder, PretrainedFamilies.CommonDecoderWithConfig, +2 |  | Audio.Plugins, Idrak, Text.Plugins, Vision.Plugins | Idrak |
 | `Idrak.Models.Abstractions.PretrainedArchitectures` | registry | public | — |  | — | Audio.Plugins, Idrak, Text.Plugins, Vision.Plugins | Idrak |
@@ -381,6 +382,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Models.Abstractions.TokenizerTrainers` | registry | public | — |  | bpe, unigram, wordpiece | Idrak | Idrak |
 | `Idrak.Models.Abstractions.VisionFamilies` | registry | public | — |  | — | Idrak, Vision.Plugins | Idrak |
 | `Idrak.Models.Abstractions.WeightCodec` | abstract class | public | — | WeightCodec.BFloat16Codec, WeightCodec.Float16Codec, WeightCodec.Float32Codec |  | Idrak | Idrak |
+| `Idrak.Models.Abstractions.WeightPlacements` | registry | public | Device |  | auto, device, split, stream | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.IOnnxExportOp` | interface | public | Module | OnnxExportOps.FunctionOp<T> |  | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.IOnnxExportOp<T>` | interface | public | — | OnnxExportOps.FunctionOp<T> |  | Idrak | Idrak |
 | `Idrak.Onnx.Abstractions.IOnnxGraphOpExport` | interface | public | — | OnnxExportOps.FunctionGraphOp |  | Idrak | Idrak |
@@ -624,17 +626,17 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 137 virtual methods, 5 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `DeferredBackend`, `HipBackend`, `VulkanBackend`. Each
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 138 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `DeferredBackend`, `HipBackend`, `VulkanBackend`. Each
 operation (157, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 131 of 147 |
-| `CudaBackend` | 136 of 147 |
-| `DeferredBackend` | 11 of 147 |
-| `HipBackend` | 137 of 147 |
-| `VulkanBackend` | 124 of 147 |
+| `CpuBackend` | 132 of 148 |
+| `CudaBackend` | 137 of 148 |
+| `DeferredBackend` | 11 of 148 |
+| `HipBackend` | 138 of 148 |
+| `VulkanBackend` | 125 of 148 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
 |---|---|---|---|---|---|---|
@@ -689,6 +691,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `CtcLossKernel(12)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `DecoderMaskKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Detach(1)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `Dispose(1)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `Download(2)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `DownloadRange(3)` | abstract | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `DropoutBackwardKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |

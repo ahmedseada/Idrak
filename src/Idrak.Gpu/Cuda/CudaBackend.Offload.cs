@@ -443,6 +443,7 @@ internal sealed unsafe partial class CudaBackend : IOffloadingBackend, IMemoryOf
 
             batch.Pending++;
             PrefetchedStorages++;
+            OffloadTraffic.CountPrefetched(BlockBytes(s.Length));
         }
 
         if (batch is not null)
@@ -512,6 +513,7 @@ internal sealed unsafe partial class CudaBackend : IOffloadingBackend, IMemoryOf
             block = TryDeviceBlock(s.Length, 0, useCache: true, out capacity);
             if (block == 0)
             {
+                OffloadTraffic.CountMapped(BlockBytes(s.Length));            // no room: the layer's kernels read it over the bus
                 continue;
             }
 
@@ -524,6 +526,7 @@ internal sealed unsafe partial class CudaBackend : IOffloadingBackend, IMemoryOf
                 }
 
                 Check(cuMemcpyHtoDAsync(block, (void*)host, (nuint)BlockBytes(s.Length), _stream), nameof(cuMemcpyHtoDAsync));
+                OffloadTraffic.CountStaged(BlockBytes(s.Length));
                 StageLocked(s, block, capacity);
                 (staged ??= []).Add(s);
             }

@@ -248,6 +248,23 @@ public sealed record PretrainedOptions
     /// <summary>The formats the choice tries, the largest first; null for <see cref="Models.AutoWeights.Formats"/>.</summary>
     public IReadOnlyList<string>? AutoWeightsFormats { get; init; }
 
+    /// <summary>
+    /// Where a decoder's layers go on a device other than the CPU (<see cref="WeightPlacements"/>, plan 37 W1): "device"
+    /// (every layer there), "split" (the first layers there as its free memory allows, the rest computed by the CPU from
+    /// system memory, as Ollama does), "stream" (every layer there, what does not fit staged from system memory each pass:
+    /// offload) or "auto" (the device when the model fits, else split or stream by what the bus and the CPU measure), or a
+    /// placement of one's own. Null takes <see cref="WeightPlacements.DefaultName"/> (IDRAK_WEIGHT_PLACEMENT; auto), so a
+    /// model that does not fit starts split instead of failing. The free memory is <see cref="AutoWeightsBudget"/> when
+    /// given, else what the device reports. <see cref="PretrainedModel.Placement"/> says what was chosen.
+    /// </summary>
+    public string? WeightPlacement { get; init; }
+
+    /// <summary>
+    /// The decoder layers on the device for a split (<see cref="WeightPlacement"/> split or auto): a count, or null for
+    /// <see cref="WeightPlacements.DefaultDeviceLayers"/> (IDRAK_DEVICE_LAYERS; sized from the measured free memory when not set).
+    /// </summary>
+    public int? DeviceLayers { get; init; }
+
     // Whether the options name a weights' format (which wins over the choice).
     internal bool NamesFormat => Int8 || Int4 || BFloat16 || PackedFormatName is not null;
 }
@@ -402,16 +419,23 @@ public sealed class PretrainedModel : IDisposable
         var spec = architecture.Spec(config, notes);
         int maxPositions = Math.Min(options.MaxPositions ?? spec.MaxPositions, spec.MaxPositions);
         WeightsChoice? weightsChoice = null;
+
+        // The weight placement (plan 37, W1): on a device other than the CPU, where the layers go when the model may not fit.
+        var placementTarget = options.Device ?? Idrak.Abstraction.Device.Default;
+        string placementName = options.WeightPlacement ?? WeightPlacements.DefaultName;
+        var placement = !options.Deferred && placementTarget.Type != DeviceType.Cpu ? WeightPlacements.Get(placementName) : null;
+        bool mayLeaveDevice = placement is not null && !placement.Name.Equals(WeightPlacements.AllOnDevice, StringComparison.OrdinalIgnoreCase);
         if (options.AutoWeights && !options.NamesFormat && !options.Deferred)
         {
-            // The weights' format chosen before any weight is read: the largest that fits what the device reports free.
-            var target = options.Device ?? Idrak.Abstraction.Device.Default;
+            // The weights' format chosen before any weight is read: the largest that fits what the device reports free (the
+            // smallest, when nothing fits and part of the model may leave the device).
+            var target = placementTarget;
             int context = Math.Min(options.AutoWeightsContext ?? options.MaxPositions ?? AutoWeights.DefaultContext, spec.MaxPositions);
             // A bfloat16 checkpoint's values are bfloat16 already: float32 would hold the same values in twice the memory.
             IReadOnlyList<string> formats = options.AutoWeightsFormats
                 ?? (reader.Names.Select(reader.FormatOf).OfType<WeightFormat>().GroupBy(f => f).MaxBy(g => g.Count())?.Key == WeightFormat.BFloat16
                     ? [.. AutoWeights.Formats.Where(f => f != "float32")] : AutoWeights.Formats);
-            weightsChoice = AutoWeights.Choose(spec, context, options.AutoWeightsBudget ?? target.Backend.AvailableMemory(), ComputeResources.OffloadToHostMemory,
+            weightsChoice = AutoWeights.Choose(spec, context, options.AutoWeightsBudget ?? target.Backend.AvailableMemory(), ComputeResources.OffloadToHostMemory || mayLeaveDevice,
                 options.AutoWeightsHeadroom, formats, $"{name} on {target}");
             options = weightsChoice.Format switch
             {
@@ -423,12 +447,36 @@ public sealed class PretrainedModel : IDisposable
             notes.Add($"weights {weightsChoice}.");
         }
 
+        WeightPlan? plan = null;
+        if (placement is not null)
+        {
+            string placedFormat = options.PackedFormatName ?? (options.Int8 ? "int8" : options.Int4 ? "int4" : options.BFloat16 ? "bfloat16" : "float32");
+            int context = Math.Min(options.AutoWeightsContext ?? options.MaxPositions ?? AutoWeights.DefaultContext, spec.MaxPositions);
+            var request = AutoWeights.PlacementRequest(spec, placedFormat, context, placementTarget, options.AutoWeightsBudget ?? placementTarget.Backend.AvailableMemory(),
+                options.DeviceLayers ?? WeightPlacements.DefaultDeviceLayers, options.AutoWeightsHeadroom);
+            plan = placement.Place(request);
+            if (plan.Split && architecture is INetworkBuildingArchitecture)
+            {
+                notes.Add($"placement {plan.Placement}: {name} builds its own network, which is not split; every layer stays on {placementTarget}.");
+                plan = plan with { DeviceLayers = plan.Layers, Reason = $"every layer on {placementTarget} ({name} builds its own network)" };
+            }
+            else if (plan.Split || plan.Stream)
+            {
+                notes.Add($"placement {plan}.");
+            }
+
+            if (plan.Stream)
+            {
+                ComputeResources.OffloadToHostMemory = true;                  // today's staging (IMemoryOffload) holds what does not fit
+            }
+        }
+
         using var adapter = options.MergeAdapter is { } adapterFolder ? new AdapterMerge(adapterFolder) : null;
         var weights = new CheckpointWeights(reader, architecture) { Adapter = adapter, Deferred = options.Deferred, Progress = LoadProgress.Of(reader, options.Progress) };
         weights.Progress?.Begin();
         var buildDevice = options.Deferred ? DeferredTensors.Device : options.Device;
         var packedCache = PackedWeightCache.For(options, folder);
-        var buildOptions = new DecoderBuildOptions { Device = buildDevice, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions, PackedCache = packedCache };
+        var buildOptions = new DecoderBuildOptions { Device = buildDevice, DeviceLayers = plan is { Split: true } ? plan.DeviceLayers : null, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions, PackedCache = packedCache };
         long building = Stopwatch.GetTimestamp();
         var fileTime = reader.ReadTime;
         Sequential network;
@@ -522,6 +570,7 @@ public sealed class PretrainedModel : IDisposable
         model.CheckpointFormat = reader.Names.Select(reader.FormatOf).OfType<WeightFormat>().GroupBy(f => f).MaxBy(g => g.Count())?.Key;
         model._loadBytes = reader.BytesRead;
         model.Weights = weightsChoice;
+        model.Placement = plan;
         try
         {
             model.RecommendedSampling = Abstraction.Generation.SamplingSettings.Read(folder);
@@ -741,6 +790,12 @@ public sealed class PretrainedModel : IDisposable
     /// memory it measured; null when the format was named or the choice was off.
     /// </summary>
     public WeightsChoice? Weights { get; private set; }
+
+    /// <summary>
+    /// Where the load placed the decoder's layers (<see cref="PretrainedOptions.WeightPlacement"/>): on the device, split with
+    /// the CPU (which layers compute where) or streamed from system memory, with what was measured; null on the CPU.
+    /// </summary>
+    public WeightPlan? Placement { get; private set; }
 
     /// <summary>Where the time of <see cref="Load"/> went, by stage (read, convert, upload, adapter merge, tokenizer, …).</summary>
     public PretrainedLoadTimes LoadTimes { get; private set; } = new(default, default, default, default, default, default, default, default, default);

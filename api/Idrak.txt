@@ -971,6 +971,7 @@ public sealed class Idrak.Layers.CrossAttention : Idrak.Abstraction.Module, Idra
 public sealed class Idrak.Layers.DecoderBlock : Idrak.Abstraction.Module, Idrak.Abstraction.Modules.ICheckpointable, Idrak.Layers.Abstractions.ICachedModule, Idrak.Layers.Abstractions.IDecoderBlock
   public DecoderBlock(Idrak.Abstraction.Module attentionNorm, Idrak.Layers.CausalSelfAttention attention, Idrak.Abstraction.Module crossNorm, Idrak.Layers.CrossAttention cross, Idrak.Abstraction.Module feedForwardNorm, Idrak.Abstraction.Module feedForward, Idrak.Layers.Dropout? residualDropout = null)
   public DecoderBlock(Idrak.Abstraction.Module attentionNorm, Idrak.Layers.CausalSelfAttention attention, Idrak.Abstraction.Module? feedForwardNorm, Idrak.Abstraction.Module feedForward, Idrak.Abstraction.Module? postAttentionNorm = null, Idrak.Abstraction.Module? postFeedForwardNorm = null, Idrak.Layers.Dropout? residualDropout = null)
+  public Idrak.Abstraction.Device? PlacedOn { get; }
   public Idrak.Abstraction.Module AttentionNorm { get; }
   public Idrak.Abstraction.Module FeedForward { get; }
   public Idrak.Abstraction.Module? CrossNorm { get; }
@@ -1558,12 +1559,14 @@ public sealed record Idrak.Models.Abstractions.CreatedVision : System.IEquatable
 public sealed record Idrak.Models.Abstractions.DecoderBuildOptions : System.IEquatable<Idrak.Models.Abstractions.DecoderBuildOptions>
   public DecoderBuildOptions()
   public Idrak.Abstraction.Device? Device { get; init; }
+  public Idrak.Abstraction.Device? HostDevice { get; init; }
   public Idrak.Abstraction.Devices.LookupTablePlacement? LookupTables { get; init; }
   public bool BFloat16 { get; init; }
   public bool Int4 { get; init; }
   public bool Int8 { get; init; }
   public float? InitStd { get; init; }
   public int Seed { get; init; }
+  public int? DeviceLayers { get; init; }
   public int? MaxPositions { get; init; }
   public string? HeadFormatName { get; init; }
   public string? PackedFormatName { get; init; }
@@ -1754,6 +1757,9 @@ public interface Idrak.Models.Abstractions.IVisionFamily
   public (default) Idrak.Models.Abstractions.CreatedVision Create(System.Text.Json.Nodes.JsonObject vision, int textDim, Idrak.Abstraction.Generation.ITokenizer tokenizer, int seed)
   public Idrak.Abstraction.Generation.IPretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
   public string Name { get; }
+
+public interface Idrak.Models.Abstractions.IWeightPlacement : Idrak.Abstraction.IKind
+  public Idrak.Models.Abstractions.WeightPlan Place(Idrak.Models.Abstractions.WeightPlacementRequest request)
 
 public interface Idrak.Models.Abstractions.IWeightSource
   public (default) Idrak.Abstraction.Generation.BFloat16Weight? ReadBFloat16(string name, System.Collections.Generic.IReadOnlyList<int> shape, Idrak.Abstraction.Device device, bool transposed = false)
@@ -2038,9 +2044,55 @@ public abstract class Idrak.Models.Abstractions.WeightCodec
   public abstract void Encode(System.ReadOnlySpan<float> values, System.Span<byte> bytes)
   public static Idrak.Models.Abstractions.WeightCodec For(Idrak.Abstraction.Formats.WeightFormat format)
 
+public sealed record Idrak.Models.Abstractions.WeightPlacementRequest : System.IEquatable<Idrak.Models.Abstractions.WeightPlacementRequest>
+  public Idrak.Abstraction.Device Device { get; init; }
+  public WeightPlacementRequest(Idrak.Abstraction.Device Device, int Layers, long LayerBytes, long FixedBytes, long LayerCacheBytes, long WorkingBytes, long? AvailableBytes, int? DeviceLayers, bool CanStream)
+  public bool CanStream { get; init; }
+  public bool Fits { get; }
+  public int Layers { get; init; }
+  public int LayersThatFit { get; }
+  public int? DeviceLayers { get; init; }
+  public long FixedBytes { get; init; }
+  public long LayerBytes { get; init; }
+  public long LayerCacheBytes { get; init; }
+  public long WorkingBytes { get; init; }
+  public long? AvailableBytes { get; init; }
+
+public static class Idrak.Models.Abstractions.WeightPlacements
+  public const string AllOnDevice = "device"
+  public const string Auto = "auto"
+  public const string DeviceLayersVariable = "IDRAK_DEVICE_LAYERS"
+  public const string EnvironmentVariable = "IDRAK_WEIGHT_PLACEMENT"
+  public const string Split = "split"
+  public const string Stream = "stream"
+  public static Idrak.Models.Abstractions.IWeightPlacement Get(string name)
+  public static Idrak.Models.Abstractions.IWeightPlacement? Default(string name)
+  public static Idrak.Models.Abstractions.IWeightPlacement? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static double MeasureBus(Idrak.Abstraction.Device device, long probeBytes)
+  public static double MeasureCpu(long probeBytes)
+  public static int? DefaultDeviceLayers { get; }
+  public static int? ParseDeviceLayers(string? value, string where)
+  public static string DefaultName { get; }
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Models.Abstractions.IWeightPlacement placement)
+
+public sealed record Idrak.Models.Abstractions.WeightPlan : System.IEquatable<Idrak.Models.Abstractions.WeightPlan>
+  public WeightPlan(string Placement, int DeviceLayers, int Layers, bool Stream, string Reason)
+  public bool Split { get; }
+  public bool Stream { get; init; }
+  public int DeviceLayers { get; init; }
+  public int Layers { get; init; }
+  public override string ToString()
+  public string Placement { get; init; }
+  public string Reason { get; init; }
+
 public static class Idrak.Models.AutoWeights
   public const double DefaultHeadroom = 0.1
   public const int DefaultContext = 4096
+  public static Idrak.Models.Abstractions.WeightPlacementRequest PlacementRequest(Idrak.Abstraction.Generation.DecoderSpec spec, string format, int context, Idrak.Abstraction.Device device, long? available, int? deviceLayers, double headroom = 0.1)
   public static Idrak.Models.WeightsChoice Choose(Idrak.Abstraction.Generation.DecoderSpec spec, int context, long? available, bool offload, double headroom = 0.1, System.Collections.Generic.IReadOnlyList<string>? formats = null, string? model = null)
   public static System.Collections.Generic.IReadOnlyList<string> Formats { get; }
   public static long WeightBytes(Idrak.Abstraction.Generation.DecoderSpec spec, string format)
@@ -2238,6 +2290,7 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public Idrak.Abstraction.Generation.SamplingSettings? RecommendedSampling { get; }
   public Idrak.Layers.Sequential Network { get; }
   public Idrak.Models.Abstractions.IPretrainedArchitecture Architecture { get; }
+  public Idrak.Models.Abstractions.WeightPlan? Placement { get; }
   public Idrak.Models.PackedWeightCacheUse? PackedCache { get; }
   public Idrak.Models.PretrainedLoadTimes LoadTimes { get; }
   public Idrak.Models.WeightsChoice? Weights { get; }
@@ -2281,6 +2334,7 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public double AutoWeightsHeadroom { get; init; }
   public double SuggestionHeadroom { get; init; }
   public int? AutoWeightsContext { get; init; }
+  public int? DeviceLayers { get; init; }
   public int? MaxPositions { get; init; }
   public long? AutoWeightsBudget { get; init; }
   public string? Architecture { get; init; }
@@ -2288,6 +2342,7 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public string? MergeAdapter { get; init; }
   public string? PackedCacheFolder { get; init; }
   public string? PackedFormatName { get; init; }
+  public string? WeightPlacement { get; init; }
 
 public sealed class Idrak.Models.PretrainedSeq2SeqModel : System.IDisposable
   public Idrak.Abstraction.Device Device { get; }

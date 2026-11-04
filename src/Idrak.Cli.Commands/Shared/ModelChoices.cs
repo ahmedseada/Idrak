@@ -22,6 +22,19 @@ internal static class ModelChoices
     /// <summary>The options a command that loads a language model accepts.</summary>
     public static readonly string[] ValueOptions = ["--weights", "--head-weights", "--kv", "--context", "--adapter"];
 
+    /// <summary>
+    /// The option giving the decoder layers kept on the device when the model is split with the CPU (a count, or auto: as the
+    /// device's measured free memory allows); over IDRAK_DEVICE_LAYERS (<see cref="Idrak.Models.Abstractions.WeightPlacements"/>).
+    /// </summary>
+    public const string DeviceLayersOption = "--device-layers";
+
+    /// <summary>Help lines for <see cref="DeviceLayersOption"/>, aligned as the commands' options are.</summary>
+    public const string DeviceLayersHelp = """
+              --device-layers N  decoder layers kept on the GPU when the model does not fit it; the rest are computed by
+                                 the CPU from system memory (auto: as the GPU's free memory allows; IDRAK_DEVICE_LAYERS;
+                                 IDRAK_WEIGHT_PLACEMENT device, split, stream or auto chooses how)
+        """;
+
     /// <summary>The option giving a vision family's own options, KEY=VALUE (repeatable).</summary>
     public const string VisionOption = "--vision-option";
 
@@ -62,6 +75,9 @@ internal static class ModelChoices
         /// <summary>The output head's own weight format (<c>--head-weights</c>, or the alias's "head_weights"), or null for the projections' format.</summary>
         public string? HeadWeights { get; init; }
 
+        /// <summary>The decoder layers kept on the device (<c>--device-layers</c>, or the alias's "device_layers"), or null to size them (auto).</summary>
+        public int? DeviceLayers { get; init; }
+
         /// <summary>The transforms every image goes through: <c>grayscale</c> first when asked (and not already a step), then <see cref="ImageTransforms"/>.</summary>
         public ImageTransformPipeline Transforms => Grayscale && ImageTransforms?.Contains("grayscale") != true
             ? ImageTransformPipeline.Parse("grayscale").Then(ImageTransforms)
@@ -72,7 +88,7 @@ internal static class ModelChoices
     public static ModelChoice Choose(CommandContext context, string name)
     {
         string model = name;
-        string? weights = null, kv = null, headWeights = null;
+        string? weights = null, kv = null, headWeights = null, deviceLayers = null;
         bool grayscale = false;
         var vision = VisionOptions.Empty;
         ImageTransformPipeline? transforms = null;
@@ -82,6 +98,7 @@ internal static class ModelChoices
             weights = (string?)alias["weights"];
             headWeights = (string?)alias["head_weights"];
             kv = (string?)alias["kv"];
+            deviceLayers = alias["device_layers"]?.ToString();
             grayscale = alias["grayscale"] is System.Text.Json.Nodes.JsonValue grey && grey.TryGetValue(out bool value) && value;
             if (alias["vision_options"] is System.Text.Json.Nodes.JsonObject saved)
             {
@@ -108,7 +125,11 @@ internal static class ModelChoices
         vision = vision.With(VisionOptionsOf(context));
         return new ModelChoice(model, context.Option("--weights") ?? weights, context.Option("--kv") ?? kv,
             context.Option("--context") is null ? null : context.IntOption("--context", 0), adapter,
-            grayscale || context.Flag("--grayscale"), vision.Count > 0 ? vision : null, given ?? transforms) { AdapterImages = tuned, HeadWeights = context.Option("--head-weights") ?? headWeights };
+            grayscale || context.Flag("--grayscale"), vision.Count > 0 ? vision : null, given ?? transforms)
+        {
+            AdapterImages = tuned, HeadWeights = context.Option("--head-weights") ?? headWeights,
+            DeviceLayers = Parsed(() => Idrak.Models.Abstractions.WeightPlacements.ParseDeviceLayers(context.Option(DeviceLayersOption) ?? deviceLayers, DeviceLayersOption), DeviceLayersOption),
+        };
     }
 
     // The head's registered format name: bf16 is bfloat16's short name, as in --weights.
@@ -267,8 +288,22 @@ internal static class ModelChoices
                 MergeAdapter = choice.Adapter,
                 AutoWeights = auto,
                 AutoWeightsContext = choice.Context ?? DefaultContext,
+                DeviceLayers = choice.DeviceLayers,
             });
             progress.Clear();
+        }
+
+        if (model.Placement is { } placed)
+        {
+            // A model split with the CPU or streamed from system memory is said on the error output (it is slower for it).
+            if (placed.Split || placed.Stream)
+            {
+                context.Error($"placement {placed}");
+            }
+            else
+            {
+                context.Detail($"placement {placed}");
+            }
         }
 
         if (model.Weights is { } chosen)

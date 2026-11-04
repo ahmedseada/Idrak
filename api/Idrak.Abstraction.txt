@@ -2129,6 +2129,31 @@ public enum Idrak.Abstraction.Devices.OffloadPriority : byte
   Hot = 0
   OptimizerState = 2
 
+public static class Idrak.Abstraction.Devices.OffloadTraffic
+  public static Idrak.Abstraction.Devices.OffloadTrafficCounts Read()
+  public static long MappedBytes { get; }
+  public static void CountBoundary(long bytes)
+  public static void CountLayer(string layer, bool staged, bool mapped)
+  public static void CountMapped(long bytes)
+  public static void CountPrefetched(long bytes)
+  public static void CountStaged(long bytes)
+
+public sealed record Idrak.Abstraction.Devices.OffloadTrafficCounts : System.IEquatable<Idrak.Abstraction.Devices.OffloadTrafficCounts>
+  public Idrak.Abstraction.Devices.OffloadTrafficCounts Since(Idrak.Abstraction.Devices.OffloadTrafficCounts before)
+  public OffloadTrafficCounts(long StagedBytes, long PrefetchedBytes, long MappedBytes, long LayersStaged, long LayersMapped, long BoundaryBytes, long BoundaryCrossings, System.Collections.Generic.IReadOnlyDictionary<string, long> MappedLayers)
+  public System.Collections.Generic.IReadOnlyDictionary<string, long> MappedLayers { get; init; }
+  public System.Text.Json.Nodes.JsonObject ToJson(int tokens)
+  public bool IsEmpty { get; }
+  public long BoundaryBytes { get; init; }
+  public long BoundaryCrossings { get; init; }
+  public long BusBytes { get; }
+  public long LayersMapped { get; init; }
+  public long LayersStaged { get; init; }
+  public long MappedBytes { get; init; }
+  public long PrefetchedBytes { get; init; }
+  public long StagedBytes { get; init; }
+  public string Describe(int tokens)
+
 public static class Idrak.Abstraction.Devices.PackedFormats
   public static int SplitAlignment(this Idrak.Abstraction.PackedFormat format)
   public static int ValuesPerWord(this Idrak.Abstraction.PackedFormat format)
@@ -3470,6 +3495,7 @@ public sealed class Idrak.Abstraction.Generation.DecodingContext : System.IDispo
   public DecodingContext(Idrak.Abstraction.Device device, int batch, int capacity, Idrak.Abstraction.Generation.KeyValueFormat format = (Idrak.Abstraction.Generation.KeyValueFormat)0)
   public Idrak.Abstraction.ComputeGraph CaptureStep(System.Action step)
   public Idrak.Abstraction.Device Device { get; }
+  public Idrak.Abstraction.Generation.DecodingContext On(Idrak.Abstraction.Device device)
   public Idrak.Abstraction.Generation.IDecodingStep OpenStep(int steps)
   public Idrak.Abstraction.Generation.IKeyValueLayout Layout { get; }
   public Idrak.Abstraction.Generation.KeyValueCache CacheFor(object owner, int rows, int headDim)
