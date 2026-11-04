@@ -45,10 +45,11 @@ public sealed partial class Tensor : IDisposable
     }
 
     // A view (plan 37, V1): `layout` over `storage` (another tensor's, referenced once more by the caller), its values read
-    // through the layout until something takes its storage directly (Materialize).
-    private Tensor(TensorLayout layout, Storage storage, Device device)
+    // through the layout until something takes its storage directly (Materialize). `shape` is the layout's own, or (a
+    // reshape strides cannot express) another of as many elements, read in the layout's row-major order.
+    private Tensor(TensorLayout layout, int[] shape, Storage storage, Device device)
     {
-        _shape = layout.Shape.ToArray();
+        _shape = shape;
         _storage = storage;
         _layout = layout;
         _pending = true;
@@ -74,13 +75,21 @@ public sealed partial class Tensor : IDisposable
 
     /// <summary>
     /// Where the elements sit in <see cref="Storage"/> (plan 37, V0): contiguous from element 0 for every tensor but a view
-    /// not copied yet, whose elements sit in another tensor's storage along its strides (see <see cref="IsView"/>).
+    /// not copied yet, whose elements sit in another tensor's storage along its strides (see <see cref="IsView"/>). The
+    /// elements in row-major order of <see cref="Shape"/> are those of the layout in its row-major order; its shape is
+    /// <see cref="Shape"/> but for a reshape of a view that strides do not express (<see cref="TensorLayout.Reshape"/>),
+    /// which keeps the view's layout.
     /// </summary>
     public TensorLayout Layout => _layout ??= TensorLayout.Contiguous(_shape);
 
+    // The layout of the storage this tensor's elements sit in (its own when contiguous, a view's source otherwise), its
+    // row-major order this tensor's: what operations that read strides (BackendCapabilities.StridedInputs) are given, with
+    // _storage, in place of Storage.
+    internal TensorLayout ElementOrder => _pending ? _layout! : Layout;
+
     /// <summary>
     /// Whether this tensor is a view not copied yet (<see cref="Permute"/>, <see cref="Narrow"/>, <see cref="Select"/>,
-    /// <see cref="Expand"/> on a device that reads strides): its elements are another tensor's, read through
+    /// <see cref="Expand"/> on a device that reads strides, and reshapes of those): its elements are another tensor's, read through
     /// <see cref="Layout"/>. Reading <see cref="Storage"/> copies them to a block of its own once (what the copies before
     /// views were); operations that read strides do not.
     /// </summary>
@@ -112,16 +121,19 @@ public sealed partial class Tensor : IDisposable
         return Traced("contiguous", y, start);
     }
 
-    // Whether views are made on this tensor's device: on (TensorViews.Enabled) where its kernels read strides.
-    internal bool MakesViews => TensorViews.Enabled && Backend.Capabilities.StridedInputs.Contains(Operations.Ops.StridedCopy);
+    // Whether views are made on this tensor's device: on (TensorViews.Enabled) where its kernels read strides, except while
+    // recorded activations are kept as bfloat16 (ActivationMemory.CompressToBFloat16): there a copy is packed to half its
+    // size, where a view would keep its source's float values for as long as it lives.
+    internal bool MakesViews => TensorViews.Enabled && !(ActivationMemory.BFloat16 && Autograd.IsEnabled)
+        && Backend.Capabilities.StridedInputs.Contains(Operations.Ops.StridedCopy);
 
     // A view of this tensor's elements through `layout` (over the storage this tensor's elements sit in); not tracked for
     // gradients here (the caller records its backward step).
-    internal Tensor View(TensorLayout layout)
+    internal Tensor View(TensorLayout layout, int[]? shape = null)
     {
         var storage = _storage;
         storage.AddRef();
-        var view = new Tensor(layout, storage, Device);
+        var view = new Tensor(layout, shape ?? layout.Shape.ToArray(), storage, Device);
         lock (storage)
         {
             var pending = storage.PendingViews ??= [];
@@ -137,12 +149,39 @@ public sealed partial class Tensor : IDisposable
         return view;
     }
 
-    // This tensor's layout over the storage its elements sit in: its own when contiguous, a view's otherwise.
-    internal TensorLayout SourceLayout => _pending ? _layout! : Layout;
-
-    // Copies a view's elements to a storage of its own, once: from now on it is an ordinary contiguous tensor.
-    private Storage Materialize()
+    // This tensor's layout over the storage its elements sit in, of its own shape (what a view of it builds on): its own
+    // when contiguous, a view's otherwise; a reshape of a view that strides do not express is copied to its own first.
+    internal TensorLayout SourceLayout
     {
+        get
+        {
+            if (!_pending)
+            {
+                return Layout;
+            }
+
+            var layout = _layout!;
+            if (layout.Shape.SequenceEqual(_shape))
+            {
+                return layout;
+            }
+
+            if (layout.Reshape(_shape) is { } strided)
+            {
+                return strided;
+            }
+
+            Materialize();
+            return Layout;
+        }
+    }
+
+    // Copies a view's elements to a storage of its own, once: from now on it is an ordinary contiguous tensor. A source whose
+    // values were released while views read them is evicted after the last of them, unless this copy is made because the
+    // source is being handed out (flushing).
+    private Storage Materialize(bool flushing = false)
+    {
+        Storage source, own;
         lock (this)
         {
             if (!_pending)
@@ -150,9 +189,9 @@ public sealed partial class Tensor : IDisposable
                 return _storage;
             }
 
-            var source = _storage;
+            source = _storage;
             var layout = _layout!;
-            var own = Backend.Allocate(Size, zeroed: false);
+            own = Backend.Allocate(Size, zeroed: false);
             Backend.StridedCopy(source, layout.Offset, layout.Shape, layout.Strides, own);
             _versionOffset = source.Version;
             _storage = own;
@@ -160,8 +199,14 @@ public sealed partial class Tensor : IDisposable
             _pending = false;
             source.Release();
             TensorViews.CountMaterialized((long)Size * sizeof(float));
-            return own;
         }
+
+        if (!flushing)
+        {
+            DropUnviewed(source);
+        }
+
+        return own;
     }
 
     // Before a tensor hands out a storage with views of it not copied yet (a direct access may write it): the views copy
@@ -184,7 +229,7 @@ public sealed partial class Tensor : IDisposable
         {
             if (weak.TryGetTarget(out var view) && view._pending && view._disposed == 0)
             {
-                view.Materialize();
+                view.Materialize(flushing: true);
             }
         }
     }
@@ -576,10 +621,18 @@ public sealed partial class Tensor : IDisposable
         Grad = null;
         _parents = null;
         _backward = null;
+        bool view;
+        var storage = _storage;
         lock (this)
         {
+            view = _pending;
             _pending = false;                                            // a view's source is no longer read through it
-            _storage.Release();
+            storage.Release();
+        }
+
+        if (view)
+        {
+            DropUnviewed(storage);
         }
     }
 
@@ -657,9 +710,50 @@ public sealed partial class Tensor : IDisposable
     /// </summary>
     internal void DropValue()
     {
-        if (_disposed == 0)
+        if (_disposed != 0)
         {
-            Backend.Evict(Storage, null);
+            return;
+        }
+
+        var storage = _storage;
+        if (!_pending && HasLiveViews(storage, null))
+        {
+            storage.DropWhenUnviewed = true;                             // views read them still: dropped after the last (plan 37, V1b)
+            return;
+        }
+
+        Backend.Evict(Storage, null);
+    }
+
+    // The storage this tensor holds as it is (a view's source while the view is not copied): for comparing which tensors
+    // share memory without copying a view (ActivationMemory.Release).
+    internal Storage Held => _storage;
+
+    // Whether views not copied yet, other than `except`, read `storage`.
+    private static bool HasLiveViews(Storage storage, Tensor? except)
+    {
+        lock (storage)
+        {
+            foreach (var weak in storage.PendingViews ?? [])
+            {
+                if (weak.TryGetTarget(out var view) && !ReferenceEquals(view, except) && view._pending && view._disposed == 0)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    // After a view stopped reading `source` (copied to its own, or disposed): a source whose values were released while
+    // views read them is evicted once none does.
+    private void DropUnviewed(Storage source)
+    {
+        if (source.DropWhenUnviewed && source.Alive && !source.Evicted && !HasLiveViews(source, this))
+        {
+            source.DropWhenUnviewed = false;
+            source.Backend.Evict(source, null);
         }
     }
 

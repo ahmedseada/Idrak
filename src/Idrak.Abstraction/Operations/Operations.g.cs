@@ -171,9 +171,12 @@ internal static class OperationIndex
     public const int ExpertGatedPair = 155;
     public const int ExpertMatMul = 156;
     public const int StridedCopy = 157;
+    public const int BatchedMatMulStrided = 158;
+    public const int AttentionTiledStrided = 159;
+    public const int AttentionTiledStridedBackward = 160;
 
     /// <summary>The number of operations.</summary>
-    public const int Count = 158;
+    public const int Count = 161;
 }
 
 /// <summary>
@@ -1421,6 +1424,35 @@ public static class OperationKernels
     /// <paramref name="y"/> of shape's elements. Every element is copied as it is.
     /// </summary>
     public delegate void StridedCopy(Backend backend, Storage x, long offset, ReadOnlySpan<int> shape, ReadOnlySpan<long> strides, Storage y);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.BatchedMatMulStrided"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.BatchedMatMul"/> with each operand read through its layout (plan 37, V1b): the elements of
+    /// <paramref name="a"/> [batch, m, k] (stored [batch, k, m] when <paramref name="transA"/>) are those of
+    /// <paramref name="aLayout"/> over <paramref name="a"/> in its row-major order, and the same for b; a view is read as it
+    /// is, with no contiguous copy made first. The results are <see cref="Backend.BatchedMatMul"/>'s on the operands' elements, bit
+    /// for bit. A device that reads strides in its products lists this operation in
+    /// <see cref="BackendCapabilities.StridedInputs"/>.
+    /// </summary>
+    public delegate void BatchedMatMulStrided(Backend backend, Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionTiledStrided"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.AttentionTiled"/> with q, keys and values read through their layouts (plan 37, V1b): row r of q
+    /// [heads, rowsPerHead, dim] is the r-th run of dim elements of <paramref name="qLayout"/> over <paramref name="q"/> in
+    /// its row-major order (heads split from a projection and permuted, read where they are), and the same for keys and
+    /// values [heads, capacity, dim]; y is contiguous. Each layout holds its rows one after another
+    /// (its last dimension a multiple of dim, stride 1). The results are <see cref="Backend.AttentionTiled"/>'s, bit for bit.
+    /// </summary>
+    public delegate void AttentionTiledStrided(Backend backend, Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant);
+
+    /// <summary>
+    /// A kernel for <see cref="Ops.AttentionTiledStridedBackward"/>, given the device it runs on (<c>backend</c>) and the operation's arguments:
+    /// <see cref="Backend.AttentionTiledBackward"/> with q, keys and values read through their layouts as
+    /// <see cref="Backend.AttentionTiledStrided"/> reads them; output, dOutput and the gradients dq, dkeys, dvalues are contiguous.
+    /// The results are <see cref="Backend.AttentionTiledBackward"/>'s, bit for bit.
+    /// </summary>
+    public delegate void AttentionTiledStridedBackward(Backend backend, Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant);
 }
 
 /// <summary>
@@ -2511,6 +2543,32 @@ public static partial class Ops
     /// </summary>
     public static readonly Operation<OperationKernels.StridedCopy> StridedCopy = new("StridedCopy", OperationIndex.StridedCopy, KernelSource.Host);
 
+    /// <summary>
+    /// <see cref="Backend.BatchedMatMul"/> with each operand read through its layout (plan 37, V1b): the elements of
+    /// <c>a</c> [batch, m, k] (stored [batch, k, m] when <c>transA</c>) are those of
+    /// <c>aLayout</c> over <c>a</c> in its row-major order, and the same for b; a view is read as it
+    /// is, with no contiguous copy made first. The results are <see cref="Backend.BatchedMatMul"/>'s on the operands' elements, bit
+    /// for bit. A device that reads strides in its products lists this operation in
+    /// <see cref="BackendCapabilities.StridedInputs"/>.
+    /// </summary>
+    public static readonly Operation<OperationKernels.BatchedMatMulStrided> BatchedMatMulStrided = new("BatchedMatMulStrided", OperationIndex.BatchedMatMulStrided, KernelSource.Host);
+
+    /// <summary>
+    /// <see cref="Backend.AttentionTiled"/> with q, keys and values read through their layouts (plan 37, V1b): row r of q
+    /// [heads, rowsPerHead, dim] is the r-th run of dim elements of <c>qLayout</c> over <c>q</c> in
+    /// its row-major order (heads split from a projection and permuted, read where they are), and the same for keys and
+    /// values [heads, capacity, dim]; y is contiguous. Each layout holds its rows one after another
+    /// (its last dimension a multiple of dim, stride 1). The results are <see cref="Backend.AttentionTiled"/>'s, bit for bit.
+    /// </summary>
+    public static readonly Operation<OperationKernels.AttentionTiledStrided> AttentionTiledStrided = new("AttentionTiledStrided", OperationIndex.AttentionTiledStrided, KernelSource.Host);
+
+    /// <summary>
+    /// <see cref="Backend.AttentionTiledBackward"/> with q, keys and values read through their layouts as
+    /// <see cref="Backend.AttentionTiledStrided"/> reads them; output, dOutput and the gradients dq, dkeys, dvalues are contiguous.
+    /// The results are <see cref="Backend.AttentionTiledBackward"/>'s, bit for bit.
+    /// </summary>
+    public static readonly Operation<OperationKernels.AttentionTiledStridedBackward> AttentionTiledStridedBackward = new("AttentionTiledStridedBackward", OperationIndex.AttentionTiledStridedBackward, KernelSource.Host);
+
     /// <summary>Every operation, by <see cref="Operation.Index"/>.</summary>
     public static IReadOnlyList<Operation> All { get; } =
     [
@@ -2672,6 +2730,9 @@ public static partial class Ops
         ExpertGatedPair,
         ExpertMatMul,
         StridedCopy,
+        BatchedMatMulStrided,
+        AttentionTiledStrided,
+        AttentionTiledStridedBackward,
     ];
 
     /// <summary>The operation named <paramref name="name"/> (as <see cref="Operation.Name"/>, any case), or null.</summary>

@@ -142,15 +142,17 @@ public sealed partial class Tensor
         }
 
         Tensor y;
-        if (_pending && _layout!.IsContiguous)
+        if (_pending)
         {
-            // A view whose elements sit one after another (a slice along its first dimensions): the reshape is a view too.
-            y = View(new TensorLayout(resolved, TensorLayout.RowMajor(resolved), _layout.Offset));
+            // A reshape keeps the row-major order, so the reshape of a view is a view too: of strides where they express the
+            // new shape, else of the view's own layout, read in its order (plan 37, V1b; nothing is copied either way).
+            var layout = _layout!;
+            y = View(layout.Reshape(resolved) ?? layout, resolved);
         }
         else
         {
             // The storage shared as it is: a write through the reshape takes it from Storage, which copies pending views first.
-            var storage = _pending ? Storage : _storage;
+            var storage = _storage;
             storage.AddRef();
             y = new Tensor(resolved, storage, Device, track: true);
         }

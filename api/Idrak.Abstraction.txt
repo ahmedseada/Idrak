@@ -1582,6 +1582,8 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   public virtual void AttentionSpansStridedKernel(Idrak.Abstraction.Devices.Storage q, long qOffset, Idrak.Abstraction.Devices.Storage k, long kOffset, Idrak.Abstraction.Devices.Storage v, long vOffset, int qRow, int kRow, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, Idrak.Abstraction.Devices.Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
   public virtual void AttentionTiledBackwardKernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public virtual void AttentionTiledKernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
+  public virtual void AttentionTiledStridedBackwardKernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.TensorLayout qLayout, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.TensorLayout keysLayout, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.TensorLayout valuesLayout, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
+  public virtual void AttentionTiledStridedKernel(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.TensorLayout qLayout, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.TensorLayout keysLayout, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.TensorLayout valuesLayout, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public virtual void AvgPoolBackwardKernel(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, in Idrak.Abstraction.Devices.ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
   public virtual void AvgPoolKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, in Idrak.Abstraction.Devices.ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
   public virtual void AxpyAtKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int offset, float alpha)
@@ -1589,6 +1591,7 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   public virtual void BFloat16DequantizeKernel(Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage w, int k, int n)
   public virtual void BFloat16MatMulKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage y, int m, int n, int k)
   public virtual void BatchedMatMulKernel(Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+  public virtual void BatchedMatMulStridedKernel(Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.TensorLayout aLayout, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.TensorLayout bLayout, Idrak.Abstraction.Devices.Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
   public virtual void BiasGeluKernel(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage bias, Idrak.Abstraction.Devices.Storage y, int n, int cols)
   public virtual void BinaryKernel(Idrak.Abstraction.Devices.BinaryOp op, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage c, int n)
   public virtual void BoxIouLossBackwardKernel(Idrak.Abstraction.Devices.Storage predicted, Idrak.Abstraction.Devices.Storage target, Idrak.Abstraction.Devices.Storage lossGrads, Idrak.Abstraction.Devices.Storage dPredicted, int count, Idrak.Abstraction.BoxOverlap overlap, float eps)
@@ -1710,6 +1713,8 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   public void AttentionSpansStrided(Idrak.Abstraction.Devices.Storage q, long qOffset, Idrak.Abstraction.Devices.Storage k, long kOffset, Idrak.Abstraction.Devices.Storage v, long vOffset, int qRow, int kRow, Idrak.Abstraction.Devices.Storage starts, Idrak.Abstraction.Devices.Storage ends, Idrak.Abstraction.Devices.Storage y, int batch, int heads, int kvHeads, int headsPerTable, int rows, int dim, float scale)
   public void AttentionTiled(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public void AttentionTiledBackward(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
+  public void AttentionTiledStrided(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.TensorLayout qLayout, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.TensorLayout keysLayout, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.TensorLayout valuesLayout, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
+  public void AttentionTiledStridedBackward(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.TensorLayout qLayout, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.TensorLayout keysLayout, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.TensorLayout valuesLayout, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant = default)
   public void AvgPool(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, in Idrak.Abstraction.Devices.ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
   public void AvgPoolBackward(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, in Idrak.Abstraction.Devices.ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
   public void Axpy(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float alpha)
@@ -1717,6 +1722,7 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   public void BFloat16Dequantize(Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage w, int k, int n)
   public void BFloat16MatMul(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage y, int m, int n, int k)
   public void BatchedMatMul(Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+  public void BatchedMatMulStrided(Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.TensorLayout aLayout, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.TensorLayout bLayout, Idrak.Abstraction.Devices.Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
   public void BiasGelu(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage bias, Idrak.Abstraction.Devices.Storage y, int n, int cols)
   public void Binary(Idrak.Abstraction.Devices.BinaryOp op, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage c, int n)
   public void BoxIouLoss(Idrak.Abstraction.Devices.Storage predicted, Idrak.Abstraction.Devices.Storage target, Idrak.Abstraction.Devices.Storage losses, int count, Idrak.Abstraction.BoxOverlap overlap, float eps)
@@ -5037,6 +5043,8 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionStridedBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionTiled (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AttentionTiledBackward (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.AttentionTiledStrided (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.AttentionTiledStridedBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AvgPool (below)
   nested Idrak.Abstraction.Operations.OperationKernels.AvgPoolBackward (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Axpy (below)
@@ -5045,6 +5053,7 @@ public static class Idrak.Abstraction.Operations.OperationKernels
   nested Idrak.Abstraction.Operations.OperationKernels.BFloat16MatMul (below)
   nested Idrak.Abstraction.Operations.OperationKernels.BFloat16TransposedMatMul (below)
   nested Idrak.Abstraction.Operations.OperationKernels.BatchedMatMul (below)
+  nested Idrak.Abstraction.Operations.OperationKernels.BatchedMatMulStrided (below)
   nested Idrak.Abstraction.Operations.OperationKernels.BiasGelu (below)
   nested Idrak.Abstraction.Operations.OperationKernels.Binary (below)
   nested Idrak.Abstraction.Operations.OperationKernels.BoxIouLoss (below)
@@ -5225,6 +5234,10 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.AttentionTile
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.AttentionTiledBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant)
 
+public delegate void Idrak.Abstraction.Operations.OperationKernels.AttentionTiledStrided(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.TensorLayout qLayout, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.TensorLayout keysLayout, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.TensorLayout valuesLayout, Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.AttentionTiledStridedBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.TensorLayout qLayout, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.TensorLayout keysLayout, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.TensorLayout valuesLayout, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage logSumExp, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, Idrak.Abstraction.Devices.AttentionVariant variant)
+
 public delegate void Idrak.Abstraction.Operations.OperationKernels.AvgPool(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, in Idrak.Abstraction.Devices.ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.AvgPoolBackward(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, in Idrak.Abstraction.Devices.ConvGeometry g, bool countIncludePad, int padBottom, int padRight)
@@ -5240,6 +5253,8 @@ public delegate void Idrak.Abstraction.Operations.OperationKernels.BFloat16MatMu
 public delegate bool Idrak.Abstraction.Operations.OperationKernels.BFloat16TransposedMatMul(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage packed, Idrak.Abstraction.Devices.Storage c, int m, int n, int k, float beta, Idrak.Abstraction.Devices.Storage? u, Idrak.Abstraction.Devices.Storage? v, int rank)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.BatchedMatMul(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.Devices.Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+
+public delegate void Idrak.Abstraction.Operations.OperationKernels.BatchedMatMulStrided(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage a, Idrak.Abstraction.TensorLayout aLayout, Idrak.Abstraction.Devices.Storage b, Idrak.Abstraction.TensorLayout bLayout, Idrak.Abstraction.Devices.Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
 
 public delegate void Idrak.Abstraction.Operations.OperationKernels.BiasGelu(Idrak.Abstraction.Devices.Backend backend, Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage bias, Idrak.Abstraction.Devices.Storage y, int n, int cols)
 
@@ -5517,6 +5532,8 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.AttentionStridedBackward> AttentionStridedBackward
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.AttentionTiled> AttentionTiled
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.AttentionTiledBackward> AttentionTiledBackward
+  public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.AttentionTiledStrided> AttentionTiledStrided
+  public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.AttentionTiledStridedBackward> AttentionTiledStridedBackward
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.AvgPool> AvgPool
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.AvgPoolBackward> AvgPoolBackward
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.Axpy> Axpy
@@ -5525,6 +5542,7 @@ public static class Idrak.Abstraction.Operations.Ops
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.BFloat16MatMul> BFloat16MatMul
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.BFloat16TransposedMatMul> BFloat16TransposedMatMul
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.BatchedMatMul> BatchedMatMul
+  public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.BatchedMatMulStrided> BatchedMatMulStrided
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.BiasGelu> BiasGelu
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.Binary> Binary
   public static readonly Idrak.Abstraction.Operations.Operation<Idrak.Abstraction.Operations.OperationKernels.BoxIouLoss> BoxIouLoss
@@ -6528,6 +6546,7 @@ public sealed class Idrak.Abstraction.TensorLayout
   public Idrak.Abstraction.TensorLayout Narrow(int dim, int start, int length)
   public Idrak.Abstraction.TensorLayout Permute(System.ReadOnlySpan<int> dims)
   public Idrak.Abstraction.TensorLayout Select(int dim, int index)
+  public Idrak.Abstraction.TensorLayout? Reshape(System.ReadOnlySpan<int> shape)
   public System.ReadOnlySpan<int> Shape { get; }
   public System.ReadOnlySpan<long> Strides { get; }
   public TensorLayout(System.ReadOnlySpan<int> shape, System.ReadOnlySpan<long> strides, long offset)

@@ -73,7 +73,11 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
         FewRows = CpuTuning.FewRows,
         DecodeAttentionHeadDim = CpuTuning.DecodeAttentionHeads,
         TiledAttentionHeadDim = CpuTuning.TiledAttentionHeads,
-        StridedInputs = new HashSet<Operations.Operation> { Operations.Ops.StridedCopy, Operations.Ops.BatchedMatMul },   // views (plan 37, V1)
+        StridedInputs = new HashSet<Operations.Operation>                    // views (plan 37, V1 and V1b)
+        {
+            Operations.Ops.StridedCopy, Operations.Ops.BatchedMatMul, Operations.Ops.BatchedMatMulStrided, Operations.Ops.AttentionTiledStrided,
+            Operations.Ops.AttentionTiledStridedBackward,
+        },
     };
 
     public override string Kind => "cpu";

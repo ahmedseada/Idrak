@@ -15,7 +15,7 @@ namespace Idrak.Abstraction.Testing.Devices;
 internal static class OperationCalls
 {
     // The operations this file knows; Ops.All.Count when it is current.
-    public const int Count = 158;
+    public const int Count = 161;
 
     // The parameter names of each operation (after the backend), by operation index.
     public static readonly string[][] Parameters =
@@ -178,6 +178,9 @@ internal static class OperationCalls
         ["x", "offsets", "experts", "hidden", "rows", "k", "n", "activation"],
         ["x", "offsets", "experts", "y", "rows", "k", "n"],
         ["x", "offset", "shape", "strides", "y"],
+        ["a", "aLayout", "b", "bLayout", "c", "batch", "m", "n", "k", "transA", "transB", "beta"],
+        ["q", "qLayout", "keys", "keysLayout", "values", "valuesLayout", "position", "y", "logSumExp", "heads", "rowsPerHead", "steps", "capacity", "dim", "scale", "variant"],
+        ["q", "qLayout", "keys", "keysLayout", "values", "valuesLayout", "output", "logSumExp", "dOutput", "dq", "dkeys", "dvalues", "heads", "rowsPerHead", "steps", "capacity", "dim", "scale", "variant"],
     ];
 
     // Registers, for devices of `kind`, a kernel per operation that reports each call to `recorder` with its arguments
@@ -2272,6 +2275,45 @@ internal static class OperationCalls
                 recorder.Exit(call);
             }
         })),
+        Kernels.Register(Ops.BatchedMatMulStrided, kind, (OperationKernels.BatchedMatMulStrided)((Backend backend, Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta) =>
+        {
+            var call = recorder.Enter(backend, Ops.BatchedMatMulStrided, [a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta]);
+            try
+            {
+                backend.BatchedMatMulStridedKernel(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+                CallRecorder.Returned(call, null);
+            }
+            finally
+            {
+                recorder.Exit(call);
+            }
+        })),
+        Kernels.Register(Ops.AttentionTiledStrided, kind, (OperationKernels.AttentionTiledStrided)((Backend backend, Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant) =>
+        {
+            var call = recorder.Enter(backend, Ops.AttentionTiledStrided, [q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant]);
+            try
+            {
+                backend.AttentionTiledStridedKernel(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+                CallRecorder.Returned(call, null);
+            }
+            finally
+            {
+                recorder.Exit(call);
+            }
+        })),
+        Kernels.Register(Ops.AttentionTiledStridedBackward, kind, (OperationKernels.AttentionTiledStridedBackward)((Backend backend, Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant) =>
+        {
+            var call = recorder.Enter(backend, Ops.AttentionTiledStridedBackward, [q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant]);
+            try
+            {
+                backend.AttentionTiledStridedBackwardKernel(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+                CallRecorder.Returned(call, null);
+            }
+            finally
+            {
+                recorder.Exit(call);
+            }
+        })),
     ];
 
     // Runs `operation` on `backend` through the dispatcher (Backend.Name(...)) with arguments as Intercept records them;
@@ -2722,6 +2764,15 @@ internal static class OperationCalls
                     return null;
                 case 157:
                     backend.StridedCopy((Storage)a[0]!, (long)a[1]!, (int[])a[2]!, (long[])a[3]!, (Storage)a[4]!);
+                    return null;
+                case 158:
+                    backend.BatchedMatMulStrided((Storage)a[0]!, (TensorLayout)a[1]!, (Storage)a[2]!, (TensorLayout)a[3]!, (Storage)a[4]!, (int)a[5]!, (int)a[6]!, (int)a[7]!, (int)a[8]!, (bool)a[9]!, (bool)a[10]!, (float)a[11]!);
+                    return null;
+                case 159:
+                    backend.AttentionTiledStrided((Storage)a[0]!, (TensorLayout)a[1]!, (Storage)a[2]!, (TensorLayout)a[3]!, (Storage)a[4]!, (TensorLayout)a[5]!, (Storage)a[6]!, (Storage)a[7]!, (Storage?)a[8], (int)a[9]!, (int)a[10]!, (int)a[11]!, (int)a[12]!, (int)a[13]!, (float)a[14]!, (AttentionVariant)a[15]!);
+                    return null;
+                case 160:
+                    backend.AttentionTiledStridedBackward((Storage)a[0]!, (TensorLayout)a[1]!, (Storage)a[2]!, (TensorLayout)a[3]!, (Storage)a[4]!, (TensorLayout)a[5]!, (Storage)a[6]!, (Storage)a[7]!, (Storage)a[8]!, (Storage)a[9]!, (Storage)a[10]!, (Storage)a[11]!, (int)a[12]!, (int)a[13]!, (int)a[14]!, (int)a[15]!, (int)a[16]!, (float)a[17]!, (AttentionVariant)a[18]!);
                     return null;
                 default:
                     throw new NotSupportedException($"{operation} is not known to this version of the testing kit.");

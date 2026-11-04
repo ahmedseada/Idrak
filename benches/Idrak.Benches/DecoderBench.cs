@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using Idrak.Layers;
 using Idrak.Models.Abstractions;
 
@@ -81,16 +82,20 @@ internal static class DecoderBench
                 {
                     string label = bfloat16 ? $"step, bfloat16 products, batch {batch}" : checkpointing ? $"step, checkpointed blocks, batch {batch}" : $"step, batch {batch}";
                     var (cold, warm) = Bench.Time(device, () => Step(checkpointing, bfloat16), settings.Repeats, settings.Warmup);
+                    var views = Views.Start();
                     var census = Bench.Count(() => Step(checkpointing, bfloat16));
+                    views = views.Stop();
                     long peak = Bench.PeakBytes(device, () => Step(checkpointing, bfloat16));
                     double tokensPerSecond = rows / (warm / 1000);
                     Console.WriteLine(Bench.Line(label, ("ms warm", Bench.F(warm, "0.0")), ("ms cold", Bench.F(cold, "0")), ("launches", census.Count.ToString()),
                         ("peak", Bench.Mib(peak)), ("tok/s", Bench.F(tokensPerSecond, "0"))));
+                    Console.WriteLine(views.Line("   views a step"));
                     report.Add(Section, label, device, "warm", warm, "ms");
                     report.Add(Section, label, device, "cold", cold, "ms");
                     report.Add(Section, label, device, "launches", census.Count, "launches");
                     report.Add(Section, label, device, "peak", peak / 1048576.0, "MiB");
                     report.Add(Section, label, device, "throughput", tokensPerSecond, "tok/s");
+                    report.Add(Section, label, device, "view copies", views.CopiedBytes / 1048576.0, "MiB");
                     if (!checkpointing && !bfloat16)
                     {
                         Console.WriteLine("   launches a step by operation (forward and backward apart, the top twelve; MiB out counts a view's elements too):");
@@ -155,6 +160,7 @@ internal static class DecoderBench
             }
 
             long launches = 0;
+            var tokenViews = default(Views);
             var watchAll = System.Diagnostics.Stopwatch.StartNew();
             using (Autograd.NoGrad())
             {
@@ -163,7 +169,9 @@ internal static class DecoderBench
                     float id = random.Next(spec.Vocabulary);
                     if (t == generated - 1)
                     {
+                        tokenViews = Views.Start();
                         launches = Bench.Count(() => model.ForwardCached(Tensor.From([id], [1, 1], device), context)).Count;
+                        tokenViews = tokenViews.Stop();
                     }
                     else
                     {
@@ -179,10 +187,29 @@ internal static class DecoderBench
             long cacheBytes = ComputeResources.GetMemoryUsage(device).InUse;
             string label = $"cache {format}, prompt {prompt}, {generated} tokens";
             Console.WriteLine(Bench.Line(label, ("tok/s", Bench.F(tokensPerSecond, "0.0")), ("launches/token", launches.ToString()), ("ms prompt", Bench.F(promptMs, "0.0")), ("in use", Bench.Mib(cacheBytes))));
+            Console.WriteLine(tokenViews.Line("   views a token"));
             report.Add(Section, label, device, "decoding", tokensPerSecond, "tok/s");
             report.Add(Section, label, device, "launches a token", launches, "launches");
             report.Add(Section, label, device, "prompt", promptMs, "ms");
         }
+    }
+
+    /// <summary>
+    /// The views (plan 37, TensorViews) a span of work made, copied to a block of their own, and read through short-lived
+    /// copies: what views save (none copied) or cost, next to the copies views off makes instead.
+    /// </summary>
+    private readonly record struct Views(long Made, long Materialized, long MaterializedBytes, long Scratch, long ScratchBytes)
+    {
+        public static Views Start() => new(TensorViews.Made, TensorViews.Materialized, TensorViews.MaterializedBytes, TensorViews.Scratch, TensorViews.ScratchBytes);
+
+        public Views Stop() => new(TensorViews.Made - Made, TensorViews.Materialized - Materialized, TensorViews.MaterializedBytes - MaterializedBytes,
+            TensorViews.Scratch - Scratch, TensorViews.ScratchBytes - ScratchBytes);
+
+        public long CopiedBytes => MaterializedBytes + ScratchBytes;
+
+        public string Line(string label) => Bench.Line(label, ("made", Made.ToString(CultureInfo.InvariantCulture)),
+            ("copied to own", string.Create(CultureInfo.InvariantCulture, $"{Materialized} ({Bench.Mib(MaterializedBytes)})")),
+            ("short-lived copies", string.Create(CultureInfo.InvariantCulture, $"{Scratch} ({Bench.Mib(ScratchBytes)})")));
     }
 
     /// <summary>Deterministic random weights for a spec: norms near one, the rest small.</summary>

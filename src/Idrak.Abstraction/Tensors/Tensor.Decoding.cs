@@ -131,8 +131,19 @@ public sealed partial class Tensor
         bool record = Autograd.IsEnabled && (q.RequiresGrad || keys.RequiresGrad || values.RequiresGrad);
         // A checkpoint's first pass asks for the log-sum-exp too, so it runs the kernel its recompute runs (Autograd.IsFirstPass).
         var lse = record || Autograd.IsFirstPass ? Empty([heads, rowsPerHead], q.Device, track: false) : null;
-        q.Backend.AttentionTiled(q.Storage, keys.Storage, values.Storage, zero.Storage, y.Storage, lse?.Storage, heads, rowsPerHead, steps,
-            capacity, dim, scale, variant);
+        bool strided = StridedAttention(q, keys, values, dim);
+        if (strided)
+        {
+            // Heads split from a projection and permuted (views) read where they are (plan 37, V1b).
+            q.Backend.AttentionTiledStrided(q._storage, q.ElementOrder, keys._storage, keys.ElementOrder, values._storage, values.ElementOrder, zero.Storage,
+                y.Storage, lse?.Storage, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else
+        {
+            q.Backend.AttentionTiled(q.Storage, keys.Storage, values.Storage, zero.Storage, y.Storage, lse?.Storage, heads, rowsPerHead, steps,
+                capacity, dim, scale, variant);
+        }
+
         if (!record)
         {
             lse?.Dispose();
@@ -145,15 +156,35 @@ public sealed partial class Tensor
                 using var dq = q.RequiresGrad ? null : Empty(q._shape, q.Device, zeroed: true, track: false);
                 using var dk = keys.RequiresGrad ? null : Empty(keys._shape, q.Device, zeroed: true, track: false);
                 using var dv = values.RequiresGrad ? null : Empty(values._shape, q.Device, zeroed: true, track: false);
-                q.Backend.AttentionTiledBackward(q.Storage, keys.Storage, values.Storage, y.Storage, lse!.Storage, g.Storage,
-                    dq?.Storage ?? q.GradStorage(), dk?.Storage ?? keys.GradStorage(), dv?.Storage ?? values.GradStorage(),
-                    heads, rowsPerHead, steps, capacity, dim, scale, variant);
+                // The output's own values, read only: its views (the merged heads) are not copied first, as Storage would.
+                var output = y._storage;
+                if (strided && StridedAttention(q, keys, values, dim))
+                {
+                    q.Backend.AttentionTiledStridedBackward(q._storage, q.ElementOrder, keys._storage, keys.ElementOrder, values._storage, values.ElementOrder,
+                        output, lse!.Storage, g.Storage, dq?.Storage ?? q.GradStorage(), dk?.Storage ?? keys.GradStorage(),
+                        dv?.Storage ?? values.GradStorage(), heads, rowsPerHead, steps, capacity, dim, scale, variant);
+                }
+                else
+                {
+                    q.Backend.AttentionTiledBackward(q.Storage, keys.Storage, values.Storage, output, lse!.Storage, g.Storage,
+                        dq?.Storage ?? q.GradStorage(), dk?.Storage ?? keys.GradStorage(), dv?.Storage ?? values.GradStorage(),
+                        heads, rowsPerHead, steps, capacity, dim, scale, variant);
+                }
+
                 lse.Dispose();
             }, q, keys, values);
         }
 
         return Traced("attention", y, start);
     }
+
+    // Whether the tiled attention reads q, keys and values through their layouts: one of them a view, on a device whose
+    // attention reads strides (BackendCapabilities.StridedInputs), each holding its rows of `dim` one after another.
+    private static bool StridedAttention(Tensor q, Tensor keys, Tensor values, int dim) =>
+        (q._pending || keys._pending || values._pending)
+        && q.Backend.Capabilities.StridedInputs.Contains(Operations.Ops.AttentionTiledStrided)
+        && q.Backend.Capabilities.StridedInputs.Contains(Operations.Ops.AttentionTiledStridedBackward)
+        && q.ElementOrder.HasRows(dim) && keys.ElementOrder.HasRows(dim) && values.ElementOrder.HasRows(dim);
 
     /// <summary>
     /// Attention in which each query row sees one range of keys (any mask that is not plainly causal: bidirectional,

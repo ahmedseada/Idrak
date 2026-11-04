@@ -12506,6 +12506,286 @@ public abstract partial class Backend
         CpuBackend.Instance.StridedCopy(h[x], offset, shape, strides, h[y]);
     }
 
+    /// <summary>
+    /// <see cref="BatchedMatMul"/> with each operand read through its layout (plan 37, V1b): the elements of
+    /// <paramref name="a"/> [batch, m, k] (stored [batch, k, m] when <paramref name="transA"/>) are those of
+    /// <paramref name="aLayout"/> over <paramref name="a"/> in its row-major order, and the same for b; a view is read as it
+    /// is, with no contiguous copy made first. The results are <see cref="BatchedMatMul"/>'s on the operands' elements, bit
+    /// for bit. A device that reads strides in its products lists this operation in
+    /// <see cref="BackendCapabilities.StridedInputs"/>.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.BatchedMatMulStrided"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>BatchedMatMulStridedKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void BatchedMatMulStrided(Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    {
+        if (_kernels is null && _moves is null)
+        {
+            BatchedMatMulStridedKernel(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            BatchedMatMulStridedGuarded(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+        }
+        else
+        {
+            BatchedMatMulStridedRegistered(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BatchedMatMulStridedRegistered(Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.BatchedMatMulStrided) is OperationKernels.BatchedMatMulStrided kernel)
+        {
+            kernel(this, a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+            return;
+        }
+
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                BatchedMatMulStridedGuarded(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+            }
+            else
+            {
+                BatchedMatMulStridedKernel(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.BatchedMatMulStrided))
+        {
+            BatchedMatMulStridedKernel(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.BatchedMatMulStrided);
+        try
+        {
+            BatchedMatMulStridedKernel(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(this, failure);
+            BatchedMatMulStridedOnHost(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // BatchedMatMulStrided on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void BatchedMatMulStridedGuarded(Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    {
+        try
+        {
+            BatchedMatMulStridedKernel(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.BatchedMatMulStrided))
+        {
+            FellBack(Ops.BatchedMatMulStrided.Name, refused, "the host");
+            BatchedMatMulStridedOnHost(a, aLayout, b, bLayout, c, batch, m, n, k, transA, transB, beta);
+        }
+    }
+
+    // The host fallback of BatchedMatMulStrided (the default body of BatchedMatMulStridedKernel), for RetryOnHost.
+    private void BatchedMatMulStridedOnHost(Storage a, TensorLayout aLayout, Storage b, TensorLayout bLayout, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    {
+        using var h = new HostCall(this, nameof(BatchedMatMulStrided));
+        CpuBackend.Instance.BatchedMatMulStrided(h[a], aLayout, h[b], bLayout, h[c], batch, m, n, k, transA, transB, beta);
+    }
+
+    /// <summary>
+    /// <see cref="AttentionTiled"/> with q, keys and values read through their layouts (plan 37, V1b): row r of q
+    /// [heads, rowsPerHead, dim] is the r-th run of dim elements of <paramref name="qLayout"/> over <paramref name="q"/> in
+    /// its row-major order (heads split from a projection and permuted, read where they are), and the same for keys and
+    /// values [heads, capacity, dim]; y is contiguous. Each layout holds its rows one after another
+    /// (its last dimension a multiple of dim, stride 1). The results are <see cref="AttentionTiled"/>'s, bit for bit.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionTiledStrided"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionTiledStridedKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void AttentionTiledStrided(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    {
+        if (_kernels is null && _moves is null)
+        {
+            AttentionTiledStridedKernel(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionTiledStridedGuarded(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else
+        {
+            AttentionTiledStridedRegistered(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionTiledStridedRegistered(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.AttentionTiledStrided) is OperationKernels.AttentionTiledStrided kernel)
+        {
+            kernel(this, q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
+        }
+
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AttentionTiledStridedGuarded(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            }
+            else
+            {
+                AttentionTiledStridedKernel(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionTiledStrided))
+        {
+            AttentionTiledStridedKernel(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AttentionTiledStrided);
+        try
+        {
+            AttentionTiledStridedKernel(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(this, failure);
+            AttentionTiledStridedOnHost(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // AttentionTiledStrided on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionTiledStridedGuarded(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        try
+        {
+            AttentionTiledStridedKernel(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionTiledStrided))
+        {
+            FellBack(Ops.AttentionTiledStrided.Name, refused, "the host");
+            AttentionTiledStridedOnHost(q, qLayout, keys, keysLayout, values, valuesLayout, position, y, logSumExp, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+    }
+
+    // The host fallback of AttentionTiledStrided (the default body of AttentionTiledStridedKernel), for RetryOnHost.
+    private void AttentionTiledStridedOnHost(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage position, Storage y, Storage? logSumExp, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, nameof(AttentionTiledStrided));
+        CpuBackend.Instance.AttentionTiledStrided(h[q], qLayout, h[keys], keysLayout, h[values], valuesLayout, h[position], h[y], h.Maybe(logSumExp), heads,
+            rowsPerHead, steps, capacity, dim, scale, variant);
+    }
+
+    /// <summary>
+    /// <see cref="AttentionTiledBackward"/> with q, keys and values read through their layouts as
+    /// <see cref="AttentionTiledStrided"/> reads them; output, dOutput and the gradients dq, dkeys, dvalues are contiguous.
+    /// The results are <see cref="AttentionTiledBackward"/>'s, bit for bit.
+    /// </summary>
+    /// <remarks>Runs <see cref="Ops.AttentionTiledStridedBackward"/>: the kernel registered for this device (<see cref="Kernels.Register"/>), else <c>AttentionTiledStridedBackwardKernel</c>.</remarks>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void AttentionTiledStridedBackward(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+    {
+        if (_kernels is null && _moves is null)
+        {
+            AttentionTiledStridedBackwardKernel(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else if (ReferenceEquals(_kernels, s_guardedKernels))
+        {
+            AttentionTiledStridedBackwardGuarded(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        else
+        {
+            AttentionTiledStridedBackwardRegistered(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionTiledStridedBackwardRegistered(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var operation = EnterOperation();
+        if (Kernel(OperationIndex.AttentionTiledStridedBackward) is OperationKernels.AttentionTiledStridedBackward kernel)
+        {
+            kernel(this, q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
+        }
+
+        if (!RetryOnHost)
+        {
+            if (RefusedKernelsFallBack)
+            {
+                AttentionTiledStridedBackwardGuarded(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            }
+            else
+            {
+                AttentionTiledStridedBackwardKernel(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            }
+
+            return;
+        }
+
+        if (!OwnsKernel(OperationIndex.AttentionTiledStridedBackward))
+        {
+            AttentionTiledStridedBackwardKernel(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+            return;
+        }
+
+        var retry = new HostRetry(Ops.AttentionTiledStridedBackward);
+        try
+        {
+            AttentionTiledStridedBackwardKernel(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (DeviceException failure)
+        {
+            retry.Failed(this, failure);
+            AttentionTiledStridedBackwardOnHost(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        finally
+        {
+            retry.End();
+        }
+    }
+
+    // AttentionTiledStridedBackward on a device whose refused kernels fall back (BuildsKernelsWhenUsed): the host when its kernel is refused.
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private void AttentionTiledStridedBackwardGuarded(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        try
+        {
+            AttentionTiledStridedBackwardKernel(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+        catch (KernelUnavailableException refused) when (OwnsKernel(OperationIndex.AttentionTiledStridedBackward))
+        {
+            FellBack(Ops.AttentionTiledStridedBackward.Name, refused, "the host");
+            AttentionTiledStridedBackwardOnHost(q, qLayout, keys, keysLayout, values, valuesLayout, output, logSumExp, dOutput, dq, dkeys, dvalues, heads, rowsPerHead, steps, capacity, dim, scale, variant);
+        }
+    }
+
+    // The host fallback of AttentionTiledStridedBackward (the default body of AttentionTiledStridedBackwardKernel), for RetryOnHost.
+    private void AttentionTiledStridedBackwardOnHost(Storage q, TensorLayout qLayout, Storage keys, TensorLayout keysLayout, Storage values, TensorLayout valuesLayout, Storage output, Storage logSumExp, Storage dOutput, Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
+    {
+        using var h = new HostCall(this, nameof(AttentionTiledStridedBackward));
+        CpuBackend.Instance.AttentionTiledStridedBackward(h[q], qLayout, h[keys], keysLayout, h[values], valuesLayout, h[output], h[logSumExp], h[dOutput],
+            h[dq], h[dkeys], h[dvalues], heads, rowsPerHead, steps, capacity, dim, scale, variant);
+    }
+
     private delegate void MaxPoolBackwardOwn(Storage dy, Storage argmax, Storage dx, int count);
 
     private delegate void MaxPoolBackward2Own(Storage dy, Storage argmax, Storage dx, in ConvGeometry g);
@@ -12672,6 +12952,9 @@ public abstract partial class Backend
         own[OperationIndex.ExpertGatedPair] = Overrides(b.ExpertGatedPairKernel);
         own[OperationIndex.ExpertMatMul] = Overrides(b.ExpertMatMulKernel);
         own[OperationIndex.StridedCopy] = Overrides(b.StridedCopyKernel);
+        own[OperationIndex.BatchedMatMulStrided] = Overrides(b.BatchedMatMulStridedKernel);
+        own[OperationIndex.AttentionTiledStrided] = Overrides(b.AttentionTiledStridedKernel);
+        own[OperationIndex.AttentionTiledStridedBackward] = Overrides(b.AttentionTiledStridedBackwardKernel);
         return own;
     }
 }

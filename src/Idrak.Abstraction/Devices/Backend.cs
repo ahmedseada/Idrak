@@ -280,6 +280,10 @@ public abstract class Storage
     // hands this storage out for a direct access (Tensor.Storage, which may write it) copies them first, so they keep the
     // values they were made with, as the copies before views did.
     internal List<WeakReference<Tensor>>? PendingViews;
+
+    // Its values were released while views still read them (ActivationMemory.Release, plan 37, V1b): evicted once the
+    // last of those views is copied to its own or gone.
+    internal bool DropWhenUnviewed;
 }
 
 /// <summary>

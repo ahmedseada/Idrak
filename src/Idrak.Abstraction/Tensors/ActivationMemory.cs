@@ -95,7 +95,8 @@ public static class ActivationMemory
     /// <summary>
     /// Releases the values of <paramref name="tensors"/> except where they share memory with <paramref name="kept"/>:
     /// a view (a reshape, or a permutation that only moves dimensions of size 1) of a result still needed shares its
-    /// memory, which must stay.
+    /// memory, which must stay. Values that views not copied yet still read (<see cref="Tensor.IsView"/>) are released
+    /// once the last of them is copied to its own or disposed.
     /// </summary>
     public static void Release(ReadOnlySpan<Tensor> kept, params Tensor?[] tensors)
     {
@@ -111,10 +112,13 @@ public static class ActivationMemory
                 continue;
             }
 
+            // The memory each holds as it is (comparing through Storage would copy a view to its own first). A kept view
+            // (plan 37) of these values defers their release until it no longer reads them (DropValue); a kept reshape
+            // shares them for good.
             bool shared = false;
             foreach (var needed in kept)
             {
-                shared |= ReferenceEquals(needed.Storage, tensor.Storage);
+                shared |= ReferenceEquals(needed.Held, tensor.Held) && !needed.IsView;
             }
 
             if (!shared)

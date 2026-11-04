@@ -628,17 +628,17 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 
 ## The device contract (`Backend`)
 
-`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 139 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `DeferredBackend`, `HipBackend`, `VulkanBackend`. Each
-operation (158, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
+`Idrak.Abstraction.Devices.Backend` (public): 10 abstract and 142 virtual methods, 6 abstract or virtual properties. Devices: `CpuBackend`, `CudaBackend`, `DeferredBackend`, `HipBackend`, `VulkanBackend`. Each
+operation (161, `Ops`) is a `NameKernel` method, the device's own kernel; `Backend.Name(...)` runs the kernel registered
 for the device in `Kernels` instead, where there is one (plan 9). The rest is device plumbing: memory, copies, graphs, profiling.
 
 | Device | Methods overridden |
 |---|---|
-| `CpuBackend` | 133 of 149 |
-| `CudaBackend` | 137 of 149 |
-| `DeferredBackend` | 11 of 149 |
-| `HipBackend` | 138 of 149 |
-| `VulkanBackend` | 125 of 149 |
+| `CpuBackend` | 136 of 152 |
+| `CudaBackend` | 137 of 152 |
+| `DeferredBackend` | 11 of 152 |
+| `HipBackend` | 138 of 152 |
+| `VulkanBackend` | 125 of 152 |
 
 | Operation | Kind | Cpu | Cuda | Deferred | Hip | Vulkan |
 |---|---|---|---|---|---|---|
@@ -666,6 +666,8 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `AttentionSpansStridedKernel(18)` | virtual |  | ✓ |  | ✓ |  |
 | `AttentionTiledBackwardKernel(16)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AttentionTiledKernel(13)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `AttentionTiledStridedBackwardKernel(19)` | virtual | ✓ |  |  |  |  |
+| `AttentionTiledStridedKernel(16)` | virtual | ✓ |  |  |  |  |
 | `AvgPoolBackwardKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AvgPoolKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `AxpyAtKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
@@ -673,6 +675,7 @@ for the device in `Kernels` instead, where there is one (plan 9). The rest is de
 | `BFloat16DequantizeKernel(4)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `BFloat16MatMulKernel(6)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `BatchedMatMulKernel(10)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
+| `BatchedMatMulStridedKernel(12)` | virtual | ✓ |  |  |  |  |
 | `BiasGeluKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `BinaryKernel(5)` | virtual | ✓ | ✓ |  | ✓ | ✓ |
 | `BoxIouLossBackwardKernel(7)` | virtual | ✓ |  |  |  |  |

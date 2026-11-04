@@ -60,9 +60,12 @@ internal sealed partial class CpuBackend
         CpuRanges.Run(chunks, size, count, ComputeResources.MaxCpuThreads, ref body);   // `body` is this frame's copy, on the stack
     }
 
-    public override void BatchedMatMulKernel(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta)
+    public override void BatchedMatMulKernel(Storage a, Storage b, Storage c, int batch, int m, int n, int k, bool transA, bool transB, float beta) =>
+        BatchedProduct(D(a), D(b), D(c), batch, m, n, k, transA, transB, beta);
+
+    // The batched product over contiguous operands (each matrix of a batch after the one before).
+    private void BatchedProduct(float[] av, float[] bv, float[] cv, int batch, int m, int n, int k, bool transA, bool transB, float beta)
     {
-        float[] av = D(a), bv = D(b), cv = D(c);
         if (batch == 1)
         {
             CpuMatMul.Multiply(av, bv, cv, m, n, k, transA, transB, beta);

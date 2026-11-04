@@ -39,8 +39,11 @@ public sealed record BackendCapabilities
     /// (<see cref="TensorViews"/>): permutes, narrows, selects and expands share their input's storage, and an operation
     /// not listed here reads a view through one contiguous copy made by that device's own strided copy (counted:
     /// <see cref="TensorViews.Scratch"/>, <see cref="TensorViews.Materialized"/>). <see cref="Operations.Ops.BatchedMatMul"/>
-    /// listed: a product reads a transposed view in place (its transpose flags). Default: none (every tensor a copy, as
-    /// before views).
+    /// listed: a product reads a transposed view in place (its transpose flags). <see cref="Operations.Ops.BatchedMatMulStrided"/>,
+    /// <see cref="Operations.Ops.AttentionTiledStrided"/> and <see cref="Operations.Ops.AttentionTiledStridedBackward"/>
+    /// listed (plan 37, V1b): products, forward and backward, read both operands through their layouts, and the tiled
+    /// attention reads q, keys and values (heads split and permuted) where they are, forward and backward. Default: none
+    /// (every tensor a copy, as before views).
     /// </summary>
     public IReadOnlySet<Operations.Operation> StridedInputs { get; init; } = new HashSet<Operations.Operation>();
 }

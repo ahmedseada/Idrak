@@ -74,6 +74,10 @@ public sealed partial class Tensor
         }
 
         int k = x._shape[^1], n = w._shape[1], m = x.Size / Math.Max(1, k);
+        if (x._pending && StridedProducts(x.Backend))
+        {
+            return x.MatMul(w) + bias;                                  // a view read where it is (the CPU has no fused pass)
+        }
 
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var y = Empty([.. x._shape[..^1], n], x.Device);
@@ -113,7 +117,8 @@ public sealed partial class Tensor
     // (a short-lived copy for another view, released by the caller).
     private (Storage Source, bool Transposed, Storage? Scratch) ProductOperand(bool transposed)
     {
-        if (_pending && Rank >= 2 && _layout!.Offset == 0 && Backend.Capabilities.StridedInputs.Contains(Operations.Ops.BatchedMatMul))
+        if (_pending && Rank >= 2 && _layout!.Offset == 0 && !_layout.IsContiguousFromStart && _layout.Shape.SequenceEqual(_shape)
+            && Backend.Capabilities.StridedInputs.Contains(Operations.Ops.BatchedMatMul))
         {
             var layout = _layout;
             int[] dims = [.. Enumerable.Range(0, Rank)];
@@ -139,34 +144,21 @@ public sealed partial class Tensor
 
         long start = Telemetry.Start(TelemetryLevel.Operations);
         var c = Empty(a.Rank == 3 ? [batch, m, n] : [m, n], a.Device);
-        var (aSource, aTrans, aScratch) = a.ProductOperand(transA);
-        // The right operand as it is (a short-lived copy for a view): its transpose flag turned over could take a few-row
-        // product through the kernel that sums in vector lanes, whose last bits differ (CpuMatMul), and results stay the copies'.
-        var (bSource, bTrans, bScratch) = (b.ReadStorage(out var bCopy), transB, bCopy);
-        try
-        {
-            a.Backend.BatchedMatMul(aSource, bSource, c.Storage, batch, m, n, k, aTrans, bTrans, 0f);
-        }
-        finally
-        {
-            aScratch?.Release();
-            bScratch?.Release();
-        }
-
+        Product(a, b, c.Storage, batch, m, n, k, transA, transB, 0f);
         if (WillRecord(a, b))
         {
             c.Record("matmul", g =>
             {
-                var backend = a.Backend;
+                // The operands read as they are, views too (none copied to its own for the backward pass).
                 if (a.RequiresGrad)
                 {
                     if (!transA)
                     {
-                        backend.BatchedMatMul(g.Storage, b.Storage, a.GradStorage(), batch, m, k, n, false, !transB, 1f);
+                        Product(g, b, a.GradStorage(), batch, m, k, n, false, !transB, 1f);
                     }
                     else
                     {
-                        backend.BatchedMatMul(b.Storage, g.Storage, a.GradStorage(), batch, k, m, n, transB, true, 1f);
+                        Product(b, g, a.GradStorage(), batch, k, m, n, transB, true, 1f);
                     }
                 }
 
@@ -174,17 +166,47 @@ public sealed partial class Tensor
                 {
                     if (!transB)
                     {
-                        backend.BatchedMatMul(a.Storage, g.Storage, b.GradStorage(), batch, k, n, m, !transA, false, 1f);
+                        Product(a, g, b.GradStorage(), batch, k, n, m, !transA, false, 1f);
                     }
                     else
                     {
-                        backend.BatchedMatMul(g.Storage, a.Storage, b.GradStorage(), batch, n, k, m, true, transA, 1f);
+                        Product(g, a, b.GradStorage(), batch, n, k, m, true, transA, 1f);
                     }
                 }
             }, a, b);
         }
 
         return Traced("matmul", c, start);
+    }
+
+    // Whether this device's products read their operands through their layouts (BackendCapabilities.StridedInputs).
+    private static bool StridedProducts(Backend backend) => backend.Capabilities.StridedInputs.Contains(Operations.Ops.BatchedMatMulStrided);
+
+    // c (+)= op(x)·op(y) over the elements of x and y as they are (plan 37, V1b). A view goes to the device's strided
+    // product, which reads it in place or packs it itself (the right operand too: never by turning its transpose flag over,
+    // which could take a few-row product through the kernel that sums in vector lanes, whose last bits differ: CpuMatMul);
+    // otherwise the contiguous product, the left operand a transposed view read in place by its flag where the device reads
+    // strides that way, any other view through a short-lived copy.
+    private static void Product(Tensor x, Tensor y, Storage c, int batch, int m, int n, int k, bool transX, bool transY, float beta)
+    {
+        var backend = x.Backend;
+        if ((x._pending || y._pending) && StridedProducts(backend))
+        {
+            backend.BatchedMatMulStrided(x._storage, x.ElementOrder, y._storage, y.ElementOrder, c, batch, m, n, k, transX, transY, beta);
+            return;
+        }
+
+        var (xs, xTrans, xScratch) = x.ProductOperand(transX);
+        var ys = y.ReadStorage(out var yScratch);
+        try
+        {
+            backend.BatchedMatMul(xs, ys, c, batch, m, n, k, xTrans, transY, beta);
+        }
+        finally
+        {
+            xScratch?.Release();
+            yScratch?.Release();
+        }
     }
 
     // ---------------------------------------------------------------- softmax and classification

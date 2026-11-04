@@ -368,11 +368,19 @@ internal sealed partial class CpuBackend
     // The reference for every attention kernel: each row's positions from its window's start (0 without a window) up to
     // its causal limit, the scaled scores soft-capped when a cap is set, then the softmax and the weighted values.
     public override void AttentionTiledKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
-        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+        int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default) =>
+        AttentionTiledRows(D(q), null, D(keys), null, D(values), null, D(position), D(y), logSumExp is null ? null : D(logSumExp), heads, rowsPerHead, steps,
+            capacity, dim, scale, variant);
+
+    // Where row `index` of an operand starts: its entry of `rows` (a view's rows, TensorLayout.RowOffsets), else index · dim.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int RowAt(long[]? rows, long index, int dim) => (int)(rows is null ? index * dim : rows[index]);
+
+    // The tiled attention over rows of q, keys and values that start where their tables say (null: one after another).
+    private void AttentionTiledRows(float[] qv, long[]? qRows, float[] kv, long[]? kRows, float[] vv, long[]? vRows, float[] pv, float[] yv, float[]? lv,
+        int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
-        float[] qv = D(q), kv = D(keys), vv = D(values), yv = D(y);
-        float[]? lv = logSumExp is null ? null : D(logSumExp);
-        int position0 = (int)D(position)[0];
+        int position0 = (int)pv[0];
         For(heads * rowsPerHead, (long)heads * rowsPerHead * dim * Math.Max(1, position0), (first, last) =>
         {
             var scores = ArrayPool<float>.Shared.Rent(capacity);
@@ -382,11 +390,11 @@ internal sealed partial class CpuBackend
                 {
                     int h = row / rowsPerHead, end = Math.Min(position0 + row % rowsPerHead % steps, capacity - 1) + 1;
                     int begin = variant.Start(end), count = end - begin;
-                    var query = qv.AsSpan(row * dim, dim);
+                    var query = qv.AsSpan(RowAt(qRows, row, dim), dim);
                     float max = float.NegativeInfinity;
                     for (int c = 0; c < count; c++)
                     {
-                        float dot = Dot(query, kv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim));
+                        float dot = Dot(query, kv.AsSpan(RowAt(kRows, (long)h * capacity + begin + c, dim), dim));
 
                         scores[c] = variant.Cap(dot * scale);
                         max = MathF.Max(max, scores[c]);
@@ -404,7 +412,7 @@ internal sealed partial class CpuBackend
                     for (int c = 0; c < count; c++)
                     {
                         float weight = scores[c] / sum;
-                        AddScaled(output, vv.AsSpan((int)(((long)h * capacity + begin + c) * dim), dim), weight);
+                        AddScaled(output, vv.AsSpan(RowAt(vRows, (long)h * capacity + begin + c, dim), dim), weight);
                     }
                 }
             }
@@ -416,10 +424,15 @@ internal sealed partial class CpuBackend
     }
 
     public override void AttentionTiledBackwardKernel(Storage q, Storage keys, Storage values, Storage output, Storage logSumExp, Storage dOutput,
-        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
+        Storage dq, Storage dkeys, Storage dvalues, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default) =>
+        AttentionTiledBackwardRows(D(q), null, D(keys), null, D(values), null, D(output), D(logSumExp), D(dOutput), D(dq), D(dkeys), D(dvalues), heads,
+            rowsPerHead, steps, capacity, dim, scale, variant);
+
+    // The tiled attention's gradient over rows of q, keys and values that start where their tables say (null: one after
+    // another); the output, its gradient and the gradients written are contiguous.
+    private void AttentionTiledBackwardRows(float[] qv, long[]? qRows, float[] kv, long[]? kRows, float[] vv, long[]? vRows, float[] ov, float[] lv, float[] gv,
+        float[] dqv, float[] dkv, float[] dvv, int heads, int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
-        float[] qv = D(q), kv = D(keys), vv = D(values), ov = D(output), lv = D(logSumExp), gv = D(dOutput);
-        float[] dqv = D(dq), dkv = D(dkeys), dvv = D(dvalues);
         For(heads, (long)heads * rowsPerHead * capacity * dim, (first, last) =>
         {
             for (int h = first; h < last; h++)
@@ -427,17 +440,18 @@ internal sealed partial class CpuBackend
                 for (int i = 0; i < rowsPerHead; i++)
                 {
                     int row = h * rowsPerHead + i, count = Math.Min(i % steps, capacity - 1) + 1;
-                    var query = qv.AsSpan(row * dim, dim);
+                    var query = qv.AsSpan(RowAt(qRows, row, dim), dim);
                     var gradOut = gv.AsSpan(row * dim, dim);
                     float delta = Dot(gradOut, ov.AsSpan(row * dim, dim));
 
                     for (int c = variant.Start(count); c < count; c++)
                     {
                         int key = (h * capacity + c) * dim;
-                        float dot = Dot(query, kv.AsSpan(key, dim)), dp = Dot(gradOut, vv.AsSpan(key, dim));
+                        var keyRow = kv.AsSpan(RowAt(kRows, h * capacity + c, dim), dim);
+                        float dot = Dot(query, keyRow), dp = Dot(gradOut, vv.AsSpan(RowAt(vRows, h * capacity + c, dim), dim));
 
                         float score = variant.Cap(dot * scale), p = MathF.Exp(score - lv[row]), ds = p * (dp - delta) * variant.Slope(score);
-                        AddScaled(dqv.AsSpan(row * dim, dim), kv.AsSpan(key, dim), scale * ds);
+                        AddScaled(dqv.AsSpan(row * dim, dim), keyRow, scale * ds);
                         AddScaled(dkv.AsSpan(key, dim), query, scale * ds);
                         AddScaled(dvv.AsSpan(key, dim), gradOut, p);
                     }

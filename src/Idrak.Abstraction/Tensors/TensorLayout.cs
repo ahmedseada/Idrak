@@ -154,6 +154,116 @@ public sealed class TensorLayout
         return new TensorLayout(shape, strides, Offset);
     }
 
+    /// <summary>
+    /// The layout of the same elements in the same row-major order as <paramref name="shape"/> (as many elements), when
+    /// strides express it: dimensions merge where they sit one after another and split anywhere. Null when they do not (a
+    /// reshape merging a permuted pair, such as [n, h, t, d] permuted to [n, t, h, d] read as [n·t, h·d]): such a reshape of
+    /// a view keeps this layout and reads it in its order (<see cref="Tensor.Reshape"/>).
+    /// </summary>
+    /// <exception cref="ArgumentException">The shape holds another number of elements.</exception>
+    public TensorLayout? Reshape(ReadOnlySpan<int> shape)
+    {
+        long elements = 1;
+        foreach (int d in shape)
+        {
+            ArgumentOutOfRangeException.ThrowIfNegative(d, nameof(shape));
+            elements *= d;
+        }
+
+        if (elements != Elements)
+        {
+            throw new ArgumentException($"A reshape keeps the {Elements} elements of {this}; [{string.Join(", ", shape.ToArray())}] holds {elements}.", nameof(shape));
+        }
+
+        if (Elements == 0 || _shape.Length == 0)
+        {
+            return new TensorLayout(shape, RowMajor(shape), Offset);
+        }
+
+        // From the last dimension: each run of old dimensions that sit one after another (a chunk) takes the new dimensions
+        // that hold as many elements, their strides stepping from the chunk's innermost one.
+        var strides = new long[shape.Length];
+        int target = shape.Length - 1;
+        long chunkStride = _strides[^1], chunkElements = 1, taken = 1;
+        for (int d = _shape.Length - 1; d >= 0; d--)
+        {
+            chunkElements *= _shape[d];
+            if (d == 0 || _shape[d - 1] != 1 && _strides[d - 1] != chunkElements * chunkStride)
+            {
+                while (target >= 0 && (taken < chunkElements || shape[target] == 1))
+                {
+                    strides[target] = taken * chunkStride;
+                    taken *= shape[target];
+                    target--;
+                }
+
+                if (taken != chunkElements)
+                {
+                    return null;
+                }
+
+                if (d > 0)
+                {
+                    chunkStride = _strides[d - 1];
+                    chunkElements = 1;
+                    taken = 1;
+                }
+            }
+        }
+
+        return target == -1 ? new TensorLayout(shape, strides, Offset) : null;
+    }
+
+    /// <summary>
+    /// Whether every run of <paramref name="length"/> elements in row-major order sits one after another (the last dimension
+    /// a multiple of it, stride 1): the rows a kernel reads in place through <see cref="RowOffsets"/>.
+    /// </summary>
+    internal bool HasRows(int length) =>
+        length > 0 && (_shape.Length == 0 ? length == 1 : _shape[^1] % length == 0 && (_strides[^1] == 1 || length == 1));
+
+    /// <summary>The storage element each run of <paramref name="length"/> elements (see <see cref="HasRows"/>) starts at, in order.</summary>
+    internal void RowOffsets(int length, Span<long> offsets)
+    {
+        if (_shape.Length == 0)
+        {
+            if (offsets.Length > 0)
+            {
+                offsets[0] = Offset;
+            }
+
+            return;
+        }
+
+        int outerRank = _shape.Length - 1, perRow = _shape[^1] / length;
+        long step = length * _strides[^1];
+        Span<int> index = outerRank <= 16 ? stackalloc int[outerRank] : new int[outerRank];
+        index.Clear();
+        int row = 0;
+        while (row < offsets.Length)
+        {
+            long at = Offset;
+            for (int d = 0; d < outerRank; d++)
+            {
+                at += index[d] * _strides[d];
+            }
+
+            for (int j = 0; j < perRow && row < offsets.Length; j++)
+            {
+                offsets[row++] = at + j * step;
+            }
+
+            for (int d = outerRank - 1; d >= 0; d--)
+            {
+                if (++index[d] < _shape[d])
+                {
+                    break;
+                }
+
+                index[d] = 0;
+            }
+        }
+    }
+
     /// <inheritdoc />
     public override string ToString() =>
         $"[{string.Join(", ", _shape)}] strides [{string.Join(", ", _strides)}] offset {Offset}{(IsContiguous ? " (contiguous)" : "")}";
@@ -174,7 +284,9 @@ public static class TensorViews
     /// <summary>
     /// Whether permutes, transposes, narrows, selects and expands return views sharing their input's storage where the
     /// device reads strides: on unless <see cref="EnvironmentVariable"/> turns it off (today's copies, to check against).
-    /// Results are the same either way.
+    /// Results are the same either way. While recorded activations are kept as bfloat16
+    /// (<see cref="ActivationMemory.CompressToBFloat16"/>) these operations copy: a copy is packed to half its size, where a
+    /// view would keep its source's float values.
     /// </summary>
     public static bool Enabled { get; set; } =
         Environment.GetEnvironmentVariable(EnvironmentVariable)?.Trim().ToLowerInvariant() is not ("0" or "false" or "off" or "no");
