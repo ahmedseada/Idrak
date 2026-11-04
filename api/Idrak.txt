@@ -2410,6 +2410,7 @@ public sealed class Idrak.Models.RenamedTensorStore : Idrak.Abstraction.Formats.
 public sealed record Idrak.Models.SafeTensorInfo : System.IEquatable<Idrak.Models.SafeTensorInfo>
   public Idrak.Models.SafeTensorType Type { get; init; }
   public SafeTensorInfo(string Name, Idrak.Models.SafeTensorType Type, int[] Shape, long Offset, long Length, string File)
+  public int BytesPerValue { get; }
   public int[] Shape { get; init; }
   public long Count { get; }
   public long Length { get; init; }
@@ -2421,11 +2422,15 @@ public enum Idrak.Models.SafeTensorType : int
   BF16 = 2
   F16 = 1
   F32 = 0
+  F8_E4M3 = 3
+  F8_E5M2 = 4
+  I8 = 5
 
 public sealed class Idrak.Models.SafeTensorsReader : Idrak.Abstraction.Formats.IBFloat16TensorStore, Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
   public System.Collections.Generic.Dictionary<string, string> Metadata { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Models.SafeTensorInfo> Tensors { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, string> LeftOut { get; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> QuantizationScales { get; }
   public System.TimeSpan ReadTime { get; }
   public bool Contains(string name)
   public bool ReadBFloat16(string name, bool transposed, System.Span<ushort> destination, int stride)

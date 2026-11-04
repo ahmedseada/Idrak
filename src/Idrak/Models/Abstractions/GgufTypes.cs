@@ -81,8 +81,9 @@ public static class GgufType
 
 /// <summary>
 /// The ggml tensor types GGUF files are read with, by type id. Idrak registers F32 (0), F16 (1), BF16 (30),
-/// Q4_0 (2), Q4_1 (3), Q5_0 (6), Q5_1 (7), Q8_0 (8), Q2_K–Q6_K (10–14), IQ4_NL (20) and IQ4_XS (23); add others with
-/// <see cref="Register"/>. A tensor's type is looked up once per read, not per block.
+/// Q4_0 (2), Q4_1 (3), Q5_0 (6), Q5_1 (7), Q8_0 (8), Q2_K–Q6_K (10–14), IQ2_XXS (16), IQ2_XS (17), IQ3_XXS (18),
+/// IQ1_S (19), IQ4_NL (20), IQ3_S (21), IQ2_S (22), IQ4_XS (23), IQ1_M (29), TQ1_0 (34), TQ2_0 (35) and MXFP4 (39); add
+/// others with <see cref="Register"/>. A tensor's type is looked up once per read, not per block.
 /// </summary>
 public static class GgufTypes
 {

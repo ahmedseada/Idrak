@@ -134,8 +134,10 @@ dependency.
   qwen3moe), Gemma, Gemma 2 and Gemma 3 (GGUF gemma, gemma2, gemma3), BERT and T5, one namespace each; the library
   registers none. A family nobody
   registered fails loudly with "not registered" and is added as a plug-in (`PretrainedFamilies`, `GgufArchitectures`).
-- Checkpoints: safetensors, GGUF (F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K to Q6_K, IQ4_NL and IQ4_XS
-  dequantized; another type, such as IQ1 to IQ3, TQ or MXFP4, is refused unless a plug-in registers it in `GgufTypes`),
+- Checkpoints: safetensors (F32, F16, BF16; F8_E4M3, F8_E5M2 and I8 weights with their scales, dequantized to
+  float32), GGUF (F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K to Q6_K, IQ1_S, IQ1_M, IQ2_XXS, IQ2_XS, IQ2_S,
+  IQ3_XXS, IQ3_S, IQ4_NL, IQ4_XS, TQ1_0, TQ2_0 and MXFP4 dequantized as ggml does, bit for bit; another type is refused
+  unless a plug-in registers it in `GgufTypes`),
   PyTorch zip read without running it; PEFT adapter folders (LoRA, DoRA, rsLoRA) loaded or merged; packed weights bfloat16, int8, int4; KV caches in
   bfloat16, float32 or int8.
 - Tokenizers: BPE from `tokenizer.json` or GGUF with the registered normalizers, pre-tokenizers and decoders; a BPE
@@ -347,7 +349,7 @@ Ordered by how soon they are likely to matter.
   hooks (stopping criteria, logits processors, speculative decoding, structured output); full metrics and optimizer
   state in checkpoints; evaluation metrics as a registry; more engine model kinds and options; retrieval pooling,
   chunking, indexes and fusion as registries; registered dataset formats when picking hub files, compression and
-  archives; safetensors FP8 and int8 dtypes; checkpoint export for every module and format; first-class packed-weight
+  archives; checkpoint export for every module and format; first-class packed-weight
   plug-ins; Jinja filters and tests; initializers, activations and precisions; structured and image tool results.
 
 **Later**

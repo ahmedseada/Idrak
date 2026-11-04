@@ -24,10 +24,11 @@ public sealed record GgufTensorInfo(string Name, int Type, long[] Dimensions, lo
 
 /// <summary>
 /// Reads GGUF files (the format of llama.cpp and of the local model store): metadata, the tensor index, and tensors dequantized to
-/// float32 from F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, IQ4_NL and IQ4_XS, and any
-/// type registered with <see cref="GgufTypes.Register"/>.
+/// float32 from F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, IQ1_S, IQ1_M, IQ2_XXS, IQ2_XS,
+/// IQ2_S, IQ3_XXS, IQ3_S, IQ4_NL, IQ4_XS, TQ1_0, TQ2_0 and MXFP4 (ggml's values bit for bit), and any type registered with
+/// <see cref="GgufTypes.Register"/>.
 /// </summary>
-public sealed class GgufFile : IDisposable
+public sealed partial class GgufFile : IDisposable
 {
     private readonly FileStream _file;
     private readonly Dictionary<string, GgufTensorInfo> _tensors = new(StringComparer.Ordinal);
@@ -191,6 +192,8 @@ public sealed class GgufFile : IDisposable
             (0, "F32", 1, 4), (1, "F16", 1, 2), (30, "BF16", 1, 2), (2, "Q4_0", 32, 18), (3, "Q4_1", 32, 20), (6, "Q5_0", 32, 22),
             (7, "Q5_1", 32, 24), (8, "Q8_0", 32, 34), (10, "Q2_K", 256, 84), (11, "Q3_K", 256, 110), (12, "Q4_K", 256, 144),
             (13, "Q5_K", 256, 176), (14, "Q6_K", 256, 210), (20, "IQ4_NL", 32, 18), (23, "IQ4_XS", 256, 136),
+            (16, "IQ2_XXS", 256, 66), (17, "IQ2_XS", 256, 74), (18, "IQ3_XXS", 256, 98), (19, "IQ1_S", 256, 50), (21, "IQ3_S", 256, 110),
+            (22, "IQ2_S", 256, 82), (29, "IQ1_M", 256, 56), (34, "TQ1_0", 256, 54), (35, "TQ2_0", 256, 66), (39, "MXFP4", 32, 17),
         }.Select(t => (t.Id, (IGgufType)new BuiltInType(t.Id, t.Name, t.BlockValues, t.BlockBytes)));
 
     // A built-in ggml type (DequantizeBuiltIn).
@@ -537,7 +540,8 @@ public sealed class GgufFile : IDisposable
             }
 
             default:
-                throw new NotSupportedException($"ggml type {type} has no built-in dequantizer.");
+                DequantizeLowBit(type, x, y);                       // IQ1-IQ3, TQ1_0, TQ2_0, MXFP4 (GgufFile.LowBit.cs)
+                return;
         }
     }
 
