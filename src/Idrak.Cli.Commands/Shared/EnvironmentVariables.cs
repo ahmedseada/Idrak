@@ -417,6 +417,7 @@ internal static class EnvironmentVariables
         new("IDRAK_CLUSTER_CARVE_FROM", Cluster, "each topology entry's own device", "The device on this machine every fake device of a simulation is carved from (cuda:0, cpu), so a topology written for other machines runs here", ClusterRun),
         new("IDRAK_CLUSTER_EVENT_LOG", Cluster, "the run folder's (cluster sim), else kept in memory", "The file a simulation's event log (faults, each rank's clock per step, state changes, transfers) is written to", ClusterRun),
         new("IDRAK_CLUSTER_EVENT_LOG_FLUSH", Cluster, "1", "Steps between the event log's writes to its file while a simulation runs (0: at the end only)", ClusterRun),
+        new("IDRAK_CLUSTER_RELEASE_DEVICES", Cluster, "1", "1 or 0: an in-process run gives its carved devices back when it ends (and a failed rank's at once: their separate backends disposed, the device's memory as before the run), or keeps them for the next run that carves alike", ClusterRun),
         new("IDRAK_CLUSTER_LOG_TRANSFERS", Cluster, "1", "1 or 0: a simulation's event log, and a run's log (transfers over real transports), record every transfer", ClusterRun),
         new("IDRAK_CLUSTER_FAULT_RATE", Cluster, "0.1", "The chance a simulated step draws a fault (the built-in failure models), from 0 to 1", ClusterRun),
         new("IDRAK_CLUSTER_SLOW_FACTOR", Cluster, "4", "How many times as long a slow worker's transfers take, 1 or more", ClusterRun),

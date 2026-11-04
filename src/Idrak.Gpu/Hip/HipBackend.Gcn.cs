@@ -75,8 +75,12 @@ internal sealed unsafe partial class HipBackend
         {
             if (_module != IntPtr.Zero)
             {
-                _backend.MakeCurrent();
-                _backend.WaitStream();                                           // launches queued earlier still run its code
+                _backend.Bind();                                                 // also from the backend's own dispose
+                if (!_backend._streamDestroyed)
+                {
+                    _backend.WaitStream();                                       // launches queued earlier still run its code
+                }
+
                 if (hipModuleUnload != null)
                 {
                     Check(hipModuleUnload(_module), nameof(hipModuleUnload));
@@ -146,8 +150,14 @@ internal sealed unsafe partial class HipBackend
 
             if (result == Success)
             {
-                return new GcnFunction(this, module, function, image, code.Name, isa, format, GcnCodeObject.KernargBytes(code), refused.ToString(), code.Arguments,
+                var loaded = new GcnFunction(this, module, function, image, code.Name, isa, format, GcnCodeObject.KernargBytes(code), refused.ToString(), code.Arguments,
                     code.RequiredWorkgroupSize?.X ?? code.MaxFlatWorkgroupSize);
+                lock (_ownedFunctions)
+                {
+                    _ownedFunctions.Add(loaded);                                 // unloaded by the dispose if its owner has not
+                }
+
+                return loaded;
             }
 
             if (module != IntPtr.Zero && hipModuleUnload != null)

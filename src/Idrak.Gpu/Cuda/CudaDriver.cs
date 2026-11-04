@@ -121,6 +121,13 @@ internal static unsafe partial class CudaDriver
     [LibraryImport(Library, EntryPoint = "cuDevicePrimaryCtxRetain")]
     public static partial int cuDevicePrimaryCtxRetain(out IntPtr context, int device);
 
+    // Gives back one retain of the device's primary context (a disposed separate backend's).
+    [LibraryImport(Library, EntryPoint = "cuDevicePrimaryCtxRelease_v2")]
+    public static partial int cuDevicePrimaryCtxRelease(int device);
+
+    [LibraryImport(Library)]
+    public static partial int cuModuleUnload(IntPtr module);
+
     [LibraryImport(Library)]
     public static partial int cuCtxSetCurrent(IntPtr context);
 
@@ -237,6 +244,9 @@ internal static unsafe partial class CudaDriver
 
     [LibraryImport(Library)]
     public static partial int cuStreamCreate(out IntPtr stream, uint flags);
+
+    [LibraryImport(Library, EntryPoint = "cuStreamDestroy_v2")]
+    public static partial int cuStreamDestroy(IntPtr stream);
 
     [LibraryImport(Library)]
     public static partial int cuStreamSynchronize(IntPtr stream);

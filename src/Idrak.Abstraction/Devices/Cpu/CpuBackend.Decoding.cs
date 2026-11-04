@@ -10,8 +10,11 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // Fused inference kernels and incremental-decoding primitives (KV cache, masks, on-device sampling).
 internal sealed partial class CpuBackend
 {
-    public override void DownloadRange(Storage source, int offset, Span<float> destination) =>
+    public override void DownloadRange(Storage source, int offset, Span<float> destination)
+    {
+        ThrowIfDisposed();
         D(source).AsSpan(offset, destination.Length).CopyTo(destination);
+    }
 
     public override void ScaleMaskSoftmaxKernel(Storage x, Storage? mask, Storage y, int rows, int cols, int maskRows, float scale)
     {

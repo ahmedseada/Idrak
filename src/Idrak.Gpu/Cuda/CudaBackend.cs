@@ -323,8 +323,24 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
 
     private readonly bool? _offload;
 
+    // Whether this is a separate backend (CreateSeparate), which its caller disposes; the device's own lives for the process.
+    private readonly bool _separate;
+
+    // Every module this backend loaded (main, tensor-core, span and plug-in), unloaded when it is disposed.
+    private readonly List<IntPtr> _modules = [];
+
+    // Device blocks this backend took from the driver itself (cuMemAlloc, outside chunks), in use or cached: what a dispose
+    // frees besides the chunks. Touched only when the driver allocates or frees (never on a pool hit), under the pool lock.
+    private readonly HashSet<ulong> _deviceBlocks = [];
+
+    // Graphs recorded on this backend and not destroyed yet (their executable and graph), destroyed when it is disposed.
+    private readonly HashSet<(IntPtr Executable, IntPtr Graph)> _graphHandles = [];
+
+    protected override bool LivesForProcess => !_separate;
+
     private CudaBackend(int ordinal, SeparateBackendOptions? separate = null)
     {
+        _separate = separate is not null;
         _offload = separate?.Offload;
         _streamGate = StreamGates.GetOrAdd(ordinal, static _ => new ReaderWriterLockSlim(LockRecursionPolicy.SupportsRecursion));
         Check(cuDeviceGet(out int device, ordinal), nameof(cuDeviceGet));
@@ -503,7 +519,19 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         return instances;
     }
 
-    private static IntPtr LoadModule(string ptx, string what = "the Idrak kernels")
+    // Loads a module and keeps it for the dispose (LoadImage does the loading).
+    private IntPtr LoadModule(string ptx, string what = "the Idrak kernels")
+    {
+        IntPtr module = LoadImage(ptx, what);
+        lock (_modules)
+        {
+            _modules.Add(module);
+        }
+
+        return module;
+    }
+
+    private static IntPtr LoadImage(string ptx, string what)
     {
         const int LogSize = 16 * 1024;
         byte[] image = Encoding.ASCII.GetBytes(ptx + "\0");
@@ -523,8 +551,18 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         }
     }
 
-    /// <summary>Binds this device's context to the calling thread (cheap no-op when already bound).</summary>
+    /// <summary>
+    /// Binds this device's context to the calling thread (cheap no-op when already bound); throws, naming the backend, once
+    /// it was disposed: every call that reaches the device comes through here.
+    /// </summary>
     private void MakeCurrent()
+    {
+        ThrowIfDisposed();
+        Bind();
+    }
+
+    // Binds the context without the disposed check (the dispose itself).
+    private void Bind()
     {
         if (t_currentContext != _context)
         {
@@ -760,6 +798,11 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         }
 
         Check(result, nameof(cuMemAlloc));
+        lock (_pool)
+        {
+            _deviceBlocks.Add(pointer);                                    // freed by the dispose if still held then
+        }
+
         return pointer;
     }
 
@@ -815,6 +858,11 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
     /// <summary>Frees every cached (currently unused) device block back to the driver.</summary>
     public override void ReleaseCachedMemory()
     {
+        if (IsDisposed)
+        {
+            return;                                                        // nothing is cached once disposed
+        }
+
         // With the work stream held: another thread's recording ends first (a synchronize issued during it would end the
         // recording with CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED and fail here); the recording thread's own call returns.
         MakeCurrent();
@@ -837,6 +885,7 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
                     if (!ChunkRelease(pointer))                            // a chunk's block goes back to its chunk
                     {
                         Check(cuMemFree(pointer), nameof(cuMemFree));
+                        _deviceBlocks.Remove(pointer);
                         _memory.Freed(BlockBytes(length));
                     }
                 }
@@ -887,6 +936,7 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
                     if (!ChunkRelease(pointer))
                     {
                         Check(cuMemFree(pointer), nameof(cuMemFree));
+                        _deviceBlocks.Remove(pointer);
                         _memory.Freed(BlockBytes(length));
                     }
                 }
@@ -932,6 +982,11 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         var s = (CudaStorage)storage;
         lock (_pool)
         {
+            if (IsDisposed)
+            {
+                return;                                                    // the dispose freed the block: nothing to keep
+            }
+
             if (_cold.Count > 0 || _awayCount > 0 || _prefetched.Count > 0 || _lookupTableCount > 0)
             {
                 ForgetLocked(s);                                           // offload bookkeeping (CudaBackend.Offload.cs)

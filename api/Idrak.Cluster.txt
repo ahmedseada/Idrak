@@ -241,6 +241,7 @@ public static class Idrak.Cluster.SimulatedDevices
   public static Idrak.Abstraction.Device PhysicalOf(Idrak.Abstraction.Device device)
   public static int Count { get; }
   public static long? CapOf(Idrak.Abstraction.Device device)
+  public static void Release(Idrak.Abstraction.Device device)
 
 public sealed class Idrak.Cluster.TopologyBuilder
   public Idrak.Abstraction.Cluster.ClusterTopology Build()

@@ -131,6 +131,14 @@ public sealed record SimulationOptions
 
     /// <summary>How often rank 0 reads the control file again while the run is paused (<c>IDRAK_CLUSTER_CONTROL_POLL</c>, seconds).</summary>
     public TimeSpan ControlPoll { get; init; } = TimeSpan.FromMilliseconds(200);
+
+    /// <summary>
+    /// Whether an in-process run gives its carved devices back when it ends, and a rank's when the rank fails (their
+    /// separate backends disposed: memory, kernels and streams, so runs one after another do not grow the device's memory;
+    /// tensors left on them can no longer be used), or keeps them for the next run that carves alike, pools included
+    /// (<c>IDRAK_CLUSTER_RELEASE_DEVICES</c>: 1 or 0).
+    /// </summary>
+    public bool ReleaseDevices { get; init; } = true;
 }
 
 /// <summary>
@@ -514,7 +522,7 @@ public sealed record ClusterOptions
         "IDRAK_CLUSTER_MICROBATCHES", "IDRAK_CLUSTER_SCHEDULE", "IDRAK_CLUSTER_STAGES", "IDRAK_CLUSTER_PIPELINE_BALANCE", "IDRAK_CLUSTER_PIPELINE_CUTS", "IDRAK_CLUSTER_SUGGEST_SHARE", "IDRAK_CLUSTER_SUGGEST_BF16_TOLERANCE",
         "IDRAK_CLUSTER_SUGGEST", "IDRAK_CLUSTER_SUGGEST_STEPS", "IDRAK_CLUSTER_SUGGEST_SLICE",
         "IDRAK_CLUSTER_PROFILES_FILE", "IDRAK_CLUSTER_SEED", "IDRAK_CLUSTER_MODE", "IDRAK_CLUSTER_THROTTLE", "IDRAK_CLUSTER_FAILURES",
-        "IDRAK_CLUSTER_REPLAY_STEP", "IDRAK_CLUSTER_CLOCK", "IDRAK_CLUSTER_CARVE_FROM", "IDRAK_CLUSTER_EVENT_LOG", "IDRAK_CLUSTER_EVENT_LOG_FLUSH", "IDRAK_CLUSTER_LOG_TRANSFERS",
+        "IDRAK_CLUSTER_REPLAY_STEP", "IDRAK_CLUSTER_CLOCK", "IDRAK_CLUSTER_CARVE_FROM", "IDRAK_CLUSTER_EVENT_LOG", "IDRAK_CLUSTER_EVENT_LOG_FLUSH", "IDRAK_CLUSTER_LOG_TRANSFERS", "IDRAK_CLUSTER_RELEASE_DEVICES",
         "IDRAK_CLUSTER_CONTROL", "IDRAK_CLUSTER_CONTROL_POLL",
         "IDRAK_CLUSTER_DEVICE", "IDRAK_CLUSTER_RUN", "IDRAK_CLUSTER_PARENT", "IDRAK_CLUSTER_RETRY_DELAY", "IDRAK_CLUSTER_SHM_BYTES", "IDRAK_CLUSTER_SHM_FOLDER",
         "IDRAK_CLUSTER_SHM_SPIN", "IDRAK_CLUSTER_SHM_CHECK",
@@ -631,6 +639,7 @@ public sealed record ClusterOptions
         if (Read(variable, "IDRAK_CLUSTER_EVENT_LOG") is { } eventLog) s = s with { EventLog = eventLog };
         if (Read(variable, "IDRAK_CLUSTER_EVENT_LOG_FLUSH") is { } flush) s = s with { EventLogFlushSteps = Whole("IDRAK_CLUSTER_EVENT_LOG_FLUSH", flush, 0) };
         if (Read(variable, "IDRAK_CLUSTER_LOG_TRANSFERS") is { } logTransfers) s = s with { LogTransfers = Flag("IDRAK_CLUSTER_LOG_TRANSFERS", logTransfers) };
+        if (Read(variable, "IDRAK_CLUSTER_RELEASE_DEVICES") is { } release) s = s with { ReleaseDevices = Flag("IDRAK_CLUSTER_RELEASE_DEVICES", release) };
         if (Read(variable, "IDRAK_CLUSTER_CONTROL") is { } control) s = s with { Control = control };
         if (Read(variable, "IDRAK_CLUSTER_CONTROL_POLL") is { } poll) s = s with { ControlPoll = TimeSpan.FromSeconds(Number("IDRAK_CLUSTER_CONTROL_POLL", poll, "a number of seconds above 0", v => v > 0)) };
         return o with { Simulation = s };

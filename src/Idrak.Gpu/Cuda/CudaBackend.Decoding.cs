@@ -200,6 +200,11 @@ internal sealed unsafe partial class CudaBackend : IGraphCaptureBackend
             }
 
             GraphCreated();
+            lock (_graphHandles)
+            {
+                _graphHandles.Add((executable, graph));                    // destroyed by the dispose if its owner has not
+            }
+
             return (executable, graph, owned);
         }
         finally
@@ -277,6 +282,14 @@ internal sealed unsafe partial class CudaBackend : IGraphCaptureBackend
 
     void IGraphCaptureBackend.DestroyGraph(IntPtr executable, IntPtr graph)
     {
+        lock (_graphHandles)
+        {
+            if (IsDisposed || !_graphHandles.Remove((executable, graph)))
+            {
+                return;                                                    // the dispose destroyed it already
+            }
+        }
+
         MakeCurrent();
         cuGraphExecDestroy(executable);
         cuGraphDestroy(graph);

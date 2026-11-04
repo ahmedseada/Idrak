@@ -158,8 +158,51 @@ public static class InProcessCluster
             devices[r] = SimulatedDevices.Carve(Device.Parse(options.Simulation.CarveFrom ?? spec.Device), spec.MemoryBytes, r);
         }
 
-        // Every rank runs rank 0's measured kernel choices, followed before any rank's thread makes one (ShareTuning).
-        using var shared = ChoiceSharing.Follow(devices, options);
+        // The run's carved devices are given back when it ends (SimulationOptions.ReleaseDevices): their backends disposed,
+        // their memory returned to the physical device, after the ranks stop following rank 0's choices.
+        ChoiceSharing.Following? shared = null;
+        try
+        {
+            // Every rank runs rank 0's measured kernel choices, followed before any rank's thread makes one (ShareTuning).
+            shared = ChoiceSharing.Follow(devices, options);
+            return RunRanks(topology, options, work, plan, transports, collectives, devices, shared);
+        }
+        finally
+        {
+            shared?.Dispose();
+            if (options.Simulation.ReleaseDevices)
+            {
+                ReleaseDevices(devices);
+            }
+        }
+    }
+
+    // Gives the run's carved devices back (a rank that failed may have given its own back already).
+    private static void ReleaseDevices(Device[] devices)
+    {
+        List<Exception>? failures = null;
+        foreach (var device in devices)
+        {
+            try
+            {
+                SimulatedDevices.Release(device);
+            }
+            catch (Exception e) when (e is not ArgumentException)
+            {
+                (failures ??= []).Add(e);
+            }
+        }
+
+        if (failures is not null)
+        {
+            throw new AggregateException($"Releasing the run's carved devices: {failures.Count} of {devices.Length} failed to give their memory back.", failures);
+        }
+    }
+
+    private static ClusterRunResult RunRanks(IClusterTopology topology, ClusterOptions options, Action<ClusterRank> work, TransportPlan plan, ITransportProvider? transports,
+                                        ICollectivesProvider collectives, Device[] devices, ChoiceSharing.Following shared)
+    {
+        int world = devices.Length;
         var errors = new Exception?[world];
         var simulated = new TimeSpan[world];
         var worlds = new SimWorld?[world];
@@ -208,6 +251,20 @@ public static class InProcessCluster
                 {
                     group?.Dispose();
                     transport?.Dispose();
+
+                    // A rank that left with an error gives its device back now, not when the others finish; rank 0 keeps
+                    // its own until the end, as the others may follow its measured choices.
+                    if (errors[rank] is not null && rank != 0 && options.Simulation.ReleaseDevices)
+                    {
+                        try
+                        {
+                            SimulatedDevices.Release(devices[rank]);
+                        }
+                        catch (Exception e) when (e is not ArgumentException)
+                        {
+                            errors[rank] = new AggregateException(errors[rank]!, e);
+                        }
+                    }
                 }
             })
             { IsBackground = true, Name = $"sim rank {rank}" };

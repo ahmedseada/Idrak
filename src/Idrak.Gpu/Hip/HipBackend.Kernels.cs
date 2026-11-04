@@ -90,8 +90,12 @@ internal sealed unsafe partial class HipBackend
         {
             if (_module != IntPtr.Zero)
             {
-                _backend.MakeCurrent();
-                _backend.WaitStream();                                           // launches queued earlier still run its code
+                _backend.Bind();                                                 // also from the backend's own dispose
+                if (!_backend._streamDestroyed)
+                {
+                    _backend.WaitStream();                                       // launches queued earlier still run its code
+                }
+
                 if (hipModuleUnload != null)
                 {
                     Check(hipModuleUnload(_module), nameof(hipModuleUnload));

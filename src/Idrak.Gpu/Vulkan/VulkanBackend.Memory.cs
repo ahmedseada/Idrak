@@ -214,7 +214,7 @@ internal sealed unsafe partial class VulkanBackend
                     }
 
                     bound = true;
-                    return new VulkanBlock(buffer, memory, (byte*)mapped, length, null, 0, size);
+                    return Live(new VulkanBlock(buffer, memory, (byte*)mapped, length, null, 0, size));
                 }
 
                 // Ranges of memory the host flushes or invalidates start and end on nonCoherentAtomSize.
@@ -233,7 +233,7 @@ internal sealed unsafe partial class VulkanBackend
 
                 Check(vkBindBufferMemory(_device, buffer, page.Memory, (ulong)offset), nameof(vkBindBufferMemory));
                 bound = true;
-                return new VulkanBlock(buffer, page.Memory, page.Mapped == null ? null : page.Mapped + offset, length, page, offset, reserved);
+                return Live(new VulkanBlock(buffer, page.Memory, page.Mapped == null ? null : page.Mapped + offset, length, page, offset, reserved));
             }
 
             throw new ResourceLimitExceededException(capped
@@ -309,8 +309,30 @@ internal sealed unsafe partial class VulkanBackend
 
     // Destroys a block's buffer and gives its memory back: to its page, or to the driver. Only once the device no longer
     // uses it (ReleaseCachedMemory and Shutdown wait first).
+    // Every block made and not destroyed yet (in use or cached): what a dispose destroys. Touched only when a block is
+    // made or destroyed (never on a pool hit).
+    private readonly HashSet<VulkanBlock> _liveBlocks = new(ReferenceEqualityComparer.Instance);
+
+    private VulkanBlock Live(VulkanBlock block)
+    {
+        lock (_liveBlocks)
+        {
+            _liveBlocks.Add(block);
+        }
+
+        return block;
+    }
+
     private void DestroyBlock(VulkanBlock block)
     {
+        lock (_liveBlocks)
+        {
+            if (!_liveBlocks.Remove(block))
+            {
+                return;                                                    // destroyed already
+            }
+        }
+
         vkDestroyBuffer(_device, block.Buffer, null);
         if (block.Page is Page page)
         {

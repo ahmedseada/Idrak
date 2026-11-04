@@ -13,7 +13,9 @@ namespace Idrak.Cluster;
 /// </summary>
 /// <remarks>
 /// Carving the same physical device with the same cap and slot gives the same device back, so a process that runs
-/// several simulated clusters reuses their devices (and their pools, rule 77) instead of carving new ones each time.
+/// several simulated clusters reuses their devices (and their pools, rule 77) instead of carving new ones each time,
+/// until one is released (<see cref="Release"/>): an in-process run releases its ranks' devices when it ends, and a
+/// failed rank's when it leaves, unless <c>SimulationOptions.ReleaseDevices</c> is off.
 /// </remarks>
 public static class SimulatedDevices
 {
@@ -74,6 +76,36 @@ public static class SimulatedDevices
         return Device.Get(Kind, ordinal);
     }
 
+    /// <summary>
+    /// Gives a carved device back: its separate backend is disposed (its memory, kernels and streams returned to the physical
+    /// device; tensors left on it can no longer be used, and the device's calls fail naming it), and the next
+    /// <see cref="Carve"/> alike carves a new one. A device already released, or never started, is simply forgotten.
+    /// </summary>
+    /// <exception cref="ArgumentException"><paramref name="device"/> is not a carved device.</exception>
+    public static void Release(Device device)
+    {
+        ArgumentNullException.ThrowIfNull(device);
+        if (device.Kind != Kind)
+        {
+            throw new ArgumentException($"{device} is not a carved device; only carved ones are released (the physical device's own backend lives for the process).", nameof(device));
+        }
+
+        var carved = Get(device.Ordinal);
+        lock (Gate)
+        {
+            foreach (var (key, ordinal) in Index)
+            {
+                if (ordinal == device.Ordinal)
+                {
+                    Index.Remove(key);
+                    break;
+                }
+            }
+        }
+
+        carved.Release();
+    }
+
     /// <summary>The physical device <paramref name="device"/> was carved from, or the device itself when it is not a carved one.</summary>
     public static Device PhysicalOf(Device device)
     {
@@ -110,11 +142,26 @@ public static class SimulatedDevices
         public string Name => string.Create(CultureInfo.InvariantCulture,
             $"{Kind}:{ordinal} ({Physical}, {(Cap is { } c ? ClusterTopology.FormatMemory(c) + " cap" : "its own memory")})");
 
+        // Set once released (Release): the device starts no new backend.
+        private bool _released;
+
         public Backend Start()
         {
             lock (_gate)
             {
-                return Backend ??= Physical.CreateSeparateBackend(new SeparateBackendOptions(Name, Cap, offload));
+                return _released
+                    ? throw new ObjectDisposedException(Name, $"{Name} was released (SimulatedDevices.Release, or its run ended); carve a device again.")
+                    : Backend ??= Physical.CreateSeparateBackend(new SeparateBackendOptions(Name, Cap, offload));
+            }
+        }
+
+        // Disposes the backend (when one was started) and starts none again.
+        public void Release()
+        {
+            lock (_gate)
+            {
+                _released = true;
+                Backend?.Dispose();
             }
         }
     }

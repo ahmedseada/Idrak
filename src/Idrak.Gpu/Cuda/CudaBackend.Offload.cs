@@ -825,6 +825,11 @@ internal sealed unsafe partial class CudaBackend : IOffloadingBackend, IMemoryOf
         }
 
         _memory.Allocated(bytes);
+        lock (_pool)
+        {
+            _deviceBlocks.Add(pointer);                                    // freed by the dispose if still held then
+        }
+
         return pointer;
     }
 

@@ -131,6 +131,8 @@ internal abstract partial class Tests
             ["IDRAK_CLUSTER_STOP"] = "all-reduce", ["IDRAK_CLUSTER_STOP_EVERY"] = "4", ["IDRAK_CLUSTER_STOP_WAIT"] = "30",
             // Phase 3: whether the ranks run rank 0's measured kernel choices.
             ["IDRAK_CLUSTER_SHARE_TUNING"] = "0",
+            // Plan 36, G6: whether an in-process run gives its carved devices back when it ends.
+            ["IDRAK_CLUSTER_RELEASE_DEVICES"] = "0",
         };
         Check(good.Keys.Order().SequenceEqual(ClusterOptions.Variables.Order()), $"every variable has a test value: {string.Join(", ", ClusterOptions.Variables.Except(good.Keys))}");
         var defaults = new ClusterOptions();
@@ -154,7 +156,7 @@ internal abstract partial class Tests
             $"the C6 settings parsed, and a shard picks the sharded synchronisation: {all}");
         Check(all is { Rank: 2, WorldSize: 4, Wire: WireType.BFloat16, Shard: ShardMode.Parameters, ChunkBytes: 4L << 20, SocketBufferBytes: 512L << 10, BucketBytes: 25L << 20,
                   TopK: 0.01, ErrorFeedback: false, LocalSgdEvery: 4, Simulation: { Seed: 7, Mode: SimulationMode.Localhost, Throttle: false, Failures: "mixed", ReplayStep: 12, Clock: ThroughputClock.Simulated,
-                      CarveFrom: "cpu", EventLog: "run.events", LogTransfers: false } }
+                      CarveFrom: "cpu", EventLog: "run.events", LogTransfers: false, ReleaseDevices: false } }
               && all.Timeout == TimeSpan.FromSeconds(2.5) && all.Key is not null,
             $"every value parsed: {all}");
         Check(all is { ChunkProbeBytes: 1L << 20, TuningFile: "sizes.txt", Simulation.EventLogFlushSteps: 4 }, $"the C8 settings parsed: {all}");

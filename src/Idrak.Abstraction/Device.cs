@@ -186,6 +186,11 @@ public sealed class Device
     /// A new backend of this device, apart from <see cref="Backend"/>: its own memory pool, streams and memory cap, sharing
     /// the hardware (plan 23: a simulated cluster's devices are carved from a physical one this way).
     /// </summary>
+    /// <remarks>
+    /// The caller owns it and disposes it (<see cref="Backend.Dispose()"/>), which gives its memory, kernels and streams back
+    /// to the device; its tensors cannot be used after that. <see cref="Backend"/>, the device's own, lives for the process
+    /// and is never disposed.
+    /// </remarks>
     /// <exception cref="NotSupportedException">The device's kind cannot make a separate backend.</exception>
     public Backend CreateSeparateBackend(SeparateBackendOptions options)
     {

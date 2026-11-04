@@ -294,8 +294,60 @@ public abstract class Storage
 /// gradients from several paths add up.
 /// </remarks>
 [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods)]   // OwnKernels reads the method each kernel's delegate binds
-public abstract partial class Backend : IDeviceBackend
+public abstract partial class Backend : IDeviceBackend, IDisposable
 {
+    // 1 once disposed (Dispose): every operation, allocation and copy then throws, naming the backend.
+    private int _disposed;
+
+    // Stored in _kernels once disposed: never null and never the guarded slots, so every generated call leaves the fast
+    // path and enters an operation (EnterOperation), which throws.
+    private static readonly Delegate?[] s_disposedKernels = [];
+
+    /// <summary>
+    /// Gives back what this backend holds on its device (memory, kernels, queues or streams, its share of the device's
+    /// context), once; a second call does nothing. Afterwards every operation, allocation and copy on it throws
+    /// <see cref="ObjectDisposedException"/> naming it, so a tensor that outlives the backend cannot touch freed memory
+    /// (releasing such a tensor is still safe). The device's own backend (<see cref="Device.Backend"/>) lives for the process:
+    /// disposing it does nothing. A separate backend (<see cref="Device.CreateSeparateBackend"/>) is its caller's to dispose.
+    /// </summary>
+    public void Dispose()
+    {
+        if (LivesForProcess || Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        Volatile.Write(ref _kernels, s_disposedKernels);
+        Dispose(disposing: true);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Frees what the device gave this backend (<see cref="Dispose()"/> calls it once, after marking the backend disposed:
+    /// the device's own calls inside it must not go through the checks that now throw). Nothing by default.
+    /// </summary>
+    protected virtual void Dispose(bool disposing)
+    {
+    }
+
+    /// <summary>Whether this backend lives for the process (the device's own, <see cref="Device.Backend"/>): <see cref="Dispose()"/> then does nothing.</summary>
+    protected virtual bool LivesForProcess => false;
+
+    /// <summary>Whether <see cref="Dispose()"/> gave this backend's resources back.</summary>
+    public bool IsDisposed => Volatile.Read(ref _disposed) != 0;
+
+    /// <summary>Throws <see cref="ObjectDisposedException"/> naming the backend when it was disposed.</summary>
+    protected void ThrowIfDisposed()
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            ThrowDisposed();
+        }
+    }
+
+    private void ThrowDisposed() =>
+        throw new ObjectDisposedException(GetType().Name, $"The {Kind} backend '{Name}' was disposed: its memory and kernels were given back, so its storages and tensors can no longer be used.");
+
     // The kernels registered for this device by operation index, null when there are none and nothing is traced (every
     // call then runs the device's own kernel after one field read), or an empty array when they must be resolved again.
     private Delegate?[]? _kernels = Operations.Kernels.Unresolved();
@@ -370,7 +422,7 @@ public abstract partial class Backend : IDeviceBackend
     /// <summary>Marks the registered kernels as changed: the next call to an operation resolves them again.</summary>
     internal void KernelsChanged()
     {
-        Volatile.Write(ref _kernels, Operations.Kernels.Unresolved());
+        Volatile.Write(ref _kernels, IsDisposed ? s_disposedKernels : Operations.Kernels.Unresolved());
         PluginKernelsChanged();
     }
 
@@ -644,6 +696,7 @@ public abstract partial class Backend : IDeviceBackend
     // guards its moves: then every call is an operation, NameRegistered, which runs NameGuarded inside it).
     private Delegate?[] ResolveKernels(Delegate?[] unresolved)
     {
+        ThrowIfDisposed();                                                 // a disposed backend's sentinel is never resolved
         var slots = Operations.Kernels.Resolve(this);
         bool direct = Array.TrueForAll(slots, k => k is null) && Volatile.Read(ref _trace) is null && !RetryOnHost;
         var kept = !direct ? slots : !RefusedKernelsFallBack ? null : _moves is null ? s_guardedKernels : slots;
@@ -704,6 +757,7 @@ public abstract partial class Backend : IDeviceBackend
     /// </summary>
     protected OperationScope EnterOperation()
     {
+        ThrowIfDisposed();
         _moves?.Enter();
         return new OperationScope(_moves);
     }

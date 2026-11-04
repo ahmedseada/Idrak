@@ -161,6 +161,7 @@ internal static unsafe class HipRuntime
         hipHostMalloc = (delegate* unmanaged<void**, nuint, uint, int>)Optional(nameof(hipHostMalloc));
         hipHostFree = (delegate* unmanaged<void*, int>)Optional(nameof(hipHostFree));
         hipEventDestroy = (delegate* unmanaged<IntPtr, int>)Optional(nameof(hipEventDestroy));
+        hipStreamDestroy = (delegate* unmanaged<IntPtr, int>)Optional(nameof(hipStreamDestroy));   // a disposed separate backend's stream
 
         if (missing.Count > 0)
         {
@@ -238,6 +239,7 @@ internal static unsafe class HipRuntime
     public static delegate* unmanaged<void**, nuint, uint, int> hipHostMalloc;
     public static delegate* unmanaged<void*, int> hipHostFree;
     public static delegate* unmanaged<IntPtr, int> hipEventDestroy;
+    public static delegate* unmanaged<IntPtr, int> hipStreamDestroy;
     public static delegate* unmanaged<byte*, int, int> hipGetDevicePropertiesR0600;
     public static delegate* unmanaged<byte*, int, int> hipGetDeviceProperties;
     public static delegate* unmanaged<byte*, int, int> hipDeviceGetUuid;

@@ -47,6 +47,23 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
 
     internal static CpuBackend CreateSeparate(SeparateBackendOptions options) => new(options);
 
+    // The CPU's own backend (Instance) lives for the process; a separate one (it has a name) is disposed by its caller.
+    protected override bool LivesForProcess => _name is null;
+
+    // A separate backend's pool goes: the arrays are the garbage collector's once nothing holds them.
+    protected override void Dispose(bool disposing)
+    {
+        lock (_pool)
+        {
+            foreach (var (length, bucket) in _pool)
+            {
+                _memory.Freed((long)length * sizeof(float) * bucket.Count);
+            }
+
+            _pool.Clear();
+        }
+    }
+
     // The CPU's own limits, all from its numerical contract (CpuTuning): its packed products stream the weights for up to
     // CpuTuning.FewRows rows before expanding them once for the register-tiled product (the split decides the int4
     // rounding), and its attention kernels (which take any head size) run up to the head sizes from which the layers have
@@ -101,6 +118,7 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
 
     public override Storage Allocate(int length, bool zeroed)
     {
+        ThrowIfDisposed();
         long bytes = (long)length * sizeof(float);
         bool releaseCache = _memory.MustReleaseCacheFor(bytes); // throws when over the in-use limit
         float[]? data = null;
@@ -143,6 +161,11 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
         var data = ((CpuStorage)storage).Data;
         lock (_pool)
         {
+            if (IsDisposed)
+            {
+                return;                                                    // a tensor that outlived its backend: nothing to keep
+            }
+
             if (!_pool.TryGetValue(data.Length, out var bucket))
             {
                 _pool[data.Length] = bucket = new Stack<float[]>();
@@ -176,11 +199,23 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
         }
     }
 
-    public override void Upload(ReadOnlySpan<float> source, Storage destination) => source.CopyTo(D(destination));
+    public override void Upload(ReadOnlySpan<float> source, Storage destination)
+    {
+        ThrowIfDisposed();
+        source.CopyTo(D(destination));
+    }
 
-    public override void Download(Storage source, Span<float> destination) => D(source).AsSpan(0, destination.Length).CopyTo(destination);
+    public override void Download(Storage source, Span<float> destination)
+    {
+        ThrowIfDisposed();
+        D(source).AsSpan(0, destination.Length).CopyTo(destination);
+    }
 
-    public override void UploadRange(ReadOnlySpan<float> source, Storage destination, int offset) => source.CopyTo(D(destination).AsSpan(offset, source.Length));
+    public override void UploadRange(ReadOnlySpan<float> source, Storage destination, int offset)
+    {
+        ThrowIfDisposed();
+        source.CopyTo(D(destination).AsSpan(offset, source.Length));
+    }
 
     public override void FillKernel(Storage y, int n, float value) => D(y).AsSpan(0, n).Fill(value);
 

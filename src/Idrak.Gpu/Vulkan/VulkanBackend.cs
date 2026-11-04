@@ -65,9 +65,16 @@ internal sealed unsafe partial class VulkanBackend : Backend
     // Whether dispatches push their descriptors (decided once the queue runs: VulkanBackend.Tuning.cs).
     private bool _usePush;
 
+    // Whether this is the device's own backend (Device.Backend), which lives for the process; every other one (a separate or
+    // a test's) is its caller's to dispose.
+    private readonly bool _processWide;
+
+    protected override bool LivesForProcess => _processWide;
+
     private VulkanBackend(PhysicalDevice physical, bool preferMapped, bool? pushDescriptors = null, int? maxAllocations = null,
-        long? stagingBytes = null, long? pageBytes = null, SeparateBackendOptions? separate = null)
+        long? stagingBytes = null, long? pageBytes = null, SeparateBackendOptions? separate = null, bool processWide = false)
     {
+        _processWide = processWide;
         _physical = physical;
         var p = physical.Properties;
         MaxAllocations = MemoryAllocationCap(p.MaxMemoryAllocationCount, maxAllocations);
@@ -365,7 +372,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
     private static Lazy<VulkanBackend>[] CreateInstances()
     {
         bool staging = Environment.GetEnvironmentVariable("IDRAK_VULKAN_STAGING") is "1" or "true";
-        return [.. Probe.Value.Devices.Select(d => new Lazy<VulkanBackend>(() => new VulkanBackend(d, preferMapped: !staging)))];
+        return [.. Probe.Value.Devices.Select(d => new Lazy<VulkanBackend>(() => new VulkanBackend(d, preferMapped: !staging, processWide: true)))];
     }
 
     // A physical device with what the backend reads of it.
@@ -667,6 +674,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
     // The block of a storage of this device, or an error naming what is wrong.
     internal VulkanBlock BlockOf(Storage storage)
     {
+        ThrowIfDisposed();                                                 // every copy and dispatch reads its storages' blocks here
         if (storage is not VulkanStorage s || !ReferenceEquals(s.Backend, this))
         {
             throw new ArgumentException($"The storage is not on {Name}.", nameof(storage));
@@ -677,6 +685,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
     public override Storage Allocate(int length, bool zeroed)
     {
+        ThrowIfDisposed();
         ArgumentOutOfRangeException.ThrowIfNegative(length);
         long bytes = BlockBytes(length);
         bool releaseCache = _memory.MustReleaseCacheFor(bytes);              // throws over the limit
@@ -753,6 +762,11 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
         lock (_pool)
         {
+            if (IsDisposed)
+            {
+                return;                                                    // the dispose destroyed the block: nothing to keep
+            }
+
             // Freed while this thread records a graph: the graph owns it (VulkanBackend.Graphs.cs), so other work does
             // not reuse memory the graph uses on every replay.
             var bucket = _capture is not null ? CaptureFreeFor(block.Capacity) : null;
@@ -783,6 +797,11 @@ internal sealed unsafe partial class VulkanBackend : Backend
     /// <summary>Frees every cached (currently unused) block, after the work queued on them has finished.</summary>
     public override void ReleaseCachedMemory()
     {
+        if (IsDisposed)
+        {
+            return;                                                        // nothing is cached once disposed
+        }
+
         lock (_gate)
         {
             SubmitAndWait();
@@ -978,27 +997,59 @@ internal sealed unsafe partial class VulkanBackend : Backend
 
     public override void Synchronize()
     {
+        ThrowIfDisposed();
         lock (_gate)
         {
             SubmitAndWait();
         }
     }
 
-    /// <summary>Waits for the device, then frees everything it holds (for backends made by <see cref="CreateSeparate(int, bool, bool?, int?, long?, long?)"/> or <see cref="CreateSeparate(int, SeparateBackendOptions)"/>; storages must be released first).</summary>
-    internal void Shutdown()
+    /// <summary>Disposes the backend (<see cref="Backend.Dispose()"/>): the name the tests used before backends were disposable.</summary>
+    internal void Shutdown() => Dispose();
+
+    /// <summary>
+    /// Waits for the device, then frees everything it holds (a separate backend, <see cref="CreateSeparate(int, SeparateBackendOptions)"/>,
+    /// or a test's): every block, in use by a tensor that outlives the backend or cached, its pages, the staging buffer, the
+    /// queue's command pool, fences, pipelines and caches, and its logical device. Creating and disposing backends does not
+    /// grow the device's memory (rule 77).
+    /// </summary>
+    protected override void Dispose(bool disposing)
     {
         lock (_gate)
         {
             SubmitAndWait();
-            ReleaseCachedMemory();
+            lock (_pool)
+            {
+                foreach (var (_, bucket) in _pool)
+                {
+                    while (bucket.Count > 0)
+                    {
+                        DestroyBlock(bucket.Pop());
+                    }
+                }
+
+                _pool.Clear();
+                _poolSizes.Clear();
+            }
+
             if (_staging is not null)
             {
                 DestroyBlock(_staging);
                 _staging = null;
             }
 
-            FreeEmptyPages();
+            VulkanBlock[] live;
+            lock (_liveBlocks)
+            {
+                live = [.. _liveBlocks];
+            }
 
+            foreach (var block in live)
+            {
+                DestroyBlock(block);                                       // still held by a tensor that outlives the backend
+            }
+
+            FreeEmptyPages();
             StopQueue();
             vkDestroyDevice(_device, null);
         }

@@ -54,8 +54,21 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
     // and cap. HIP has no host offloading, so the cap is hard.
     internal static HipBackend CreateSeparate(int ordinal, SeparateBackendOptions options) => new(Probe.Value.Devices[ordinal], options);
 
+    // Whether this is a separate backend (CreateSeparate), which its caller disposes; the device's own lives for the process.
+    private readonly bool _separate;
+
+    // Device blocks this backend took from the runtime (hipMalloc), in use or cached: what a dispose frees. Touched only
+    // when the runtime allocates or frees (never on a pool hit), under the pool lock.
+    private readonly HashSet<ulong> _deviceBlocks = [];
+
+    // Kernels loaded alone (LoadGcn) that own their module, unloaded when the backend is disposed if their owner has not.
+    private readonly List<GcnFunction> _ownedFunctions = [];
+
+    protected override bool LivesForProcess => !_separate;
+
     private HipBackend(HipDevice device, SeparateBackendOptions? separate = null)
     {
+        _separate = separate is not null;
         _device = device;
         MakeCurrent();
         IntPtr stream;
@@ -172,8 +185,18 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
         }
     }
 
-    /// <summary>Binds this device to the calling thread (the runtime keeps a current device per thread).</summary>
+    /// <summary>
+    /// Binds this device to the calling thread (the runtime keeps a current device per thread); throws, naming the backend,
+    /// once it was disposed: every call that reaches the device comes through here.
+    /// </summary>
     private void MakeCurrent()
+    {
+        ThrowIfDisposed();
+        Bind();
+    }
+
+    // Binds the device without the disposed check (the dispose, and kernels given back after it).
+    private void Bind()
     {
         if (t_currentDevice != _device.RuntimeOrdinal + 1)
         {
@@ -287,6 +310,11 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
         }
 
         Check(result, nameof(hipMalloc));
+        lock (_pool)
+        {
+            _deviceBlocks.Add(pointer);                                    // freed by the dispose if still held then
+        }
+
         return pointer;
     }
 
@@ -297,6 +325,11 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
         long bytes = BlockBytes(s.Capacity);
         lock (_pool)
         {
+            if (IsDisposed)
+            {
+                return;                                                    // the dispose freed the block: nothing to keep
+            }
+
             if (s.Pointer != 0)
             {
                 if (!_pool.TryGetValue(s.Capacity, out var bucket))
@@ -324,6 +357,11 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
     /// <summary>Frees every cached block, after the work queued earlier (which may still use one) has finished.</summary>
     public override void ReleaseCachedMemory()
     {
+        if (IsDisposed)
+        {
+            return;                                                        // nothing is cached once disposed
+        }
+
         MakeCurrent();
         WaitStream();
         lock (_pool)
@@ -332,7 +370,9 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
             {
                 while (bucket.Count > 0)
                 {
-                    Check(hipFree(bucket.Pop()), nameof(hipFree));
+                    ulong pointer = bucket.Pop();
+                    Check(hipFree(pointer), nameof(hipFree));
+                    _deviceBlocks.Remove(pointer);
                     _memory.Freed(BlockBytes(length));
                 }
             }

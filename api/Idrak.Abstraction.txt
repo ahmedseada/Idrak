@@ -630,6 +630,7 @@ public sealed record Idrak.Abstraction.Cluster.SimulationOptions : System.IEquat
   public SimulationOptions()
   public System.TimeSpan ControlPoll { get; init; }
   public bool LogTransfers { get; init; }
+  public bool ReleaseDevices { get; init; }
   public bool Throttle { get; init; }
   public int EventLogFlushSteps { get; init; }
   public int? Seed { get; init; }
@@ -1430,7 +1431,7 @@ public readonly record struct Idrak.Abstraction.Devices.AttentionVariant : Syste
   public int Start(int end)
   public int Window { get; init; }
 
-public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devices.IDeviceBackend
+public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devices.IDeviceBackend, System.IDisposable
   nested Idrak.Abstraction.Devices.Backend.OperationScope (below)
   protected Backend()
   protected Idrak.Abstraction.Devices.Backend.OperationScope EnterOperation()
@@ -1444,6 +1445,8 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   protected bool HoldsAddresses { get; }
   protected static long TuningBegan()
   protected virtual bool BuildsKernelsWhenUsed { get; }
+  protected virtual bool LivesForProcess { get; }
+  protected virtual void Dispose(bool disposing)
   protected virtual void KernelFellBack(string operation, Idrak.Abstraction.Devices.KernelUnavailableException refused, string fallback)
   protected void ComposedAttention(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage? mask, Idrak.Abstraction.Devices.Storage scores, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage y, int heads, int rows, int keyRows, int dim, float scale)
   protected void ComposedAttentionTraining(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage? mask, Idrak.Abstraction.Devices.Storage scores, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage gradients, Idrak.Abstraction.Devices.Storage y, Idrak.Abstraction.Devices.Storage dOutput, Idrak.Abstraction.Devices.Storage dq, Idrak.Abstraction.Devices.Storage dkeys, Idrak.Abstraction.Devices.Storage dvalues, int heads, int rows, int keyRows, int dim, float scale)
@@ -1452,6 +1455,7 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   protected void ComposedConvolutionBackwardWeight(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dweight, in Idrak.Abstraction.Devices.ConvGeometry g, int filters, int groups)
   protected void CopyThroughHost(Idrak.Abstraction.Devices.Storage source, Idrak.Abstraction.Devices.Storage destination, int count)
   protected void EndMove()
+  protected void ThrowIfDisposed()
   protected void TuningMeasured(string operation, int candidates, long began)
   public Idrak.Abstraction.Devices.IMemoryOffload? Offload { get; }
   public System.Collections.Generic.IReadOnlySet<Idrak.Abstraction.Operations.Operation> OwnKernels { get; }
@@ -1504,6 +1508,7 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   public bool GruStepBackward(Idrak.Abstraction.Devices.Storage gates, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage? dOutput, Idrak.Abstraction.Devices.Storage weightsT, Idrak.Abstraction.Devices.Storage dHidden, Idrak.Abstraction.Devices.Storage dGates, Idrak.Abstraction.Devices.Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
   public bool GruStepBackwardKernel(Idrak.Abstraction.Devices.Storage gates, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage? dOutput, Idrak.Abstraction.Devices.Storage weightsT, Idrak.Abstraction.Devices.Storage dHidden, Idrak.Abstraction.Devices.Storage dGates, Idrak.Abstraction.Devices.Storage dRecurrent, int step, int next, int previous, int steps, int batch, int hiddenSize)
   public bool GruStepKernel(Idrak.Abstraction.Devices.Storage projected, Idrak.Abstraction.Devices.Storage weights, Idrak.Abstraction.Devices.Storage? hiddenBias, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage? gates, int step, int previous, int steps, int batch, int hiddenSize)
+  public bool IsDisposed { get; }
   public bool LstmCell(Idrak.Abstraction.Devices.Storage projected, Idrak.Abstraction.Devices.Storage recurrent, Idrak.Abstraction.Devices.Storage cell, Idrak.Abstraction.Devices.Storage hidden, Idrak.Abstraction.Devices.Storage output, Idrak.Abstraction.Devices.Storage? gates, Idrak.Abstraction.Devices.Storage? cells, int step, int steps, int batch, int hiddenSize)
   public bool LstmCellBackward(Idrak.Abstraction.Devices.Storage gates, Idrak.Abstraction.Devices.Storage cells, Idrak.Abstraction.Devices.Storage? dOutput, Idrak.Abstraction.Devices.Storage dHidden, Idrak.Abstraction.Devices.Storage dCell, Idrak.Abstraction.Devices.Storage dGates, Idrak.Abstraction.Devices.Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
   public bool LstmCellBackwardKernel(Idrak.Abstraction.Devices.Storage gates, Idrak.Abstraction.Devices.Storage cells, Idrak.Abstraction.Devices.Storage? dOutput, Idrak.Abstraction.Devices.Storage dHidden, Idrak.Abstraction.Devices.Storage dCell, Idrak.Abstraction.Devices.Storage dGates, Idrak.Abstraction.Devices.Storage dStep, int step, int previous, int steps, int batch, int hiddenSize)
@@ -1723,6 +1728,7 @@ public abstract class Idrak.Abstraction.Devices.Backend : Idrak.Abstraction.Devi
   public void CtcLoss(Idrak.Abstraction.Devices.Storage logProbs, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage losses, System.ReadOnlySpan<int> inputLengths, System.ReadOnlySpan<int> targetLengths, System.ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
   public void CtcLossBackward(Idrak.Abstraction.Devices.Storage logProbs, Idrak.Abstraction.Devices.Storage targets, Idrak.Abstraction.Devices.Storage lossGrads, Idrak.Abstraction.Devices.Storage dLogProbs, System.ReadOnlySpan<int> inputLengths, System.ReadOnlySpan<int> targetLengths, System.ReadOnlySpan<int> targetOffsets, int steps, int batch, int classes, int blank, bool batchFirst, bool zeroInfinity)
   public void DecoderMask(Idrak.Abstraction.Devices.Storage position, Idrak.Abstraction.Devices.Storage mask, int rows, int capacity)
+  public void Dispose()
   public void Dropout(Idrak.Abstraction.Devices.Storage x, Idrak.Abstraction.Devices.Storage y, int n, float p, uint seed)
   public void DropoutBackward(Idrak.Abstraction.Devices.Storage dy, Idrak.Abstraction.Devices.Storage dx, int n, float p, uint seed)
   public void Evict(Idrak.Abstraction.Devices.Storage storage, System.Action<Idrak.Abstraction.Devices.Storage>? recompute)
