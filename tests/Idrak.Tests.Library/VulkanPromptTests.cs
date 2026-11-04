@@ -32,8 +32,7 @@ internal abstract partial class Tests
 
         if (Environment.GetEnvironmentVariable("IDRAK_VULKAN_KERNELS") is "0" or "false")
         {
-            Console.WriteLine("    (IDRAK_VULKAN_KERNELS=0: kernels off, skipped)");
-            return;
+            Skip("IDRAK_VULKAN_KERNELS=0: kernels off");
         }
 
         string cache = Path.Combine(Path.GetTempPath(), $"idrak-prompt-tuning-{Environment.ProcessId}.tsv");
@@ -329,8 +328,7 @@ internal abstract partial class Tests
 
         if (Environment.GetEnvironmentVariable("IDRAK_VULKAN_KERNELS") is "0" or "false")
         {
-            Console.WriteLine("    (IDRAK_VULKAN_KERNELS=0: kernels off, skipped)");
-            return;
+            Skip("IDRAK_VULKAN_KERNELS=0: kernels off");
         }
 
         int[] ids = [1, 4, 9, 16, 2, 7, 11, 3, 8, 20, 5, 6];

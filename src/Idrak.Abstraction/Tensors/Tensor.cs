@@ -29,6 +29,9 @@ public sealed partial class Tensor : IDisposable
     private string? _operation;
     private int _disposed;
 
+    // Set when a backward pass ran this tensor's step and freed it: a later pass that brings it a gradient would drop it.
+    private bool _consumed;
+
     private Tensor(int[] shape, Storage storage, Device device, bool track)
     {
         _shape = shape;
@@ -550,9 +553,17 @@ public sealed partial class Tensor : IDisposable
 
     /// <summary>
     /// Computes the gradient of this scalar with respect to every tensor that requires gradients
-    /// and accumulates it into their <see cref="Grad"/>. The graph is freed afterwards.
+    /// and accumulates it into their <see cref="Grad"/>. The graph is freed afterwards: a later pass that reaches one of
+    /// its results throws (<see cref="Backward(bool)"/> keeps it).
     /// </summary>
-    public void Backward()
+    public void Backward() => Backward(retainGraph: false);
+
+    /// <summary>
+    /// Computes the gradient of this scalar as <see cref="Backward()"/> does; with <paramref name="retainGraph"/> the graph
+    /// is kept, so another pass may run through the same results (two losses sharing an activation, each back-propagated
+    /// in turn). Intermediate gradients are released either way; leaves' gradients accumulate.
+    /// </summary>
+    public void Backward(bool retainGraph)
     {
         if (Size != 1)
         {
@@ -560,11 +571,21 @@ public sealed partial class Tensor : IDisposable
         }
 
         using var seed = Full(_shape, 1f, Device);
-        Backward(seed);
+        Backward(seed, retainGraph);
     }
 
-    /// <summary>Back-propagates starting from the given gradient of this tensor.</summary>
-    public void Backward(Tensor gradient)
+    /// <summary>Back-propagates starting from the given gradient of this tensor (the graph is freed afterwards).</summary>
+    public void Backward(Tensor gradient) => Backward(gradient, retainGraph: false);
+
+    /// <summary>
+    /// Back-propagates starting from the given gradient of this tensor; with <paramref name="retainGraph"/> the graph is kept
+    /// for another pass.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">
+    /// A result this pass reaches had its step freed by an earlier pass (run that one with <paramref name="retainGraph"/>):
+    /// its gradient would otherwise be dropped silently.
+    /// </exception>
+    public void Backward(Tensor gradient, bool retainGraph)
     {
         ThrowIfDisposed();
         if (!RequiresGrad)
@@ -579,7 +600,7 @@ public sealed partial class Tensor : IDisposable
         Autograd.Backward(begins: true);
         try
         {
-            BackwardNodes(reads, held);
+            BackwardNodes(reads, held, retainGraph);
         }
         finally
         {
@@ -600,7 +621,7 @@ public sealed partial class Tensor : IDisposable
         }
     }
 
-    private void BackwardNodes(List<Storage> reads, List<Storage> held)
+    private void BackwardNodes(List<Storage> reads, List<Storage> held, bool retainGraph)
     {
         var order = TopologicalOrder();
         using var staging = TensorOffloading.Hooks is { } hooks && Device.Backend.Offload is { OffloadedCount: > 0 }
@@ -617,7 +638,22 @@ public sealed partial class Tensor : IDisposable
             }
 
             var node = order[index];
-            if (node._backward is null || node.Grad is null)
+            if (node._backward is null)
+            {
+                if (node._consumed && node.Grad is { } dropped)
+                {
+                    // A result whose step an earlier pass ran and freed: its gradient would stop here, never reaching its inputs.
+                    dropped.Dispose();
+                    node.Grad = null;
+                    throw new InvalidOperationException($"Backward reached the result of '{node._operation ?? "an operation"}' (shape {FormatShape(node._shape)}) "
+                        + "whose backward step an earlier Backward already ran and freed, so its gradient would be dropped. Back-propagate through it "
+                        + "once, or run the earlier pass with Backward(retainGraph: true) to keep the graph for another pass.");
+                }
+
+                continue;
+            }
+
+            if (node.Grad is null)
             {
                 continue;
             }
@@ -654,12 +690,16 @@ public sealed partial class Tensor : IDisposable
                 Telemetry.Operation(node._operation ?? "?", node, start, backward: true);
             }
 
-            // Intermediate results do not keep their gradient or graph (like PyTorch without retain_graph).
+            // Intermediate results do not keep their gradient, nor their graph unless asked to (PyTorch's retain_graph).
             node.Grad.Dispose();
             node.Grad = null;
-            node._backward = null;
-            node._parents = null;
-            node._stage = null;
+            if (!retainGraph)
+            {
+                node._backward = null;
+                node._parents = null;
+                node._stage = null;
+                node._consumed = true;
+            }
         }
 
         if (finishes is not null && order.Count > 0)

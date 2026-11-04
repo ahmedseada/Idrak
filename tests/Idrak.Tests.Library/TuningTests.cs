@@ -161,8 +161,7 @@ internal abstract partial class Tests
                 int first = tunings.Convolutions;
                 if (first == 0)
                 {
-                    Console.WriteLine($"    (the shape offers one candidate on {device}: nothing to measure; skipped)");
-                    return;
+                    Skip($"the shape offers one candidate on {device}: nothing to measure");
                 }
 
                 var near = Run(device, 5000);                                    // class 5120, a quarter octave away: lent

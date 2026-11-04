@@ -71,7 +71,7 @@ internal sealed unsafe partial class VulkanBackend
     internal static string? DefaultTuningCacheFile()
     {
         string? setting = Environment.GetEnvironmentVariable("IDRAK_VULKAN_TUNING_CACHE");
-        if (setting is "0" or "false")
+        if (Idrak.Abstraction.Devices.TuningFiles.IsOff(setting))
         {
             return null;
         }
@@ -154,6 +154,7 @@ internal sealed unsafe partial class VulkanBackend
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(file))!);
+            using var held = Idrak.Abstraction.Devices.TuningFiles.Lock(file);           // another process's merge waits: both keep their lines
             string prefix = TuningKey() + "/";
             // Other choices of this device and driver stay (the runtime policy and the storage memory are kept apart).
             var replaced = choices.Keys.Select(k => $"{prefix}{k}\t").ToArray();

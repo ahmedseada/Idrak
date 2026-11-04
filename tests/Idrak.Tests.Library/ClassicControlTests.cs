@@ -19,9 +19,9 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] ClassicControlGroup =
     [
-        ("plugins: classic: ClassicControlPlugin is the plug-in \"classic\" of ReinforcementPlugins.All; Register twice registers bandit, cartpole, pendulum and mountain-car once, from Idrak.Reinforcement.Plugins; Unregister leaves EnvironmentKinds as found; options are refused naming the keys", d => { if (d == Device.Cpu) ClassicPluginRegisters(); }),
-        ("plugins: classic: CartPole, Pendulum and MountainCar match Gymnasium's trajectories from the same start states and actions (observations and rewards within 1e-5, terminated and truncated exactly; the fixtures' hashes are the manifest's)", d => { if (d == Device.Cpu) ClassicMatchesGymnasium(); }),
-        ("plugins: classic: the four kinds pass the environment suite (with options too), start from Gymnasium's reset distributions drawn from the episode's seed, and the bandit pays its arms' means and spreads", d => { if (d == Device.Cpu) ClassicSuitesAndDraws(); }),
+        ("plugins: classic: ClassicControlPlugin is the plug-in \"classic\" of ReinforcementPlugins.All; Register twice registers bandit, cartpole, pendulum and mountain-car once, from Idrak.Reinforcement.Plugins; Unregister leaves EnvironmentKinds as found; options are refused naming the keys", d => { CpuOnly(d); ClassicPluginRegisters(); }),
+        ("plugins: classic: CartPole, Pendulum and MountainCar match Gymnasium's trajectories from the same start states and actions (observations and rewards within 1e-5, terminated and truncated exactly; the fixtures' hashes are the manifest's)", d => { CpuOnly(d); ClassicMatchesGymnasium(); }),
+        ("plugins: classic: the four kinds pass the environment suite (with options too), start from Gymnasium's reset distributions drawn from the episode's seed, and the bandit pays its arms' means and spreads", d => { CpuOnly(d); ClassicSuitesAndDraws(); }),
         ("plugins: classic: PPO (R2's trainer) solves CartPole: 32 greedy evaluation episodes average at least 490 within 150 iterations, then 100 new greedy episodes average at least 475, the rest cut at Gymnasium's 500 steps", ClassicPpoSolvesCartPole),
         ("plugins: classic: DQN (the off-policy trainer) solves the bandit (its greedy arm the best one, with and without double Q-learning) and CartPole (16 greedy evaluation episodes average at least 490 within 60,000 steps, then 100 new greedy episodes at least 475)", ClassicDqnSolves),
     ];

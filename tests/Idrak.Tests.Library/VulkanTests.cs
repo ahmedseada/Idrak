@@ -100,12 +100,10 @@ internal abstract partial class Tests
         };
         if (ordinals.Count == 0)
         {
-            if (device.Type == DeviceType.Cpu)
-            {
-                Console.WriteLine($"    (no Vulkan device: {VulkanBackend.UnavailableReason}; skipped)");
-            }
-
-            return;
+            // Missing hardware is the runner's SKIP, never a PASS that checked nothing.
+            Skip(device.Type == DeviceType.Cpu
+                ? $"no Vulkan device: {VulkanBackend.UnavailableReason}"
+                : $"Vulkan devices are checked from the CPU's pass and their own (vulkan:N), not from {device}");
         }
 
         foreach (int ordinal in ordinals)
@@ -144,10 +142,7 @@ internal abstract partial class Tests
 
     internal static void VulkanDevices(Device device)
     {
-        if (device.Type != DeviceType.Cpu)
-        {
-            return;                                                      // checked once
-        }
+        CpuOnly(device);                                                 // checked once, from the CPU's pass
 
         var provider = DeviceProviders.Find("vulkan");
         Check(provider is not null && provider.Type == DeviceType.Vulkan && provider.Display == "Vulkan", "the Vulkan provider is registered");
@@ -155,8 +150,7 @@ internal abstract partial class Tests
         if (VulkanBackend.DeviceCount == 0)
         {
             Check(VulkanBackend.UnavailableReason.Length > 0, "a reason when there is no device");
-            Console.WriteLine($"    (no Vulkan device: {VulkanBackend.UnavailableReason})");
-            return;
+            Skip($"no Vulkan device: {VulkanBackend.UnavailableReason} (the provider and the reason checked)");
         }
 
         for (int i = 0; i < VulkanBackend.DeviceCount; i++)
@@ -504,8 +498,7 @@ internal abstract partial class Tests
     {
         if (Environment.GetEnvironmentVariable("IDRAK_VULKAN_KERNELS") is "0" or "false")
         {
-            Console.WriteLine("    (IDRAK_VULKAN_KERNELS=0: kernels off, skipped)");
-            return;
+            Skip("IDRAK_VULKAN_KERNELS=0: the Vulkan kernels are off");
         }
 
         var cpu = Idrak.Abstraction.Devices.Cpu.CpuBackend.Instance;

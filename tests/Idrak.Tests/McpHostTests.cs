@@ -21,16 +21,16 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] McpHostGroup =
     [
-        ("mcp host: stdio over pipes lists the tools, calls one, cancels a long call (Idrak's client sends notifications/cancelled: the server's tool stops) and stops", d => { if (d == Device.Cpu) Run(McpHostStdioAsync); }),
-        ("mcp host: http on loopback: McpTools.ConnectHttpAsync lists, calls, cancels a long call (client cancel and disconnect), ends its session, stops", d => { if (d == Device.Cpu) Run(McpHostHttpAsync); }),
-        ("mcp host: http refuses a missing or wrong token (401), a page off this machine (403), an unknown session (404), a non-loopback bind unless allowed; the token can be turned off", d => { if (d == Device.Cpu) Run(McpHostHttpRefusalsAsync); }),
-        ("mcp host: an unknown transport fails with \"not registered\" naming stdio and http; option keys a transport does not take are refused", d => { if (d == Device.Cpu) Run(McpHostRegistryAsync); }),
-        ("mcp host: a client of the 2026-07-28 revision connects over http in one request (server/discover, no 400, no initialize) and over stdio; sessionless GET and DELETE are 405; a sessionless notifications/cancelled stops its call", d => { if (d == Device.Cpu) Run(McpHostSessionlessAsync); }),
-        ("mcp host: http MaxSessions: a new session over the limit is 503 with Retry-After; ReplaceIdleSessions closes the idle one unused the longest for it; IDRAK_MCP_MAX_SESSIONS and IDRAK_MCP_REPLACE_IDLE", d => { if (d == Device.Cpu) Run(McpHostSessionLimitAsync); }),
-        ("mcp host: telemetry (TelemetryLevel.Mcp): sessions opened and closed, requests received and answered (method, tool, status, bytes, time), tool calls finished, failed and cancelled, refusals with status and reason, over http and stdio", d => { if (d == Device.Cpu) Run(McpHostTelemetryAsync); }),
-        ("mcp host: per-call cost of a trivial tool over http and over stdio, cold and warm apart, telemetry off and with a listener (printed)", d => { if (d == Device.Cpu) Run(McpHostOverheadAsync); }),
-        ("cli serve: mcp serve --transport http prints its address and token; a client with the token lists and calls; --verbose prints its requests, --profile its report at exit; Ctrl+C stops it", d => { if (d == Device.Cpu) CliMcpServeHttp(); }),
-        ("cli serve: mcp serve over stdio with --verbose and --profile: the events and the report go to the error output, the protocol's output holds JSON-RPC lines only; --quiet drops the status line, not the events", d => { if (d == Device.Cpu) CliMcpServeStdioVerbose(); }),
+        ("mcp host: stdio over pipes lists the tools, calls one, cancels a long call (Idrak's client sends notifications/cancelled: the server's tool stops) and stops", d => { CpuOnly(d); Run(McpHostStdioAsync); }),
+        ("mcp host: http on loopback: McpTools.ConnectHttpAsync lists, calls, cancels a long call (client cancel and disconnect), ends its session, stops", d => { CpuOnly(d); Run(McpHostHttpAsync); }),
+        ("mcp host: http refuses a missing or wrong token (401), a page off this machine (403), an unknown session (404), a non-loopback bind unless allowed; the token can be turned off", d => { CpuOnly(d); Run(McpHostHttpRefusalsAsync); }),
+        ("mcp host: an unknown transport fails with \"not registered\" naming stdio and http; option keys a transport does not take are refused", d => { CpuOnly(d); Run(McpHostRegistryAsync); }),
+        ("mcp host: a client of the 2026-07-28 revision connects over http in one request (server/discover, no 400, no initialize) and over stdio; sessionless GET and DELETE are 405; a sessionless notifications/cancelled stops its call", d => { CpuOnly(d); Run(McpHostSessionlessAsync); }),
+        ("mcp host: http MaxSessions: a new session over the limit is 503 with Retry-After; ReplaceIdleSessions closes the idle one unused the longest for it; IDRAK_MCP_MAX_SESSIONS and IDRAK_MCP_REPLACE_IDLE", d => { CpuOnly(d); Run(McpHostSessionLimitAsync); }),
+        ("mcp host: telemetry (TelemetryLevel.Mcp): sessions opened and closed, requests received and answered (method, tool, status, bytes, time), tool calls finished, failed and cancelled, refusals with status and reason, over http and stdio", d => { CpuOnly(d); Run(McpHostTelemetryAsync); }),
+        ("mcp host: per-call cost of a trivial tool over http and over stdio, cold and warm apart, telemetry off and with a listener (printed)", d => { CpuOnly(d); Run(McpHostOverheadAsync); }),
+        ("cli serve: mcp serve --transport http prints its address and token; a client with the token lists and calls; --verbose prints its requests, --profile its report at exit; Ctrl+C stops it", d => { CpuOnly(d); CliMcpServeHttp(); }),
+        ("cli serve: mcp serve over stdio with --verbose and --profile: the events and the report go to the error output, the protocol's output holds JSON-RPC lines only; --quiet drops the status line, not the events", d => { CpuOnly(d); CliMcpServeStdioVerbose(); }),
     ];
 
     private static void Run(Func<Task> test) => test().GetAwaiter().GetResult();

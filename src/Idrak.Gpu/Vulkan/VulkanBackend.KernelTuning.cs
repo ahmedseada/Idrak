@@ -80,7 +80,7 @@ internal readonly record struct VulkanTuneKey(VulkanTuneOp Op, int Variant, int 
 internal sealed unsafe partial class VulkanBackend
 {
     /// <summary>Measure device-dependent choices on the device (default); off (IDRAK_AUTOTUNE=0): the formulas only.</summary>
-    internal static bool Autotune = Environment.GetEnvironmentVariable("IDRAK_AUTOTUNE") is not ("0" or "false");
+    internal static bool Autotune = !Idrak.Abstraction.Devices.TuningFiles.IsOff(Environment.GetEnvironmentVariable("IDRAK_AUTOTUNE"));
 
     /// <summary>
     /// A candidate decided by one timed run each (the rounds would outlast ComputeResources.TuningBudget) replaces the

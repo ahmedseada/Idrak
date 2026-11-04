@@ -43,7 +43,7 @@ internal enum TiledKernel : byte
 internal static class CpuTuning
 {
     /// <summary>Measure the parallel cut-overs (default); off (IDRAK_AUTOTUNE=0): the cache-size formulas only.</summary>
-    internal static bool Autotune = Environment.GetEnvironmentVariable("IDRAK_AUTOTUNE") is not ("0" or "false");
+    internal static bool Autotune = !TuningFiles.IsOff(Environment.GetEnvironmentVariable("IDRAK_AUTOTUNE"));
 
     /// <summary>Overrides the element-wise parallel cut-over (IDRAK_CPU_PARALLEL_ELEMENTS; tests and benchmarks).</summary>
     internal static int? ParallelElementsOverride = EnvironmentInt("IDRAK_CPU_PARALLEL_ELEMENTS");
@@ -79,7 +79,7 @@ internal static class CpuTuning
 
     internal static string? DefaultCacheFile()
     {
-        if (Environment.GetEnvironmentVariable("IDRAK_TUNING_CACHE") is "0" or "false")
+        if (TuningFiles.IsOff(Environment.GetEnvironmentVariable("IDRAK_TUNING_CACHE")))
         {
             return null;
         }
@@ -505,9 +505,10 @@ internal static class CpuTuning
             }
 
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(file))!);
+            using var held = TuningFiles.Lock(file);                       // another process's (or thread's) merge waits: both keep their lines
             var lines = File.Exists(file) ? File.ReadAllLines(file).Where(l => !l.StartsWith(key + "\t", StringComparison.Ordinal)).ToList() : [];
             lines.Add(string.Create(CultureInfo.InvariantCulture, $"{key}\t{cutovers.Elements}\t{cutovers.Flops}"));
-            string temporary = file + "." + Environment.ProcessId + ".tmp";
+            string temporary = file + "." + Environment.ProcessId + "." + Environment.CurrentManagedThreadId + ".tmp";
             File.WriteAllLines(temporary, lines);
             File.Move(temporary, file, overwrite: true);
         }

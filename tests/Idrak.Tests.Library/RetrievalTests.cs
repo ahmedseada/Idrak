@@ -20,14 +20,14 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] Retrieval =
     [
         ("retrieval: chunking by words and sentences with overlap", Chunking),
-        ("retrieval: chunks, BM25 scores and word tokens equal the string-splitting reference (casing, Unicode white space, punctuation)", d => { if (d == Device.Cpu) TextPathsMatchReference(); }),
+        ("retrieval: chunks, BM25 scores and word tokens equal the string-splitting reference (casing, Unicode white space, punctuation)", d => { CpuOnly(d); TextPathsMatchReference(); }),
         ("retrieval: BM25 scores match the formula; vector index search and save/load", KeywordAndVectorSearch),
         ("retrieval: text encoder pools real tokens and normalizes; contrastive training retrieves the pairs", TextEncoderPoolingAndTraining),
         ("retrieval: text encoder with a pretrained tokenizer (BPE, WordPiece, Unigram) encodes each batch in one EncodeBatch and gives the plain Encode path's vectors (empty, longer than MaxLength, Arabic, emoji; a tokenizer.json that truncates from the left and pads)", TextEncoderPretrainedBatch),
         ("retrieval: index with keywords, vectors, reciprocal rank fusion; save/load; builder rules", HybridIndex),
         ("retrieval: cross-encoder re-ranking, RAG prompt and citations, search tool", RerankAndRag),
-        ("retrieval: in-memory vector store (replace, delete, filter, order); an index over any embedder and store; RAG with any retriever and re-ranker", d => { if (d == Device.Cpu) PluggableRetrieval(); }),
-        ("mcp: serve a tool registry over MCP and call it from a client (prefix, rules, errors)", d => { if (d == Device.Cpu) McpRoundTrip(); }),
+        ("retrieval: in-memory vector store (replace, delete, filter, order); an index over any embedder and store; RAG with any retriever and re-ranker", d => { CpuOnly(d); PluggableRetrieval(); }),
+        ("mcp: serve a tool registry over MCP and call it from a client (prefix, rules, errors)", d => { CpuOnly(d); McpRoundTrip(); }),
     ];
 
     internal static readonly Document[] Towns =

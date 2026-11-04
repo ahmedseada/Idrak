@@ -13,7 +13,7 @@ internal abstract partial class Tests
 {
     internal static readonly (string Name, Action<Device> Run)[] PolicyNetworkGroup =
     [
-        ("reinforcement: policy networks: ModulePolicyOptions' hidden widths, activation and value head have defaults, read IDRAK_RL_HIDDEN, IDRAK_RL_ACTIVATION and IDRAK_RL_VALUE_HEAD (bad values refused naming them), and the automatic value head follows the run's algorithm and estimator", d => { if (d == Device.Cpu) PolicyNetworkOptions(); }),
+        ("reinforcement: policy networks: ModulePolicyOptions' hidden widths, activation and value head have defaults, read IDRAK_RL_HIDDEN, IDRAK_RL_ACTIVATION and IDRAK_RL_VALUE_HEAD (bad values refused naming them), and the automatic value head follows the run's algorithm and estimator", d => { CpuOnly(d); PolicyNetworkOptions(); }),
         ("reinforcement: policy networks: PolicyNetworks builds a network of the options' shape, a categorical or Gaussian policy for an environment kind's spaces (a critic and a reference when asked) and DQN's Q-network and target, the same weights from the same seed; a box refused for a Q-network naming it", PolicyNetworkBuilders),
     ];
 

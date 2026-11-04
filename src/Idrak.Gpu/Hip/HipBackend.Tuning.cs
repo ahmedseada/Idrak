@@ -25,7 +25,7 @@ namespace Idrak.Gpu.Hip;
 internal sealed unsafe partial class HipBackend
 {
     /// <summary>Measure device-dependent choices (default); off (IDRAK_AUTOTUNE=0): the defaults and formulas only.</summary>
-    internal static bool Autotune { get; set; } = Environment.GetEnvironmentVariable("IDRAK_AUTOTUNE") is not ("0" or "false");
+    internal static bool Autotune { get; set; } = !Idrak.Abstraction.Devices.TuningFiles.IsOff(Environment.GetEnvironmentVariable("IDRAK_AUTOTUNE"));
 
     // This backend's choices (null until first needed), or a cluster leader's it follows (HipMeasuredChoices).
     private HipTuningTable? _tuning;

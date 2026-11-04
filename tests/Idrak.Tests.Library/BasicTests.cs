@@ -553,5 +553,17 @@ internal abstract partial class Tests
     /// <summary>Ends the test as skipped: its data is not here (the owner's references), and <paramref name="reason"/> names the run that writes it.</summary>
     internal static void Skip(string reason) => throw new SkippedException(reason);
 
+    /// <summary>
+    /// For a test of something no device changes (files, parsing, the command line), run once on the CPU: on any other
+    /// device it is a SKIP, never a PASS that did no work.
+    /// </summary>
+    internal static void CpuOnly(Device device)
+    {
+        if (device != Device.Cpu)
+        {
+            Skip($"device-independent: checked once, on the CPU (not on {device})");
+        }
+    }
+
     internal sealed class SkippedException(string reason) : Exception(reason);
 }

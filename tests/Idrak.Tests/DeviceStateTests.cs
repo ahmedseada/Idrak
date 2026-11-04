@@ -12,7 +12,7 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] DeviceStateGroup =
     [
-        ("tensor scope: disposing an outer scope first throws, the inner stays current, a later tensor lands in the live scope, and disposing in order afterwards disposes every tensor", d => { if (d == Device.Cpu) TensorScopeOutOfOrder(); }),
+        ("tensor scope: disposing an outer scope first throws, the inner stays current, a later tensor lands in the live scope, and disposing in order afterwards disposes every tensor", d => { CpuOnly(d); TensorScopeOutOfOrder(); }),
         ("cuda launch: a launch with the wrong argument count throws naming the kernel, leaves no shared bytes or cooperative flag to the next launch, and the next launch runs", CudaLaunchRefusedLeavesNothing),
         ("tensor cores: two threads' first use loads the tensor-core modules once, both get the same answer and both launch", TensorCoresLoadOnce),
     ];

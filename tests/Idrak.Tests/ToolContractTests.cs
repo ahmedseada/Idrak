@@ -29,10 +29,10 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ToolContractGroup =
     [
-        ("tool contracts: ChatTools.WithTools runs tools on the server (rounds, the round limit, streaming, the request kept)", d => { if (d == Device.Cpu) WithToolsRounds(); }),
-        ("tool contracts: MapChatApi with server-side tools (the model's own through IToolChatModel, or given in the options; streamed and not)", d => { if (d == Device.Cpu) ChatApiServerTools(); }),
+        ("tool contracts: ChatTools.WithTools runs tools on the server (rounds, the round limit, streaming, the request kept)", d => { CpuOnly(d); WithToolsRounds(); }),
+        ("tool contracts: MapChatApi with server-side tools (the model's own through IToolChatModel, or given in the options; streamed and not)", d => { CpuOnly(d); ChatApiServerTools(); }),
         ("mcp: the engine's models as MCP tools (generate, chat, embed) listed and called in process over the model catalog", ModelToolsOverMcp),
-        ("cli serve: serve --mcp serves the models (generate, chat) and --tools assemblies over pipes", d => { if (d == Device.Cpu) CliServeMcp(); }),
+        ("cli serve: serve --mcp serves the models (generate, chat) and --tools assemblies over pipes", d => { CpuOnly(d); CliServeMcp(); }),
     ];
 
     private static IToolRegistry WeatherTools(List<string> asked) => ToolRegistry.Create()

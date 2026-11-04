@@ -2160,6 +2160,11 @@ public static class Idrak.Abstraction.Devices.TensorOffloading
   public static void Register(Idrak.Abstraction.Devices.ITensorOffloadingHooks hooks)
   public static void StepBoundary(Idrak.Abstraction.Device device)
 
+public static class Idrak.Abstraction.Devices.TuningFiles
+  public static System.IDisposable Lock(string file, System.TimeSpan? timeout = null)
+  public static bool IsOff(string? setting)
+  public static readonly System.TimeSpan DefaultLockTimeout
+
 public enum Idrak.Abstraction.Devices.UnaryOp : int
   Abs = 4
   Cos = 10
@@ -6414,6 +6419,8 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public void AddScaled(Idrak.Abstraction.Tensor other, float scale = 1f)
   public void Backward()
   public void Backward(Idrak.Abstraction.Tensor gradient)
+  public void Backward(Idrak.Abstraction.Tensor gradient, bool retainGraph)
+  public void Backward(bool retainGraph)
   public void CopyFrom(Idrak.Abstraction.Tensor source)
   public void CopyFrom(System.ReadOnlySpan<float> values)
   public void CopyTo(System.Span<float> destination, int offset = 0)

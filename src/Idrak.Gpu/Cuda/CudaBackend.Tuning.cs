@@ -59,7 +59,7 @@ internal readonly record struct TuneKey(TuneOp Op, int Variant, int A, int B, in
 internal sealed unsafe partial class CudaBackend
 {
     /// <summary>Measure card-dependent choices on the device (default); off (IDRAK_AUTOTUNE=0): the formulas only.</summary>
-    internal static bool Autotune = Environment.GetEnvironmentVariable("IDRAK_AUTOTUNE") is not ("0" or "false");
+    internal static bool Autotune = !Idrak.Abstraction.Devices.TuningFiles.IsOff(Environment.GetEnvironmentVariable("IDRAK_AUTOTUNE"));
 
     /// <summary>Keep measured choices in the user's cache folder and read them at the next start (IDRAK_TUNING_CACHE=0: off).</summary>
     internal static bool PersistTuning = TuningCache.Folder() is not null;

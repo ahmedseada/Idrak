@@ -78,7 +78,7 @@ public static class ClusterCache
     {
         get
         {
-            if (Environment.GetEnvironmentVariable("IDRAK_TUNING_CACHE") is "0" or "false" or "off")
+            if (Idrak.Abstraction.Devices.TuningFiles.IsOff(Environment.GetEnvironmentVariable("IDRAK_TUNING_CACHE")))
             {
                 return null;
             }

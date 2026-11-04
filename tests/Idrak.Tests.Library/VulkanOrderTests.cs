@@ -30,12 +30,8 @@ internal abstract partial class Tests
         };
         if (ordinals.Count == 0 || Environment.GetEnvironmentVariable("IDRAK_VULKAN_KERNELS") is "0" or "false")
         {
-            if (device.Type == DeviceType.Cpu)
-            {
-                Console.WriteLine($"    (no Vulkan device or kernels off: {VulkanBackend.UnavailableReason}; skipped)");
-            }
-
-            return;
+            Skip(ordinals.Count > 0 ? "IDRAK_VULKAN_KERNELS=0: the Vulkan kernels are off"
+                : device.Type == DeviceType.Cpu ? $"no Vulkan device: {VulkanBackend.UnavailableReason}" : $"Vulkan devices are checked from the CPU's pass and their own (vulkan:N), not from {device}");
         }
 
         bool timing = Environment.GetEnvironmentVariable("IDRAK_ORDER_TIMES") is "1" or "true";

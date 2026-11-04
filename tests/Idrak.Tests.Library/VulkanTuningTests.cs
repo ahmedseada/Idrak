@@ -23,18 +23,12 @@ internal abstract partial class Tests
         };
         if (ordinals.Count == 0)
         {
-            if (device.Type == DeviceType.Cpu)
-            {
-                Console.WriteLine($"    (no Vulkan device: {VulkanBackend.UnavailableReason}; skipped)");
-            }
-
-            return;
+            Skip(device.Type == DeviceType.Cpu ? $"no Vulkan device: {VulkanBackend.UnavailableReason}" : $"Vulkan devices are checked from the CPU's pass and their own (vulkan:N), not from {device}");
         }
 
         if (Environment.GetEnvironmentVariable("IDRAK_VULKAN_KERNELS") is "0" or "false")
         {
-            Console.WriteLine("    (IDRAK_VULKAN_KERNELS=0: kernels off, skipped)");
-            return;
+            Skip("IDRAK_VULKAN_KERNELS=0: kernels off");
         }
 
         // Measured choices go to a file of this test's own, removed afterwards.

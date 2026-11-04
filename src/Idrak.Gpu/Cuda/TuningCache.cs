@@ -233,7 +233,7 @@ internal static class TuningCache
     internal static string? Folder(Func<string, string?>? environment = null, string kind = "cuda")
     {
         string? setting = (environment ?? Environment.GetEnvironmentVariable)("IDRAK_TUNING_CACHE");
-        if (setting is "0" || string.Equals(setting, "false", StringComparison.OrdinalIgnoreCase) || string.Equals(setting, "off", StringComparison.OrdinalIgnoreCase))
+        if (Idrak.Abstraction.Devices.TuningFiles.IsOff(setting))
         {
             return null;
         }
@@ -346,9 +346,11 @@ internal static class TuningCache
 
     /// <summary>
     /// Writes <paramref name="entries"/> to <paramref name="path"/>, keeping the choices another process wrote there for
-    /// the same identity (ours win) and replacing a file of another identity. Written to a temporary file first and moved
-    /// into place, so a reader never sees half a file. False when it could not be written (a read-only folder: the
-    /// choices are then measured again next time).
+    /// the same identity (ours win) and replacing a file of another identity. Read, merged and written under the file's
+    /// lock across processes (<see cref="Idrak.Abstraction.Devices.TuningFiles.Lock"/>), so two processes saving at once
+    /// both keep their choices; written to a temporary file first and moved into place, so a reader never sees half a
+    /// file. False when it could not be written (a read-only folder, or the lock held too long: the choices are then
+    /// measured again next time).
     /// </summary>
     internal static bool Save(string path, TuningIdentity identity, IReadOnlyDictionary<TuneKey, int> entries)
     {
@@ -356,6 +358,7 @@ internal static class TuningCache
         {
             lock (FileLock)
             {
+                using var held = Idrak.Abstraction.Devices.TuningFiles.Lock(path);
                 var merged = File.Exists(path) ? Parse(File.ReadAllText(path), identity) ?? [] : [];
                 foreach (var (key, value) in entries)
                 {

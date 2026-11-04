@@ -43,7 +43,7 @@ internal sealed class HipKernelCache(string? folder)
     internal static string? DefaultFolder(Func<string, string?>? environment = null)
     {
         string? setting = (environment ?? Environment.GetEnvironmentVariable)("IDRAK_HIP_KERNEL_CACHE");
-        if (setting is "0" or "false")
+        if (Idrak.Abstraction.Devices.TuningFiles.IsOff(setting))
         {
             return null;
         }

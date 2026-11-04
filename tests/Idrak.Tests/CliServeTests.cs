@@ -63,13 +63,13 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliServeGroup =
     [
-        ("cli serve: help, short forms, usage errors, server keys", d => { if (d == Device.Cpu) CliServeHelpAndKeys(); }),
-        ("cli serve: the port (--port, IDRAK_PORT, config serve.port, default 7317) for serve and the client commands", d => { if (d == Device.Cpu) CliServePort(); }),
+        ("cli serve: help, short forms, usage errors, server keys", d => { CpuOnly(d); CliServeHelpAndKeys(); }),
+        ("cli serve: the port (--port, IDRAK_PORT, config serve.port, default 7317) for serve and the client commands", d => { CpuOnly(d); CliServePort(); }),
         ("cli serve: serve a tiny model, both APIs (streaming and not), ps, api, ping, load/unload, metrics, request log, stop", CliServeEndToEnd),
-        ("cli serve: mcp serve over pipes, --list", d => { if (d == Device.Cpu) CliMcpServe(); }),
+        ("cli serve: mcp serve over pipes, --list", d => { CpuOnly(d); CliMcpServe(); }),
         ("cli serve: images: idrak serve with the tiny Gemma 3 answers /v1 data URLs, uploads and /api/chat as run --image (grayscale per request and --grayscale as run --grayscale); text model, http URL, limits, bad input refused", CliServeImages),
-        ("cli serve: OpenAI-style API in Idrak.AspNetCore (tool calls streamed and not, translation, embeddings)", d => { if (d == Device.Cpu) CompletionsApiScripted(); }),
-        ("cli serve: the doors: an empty --api-key or IDRAK_API_KEY refused at startup; a public bind without a key warns first (refused with --require-key); a cross-origin POST to /idrak/stop is 403 and the server stays up, allowed origins pass; a JSON route answers another Content-Type with 415; response_format, logprobs, an object tool_choice and the other unimplemented fields answer 400 naming the field", d => { if (d == Device.Cpu) CliServeDoors(); }),
+        ("cli serve: OpenAI-style API in Idrak.AspNetCore (tool calls streamed and not, translation, embeddings)", d => { CpuOnly(d); CompletionsApiScripted(); }),
+        ("cli serve: the doors: an empty --api-key or IDRAK_API_KEY refused at startup; a public bind without a key warns first (refused with --require-key); a cross-origin POST to /idrak/stop is 403 and the server stays up, allowed origins pass; a JSON route answers another Content-Type with 415; response_format, logprobs, an object tool_choice and the other unimplemented fields answer 400 naming the field", d => { CpuOnly(d); CliServeDoors(); }),
         ("cli serve: an encoder-decoder beside a chat model: served as the \"seq2seq\" kind (announcement, ps, /idrak/ps), /v1/completions answers with transformers' greedy text (num_beams 1) and with the best of --beams 3; /v1/chat/completions, /api/chat and the web chat leave it out naming the reason; MCP generate takes num_beams and the server's beams; --beams without one refused", CliServeSeq2Seq),
     ];
 

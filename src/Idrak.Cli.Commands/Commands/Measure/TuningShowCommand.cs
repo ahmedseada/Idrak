@@ -119,8 +119,7 @@ internal sealed class TuningShowCommand : Command
     /// <summary>The caches, where the backends look for them (the same variables and defaults, under <paramref name="cacheFolder"/>).</summary>
     internal static IEnumerable<Cache> Caches(string cacheFolder)
     {
-        static bool Off(string? setting) => setting is "0" || string.Equals(setting, "false", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(setting, "off", StringComparison.OrdinalIgnoreCase);
+        static bool Off(string? setting) => Idrak.Abstraction.Devices.TuningFiles.IsOff(setting);           // as every backend reads it
         string? tuning = Environment.GetEnvironmentVariable("IDRAK_TUNING_CACHE");
 
         string? cpu = Off(tuning) ? null
@@ -134,7 +133,7 @@ internal sealed class TuningShowCommand : Command
         yield return new Cache("cuda", cuda, cuda is not null && Directory.Exists(cuda) ? [.. Directory.GetFiles(cuda, "*.txt").Order(StringComparer.Ordinal)] : [], ReadCuda);
 
         string? vulkanSetting = Environment.GetEnvironmentVariable("IDRAK_VULKAN_TUNING_CACHE");
-        string? vulkan = vulkanSetting is "0" or "false" ? null
+        string? vulkan = Off(vulkanSetting) ? null
             : !string.IsNullOrEmpty(vulkanSetting) ? vulkanSetting
             : System.IO.Path.Combine(cacheFolder, "vulkan", "tuning.tsv");
         yield return new Cache("vulkan", vulkan, vulkan is not null && File.Exists(vulkan) ? [vulkan] : [], ReadVulkan);

@@ -16,22 +16,22 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CliMeasureGroup =
     [
-        ("cli measure: every command has help with an example and its environment; short forms are its own", d => { if (d == Device.Cpu) CliMeasureHelp(); }),
+        ("cli measure: every command has help with an example and its environment; short forms are its own", d => { CpuOnly(d); CliMeasureHelp(); }),
         ("cli measure: bench without a model runs the kernel benchmarks (JSON shape, cold and warm apart, the cold call's compiling, --save and --compare)", CliBenchKernels),
-        ("cli measure: bench warm-up settles on a fake clock: the first call apart with the JIT's share of it, rounds until they agree and nothing compiles, the median", d => { if (d == Device.Cpu) CliBenchSettle(); }),
+        ("cli measure: bench warm-up settles on a fake clock: the first call apart with the JIT's share of it, rounds until they agree and nothing compiles, the median", d => { CpuOnly(d); CliBenchSettle(); }),
         ("cli measure: bench MODEL gives tokens per second, GFLOP/s and memory; --save and --compare", CliBenchModel),
         ("cli measure: bench --matrix and --devices give one run per format and device", CliBenchMatrix),
-        ("cli measure: bench usage errors exit with 2", d => { if (d == Device.Cpu) CliBenchErrors(); }),
+        ("cli measure: bench usage errors exit with 2", d => { CpuOnly(d); CliBenchErrors(); }),
         ("cli measure: perplexity of a text, float32 and int8 weights", CliPerplexity),
         ("cli measure: profile times every layer, operation and kernel of one decoding step", CliProfile),
         ("cli measure: eval scores answers on conversations and writes them", CliEval),
         ("cli measure: check against a reference passes, and a changed reference fails", CliCheck),
-        ("cli measure: tuning show reads the CPU, CUDA and Vulkan caches; --reset clears one", d => { if (d == Device.Cpu) CliTuningShow(); }),
+        ("cli measure: tuning show reads the CPU, CUDA and Vulkan caches; --reset clears one", d => { CpuOnly(d); CliTuningShow(); }),
     ];
 
     private static readonly (string Name, Action<Device> Run)[] CliRetrievalGroup =
     [
-        ("cli retrieval: rag index, search and eval with keywords", d => { if (d == Device.Cpu) CliRagKeywords(); }),
+        ("cli retrieval: rag index, search and eval with keywords", d => { CpuOnly(d); CliRagKeywords(); }),
         ("cli retrieval: rag index with a model (hybrid), search and ask", CliRagHybrid),
     ];
 

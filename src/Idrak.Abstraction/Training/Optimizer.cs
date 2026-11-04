@@ -179,8 +179,20 @@ public abstract class Optimizer : IOptimizer
     /// <summary>A state tensor's values as a saved value.</summary>
     protected static OptimizerStateValue StateOf(Tensor tensor) => new([.. tensor.Shape], tensor.ToArray());
 
-    /// <summary>The step count as a saved value.</summary>
-    protected static OptimizerStateValue StateOf(int step) => new([1], [step]);
+    /// <summary>
+    /// The step count as a saved value: an integer kept exactly in the state's floats as two parts, the low 24 bits and the
+    /// rest, shape [2] (one float holds every integer only up to 2^24, 16.7M steps). <see cref="LoadStep"/> reads this form
+    /// and the earlier one (one float, shape [1]).
+    /// </summary>
+    protected static OptimizerStateValue StateOf(int step)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(step);
+        return new([2], [step & StepLowMask, step >> StepLowBits]);
+    }
+
+    // The step's low part: the bits one float holds exactly.
+    private const int StepLowBits = 24;
+    private const int StepLowMask = (1 << StepLowBits) - 1;
 
     /// <summary>
     /// The state tensor <paramref name="name"/> of <paramref name="state"/> loaded into <paramref name="target"/> (made by
@@ -204,11 +216,27 @@ public abstract class Optimizer : IOptimizer
         return target;
     }
 
-    /// <summary>The saved step count <paramref name="name"/>.</summary>
-    protected static int LoadStep(IReadOnlyDictionary<string, OptimizerStateValue> state, string name = "step") =>
-        state.TryGetValue(name, out var value) && value.Values.Length == 1
-            ? (int)value.Values[0]
-            : throw new ArgumentException($"The saved optimizer state has no '{name}'.", nameof(state));
+    /// <summary>
+    /// The saved step count <paramref name="name"/>: the integer form <see cref="StateOf(int)"/> writes (two exact parts),
+    /// or the earlier one float (a checkpoint saved before it).
+    /// </summary>
+    protected static int LoadStep(IReadOnlyDictionary<string, OptimizerStateValue> state, string name = "step")
+    {
+        if (!state.TryGetValue(name, out var value))
+        {
+            throw new ArgumentException($"The saved optimizer state has no '{name}'.", nameof(state));
+        }
+
+        static bool Whole(float part) => part >= 0 && part <= int.MaxValue && part == MathF.Floor(part);
+        return value.Values switch
+        {
+            [var single] when Whole(single) => (int)single,                                         // the earlier form
+            [var low, var high] when Whole(low) && low <= StepLowMask && Whole(high) && high <= int.MaxValue >> StepLowBits =>
+                (int)high << StepLowBits | (int)low,
+            _ => throw new ArgumentException($"The saved optimizer state '{name}' is not a step count: [{string.Join(", ", value.Values.Select(v => v.ToString(System.Globalization.CultureInfo.InvariantCulture)))}] "
+                + "(one whole number, or the low 24 bits and the rest).", nameof(state)),
+        };
+    }
 
     /// <summary>Set by a <see cref="ClipAndStep"/> that zeroed the gradients: the next <see cref="ZeroGrad"/> skips its pass.</summary>
     protected bool GradientsZeroed { get; set; }

@@ -26,7 +26,7 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] AspNetCore =
     [
-        ("aspnetcore: MapPredictor, MapGenerate (JSON and SSE), MapChatApi, status, DI predictor, a model kind of one's own, errors", d => { if (d == Device.Cpu) AspNetCoreEndpoints(d); }),
+        ("aspnetcore: MapPredictor, MapGenerate (JSON and SSE), MapChatApi, status, DI predictor, a model kind of one's own, errors", d => { CpuOnly(d); AspNetCoreEndpoints(d); }),
         ("aspnetcore: images (plan 11 phase 8): a vision chat model in the engine, /v1 image_url data and http URLs, /v1/chat/upload, /api/chat parts, streamed and not = transformers' 20 tokens; refusals", AspNetCoreImages),
     ];
 

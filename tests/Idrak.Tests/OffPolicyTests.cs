@@ -15,7 +15,7 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] OffPolicyGroup =
     [
-        ("reinforcement: off-policy: the replay buffer is a fixed ring: the memory allocated when it is made is the transitions' size exactly (no pool's rounding) and does not grow after it is full, the oldest transition is overwritten, sampling is seeded, Save and Load keep it bit for bit", d => { if (d == Device.Cpu) OffPolicyReplayBuffer(); }),
+        ("reinforcement: off-policy: the replay buffer is a fixed ring: the memory allocated when it is made is the transitions' size exactly (no pool's rounding) and does not grow after it is full, the oldest transition is overwritten, sampling is seeded, Save and Load keep it bit for bit", d => { CpuOnly(d); OffPolicyReplayBuffer(); }),
         ("reinforcement: off-policy: dqn is QLosses' library default; it matches a direct computation (Huber of δ 1 and 2, the squared error, double Q-learning, weights), its gradient reaches only the actions taken, and unknown names, options and inputs are refused; an app's loss falls back on it", OffPolicyLoss),
         ("reinforcement: off-policy: a seeded DQN run gives the same returns, losses and weights twice, on 1 and 4 threads, with its environments stepped in parallel or not; another seed differs; memory held does not grow after the buffer is full", OffPolicyReproducible),
         ("reinforcement: off-policy: a resumed DQN run matches an uninterrupted one bit for bit (returns, losses, weights, the target network, the replay buffer, the schedule's rate), episodes under way at the checkpoint replayed from their seeds and actions", OffPolicyResume),

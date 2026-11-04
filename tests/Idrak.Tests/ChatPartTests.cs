@@ -17,10 +17,10 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ChatPartGroup =
     [
-        ("chat parts: ChatImage from bytes, files and data URLs (media types sniffed or given, SHA-256 hash, equality by bytes), bad data URLs refused", d => { if (d == Device.Cpu) ChatImageFactories(); }),
-        ("chat parts: ChatMessage holds ordered parts; text-only messages, Content, with { Content } and equality are as before", d => { if (d == Device.Cpu) ChatMessageParts(); }),
-        ("chat parts: the registry (text and image as library defaults, Register/Unregister, Origin, versions, policies) and the JSON of parts and content", d => { if (d == Device.Cpu) ChatPartRegistry(); }),
-        ("chat parts: the testing kit's ChatPartKindSuite passes the built-in kinds and catches a kind that loses data", d => { if (d == Device.Cpu) ChatPartKit(); }),
+        ("chat parts: ChatImage from bytes, files and data URLs (media types sniffed or given, SHA-256 hash, equality by bytes), bad data URLs refused", d => { CpuOnly(d); ChatImageFactories(); }),
+        ("chat parts: ChatMessage holds ordered parts; text-only messages, Content, with { Content } and equality are as before", d => { CpuOnly(d); ChatMessageParts(); }),
+        ("chat parts: the registry (text and image as library defaults, Register/Unregister, Origin, versions, policies) and the JSON of parts and content", d => { CpuOnly(d); ChatPartRegistry(); }),
+        ("chat parts: the testing kit's ChatPartKindSuite passes the built-in kinds and catches a kind that loses data", d => { CpuOnly(d); ChatPartKit(); }),
         ("chat parts: text-only models (ChatGenerator, the engine's chat model, FakeChatModel, WithTools) and templates refuse an image with a clear message; text is unchanged", ChatPartModelsRefuse),
         ("chat parts: chat JSON (ChatJson, fine-tuning transcripts, the CLI's --history) round-trips images and keeps text-only content a string; /v1 reads image_url data URLs and refuses other parts", ChatPartJson),
     ];
