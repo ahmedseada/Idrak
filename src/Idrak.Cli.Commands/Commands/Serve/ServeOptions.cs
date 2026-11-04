@@ -71,8 +71,30 @@ internal sealed record ServeSettings(string Host, int Port, string? ApiKey, IRea
     /// <summary>Whether the request log holds the request bodies (--log-content).</summary>
     public bool LogContent { get; init; }
 
-    /// <summary>Whether requests need a key.</summary>
-    public bool NeedsKey => ApiKey is not null || KeyHashes.Count > 0;
+    /// <summary>Whether requests need a key (an empty key is refused when the settings are read, never taken as one).</summary>
+    public bool NeedsKey => ApiKey is { Length: > 0 } || KeyHashes.Count > 0;
+
+    /// <summary>
+    /// Browser origins (normalized, <c>scheme://host[:port]</c>, or <c>*</c> for any) whose pages may call the control
+    /// endpoints besides the server's own page and the origins <see cref="Cors"/> names (--control-origins,
+    /// <see cref="ServeOptions.ControlOriginsVariable"/>; default none).
+    /// </summary>
+    public IReadOnlyList<string> ControlOrigins { get; init; } = [];
+
+    /// <summary>
+    /// Whether listening where other machines reach (<see cref="PublicBind"/>) with no key refuses to start, instead of the
+    /// warning (--require-key, <see cref="ServeOptions.RequireKeyVariable"/>).
+    /// </summary>
+    public bool RequireKey { get; init; }
+
+    /// <summary>
+    /// Whether a JSON route reads its body whatever its Content-Type says (--any-content-type,
+    /// <see cref="ServeOptions.AnyContentTypeVariable"/>); off, another declared type is a 415, so a cross-site form cannot post to it.
+    /// </summary>
+    public bool AnyContentType { get; init; }
+
+    /// <summary>Whether <see cref="Host"/> is reachable from other machines (any address but a loopback one or localhost).</summary>
+    public bool PublicBind => ServeOptions.IsPublicHost(Host);
 
     /// <summary>The largest request body in bytes (--max-request-mb); a larger one is a 413.</summary>
     public long MaxRequestBytes { get; init; } = ServeOptions.DefaultMaxRequestMegabytes * 1024L * 1024;
@@ -110,11 +132,23 @@ internal static class ServeOptions
     public const string PortKey = "serve.port";
 
     /// <summary>The options of serve and ui (besides the model options).</summary>
-    public static readonly string[] ValueOptions = ["--host", "--port", "--api-key", "--cors", "--max-concurrency", "--keep-alive", "--log-requests",
+    public static readonly string[] ValueOptions = ["--host", "--port", "--api-key", "--cors", "--control-origins", "--max-concurrency", "--keep-alive", "--log-requests",
         "--max-request-mb", "--max-images", ModelChoices.VisionOption, ModelChoices.ImageTransformOption, Seq2SeqRun.BeamsOption, Seq2SeqRun.LengthPenaltyOption];
 
     /// <summary>The flags of serve and ui.</summary>
-    public static readonly string[] Flags = ["--metrics", "--log-content", "--grayscale", "--allow-image-urls"];
+    public static readonly string[] Flags = ["--metrics", "--log-content", "--grayscale", "--allow-image-urls", "--require-key", "--any-content-type"];
+
+    /// <summary>The environment variable giving the key when <c>--api-key</c> is not given.</summary>
+    public const string ApiKeyVariable = "IDRAK_API_KEY";
+
+    /// <summary>The environment variable turning <c>--require-key</c> on (1, true, on or yes) or off (0, false, off or no).</summary>
+    public const string RequireKeyVariable = "IDRAK_SERVE_REQUIRE_KEY";
+
+    /// <summary>The environment variable giving the control origins (comma-separated) when <c>--control-origins</c> is not given.</summary>
+    public const string ControlOriginsVariable = "IDRAK_SERVE_CONTROL_ORIGINS";
+
+    /// <summary>The environment variable turning <c>--any-content-type</c> on (1, true, on or yes) or off (0, false, off or no).</summary>
+    public const string AnyContentTypeVariable = "IDRAK_SERVE_ANY_CONTENT_TYPE";
 
     /// <summary>The largest request body when --max-request-mb is not given, in MB (a phone photo as a data URL fits).</summary>
     public const int DefaultMaxRequestMegabytes = 32;
@@ -193,10 +227,22 @@ internal static class ServeOptions
 
         var (beams, penalty) = Seq2SeqRun.Beams(context);
 
-        return new ServeSettings(host, port, context.Option("--api-key") ?? Environment.GetEnvironmentVariable("IDRAK_API_KEY"),
+        // An empty key would make the server look protected while an empty bearer matches it: refused, never taken.
+        string? key = context.Option("--api-key") ?? Environment.GetEnvironmentVariable(ApiKeyVariable);
+        if (key is not null && string.IsNullOrWhiteSpace(key))
+        {
+            string source = context.Option("--api-key") is not null ? "--api-key" : ApiKeyVariable;
+            throw new UsageException($"{source} is empty: an empty key would let every request in. Give a key with --api-key KEY or {ApiKeyVariable}, "
+                + $"or leave both out ({ApiKeyVariable} unset) to serve without one.");
+        }
+
+        var settings = new ServeSettings(host, port, key,
             [.. context.Options("--cors").SelectMany(o => o.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))],
             concurrency, keep, keepText)
         {
+            ControlOrigins = ControlOrigins(context),
+            RequireKey = Switch(context, "--require-key", RequireKeyVariable),
+            AnyContentType = Switch(context, "--any-content-type", AnyContentTypeVariable),
             KeyHashes = [.. ServerKeys.Hashes(context)],
             Metrics = context.Flag("--metrics"),
             RequestLog = context.Option("--log-requests"),
@@ -208,7 +254,74 @@ internal static class ServeOptions
             LogContent = context.Flag("--log-content") && (context.Option("--log-requests") is not null
                 ? true : throw new UsageException("--log-content adds the request bodies to the request log; give the log with --log-requests FILE.")),
         };
+
+        // MCP listens on its own address (--mcp-address, which refuses a remote one by itself); --host is the HTTP server's.
+        if (settings.RequireKey && settings.PublicBind && !settings.NeedsKey && !context.Flag("--mcp"))
+        {
+            throw new UsageException($"--require-key ({RequireKeyVariable}): --host {host} is reachable from other machines and no API key is set. Give one with "
+                + $"--api-key KEY or {ApiKeyVariable} (or add one with 'idrak server keys add'), or listen on 127.0.0.1.");
+        }
+
+        return settings;
     }
+
+    /// <summary>
+    /// Whether <paramref name="host"/> is reachable from other machines: every address but a loopback one (127.0.0.0/8,
+    /// ::1) and localhost; the wildcards (0.0.0.0, *, +, ::, [::]) and host names included.
+    /// </summary>
+    public static bool IsPublicHost(string host)
+    {
+        string name = host.Trim();
+        if (name.Equals("localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (name.Length > 1 && name[0] == '[' && name[^1] == ']')
+        {
+            name = name[1..^1];
+        }
+
+        return !(IPAddress.TryParse(name, out var address) && IPAddress.IsLoopback(address));
+    }
+
+    /// <summary>The warning printed first when the server listens where other machines reach with no key.</summary>
+    public static string PublicBindWarning(string host) =>
+        $"idrak serve: warning: listening on {host}, which other machines reach, with no API key: anyone who reaches this port can use, load, unload "
+        + $"and stop the models. Give a key with --api-key KEY or {ApiKeyVariable} (or 'idrak server keys add'), or make this start fail with "
+        + $"--require-key ({RequireKeyVariable}=1).";
+
+    /// <summary>
+    /// An origin as browsers send it in the <c>Origin</c> header (<c>scheme://host[:port]</c>, the host in lower case, a
+    /// default port left out), or null when <paramref name="text"/> is not an http(s) origin (such as "null").
+    /// </summary>
+    public static string? NormalizeOrigin(string text) =>
+        Uri.TryCreate(text.Trim(), UriKind.Absolute, out var uri) && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+            ? uri.GetLeftPart(UriPartial.Authority) : null;
+
+    // --control-origins (repeatable or comma-separated), else IDRAK_SERVE_CONTROL_ORIGINS: each an origin or *.
+    private static string[] ControlOrigins(CommandContext context)
+    {
+        IReadOnlyList<string> values = context.Options("--control-origins");
+        string source = "--control-origins";
+        if (values.Count == 0 && Environment.GetEnvironmentVariable(ControlOriginsVariable) is { Length: > 0 } text)
+        {
+            values = [text];
+            source = ControlOriginsVariable;
+        }
+
+        return [.. values.SelectMany(v => v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).Select(v => v == "*" ? v
+            : NormalizeOrigin(v) ?? throw new UsageException($"{source}: '{v}' is not an origin (http://HOST[:PORT] or https://HOST[:PORT], or * for any)."))];
+    }
+
+    // A flag, or its variable: 1, true, on or yes turn it on; 0, false, off or no (or unset) leave it off.
+    private static bool Switch(CommandContext context, string flag, string variable) =>
+        context.Flag(flag) || (Environment.GetEnvironmentVariable(variable)?.Trim().ToLowerInvariant() switch
+        {
+            null or "" or "0" or "false" or "off" or "no" => false,
+            "1" or "true" or "on" or "yes" => true,
+            var other => throw new UsageException($"{variable} takes 1, true, on or yes (or 0, false, off or no), not '{other}'."),
+        });
 
     /// <summary>
     /// The models named on the command line: NAME=MODEL serves MODEL as NAME; otherwise an alias keeps its name, a file

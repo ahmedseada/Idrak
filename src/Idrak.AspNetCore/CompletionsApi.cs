@@ -713,8 +713,23 @@ public static class CompletionsTranslation
             list.Add(new ChatMessage(role, content, (string?)m["reasoning_content"], calls, toolName));
         }
 
+        // tool_choice: "auto" (the model chooses, the default) or "none" (no tools); forcing a call, or one function, is not
+        // something the sampler can honour, so it is refused rather than ignored.
+        string? toolChoice = body["tool_choice"] switch
+        {
+            null => null,
+            JsonValue v when v.TryGetValue(out string? choice) && choice is "auto" or "none" => choice,
+            var other => throw new ArgumentException($"tool_choice: this server lets the model choose (\"auto\") or gives it no tools (\"none\"); "
+                + $"it cannot force a call ({other.ToJsonString()}). Leave tool_choice out, or give \"auto\" or \"none\"."),
+        };
+        if (body["functions"] is not null || body["function_call"] is not null)
+        {
+            throw new ArgumentException($"{(body["functions"] is not null ? "functions" : "function_call")}: the legacy function-calling fields are not read; "
+                + "give the functions as tools ([{\"type\": \"function\", \"function\": {...}}]).");
+        }
+
         var tools = new List<ToolDefinition>();
-        if ((string?)body["tool_choice"] != "none" && body["tools"] is JsonArray toolList)
+        if (toolChoice != "none" && body["tools"] is JsonArray toolList)
         {
             foreach (var t in toolList)
             {
@@ -739,9 +754,13 @@ public static class CompletionsTranslation
     /// The generation options of an OpenAI-style body: temperature, top_p, max_tokens (or max_completion_tokens), seed,
     /// stop (a string or an array), presence_penalty, frequency_penalty, the common extras top_k, min_p and
     /// repeat_penalty, and an encoder-decoder's beam search as transformers names it: num_beams, length_penalty and
-    /// early_stopping (a decoder samples and does not read them); anything else is ignored. The library's defaults apply
-    /// to what is not given, except repeat_penalty: 1 (off) unless given, since the wire format has no repetition penalty
-    /// (so an answer is the one <c>idrak run</c> gives, and an OCR model may repeat characters a page repeats).
+    /// early_stopping (a decoder samples and does not read them). A field that asks for what is not implemented is
+    /// refused with <see cref="ArgumentException"/> naming it, never ignored: n above 1, response_format other than
+    /// text, json_schema, logprobs, top_logprobs above 0, logit_bias, best_of above 1, echo, suffix, and audio output
+    /// (audio, or modalities other than text); fields that ask for nothing of the answer (user, metadata, store) are
+    /// ignored. The library's defaults apply to what is not given, except repeat_penalty: 1 (off) unless given, since
+    /// the wire format has no repetition penalty (so an answer is the one <c>idrak run</c> gives, and an OCR model may
+    /// repeat characters a page repeats).
     /// </summary>
     public static GenerationOptions Options(JsonObject body) => Options(body, new GenerationOptions { RepeatPenalty = 1f });
 
@@ -758,6 +777,8 @@ public static class CompletionsTranslation
         {
             throw new ArgumentException("n: one choice per request.");
         }
+
+        ThrowIfUnimplemented(body);
 
         foreach (var (key, value) in body)
         {
@@ -793,6 +814,43 @@ public static class CompletionsTranslation
         }
 
         return options;
+    }
+
+    // The fields the wire format has that this API does not implement, each refused with its name when it asks for
+    // something (a request that gives the default, such as logprobs false or response_format text, is answered).
+    private static void ThrowIfUnimplemented(JsonObject body)
+    {
+        static string Text(JsonNode node) => node.ToJsonString();
+        static bool Truthy(JsonNode node) => node is not JsonValue v || !(v.TryGetValue(out bool b) && !b) && !(v.TryGetValue(out double d) && d == 0);
+
+        foreach (var (key, value) in body)
+        {
+            if (value is null)
+            {
+                continue;
+            }
+
+            string? reason = key switch
+            {
+                "response_format" when !(value is JsonObject format && format["type"] is JsonValue type && type.TryGetValue(out string? kind) && kind == "text") =>
+                    $"the output is not constrained to JSON or a schema ({Text(value)}); leave response_format out or give {{\"type\": \"text\"}}",
+                "json_schema" or "guided_json" => $"the output is not constrained to a schema; leave {key} out",
+                "logprobs" when Truthy(value) => $"token log-probabilities are not returned ({Text(value)}); leave logprobs out or give false",
+                "top_logprobs" when Truthy(value) => $"token log-probabilities are not returned ({Text(value)}); leave top_logprobs out or give 0",
+                "logit_bias" when value is not JsonObject { Count: 0 } => "token biases are not applied; leave logit_bias out",
+                "best_of" when !(value is JsonValue best && best.TryGetValue(out int count) && count <= 1) => "one candidate per request; leave best_of out or give 1",
+                "echo" when Truthy(value) => "the prompt is not echoed in the answer; leave echo out or give false",
+                "suffix" when !(value is JsonValue suffix && suffix.TryGetValue(out string? inserted) && inserted.Length == 0) => "no text is inserted before a suffix; leave suffix out",
+                "audio" => "the answer is text only, not audio; leave audio out",
+                "modalities" when value is not JsonArray modalities || modalities.Any(m => !(m is JsonValue mv && mv.TryGetValue(out string? modality) && modality == "text")) =>
+                    $"the answer is text only ({Text(value)}); leave modalities out or give [\"text\"]",
+                _ => null,
+            };
+            if (reason is not null)
+            {
+                throw new ArgumentException($"{key}: not implemented by this server: {reason}.");
+            }
+        }
     }
 
     /// <summary>An assistant message as OpenAI-style JSON (content, reasoning_content, tool_calls with arguments as a JSON string).</summary>

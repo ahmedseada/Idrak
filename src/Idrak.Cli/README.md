@@ -219,6 +219,19 @@ idrak api /v1/chat/completions '{"model":"qwen","messages":[{"role":"user","cont
 idrak ping http://192.168.1.20:8080 --timeout 5s
 ```
 
+#### Keys, browsers and request fields
+
+| Option | What it does |
+|---|---|
+| `--api-key KEY` | Require `Authorization: Bearer KEY` (default `IDRAK_API_KEY`); an empty key is refused at startup, and an empty bearer never matches |
+| `--require-key` | Refuse to listen on an address other machines reach (`-H 0.0.0.0`, a LAN address) without a key; off (`IDRAK_SERVE_REQUIRE_KEY`), such a start prints a warning first |
+| `--control-origins O` | Browser origins whose pages may call `POST /idrak/load`, `/idrak/unload` and `/idrak/stop` (`IDRAK_SERVE_CONTROL_ORIGINS`; `*` for any). Default: the server's own page and the origins `--cors` names (not `--cors *`); any other page gets 403. The command-line client and scripts send no `Origin` and are not affected |
+| `--any-content-type` | Read a JSON body whatever its `Content-Type` says (`IDRAK_SERVE_ANY_CONTENT_TYPE`); off, a JSON route answers another type with 415, so a cross-site form cannot post to it (`curl -H "Content-Type: application/json"`) |
+
+A field the OpenAI-style API does not implement is answered with 400 naming it, never ignored: `response_format`
+other than `text`, `json_schema`, `logprobs`, `top_logprobs`, `logit_bias`, a `tool_choice` other than `auto` or
+`none`, `functions`, `n` above 1, `best_of`, `echo`, `suffix` and audio output.
+
 #### Images
 
 A vision-language model (Gemma 3 and its fine-tunes, such as the OCR model `bakrianoo/arabic-legal-documents-ocr-1.0`)

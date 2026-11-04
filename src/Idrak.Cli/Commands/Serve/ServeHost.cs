@@ -55,11 +55,16 @@ internal sealed class ServeHost
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<TextGenerator, PretrainedModel> _loaded = [];
     private bool _mcp;
 
+    // The explicit origins of --cors and --control-origins, normalized (--cors * lets any page read answers, not drive the server).
+    private readonly Lazy<HashSet<string>> _allowedOrigins;
+
     public ServeHost(CommandContext context, ServeSettings settings, IReadOnlyList<ServedModel> models)
     {
         _context = context;
         Settings = settings;
         Served = models;
+        _allowedOrigins = new(() => new HashSet<string>(
+            settings.ControlOrigins.Concat(settings.Cors).Where(o => o != "*").Select(o => NormalizeOrigin(o)).OfType<string>(), StringComparer.OrdinalIgnoreCase));
     }
 
     public ServeSettings Settings { get; }
@@ -69,6 +74,11 @@ internal sealed class ServeHost
     /// <summary>Starts the server, prints where it listens, waits for Ctrl+C, the host's stop or <c>idrak server stop</c>, then drains open requests.</summary>
     public int Run(Action<string>? started = null)
     {
+        if (Settings.PublicBind && !Settings.NeedsKey)
+        {
+            _context.Error(PublicBindWarning(Settings.Host));       // first: other machines reach a server nothing guards
+        }
+
         if (Settings.RequestLog is { } log)
         {
             Directory.CreateDirectory(System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(log))!);
@@ -91,7 +101,7 @@ internal sealed class ServeHost
 
         string url = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.First();
         int port = new Uri(url).Port;
-        string local = Settings.Host is "0.0.0.0" or "*" or "+" or "::" or "[::]" ? $"http://127.0.0.1:{port}" : url;
+        string local = IsWildcard(Settings.Host) ? $"http://127.0.0.1:{port}" : url;
         string state = ServerState.Write(_context, local, port, Served.Select(m => m.Name));
         // The host's stop (an app's Stop button) ends the server as Ctrl+C does the console's: the requests answered, closed.
         using var hostStop = _context.Cancellation.Register(() => app.Lifetime.StopApplication());
@@ -178,7 +188,7 @@ internal sealed class ServeHost
         builder.Logging.ClearProviders();
         builder.Services.Configure<ConsoleLifetimeOptions>(o => o.SuppressStatusMessages = true);
         builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(30));      // open requests drain
-        builder.WebHost.UseUrls($"http://{(Settings.Host is "0.0.0.0" or "*" ? "0.0.0.0" : Settings.Host)}:{Settings.Port}");
+        builder.WebHost.UseUrls($"http://{ListenHost(Settings.Host)}:{Settings.Port}");
         builder.WebHost.ConfigureKestrel(o => o.Limits.MaxRequestBodySize = Settings.MaxRequestBytes);
         builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(o => o.MultipartBodyLengthLimit = Settings.MaxRequestBytes);
         if (Settings.Cors.Count > 0)
@@ -206,6 +216,7 @@ internal sealed class ServeHost
         }
 
         app.Use(Log);
+        app.Use(Guard);
         app.Use(Authorize);
         var gate = Settings.MaxConcurrency > 0 ? new SemaphoreSlim(Settings.MaxConcurrency) : null;
         app.Use((http, next) => Dispatch(http, next, gate));
@@ -474,6 +485,105 @@ internal sealed class ServeHost
         ("/api/chat", "/api/chat"), ("/api/tags", "/api/tags"), ("/api/version", "/api/version"), ("/models", "/v1/models"),
     ];
 
+    // The host as a URL takes it: the wildcards as Kestrel reads them, an IPv6 address in brackets.
+    internal static string ListenHost(string host) => host switch
+    {
+        "0.0.0.0" or "*" => "0.0.0.0",
+        "::" => "[::]",
+        _ when host.Contains(':') && !host.StartsWith('[') => $"[{host}]",
+        _ => host,
+    };
+
+    // The control endpoints: every /idrak/ route but the models' own (Internal), which /api/chat is sent to.
+    private static bool IsControl(string path) => path.StartsWith("/idrak/", StringComparison.Ordinal) && !path.StartsWith(Internal + "/", StringComparison.Ordinal);
+
+    // The routes whose body is JSON (the upload is a form; its endpoint answers another type with 415 itself).
+    private static bool TakesJson(string path) => path is "/api/chat" or "/v1/chat/completions" or "/v1/completions" or "/v1/embeddings" || IsControl(path)
+        || path.StartsWith(Internal + "/", StringComparison.Ordinal);
+
+    /// <summary>
+    /// The doors a browser page could open: a request that changes state (any method but GET, HEAD, OPTIONS and TRACE) to a
+    /// control endpoint from a page whose origin is not allowed (<see cref="ControlRefusal"/>) is a 403, and one to a JSON
+    /// route whose body is not declared JSON is a 415 (unless <see cref="ServeSettings.AnyContentType"/>): CORS governs only
+    /// what a page may read, and a simple cross-site POST (a form, text/plain) reaches the server without asking.
+    /// </summary>
+    private async Task Guard(HttpContext http, Func<Task> next)
+    {
+        var request = http.Request;
+        string path = request.Path.Value ?? "";
+        if (HttpMethods.IsGet(request.Method) || HttpMethods.IsHead(request.Method) || HttpMethods.IsOptions(request.Method) || HttpMethods.IsTrace(request.Method))
+        {
+            await next();
+            return;
+        }
+
+        if (IsControl(path) && ControlRefusal(request, path, http.Connection.LocalPort) is { } refused)
+        {
+            Print($"{request.Method} {path}: 403, {refused}");
+            http.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await http.Response.WriteAsJsonAsync(new { error = refused });
+            return;
+        }
+
+        bool hasBody = request.ContentLength is > 0 || request.ContentType is not null || request.Headers.TransferEncoding.Count > 0;
+        if (!Settings.AnyContentType && hasBody && TakesJson(path) && !request.HasJsonContentType())
+        {
+            string reason = $"{path} reads a JSON body: send it with Content-Type: application/json (curl -H \"Content-Type: application/json\"), "
+                + $"not {(request.ContentType is { Length: > 0 } type ? $"'{type}'" : "none")}. A server that reads any type: idrak serve --any-content-type ({AnyContentTypeVariable}=1).";
+            http.Response.StatusCode = StatusCodes.Status415UnsupportedMediaType;
+            await (path.StartsWith("/v1/", StringComparison.Ordinal)
+                ? http.Response.WriteAsJsonAsync(new { error = new { message = reason, type = "invalid_request_error", code = "unsupported_media_type" } })
+                : http.Response.WriteAsJsonAsync(new { error = reason }));
+            return;
+        }
+
+        await next();
+    }
+
+    /// <summary>
+    /// Why a browser page may not call the control endpoint <paramref name="path"/>, or null when it may: a request with
+    /// no <c>Origin</c> (the command-line client, scripts) may, unless its <c>Sec-Fetch-Site</c> says a page of another
+    /// site sent it; one with an <c>Origin</c> may when that origin is the server's own page (a loopback address, or the
+    /// host it listens on, at its port), one <see cref="ServeSettings.Cors"/> names (not <c>*</c>) or one
+    /// <see cref="ServeSettings.ControlOrigins"/> allows.
+    /// </summary>
+    internal string? ControlRefusal(HttpRequest request, string path, int port)
+    {
+        string origin = request.Headers.Origin.ToString();
+        if (origin.Length == 0)
+        {
+            string site = request.Headers["Sec-Fetch-Site"].ToString();
+            return site is "cross-site" or "same-site"
+                ? $"{path} controls the server: a browser page of another site (Sec-Fetch-Site: {site}) may not call it; the command-line client and scripts may."
+                : null;
+        }
+
+        if (Settings.ControlOrigins.Contains("*"))
+        {
+            return null;
+        }
+
+        if (NormalizeOrigin(origin) is { } normalized)
+        {
+            if (_allowedOrigins.Value.Contains(normalized))
+            {
+                return null;
+            }
+
+            var uri = new Uri(normalized);
+            string listened = Settings.Host.Trim('[', ']');
+            if (uri.Scheme == Uri.UriSchemeHttp && uri.Port == port && (uri.IsLoopback || (!IsWildcard(Settings.Host) && uri.Host.Equals(listened, StringComparison.OrdinalIgnoreCase))))
+            {
+                return null;                                    // the server's own page
+            }
+        }
+
+        return $"{path} controls the server: a browser page from {origin} may not call it. Allow that origin with --control-origins {origin} "
+            + $"({ControlOriginsVariable}); the command-line client and scripts send no Origin and may.";
+    }
+
+    private static bool IsWildcard(string host) => host is "0.0.0.0" or "*" or "+" or "::" or "[::]";
+
     private async Task Authorize(HttpContext http, Func<Task> next)
     {
         string path = http.Request.Path.Value ?? "";
@@ -485,9 +595,9 @@ internal sealed class ServeHost
 
         string given = http.Request.Headers.Authorization.ToString() is { } auth && auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
             ? auth["Bearer ".Length..].Trim() : http.Request.Headers["X-API-Key"].ToString();
-        bool valid = Settings.ApiKey is { } key && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
-            System.Text.Encoding.UTF8.GetBytes(given), System.Text.Encoding.UTF8.GetBytes(key));
-        valid |= given.Length > 0 && ServerKeys.Matches(given, Settings.KeyHashes);
+        // An empty key given never matches (nor does an empty --api-key, which ReadSettings refuses at startup).
+        bool valid = given.Length > 0 && ((Settings.ApiKey is { Length: > 0 } key && System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.UTF8.GetBytes(given), System.Text.Encoding.UTF8.GetBytes(key))) || ServerKeys.Matches(given, Settings.KeyHashes));
         if (!valid)
         {
             http.Response.StatusCode = StatusCodes.Status401Unauthorized;

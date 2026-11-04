@@ -69,6 +69,7 @@ internal abstract partial class DesktopTests : Tests
         ("cli serve: mcp serve over pipes, --list", d => { if (d == Device.Cpu) CliMcpServe(); }),
         ("cli serve: images: idrak serve with the tiny Gemma 3 answers /v1 data URLs, uploads and /api/chat as run --image (grayscale per request and --grayscale as run --grayscale); text model, http URL, limits, bad input refused", CliServeImages),
         ("cli serve: OpenAI-style API in Idrak.AspNetCore (tool calls streamed and not, translation, embeddings)", d => { if (d == Device.Cpu) CompletionsApiScripted(); }),
+        ("cli serve: the doors: an empty --api-key or IDRAK_API_KEY refused at startup; a public bind without a key warns first (refused with --require-key); a cross-origin POST to /idrak/stop is 403 and the server stays up, allowed origins pass; a JSON route answers another Content-Type with 415; response_format, logprobs, an object tool_choice and the other unimplemented fields answer 400 naming the field", d => { if (d == Device.Cpu) CliServeDoors(); }),
         ("cli serve: an encoder-decoder beside a chat model: served as the \"seq2seq\" kind (announcement, ps, /idrak/ps), /v1/completions answers with transformers' greedy text (num_beams 1) and with the best of --beams 3; /v1/chat/completions, /api/chat and the web chat leave it out naming the reason; MCP generate takes num_beams and the server's beams; --beams without one refused", CliServeSeq2Seq),
     ];
 
@@ -265,6 +266,14 @@ internal abstract partial class DesktopTests : Tests
         {
             Check(serveOutput.ToString().Contains($"{url}/v1") && !serveOutput.ToString().Contains("ollama", StringComparison.OrdinalIgnoreCase), $"announcement: {serveOutput}");
             Check(http.GetAsync("/v1/models").Result.StatusCode == HttpStatusCode.Unauthorized, "a key is required");
+            foreach (var (header, value) in new[] { ("Authorization", "Bearer "), ("Authorization", "Bearer    "), ("X-API-Key", "") })
+            {
+                using var empty = new HttpRequestMessage(HttpMethod.Get, "/v1/models");
+                empty.Headers.TryAddWithoutValidation(header, value);
+                var answer = http.SendAsync(empty).Result;
+                Check(answer.StatusCode == HttpStatusCode.Unauthorized, $"an empty key given ({header}: '{value}') is refused with 401, not {(int)answer.StatusCode}");
+            }
+
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "ci-key-12345");
             Check(http.GetStringAsync("/v1/models").Result.Contains("\"tiny\""), "a stored key works; /v1/models");
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "secret");
@@ -300,8 +309,8 @@ internal abstract partial class DesktopTests : Tests
             Check((string?)completion["object"] == "text_completion" && completion["choices"]![0]!["text"] is not null, $"completion: {completion}");
             string completionStream = PostText("/v1/completions", """{"model":"tiny","prompt":"ab","max_tokens":3,"stream":true}""");
             Check(completionStream.EndsWith("data: [DONE]\n\n", StringComparison.Ordinal) && completionStream.Contains("text_completion"), "streamed completion");
-            Check(http.PostAsync("/v1/embeddings", new StringContent("""{"input":"x"}""")).Result.StatusCode == HttpStatusCode.NotFound, "no embedding model: 404");
-            Check(http.PostAsync("/v1/chat/completions", new StringContent("{\"messages\":")).Result.StatusCode == HttpStatusCode.BadRequest, "bad JSON: 400");
+            Check(http.PostAsync("/v1/embeddings", new StringContent("""{"input":"x"}""", Encoding.UTF8, "application/json")).Result.StatusCode == HttpStatusCode.NotFound, "no embedding model: 404");
+            Check(http.PostAsync("/v1/chat/completions", new StringContent("{\"messages\":", Encoding.UTF8, "application/json")).Result.StatusCode == HttpStatusCode.BadRequest, "bad JSON: 400");
 
             // chat API
             var single = Post("/api/chat", """{"model":"tiny:latest","messages":[{"role":"user","content":"hi"}],"stream":false,"options":{"num_predict":4}}""");
@@ -358,6 +367,216 @@ internal abstract partial class DesktopTests : Tests
 
         Check(!Directory.EnumerateFiles(Path.Combine(cache, "servers")).Any(), "the state file is removed");
         Check(ServeCli("ping", url).Code == 1, "ping fails once the server is gone");
+    }
+
+    // The doors of idrak serve (plan 36, G-1 1b): an empty key, a public bind without a key, browser pages calling the
+    // control endpoints, bodies not declared JSON, and request fields the OpenAI-style API does not implement.
+    private static void CliServeDoors()
+    {
+        string cache = TempFolder(), folder = TempFolder(), config = Path.Combine(folder, "config.json");
+        string model = "tiny=" + TestData("gguf/tiny-qwen3-q8.gguf");
+        string?[] saved = [.. new[] { ServeOptions.ApiKeyVariable, ServeOptions.RequireKeyVariable, ServeOptions.ControlOriginsVariable, ServeOptions.AnyContentTypeVariable }
+            .Select(Environment.GetEnvironmentVariable)];
+        try
+        {
+            Environment.SetEnvironmentVariable(ServeOptions.ApiKeyVariable, null);
+            Environment.SetEnvironmentVariable(ServeOptions.RequireKeyVariable, null);
+            Environment.SetEnvironmentVariable(ServeOptions.ControlOriginsVariable, null);
+            Environment.SetEnvironmentVariable(ServeOptions.AnyContentTypeVariable, null);
+
+            // An empty key is a configuration error at startup, naming the flag and the variable (an empty key matched an empty bearer).
+            foreach (string[] empty in new[] { new[] { "--api-key", "" }, new[] { "--api-key=   " } })
+            {
+                var refused = ServeCli([.. new[] { "serve", model, "-p", "0", "--cache", cache, "-C", config }, .. empty]);
+                Check(refused.Code == ExitCodes.Usage && refused.Error.Contains("--api-key is empty", StringComparison.Ordinal)
+                      && refused.Error.Contains(ServeOptions.ApiKeyVariable, StringComparison.Ordinal),
+                    $"serve {string.Join(' ', empty)}: refused at startup naming --api-key and {ServeOptions.ApiKeyVariable} (exit {refused.Code}): {refused.Error}");
+            }
+
+            Environment.SetEnvironmentVariable(ServeOptions.ApiKeyVariable, " ");                  // set but blank (an empty value unsets it on Windows)
+            var blank = ServeCli("serve", model, "-p", "0", "--cache", cache, "-C", config);
+            Check(blank.Code == ExitCodes.Usage && blank.Error.Contains($"{ServeOptions.ApiKeyVariable} is empty", StringComparison.Ordinal)
+                  && blank.Error.Contains("--api-key", StringComparison.Ordinal), $"a blank {ServeOptions.ApiKeyVariable} is refused at startup naming it and --api-key (exit {blank.Code}): {blank.Error}");
+            Environment.SetEnvironmentVariable(ServeOptions.ApiKeyVariable, null);
+
+            // --require-key (or its variable): a public bind without a key refused; with a key, or on loopback, it starts as before.
+            var required = ServeCli("serve", model, "-H", "0.0.0.0", "-p", "0", "--require-key", "--cache", cache, "-C", config);
+            Check(required.Code == ExitCodes.Usage && required.Error.Contains("--require-key", StringComparison.Ordinal) && required.Error.Contains(ServeOptions.RequireKeyVariable, StringComparison.Ordinal)
+                  && required.Error.Contains("--api-key", StringComparison.Ordinal), $"--require-key refuses -H 0.0.0.0 without a key, naming the flag, the variable and --api-key (exit {required.Code}): {required.Error}");
+            Environment.SetEnvironmentVariable(ServeOptions.RequireKeyVariable, "1");
+            var requiredByVariable = ServeCli("serve", model, "-H", "::", "-p", "0", "--cache", cache, "-C", config);
+            Check(requiredByVariable.Code == ExitCodes.Usage && requiredByVariable.Error.Contains(ServeOptions.RequireKeyVariable, StringComparison.Ordinal),
+                $"{ServeOptions.RequireKeyVariable}=1 refuses -H :: without a key (exit {requiredByVariable.Code}): {requiredByVariable.Error}");
+            Environment.SetEnvironmentVariable(ServeOptions.RequireKeyVariable, "maybe");
+            var badSwitch = ServeCli("serve", model, "-p", "0", "--cache", cache, "-C", config);
+            Check(badSwitch.Code == ExitCodes.Usage && badSwitch.Error.Contains(ServeOptions.RequireKeyVariable, StringComparison.Ordinal), $"{ServeOptions.RequireKeyVariable}=maybe is a usage error naming it: {badSwitch.Error}");
+            Environment.SetEnvironmentVariable(ServeOptions.RequireKeyVariable, null);
+            var badOrigin = ServeCli("serve", model, "-p", "0", "--control-origins", "not an origin", "--cache", cache, "-C", config);
+            Check(badOrigin.Code == ExitCodes.Usage && badOrigin.Error.Contains("--control-origins", StringComparison.Ordinal), $"a bad --control-origins is a usage error naming it: {badOrigin.Error}");
+            Check(ServeOptions.IsPublicHost("0.0.0.0") && ServeOptions.IsPublicHost("*") && ServeOptions.IsPublicHost("+") && ServeOptions.IsPublicHost("::") && ServeOptions.IsPublicHost("[::]")
+                  && ServeOptions.IsPublicHost("192.168.1.5") && !ServeOptions.IsPublicHost("127.0.0.1") && !ServeOptions.IsPublicHost("localhost") && !ServeOptions.IsPublicHost("[::1]"),
+                "public hosts: the wildcards and a LAN address; loopback and localhost are not");
+
+            // The unimplemented fields, as the translation reads them: the defaults answered, the rest refused naming the field.
+            static JsonObject Ask(params (string Field, string Value)[] fields)
+            {
+                var body = new JsonObject { ["model"] = "tiny", ["messages"] = new JsonArray(new JsonObject { ["role"] = "user", ["content"] = "hi" }) };
+                foreach (var (field, value) in fields)
+                {
+                    body[field] = JsonNode.Parse(value);
+                }
+
+                return body;
+            }
+
+            static string? Refusal(JsonObject body)
+            {
+                try
+                {
+                    CompletionsTranslation.Chat(body);
+                    return null;
+                }
+                catch (ArgumentException e)
+                {
+                    return e.Message;
+                }
+            }
+
+            Check(Refusal(Ask(("response_format", """{"type":"text"}"""), ("logprobs", "false"), ("top_logprobs", "0"), ("tool_choice", "\"auto\""), ("n", "1"),
+                    ("logit_bias", "{}"), ("user", "\"u\""), ("modalities", """["text"]"""))) is null,
+                "the defaults of the unimplemented fields (response_format text, logprobs false, top_logprobs 0, tool_choice auto, n 1, an empty logit_bias, modalities text) are answered");
+            foreach (var (field, value) in new[]
+                     {
+                         ("response_format", """{"type":"json_schema","json_schema":{"name":"x","schema":{"type":"object"}}}"""), ("response_format", """{"type":"json_object"}"""),
+                         ("json_schema", """{"type":"object"}"""), ("logprobs", "true"), ("top_logprobs", "3"), ("logit_bias", """{"50256":-100}"""),
+                         ("tool_choice", """{"type":"function","function":{"name":"weather"}}"""), ("tool_choice", "\"required\""), ("functions", """[{"name":"weather"}]"""),
+                         ("modalities", """["text","audio"]"""), ("audio", """{"voice":"alloy","format":"wav"}"""), ("n", "2"),
+                     })
+            {
+                string? message = Refusal(Ask((field, value)));
+                Check(message is not null && message.StartsWith(field + ":", StringComparison.Ordinal), $"{field}: {value} refused naming {field}, not ignored: {message ?? "accepted"}");
+            }
+
+            int port;
+            using (var probe = new TcpListener(IPAddress.Loopback, 0))
+            {
+                probe.Start();
+                port = ((IPEndPoint)probe.LocalEndpoint).Port;
+            }
+
+            // Listening on every interface without a key: the warning comes first; the doors are guarded all the same.
+            string url = $"http://127.0.0.1:{port}";
+            var serveOutput = new StringWriter();
+            var serveError = new StringWriter();
+            var server = Task.Run(() => CommandLine.Run(["serve", model, "-H", "0.0.0.0", "-p", port.ToString(), "--cache", cache, "-C", config,
+                "--cors", "http://cors.example:3000", "--control-origins", "http://ok.example"], TextWriter.Synchronized(serveOutput), TextWriter.Synchronized(serveError)));
+            using var http = new HttpClient { BaseAddress = new Uri(url), Timeout = TimeSpan.FromMinutes(2) };
+            var deadline = DateTime.UtcNow.AddSeconds(60);
+            while (true)
+            {
+                Check(!server.IsCompleted, $"the server stopped early: {serveOutput}{serveError}");
+                try
+                {
+                    if (http.GetAsync("/").Result.IsSuccessStatusCode)
+                    {
+                        break;
+                    }
+                }
+                catch (AggregateException)
+                {
+                }
+
+                Check(DateTime.UtcNow < deadline, "the server answers within a minute");
+                Thread.Sleep(100);
+            }
+
+            try
+            {
+                string firstLine = serveError.ToString().Split('\n')[0];
+                Check(firstLine.Contains("warning", StringComparison.Ordinal) && firstLine.Contains("0.0.0.0", StringComparison.Ordinal) && firstLine.Contains("no API key", StringComparison.Ordinal)
+                      && firstLine.Contains("--require-key", StringComparison.Ordinal), $"a public bind without a key prints the warning first: {serveError}");
+
+                HttpResponseMessage Send(string path, string body, string type = "application/json", (string Name, string Value)[]? headers = null)
+                {
+                    using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new StringContent(body, Encoding.UTF8, type) };
+                    foreach (var (name, value) in headers ?? [])
+                    {
+                        request.Headers.TryAddWithoutValidation(name, value);
+                    }
+
+                    return http.SendAsync(request).Result;
+                }
+
+                string Body(HttpResponseMessage response) => response.Content.ReadAsStringAsync().Result;
+
+                // A page from another origin cannot stop (or load, or unload) the server: 403 naming the setting, and it stays up.
+                var stop = Send("/idrak/stop", "[]", headers: [("Origin", "http://evil.example")]);
+                Check(stop.StatusCode == HttpStatusCode.Forbidden && Body(stop).Contains("--control-origins", StringComparison.Ordinal),
+                    $"a cross-origin POST to /idrak/stop is 403 naming --control-origins, not {(int)stop.StatusCode}: {Body(stop)}");
+                var rebound = Send("/idrak/stop", "[]", headers: [("Origin", $"http://evil.example:{port}")]);
+                Check(rebound.StatusCode == HttpStatusCode.Forbidden, $"a page of another host at the server's port (DNS rebinding) is 403, not {(int)rebound.StatusCode}");
+                var sandboxed = Send("/idrak/stop", "[]", headers: [("Origin", "null")]);
+                Check(sandboxed.StatusCode == HttpStatusCode.Forbidden, $"Origin: null is 403, not {(int)sandboxed.StatusCode}");
+                var crossSite = Send("/idrak/stop", "[]", headers: [("Sec-Fetch-Site", "cross-site")]);
+                Check(crossSite.StatusCode == HttpStatusCode.Forbidden && Body(crossSite).Contains("Sec-Fetch-Site", StringComparison.Ordinal),
+                    $"Sec-Fetch-Site: cross-site without an Origin is 403 naming it, not {(int)crossSite.StatusCode}: {Body(crossSite)}");
+                var load = Send("/idrak/load", """{"model":"tiny"}""", headers: [("Origin", "http://evil.example")]);
+                Check(load.StatusCode == HttpStatusCode.Forbidden, $"a cross-origin POST to /idrak/load is 403, not {(int)load.StatusCode}");
+                Thread.Sleep(500);                                  // a stop that got through would have ended the server by now
+                Check(!server.IsCompleted && http.GetAsync("/").Result.IsSuccessStatusCode, $"the server stays up after the refused stops: {serveOutput}{serveError}");
+                Check(serveOutput.ToString().Contains("/idrak/stop: 403", StringComparison.Ordinal), $"the server prints the refusals: {serveOutput}");
+
+                // Allowed: --control-origins, an origin --cors names, the server's own page (loopback at its port), and no Origin at all.
+                foreach (var origin in new[] { "http://ok.example", "http://cors.example:3000", $"http://127.0.0.1:{port}", $"http://localhost:{port}", "" })
+                {
+                    var unload = Send("/idrak/unload", """{"model":"tiny"}""", headers: origin.Length == 0 ? null : [("Origin", origin)]);
+                    Check(unload.StatusCode == HttpStatusCode.OK, $"/idrak/unload from '{origin}' is allowed, not {(int)unload.StatusCode}: {Body(unload)}");
+                }
+
+                // A JSON route answers a body declared as another type with 415 (a cross-site form or text/plain post).
+                string any = Ask(("prompt", "\"x\"")).ToJsonString();
+                foreach (var (path, type) in new[] { ("/idrak/unload", "text/plain"), ("/v1/chat/completions", "text/plain"), ("/api/chat", "application/x-www-form-urlencoded"), ("/v1/completions", "multipart/form-data") })
+                {
+                    var wrong = Send(path, any, type);
+                    Check(wrong.StatusCode == HttpStatusCode.UnsupportedMediaType && Body(wrong).Contains("application/json", StringComparison.Ordinal)
+                          && Body(wrong).Contains("--any-content-type", StringComparison.Ordinal), $"{path} with {type} is 415 naming the type to send and --any-content-type, not {(int)wrong.StatusCode}: {Body(wrong)}");
+                }
+
+                Check((string?)JsonNode.Parse(Body(Send("/v1/chat/completions", "{}", "text/plain")))?["error"]?["code"] == "unsupported_media_type", "the /v1 415 has the OpenAI error shape");
+
+                // The OpenAI-style API refuses what it does not implement, naming the field (before any model loads).
+                foreach (var (path, field, json) in new[]
+                         {
+                             ("/v1/chat/completions", "response_format", Ask(("response_format", """{"type":"json_object"}"""))),
+                             ("/v1/chat/completions", "logprobs", Ask(("logprobs", "true"))),
+                             ("/v1/chat/completions", "tool_choice", Ask(("tools", """[{"type":"function","function":{"name":"f"}}]"""), ("tool_choice", """{"type":"function","function":{"name":"f"}}"""))),
+                             ("/v1/completions", "logprobs", new JsonObject { ["model"] = "tiny", ["prompt"] = "x", ["logprobs"] = 2 }),
+                             ("/v1/completions", "echo", new JsonObject { ["model"] = "tiny", ["prompt"] = "x", ["echo"] = true }),
+                         })
+                {
+                    var refused = Send(path, json.ToJsonString());
+                    string message = (string?)JsonNode.Parse(Body(refused))?["error"]?["message"] ?? "";
+                    Check(refused.StatusCode == HttpStatusCode.BadRequest && message.StartsWith(field + ":", StringComparison.Ordinal),
+                        $"{path} with {field} answers 400 naming {field}, not {(int)refused.StatusCode}: {Body(refused)}");
+                }
+
+                var ps = JsonNode.Parse(http.GetStringAsync("/idrak/ps").Result)!["models"]![0]!;
+                Check(!(bool)ps["loaded"]!, $"none of the refused requests loaded the model: {ps}");
+            }
+            finally
+            {
+                var stop = ServeCli("server", "stop", "-p", port.ToString());
+                Check(stop.Code == 0, $"server stop from the command line (no Origin) still works: {stop.Output}{stop.Error}");
+                Check(server.Wait(TimeSpan.FromSeconds(60)) && server.Result == 0, $"serve exits with 0 after stop: {serveOutput}{serveError}");
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(ServeOptions.ApiKeyVariable, saved[0]);
+            Environment.SetEnvironmentVariable(ServeOptions.RequireKeyVariable, saved[1]);
+            Environment.SetEnvironmentVariable(ServeOptions.ControlOriginsVariable, saved[2]);
+            Environment.SetEnvironmentVariable(ServeOptions.AnyContentTypeVariable, saved[3]);
+        }
     }
 
     // The port: --port, else IDRAK_PORT, else the config's serve.port, else Idrak's own default; the client commands put

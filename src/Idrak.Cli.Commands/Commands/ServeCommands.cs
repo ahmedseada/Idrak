@@ -48,16 +48,27 @@ internal sealed class ServeCommand : Command
 
     /// <summary>The options of the server (serve and ui).</summary>
     public const string OptionsHelp = """
-          -H, --host NAME            address to listen on (default 127.0.0.1; 0.0.0.0 for every interface)
+          -H, --host NAME            address to listen on (default 127.0.0.1; 0.0.0.0 for every interface: without
+                                     a key the server prints a warning first)
           -p, --port N               port (default IDRAK_PORT, else the config's serve.port, else 7317; 0 picks a
                                      free one; -p 11434 for clients that expect that port)
               --api-key KEY          require "Authorization: Bearer KEY" (default IDRAK_API_KEY when set); keys
-                                     added with 'idrak server keys add' are accepted too
+                                     added with 'idrak server keys add' are accepted too; an empty key is refused
+              --require-key          refuse to listen on an address other machines reach (0.0.0.0, a LAN address)
+                                     without a key, instead of the warning (default IDRAK_SERVE_REQUIRE_KEY)
               --metrics              GET /metrics: requests, tokens, tokens per second, latency, queue and memory
                                      in the plain text format monitoring tools scrape
               --log-requests FILE    one JSON line per model request (time, model, status, tokens, speed)
               --log-content          add the request bodies (prompts) to that log
               --cors ORIGIN          allow browser pages from ORIGIN (repeatable or comma-separated; * for any)
+              --control-origins O    browser pages from O may also call the control endpoints (POST /idrak/load,
+                                     /idrak/unload, /idrak/stop; repeatable or comma-separated; * for any); default
+                                     IDRAK_SERVE_CONTROL_ORIGINS, else only the server's own page and the origins
+                                     --cors names (not --cors *); a page from another origin gets 403, and the
+                                     command-line client and scripts (no Origin) are not affected
+              --any-content-type     read a JSON body whatever its Content-Type says (curl -d without -H); off, a
+                                     JSON route answers another type with 415, so a cross-site form cannot post to
+                                     it (default IDRAK_SERVE_ANY_CONTENT_TYPE)
               --max-concurrency N    model requests answered at once; the rest wait (default 0: no limit)
               --keep-alive DURATION  unload a model after this long without use: 30s, 5m, 1h, 0 (after each
                                      request) or -1 (never) (default 5m)
@@ -114,7 +125,11 @@ internal sealed class ServeCommand : Command
         text-only model answers an image with 400. An encoder-decoder (a folder whose architecture a plug-in registers as
         one) answers prompts on /v1/completions and MCP generate (num_beams, length_penalty and early_stopping per
         request, --beams and --length-penalty for every request); the chat routes answer it with 400 and the web chat
-        leaves it out. Tool calls are returned to the client, which runs the tools. Point clients at http://127.0.0.1:7317 (the
+        leaves it out. Tool calls are returned to the client, which runs the tools. A request field the OpenAI-style API
+        does not implement (response_format other than text, json_schema, logprobs, top_logprobs, logit_bias, a
+        tool_choice other than auto or none, functions, n above 1, best_of, echo, suffix, audio output) is answered
+        with 400 naming it, never ignored. JSON routes take Content-Type: application/json (curl -H "Content-Type:
+        application/json"; --any-content-type for clients that send none). Point clients at http://127.0.0.1:7317 (the
         chat API's base address, or http://127.0.0.1:7317/v1 for the OpenAI-style API), or serve on the port they
         expect with -p.
 
