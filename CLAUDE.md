@@ -51,10 +51,12 @@ These are the owner's standing rules. They hold in every session, after every co
   not publish or package.
 - **Tests.** Never run the full test suite, anywhere, by anyone but the owner. Only targeted runs: always
   `IDRAK_DEVICES=cpu` with an `IDRAK_FILTER` group or name for the code changed (sample test projects with their own
-  filter). GPU tests, apps and training runs are the owner's: give the exact commands. Sessions test on `cpu` and on
-  `vulkan` through Mesa's software driver (llvmpipe) where the container has it: a piece that changes GPU or Vulkan code
-  also runs its filter once with `IDRAK_DEVICES=vulkan`. llvmpipe proves results only, never speed or real device
-  memory; speed is measured only on the owner's devices, and the owner tests `cuda` and `hip`.
+  filter). GPU tests, apps and training runs are the owner's: give the exact commands. Sessions test on `cpu` only. Only a
+  part that needs a GPU check (GPU or Vulkan kernels, device memory, a path that runs across devices) also runs its own
+  test groups once with `IDRAK_DEVICES=vulkan`, through Mesa's software driver (llvmpipe) where the container has it;
+  global checks (the public API, the inventory, the environment table, help text and every other device-independent
+  group) never run on Vulkan. llvmpipe proves results only, never speed or real device memory; speed is measured only
+  on the owner's devices, and the owner tests `cuda` and `hip`.
 - **The fix workflow (the owner's, in this order).** 1. Fix every error of the task first; never run tests between
   fixes. 2. Update the tests the fixes touch (expectations, and failure messages that name the cause, e.g. which
   operation took a host fallback). 3. Build once, only the projects that changed, and only after all the work is
