@@ -478,6 +478,7 @@ internal sealed unsafe partial class CudaBackend
             IntPtr module = LoadModule(source, moduleName);
             var counts = PtxKernels.ParameterCountsOf(source);
             var kernels = new Dictionary<string, IntPtr>();
+            var signatures = new List<KeyValuePair<IntPtr, (string Name, int Parameters)>>();
             foreach (var kernel in names)
             {
                 byte[] bytes = Encoding.ASCII.GetBytes(kernel + "\0");
@@ -489,15 +490,12 @@ internal sealed unsafe partial class CudaBackend
                         Check(cuFuncSetAttribute(function, FunctionAttributeMaxDynamicSharedSizeBytes, dynamicBytes), $"cuFuncSetAttribute({kernel})");
                     }
 
-                    lock (_signatures)
-                    {
-                        _signatures[function] = (kernel, counts[kernel]);
-                    }
-
+                    signatures.Add(new(function, (kernel, counts[kernel])));
                     kernels[kernel] = function;
                 }
             }
 
+            AddSignatures(signatures);                              // published before the caller can launch them
             return kernels;
         }
         catch (CudaException e)

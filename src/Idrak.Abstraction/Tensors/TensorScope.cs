@@ -113,12 +113,14 @@ public sealed class TensorScope : IDisposable
             return;
         }
 
-        _disposed = true;
+        // The order first: a scope disposed out of order stays live (and its thread on the innermost scope), so disposing
+        // the scopes in order afterwards still disposes its tensors and restores the enclosing scope.
         if (t_current != this)
         {
             throw new InvalidOperationException("TensorScopes must be disposed in the reverse order they were created, on the thread that created them.");
         }
 
+        _disposed = true;
         t_current = _parent;
         foreach (var tensor in _tensors)
         {

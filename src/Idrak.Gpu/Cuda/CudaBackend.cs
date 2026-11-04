@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Collections.Frozen;
 using System.Runtime.InteropServices;
 using System.Text;
 using static Idrak.Gpu.Cuda.CudaDriver;
@@ -114,7 +115,15 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
 
     // The tensor-core module (compute capability 8.0 and newer), loaded on first use; null when unavailable.
     private Dictionary<string, IntPtr>? _tensorCore;
+
+    // Set (with a release write) only after the load ended and its results were stored: a caller that sees it reads them.
     private bool _tensorCoreTried;
+
+    // Every entry to the tensor-core load takes this: one thread loads, the others wait for its result (never the slower path).
+    private readonly object _tensorCoreLock = new();
+
+    /// <summary>How many times this backend tried to load the tensor-core modules: once, whatever the threads (tests).</summary>
+    internal int TensorCoreLoads { get; private set; }
 
     /// <summary>Why bfloat16 tensor-core products are unavailable on this GPU (null when they are available or untried).</summary>
     public string? TensorCoreUnavailableReason { get; private set; }
@@ -172,13 +181,8 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
 
     bool IMatrixUnitBackend.AttentionHeadDim(int dim) => PtxKernels.FlashTensorDim(dim);
 
-    string? IMatrixUnitBackend.TensorCoresUnavailable()
-    {
-        lock (_signatures)
-        {
-            return TensorCoreKernels() is null ? TensorCoreUnavailableReason ?? "the tensor-core products did not load" : null;
-        }
-    }
+    string? IMatrixUnitBackend.TensorCoresUnavailable() =>
+        TensorCoreKernels() is null ? TensorCoreUnavailableReason ?? "the tensor-core products did not load" : null;
 
     // A loaded tensor-core kernel by name, or null.
     private IntPtr? TensorKernel(string name)
@@ -187,18 +191,41 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         return _tensorCoreAny.TryGetValue(name, out var function) ? function : null;
     }
 
+    // The tensor-core kernels, loaded once on first use whichever entry reaches them first (TensorKernel,
+    // the products, TensorCoresUnavailable): after the first load ended, a lock-free read.
     private Dictionary<string, IntPtr>? TensorCoreKernels()
     {
-        if (_tensorCoreTried)
+        if (Volatile.Read(ref _tensorCoreTried))
         {
             return _tensorCore;
         }
 
-        _tensorCoreTried = true;
+        lock (_tensorCoreLock)
+        {
+            if (!_tensorCoreTried)
+            {
+                try
+                {
+                    LoadTensorCores();
+                }
+                finally
+                {
+                    Volatile.Write(ref _tensorCoreTried, true);         // after the results: a failed load is not retried on every product
+                }
+            }
+
+            return _tensorCore;
+        }
+    }
+
+    // Loads the tensor-core modules (under _tensorCoreLock): _tensorCore, _tensorCoreAny and the reasons set before it returns.
+    private void LoadTensorCores()
+    {
+        TensorCoreLoads++;
         if (_computeMajor < 8)
         {
             TensorCoreUnavailableReason = $"compute capability {_computeMajor}.x has no bfloat16 tensor cores (8.0 or newer needed)";
-            return null;
+            return;
         }
 
         // Each module on its own: a driver that rejects one (a JIT compiler error) still runs the others. Its error is
@@ -206,6 +233,7 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         MakeCurrent();
         using var quiet = DeviceException.Handled();
         var kernels = new Dictionary<string, IntPtr>();
+        var signatures = new List<KeyValuePair<IntPtr, (string Name, int Parameters)>>();
         var errors = new List<string>();
         foreach (var (moduleName, names, source) in PtxKernels.TensorCoreModules)
         {
@@ -229,7 +257,7 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
                     fixed (byte* p = bytes)
                     {
                         Check(cuModuleGetFunction(out IntPtr function, module, p), $"cuModuleGetFunction({kernel})");
-                        _signatures[function] = (kernel, PtxKernels.TensorCoreParameterCounts[kernel]);
+                        signatures.Add(new(function, (kernel, PtxKernels.TensorCoreParameterCounts[kernel])));
                         if (PtxKernels.DynamicSharedBytes(kernel) is > 0 and var sharedBytes)
                         {
                             Check(cuFuncSetAttribute(function, FunctionAttributeMaxDynamicSharedSizeBytes, sharedBytes), $"cuFuncSetAttribute({kernel})");
@@ -245,6 +273,7 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
             }
         }
 
+        AddSignatures(signatures);                                  // before any of them can be launched
         TensorCoreModuleErrors = errors;
         if (errors.Count > 0)
         {
@@ -253,12 +282,30 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
 
         _tensorCore = kernels.ContainsKey("gemm_tc_nn_f32") ? kernels : null;
         _tensorCoreAny = kernels;
-        return _tensorCore;
     }
 
     // Kernel name and declared parameter count per loaded function: a launch with the wrong number of arguments
-    // would make the driver read past the argument array (CUDA_ERROR_INVALID_VALUE or silent garbage).
-    private readonly Dictionary<IntPtr, (string Name, int Parameters)> _signatures = [];
+    // would make the driver read past the argument array (CUDA_ERROR_INVALID_VALUE or silent garbage). Read on every
+    // launch without a lock: a frozen map, replaced whole (never changed) after each module load (AddSignatures).
+    private volatile FrozenDictionary<IntPtr, (string Name, int Parameters)> _signatures = FrozenDictionary<IntPtr, (string Name, int Parameters)>.Empty;
+
+    // Writers of _signatures (module loads, rare): each copies the current map with its kernels added and publishes it.
+    private readonly object _signaturesLock = new();
+
+    // Adds a loaded module's kernels to _signatures: one new frozen map, published once its entries are all in.
+    private void AddSignatures(IEnumerable<KeyValuePair<IntPtr, (string Name, int Parameters)>> added)
+    {
+        lock (_signaturesLock)
+        {
+            var next = new Dictionary<IntPtr, (string Name, int Parameters)>(_signatures);
+            foreach (var (function, signature) in added)
+            {
+                next[function] = signature;
+            }
+
+            _signatures = next.ToFrozenDictionary();
+        }
+    }
     private readonly IntPtr _fill, _affine, _axpy, _mulAdd, _add, _sub, _mul, _clipFactor, _packBFloat16;
     private readonly IntPtr _sigmoid, _tanh, _relu, _square, _abs;
     private readonly IntPtr _sigmoidBwd, _tanhBwd, _reluBwd, _squareBwd, _absBwd, _dropout;
@@ -316,13 +363,14 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         }
 
         IntPtr module = LoadModule(PtxKernels.SourceFor(_shapes));
+        var signatures = new List<KeyValuePair<IntPtr, (string Name, int Parameters)>>();
         IntPtr Fn(string kernel)
         {
             byte[] bytes = Encoding.ASCII.GetBytes(kernel + "\0");
             fixed (byte* p = bytes)
             {
                 Check(cuModuleGetFunction(out IntPtr function, module, p), $"cuModuleGetFunction({kernel})");
-                _signatures[function] = (kernel, PtxKernels.ParameterCounts[kernel]);
+                signatures.Add(new(function, (kernel, PtxKernels.ParameterCounts[kernel])));
                 return function;
             }
         }
@@ -355,6 +403,7 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         _adam = Fn("adam_f32");
         _matmul = Fn("matmul_f32");
         _kernels = PtxKernels.AdvancedNames.Concat(PtxKernels.DecodingNames).Concat(PtxKernels.QuantizedNames).Concat(PtxKernels.DecoderNames).Concat(PtxKernels.RowNames).Concat(PtxKernels.ConvolutionNames).Concat(PtxKernels.ResamplingNames).Concat(PtxKernels.CtcNames).Concat(PtxKernels.RecurrentNames).Concat(PtxKernels.PointwiseNames).Append("add_dropout_f32").ToDictionary(k => k, Fn);
+        AddSignatures(signatures);                                  // the main module's kernels, before the first launch
         CtcOptIn();
         SequenceBarrier();
     }
@@ -2089,15 +2138,16 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
 
     private void LaunchGrid(IntPtr function, uint gridX, uint gridY, uint gridZ, uint blockX, uint blockY, uint blockZ, ReadOnlySpan<ulong> args)
     {
+        // This launch's settings, taken and reset first: a launch refused below must not leave them to the next one.
+        uint shared = t_sharedBytes;
+        bool cooperative = t_cooperative;
+        (t_sharedBytes, t_cooperative) = (0, false);
         if (_signatures.TryGetValue(function, out var signature) && signature.Parameters != args.Length)
         {
             throw new InvalidOperationException(
                 $"Kernel {signature.Name} declares {signature.Parameters} parameters but was launched with {args.Length} arguments.");
         }
 
-        uint shared = t_sharedBytes;
-        bool cooperative = t_cooperative;
-        (t_sharedBytes, t_cooperative) = (0, false);
         MakeCurrent();
 
         // The values, then a pointer to each: on the stack up to StackArguments (a plug-in's PTX decides how many it
@@ -2170,6 +2220,16 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
                     + CudaDriver.Describe(result));
             }
         }
+    }
+
+    /// <summary>The launch settings this thread leaves for its next launch: (0, false) after every launch, refused or not (tests).</summary>
+    internal static (uint SharedBytes, bool Cooperative) PendingLaunchSettings => (t_sharedBytes, t_cooperative);
+
+    /// <summary>Sets this thread's launch settings, then launches fill_f32 over one element with <paramref name="args"/> (tests: a wrong count is refused).</summary>
+    internal void LaunchFill(uint sharedBytes, bool cooperative, params ReadOnlySpan<ulong> args)
+    {
+        (t_sharedBytes, t_cooperative) = (sharedBytes, cooperative);
+        Launch1D(_fill, 1, args);
     }
 
     // Kernel arguments staged on the stack at most (two 8-byte slots each: 1 KiB); more go to pinned memory.
