@@ -20,6 +20,25 @@ Less memory and fewer copies on every path, with every existing result unchanged
 4. **64-bit sizes (C3):** a tensor and a storage may hold more than 2^31 elements; index arithmetic that can overflow
    is 64-bit.
 
+## What it gains, and what it does not
+
+The weight-placement stages (W0-W2, R0, R1) turn "fails or crawls" into "runs at a usable speed" for a model larger than
+the device; mixture-of-experts models gain the most. The stages after them (views, element types, 64-bit sizes) lower
+the memory of every run.
+
+| Case | Today | After | Why |
+|---|---|---|---|
+| A dense model larger than the device | Fails, or crawls with `IDRAK_OFFLOAD=1` | Runs near Ollama's speed (W1) | Only the activations cross the bus, not the weights every token |
+| A mixture-of-experts model larger than the device | Fails or crawls | Near full speed (R0, R1) | A few experts run per token; the used ones stay on the device, the cold ones run on the CPU |
+| Starting a large model | Loads everything first | Starts at once (W2) | The file is mapped and read as layers are first used |
+| Another program takes device memory during a run | Can fail | Keeps running, a little slower (W2) | Layers move to the CPU instead of failing |
+| Any model, any run | Copies on every transpose and slice; float32 everywhere | Less memory and fewer copies (V, T) | Views share storage; bf16/f16 halve the bytes; int types replace bits packed in floats |
+
+What it does not change: a model that already fits the device runs as today in W1 and W2 (no gain, no loss); a model far
+larger than the device is still bound by the CPU's and the system memory's speed (Ollama has the same limit); lazy start
+does not lower a dense model's memory once it runs, since every layer serves every token; training keeps its own
+staging (W1 aims at inference). The numbers come from W0 and the owner's runs, never from an estimate.
+
 ## Today
 
 | What | Where | Effect |
