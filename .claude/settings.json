@@ -1,0 +1,29 @@
+﻿{
+  "permissions": {
+    "allow": [
+      "Bash(git push origin main)",
+      "Bash(git push origin HEAD:main)",
+      "Bash(git fetch *)",
+      "Bash(git merge --ff-only *)",
+      "Bash(git cherry-pick *)",
+      "Bash(git commit *)",
+      "Bash(git add *)",
+      "Bash(git worktree *)",
+      "Bash(git -C *)",
+      "Bash(git status *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git diff *)",
+      "Bash(git checkout --detach *)",
+      "Bash(dotnet build *)",
+      "Bash(dotnet run *)",
+      "Bash(dotnet restore *)",
+      "Bash(IDRAK_DEVICES=cpu *)",
+      "Bash(mkdir *)"
+    ],
+    "deny": [
+      "Bash(git push --force *)",
+      "Bash(git push -f *)"
+    ]
+  }
+}
