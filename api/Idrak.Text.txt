@@ -21,6 +21,13 @@ public static class Idrak.Text.Abstractions.AnswerTexts
   public static void Register(Idrak.Text.Abstractions.IAnswerText text)
   public static void SetPolicy(string name, Idrak.Abstraction.SlotPolicy policy, double shadowRate = 0.01)
 
+public sealed class Idrak.Text.Abstractions.AskingWritePolicy : Idrak.Text.Abstractions.IWritePolicy
+  public AskingWritePolicy(System.Func<Idrak.Text.Abstractions.FileWrite, System.Threading.CancellationToken, System.Threading.Tasks.ValueTask<bool>> ask, string name = "ask")
+  public System.Threading.Tasks.ValueTask<string?> CheckAsync(Idrak.Text.Abstractions.FileWrite write, System.Threading.CancellationToken cancellationToken = default)
+  public string Name { get; }
+  public string Refusal { get; init; }
+  public string Summary { get; }
+
 public sealed record Idrak.Text.Abstractions.CodingLanguage : Idrak.Text.Abstractions.ICodingLanguage, System.IEquatable<Idrak.Text.Abstractions.CodingLanguage>
   public CodingLanguage(string Name, string Summary)
   public Idrak.Text.Abstractions.CodingToolExamples ToolExamples { get; init; }
@@ -76,6 +83,16 @@ public static class Idrak.Text.Abstractions.DistillationTeacher
 
 public static class Idrak.Text.Abstractions.FeatureCacheKeyExtensions
   public static Idrak.Abstraction.Generation.FeatureCacheKey For(Idrak.Abstraction.Generation.ChatImage image, Idrak.Text.TuningImages images, string family, string checkpoint, string dtype, string stage = "tower")
+
+public sealed record Idrak.Text.Abstractions.FileWrite : System.IEquatable<Idrak.Text.Abstractions.FileWrite>
+  public FileWrite(string Tool, string Path, string FullPath, bool Creates, string Content, string? Previous, string Change)
+  public bool Creates { get; init; }
+  public string Change { get; init; }
+  public string Content { get; init; }
+  public string FullPath { get; init; }
+  public string Path { get; init; }
+  public string Tool { get; init; }
+  public string? Previous { get; init; }
 
 public interface Idrak.Text.Abstractions.IAnswerText
   public string Name { get; }
@@ -177,6 +194,11 @@ public interface Idrak.Text.Abstractions.ITuningDataFormat
   public (default) Idrak.Text.Abstractions.PendingConversations ReadPending(string path, Idrak.Text.Abstractions.TuningDataOptions? options = null)
   public System.Collections.Generic.IEnumerable<Idrak.Text.ChatTranscript> Read(string path, Idrak.Text.Abstractions.TuningDataOptions? options = null)
   public bool Recognizes(System.Text.Json.Nodes.JsonObject record)
+  public string Name { get; }
+  public string Summary { get; }
+
+public interface Idrak.Text.Abstractions.IWritePolicy
+  public System.Threading.Tasks.ValueTask<string?> CheckAsync(Idrak.Text.Abstractions.FileWrite write, System.Threading.CancellationToken cancellationToken = default)
   public string Name { get; }
   public string Summary { get; }
 
@@ -413,6 +435,20 @@ public sealed record Idrak.Text.Abstractions.TuningDataOptions : System.IEquatab
   public string? Audios { get; init; }
   public string? Images { get; init; }
   public string? Prompt { get; init; }
+
+public static class Idrak.Text.Abstractions.WritePolicies
+  public const string Allow = "allow"
+  public const string Ask = "ask"
+  public const string EnvironmentVariable = "IDRAK_WRITE_POLICY"
+  public static Idrak.Text.Abstractions.IWritePolicy Get(string name)
+  public static Idrak.Text.Abstractions.IWritePolicy? Default(string name)
+  public static Idrak.Text.Abstractions.IWritePolicy? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string DefaultName { get; }
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Text.Abstractions.IWritePolicy policy)
 
 public sealed record Idrak.Text.AnswerChoice : System.IEquatable<Idrak.Text.AnswerChoice>
   public AnswerChoice(int Best, System.Collections.Generic.IReadOnlyList<double> Probabilities, System.Collections.Generic.IReadOnlyList<double> LogLikelihoods)
@@ -787,7 +823,11 @@ public sealed record Idrak.Text.Generation.CodingAgentRun : System.IEquatable<Id
 
 public sealed record Idrak.Text.Generation.CodingToolOptions : System.IEquatable<Idrak.Text.Generation.CodingToolOptions>
   public CodingToolOptions()
+  public System.Collections.Generic.IReadOnlyDictionary<string, System.Collections.Generic.IReadOnlyList<string>> GitSubcommandArguments { get; init; }
+  public System.Collections.Generic.IReadOnlyDictionary<string, string> GitVariables { get; init; }
   public System.Collections.Generic.IReadOnlyDictionary<string, string>? Environment { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> GitArguments { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> GitRefusedOptions { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> GitSubcommands { get; init; }
   public System.Collections.Generic.IReadOnlyList<string>? Commands { get; init; }
   public System.Collections.Generic.IReadOnlyList<string>? IgnoredDirectories { get; init; }
@@ -796,6 +836,7 @@ public sealed record Idrak.Text.Generation.CodingToolOptions : System.IEquatable
   public bool Network { get; init; }
   public bool ReadBeforeEdit { get; init; }
   public bool ReadOnly { get; init; }
+  public const string CommandsEnvironmentVariable = "IDRAK_AGENT_COMMANDS"
   public double MaxCpus { get; init; }
   public int DetectionDepth { get; init; }
   public int EditQuotedLines { get; init; }
@@ -806,8 +847,10 @@ public sealed record Idrak.Text.Generation.CodingToolOptions : System.IEquatable
   public int MaxSearchResults { get; init; }
   public long MaxMemoryBytes { get; init; }
   public static System.Collections.Generic.IReadOnlyList<string> LanguageFreeIgnoredDirectories { get; }
+  public static System.Collections.Generic.IReadOnlyList<string>? EnvironmentCommands { get; }
   public string Languages { get; init; }
   public string Sandbox { get; init; }
+  public string WritePolicy { get; init; }
 
 public sealed record Idrak.Text.Generation.CodingToolTurn : System.IEquatable<Idrak.Text.Generation.CodingToolTurn>
   public CodingToolTurn(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolResult> Results, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> Messages, int Errors, string Key)
@@ -821,12 +864,15 @@ public sealed class Idrak.Text.Generation.CodingTools
   public Idrak.Abstraction.CommandLimits Limits { get; }
   public Idrak.Abstraction.Generation.ToolRegistry Registry()
   public Idrak.Abstraction.ICommandSandbox Sandbox { get; }
+  public Idrak.Text.Abstractions.IWritePolicy WritePolicy { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.Tool> All { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Text.Abstractions.ICodingLanguage> Languages { get; }
   public System.Collections.Generic.IReadOnlyList<string> Commands { get; }
   public System.Collections.Generic.IReadOnlyList<string> IgnoredDirectories { get; }
   public System.Threading.Tasks.Task<Idrak.Abstraction.CommandResult> ExecuteAsync(string command, string directory = ".", System.TimeSpan? timeout = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.Threading.Tasks.Task<string> EditFileAsync(string path, string oldText, string newText, bool replaceAll = false, System.Threading.CancellationToken cancellationToken = default)
   public System.Threading.Tasks.Task<string> RunCommandAsync(string command, string directory = ".", int? timeoutSeconds = null, System.Threading.CancellationToken cancellationToken = default)
+  public System.Threading.Tasks.Task<string> WriteFileAsync(string path, string content, System.Threading.CancellationToken cancellationToken = default)
   public string EditFile(string path, string oldText, string newText, bool replaceAll = false)
   public string ListFiles(string path = ".", string? pattern = null)
   public string ReadFile(string path, int? startLine = null, int? endLine = null)

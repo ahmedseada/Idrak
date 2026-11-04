@@ -52,7 +52,11 @@ public interface ICodingLanguage
     /// <summary>Whether the files within <paramref name="depth"/> folders of <paramref name="workspace"/>'s top (0: the top only) show a project of the language.</summary>
     bool Detect(string workspace, int depth);
 
-    /// <summary>The programs <c>run_command</c> may start for it (file names without extension, in order).</summary>
+    /// <summary>
+    /// The programs <c>run_command</c> may start for it by default (file names without extension, in order): its build and
+    /// test runners only, never a program that runs any code it is given (<c>node</c>, <c>npx</c>), which the coding
+    /// tools' options name when an app wants it.
+    /// </summary>
     IReadOnlyList<string> Commands { get; }
 
     /// <summary>How to build, check and test it, as "Name: commands" (the agent's prompt lists them in its line on checking the work).</summary>

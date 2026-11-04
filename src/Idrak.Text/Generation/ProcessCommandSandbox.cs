@@ -8,8 +8,10 @@ namespace Idrak.Text.Generation;
 
 /// <summary>
 /// The <c>process</c> command sandbox (<see cref="CommandSandboxes.Process"/>, registered by Idrak.Text; the default): the
-/// command runs as a plain process of this machine, started without a shell, in its folder, with the programs allowed
-/// (<see cref="CommandLimits.Programs"/>, found on the PATH), standard input closed, the time limit and the memory limit
+/// command runs as a plain process of this machine, with the user's rights and nothing isolating the files, network or
+/// processes it reaches (for models you trust; <see cref="CommandSandboxes.Container"/> isolates them), started without a
+/// shell, in its folder, with the programs allowed (<see cref="CommandLimits.Programs"/>, found on the PATH: this
+/// sandbox's check is the one the coding tools rely on, they keep no copy of it), standard input closed, the time limit and the memory limit
 /// enforced by stopping the whole process tree, and the output trimmed to its cap. The memory limit is checked on the
 /// started process's working set (<see cref="Process.WorkingSet64"/>, which .NET reports on every platform), every
 /// <see cref="PollInterval"/>; the processes it starts in turn are not counted. It cannot turn the network off nor limit

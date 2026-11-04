@@ -21,21 +21,28 @@ internal sealed class AgentCommand : Command
 
         The model works in the folder (--workspace, default the current one) with the coding tools: list_files,
         read_file, search, edit_file, write_file and run_command (allowlisted programs started without a shell:
-        git and those of the coding languages, such as dotnet, npm, node; paths cannot leave the folder). The
-        coding languages (Idrak.Text.Plugins registers C#, TypeScript, Angular and Python) set the programs, the
+        git and the coding languages' build and test runners, such as dotnet, npm, tsc; --commands or
+        IDRAK_AGENT_COMMANDS names others, such as node; paths cannot leave the folder, nor follow a link out of
+        it). Commands run in the sandbox --sandbox names (IDRAK_SANDBOX, default process: a plain process with
+        your rights, nothing isolated, said in the first line; container runs each in Docker or Podman, for a
+        model you do not trust). The coding languages (Idrak.Text.Plugins registers C#, TypeScript, Angular and Python) set the programs, the
         folders skipped and the prompt's build and test commands: all registered ones by default, --languages
         detected for those the folder shows, or names. A folder no chosen language detects gets a note naming
         the plug-in to register. With a task it works on it and exits; without one it reads tasks line by line,
-        as chat does, keeping the conversation (/exit ends). Every command the model wants to run is shown and
-        asked about (y to run it) unless --yes is given; without a terminal and without --yes, commands are
-        refused. Calls the model writes as text (markdown json fences, JSON in its prose) naming an offered tool
+        as chat does, keeping the conversation (/exit ends). Every command the model wants to run and every
+        file it wants to write or edit is shown and asked about (y to go on) unless --yes is given; without a
+        terminal and without --yes, commands and writes are refused. Calls the model writes as text (markdown json fences, JSON in its prose) naming an offered tool
         are read and run unless --strict-calls is given; a reply that looks like calls none of which can be read
         gets a correction showing the template's call format, at most --nudges in a row, then the task ends
         saying so.
 
         Options:
               --workspace DIR    the folder to work in (default: the current folder)
-          -y, --yes              run commands without asking
+          -y, --yes              run commands and write files without asking
+              --sandbox NAME     where commands run: process (a plain process, the default) or container
+                                 (Docker or Podman; IDRAK_SANDBOX)
+              --commands LIST    the programs commands may start, such as dotnet,npm,node,git (default:
+                                 IDRAK_AGENT_COMMANDS, else the languages' build and test runners and git)
               --read-only        only the reading tools (no edits, writes or commands)
               --rounds N         model replies allowed per task (default 40)
               --nudges N         corrections in a row for calls that could not be read (default 2; 0: none)
@@ -55,7 +62,7 @@ internal sealed class AgentCommand : Command
           idrak agent qwen -y --context 16384
         """;
 
-    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--workspace", "--rounds", "--languages", "--nudges"];
+    public override IReadOnlyCollection<string> ValueOptions => [.. ModelChoices.ValueOptions, .. GenerationSettings.ValueOptions, "--workspace", "--rounds", "--languages", "--nudges", "--sandbox", "--commands"];
 
     public override IReadOnlyCollection<string> Flags => [.. GenerationSettings.Flags, "--yes", "--read-only", "--strict-calls"];
 
@@ -83,14 +90,34 @@ internal sealed class AgentCommand : Command
         bool interactive = !StandardInput.IsRedirected;
         bool yes = context.Flag("--yes");
 
+        // Writes are asked about as commands are (the "ask" write policy, registered for this run), unless --yes.
+        using var asking = AskWrites(context, input, interactive);
         CodingTools coding;
         try
         {
-            coding = new CodingTools(workspace, new CodingToolOptions { ReadOnly = context.Flag("--read-only"), Languages = context.Option("--languages") ?? CodingLanguages.DefaultChoice });
+            var options = new CodingToolOptions
+            {
+                ReadOnly = context.Flag("--read-only"), Languages = context.Option("--languages") ?? CodingLanguages.DefaultChoice,
+                WritePolicy = yes ? WritePolicies.Allow : WritePolicies.Ask,
+            };
+            coding = new CodingTools(workspace, options with
+            {
+                Sandbox = context.Option("--sandbox") ?? options.Sandbox,
+                Commands = context.Option("--commands") is { } commands ? commands.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : options.Commands,
+            });
         }
-        catch (NotRegisteredException e) when (e.Registry == nameof(CodingLanguages))
+        catch (NotRegisteredException e) when (e.Registry is nameof(CodingLanguages) or nameof(CommandSandboxes))
         {
             throw new UsageException(e.Message);
+        }
+
+        if (coding.All.Any(t => t.Definition.Name == "run_command"))
+        {
+            // The first line: where the model's commands run, and how to isolate them.
+            context.Error(coding.Sandbox.Name.Equals(CommandSandboxes.Process, StringComparison.OrdinalIgnoreCase)
+                ? $"Commands run in the {CommandSandboxes.Process} sandbox: a plain process of this machine with your rights, nothing isolated (for models you trust); "
+                  + $"for one you do not, run them in a container: --sandbox {CommandSandboxes.Container} or {CommandSandboxes.EnvironmentVariable}={CommandSandboxes.Container} (Docker or Podman)."
+                : $"Commands run in the {coding.Sandbox.Name} sandbox: {coding.Sandbox.Summary}.");
         }
 
         if (coding.LanguageNotice is { } notice)
@@ -192,5 +219,31 @@ internal sealed class AgentCommand : Command
             ["messages"] = ChatJson.Messages(messages),
         });
         return ExitCodes.Ok;
+    }
+
+    // The "ask" write policy for this run (WritePolicies.Ask): each write_file and edit_file shown and asked about on the
+    // terminal (y to write), refused without one; unregistered when the run ends.
+    private static AskRegistration AskWrites(CommandContext context, TextReader input, bool interactive)
+    {
+        WritePolicies.Register(new AskingWritePolicy((write, _) =>
+        {
+            string what = $"{(write.Tool == "edit_file" ? "Edit" : "Write")} '{write.Path}' ({(write.Creates ? "new file, " : "")}{write.Change})";
+            if (!interactive && StandardInput.Override is null)
+            {
+                context.Error($"Refused: {what}: no terminal to ask; give --yes to allow writes.");
+                return ValueTask.FromResult(false);
+            }
+
+            context.Output.Write($"{what}? [y/N] ");
+            context.Output.Flush();
+            string answer = input.ReadLine()?.Trim().ToLowerInvariant() ?? "";
+            return ValueTask.FromResult(answer is "y" or "yes");
+        }));
+        return new AskRegistration();
+    }
+
+    private sealed class AskRegistration : IDisposable
+    {
+        public void Dispose() => WritePolicies.Unregister(WritePolicies.Ask);
     }
 }

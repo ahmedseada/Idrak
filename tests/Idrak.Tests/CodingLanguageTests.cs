@@ -25,7 +25,7 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CodingLanguageGroup =
     [
-        ("coding languages: with Idrak.Text.Plugins' languages and all, the agent's system prompt, the programs allowed and the tools' descriptions are the ones the library had byte for byte, the ignored folders those plus python's __pycache__ and .venv, the commands' variables the same", d => { if (d == Device.Cpu) CodingLanguagesUnchanged(); }),
+        ("coding languages: with Idrak.Text.Plugins' languages and all, the agent's system prompt, the programs allowed and the tools' descriptions are the ones the library had byte for byte but for the programs (each language's build and test runners only: no npx, node or ng unless the options name them; the checks through npm), the ignored folders those plus python's __pycache__ and .venv, the commands' variables the same", d => { if (d == Device.Cpu) CodingLanguagesUnchanged(); }),
         ("coding languages: the library registers none; with none registered the prompt, the programs, the folders, the tools' descriptions and the variables name no language (every profile's programs, folders, examples and labels scanned)", d => { if (d == Device.Cpu) CodingLanguagesNone(); }),
         ("coding languages: detected picks csharp for a .csproj workspace, typescript for a package.json one, typescript and angular for an Angular one; names choose in their order and one not registered is refused naming Idrak.Text.Plugins; a workspace no chosen language detects gets a notice naming the plug-in, a task's own commands still run; IDRAK_CODING_LANGUAGES chooses; the merge keeps each list's order", d => { if (d == Device.Cpu) CodingLanguagesChoice(); }),
         ("plugins: csharp-language: CSharpLanguagePlugin is the plug-in \"csharp-language\" of TextPlugins.All, in Idrak.Text.Plugins.CSharp; Register twice registers csharp once; Unregister leaves CodingLanguages as found", d => { if (d == Device.Cpu) LanguagePluginRegisters(CSharpLanguagePlugin.Plugin, "csharp-language", "Idrak.Text.Plugins.CSharp", ["csharp"]); }),
@@ -116,14 +116,15 @@ internal abstract partial class DesktopTests : Tests
             - Make focused changes with edit_file; copy old_text exactly as the file has it (read_file shows line numbers
               before a "| " separator: they are not part of the file). Create new files with write_file.
             - Follow the project's conventions: its naming, formatting, file layout, frameworks and library versions.
+            - Write every reply in the language of the user's request.
             - Check your work: build and run the tests after changing code (C#: dotnet build, dotnet test; TypeScript:
-              npx tsc --noEmit, npm test; Angular: npx ng build, npx ng test --watch=false). Read the errors, fix them and
-              run the checks again until they pass.
+              npm exec -- tsc --noEmit, npm test; Angular: npm run build, npm test -- --watch=false). Read the errors, fix
+              them and run the checks again until they pass.
             - Do not weaken or delete tests to make them pass, unless the user asks for it.
             - Do only what was asked; mention anything else worth doing instead of doing it.
             - When the task is done, answer without a tool call: say briefly what you changed and how you checked it.
             """;
-        string[] oldCommands = ["dotnet", "npm", "npx", "ng", "node", "tsc", "git"];
+        string[] oldCommands = ["dotnet", "npm", "tsc", "git"];          // G-1 1a: the build and test runners only (npx, ng and node were here)
         string[] oldIgnored = [".git", "bin", "obj", "node_modules", "dist", ".angular", ".vs", ".idea", "coverage", "out"];
         var oldVariables = new Dictionary<string, string>
         {
@@ -152,7 +153,7 @@ internal abstract partial class DesktopTests : Tests
             ["write_file"] = "Create a file, or replace a file's whole content. Prefer edit_file for changes to existing files.",
             ["write_file.path"] = "File path, relative to the workspace; missing folders are created.",
             ["write_file.content"] = "The complete file content.",
-            ["run_command"] = "Run a command in the workspace and return its exit code and output. Allowed programs: dotnet, npm, npx, ng, node, tsc, git (git only status, diff, log, show, ls-files, grep, blame). The command is not run by a shell: no pipes, redirection, && or variables. Use it to build, test, lint and inspect, e.g. dotnet build, dotnet test, npm test, npx tsc --noEmit, ng build.",
+            ["run_command"] = "Run a command in the workspace and return its exit code and output. Allowed programs: dotnet, npm, tsc, git (git only status, diff, log, show, ls-files, grep, blame). The command is not run by a shell: no pipes, redirection, && or variables. Use it to build, test, lint and inspect, e.g. dotnet build, dotnet test, npm test, npm exec -- tsc --noEmit, npm run build.",
             ["run_command.command"] = "The command line, e.g. dotnet test --no-restore.",
             ["run_command.directory"] = "Folder to run in, relative to the workspace (default: the workspace).",
             ["run_command.timeout_seconds"] = "Stop the command after this many seconds (at most 300).",

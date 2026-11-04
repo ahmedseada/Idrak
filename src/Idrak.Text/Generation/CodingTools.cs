@@ -29,13 +29,68 @@ public sealed record CodingToolOptions
     public int DetectionDepth { get; init; } = CodingLanguages.DefaultDepth;
 
     /// <summary>
-    /// Programs <c>run_command</c> may start (file names without extension; resolved on the PATH); null (the default) for
-    /// the languages' programs, then <c>git</c>.
+    /// The variable that names the programs <c>run_command</c> may start when <see cref="Commands"/> is not given:
+    /// "IDRAK_AGENT_COMMANDS", names separated by commas (e.g. <c>dotnet,npm,node,git</c>), which replace the languages'
+    /// defaults.
     /// </summary>
-    public IReadOnlyList<string>? Commands { get; init; }
+    public const string CommandsEnvironmentVariable = "IDRAK_AGENT_COMMANDS";
 
-    /// <summary>The only <c>git</c> subcommands allowed (read-only by default: the agent edits files, not history).</summary>
+    /// <summary>The programs <see cref="CommandsEnvironmentVariable"/> names, in its order; null when it is not set (or names none).</summary>
+    public static IReadOnlyList<string>? EnvironmentCommands =>
+        System.Environment.GetEnvironmentVariable(CommandsEnvironmentVariable)?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) is { Length: > 0 } names
+            ? names : null;
+
+    /// <summary>
+    /// Programs <c>run_command</c> may start (file names without extension; resolved on the PATH), checked by the sandbox
+    /// the command runs in (<see cref="CommandLimits.Programs"/>); by default the ones <see cref="CommandsEnvironmentVariable"/>
+    /// (IDRAK_AGENT_COMMANDS) names, else null: the languages' programs (each language's build and test runners, such as
+    /// <c>dotnet</c>, <c>npm</c> and <c>tsc</c>), then <c>git</c>. Programs that run any code they are given (<c>node</c>,
+    /// <c>npx</c>, <c>ng</c>) are in no language's defaults: name them here or in the variable to allow them. A build or
+    /// test runner still runs the project's own code and scripts: the programs are not a boundary against a model that
+    /// means harm, the sandbox is (<see cref="Sandbox"/>).
+    /// </summary>
+    public IReadOnlyList<string>? Commands { get; init; } = EnvironmentCommands;
+
+    /// <summary>
+    /// The only <c>git</c> subcommands allowed (read-only by default: the agent edits files, not history). A name that is
+    /// not one of git's own commands could be an alias in git's settings, which may start a program: name git's commands only.
+    /// </summary>
     public IReadOnlyList<string> GitSubcommands { get; init; } = ["status", "diff", "log", "show", "ls-files", "grep", "blame"];
+
+    /// <summary>
+    /// The options of a <c>git</c> command that are refused by name, because they write a file, read one outside the
+    /// workspace, start a program or change git's settings: <c>--output</c>, <c>--output-directory</c>, <c>--ext-diff</c>,
+    /// <c>--open-files-in-pager</c> and <c>-O</c>, <c>--no-index</c>, <c>--contents</c>, <c>--exec</c>, <c>--exec-path</c>,
+    /// <c>--upload-pack</c>, <c>--receive-pack</c>, <c>--config-env</c> and <c>-c</c> by default. A long one is refused with a
+    /// value (<c>--output=x</c>) and abbreviated (git takes <c>--outp</c> for <c>--output</c>); a short one (one letter) is
+    /// refused wherever its letter is among a word's (<c>-iO</c>, <c>-Sconfig</c>: a value goes in a word of its own then).
+    /// Options before the subcommand are always refused, and words after <c>--</c> are paths. Empty: none refused by name.
+    /// </summary>
+    public IReadOnlyList<string> GitRefusedOptions { get; init; } =
+        ["--output", "--output-directory", "--ext-diff", "--open-files-in-pager", "-O", "--no-index", "--contents", "--exec", "--exec-path", "--upload-pack", "--receive-pack",
+            "--config-env", "-c"];
+
+    /// <summary>
+    /// The words every <c>git</c> command gets before its subcommand: no pager (<c>--no-pager</c>, <c>-c core.pager=</c>)
+    /// and no file-system monitor program (<c>-c core.fsmonitor=</c>) by default. Empty: none.
+    /// </summary>
+    public IReadOnlyList<string> GitArguments { get; init; } = ["--no-pager", "-c", "core.pager=", "-c", "core.fsmonitor="];
+
+    /// <summary>
+    /// The words a <c>git</c> subcommand gets right after its name, by subcommand: <c>--no-ext-diff</c> for <c>diff</c>,
+    /// <c>log</c> and <c>show</c> by default (no external diff program, whatever <c>GIT_EXTERNAL_DIFF</c> or git's
+    /// <c>diff.external</c> setting names). Empty: none.
+    /// </summary>
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> GitSubcommandArguments { get; init; } = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
+    {
+        ["diff"] = ["--no-ext-diff"], ["log"] = ["--no-ext-diff"], ["show"] = ["--no-ext-diff"],
+    };
+
+    /// <summary>
+    /// Variables every <c>git</c> command gets, over <see cref="Environment"/>: <c>GIT_PAGER</c> and <c>PAGER</c> set to
+    /// <c>cat</c> by default (git starts no pager for it). Empty: none.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> GitVariables { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal) { ["GIT_PAGER"] = "cat", ["PAGER"] = "cat" };
 
     /// <summary>Longest a command may run (the model may ask for less).</summary>
     public TimeSpan CommandTimeout { get; init; } = TimeSpan.FromMinutes(5);
@@ -84,11 +139,22 @@ public sealed record CodingToolOptions
     public bool ReadBeforeEdit { get; init; } = true;
 
     /// <summary>
-    /// The <see cref="CommandSandboxes"/> sandbox every command runs in: <see cref="CommandSandboxes.Process"/> (a plain
-    /// process) unless <see cref="CommandSandboxes.EnvironmentVariable"/> (IDRAK_SANDBOX) names another, such as
-    /// <see cref="CommandSandboxes.Container"/> (Idrak.Reinforcement.Plugins).
+    /// The <see cref="CommandSandboxes"/> sandbox every command runs in: <see cref="CommandSandboxes.Process"/> unless
+    /// <see cref="CommandSandboxes.EnvironmentVariable"/> (IDRAK_SANDBOX) names another. <b>process is a plain process of
+    /// this machine</b>, with the user's rights: no shell and only the programs allowed, but nothing isolates the files,
+    /// the network or the processes a command reaches (a build or a test runs the project's code). Use it with models you
+    /// trust; for one you do not, choose <see cref="CommandSandboxes.Container"/> (Docker or Podman, Idrak.Reinforcement.Plugins:
+    /// <c>Sandbox = "container"</c> or IDRAK_SANDBOX=container).
     /// </summary>
     public string Sandbox { get; init; } = CommandSandboxes.DefaultName;
+
+    /// <summary>
+    /// The <see cref="WritePolicies"/> policy every <c>write_file</c> and <c>edit_file</c> asks before it writes:
+    /// <see cref="WritePolicies.Allow"/> (every write inside the workspace happens) unless
+    /// <see cref="WritePolicies.EnvironmentVariable"/> (IDRAK_WRITE_POLICY) names another, such as
+    /// <see cref="WritePolicies.Ask"/>, which an app registers (<see cref="AskingWritePolicy"/>; the CLI's <c>idrak agent</c> does).
+    /// </summary>
+    public string WritePolicy { get; init; } = WritePolicies.DefaultName;
 
     /// <summary>The most memory a command may use, in bytes; 0 (the default) for no limit.</summary>
     public long MaxMemoryBytes { get; init; }
@@ -109,11 +175,15 @@ public sealed record CodingToolOptions
 /// <summary>
 /// Tools for a coding agent working in one folder (the workspace): <c>list_files</c>, <c>read_file</c>, <c>search</c>,
 /// <c>edit_file</c> (exact search and replace), <c>write_file</c> and <c>run_command</c> (allowlisted programs, started
-/// without a shell, in the command sandbox the options name: <see cref="CodingToolOptions.Sandbox"/>). The programs
-/// allowed, the folders skipped, the commands' variables and the examples in the tools' descriptions come from the coding
-/// languages the options choose (<see cref="CodingToolOptions.Languages"/>, <see cref="CodingLanguages"/>); with none,
-/// only the language-free ones (git, <c>.git</c>). Paths are relative to the workspace and cannot leave it; results are
-/// plain text sized for a model's context; mistakes come back as messages the model can act on.
+/// without a shell, in the command sandbox the options name: <see cref="CodingToolOptions.Sandbox"/>, which checks the
+/// programs allowed). The programs allowed, the folders skipped, the commands' variables and the examples in the tools'
+/// descriptions come from the coding languages the options choose (<see cref="CodingToolOptions.Languages"/>,
+/// <see cref="CodingLanguages"/>); with none, only the language-free ones (git, <c>.git</c>). Paths are relative to the
+/// workspace and cannot leave it, by their text or through a link (every link along a path is followed, and a target
+/// outside the workspace is refused; the folder walk of list_files and search neither lists nor follows such a link, and
+/// walks a folder reached twice once). Every write of write_file and edit_file is asked of the write policy first
+/// (<see cref="CodingToolOptions.WritePolicy"/>). Results are plain text sized for a model's context; mistakes come back as
+/// messages the model can act on.
 /// </summary>
 public sealed partial class CodingTools
 {
@@ -121,6 +191,7 @@ public sealed partial class CodingTools
     private static readonly Dictionary<string, string> Quiet = new(StringComparer.Ordinal) { ["CI"] = "1", ["NO_COLOR"] = "1", ["FORCE_COLOR"] = "0" };
 
     private readonly string _root;
+    private readonly string _realRoot;                  // _root with every link along it followed
     private readonly CodingToolOptions _options;
     private readonly CommandLimits _limits;
     private readonly HashSet<string> _ignored;
@@ -131,7 +202,10 @@ public sealed partial class CodingTools
     /// <param name="options">What they may do; null for the defaults.</param>
     /// <param name="sandbox">The sandbox commands run in; null for the one <see cref="CodingToolOptions.Sandbox"/> names in <see cref="CommandSandboxes"/>.</param>
     /// <exception cref="DirectoryNotFoundException">The workspace does not exist.</exception>
-    /// <exception cref="NotSupportedException">The sandbox is not registered, or cannot enforce the options' limits (the message names one that can).</exception>
+    /// <exception cref="NotSupportedException">
+    /// The sandbox or the write policy is not registered, or the sandbox cannot enforce the options' limits (the message
+    /// names one that can).
+    /// </exception>
     public CodingTools(string workspace, CodingToolOptions? options = null, ICommandSandbox? sandbox = null)
     {
         _root = Path.GetFullPath(workspace).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -140,7 +214,10 @@ public sealed partial class CodingTools
             throw new DirectoryNotFoundException($"Workspace '{_root}' does not exist.");
         }
 
+        int hops = MaxLinks;
+        _realRoot = RealPath(_root, ref hops) ?? _root;
         _options = options ?? new CodingToolOptions();
+        WritePolicy = WritePolicies.Get(_options.WritePolicy);
         Languages = CodingLanguages.Resolve(_options.Languages, _root, _options.DetectionDepth);
         var languages = Languages;
         Commands = _options.Commands ?? CodingLanguages.Merge([.. languages.Select(l => l.Commands), ["git"]], StringComparer.OrdinalIgnoreCase);
@@ -166,6 +243,14 @@ public sealed partial class CodingTools
         {
             throw new NotSupportedException(refusal);
         }
+
+        var gitEnvironment = new Dictionary<string, string>(environment, StringComparer.Ordinal);
+        foreach (var (name, value) in _options.GitVariables)
+        {
+            gitEnvironment[name] = value;
+        }
+
+        _gitEnvironment = gitEnvironment;
 
         // The examples in the descriptions: every language's, in their order (none without a language).
         IReadOnlyList<string> Examples(Func<CodingToolExamples, IReadOnlyList<string>> pick) => CodingLanguages.Merge([.. languages.Select(l => pick(l.ToolExamples))]);
@@ -197,11 +282,12 @@ public sealed partial class CodingTools
                     ("old_text", "string", "The exact text to replace.", true),
                     ("new_text", "string", "The replacement.", true),
                     ("replace_all", "boolean", "Replace every occurrence.", false)),
-                (args, _) => Task.FromResult(Unread(Text(args, "path")!) ?? EditFile(Text(args, "path")!, Text(args, "old_text")!, Text(args, "new_text")!, args["replace_all"]?.GetValue<bool>() ?? false))));
+                async (args, token) => Unread(Text(args, "path")!)
+                                       ?? await EditFileAsync(Text(args, "path")!, Text(args, "old_text")!, Text(args, "new_text")!, args["replace_all"]?.GetValue<bool>() ?? false, token).ConfigureAwait(false)));
             tools.Add(Tool.Create("write_file", "Create a file, or replace a file's whole content. Prefer edit_file for changes to existing files.",
                 Schema(("path", "string", "File path, relative to the workspace; missing folders are created.", true),
                     ("content", "string", "The complete file content.", true)),
-                (args, _) => Task.FromResult(Seen(Text(args, "path")!, WriteFile(Text(args, "path")!, Text(args, "content")!)))));
+                async (args, token) => Seen(Text(args, "path")!, await WriteFileAsync(Text(args, "path")!, Text(args, "content")!, token).ConfigureAwait(false))));
             tools.Add(Tool.Create("run_command", $"Run a command in the workspace and return its exit code and output. Allowed programs: " +
                 $"{string.Join(", ", Commands)} (git only {string.Join(", ", _options.GitSubcommands)}). The command is not run by a shell: " +
                 "no pipes, redirection, && or variables. " + Example("Use it to build, test, lint and inspect", Examples(e => e.Commands), ", "),
@@ -319,6 +405,9 @@ public sealed partial class CodingTools
 
     /// <summary>The sandbox every command runs in.</summary>
     public ICommandSandbox Sandbox { get; }
+
+    /// <summary>The write policy every <c>write_file</c> and <c>edit_file</c> asks before it writes (<see cref="CodingToolOptions.WritePolicy"/>).</summary>
+    public IWritePolicy WritePolicy { get; }
 
     /// <summary>The limits every command runs under (the time limit capped per call by <see cref="ExecuteAsync"/>).</summary>
     public CommandLimits Limits => _limits;
@@ -471,9 +560,21 @@ public sealed partial class CodingTools
         return string.Join('\n', results) + (total > results.Count ? $"\n… {total - results.Count} more matches (narrow the path, glob or pattern)" : "");
     }
 
-    /// <summary><c>edit_file</c>.</summary>
-    public string EditFile(string path, string oldText, string newText, bool replaceAll = false)
+    /// <summary><c>edit_file</c>, without asking the write policy (the tool asks it: <see cref="EditFileAsync"/>).</summary>
+    public string EditFile(string path, string oldText, string newText, bool replaceAll = false) =>
+        PlanEdit(path, oldText, newText, replaceAll, out var edit) ?? Commit(edit);
+
+    /// <summary><c>edit_file</c> as the tool runs it: the change found, then the write policy asked (<see cref="WritePolicy"/>), then written.</summary>
+    public async Task<string> EditFileAsync(string path, string oldText, string newText, bool replaceAll = false, CancellationToken cancellationToken = default) =>
+        PlanEdit(path, oldText, newText, replaceAll, out var edit) ?? await Refused(edit.Write, cancellationToken).ConfigureAwait(false) ?? Commit(edit);
+
+    // An edit found, not written yet: the write as the policy sees it, and where the replacement goes in the text before.
+    private readonly record struct PlannedEdit(FileWrite Write, int At, string Replacement, string What);
+
+    // The edit's error, or null with the edit to make.
+    private string? PlanEdit(string path, string oldText, string newText, bool replaceAll, out PlannedEdit edit)
     {
+        edit = default;
         if (Resolve(path, out string full) is { } error)
         {
             return error;
@@ -517,9 +618,9 @@ public sealed partial class CodingTools
             }
 
             string changed = string.Concat(text.AsSpan(0, tolerant.Start), tolerant.Replacement, text.AsSpan(tolerant.Start + tolerant.Length));
-            WriteKeepingBom(full, changed);
-            _missed.TryRemove(full, out _);
-            return Edited(path, full, text, tolerant.Start, tolerant.Replacement, $"1 replacement; old_text matched {tolerant.How}");
+            edit = new PlannedEdit(new FileWrite("edit_file", Relative(full), full, false, changed, text, $"1 replacement; old_text matched {tolerant.How}"), tolerant.Start, tolerant.Replacement,
+                $"1 replacement; old_text matched {tolerant.How}");
+            return null;
         }
 
         if (count > 1 && !replaceAll)
@@ -529,10 +630,25 @@ public sealed partial class CodingTools
 
         int at = text.IndexOf(find, StringComparison.Ordinal);
         string updated = replaceAll ? text.Replace(find, replacement, StringComparison.Ordinal) : string.Concat(text.AsSpan(0, at), replacement, text.AsSpan(at + find.Length));
-        WriteKeepingBom(full, updated);
-        _missed.TryRemove(full, out _);
-        return Edited(path, full, text, at, replacement, replaceAll ? $"{count} replacements" : "1 replacement");
+        string what = replaceAll ? $"{count} replacements" : "1 replacement";
+        edit = new PlannedEdit(new FileWrite("edit_file", Relative(full), full, false, updated, text, what), at, replacement, what);
+        return null;
     }
+
+    // Writes the edit found; the answer shows the changed lines.
+    private string Commit(PlannedEdit edit)
+    {
+        var write = edit.Write;
+        WriteKeepingBom(write.FullPath, write.Content);
+        _missed.TryRemove(write.FullPath, out _);
+        return Edited(write.Path, write.FullPath, write.Previous!, edit.At, edit.Replacement, edit.What);
+    }
+
+    // The write policy's refusal of `write` as the model reads it, or null when it may be written.
+    private async Task<string?> Refused(FileWrite write, CancellationToken cancellationToken) =>
+        await WritePolicy.CheckAsync(write, cancellationToken).ConfigureAwait(false) is { } why
+            ? $"{ErrorPrefix}{write.Tool} of {write.Path} was refused by the write policy '{WritePolicy.Name}': {why}. The file is unchanged."
+            : null;
 
     // The changed lines with a little context, so the model sees the result without reading the file again.
     private string Edited(string path, string full, string before, int at, string replacement, string what)
@@ -749,9 +865,17 @@ public sealed partial class CodingTools
         return new TolerantMatch(from, lastStart + lastLength - from, replacement, how, found);
     }
 
-    /// <summary><c>write_file</c>.</summary>
-    public string WriteFile(string path, string content)
+    /// <summary><c>write_file</c>, without asking the write policy (the tool asks it: <see cref="WriteFileAsync"/>).</summary>
+    public string WriteFile(string path, string content) => PlanWrite(path, content, out var write) ?? Commit(write);
+
+    /// <summary><c>write_file</c> as the tool runs it: the write policy asked (<see cref="WritePolicy"/>), then written.</summary>
+    public async Task<string> WriteFileAsync(string path, string content, CancellationToken cancellationToken = default) =>
+        PlanWrite(path, content, out var write) ?? await Refused(write, cancellationToken).ConfigureAwait(false) ?? Commit(write);
+
+    // The write's error, or null with the write to make.
+    private string? PlanWrite(string path, string content, out FileWrite write)
     {
+        write = null!;
         if (Resolve(path, out string full) is { } error)
         {
             return error;
@@ -762,15 +886,22 @@ public sealed partial class CodingTools
             return $"Error: '{path}' is a folder.";
         }
 
-        bool existed = File.Exists(full);
-        if (existed && File.ReadAllText(full).Contains("\r\n", StringComparison.Ordinal))
+        string? previous = File.Exists(full) ? File.ReadAllText(full) : null;
+        if (previous is not null && previous.Contains("\r\n", StringComparison.Ordinal))
         {
             content = content.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\n", "\r\n", StringComparison.Ordinal);   // keep the file's line endings
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(full)!);
-        WriteKeepingBom(full, content);
-        return $"{(existed ? "Replaced" : "Created")} {Relative(full)} ({SplitLines(content).Count} lines).";
+        write = new FileWrite("write_file", Relative(full), full, previous is null, content, previous, $"{SplitLines(content).Count} lines");
+        return null;
+    }
+
+    // Writes the file (its folders made); the answer says whether it was created or replaced.
+    private string Commit(FileWrite write)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(write.FullPath)!);
+        WriteKeepingBom(write.FullPath, write.Content);
+        return $"{(write.Creates ? "Created" : "Replaced")} {write.Path} ({write.Change}).";
     }
 
     /// <summary><c>run_command</c>: the command's outcome as the model sees it.</summary>
@@ -791,8 +922,11 @@ public sealed partial class CodingTools
     }
 
     /// <summary>
-    /// Runs <paramref name="command"/> under the same rules as <c>run_command</c> (allowlist, no shell, the workspace) in
-    /// <see cref="Sandbox"/>; the timeout is capped at <see cref="CodingToolOptions.CommandTimeout"/>.
+    /// Runs <paramref name="command"/> under the same rules as <c>run_command</c> (no shell, the workspace, git's
+    /// subcommands and refused options; the programs allowed are checked by <see cref="Sandbox"/>, the one place they
+    /// are) in <see cref="Sandbox"/>; the timeout is capped at <see cref="CodingToolOptions.CommandTimeout"/>. A
+    /// <c>git</c> command runs with <see cref="CodingToolOptions.GitArguments"/> before its subcommand,
+    /// <see cref="CodingToolOptions.GitSubcommandArguments"/> after it and <see cref="CodingToolOptions.GitVariables"/>.
     /// </summary>
     public async Task<CommandResult> ExecuteAsync(string command, string directory = ".", TimeSpan? timeout = null, CancellationToken cancellationToken = default)
     {
@@ -812,49 +946,201 @@ public sealed partial class CodingTools
             return Refuse("Error: the command is not run by a shell, so pipes, redirection, &&, ; and variables are not available. Run one program per call.");
         }
 
-        var words = SplitCommandLine(command);
+        IReadOnlyList<string> words = SplitCommandLine(command);
         if (words.Count == 0)
         {
             return Refuse("Error: empty command.");
         }
 
-        string program = Path.GetFileNameWithoutExtension(words[0]);
-        if (!Commands.Contains(program, StringComparer.OrdinalIgnoreCase) || words[0].Contains('/') || words[0].Contains('\\'))
+        var limits = _limits with { Time = timeout is { } t && t < _options.CommandTimeout ? t : _options.CommandTimeout };
+        if (Path.GetFileNameWithoutExtension(words[0]).Equals("git", StringComparison.OrdinalIgnoreCase))
         {
-            return Refuse($"Error: '{words[0]}' is not an allowed program. Allowed: {string.Join(", ", Commands)}.");
+            if (Git(words) is { } refusal)
+            {
+                return Refuse(refusal);
+            }
+
+            words = [words[0], .. _options.GitArguments, words[1], .. _options.GitSubcommandArguments.GetValueOrDefault(words[1]) ?? [], .. words.Skip(2)];
+            limits = limits with { Environment = _gitEnvironment };
         }
 
-        if (program.Equals("git", StringComparison.OrdinalIgnoreCase) && (words.Count < 2 || !_options.GitSubcommands.Contains(words[1])))
-        {
-            return Refuse($"Error: only git {string.Join(", ", _options.GitSubcommands)} are allowed.");
-        }
-
-        var limitTime = timeout is { } t && t < _options.CommandTimeout ? t : _options.CommandTimeout;
-        return await Sandbox.RunAsync(words, folder, _limits with { Time = limitTime }, cancellationToken).ConfigureAwait(false);
+        return await Sandbox.RunAsync(words, folder, limits, cancellationToken).ConfigureAwait(false);
     }
 
-    // Null when `path` stays inside the workspace (then `full` is its absolute path), else the error for the model.
+    // The variables of a git command: the commands' own, then CodingToolOptions.GitVariables.
+    private readonly IReadOnlyDictionary<string, string> _gitEnvironment;
+
+    // Why a git command is refused (an option before its subcommand, a subcommand not allowed, an option refused by name), or null.
+    private string? Git(IReadOnlyList<string> words)
+    {
+        string allowed = $"only git {string.Join(", ", _options.GitSubcommands)} are allowed.";
+        if (words.Count >= 2 && words[1].StartsWith('-'))
+        {
+            return $"Error: git's option '{words[1]}' is not allowed before the subcommand (such options change git's settings or start programs); {allowed}";
+        }
+
+        if (words.Count < 2 || !_options.GitSubcommands.Contains(words[1]))
+        {
+            return $"Error: {allowed}";
+        }
+
+        for (int i = 2; i < words.Count; i++)
+        {
+            string word = words[i];
+            if (word == "--")
+            {
+                break;                                          // paths from here on
+            }
+
+            if (RefusedGitOption(word, _options.GitRefusedOptions) is { } name)
+            {
+                return name.Length == 2 && !word.StartsWith(name, StringComparison.Ordinal)
+                    ? $"Error: git's option '{word}' is not allowed: it holds {name}, which can write files, read outside the workspace or start programs. Give an option's value as a word of its own."
+                    : $"Error: git's option '{word}' is not allowed ({name}): it can write files, read outside the workspace or start programs.";
+            }
+        }
+
+        return null;
+    }
+
+    // The refused option `word` is (its name, a long one's abbreviation, or a short one among its letters), or null.
+    private static string? RefusedGitOption(string word, IReadOnlyList<string> refused)
+    {
+        if (word.Length < 2 || word[0] != '-')
+        {
+            return null;
+        }
+
+        var name = word.AsSpan();
+        bool longOption = word.StartsWith("--", StringComparison.Ordinal);
+        if (longOption && name.IndexOf('=') is var equals and >= 0)
+        {
+            name = name[..equals];
+        }
+
+        foreach (string option in refused)
+        {
+            bool longRefused = option.StartsWith("--", StringComparison.Ordinal);
+            if (longOption && longRefused && (name.SequenceEqual(option) || name.Length >= 4 && option.AsSpan().StartsWith(name, StringComparison.Ordinal)))
+            {
+                return option;                                  // git takes a long option's unique prefix for it
+            }
+
+            if (!longOption && !longRefused && option.Length == 2 && option[0] == '-' && name[1..].Contains(option[1]))
+            {
+                return option;                                  // short options bundle: -iO is -i -O
+            }
+        }
+
+        return null;
+    }
+
+    // Links followed along one path at most: more means they loop (as the systems' own limit, about 40).
+    private const int MaxLinks = 40;
+
+    // Null when `path` stays inside the workspace, by its text and through every link along it (then `full` is its
+    // absolute path), else the error for the model.
     private string? Resolve(string path, out string full)
     {
         full = Path.GetFullPath(Path.Combine(_root, path.Trim()));
-        bool inside = full.Equals(_root, StringComparison.Ordinal)
-                      || full.StartsWith(_root + Path.DirectorySeparatorChar, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
-        return inside ? null : $"Error: '{path}' is outside the workspace; use paths relative to it.";
+        if (!Inside(full, _root))
+        {
+            return $"Error: '{path}' is outside the workspace; use paths relative to it.";
+        }
+
+        int hops = MaxLinks;
+        string? real = full.Length == _root.Length ? _realRoot : Follow(_realRoot, full.AsSpan(_root.Length + 1), ref hops);
+        return real is null ? $"Error: '{path}' goes through links that loop; use a path without them."
+            : Inside(real, _realRoot) ? null
+            : $"Error: '{path}' is a link to a place outside the workspace; only files inside it can be used.";
+    }
+
+    private static bool Inside(string path, string root) =>
+        path.Equals(root, PathComparison)
+        || path.Length > root.Length && path.StartsWith(root, PathComparison) && path[root.Length] == Path.DirectorySeparatorChar;
+
+    private static StringComparison PathComparison => OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    // `path` (absolute) with every link along it followed, each part from the top; null when the links loop.
+    private static string? RealPath(string path, ref int hops)
+    {
+        string top = Path.GetPathRoot(path)!;
+        return Follow(top, path.AsSpan(top.Length), ref hops);
+    }
+
+    // `start` (a path with no link along it) joined with the parts of `rest`, each one that is a link followed to its
+    // final target (a part that does not exist ends the links: the rest is joined as it is); null when more than
+    // `hops` links are met (they loop).
+    private static string? Follow(string start, ReadOnlySpan<char> rest, ref int hops)
+    {
+        string current = start;
+        foreach (Range range in rest.Split(Path.DirectorySeparatorChar))
+        {
+            var part = rest[range];
+            if (part.IsEmpty)
+            {
+                continue;
+            }
+
+            current = Path.Join(current, part);
+            if (LinkTarget(current) is not { } target)
+            {
+                continue;
+            }
+
+            if (--hops < 0)
+            {
+                return null;
+            }
+
+            // The target, relative to the link's folder, may hold links of its own along it: followed from the top.
+            if (RealPath(Path.GetFullPath(target, Path.GetDirectoryName(current)!), ref hops) is not { } followed)
+            {
+                return null;
+            }
+
+            current = followed;
+        }
+
+        return current;
+    }
+
+    // The target `path` links to as the link holds it (a symbolic link or a junction), or null for anything else.
+    private static string? LinkTarget(string path)
+    {
+        try
+        {
+            return new FileInfo(path).LinkTarget;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;                                        // missing, or not ours to read: not a link we can follow
+        }
     }
 
     private string Relative(string full) => Path.GetRelativePath(_root, full).Replace('\\', '/');
 
+    // The files below `folder` (inside the workspace: Resolve passed it), the ignored folders skipped. A link is followed
+    // only to a place inside the workspace, and a folder reached twice (a link back to one walked) is walked once.
     private IEnumerable<string> Files(string folder)
     {
-        var pending = new Stack<string>();
-        pending.Push(folder);
+        int hops = MaxLinks;
+        string? real = folder.Length == _root.Length ? _realRoot : Follow(_realRoot, folder.AsSpan(_root.Length + 1), ref hops);
+        if (real is null)
+        {
+            yield break;
+        }
+
+        var walked = new HashSet<string>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal) { real };
+        var pending = new Stack<(string Path, string Real)>();
+        pending.Push((folder, real));
         while (pending.Count > 0)
         {
-            string current = pending.Pop();
-            IEnumerable<string> entries;
+            var (current, currentReal) = pending.Pop();
+            IEnumerable<FileSystemInfo> entries;
             try
             {
-                entries = Directory.EnumerateFileSystemEntries(current);
+                entries = new DirectoryInfo(current).EnumerateFileSystemInfos();
             }
             catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
             {
@@ -863,16 +1149,27 @@ public sealed partial class CodingTools
 
             foreach (var entry in entries)
             {
-                if (Directory.Exists(entry))
+                string entryReal = Path.Join(currentReal, entry.Name);
+                bool folderEntry = entry is DirectoryInfo;
+                if ((entry.Attributes & FileAttributes.ReparsePoint) != 0)
                 {
-                    if (!_ignored.Contains(Path.GetFileName(entry)))
+                    int linkHops = MaxLinks;
+                    if (Follow(currentReal, entry.Name, ref linkHops) is not { } target || !Inside(target, _realRoot))
                     {
-                        pending.Push(entry);
+                        continue;                               // a link out of the workspace (or a loop): neither listed nor followed
                     }
+
+                    entryReal = target;
+                    folderEntry = Directory.Exists(target);
                 }
-                else
+
+                if (!folderEntry)
                 {
-                    yield return entry;
+                    yield return entry.FullName;
+                }
+                else if (!_ignored.Contains(entry.Name) && walked.Add(entryReal))
+                {
+                    pending.Push((entry.FullName, entryReal));
                 }
             }
         }

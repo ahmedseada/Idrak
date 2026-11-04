@@ -15,7 +15,7 @@ scanned only as a user of the internals of `Idrak` and `Idrak.Gpu`.
 | `Idrak` | 54 | 5 | 20 | 79 | 0 |
 | `Idrak.Gpu` | 5 | 0 | 1 | 6 | 0 |
 | `Idrak.Imaging` | 0 | 0 | 0 | 0 | 0 |
-| `Idrak.Text` | 24 | 0 | 12 | 36 | 0 |
+| `Idrak.Text` | 25 | 0 | 13 | 38 | 0 |
 | `Idrak.Data` | 6 | 0 | 4 | 10 | 0 |
 | `Idrak.Vision` | 13 | 0 | 6 | 19 | 0 |
 | `Idrak.Audio` | 52 | 2 | 21 | 75 | 0 |
@@ -428,6 +428,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Text.Abstractions.ITeacherDivergence` | interface | public | Tensor | TeacherDivergences.ForwardDivergence, TeacherDivergences.GuardedDivergence, TeacherDivergences.JensenShannonDivergence, TeacherDivergences.ReverseDivergence |  | Text | Text |
 | `Idrak.Text.Abstractions.ITextMatcher` | interface | public | — | SemiGlobalMatcher, TextMatchers.GuardedMatcher |  | Text | Text |
 | `Idrak.Text.Abstractions.ITuningDataFormat` | interface | public | — | MessagesDataFormat, ShareGptDataFormat, TranscriptsDataFormat |  | Text | Text |
+| `Idrak.Text.Abstractions.IWritePolicy` | interface | public | — | AskingWritePolicy, WritePolicies.AllowWritePolicy |  | Text | Text |
 | `Idrak.Text.Abstractions.JsonRepairs` | registry | public | — |  | lenient | Text | Text |
 | `Idrak.Text.Abstractions.KeywordIndexes` | registry | public | — |  | bm25 | Text | Text |
 | `Idrak.Text.Abstractions.PagePartFillers` | registry | public | — |  | date, digits, field, hijri, line, number, pick | Text | Text |
@@ -438,6 +439,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Text.Abstractions.TeacherDivergences` | registry | public | Tensor |  | forward, jsd, reverse | Text | Text |
 | `Idrak.Text.Abstractions.TextMatchers` | registry | public | — |  | semi-global | — | Text |
 | `Idrak.Text.Abstractions.TuningDataFormats` | registry | public | — |  | messages, sharegpt, transcripts | Text | Text |
+| `Idrak.Text.Abstractions.WritePolicies` | registry | public | — |  | allow | Text | Text |
 | `Idrak.Text.Reinforcement.Abstractions.IRewardedEnvironmentKind` | interface | public | — | CodingEnvironmentKind, PromptsEnvironmentKind |  | Reinforcement.Plugins, Text | Text |
 | `Idrak.Text.Retrieval.Abstractions.IPairEncoder` | interface | public | — | FunctionPairEncoder |  | Text | Text |
 | `Idrak.Text.Retrieval.Abstractions.IReranker` | interface | public | — | CrossEncoder |  | Text | Text |

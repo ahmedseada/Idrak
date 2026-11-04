@@ -9,8 +9,10 @@ namespace Idrak.Text.Plugins.CSharp;
 /// <summary>
 /// C# as a coding language (<see cref="CodingLanguages"/>: "csharp") for the coding agent and its tools: a workspace
 /// with a solution or a project (<c>*.sln</c>, <c>*.slnx</c>, <c>*.csproj</c>) is C#; <c>run_command</c> may start
-/// <c>dotnet</c>; the agent checks its work with <c>dotnet build</c> and <c>dotnet test</c>; <c>bin</c>, <c>obj</c> and
-/// <c>.vs</c> are skipped; a coding task that names no commands restores, builds and tests with dotnet.
+/// <c>dotnet</c>, its build and test runner, by default (as every language's defaults, the build and test runners only;
+/// <c>CodingToolOptions.Commands</c> or IDRAK_AGENT_COMMANDS name others); the agent checks its work with
+/// <c>dotnet build</c> and <c>dotnet test</c>; <c>bin</c>, <c>obj</c> and <c>.vs</c> are skipped; a coding task that
+/// names no commands restores, builds and tests with dotnet.
 /// </summary>
 public static class CSharpLanguagePlugin
 {

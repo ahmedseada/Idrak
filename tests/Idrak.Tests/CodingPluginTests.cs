@@ -27,7 +27,7 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] CodingPluginGroup =
     [
-        ("command sandboxes: process is Idrak.Text's in CommandSandboxes; it runs a program without a shell, enforces the programs allowed, its time, output and memory limits (stopping the command), hands each line of output to CommandLimits.Output as it is written, refuses network off, processes and CPUs naming container, and stops on cancellation; the coding tools run every command through the sandbox their options name", d => { if (d == Device.Cpu) ProcessSandboxLimits(); }),
+        ("command sandboxes: process is Idrak.Text's in CommandSandboxes; it runs a program without a shell, enforces the programs allowed, its time, output and memory limits (stopping the command), hands each line of output to CommandLimits.Output as it is written, refuses network off, processes and CPUs naming container, and stops on cancellation; the coding tools run every command through the sandbox their options name, which alone checks the programs allowed (the tools hand a program not allowed over, and run_command says the sandbox's refusal)", d => { if (d == Device.Cpu) ProcessSandboxLimits(); }),
         ("command sandboxes: interactive start: process starts a command with its standard input, output and error as streams (a child of this program echoes each line sent to it on its output, an error line on its error stream, and exits with its code at the end of its input; its variables set); the memory stays flat over thousands of lines; Stop and a dispose end its whole process tree, the time limit stops it; a program not allowed or not found is a refused start, a limit it cannot keep throws naming container, a cancelled start throws; a sandbox without an interactive start (container, an app's) refuses with the reason", d => { if (d == Device.Cpu) ProcessSandboxInteractive(); }),
         ("command sandboxes: requester: CommandLimits.Requester (who asks, as the words of a sentence, for a sandbox that asks the user first) is \"the agent\" by default and in the coding tools' limits, Purpose (what the command is for) is none by default; a copy keeps the ones given, and they change nothing about the run (the process sandbox runs the same command with another requester)", d => { if (d == Device.Cpu) CommandRequester(); }),
         ("command sandboxes: container refuses when no program is found or no image is set (naming IDRAK_SANDBOX_PROGRAM and IDRAK_SANDBOX_IMAGE), and builds its command line: the workspace mounted, the network off unless allowed, the memory, CPU and process limits, the user, the variables, the image, then the command", d => { if (d == Device.Cpu) ContainerSandboxCommandLine(); }),
@@ -179,8 +179,14 @@ internal abstract partial class DesktopTests : Tests
             Check(call.Limits is { Time.TotalSeconds: 5, MaxMemoryBytes: 1L << 20, Network: true } && call.Limits.Programs!.SequenceEqual(["dotnet"]) && call.Limits.Root == tools.Workspace
                   && call.Limits.Environment!["CODING_TEST"] == "1" && call.Limits.Environment["CI"] == "1", "the limits: the call's time, the memory, the programs, the root, the variables");
             Check(text.Contains("stopped: it used more than the memory limit (1 MB)", StringComparison.Ordinal), $"run_command says a command was stopped for its memory: {text}");
-            Check(tools.RunCommandAsync("python x.py").GetAwaiter().GetResult().Contains("not an allowed program", StringComparison.Ordinal) && recorder.Calls.Count == 1,
-                "a program not allowed never reaches the sandbox");
+            // The programs allowed are checked in one place, the sandbox (G-1 1a, L6): the tools keep no copy of the check.
+            tools.RunCommandAsync("python x.py").GetAwaiter().GetResult();
+            Check(recorder.Calls.Count == 2 && recorder.Calls[1].Command[0] == "python" && recorder.Calls[1].Limits.Programs!.SequenceEqual(["dotnet"]),
+                $"a program not allowed goes to the sandbox with the programs allowed: the tools do not check it themselves ({recorder.Calls.Count} calls)");
+            string refusedText = new CodingTools(root, new CodingToolOptions { Commands = ["dotnet"] }).RunCommandAsync("python x.py").GetAwaiter().GetResult();
+            var direct = sandbox.RunAsync(["python", "x.py"], root, new CommandLimits { Programs = ["dotnet"] }).AsTask().GetAwaiter().GetResult();
+            Check(direct.Refused && refusedText == direct.Output && refusedText == "Error: 'python' is not an allowed program. Allowed: dotnet.",
+                $"the process sandbox refuses it, and run_command says the sandbox's words: {refusedText}");
         }
         finally
         {

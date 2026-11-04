@@ -6,6 +6,7 @@ using Idrak;
 using Idrak.Generation;
 using Idrak.Reinforcement.Plugins.Coding;
 using Idrak.Text;
+using Idrak.Text.Abstractions;
 using Idrak.Text.Generation;
 
 // Coding tools: the workspace sandbox, reading, searching, exact edits, writes and allowlisted commands.
@@ -16,6 +17,9 @@ internal abstract partial class DesktopTests : Tests
         ("coding tools: list, read, search, edit and write stay inside the workspace and explain mistakes", CodingToolsFiles),
         ("coding tools: read_file and search number and cut lines as the string-splitting reference (CRLF, lone CR, final newline, long lines); web text collapses white space as the regex did", d => { if (d == Device.Cpu) CodingToolsLinesMatchReference(); }),
         ("coding tools: run_command starts allowlisted programs without a shell and trims long output", CodingToolsCommands),
+        ("coding tools: links: a symbolic link out of the workspace (to a folder, to a file, dangling, relative) is refused for read, write, edit, list, search and a command's folder, naming the link, and nothing outside is read or written; a link inside it is followed; links that loop are refused; the folder walk lists no link out, ends on a link back up and walks a folder reached twice once", CodingToolsLinks),
+        ("coding tools: git: an option before the subcommand, --output (with a value, or abbreviated), --ext-diff, --no-index, --contents and -O among bundled letters are refused naming the option, before the sandbox; the rest run with no pager, no file-system monitor, no external diff and GIT_PAGER/PAGER cat (the words and variables the sandbox gets; a real git takes them); words after -- are paths; the settings emptied, git runs as asked", CodingToolsGit),
+        ("coding tools: write policy: allow is Idrak.Text's and the default; an AskingWritePolicy is asked once per write of write_file and edit_file (the path, the text before and after, the change), never for an edit that found nothing nor for the methods called directly; a refused write leaves the file and its error names the policy and the reason; a policy not registered is refused naming who registers ask; IDRAK_WRITE_POLICY and IDRAK_AGENT_COMMANDS choose", CodingToolsWritePolicy),
         ("coding tools: edit_file on the bench's Program.cs (byte order mark, CRLF): a guessed old_text's error quotes it and the file; read_file's line numbers, trailing white space and the final line break tolerated when the match is unique, said so; the encoding kept; the option off is exact", CodingEditTolerance),
         ("coding agent: an answer with a failed change left (no later success on its path) gets one reminder listing it; a change made good, a failed read or the option at 0 gets none", AgentRemindsFailedChanges),
         ("coding agent: transcripts written as OpenAI chat JSON read back for fine-tuning", AgentTranscriptJson),
@@ -707,6 +711,200 @@ internal abstract partial class DesktopTests : Tests
         {
             Directory.Delete(root, true);
         }
+    }
+
+    private static void CodingToolsLinks(Device device)
+    {
+        _ = device;
+        string root = Path.Combine(Path.GetTempPath(), "ns-coding-links-" + Guid.NewGuid().ToString("N"));
+        string outside = root + "-outside", workspace = Path.Combine(root, "ws");
+        Directory.CreateDirectory(Path.Combine(workspace, "src"));
+        Directory.CreateDirectory(outside);
+        try
+        {
+            string secret = Path.Combine(outside, "secret.txt");
+            File.WriteAllText(secret, "the secret\n");
+            File.WriteAllText(Path.Combine(workspace, "src", "a.txt"), "inside\n");
+            try
+            {
+                Directory.CreateSymbolicLink(Path.Combine(workspace, "out"), outside);
+                File.CreateSymbolicLink(Path.Combine(workspace, "secret.txt"), secret);
+                File.CreateSymbolicLink(Path.Combine(workspace, "dangling.txt"), Path.Combine(outside, "made-through-a-link.txt"));
+                Directory.CreateSymbolicLink(Path.Combine(workspace, "relative"), Path.Combine("..", "..", Path.GetFileName(outside)));
+                Directory.CreateSymbolicLink(Path.Combine(workspace, "inner"), Path.Combine(workspace, "src"));
+                Directory.CreateSymbolicLink(Path.Combine(workspace, "src", "up"), workspace);
+                File.CreateSymbolicLink(Path.Combine(workspace, "loop1"), Path.Combine(workspace, "loop2"));
+                File.CreateSymbolicLink(Path.Combine(workspace, "loop2"), Path.Combine(workspace, "loop1"));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                Skip($"symbolic links cannot be made here (Windows needs Developer Mode or an administrator): {e.Message}");
+            }
+
+            var recorder = new RecordingSandbox(new CommandResult(0, false, "", TimeSpan.Zero, false));
+            var tools = new CodingTools(workspace, new CodingToolOptions { ReadBeforeEdit = false }, recorder);
+            var registry = tools.Registry();
+            ToolResult Run(string name, JsonObject arguments) => registry.InvokeAsync(new ToolCall(name, arguments)).GetAwaiter().GetResult();
+            var outward = new (string Name, JsonObject Arguments)[]
+            {
+                ("read_file", new() { ["path"] = "out/secret.txt" }),
+                ("read_file", new() { ["path"] = "secret.txt" }),
+                ("read_file", new() { ["path"] = "relative/secret.txt" }),
+                ("write_file", new() { ["path"] = "out/new.txt", ["content"] = "x" }),
+                ("write_file", new() { ["path"] = "dangling.txt", ["content"] = "x" }),
+                ("write_file", new() { ["path"] = "secret.txt", ["content"] = "overwritten" }),
+                ("edit_file", new() { ["path"] = "secret.txt", ["old_text"] = "the secret", ["new_text"] = "changed" }),
+                ("edit_file", new() { ["path"] = "out/secret.txt", ["old_text"] = "the secret", ["new_text"] = "changed" }),
+                ("list_files", new() { ["path"] = "out" }),
+                ("list_files", new() { ["path"] = "relative" }),
+                ("search", new() { ["pattern"] = "secret", ["path"] = "out" }),
+                ("run_command", new() { ["command"] = "dotnet build", ["directory"] = "out" }),
+            };
+            foreach (var (name, arguments) in outward)
+            {
+                var result = Run(name, arguments);
+                Check(!result.Succeeded && result.Error is { } error && error.Contains("is a link to a place outside the workspace", StringComparison.Ordinal),
+                    $"{name} {arguments.ToJsonString()}: refused naming the link out of the workspace ({(result.Succeeded ? "succeeded: " + result.Content : result.Error)})");
+            }
+
+            Check(File.ReadAllText(secret) == "the secret\n" && !File.Exists(Path.Combine(outside, "new.txt")) && !File.Exists(Path.Combine(outside, "made-through-a-link.txt"))
+                  && recorder.Calls.Count == 0, "nothing outside the workspace was written, and no command ran there");
+
+            string listed = Run("list_files", new()).Content;
+            Check(!listed.Contains("secret", StringComparison.Ordinal) && !listed.Contains("dangling", StringComparison.Ordinal) && !listed.Contains("loop", StringComparison.Ordinal)
+                  && listed.Split('\n').Count(l => l.EndsWith("a.txt", StringComparison.Ordinal)) == 1,
+                $"list_files lists no link out of the workspace, no loop, and a folder reached twice (src, inner, src/up) once: {listed}");
+            string found = Run("search", new() { ["pattern"] = "secret|inside" }).Content;
+            Check(found.Contains("inside", StringComparison.Ordinal) && !found.Contains("the secret", StringComparison.Ordinal), $"search reads nothing out of the workspace: {found}");
+            Check(Run("read_file", new() { ["path"] = "inner/a.txt" }) is { Succeeded: true } inner && inner.Content.Contains("inside", StringComparison.Ordinal),
+                "a link to a folder inside the workspace is followed");
+            Check(Run("read_file", new() { ["path"] = "loop1" }) is { Succeeded: false, Error: { } loop } && loop.Contains("links that loop", StringComparison.Ordinal),
+                "links that loop are refused saying so");
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+            Directory.Delete(root + "-outside", recursive: true);
+        }
+    }
+
+    private static void CodingToolsGit(Device device)
+    {
+        _ = device;
+        InAgentWorkspace(root =>
+        {
+            var recorder = new RecordingSandbox(new CommandResult(0, false, "", TimeSpan.Zero, false));
+            var tools = new CodingTools(root, new CodingToolOptions { Commands = ["git"] }, recorder);
+            string Run(CodingTools with, string command) => with.RunCommandAsync(command).GetAwaiter().GetResult();
+            string written = Path.Combine(root, "written-by-git.txt");
+            foreach (var (command, says) in new[]
+                     {
+                         ($"git log --output={written}", $"'--output={written}' is not allowed (--output)"), ("git log --outp x.txt", "'--outp' is not allowed (--output)"),
+                         ("git diff --ext-diff", "(--ext-diff)"), ("git grep -iOvim class", "'-iOvim' is not allowed: it holds -O"), ("git diff --no-index a b", "(--no-index)"),
+                         ("git blame --contents a x", "(--contents)"), ("git -c core.pager=evil log", "'-c' is not allowed before the subcommand"),
+                         ("git --exec-path=/tmp log", "before the subcommand"), ("git push", "only git status"),
+                     })
+            {
+                string text = Run(tools, command);
+                Check(text.StartsWith("Error: ", StringComparison.Ordinal) && text.Contains(says, StringComparison.Ordinal), $"{command}: refused saying \"{says}\": {text}");
+            }
+
+            Check(recorder.Calls.Count == 0, "no refused git command reaches the sandbox");
+            Run(tools, "git diff --output-indicator-new=+ --stat");
+            Run(tools, "git status");
+            Run(tools, "git log -- --output=x");
+            string[] safe = ["git", "--no-pager", "-c", "core.pager=", "-c", "core.fsmonitor="];
+            Check(recorder.Calls.Count == 3 && recorder.Calls[0].Command.SequenceEqual([.. safe, "diff", "--no-ext-diff", "--output-indicator-new=+", "--stat"])
+                  && recorder.Calls[1].Command.SequenceEqual([.. safe, "status"]) && recorder.Calls[2].Command.SequenceEqual([.. safe, "log", "--no-ext-diff", "--", "--output=x"]),
+                $"the words the sandbox gets: {string.Join(" | ", recorder.Calls.Select(c => string.Join(' ', c.Command)))}");
+            var variables = recorder.Calls[0].Limits.Environment!;
+            Check(variables["GIT_PAGER"] == "cat" && variables["PAGER"] == "cat" && variables["CI"] == "1", "git's variables: GIT_PAGER and PAGER cat, over the commands' own");
+
+            var open = new CodingTools(root, new CodingToolOptions
+            {
+                Commands = ["git"], GitRefusedOptions = [], GitArguments = [], GitSubcommandArguments = new Dictionary<string, IReadOnlyList<string>>(), GitVariables = new Dictionary<string, string>(),
+            }, recorder);
+            Run(open, "git log --output=x");
+            Check(recorder.Calls[^1].Command.SequenceEqual(["git", "log", "--output=x"]) && !recorder.Calls[^1].Limits.Environment!.ContainsKey("GIT_PAGER"),
+                "with the settings emptied git runs as asked");
+
+            // A real git takes the words (when one is installed): the commands run, and --output writes nothing.
+            if (ProcessCommandSandbox.FindProgram("git") is not null)
+            {
+                var init = new ProcessCommandSandbox().RunAsync(["git", "init", "-q"], root, new CommandLimits()).AsTask().GetAwaiter().GetResult();
+                Check(init.Succeeded, $"git init: {init.Output}");
+                File.WriteAllText(Path.Combine(root, "a.txt"), "x\n");
+                var real = new CodingTools(root, new CodingToolOptions { Commands = ["git"] });
+                foreach (var command in new[] { "git status --short", "git diff --stat", "git ls-files --others" })
+                {
+                    string text = Run(real, command);
+                    Check(text.Contains("exit code 0", StringComparison.Ordinal), $"a real git runs {command} with the words: {text}");
+                }
+
+                Check(Run(real, $"git log --output={written}").Contains("not allowed", StringComparison.Ordinal) && !File.Exists(written), "a real git: --output refused, nothing written");
+            }
+        });
+    }
+
+    private static void CodingToolsWritePolicy(Device device)
+    {
+        _ = device;
+        Check(WritePolicies.Get(WritePolicies.Allow) is { Name: WritePolicies.Allow } && WritePolicies.Origin(WritePolicies.Allow) == Overrides.Library,
+            "allow is the library's, from Idrak.Text");
+        Check(Environment.GetEnvironmentVariable(WritePolicies.EnvironmentVariable) is not null || new CodingToolOptions().WritePolicy == WritePolicies.Allow,
+            "allow is the coding tools' default (IDRAK_WRITE_POLICY unset)");
+        WithEnvironment(new Dictionary<string, string?> { [WritePolicies.EnvironmentVariable] = "coding-test-ask", [CodingToolOptions.CommandsEnvironmentVariable] = "dotnet, node" }, () =>
+            Check(new CodingToolOptions() is { WritePolicy: "coding-test-ask", Commands: { } commands } && commands.SequenceEqual(["dotnet", "node"]),
+                "IDRAK_WRITE_POLICY names the policy and IDRAK_AGENT_COMMANDS the programs"));
+        InAgentWorkspace(root =>
+        {
+            ThrowsNaming<NotSupportedException>(() => _ = new CodingTools(root, new CodingToolOptions { WritePolicy = "coding-test-nobody" }), "a write policy not registered",
+                "'coding-test-nobody'", "not registered", "AskingWritePolicy");
+            var asked = new List<FileWrite>();
+            bool answer = true;
+            WritePolicies.Register(new AskingWritePolicy((write, _) =>
+            {
+                lock (asked)
+                {
+                    asked.Add(write);
+                }
+
+                return ValueTask.FromResult(answer);
+            }, "coding-test-ask"));
+            try
+            {
+                var tools = new CodingTools(root, new CodingToolOptions { WritePolicy = "coding-test-ask" });
+                var registry = tools.Registry();
+                ToolResult Run(string name, JsonObject arguments) => registry.InvokeAsync(new ToolCall(name, arguments)).GetAwaiter().GetResult();
+                string file = Path.Combine(root, "src", "A.cs");
+                Check(tools.WritePolicy.Name == "coding-test-ask", "the tools' policy is the one the options name");
+
+                var created = Run("write_file", new() { ["path"] = "src/A.cs", ["content"] = "class A { }\n" });
+                Check(created.Succeeded && asked.Count == 1 && asked[0] is { Tool: "write_file", Path: "src/A.cs", Creates: true, Previous: null, Content: "class A { }\n", Change: "1 lines" } first
+                      && first.FullPath == Path.Combine(tools.Workspace, "src", "A.cs") && File.ReadAllText(file) == "class A { }\n",
+                    $"write_file asks once, with the write, then writes ({asked.Count} asked; {created.Error ?? created.Content})");
+                var missed = Run("edit_file", new() { ["path"] = "src/A.cs", ["old_text"] = "class Z", ["new_text"] = "class B" });
+                Check(!missed.Succeeded && asked.Count == 1, $"an edit that found nothing asks nothing ({asked.Count} asked)");
+                var edited = Run("edit_file", new() { ["path"] = "src/A.cs", ["old_text"] = "class A", ["new_text"] = "class B" });
+                Check(edited.Succeeded && asked.Count == 2 && asked[1] is { Tool: "edit_file", Path: "src/A.cs", Creates: false, Previous: "class A { }\n", Content: "class B { }\n", Change: "1 replacement" }
+                      && File.ReadAllText(file) == "class B { }\n", $"edit_file asks once, with the text before and after, then writes ({asked.Count} asked; {edited.Error ?? edited.Content})");
+
+                answer = false;
+                var refused = Run("write_file", new() { ["path"] = "src/A.cs", ["content"] = "class C { }\n" });
+                var refusedEdit = Run("edit_file", new() { ["path"] = "src/A.cs", ["old_text"] = "class B", ["new_text"] = "class D" });
+                Check(!refused.Succeeded && !refusedEdit.Succeeded && asked.Count == 4 && File.ReadAllText(file) == "class B { }\n"
+                      && refused.Error!.Contains("write_file of src/A.cs was refused by the write policy 'coding-test-ask': the user did not allow it", StringComparison.Ordinal)
+                      && refusedEdit.Error!.Contains("edit_file of src/A.cs was refused by the write policy 'coding-test-ask'", StringComparison.Ordinal),
+                    $"a refused write and edit leave the file, naming the policy and the reason ({asked.Count} asked; {refused.Error}; {refusedEdit.Error})");
+                Check(tools.WriteFile("src/Direct.cs", "x").StartsWith("Created", StringComparison.Ordinal) && asked.Count == 4, "the methods called directly (not as the model's tools) do not ask");
+            }
+            finally
+            {
+                WritePolicies.Unregister("coding-test-ask");
+            }
+
+            Check(WritePolicies.Find("coding-test-ask") is null, "the test's policy is unregistered");
+        });
     }
 
     private static void CodingToolsCommands(Device device)
