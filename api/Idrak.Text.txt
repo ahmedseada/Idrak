@@ -829,6 +829,7 @@ public sealed record Idrak.Text.Generation.CodingToolOptions : System.IEquatable
   public System.Collections.Generic.IReadOnlyList<string> GitArguments { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> GitRefusedOptions { get; init; }
   public System.Collections.Generic.IReadOnlyList<string> GitSubcommands { get; init; }
+  public System.Collections.Generic.IReadOnlyList<string> WriteProtectedDirectories { get; init; }
   public System.Collections.Generic.IReadOnlyList<string>? Commands { get; init; }
   public System.Collections.Generic.IReadOnlyList<string>? IgnoredDirectories { get; init; }
   public System.TimeSpan CommandTimeout { get; init; }
@@ -1037,7 +1038,8 @@ public sealed class Idrak.Text.JinjaChatTemplate : Idrak.Abstraction.Generation.
   public Idrak.Abstraction.Generation.ToolCallFormat DetectToolCallFormat()
   public Idrak.Abstraction.Generation.ToolCallFormat? CallFormat { get; init; }
   public Idrak.Abstraction.Generation.ToolCallProbe ProbeToolCalls()
-  public JinjaChatTemplate(string source, System.Collections.Generic.IReadOnlyList<string> stopSequences, string bosToken = "", string eosToken = "", string? toolSource = null)
+  public Idrak.Text.JinjaOptions? Limits { get; init; }
+  public JinjaChatTemplate(string source, System.Collections.Generic.IReadOnlyList<string> stopSequences, string bosToken = "", string eosToken = "", string? toolSource = null, string? name = null)
   public System.Collections.Generic.IReadOnlyDictionary<string, object?> Variables { get; init; }
   public bool AddBosToken { get; init; }
   public override (string, string) ThinkTags { get; }
@@ -1056,11 +1058,23 @@ public sealed class Idrak.Text.JinjaChatTemplate : Idrak.Abstraction.Generation.
   public string? CallFormatName { get; init; }
   public void Render(System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ChatMessage> messages, System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.Generation.ToolDefinition> tools, bool? think, bool addGenerationPrompt, System.Text.StringBuilder prompt)
 
+public sealed record Idrak.Text.JinjaOptions : System.IEquatable<Idrak.Text.JinjaOptions>
+  public JinjaOptions()
+  public const long DefaultMaxOutputChars = 67108864
+  public const long DefaultMaxSteps = 10000000
+  public const string MaxOutputVariable = "IDRAK_TEMPLATE_MAX_OUTPUT"
+  public const string MaxStepsVariable = "IDRAK_TEMPLATE_MAX_STEPS"
+  public long MaxOutputChars { get; init; }
+  public long MaxSteps { get; init; }
+
 public sealed class Idrak.Text.JinjaTemplate
   nested Idrak.Text.JinjaTemplate.Undefined (below)
-  public static Idrak.Text.JinjaTemplate Parse(string source)
+  public static Idrak.Text.JinjaTemplate Parse(string source, string? name = null)
   public string Render(System.Collections.Generic.IReadOnlyDictionary<string, object?> variables)
+  public string Render(System.Collections.Generic.IReadOnlyDictionary<string, object?> variables, Idrak.Text.JinjaOptions? options)
+  public string TemplateName { get; }
   public void Render(System.Collections.Generic.IReadOnlyDictionary<string, object?> variables, System.Text.StringBuilder output)
+  public void Render(System.Collections.Generic.IReadOnlyDictionary<string, object?> variables, System.Text.StringBuilder output, Idrak.Text.JinjaOptions? options)
 
 public sealed class Idrak.Text.JinjaTemplate.Undefined
   public override string ToString()

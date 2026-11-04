@@ -29,16 +29,16 @@ internal sealed class AgentCommand : Command
         folders skipped and the prompt's build and test commands: all registered ones by default, --languages
         detected for those the folder shows, or names. A folder no chosen language detects gets a note naming
         the plug-in to register. With a task it works on it and exits; without one it reads tasks line by line,
-        as chat does, keeping the conversation (/exit ends). Every command the model wants to run and every
-        file it wants to write or edit is shown and asked about (y to go on) unless --yes is given; without a
-        terminal and without --yes, commands and writes are refused. Calls the model writes as text (markdown json fences, JSON in its prose) naming an offered tool
+        as chat does, keeping the conversation (/exit ends). Every command the model wants to run, every file
+        it wants to write or edit and every call of a --tools tool is shown and asked about (y to go on) unless
+        --yes is given; without a terminal and without --yes, they are refused. Calls the model writes as text (markdown json fences, JSON in its prose) naming an offered tool
         are read and run unless --strict-calls is given; a reply that looks like calls none of which can be read
         gets a correction showing the template's call format, at most --nudges in a row, then the task ends
         saying so.
 
         Options:
               --workspace DIR    the folder to work in (default: the current folder)
-          -y, --yes              run commands and write files without asking
+          -y, --yes              run commands, write files and call --tools tools without asking
               --sandbox NAME     where commands run: process (a plain process, the default) or container
                                  (Docker or Podman; IDRAK_SANDBOX)
               --commands LIST    the programs commands may start, such as dotnet,npm,node,git (default:
@@ -125,27 +125,22 @@ internal sealed class AgentCommand : Command
             context.Error(notice);
         }
 
-        var builder = ToolRegistry.Create().Add(coding.All);
-        if (!yes && coding.All.Any(t => t.Definition.Name == "run_command"))
+        var extra = ToolAssemblies.Load(settings.ToolAssemblies);
+        ValueTask<bool> Ask(string what)
         {
-            builder.RequireApproval("run_command", (call, _) =>
+            if (!interactive && StandardInput.Override is null)
             {
-                string command = (string?)call.Arguments["command"] ?? call.Arguments.ToJsonString();
-                if (!interactive && StandardInput.Override is null)
-                {
-                    context.Error($"Refused '{command}': no terminal to ask; give --yes to allow commands.");
-                    return ValueTask.FromResult(false);
-                }
+                context.Error($"Refused {what}: no terminal to ask; give --yes to allow it.");
+                return ValueTask.FromResult(false);
+            }
 
-                context.Output.Write($"Run '{command}'? [y/N] ");
-                context.Output.Flush();
-                string answer = input.ReadLine()?.Trim().ToLowerInvariant() ?? "";
-                return ValueTask.FromResult(answer is "y" or "yes");
-            });
+            context.Output.Write($"{char.ToUpperInvariant(what[0])}{what[1..]}? [y/N] ");
+            context.Output.Flush();
+            string answer = input.ReadLine()?.Trim().ToLowerInvariant() ?? "";
+            return ValueTask.FromResult(answer is "y" or "yes");
         }
 
-        var extra = ToolAssemblies.Load(settings.ToolAssemblies);
-        var registry = builder.Add(extra).Build();
+        var registry = Tools(coding, extra, yes ? null : Ask);
         settings.ToolAssemblies = [];
         using var loaded = LoadedChat.Load(context, name, settings);
         var color = Terminal.UseColour(context);
@@ -219,6 +214,30 @@ internal sealed class AgentCommand : Command
             ["messages"] = ChatJson.Messages(messages),
         });
         return ExitCodes.Ok;
+    }
+
+    /// <summary>
+    /// The agent's tools: the coding tools, then the <c>--tools</c> assemblies' <paramref name="extra"/>. Every tool that
+    /// changes something outside the model's text is asked about through <paramref name="ask"/> (null: <c>--yes</c>, none
+    /// is): run_command, and every extra tool, whatever it does; write_file and edit_file ask through the write policy.
+    /// </summary>
+    internal static ToolRegistry Tools(CodingTools coding, IReadOnlyList<ITool> extra, Func<string, ValueTask<bool>>? ask)
+    {
+        var builder = ToolRegistry.Create().Add(coding.All).Add(extra);
+        if (ask is not null)
+        {
+            if (coding.All.Any(t => t.Definition.Name == "run_command"))
+            {
+                builder.RequireApproval("run_command", (call, _) => ask($"run '{(string?)call.Arguments["command"] ?? call.Arguments.ToJsonString()}'"));
+            }
+
+            foreach (var tool in extra)
+            {
+                builder.RequireApproval(tool.Definition.Name, (call, _) => ask($"call the tool '{call.Name}' with {call.Arguments.ToJsonString()}"));
+            }
+        }
+
+        return builder.Build();
     }
 
     // The "ask" write policy for this run (WritePolicies.Ask): each write_file and edit_file shown and asked about on the

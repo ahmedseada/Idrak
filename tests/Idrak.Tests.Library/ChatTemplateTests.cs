@@ -14,6 +14,8 @@ internal abstract partial class Tests
     internal static readonly (string Name, Action<Device> Run)[] ChatTemplates =
     [
         ("chat templates: Jinja expressions, filters, tests, loops, macros and whitespace control match jinja2", JinjaMatchesPython),
+        ("chat templates: call blocks (caller() in the macro, with arguments and defaults, called twice) and recursive loops (loop(...), loop.depth, loop.depth0) render as jinja2 does; loop(...) outside a recursive loop is refused saying so", JinjaCallsAndRecursion),
+        ("chat templates: limits: a render past JinjaOptions.MaxSteps (IDRAK_TEMPLATE_MAX_STEPS) or MaxOutputChars (IDRAK_TEMPLATE_MAX_OUTPUT) stops naming the template and the limit; a huge range or repeat stops before it is built; a macro that calls itself stops at the stack naming the template; the caller's text in the output is not counted; a bad variable is refused naming it", d => { if (d == Device.Cpu) JinjaLimits(); }),
         ("chat templates: a Qwen3 template read from a model folder renders tools, tool calls and reasoning as transformers does", ModelChatTemplate),
         ("chat templates: each family's tool-call format is read off its template (tags, bare JSON, lists) and parsed from streamed output", ToolCallFormats),
         ("chat templates: tool-call formats (pythonic, Qwen3-Coder XML, Mistral, harmony, DeepSeek) detected from published templates, parsed streamed and round-tripped", ToolCallFormatsDetectAndParse),
@@ -278,6 +280,87 @@ internal abstract partial class Tests
         {
             Check(ex.Message.Contains("bad input"), ex.Message);
         }
+    }
+
+    // Checked against jinja2 3.1.6 (trim_blocks and lstrip_blocks, as Hugging Face renders): call blocks and recursive loops.
+    internal static void JinjaCallsAndRecursion(Device device)
+    {
+        _ = device;
+        var tree = new List<object?>
+        {
+            new Dictionary<string, object?>
+            {
+                ["name"] = "a", ["kids"] = new List<object?>
+                {
+                    new Dictionary<string, object?> { ["name"] = "b", ["kids"] = new List<object?>() },
+                    new Dictionary<string, object?> { ["name"] = "c", ["kids"] = new List<object?> { new Dictionary<string, object?> { ["name"] = "d", ["kids"] = new List<object?>() } } },
+                },
+            },
+            new Dictionary<string, object?> { ["name"] = "e", ["kids"] = new List<object?>() },
+        };
+        var variables = new Dictionary<string, object?> { ["n"] = 7L, ["xs"] = new List<object?> { 3L, 1L, 2L }, ["tree"] = tree };
+        (string Template, string Expected)[] cases =
+        [
+            ("{% macro m(x) %}[{{ x }}:{{ caller() }}]{% endmacro %}{% call m(1) %}body{{ n }}{% endcall %}", "[1:body7]"),
+            ("{% macro each(items) %}{% for i in items %}<{{ caller(i, loop.index) }}>{% endfor %}{% endmacro %}{% call(item, k) each(xs) %}{{ k }}={{ item * 2 }}{% endcall %}", "<1=6><2=2><3=4>"),
+            ("{% macro m(a, b='B') %}{{ a }}{{ b }}{{ caller(a) }}{% endmacro %}{% call(v='d') m('A', b='c') %}<{{ v }}>{% endcall %}", "Ac<A>"),
+            ("{% macro m() %}{{ caller() }}{{ caller() }}{% endmacro %}{% call m() %}{% set k = 1 %}{{ k }}{% endcall %}", "11"),
+            ("{% for t in tree recursive %}{{ loop.depth }}{{ t.name }}{% if t.kids %}[{{ loop(t.kids) }}]{% endif %}{% endfor %}", "1a[2b2c[3d]]1e"),
+            ("{% for t in tree recursive %}{{ loop.depth0 }}:{{ loop.index }}/{{ loop.length }}{{ t.name }}{% if t.kids %}({{ loop(t.kids)|trim }}){% endif %};{% endfor %}",
+             "0:1/2a(1:1/2b;1:2/2c(2:1/1d;););0:2/2e;"),
+            ("{% for x in xs %}{{ loop.depth }}{% endfor %}", "111"),
+        ];
+        foreach (var (template, expected) in cases)
+        {
+            string actual = JinjaTemplate.Parse(template).Render(variables);
+            Check(actual == expected, $"{template}\n  expected (jinja2): {expected}\n  actual:            {actual}");
+        }
+
+        ThrowsNaming<InvalidOperationException>(() => JinjaTemplate.Parse("{% for x in xs %}{{ loop(xs) }}{% endfor %}").Render(variables), "loop(...) in a loop that is not recursive",
+            "needs a recursive loop");
+    }
+
+    internal static void JinjaLimits()
+    {
+        var none = new Dictionary<string, object?>();
+        string Stops(string template, JinjaOptions? options = null, string name = "limits-test")
+        {
+            try
+            {
+                JinjaTemplate.Parse(template, name).Render(none, options);
+                return "rendered";
+            }
+            catch (InvalidOperationException e)
+            {
+                return e.Message;
+            }
+        }
+
+        string steps = Stops("{% for i in range(1000) %}{% for j in range(1000) %}{{ j }}{% endfor %}{% endfor %}", new JinjaOptions { MaxSteps = 10_000 });
+        Check(steps.Contains("'limits-test'", StringComparison.Ordinal) && steps.Contains("10000 steps", StringComparison.Ordinal) && steps.Contains("IDRAK_TEMPLATE_MAX_STEPS", StringComparison.Ordinal),
+            $"a render past its steps stops naming the template and the limit: {steps}");
+        string written = Stops("{% for i in range(100) %}{{ 'x' * 100 }}{% endfor %}", new JinjaOptions { MaxOutputChars = 5_000 });
+        Check(written.Contains("'limits-test'", StringComparison.Ordinal) && written.Contains("passed 5000 characters", StringComparison.Ordinal)
+              && written.Contains("IDRAK_TEMPLATE_MAX_OUTPUT", StringComparison.Ordinal), $"a render past its output stops naming the limit: {written}");
+        string repeated = Stops("{{ 'x' * 1000000000000 }}");
+        Check(repeated.Contains("a repeated string of 1000000000000", StringComparison.Ordinal), $"a huge repeat stops before it is built: {repeated}");
+        string ranged = Stops("{% for i in range(10 ** 15) %}{% endfor %}");
+        Check(ranged.Contains("steps", StringComparison.Ordinal) && ranged.Contains("'limits-test'", StringComparison.Ordinal), $"a huge range stops before it is made: {ranged}");
+        string deep = Stops("{% macro f(n) %}{{ f(n + 1) }}{% endmacro %}{{ f(0) }}", name: "self-calling");
+        Check(deep.Contains("'self-calling'", StringComparison.Ordinal) && (deep.Contains("nest too deep", StringComparison.Ordinal) || deep.Contains("steps", StringComparison.Ordinal)),
+            $"a macro that calls itself stops (the stack, or the steps first), naming the template: {deep}");
+
+        var prompt = new System.Text.StringBuilder(new string('p', 4_000));
+        JinjaTemplate.Parse("{{ 'x' * 1000 }}").Render(none, prompt, new JinjaOptions { MaxOutputChars = 1_000 });
+        Check(prompt.Length == 5_000, "the caller's text already in the output is not counted against the cap");
+        Check(Stops("{% for m in range(3) %}{{ m }}{% endfor %}") == "rendered", "a template within the defaults renders");
+
+        WithEnvironment(new Dictionary<string, string?> { [JinjaOptions.MaxStepsVariable] = "500", [JinjaOptions.MaxOutputVariable] = "64" }, () =>
+            Check(new JinjaOptions() is { MaxSteps: 500, MaxOutputChars: 64 }, "the variables set the defaults"));
+        WithEnvironment(new Dictionary<string, string?> { [JinjaOptions.MaxStepsVariable] = "lots" }, () =>
+            ThrowsNaming<FormatException>(() => _ = new JinjaOptions(), "a bad IDRAK_TEMPLATE_MAX_STEPS", "IDRAK_TEMPLATE_MAX_STEPS", "lots"));
+        WithEnvironment(new Dictionary<string, string?> { [JinjaOptions.MaxStepsVariable] = null, [JinjaOptions.MaxOutputVariable] = null }, () =>
+            Check(new JinjaOptions() is { MaxSteps: JinjaOptions.DefaultMaxSteps, MaxOutputChars: JinjaOptions.DefaultMaxOutputChars }, "unset: the built-in defaults"));
     }
 
     internal static void ModelChatTemplate(Device device)

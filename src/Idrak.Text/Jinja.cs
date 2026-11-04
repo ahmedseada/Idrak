@@ -7,35 +7,126 @@ using System.Text;
 namespace Idrak.Text;
 
 /// <summary>
+/// The limits of a render (<see cref="JinjaTemplate.Render(IReadOnlyDictionary{string, object?}, StringBuilder, JinjaOptions?)"/>):
+/// a template comes with a downloaded model, so one that loops without end or builds text without bound must stop with an
+/// error naming it, not hang the process or take its memory. The defaults are far above what a real chat template needs
+/// (a long conversation with many tools renders in well under a million steps).
+/// </summary>
+public sealed record JinjaOptions
+{
+    /// <summary>The variable that sets <see cref="MaxSteps"/> when an option does not: "IDRAK_TEMPLATE_MAX_STEPS".</summary>
+    public const string MaxStepsVariable = "IDRAK_TEMPLATE_MAX_STEPS";
+
+    /// <summary>The variable that sets <see cref="MaxOutputChars"/> when an option does not: "IDRAK_TEMPLATE_MAX_OUTPUT".</summary>
+    public const string MaxOutputVariable = "IDRAK_TEMPLATE_MAX_OUTPUT";
+
+    /// <summary>The steps a render may take unless <see cref="MaxStepsVariable"/> says otherwise: 10,000,000.</summary>
+    public const long DefaultMaxSteps = 10_000_000;
+
+    /// <summary>The characters a render may write unless <see cref="MaxOutputVariable"/> says otherwise: 64 Mi (about 16 M tokens).</summary>
+    public const long DefaultMaxOutputChars = 64L * 1024 * 1024;
+
+    /// <summary>
+    /// The most steps a render takes (each statement run and each expression evaluated is one; a loop's items and a
+    /// <c>range</c>'s numbers count too): more stops it naming the template. By default <see cref="MaxStepsVariable"/>
+    /// (IDRAK_TEMPLATE_MAX_STEPS), else <see cref="DefaultMaxSteps"/>.
+    /// </summary>
+    public long MaxSteps { get; init; } = Read(MaxStepsVariable, DefaultMaxSteps);
+
+    /// <summary>
+    /// The most characters a render writes, and the longest string it builds on the way (a concatenation, a repeat, a
+    /// filter's result): more stops it naming the template. By default <see cref="MaxOutputVariable"/>
+    /// (IDRAK_TEMPLATE_MAX_OUTPUT), else <see cref="DefaultMaxOutputChars"/>.
+    /// </summary>
+    public long MaxOutputChars { get; init; } = Read(MaxOutputVariable, DefaultMaxOutputChars);
+
+    private static long Read(string variable, long fallback)
+    {
+        string? text = Environment.GetEnvironmentVariable(variable);
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return fallback;
+        }
+
+        return long.TryParse(text.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out long value) && value > 0 ? value
+            : throw new FormatException($"{variable} must be a whole number above 0, not '{text}'.");
+    }
+}
+
+/// <summary>
 /// A Jinja template interpreter covering what chat templates use: output, if/elif/else, for (with loop variables,
-/// filters on the iterable, else, break/continue), set (including namespace attributes and block sets), macros, raw
-/// blocks, comments, whitespace control, and Hugging Face's trim_blocks/lstrip_blocks settings; expressions with
-/// Python-like values (strings, numbers, lists, dicts, None), slices, attribute and item access, string and dict
-/// methods, filters (tojson with Python spacing, trim, length, join, map, selectattr, …) and tests (defined, none,
-/// string, mapping, …). Values are .NET strings, longs, doubles, bools, lists, dictionaries and null.
+/// filters on the iterable, else, break/continue, <c>recursive</c> with <c>loop(...)</c> and <c>loop.depth</c>), set
+/// (including namespace attributes and block sets), macros, call blocks (<c>caller()</c>, with arguments), raw blocks,
+/// comments, whitespace control, and Hugging Face's trim_blocks/lstrip_blocks settings; expressions with Python-like
+/// values (strings, numbers, lists, dicts, None), slices, attribute and item access, string and dict methods, filters
+/// (tojson with Python spacing, trim, length, join, map, selectattr, …) and tests (defined, none, string, mapping, …).
+/// Values are .NET strings, longs, doubles, bools, lists, dictionaries and null. Not supported: <c>include</c>,
+/// <c>import</c>, <c>extends</c>, <c>with</c> and <c>loop.cycle</c>. A render stops with an error naming the template
+/// when it passes its limits (<see cref="JinjaOptions"/>) or nests too deep for the stack.
 /// </summary>
 public sealed partial class JinjaTemplate
 {
     private readonly List<Node> _nodes;
 
-    private JinjaTemplate(List<Node> nodes) => _nodes = nodes;
+    private JinjaTemplate(List<Node> nodes, string name)
+    {
+        _nodes = nodes;
+        TemplateName = name;
+    }
+
+    /// <summary>What the template is called in error messages ("template" unless given: a chat template names its model).</summary>
+    public string TemplateName { get; }
 
     /// <summary>Parses <paramref name="source"/> (with trim_blocks and lstrip_blocks, as Hugging Face renders chat templates).</summary>
-    public static JinjaTemplate Parse(string source) =>
-        new(new Parser(Lexer.Tokenize(source.EndsWith('\n') ? source[..(source.EndsWith("\r\n", StringComparison.Ordinal) ? ^2 : ^1)] : source)).ParseAll());   // Jinja drops one trailing newline
+    /// <param name="source">The template's text.</param>
+    /// <param name="name">What error messages call it ("template" when null).</param>
+    public static JinjaTemplate Parse(string source, string? name = null) =>
+        new(new Parser(Lexer.Tokenize(source.EndsWith('\n') ? source[..(source.EndsWith("\r\n", StringComparison.Ordinal) ? ^2 : ^1)] : source)).ParseAll(),   // Jinja drops one trailing newline
+            string.IsNullOrWhiteSpace(name) ? "template" : name);
 
     /// <summary>Renders the template with <paramref name="variables"/>.</summary>
-    public string Render(IReadOnlyDictionary<string, object?> variables)
+    public string Render(IReadOnlyDictionary<string, object?> variables) => Render(variables, (JinjaOptions?)null);
+
+    /// <summary>Renders the template with <paramref name="variables"/> within <paramref name="options"/>' limits (the defaults when null).</summary>
+    /// <exception cref="InvalidOperationException">The render passed a limit or nested too deep: the message names the template and the limit.</exception>
+    public string Render(IReadOnlyDictionary<string, object?> variables, JinjaOptions? options)
     {
         var output = new StringBuilder();
-        Render(variables, output);
+        Render(variables, output, options);
         return output.ToString();
     }
 
     /// <summary>Renders the template with <paramref name="variables"/>, appending the text to <paramref name="output"/>.</summary>
-    public void Render(IReadOnlyDictionary<string, object?> variables, StringBuilder output)
+    public void Render(IReadOnlyDictionary<string, object?> variables, StringBuilder output) => Render(variables, output, null);
+
+    /// <summary>
+    /// Renders the template with <paramref name="variables"/>, appending the text to <paramref name="output"/>, within
+    /// <paramref name="options"/>' limits (the defaults when null).
+    /// </summary>
+    /// <exception cref="InvalidOperationException">The render passed a limit or nested too deep: the message names the template and the limit.</exception>
+    public void Render(IReadOnlyDictionary<string, object?> variables, StringBuilder output, JinjaOptions? options)
     {
+        ArgumentNullException.ThrowIfNull(variables);
         ArgumentNullException.ThrowIfNull(output);
+        options ??= new JinjaOptions();
+        var previous = RenderRun.Current;
+        RenderRun.Current = new RenderRun(TemplateName, options.MaxSteps, options.MaxOutputChars, output);
+        try
+        {
+            Execute(variables, output);
+        }
+        catch (InsufficientExecutionStackException)
+        {
+            throw new InvalidOperationException($"The template '{TemplateName}' stopped: its macros, calls or loops nest too deep for the stack (a macro that calls itself without end?).");
+        }
+        finally
+        {
+            RenderRun.Current = previous;
+        }
+    }
+
+    private void Execute(IReadOnlyDictionary<string, object?> variables, StringBuilder output)
+    {
         var scope = new Scope(null);
         foreach (var (name, value) in variables)
         {
@@ -82,6 +173,59 @@ public sealed partial class JinjaTemplate
     internal sealed class LoopBreak : Exception;
 
     internal sealed class LoopContinue : Exception;
+
+    // A loop's variables (loop.index, …); a recursive loop's is also callable: loop(items) renders the body for them, one level down.
+    internal sealed class LoopState : Dictionary<string, object?>
+    {
+        public Callable? Recurse { get; init; }
+    }
+
+    // The limits of the render on this thread (JinjaOptions): its steps, and the length of what it writes and builds.
+    internal sealed class RenderRun(string name, long maxSteps, long maxOutput, StringBuilder top)
+    {
+        private readonly int _start = top.Length;              // the caller's text already in the output is not counted
+
+        [ThreadStatic]
+        private static RenderRun? t_current;
+
+        private long _steps;
+
+        public static RenderRun? Current
+        {
+            get => t_current;
+            set => t_current = value;
+        }
+
+        // One step (a statement run, an expression evaluated, an item made); past the budget, the render stops.
+        public void Step(long count = 1)
+        {
+            if (count > maxSteps - _steps)
+            {
+                throw new InvalidOperationException($"The template '{name}' stopped after {maxSteps} steps (JinjaOptions.MaxSteps, {JinjaOptions.MaxStepsVariable}): "
+                                                    + "it loops too long or without end, or the limit is too low for it.");
+            }
+
+            _steps += count;
+        }
+
+        // The output after an append: past the cap (counted from where this render started writing), the render stops.
+        public void Wrote(StringBuilder output)
+        {
+            if (output.Length - (ReferenceEquals(output, top) ? _start : 0) > maxOutput)
+            {
+                throw new InvalidOperationException($"The template '{name}' stopped: what it writes passed {maxOutput} characters (JinjaOptions.MaxOutputChars, {JinjaOptions.MaxOutputVariable}).");
+            }
+        }
+
+        // A string (or list) the render is about to build, by its length: past the cap, the render stops before building it.
+        public void Builds(long length, string what)
+        {
+            if (length > maxOutput)
+            {
+                throw new InvalidOperationException($"The template '{name}' stopped: {what} of {length} would pass {maxOutput} (JinjaOptions.MaxOutputChars, {JinjaOptions.MaxOutputVariable}).");
+            }
+        }
+    }
 
     // ------------------------------------------------------------------ lexer
 
@@ -292,13 +436,13 @@ public sealed partial class JinjaTemplate
 
     private sealed record IfNode(List<(Expr? Condition, List<Node> Body)> Branches) : Node;
 
-    private sealed record ForNode(List<string> Targets, Expr Iterable, Expr? Filter, List<Node> Body, List<Node>? Else) : Node;
+    private sealed record ForNode(List<string> Targets, Expr Iterable, Expr? Filter, List<Node> Body, List<Node>? Else, bool Recursive) : Node;
 
     private sealed record SetNode(Expr Target, Expr? Value, List<Node>? Body) : Node;
 
     private sealed record MacroNode(string Name, List<(string Name, Expr? Default)> Parameters, List<Node> Body) : Node;
 
-    private sealed record CallBlockNode(Expr Call, List<Node> Body) : Node;
+    private sealed record CallBlockNode(List<(string Name, Expr? Default)> Parameters, Expr Call, List<Node> Body) : Node;
 
     private sealed record ControlNode(bool Break) : Node;
 
@@ -422,7 +566,7 @@ public sealed partial class JinjaTemplate
                     parser.Keyword("in");
                     var iterable = parser.ParseFilteredOr();
                     Expr? filter = parser.AcceptKeyword("if") ? parser.ParseOr() : null;
-                    parser.AcceptKeyword("recursive");
+                    bool recursive = parser.AcceptKeyword("recursive");
                     parser.End();
                     var body = ParseUntil(out string? end, "else", "endfor");
                     List<Node>? elseBody = null;
@@ -431,7 +575,7 @@ public sealed partial class JinjaTemplate
                         elseBody = ParseUntil(out _, "endfor");
                     }
 
-                    return new ForNode(targets, iterable, filter, body, elseBody);
+                    return new ForNode(targets, iterable, filter, body, elseBody, recursive);
                 }
 
                 case "set":
@@ -453,24 +597,21 @@ public sealed partial class JinjaTemplate
                 {
                     var parser = new ExprParser(rest, token.Line);
                     string name = parser.Identifier();
-                    var parameters = new List<(string, Expr?)>();
                     parser.Expect("(");
-                    if (!parser.Accept(")"))
-                    {
-                        do
-                        {
-                            string p = parser.Identifier();
-                            parameters.Add((p, parser.Accept("=") ? parser.ParseExpression() : null));
-                        }
-                        while (parser.Accept(","));
-                        parser.Expect(")");
-                    }
-
-                    return new MacroNode(name, parameters, ParseUntil(out _, "endmacro"));
+                    return new MacroNode(name, Parameters(parser), ParseUntil(out _, "endmacro"));
                 }
 
                 case "call":
-                    return new CallBlockNode(new ExprParser(rest, token.Line).ParseComplete(), ParseUntil(out _, "endcall"));
+                {
+                    // {% call m() %} or {% call(a, b) m() %}: the parameters caller() takes, then the call.
+                    var parser = new ExprParser(rest, token.Line);
+                    var parameters = parser.Accept("(") ? Parameters(parser) : [];
+                    var call = parser.ParseExpression();
+                    parser.End();
+                    return call is Call ? new CallBlockNode(parameters, call, ParseUntil(out _, "endcall"))
+                        : throw new FormatException($"{{% call %}} at line {token.Line} needs a call, such as {{% call m() %}}.");
+                }
+
                 case "filter":
                 {
                     var parser = new ExprParser(rest, token.Line);
@@ -488,6 +629,24 @@ public sealed partial class JinjaTemplate
                 default:
                     throw new FormatException($"Unsupported statement {{% {word} %}} at line {token.Line}.");
             }
+        }
+
+        // A macro's or a call block's parameters, after its "(", to its ")": names with optional defaults.
+        private static List<(string Name, Expr? Default)> Parameters(ExprParser parser)
+        {
+            var parameters = new List<(string, Expr?)>();
+            if (!parser.Accept(")"))
+            {
+                do
+                {
+                    string p = parser.Identifier();
+                    parameters.Add((p, parser.Accept("=") ? parser.ParseExpression() : null));
+                }
+                while (parser.Accept(","));
+                parser.Expect(")");
+            }
+
+            return parameters;
         }
     }
 
@@ -1022,21 +1181,30 @@ public sealed partial class JinjaTemplate
     {
         public static void Execute(List<Node> nodes, Scope scope, StringBuilder output)
         {
+            System.Runtime.CompilerServices.RuntimeHelpers.EnsureSufficientExecutionStack();   // a macro calling itself without end stops here, not in a crash
             foreach (var node in nodes)
             {
                 Execute(node, scope, output);
             }
         }
 
+        // Appends text, then checks the output's length against the render's cap.
+        private static void Append(StringBuilder output, string text)
+        {
+            output.Append(text);
+            RenderRun.Current?.Wrote(output);
+        }
+
         private static void Execute(Node node, Scope scope, StringBuilder output)
         {
+            RenderRun.Current?.Step();
             switch (node)
             {
                 case TextNode t:
-                    output.Append(t.Text);
+                    Append(output, t.Text);
                     break;
                 case OutputNode o:
-                    output.Append(Builtins.Str(Evaluate(o.Value, scope)));
+                    Append(output, Builtins.Str(Evaluate(o.Value, scope)));
                     break;
                 case IfNode f:
                     foreach (var (condition, body) in f.Branches)
@@ -1082,20 +1250,30 @@ public sealed partial class JinjaTemplate
                     scope.Set(m.Name, MakeMacro(m, scope));
                     break;
                 case CallBlockNode c:
-                    var callScope = new Scope(scope);
-                    var caller = new StringBuilder();
-                    callScope.Set("caller", (Callable)((_, _) =>
+                {
+                    // caller() renders the block where it stands (its parameters bound to caller's arguments); it reaches the
+                    // macro as its caller keyword, which the macro binds in its own scope (as Jinja does).
+                    Callable caller = (args, kwargs) =>
                     {
-                        caller.Clear();
-                        Execute(c.Body, new Scope(scope), caller);
-                        return caller.ToString();
-                    }));
-                    output.Append(Builtins.Str(Evaluate(c.Call, callScope)));
+                        var body = new Scope(scope);
+                        Bind(c.Parameters, args, kwargs, body, scope);
+                        var text = new StringBuilder();
+                        Execute(c.Body, body, text);
+                        return text.ToString();
+                    };
+                    var call = (Call)c.Call;
+                    var args = call.Args.Select(a => Evaluate(a, scope)).ToList();
+                    var kwargs = call.Kwargs.ToDictionary(k => k.Name, k => Evaluate(k.Value, scope));
+                    kwargs["caller"] = caller;
+                    Append(output, Builtins.Str(Evaluate(call.Target, scope) is Callable callable ? callable(args, kwargs)
+                        : throw new InvalidOperationException($"'{Describe(call.Target)}' is not callable.")));
                     break;
+                }
+
                 case FilterBlockNode fb:
                     var inner = new StringBuilder();
                     Execute(fb.Body, scope, inner);
-                    output.Append(Builtins.Str(Builtins.ApplyFilter(fb.Filter, inner.ToString(), [.. fb.Args.Select(a => Evaluate(a, scope))], [], scope)));
+                    Append(output, Builtins.Str(Builtins.ApplyFilter(fb.Filter, inner.ToString(), [.. fb.Args.Select(a => Evaluate(a, scope))], [], scope)));
                     break;
                 case ControlNode c:
                     throw c.Break ? new LoopBreak() : new LoopContinue();
@@ -1105,12 +1283,16 @@ public sealed partial class JinjaTemplate
         private static Callable MakeMacro(MacroNode m, Scope definition) => (args, kwargs) =>
         {
             var local = new Scope(definition);
-            for (int i = 0; i < m.Parameters.Count; i++)
+            if (kwargs.Remove("caller", out var caller) && m.Parameters.All(p => p.Name != "caller"))
             {
-                var (name, fallback) = m.Parameters[i];
-                local.Set(name, i < args.Count ? args[i] : kwargs.TryGetValue(name, out var v) ? v : fallback is null ? Undefined.Value : Evaluate(fallback, definition));
+                local.Set("caller", caller);                   // a call block's body, for this invocation only
+            }
+            else if (caller is not null)
+            {
+                kwargs["caller"] = caller;                      // a parameter named caller takes it as any keyword
             }
 
+            Bind(m.Parameters, args, kwargs, local, definition);
             local.Set("varargs", args.Skip(m.Parameters.Count).ToList<object?>());
             local.Set("kwargs", kwargs.Where(k => m.Parameters.All(p => p.Name != k.Key)).ToDictionary(k => k.Key, k => k.Value));
             var output = new StringBuilder();
@@ -1118,9 +1300,23 @@ public sealed partial class JinjaTemplate
             return output.ToString();
         };
 
-        private static void RunFor(ForNode f, Scope scope, StringBuilder output)
+        // Parameters bound to the arguments: by position, else by keyword, else their default (evaluated where they were defined).
+        private static void Bind(List<(string Name, Expr? Default)> parameters, List<object?> args, Dictionary<string, object?> kwargs, Scope local, Scope definition)
         {
-            var items = Builtins.Iterate(Evaluate(f.Iterable, scope)).ToList();
+            for (int i = 0; i < parameters.Count; i++)
+            {
+                var (name, fallback) = parameters[i];
+                local.Set(name, i < args.Count ? args[i] : kwargs.TryGetValue(name, out var v) ? v : fallback is null ? Undefined.Value : Evaluate(fallback, definition));
+            }
+        }
+
+        private static void RunFor(ForNode f, Scope scope, StringBuilder output) => RunFor(f, scope, output, Evaluate(f.Iterable, scope), 1);
+
+        // The loop over `iterable` at `depth` (1 at the top; a recursive loop's loop(items) renders one level down).
+        private static void RunFor(ForNode f, Scope scope, StringBuilder output, object? iterable, int depth)
+        {
+            var items = Builtins.Iterate(iterable).ToList();
+            RenderRun.Current?.Step(items.Count);
             if (f.Filter is not null)
             {
                 items = [.. items.Where(item =>
@@ -1146,11 +1342,18 @@ public sealed partial class JinjaTemplate
             {
                 var local = new Scope(scope);
                 Bind(f.Targets, items[i], local);
-                local.Set("loop", new Dictionary<string, object?>
+                local.Set("loop", new LoopState
                 {
                     ["index"] = (long)i + 1, ["index0"] = (long)i, ["revindex"] = (long)(items.Count - i), ["revindex0"] = (long)(items.Count - i - 1),
                     ["first"] = i == 0, ["last"] = i == items.Count - 1, ["length"] = (long)items.Count,
                     ["previtem"] = i > 0 ? items[i - 1] : Undefined.Value, ["nextitem"] = i < items.Count - 1 ? items[i + 1] : Undefined.Value,
+                    ["depth"] = (long)depth, ["depth0"] = (long)depth - 1,
+                    Recurse = f.Recursive ? (args, _) =>
+                    {
+                        var text = new StringBuilder();
+                        RunFor(f, scope, text, args.Count > 0 ? args[0] : Undefined.Value, depth + 1);
+                        return text.ToString();
+                    } : null,
                 });
                 try
                 {
@@ -1182,6 +1385,23 @@ public sealed partial class JinjaTemplate
         }
 
         public static object? Evaluate(Expr expr, Scope scope)
+        {
+            if (RenderRun.Current is { } run)
+            {
+                run.Step();
+                var value = Compute(expr, scope);
+                if (value is string { Length: > 0 } text)
+                {
+                    run.Builds(text.Length, "a string");
+                }
+
+                return value;
+            }
+
+            return Compute(expr, scope);
+        }
+
+        private static object? Compute(Expr expr, Scope scope)
         {
             switch (expr)
             {
@@ -1219,8 +1439,13 @@ public sealed partial class JinjaTemplate
                         }
                     }
 
-                    return Evaluate(c.Target, scope) is Callable callable ? callable(args, kwargs)
-                        : throw new InvalidOperationException($"'{Describe(c.Target)}' is not callable.");
+                    return Evaluate(c.Target, scope) switch
+                    {
+                        Callable callable => callable(args, kwargs),
+                        LoopState { Recurse: { } recurse } => recurse(args, kwargs),
+                        LoopState => throw new InvalidOperationException("loop(...) needs a recursive loop: {% for x in items recursive %}."),
+                        _ => throw new InvalidOperationException($"'{Describe(c.Target)}' is not callable."),
+                    };
                 case Filter f:
                     return Builtins.ApplyFilter(f.Id, Evaluate(f.Target, scope), [.. f.Args.Select(a => Evaluate(a, scope))],
                         f.Kwargs.ToDictionary(k => k.Name, k => Evaluate(k.Value, scope)), scope);

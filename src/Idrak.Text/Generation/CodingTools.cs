@@ -132,6 +132,13 @@ public sealed record CodingToolOptions
     public bool ReadOnly { get; init; }
 
     /// <summary>
+    /// Folders write_file and edit_file never write in, at any depth (by the path's text and through links, ignoring
+    /// case): <c>.git</c> by default, since git reads programs to start from its settings there (a pager, a diff or
+    /// filter driver, a file-system monitor) and the agent edits files, not history. Empty: none.
+    /// </summary>
+    public IReadOnlyList<string> WriteProtectedDirectories { get; init; } = [".git"];
+
+    /// <summary>
     /// edit_file refuses a file the task has not read (read_file) or written (write_file) since the tools were made or
     /// <see cref="CodingTools.ForgetReads"/> was called (the agent calls it as each task starts), saying to read it first:
     /// an edit replaces exact text, and a model that guesses a file's text writes edits that do not match. True by default.
@@ -575,7 +582,7 @@ public sealed partial class CodingTools
     private string? PlanEdit(string path, string oldText, string newText, bool replaceAll, out PlannedEdit edit)
     {
         edit = default;
-        if (Resolve(path, out string full) is { } error)
+        if (ResolveWrite(path, out string full) is { } error)
         {
             return error;
         }
@@ -876,7 +883,7 @@ public sealed partial class CodingTools
     private string? PlanWrite(string path, string content, out FileWrite write)
     {
         write = null!;
-        if (Resolve(path, out string full) is { } error)
+        if (ResolveWrite(path, out string full) is { } error)
         {
             return error;
         }
@@ -1040,8 +1047,12 @@ public sealed partial class CodingTools
 
     // Null when `path` stays inside the workspace, by its text and through every link along it (then `full` is its
     // absolute path), else the error for the model.
-    private string? Resolve(string path, out string full)
+    private string? Resolve(string path, out string full) => Resolve(path, out full, out _);
+
+    // Resolve, with the path every link along it followed (`real`, inside the real workspace when there is no error).
+    private string? Resolve(string path, out string full, out string real)
     {
+        real = "";
         full = Path.GetFullPath(Path.Combine(_root, path.Trim()));
         if (!Inside(full, _root))
         {
@@ -1049,10 +1060,41 @@ public sealed partial class CodingTools
         }
 
         int hops = MaxLinks;
-        string? real = full.Length == _root.Length ? _realRoot : Follow(_realRoot, full.AsSpan(_root.Length + 1), ref hops);
-        return real is null ? $"Error: '{path}' goes through links that loop; use a path without them."
-            : Inside(real, _realRoot) ? null
-            : $"Error: '{path}' is a link to a place outside the workspace; only files inside it can be used.";
+        string? followed = full.Length == _root.Length ? _realRoot : Follow(_realRoot, full.AsSpan(_root.Length + 1), ref hops);
+        if (followed is null)
+        {
+            return $"Error: '{path}' goes through links that loop; use a path without them.";
+        }
+
+        real = followed;
+        return Inside(followed, _realRoot) ? null : $"Error: '{path}' is a link to a place outside the workspace; only files inside it can be used.";
+    }
+
+    // Resolve for a write: also refused in a write-protected folder (CodingToolOptions.WriteProtectedDirectories).
+    private string? ResolveWrite(string path, out string full)
+    {
+        if (Resolve(path, out full, out string real) is { } error)
+        {
+            return error;
+        }
+
+        foreach (var (text, top) in new[] { (full, _root), (real, _realRoot) })
+        {
+            foreach (Range part in text.AsSpan(Math.Min(text.Length, top.Length + 1)).Split(Path.DirectorySeparatorChar))
+            {
+                var name = text.AsSpan(Math.Min(text.Length, top.Length + 1))[part];
+                foreach (string folder in _options.WriteProtectedDirectories)
+                {
+                    if (name.Equals(folder, StringComparison.OrdinalIgnoreCase))
+                    {
+                        return $"Error: '{path}' is in {folder}, which the tools do not write in ({(folder == ".git" ? "git's own folder: its settings can start programs" : "a protected folder")}); "
+                               + "change the project's files instead.";
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     private static bool Inside(string path, string root) =>

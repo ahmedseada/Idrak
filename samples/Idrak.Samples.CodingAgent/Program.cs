@@ -6,6 +6,7 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Idrak;
+using Idrak.Abstraction;
 using Idrak.Abstraction.Reinforcement;
 using Idrak.Diagnostics;
 using Idrak.Generation;
@@ -15,6 +16,7 @@ using Idrak.Reinforcement;
 using Idrak.Reinforcement.Plugins;
 using Idrak.Reinforcement.Plugins.Coding;
 using Idrak.Text;
+using Idrak.Text.Abstractions;
 using Idrak.Text.Generation;
 using Idrak.Text.Plugins;
 using Idrak.Text.Reinforcement;
@@ -23,12 +25,15 @@ using Idrak.Text.Reinforcement;
 // files and runs allowlisted commands (dotnet, npm …) in a workspace, run by Idrak's own engine (CPU or CUDA):
 //
 //   agent <folder> <task…> --workspace <dir>
-//                                   works on the task in <dir>, streaming its reasoning and tool calls
+//                                   works on the task in <dir>, streaming its reasoning and tool calls; asks before each
+//                                   command and each file write (y to go on) unless --yes (-y) is given
 //                                   (--out F: append the transcript to F)
 //   agent-run <folder> <suite> --out <runs.jsonl>
 //                                   evaluates a model on a task suite (folders with task.json, workspace/, verify/;
 //                                   Idrak.Reinforcement.Plugins' coding task layer): each task runs in a fresh copy and is
-//                                   verified by its own commands; one record per run
+//                                   verified by its own commands; one record per run. Unattended: the model's commands run
+//                                   without asking (its first line says so), so run it in the container sandbox
+//                                   (IDRAK_SANDBOX=container) for a model you do not trust; agent-train likewise
 //                                   (--attempts N, --filter S, --work DIR, --rounds N, --temperature T)
 //   agent-check <suite>             checks every task without a model: verification fails on the starting files and
 //                                   passes with the task's solution/ folder (--filter S, --work DIR)
@@ -58,6 +63,7 @@ int? iterations = null, groupSize = null, episodes = null, rank = null, maxNew =
 float? learningRate = null;
 string? algorithm = null;
 bool resume = false;
+bool yes = false;                                   // --yes: the interactive agent runs commands and writes files without asking
 float? temperature = null;
 MatMulPrecision? matmul = null;
 Device device = Device.Default;                                       // CUDA, else a Vulkan GPU with IDRAK_VULKAN_DEFAULT=1, else the CPU
@@ -103,6 +109,7 @@ for (int i = 0; i < args.Length; i++)
         case "--rank": rank = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
         case "--max-new": maxNew = int.Parse(args[++i], CultureInfo.InvariantCulture); break;
         case "--resume": resume = true; break;
+        case "--yes" or "-y": yes = true; break;
         case ['-', '-', ..]:
             Console.Error.WriteLine($"Unknown option {args[i]}.");
             return 1;
@@ -113,11 +120,21 @@ for (int i = 0; i < args.Length; i++)
 if (positional.Count < 2 || positional[0] is not ("agent" or "agent-run" or "agent-check" or "agent-train")
     || positional[0] is "agent" && (positional.Count < 3 || workspace is null) || positional[0] is "agent-run" or "agent-train" && (positional.Count < 3 || output is null))
 {
-    Console.WriteLine("usage: agent <folder> <task…> --workspace <dir> | agent-run <folder> <suite> --out <runs.jsonl> [--attempts N] | agent-check <suite>");
+    Console.WriteLine("usage: agent <folder> <task…> --workspace <dir> [--yes] | agent-run <folder> <suite> --out <runs.jsonl> [--attempts N] | agent-check <suite>");
     Console.WriteLine("       | agent-train <folder> <suite> --out <dir> [--algorithm grpo|ppo|reinforce] [--iterations N] [--group N] [--episodes N] [--resume]");
     Console.WriteLine("       [--cuda|--cpu|--vulkan|--device NAME] [--int8|--int4|--bf16] [--kv8|--kv16] [--context N] [--adapter DIR] [--no-think] [--matmul fp32|bf16|fp8]");
     return 1;
 }
+
+// The first line: whether the model's commands and writes are asked about, and where its commands run.
+string sandboxNote = $"in the {CommandSandboxes.DefaultName} sandbox{(CommandSandboxes.DefaultName == CommandSandboxes.Process ? " (a plain process with your rights; IDRAK_SANDBOX=container isolates them, Docker or Podman)" : "")}";
+Console.WriteLine(positional[0] switch
+{
+    "agent" when !yes => $"The model's commands and file writes are asked about before they happen (y to go on); --yes runs them without asking. Commands run {sandboxNote}.",
+    "agent" => $"--yes: the model's commands run and its file writes happen without asking, {sandboxNote}.",
+    "agent-check" => "No model: each task's own commands run, without asking, " + sandboxNote + ".",
+    _ => $"Unattended: the model's commands run and its file writes happen without asking (each task in a fresh copy), {sandboxNote}.",
+});
 
 MixedPrecision.Default = matmul ?? MatMulPrecision.BFloat16;
 Device.Default = device;
@@ -334,7 +351,20 @@ switch (positional[0])
         {
             var task = new CodingTask("interactive", string.Join(' ', positional.Skip(2)));
             var agent = new CodingAgent(chatModel, agentOptions) { OnDelta = Show, OnToolResult = ShowTool };
-            var run = await agent.RunAsync(task.Prompt, new CodingTools(workspace!, agentOptions.Tools), cancel.Token);
+            CodingTools tools;
+            if (yes)
+            {
+                tools = new CodingTools(workspace!, agentOptions.Tools);
+            }
+            else
+            {
+                // Asked on the terminal: each write (the "ask" write policy) and each command (the sandbox, wrapped).
+                WritePolicies.Register(new AskingWritePolicy((write, _) =>
+                    ValueTask.FromResult(Asking.Ask($"{(write.Tool == "edit_file" ? "edit" : "write")} {write.Path} ({(write.Creates ? "new file, " : "")}{write.Change})"))));
+                tools = new CodingTools(workspace!, agentOptions.Tools with { WritePolicy = WritePolicies.Ask }, new Asking(CommandSandboxes.Get(agentOptions.Tools.Sandbox)));
+            }
+
+            var run = await agent.RunAsync(task.Prompt, tools, cancel.Token);
             Console.ResetColor();
             // A typed task has no verification commands: finishing is all "Passed" can mean, so say that.
             var typed = new CodingRun(task, run, run.End switch
@@ -408,4 +438,27 @@ switch (positional[0])
 
     default:
         return 1;
+}
+
+// The interactive agent's questions: a sandbox that asks on the terminal before each command, then runs it in the
+// sandbox it wraps (the command sandbox contract's "asks the user first"; CommandLimits.Requester words the question).
+internal sealed class Asking(ICommandSandbox inner) : ICommandSandbox
+{
+    public string Name => inner.Name;
+
+    public string Summary => inner.Summary + "; asks before each command";
+
+    // "Agent wants to …? [y/N]" on the terminal: true for y or yes.
+    public static bool Ask(string what)
+    {
+        Console.ResetColor();
+        Console.Write($"\nThe agent wants to {what}: go on? [y/N] ");
+        return (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "") is "y" or "yes";
+    }
+
+    public string? Check(CommandLimits limits) => inner.Check(limits);
+
+    public async ValueTask<CommandResult> RunAsync(IReadOnlyList<string> command, string directory, CommandLimits limits, CancellationToken cancellationToken = default) =>
+        Ask($"run '{string.Join(' ', command)}'") ? await inner.RunAsync(command, directory, limits, cancellationToken).ConfigureAwait(false)
+            : new CommandResult(null, false, "Error: the user did not allow this command.", TimeSpan.Zero, true);
 }

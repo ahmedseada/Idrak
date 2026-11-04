@@ -13,6 +13,9 @@ public sealed partial class JinjaTemplate
     // Python semantics for values, operators, methods, filters and tests.
     private static class Builtins
     {
+        // a × b as a count for the render's limits, long.MaxValue when it does not fit (never wrapping round to a small one).
+        private static long Product(double a, double b) => a * b >= long.MaxValue ? long.MaxValue : (long)(a * b);
+
         public static readonly IReadOnlyList<(string Name, object? Value)> Globals =
         [
             ("namespace", (Callable)((args, kwargs) =>
@@ -45,6 +48,8 @@ public sealed partial class JinjaTemplate
                     throw new InvalidOperationException("range() step must not be zero.");
                 }
 
+                // Its length first: each number is a step of the render, so a huge range stops before it is made.
+                RenderRun.Current?.Step(Product(Math.Max(0, Math.Ceiling(((double)stop - start) / step)), 1));
                 var list = new List<object?>();
                 for (long i = start; step > 0 ? i < stop : i > stop; i += step)
                 {
@@ -558,12 +563,16 @@ public sealed partial class JinjaTemplate
                 case "*":
                     if (a is string rs && IsNumber(b))
                     {
-                        return string.Concat(Enumerable.Repeat(rs, (int)Math.Max(0, ToLong(b))));
+                        long times = Math.Max(0, ToLong(b));
+                        RenderRun.Current?.Builds(Product(rs.Length, times), "a repeated string");   // checked before it is built
+                        return string.Concat(Enumerable.Repeat(rs, (int)times));
                     }
 
                     if (a is IList rl && IsNumber(b))
                     {
-                        return Enumerable.Repeat(rl.Cast<object?>(), (int)Math.Max(0, ToLong(b))).SelectMany(x => x).ToList();
+                        long times = Math.Max(0, ToLong(b));
+                        RenderRun.Current?.Step(Product(rl.Count, times));
+                        return Enumerable.Repeat(rl.Cast<object?>(), (int)times).SelectMany(x => x).ToList();
                     }
 
                     return Arithmetic(a, b, (x, y) => x * y, (x, y) => x * y);

@@ -28,11 +28,13 @@ public sealed class JinjaChatTemplate : ChatTemplate
     /// <param name="bosToken">The value of <c>bos_token</c>.</param>
     /// <param name="eosToken">The value of <c>eos_token</c>.</param>
     /// <param name="toolSource">A separate template used when tools are given (some models name one "tool_use").</param>
-    public JinjaChatTemplate(string source, IReadOnlyList<string> stopSequences, string bosToken = "", string eosToken = "", string? toolSource = null)
+    /// <param name="name">What error messages call it ("chat template" when null; <see cref="Load"/> names the model's folder).</param>
+    public JinjaChatTemplate(string source, IReadOnlyList<string> stopSequences, string bosToken = "", string eosToken = "", string? toolSource = null, string? name = null)
     {
         Source = source;
-        _template = JinjaTemplate.Parse(source);
-        _toolTemplate = toolSource is null ? null : JinjaTemplate.Parse(toolSource);
+        name = string.IsNullOrWhiteSpace(name) ? "chat template" : name;
+        _template = JinjaTemplate.Parse(source, name);
+        _toolTemplate = toolSource is null ? null : JinjaTemplate.Parse(toolSource, name + " (tool_use)");
         StopSequences = stopSequences;
         BosToken = bosToken;
         EosToken = eosToken;
@@ -40,6 +42,9 @@ public sealed class JinjaChatTemplate : ChatTemplate
 
     /// <summary>The Jinja source.</summary>
     public string Source { get; }
+
+    /// <summary>The limits every render of it keeps (<see cref="JinjaOptions"/>: steps and output); null for the defaults (their variables, else built in).</summary>
+    public JinjaOptions? Limits { get; init; }
 
     /// <summary>The value of <c>bos_token</c> in the template.</summary>
     public string BosToken { get; }
@@ -339,7 +344,7 @@ public sealed class JinjaChatTemplate : ChatTemplate
             variables["enable_thinking"] = enabled;
         }
 
-        (tools.Count > 0 && _toolTemplate is not null ? _toolTemplate : _template).Render(variables, output);
+        (tools.Count > 0 && _toolTemplate is not null ? _toolTemplate : _template).Render(variables, output, Limits);
     }
 
     /// <summary>
@@ -371,6 +376,7 @@ public sealed class JinjaChatTemplate : ChatTemplate
         }
 
         string bos = TokenText(config?["bos_token"]), eos = TokenText(config?["eos_token"]);
+        string name = $"chat template of {Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)))}";
         var stops = new List<string>();
         if (eos.Length > 0)
         {
@@ -394,7 +400,7 @@ public sealed class JinjaChatTemplate : ChatTemplate
         bool addBos = config?["add_bos_token"] is JsonValue add && add.TryGetValue(out bool adds) && adds;
         if (tokenizer is not null)
         {
-            foreach (var marker in TurnMarkers(new JinjaChatTemplate(source, stops, bos, eos, toolSource), tokenizer))
+            foreach (var marker in TurnMarkers(new JinjaChatTemplate(source, stops, bos, eos, toolSource, name), tokenizer))
             {
                 if (!stops.Contains(marker))
                 {
@@ -403,7 +409,7 @@ public sealed class JinjaChatTemplate : ChatTemplate
             }
         }
 
-        return new JinjaChatTemplate(source, stops, bos, eos, toolSource) { AddBosToken = addBos };
+        return new JinjaChatTemplate(source, stops, bos, eos, toolSource, name) { AddBosToken = addBos };
     }
 
     /// <summary>

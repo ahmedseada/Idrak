@@ -19,6 +19,7 @@ internal abstract partial class DesktopTests : Tests
         ("coding tools: run_command starts allowlisted programs without a shell and trims long output", CodingToolsCommands),
         ("coding tools: links: a symbolic link out of the workspace (to a folder, to a file, dangling, relative) is refused for read, write, edit, list, search and a command's folder, naming the link, and nothing outside is read or written; a link inside it is followed; links that loop are refused; the folder walk lists no link out, ends on a link back up and walks a folder reached twice once", CodingToolsLinks),
         ("coding tools: git: an option before the subcommand, --output (with a value, or abbreviated), --ext-diff, --no-index, --contents and -O among bundled letters are refused naming the option, before the sandbox; the rest run with no pager, no file-system monitor, no external diff and GIT_PAGER/PAGER cat (the words and variables the sandbox gets; a real git takes them); words after -- are paths; the settings emptied, git runs as asked", CodingToolsGit),
+        ("coding tools: .git: write_file and edit_file refuse a file in .git at any depth (git's settings can start programs), by its text, in any case and through a link, naming the folder; the file is unchanged; reading it still works; the setting emptied, it is written", CodingToolsGitFolder),
         ("coding tools: write policy: allow is Idrak.Text's and the default; an AskingWritePolicy is asked once per write of write_file and edit_file (the path, the text before and after, the change), never for an edit that found nothing nor for the methods called directly; a refused write leaves the file and its error names the policy and the reason; a policy not registered is refused naming who registers ask; IDRAK_WRITE_POLICY and IDRAK_AGENT_COMMANDS choose", CodingToolsWritePolicy),
         ("coding tools: edit_file on the bench's Program.cs (byte order mark, CRLF): a guessed old_text's error quotes it and the file; read_file's line numbers, trailing white space and the final line break tolerated when the match is unique, said so; the encoding kept; the option off is exact", CodingEditTolerance),
         ("coding agent: an answer with a failed change left (no later success on its path) gets one reminder listing it; a change made good, a failed read or the option at 0 gets none", AgentRemindsFailedChanges),
@@ -843,6 +844,52 @@ internal abstract partial class DesktopTests : Tests
 
                 Check(Run(real, $"git log --output={written}").Contains("not allowed", StringComparison.Ordinal) && !File.Exists(written), "a real git: --output refused, nothing written");
             }
+        });
+    }
+
+    private static void CodingToolsGitFolder(Device device)
+    {
+        _ = device;
+        InAgentWorkspace(root =>
+        {
+            string config = Path.Combine(root, ".git", "config");
+            Directory.CreateDirectory(Path.Combine(root, ".git"));
+            Directory.CreateDirectory(Path.Combine(root, "sub", ".git"));
+            File.WriteAllText(config, "[core]\n");
+            var tools = new CodingTools(root, new CodingToolOptions { ReadBeforeEdit = false });
+            var registry = tools.Registry();
+            ToolResult Run(string name, JsonObject arguments) => registry.InvokeAsync(new ToolCall(name, arguments)).GetAwaiter().GetResult();
+            var writes = new List<(string Name, JsonObject Arguments)>
+            {
+                ("write_file", new() { ["path"] = ".git/config", ["content"] = "[core]\n\tpager = evil\n" }),
+                ("edit_file", new() { ["path"] = ".git/config", ["old_text"] = "[core]", ["new_text"] = "[core]\n\tfsmonitor = evil" }),
+                ("write_file", new() { ["path"] = "sub/.git/hooks/pre-commit", ["content"] = "evil" }),
+                ("write_file", new() { ["path"] = OperatingSystem.IsLinux() ? ".git/CONFIG" : ".GIT/config", ["content"] = "x" }),
+            };
+            bool linked = false;
+            try
+            {
+                Directory.CreateSymbolicLink(Path.Combine(root, "settings"), Path.Combine(root, ".git"));
+                writes.Add(("write_file", new() { ["path"] = "settings/config", ["content"] = "evil" }));
+                linked = true;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // No symbolic links here (Windows without Developer Mode): the other writes are checked.
+            }
+
+            foreach (var (name, arguments) in writes)
+            {
+                var result = Run(name, arguments);
+                Check(!result.Succeeded && result.Error is { } error && error.Contains("is in .git, which the tools do not write in", StringComparison.Ordinal),
+                    $"{name} {arguments.ToJsonString()}: refused naming .git ({(result.Succeeded ? "written: " + result.Content : result.Error)})");
+            }
+
+            Check(File.ReadAllText(config) == "[core]\n" && !File.Exists(Path.Combine(root, "sub", ".git", "hooks", "pre-commit")), $"nothing in .git was written (links checked: {linked})");
+            Check(Run("read_file", new() { ["path"] = ".git/config" }) is { Succeeded: true } read && read.Content.Contains("[core]", StringComparison.Ordinal), "reading .git still works");
+            Check(Run("write_file", new() { ["path"] = "src/.gitignore", ["content"] = "bin/\n" }).Succeeded, "a file whose name starts with .git is written");
+            var open = new CodingTools(root, new CodingToolOptions { WriteProtectedDirectories = [] });
+            Check(open.WriteFile(".git/config", "[core]\n\tbare = false\n").StartsWith("Replaced", StringComparison.Ordinal), "with the setting emptied .git is written");
         });
     }
 

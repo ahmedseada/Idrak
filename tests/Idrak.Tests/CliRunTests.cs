@@ -25,6 +25,7 @@ internal abstract partial class DesktopTests : Tests
         ("cli run: complete, tokenize (--chat, --count), template, embed (JSON and .npy), compare", CliRunText),
         ("cli run: tokenize --offsets, --pair, --special, --max-length, --truncation give tokenizers' encodings (WordPiece pairs, Unigram Arabic and emoji); plain output unchanged; bad values refused", d => { if (d == Device.Cpu) CliRunTokenizeDetailed(d); }),
         ("cli run: tools list/test on an assembly, run with --tools, agent in a read-only workspace, run --schema", CliRunToolsAndAgent),
+        ("cli run: agent asks before run_command and before every --tools tool (named with its arguments), runs them on y and refuses on no; with --yes none is asked", d => { if (d == Device.Cpu) CliAgentAsksForTools(); }),
         ("cli run: the model's recommended sampling (generation_config.json) fills the values not given, said in --verbose; given values and /set win; the chat API takes it under a request's own", d => { if (d == Device.Cpu) CliRunRecommendedSampling(d); }),
     ];
 
@@ -115,6 +116,45 @@ internal abstract partial class DesktopTests : Tests
         catch (Exception e)
         {
             throw new InvalidOperationException($"{what}: output is not one JSON object ({e.Message}): {text}");
+        }
+    }
+
+    private static void CliAgentAsksForTools()
+    {
+        string workspace = Path.Combine(Path.GetTempPath(), $"idrak-cli-agent-ask-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workspace);
+        try
+        {
+            var coding = new Idrak.Text.Generation.CodingTools(workspace, new Idrak.Text.Generation.CodingToolOptions { Commands = ["coding-test-no-such-program"] });
+            int ran = 0;
+            var extra = Tool.Create("cli_extra", "A tool of a --tools assembly.", new JsonObject { ["type"] = "object" }, (_, _) =>
+            {
+                ran++;
+                return Task.FromResult("ran");
+            });
+            var asked = new List<string>();
+            bool answer = false;
+            var registry = AgentCommand.Tools(coding, [extra], what =>
+            {
+                asked.Add(what);
+                return ValueTask.FromResult(answer);
+            });
+            ToolResult Call(string name, JsonObject arguments) => registry.InvokeAsync(new ToolCall(name, arguments)).GetAwaiter().GetResult();
+
+            var refused = Call("cli_extra", new JsonObject { ["x"] = 1 });
+            var command = Call("run_command", new JsonObject { ["command"] = "coding-test-no-such-program --version" });
+            Check(!refused.Succeeded && refused.Error!.Contains("not approved", StringComparison.Ordinal) && ran == 0 && !command.Succeeded
+                  && asked.SequenceEqual(["call the tool 'cli_extra' with {\"x\":1}", "run 'coding-test-no-such-program --version'"]),
+                $"without --yes the extra tool and run_command are asked about, and refused on no: {string.Join(" | ", asked)}; {refused.Error}");
+            answer = true;
+            Check(Call("cli_extra", new JsonObject()) is { Succeeded: true, Content: "ran" } && ran == 1 && asked.Count == 3, "on y the extra tool runs");
+
+            var yes = AgentCommand.Tools(coding, [extra], null);
+            Check(yes.InvokeAsync(new ToolCall("cli_extra", new JsonObject())).GetAwaiter().GetResult() is { Succeeded: true } && ran == 2 && asked.Count == 3, "with --yes none is asked");
+        }
+        finally
+        {
+            Directory.Delete(workspace, recursive: true);
         }
     }
 
