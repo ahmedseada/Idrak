@@ -164,7 +164,7 @@ public sealed class TuningAnswerScorer
         var watch = Stopwatch.StartNew();
         var answers = new List<TuningAnswer>(Items.Count);
         int context = Math.Clamp(ContextLength, 2, model.MaxPositions);
-        var generator = model.CreateGenerator(KeyValueFormat.Float32, context);
+        var generator = model.CreateGenerator(contextLength: context);          // the cache in the run's type (or IDRAK_KV_CACHE_TYPE)
         generator.KeepCache = false;                                              // nothing held between answers or steps
         try
         {

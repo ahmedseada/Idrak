@@ -13,7 +13,8 @@ Nothing is downloaded. The script writes, from fixed word lists and seeded gener
 - tokenizer-full/: byte level again, merging until no pair is left (minimum frequency 1), which meets many count ties;
 - tiny-llama/: a LlamaForCausalLM with every weight drawn from one seeded generator, the tokenizer and a ChatML chat
   template that walks content parts (the template plan 19 gives created models);
-- tokens.bin: every document of corpus.txt encoded and followed by </s>, as uint16 (what `idrak data tokens` writes);
+- tokens.bin: every document of corpus.txt encoded and followed by </s>, as uint16 (what `idrak data tokens` writes),
+  and tokens.bin.json beside it (the record that says so);
 - step/: training on the first four 32-token windows of tokens.bin with every parameter trained, the mean token cross
   entropy over every position; plain SGD at 0.2 (step 1's loss and gradients, three steps' losses and the weights after
   them) and AdamW (three steps' losses, the weights and the optimizer's moments after them); adamw-folded/ the same with
@@ -299,6 +300,9 @@ def main():
         tokens += tok.encode(doc, add_special_tokens=False).ids + [ids["</s>"]]
     tokens = np.asarray(tokens, dtype=np.uint16)
     tokens.tofile(os.path.join(out, "tokens.bin"))
+    # The record beside it, as `idrak data tokens` writes it: readers take the ids' type from it.
+    dump_json(os.path.join(out, "tokens.bin.json"), {"format": "idrak-tokens/1", "type": "UInt16", "tokens": int(tokens.size), "documents": len(docs),
+                                                     "separator": ids["</s>"], "vocabulary": tok.get_vocab_size()})
 
     model_dir = os.path.join(out, "tiny-llama")
     write_model(model_dir, os.path.join(out, "tokenizer"), ids)

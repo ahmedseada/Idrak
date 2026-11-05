@@ -377,7 +377,8 @@ internal sealed class ServeHost
         Seq2SeqGenerator generator;
         try
         {
-            generator = loaded.CreateGenerator(cacheLayout: ModelChoices.CacheLayout(model.Choice));
+            // Auto keeps the run's type: an encoder-decoder load computes in float32 (its weights take no element type choice yet).
+            generator = loaded.CreateGenerator(cacheLayout: ModelChoices.CacheLayout(model.Choice, Idrak.Abstraction.ElementType.Float32));
         }
         catch
         {

@@ -288,7 +288,7 @@ public sealed record Idrak.Text.Abstractions.PretrainingContext : System.IEquata
   public int MaxLength { get; init; }
 
 public sealed record Idrak.Text.Abstractions.PretrainingSource : System.IEquatable<Idrak.Text.Abstractions.PretrainingSource>
-  public Idrak.Datasets.TokenType TokenType { get; init; }
+  public Idrak.Datasets.TokenType? TokenType { get; init; }
   public PretrainingSource(string Kind, System.Collections.Generic.IReadOnlyList<string> Paths)
   public System.Collections.Generic.IReadOnlyList<string> Paths { get; init; }
   public System.Text.Json.Nodes.JsonObject ToJson()
@@ -1096,9 +1096,9 @@ public sealed record Idrak.Text.PreferencePair : System.IEquatable<Idrak.Text.Pr
 
 public static class Idrak.Text.PretrainedModelExtensions
   public static Idrak.Generation.TextGenerator CreateGenerator(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.IKeyValueLayout cacheLayout, int? contextLength = null)
-  public static Idrak.Generation.TextGenerator CreateGenerator(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.KeyValueFormat cacheFormat = (Idrak.Abstraction.Generation.KeyValueFormat)0, int? contextLength = null)
+  public static Idrak.Generation.TextGenerator CreateGenerator(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.KeyValueFormat? cacheFormat = null, int? contextLength = null)
   public static Idrak.Text.Generation.ChatGenerator CreateChat(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.IKeyValueLayout cacheLayout, int? contextLength = null)
-  public static Idrak.Text.Generation.ChatGenerator CreateChat(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.KeyValueFormat cacheFormat = (Idrak.Abstraction.Generation.KeyValueFormat)0, int? contextLength = null)
+  public static Idrak.Text.Generation.ChatGenerator CreateChat(this Idrak.Models.PretrainedModel model, Idrak.Abstraction.Generation.KeyValueFormat? cacheFormat = null, int? contextLength = null)
   public static Idrak.Text.JinjaChatTemplate? get_JinjaTemplate(Idrak.Models.PretrainedModel model)
 
 public static class Idrak.Text.Pretrainer
@@ -1289,9 +1289,9 @@ public sealed record Idrak.Text.Reinforcement.LanguageModelPolicyOptions : Syste
   public int MaxNewTokens { get; init; }
   public int? ContextLength { get; init; }
   public string Behavior { get; init; }
-  public string CacheFormat { get; init; }
   public string Divergence { get; init; }
   public string Turns { get; init; }
+  public string? CacheFormat { get; init; }
 
 public sealed record Idrak.Text.Reinforcement.OnPolicyDistillationOptions : System.IEquatable<Idrak.Text.Reinforcement.OnPolicyDistillationOptions>
   public OnPolicyDistillationOptions()

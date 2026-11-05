@@ -94,14 +94,14 @@ internal sealed class BenchCommand : Command
     public override IReadOnlyDictionary<string, string> ShortForms { get; } =
         new Dictionary<string, string>(ModelChoices.ShortForms) { ["-n"] = "--repeat" };
 
-    /// <summary>One benchmark run: a device, and with a model its weight and KV formats (null: as stored, float32).</summary>
+    /// <summary>One benchmark run: a device, and with a model its weight and KV formats (null: weights as stored, the cache in the run's type).</summary>
     private sealed record BenchRun(Device Device, string? Weights, string? Kv)
     {
         public string Label(bool devices, bool matrix) => string.Join(" ", new[]
         {
             devices ? Device.ToString() : null,
             matrix ? $"w {Weights ?? "float32"}" : null,
-            matrix ? $"kv {Kv ?? "float32"}" : null,
+            matrix ? $"kv {Kv ?? "auto"}" : null,
         }.OfType<string>());
     }
 

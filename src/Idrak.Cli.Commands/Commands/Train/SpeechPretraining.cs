@@ -34,7 +34,7 @@ internal static class SpeechPretraining
 
     // The pretrain options a speech run does not read (they shape token sequences, images or a decoder's stages).
     private static readonly string[] TextOnly =
-        ["--tokens", "--images", "--image-transform", "--vision", "--trained", "--max-length", "--batch-tokens", "--sequences", "--weight", "--top-k"];
+        ["--tokens", "--token-type", "--images", "--image-transform", "--vision", "--trained", "--max-length", "--batch-tokens", "--sequences", "--weight", "--top-k"];
 
     private static readonly string[] TextFlags = ["--recompute", "--no-packing", "--no-graphs"];
 

@@ -26,7 +26,7 @@ internal sealed class CompareCommand : Command
           -i, --input FILE       read (more of) the prompt from FILE (repeatable)
           -w, --weights FORMAT   weight format of both (default: auto); --weights-b FORMAT: of B only
           --head-weights F       the output head's format, of both (bf16 beside int8/int4: the checkpoint's own scores)
-          -k, --kv FORMAT        KV cache format of both (default float32); --kv-b FORMAT: of B only
+          -k, --kv FORMAT        KV cache format of both (default: each run's type); --kv-b FORMAT: of B only
               --context N        context window in tokens (default 4096, at most the model's)
               --adapter DIR      merge a LoRA adapter into the weights of both
               --width N          width of the side-by-side text (default 100; 0 prints the answers one after the other)

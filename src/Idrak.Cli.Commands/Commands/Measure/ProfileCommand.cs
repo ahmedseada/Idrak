@@ -81,9 +81,10 @@ internal sealed class ProfileCommand : Command
         var network = model.Network;
         var random = new Random(context.Seed ?? 1);
         float Token() => random.Next(Math.Min(model.Spec.Vocabulary, 1000));
-        string kv = choice.Kv ?? "float32";
+        var cache = ModelChoices.CacheLayout(choice, model);                    // --kv, else the cache in the run's type
+        string kv = cache.Name;
         TensorOffloading.BeforeInference(device, network);                               // as generation does: room when offloaded
-        using var decoding = new DecodingContext(device, 1, promptTokens + 5, KeyValueLayouts.Get(kv));
+        using var decoding = new DecodingContext(device, 1, promptTokens + 5, cache);
         using var noGrad = Autograd.NoGrad();
         using (var scope = new TensorScope())
         {
@@ -226,7 +227,6 @@ internal sealed class ProfileCommand : Command
             throw new UsageException($"A pipeline over {topologyFile} needs 2 or more stages dividing its {topology.WorldSize} rank(s) (--stages, IDRAK_CLUSTER_STAGES).");
         }
 
-        string kv = choice.Kv ?? "float32";
         var hops = new Hops();
         double stepMs = 0, simulatedMs = 0;
         string[] modules = [];
@@ -245,7 +245,7 @@ internal sealed class ProfileCommand : Command
                 int tokens = Math.Max(1, Math.Min(promptTokens, model.MaxPositions - steps - 3));
                 var random = new Random(context.Seed ?? 1);
                 float Token() => random.Next(Math.Min(model.Spec.Vocabulary, 1000));
-                using var decoding = new DecodingContext(rank.Device, 1, tokens + steps + 2, KeyValueLayouts.Get(kv));
+                using var decoding = new DecodingContext(rank.Device, 1, tokens + steps + 2, ModelChoices.CacheLayout(choice, model));   // --kv, else the cache in the run's type
                 using var noGrad = Autograd.NoGrad();
                 using (var scope = new TensorScope())
                 {

@@ -61,7 +61,7 @@ internal sealed class VlmCheckCommand : Command
         "      --image-transform P  the image transforms instead of the reference's (the same syntax as run's)\n" +
         "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format (default: auto); the encoder is float32\n" +
         "      --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory, slower)\n" +
-        "  -k, --kv FORMAT       the KV cache format (default float32)\n" +
+        "  -k, --kv FORMAT       the KV cache format (default: IDRAK_KV_CACHE_TYPE, else auto: the run's element type)\n" +
         "      --context N       the context window in tokens (default 4096, at most the model's)\n" +
         "      --adapter DIR     merge a LoRA adapter into the weights as they are read\n\n" +
         "Examples:\n" +
@@ -146,7 +146,7 @@ internal sealed class VlmCheckCommand : Command
         context.Write($"Reference  {folder}: transformers {manifest["versions"]?["transformers"]}, torch {manifest["versions"]?["torch"]}, "
                       + $"{manifest["dtype"]} (vision {manifest["vision_dtype"]}), logits {manifest["logits_dtype"]}, {manifest["image_processor_class"]}, "
                       + $"grayscale {grayscale}, image transforms {(choice.Transforms.IsEmpty ? "none" : choice.Transforms)}, vision options {visionOptions}, {ids.Length} prompt tokens, {generated.Length} generated");
-        context.Write($"Idrak      {choice.Model} on {device}, weights {choice.Weights ?? "as stored"}, KV cache {choice.Kv ?? "float32"}, encoder float32, "
+        context.Write($"Idrak      {choice.Model} on {device}, weights {choice.Weights ?? "as stored"}, KV cache {choice.Kv ?? "auto"}, encoder float32, "
                       + $"matrix products {MixedPrecision.Default}");
 
         using var noGrad = Autograd.NoGrad();
@@ -165,7 +165,7 @@ internal sealed class VlmCheckCommand : Command
             ["model"] = choice.Model,
             ["device"] = device.ToString(),
             ["weights"] = choice.Weights,
-            ["kv"] = choice.Kv ?? "float32",
+            ["kv"] = choice.Kv ?? "auto",
             ["reference"] = Path.GetFullPath(folder),
             ["reference_dtype"] = manifest["dtype"]?.DeepClone(),
             ["reference_vision_dtype"] = manifest["vision_dtype"]?.DeepClone(),
@@ -282,6 +282,7 @@ internal sealed class VlmCheckCommand : Command
         int imageToken = vision.PromptFormat.ImageToken;
         int afterImage = Math.Max(0, System.Array.LastIndexOf(ids, imageToken) + 1);
         var layout = ModelChoices.CacheLayout(choice, model);
+        json["kv"] = layout.Name;                                         // the cache the run takes: --kv, else its type
 
         // 4. Teacher forcing, 5. greedy.
         Pass Force(string label, float[] featureValues, bool promptRows)

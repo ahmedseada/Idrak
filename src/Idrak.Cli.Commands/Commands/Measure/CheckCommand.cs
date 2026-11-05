@@ -80,9 +80,11 @@ internal sealed class CheckCommand : Command
         var tokenizer = model.Tokenizer ?? throw new InvalidOperationException($"{choice.Model} has no tokenizer.");
         string TokenOf(int id) => tokenizer is IPretrainedTokenizer pretrained ? pretrained.TokenOf(id) : id.ToString(CultureInfo.InvariantCulture);
         int failures = 0;
-        string kv = choice.Kv ?? "float32";
-        bool approximate = choice.Weights is not null and not ("float32" or "f32") || kv != "float32";
+        // --kv, else the cache in the run's type (float32, which check selects unless --dtype names another). The reference
+        // is float32: weights, a run or a cache held in another type match it only to its top token.
+        var cache = ModelChoices.CacheLayout(choice, model);
         bool packedWeights = choice.Weights is not null and not ("float32" or "f32");
+        bool approximate = packedWeights || !ReferenceEquals(model.ElementType.Type, ElementType.Float32) || cache.Name != ElementType.Float32.Name;
 
         // 1. Tokenizer: the same ids, and decoding gives the text back.
         context.Write("Tokenizer");
@@ -179,7 +181,7 @@ internal sealed class CheckCommand : Command
             bool encodes = tokenizer.Encode(prompt).SequenceEqual(ids);
             int greedyLength = run["generated"]?.AsArray().Count ?? 0;
             string expectedText = (string?)run["generated_text"] ?? "";
-            var generator = model.CreateGenerator(KeyValueLayouts.Get(kv), model.MaxPositions);
+            var generator = model.CreateGenerator(cache, model.MaxPositions);
             var options = new GenerationOptions { TopK = 1, Temperature = 1f, RepeatPenalty = 1f, NumPredict = Math.Max(1, greedyLength), NumCtx = model.MaxPositions, Seed = 0 };
             var (text, _, stats) = generator.Generate(prompt, options);
             int agree = 0;
@@ -221,7 +223,7 @@ internal sealed class CheckCommand : Command
             ["model"] = choice.Model,
             ["device"] = device.ToString(),
             ["weights"] = choice.Weights,
-            ["kv"] = kv,
+            ["kv"] = cache.Name,
             ["ok"] = failures == 0,
             ["failures"] = failures,
             ["texts"] = texts,

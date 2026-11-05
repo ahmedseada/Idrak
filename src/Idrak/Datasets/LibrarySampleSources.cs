@@ -51,7 +51,7 @@ internal static class LibrarySampleSources
     {
         int length = int.Parse(options.GetValueOrDefault("length") ?? throw new ArgumentException("The tokens source needs the option 'length' (tokens per window)."), CultureInfo.InvariantCulture);
         int? stride = options.TryGetValue("stride", out var s) ? int.Parse(s, CultureInfo.InvariantCulture) : null;
-        var type = options.TryGetValue("type", out var t) ? Enum.Parse<TokenType>(t, ignoreCase: true) : TokenType.UInt16;
+        TokenType? type = options.TryGetValue("type", out var t) ? TokenFileRecord.Parse(t) : null;   // null: the file's record says it
         return new TokenFileSource(path, length, stride, type);
     }
 

@@ -62,12 +62,13 @@ public sealed record LanguageModelPolicyOptions
 
     /// <summary>
     /// The key/value cache format replies are generated with: a <see cref="KeyValueLayouts"/> name (float32, bfloat16,
-    /// int8 or one registered); float32 by default (<see cref="CacheFormatVariable"/>). bfloat16 takes half the memory
-    /// and still decodes conversations of different lengths together (<see cref="IRowStartsLayout"/>); a format
-    /// that cannot decodes them in float32. The trained log-probabilities are the training forward's either way
+    /// int8 or one registered), <see cref="CacheFormatVariable"/> when set; null or "auto": the model's element type
+    /// (<see cref="KeyValueLayouts.Choose"/>, after <see cref="KeyValueLayouts.EnvironmentVariable"/>). bfloat16 takes half
+    /// the memory of float32 and still decodes conversations of different lengths together (<see cref="IRowStartsLayout"/>);
+    /// a format that cannot decodes them in float32. The trained log-probabilities are the training forward's either way
     /// (<see cref="Behavior"/>).
     /// </summary>
-    public string CacheFormat { get; init; } = Setting(CacheFormatVariable) ?? KeyValueLayouts.For(KeyValueFormat.Float32).Name;
+    public string? CacheFormat { get; init; } = Setting(CacheFormatVariable);
 
     /// <summary>The reasoning mode of observations that give none (null: the template's default).</summary>
     public bool? Think { get; init; }
@@ -194,7 +195,8 @@ public sealed class LanguageModelPolicy : IPreferencePolicy<ChatObservation, Cha
         Session = session;
         Options = options;
         _ownsSession = ownsSession;
-        var chat = session.Generator(KeyValueLayouts.Get(options.CacheFormat), options.ContextLength);
+        var chat = session.Generator(KeyValueLayouts.Choose(options.CacheFormat, session.Model.ElementType.Type, LanguageModelPolicyOptions.CacheFormatVariable).Layout,
+            options.ContextLength);
         Chat = options.ToolsInPrompt is null ? chat : new Generation.ChatGenerator(chat.Generator, chat.Template) { ToolsInPrompt = options.ToolsInPrompt };
     }
 

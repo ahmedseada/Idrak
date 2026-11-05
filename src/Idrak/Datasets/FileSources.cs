@@ -1,12 +1,15 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
 namespace Idrak.Datasets;
 
 /// <summary>How token ids are packed in a <see cref="TokenFileSource"/> file (little-endian).</summary>
 public enum TokenType
 {
-    /// <summary>16-bit unsigned ids (vocabularies up to 65,536), the usual packing of pretraining token files.</summary>
+    /// <summary>16-bit unsigned ids (vocabularies up to 65,536).</summary>
     UInt16,
 
     /// <summary>32-bit signed ids.</summary>
@@ -14,14 +17,108 @@ public enum TokenType
 
     /// <summary>32-bit unsigned ids.</summary>
     UInt32,
+
+    /// <summary>8-bit unsigned ids (vocabularies up to 256).</summary>
+    UInt8,
+}
+
+/// <summary>
+/// The record beside a token file (<c>tokens.bin.json</c>, format <c>idrak-tokens/1</c>) that says how its ids are
+/// stored: <see cref="TokenFileWriter.Write"/> writes it, <see cref="TokenFileSource"/> reads it, and a file without one
+/// is read with the type it is given.
+/// </summary>
+public static class TokenFileRecord
+{
+    /// <summary>The record's format name.</summary>
+    public const string Format = "idrak-tokens/1";
+
+    /// <summary>Where the record of <paramref name="tokenFile"/> is: beside it, its name with ".json" added.</summary>
+    public static string PathOf(string tokenFile)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tokenFile);
+        return tokenFile + ".json";
+    }
+
+    /// <summary>
+    /// The id type the record beside <paramref name="tokenFile"/> says, or null when there is none (no file, or a .json of
+    /// another format).
+    /// </summary>
+    /// <exception cref="InvalidDataException">The record is not JSON, or names no id type or an unknown one.</exception>
+    public static TokenType? ReadType(string tokenFile)
+    {
+        string record = PathOf(tokenFile);
+        if (!File.Exists(record))
+        {
+            return null;
+        }
+
+        JsonObject? json;
+        try
+        {
+            json = JsonNode.Parse(File.ReadAllText(record)) as JsonObject;
+        }
+        catch (JsonException e)
+        {
+            throw new InvalidDataException($"{record}: the token file's record is not JSON ({e.Message}).", e);
+        }
+
+        if (json?["format"] is not JsonValue format || format.GetValueKind() != JsonValueKind.String || format.GetValue<string>() != Format)
+        {
+            return null;
+        }
+
+        return json["type"] is JsonValue type && type.GetValueKind() == JsonValueKind.String
+               && Enum.TryParse(type.GetValue<string>(), ignoreCase: true, out TokenType parsed) && Enum.IsDefined(parsed)
+            ? parsed
+            : throw new InvalidDataException($"{record}: the record's \"type\" is not one of {string.Join(", ", Enum.GetNames<TokenType>())}.");
+    }
+
+    /// <summary>A token type as the settings name it: u8, u16, i32, u32 or a <see cref="TokenType"/> name.</summary>
+    /// <exception cref="ArgumentException">Not one of them (the message names them).</exception>
+    public static TokenType Parse(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        return text.Trim().ToLowerInvariant() switch
+        {
+            "u8" or "uint8" => TokenType.UInt8,
+            "u16" or "uint16" => TokenType.UInt16,
+            "i32" or "int32" => TokenType.Int32,
+            "u32" or "uint32" => TokenType.UInt32,
+            _ => throw new ArgumentException($"A token type is u8, u16, i32 or u32, not '{text}'.", nameof(text)),
+        };
+    }
+
+    /// <summary>The smallest type that holds the ids 0 to <paramref name="largest"/> (rule 74).</summary>
+    /// <exception cref="ArgumentOutOfRangeException">No token type holds it.</exception>
+    public static TokenType Smallest(long largest) => largest switch
+    {
+        < 0 => throw new ArgumentOutOfRangeException(nameof(largest), largest, "Ids are 0 or more."),
+        <= byte.MaxValue => TokenType.UInt8,
+        <= ushort.MaxValue => TokenType.UInt16,
+        <= uint.MaxValue => TokenType.UInt32,
+        _ => throw new ArgumentOutOfRangeException(nameof(largest), largest, $"No token type holds the id {largest}."),
+    };
+
+    /// <summary>The largest id <paramref name="type"/> holds.</summary>
+    public static long Largest(TokenType type) => type switch
+    {
+        TokenType.UInt8 => byte.MaxValue,
+        TokenType.UInt16 => ushort.MaxValue,
+        TokenType.Int32 => int.MaxValue,
+        _ => uint.MaxValue,
+    };
+
+    /// <summary>The bytes of one id of <paramref name="type"/>.</summary>
+    public static int Width(TokenType type) => type switch { TokenType.UInt8 => 1, TokenType.UInt16 => 2, _ => 4 };
 }
 
 /// <summary>
 /// Packed token ids for language-model pretraining, memory-mapped so files larger than memory work, cut into windows of
 /// <see cref="Length"/> tokens: the features are tokens [s, s + length) and the targets the next tokens [s + 1, s + length
-/// + 1), for window starts s = 0, stride, 2 x stride, .... Ids become floats (exact up to 16,777,216), as the
-/// embedding layers and <see cref="Losses.SparseCrossEntropy(Tensor, Tensor, float)"/> take them. A .npy file of one
-/// dimension is read with its own element type.
+/// + 1), for window starts s = 0, stride, 2 x stride, .... The ids are read as <see cref="ISampleSource"/> gives samples,
+/// as floats (exact up to 16,777,216). A .npy file of one dimension is read with its own element type; a raw file with
+/// the type its record says (<see cref="TokenFileRecord"/>, written beside it by <see cref="TokenFileWriter"/>), else
+/// the type it is given.
 /// </summary>
 /// <example>
 /// <code>
@@ -40,8 +137,15 @@ public sealed class TokenFileSource : ISampleSource, IDisposable
     /// <param name="path">The token file: ids back to back, or a one-dimensional .npy array.</param>
     /// <param name="length">Tokens per window (the sequence length).</param>
     /// <param name="stride">Tokens between window starts; defaults to <paramref name="length"/> (windows do not overlap).</param>
-    /// <param name="type">The packing of a raw file (a .npy file says its own).</param>
-    public TokenFileSource(string path, int length, int? stride = null, TokenType type = TokenType.UInt16)
+    /// <param name="type">
+    /// The packing of a raw file: null to read it from the file's record (<see cref="TokenFileRecord"/>); given while the
+    /// record says another, the file is refused naming both. A .npy file says its own.
+    /// </param>
+    /// <exception cref="InvalidDataException">
+    /// A raw file with no record and no <paramref name="type"/>, a record and a <paramref name="type"/> that disagree, or a
+    /// file that is not a whole number of ids or shorter than one window.
+    /// </exception>
+    public TokenFileSource(string path, int length, int? stride = null, TokenType? type = null)
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(length);
         Stride = stride ?? length;
@@ -61,11 +165,27 @@ public sealed class TokenFileSource : ISampleSource, IDisposable
             }
             else
             {
-                _type = type switch { TokenType.Int32 => ElementType.Int32, TokenType.UInt32 => ElementType.UInt32, _ => ElementType.UInt16 };
+                var recorded = TokenFileRecord.ReadType(path);
+                if (recorded is { } said && type is { } given && said != given)
+                {
+                    throw new InvalidDataException($"{path}: its record ({TokenFileRecord.PathOf(path)}) says the ids are {said}, the setting {given}; give {said} or no type.");
+                }
+
+                var stored = recorded ?? type ?? throw new InvalidDataException(
+                    $"{path} has no record of its id type ({TokenFileRecord.PathOf(path)}, which idrak data tokens and TokenFileWriter write beside it): "
+                    + "give the type, u8, u16, i32 or u32, in TokenFileSource's type, the tokens sample source's \"type\" option, idrak pretrain --token-type "
+                    + "or a pretraining source's \"token_type\".");
+                _type = stored switch
+                {
+                    TokenType.UInt8 => ElementType.UInt8,
+                    TokenType.Int32 => ElementType.Int32,
+                    TokenType.UInt32 => ElementType.UInt32,
+                    _ => ElementType.UInt16,
+                };
                 int size = Elements.Size(_type);
                 if (_file.Length % size != 0)
                 {
-                    throw new InvalidDataException($"{path}: {_file.Length} bytes is not a whole number of {type} token ids.");
+                    throw new InvalidDataException($"{path}: {_file.Length} bytes is not a whole number of {stored} token ids.");
                 }
 
                 TokenCount = _file.Length / size;

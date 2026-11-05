@@ -94,6 +94,12 @@ internal abstract partial class DesktopTests : Tests
             var encoded = TrainCliJson("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "-o", tokens);
             Check(File.ReadAllBytes(tokens).AsSpan().SequenceEqual(File.ReadAllBytes(PretrainData("tokens.bin"))), $"data tokens writes the reference's token file: {encoded}");
             Check((long)encoded["documents"]! == 96 && File.Exists(tokens + ".json"), "96 documents, and the description beside it");
+            // No --type: the smallest id type that holds the vocabulary of 512 (uint16), recorded beside the file for its readers.
+            var record = JsonNode.Parse(File.ReadAllText(tokens + ".json"))!;
+            Check((string?)encoded["type"] == "UInt16" && (string?)record["type"] == "UInt16" && (string?)record["format"] == "idrak-tokens/1" && (long)record["tokens"]! == 25515
+                  && record["tokenizer"] is not null, $"auto picks uint16 for 512 ids and records it with the tokenizer: {record}");
+            var (narrow, _, narrowError) = TrainCli("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--type", "u8", "-o", Path.Combine(folder, "u8.bin"));
+            Check(narrow == 2 && narrowError.Contains("do not fit UInt8", StringComparison.Ordinal), $"--type u8 for 512 ids is refused: {narrowError}");
             var (code, _, error) = TrainCli("data", "tokens", PretrainData("corpus.txt"), "--tokenizer", tokenizer, "--separator", "<nope>", "-o", tokens);
             Check(code == 2 && error.Contains("no token '<nope>'", StringComparison.Ordinal), $"an unknown separator: {error}");
             (code, _, error) = TrainCli("data", "tokenizer", PretrainData("corpus.txt"), "--trainer", "nope", "-o", tokenizer);

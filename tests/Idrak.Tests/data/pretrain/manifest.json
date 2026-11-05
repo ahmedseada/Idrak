@@ -80,6 +80,10 @@
   "tokens.bin": {
    "bytes": 51030,
    "sha256": "8964b87be156f9bb4ffffb7f91b2e8b341f98964967ee178cbe53e3f74dbaf32"
+  },
+  "tokens.bin.json": {
+   "bytes": 124,
+   "sha256": "65eae65409c3b05eb234e464cc0a1cbf01ca38896996c8b4ee04d249d8659cb0"
   }
  },
  "special_tokens": {

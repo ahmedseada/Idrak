@@ -805,12 +805,14 @@ internal abstract partial class Tests
         string folder = TempFolder();
         try
         {
-            // 16-bit token ids, back to back.
+            // 16-bit token ids, back to back, with no record of their type: the reader is told it.
             var tokens = Enumerable.Range(0, 1000).Select(i => (ushort)((i * 7919 + i / 3) % 50000)).ToArray();
             string raw = Path.Combine(folder, "train.bin");
             File.WriteAllBytes(raw, [.. tokens.SelectMany(BitConverter.GetBytes)]);
             const int T = 16;
-            using (var windows = new TokenFileSource(raw, T, stride: 10))
+            ThrowsNaming<InvalidDataException>(() => _ = new TokenFileSource(raw, T),
+                "a token file with no record and no type is refused naming the settings that give it", "no record of its id type", "--token-type", "\"token_type\"");
+            using (var windows = new TokenFileSource(raw, T, stride: 10, type: TokenType.UInt16))
             {
                 Check(windows.TokenCount == 1000 && windows.Count == (1000 - T - 1) / 10 + 1, $"{windows.Count} windows of {windows.TokenCount} tokens");
                 var x = new List<float>();
@@ -844,7 +846,19 @@ internal abstract partial class Tests
                 Check(windows.ToDataset().GetFeatures(1)[3] == tokens[T + 3] + 70000f, "32-bit token ids");
             }
 
-            Throws<InvalidDataException>(() => _ = new TokenFileSource(raw, 2000), "a window longer than the file");
+            Throws<InvalidDataException>(() => _ = new TokenFileSource(raw, 2000, type: TokenType.UInt16), "a window longer than the file");
+
+            // The record beside a file says its type; a type that differs is refused naming both.
+            File.WriteAllText(TokenFileRecord.PathOf(raw32), $"{{\"format\": \"{TokenFileRecord.Format}\", \"type\": \"UInt32\"}}");
+            using (var windows = new TokenFileSource(raw32, T))
+            {
+                Check(windows.TokenCount == 1000 && windows.ToDataset().GetFeatures(1)[3] == tokens[T + 3] + 70000f, "the record's type, with no type given");
+            }
+
+            ThrowsNaming<InvalidDataException>(() => _ = new TokenFileSource(raw32, T, type: TokenType.UInt16), "a type the record contradicts", "UInt32", "UInt16");
+            Check(TokenFileRecord.Smallest(255) == TokenType.UInt8 && TokenFileRecord.Smallest(256) == TokenType.UInt16 && TokenFileRecord.Smallest(65535) == TokenType.UInt16
+                  && TokenFileRecord.Smallest(65536) == TokenType.UInt32 && TokenFileRecord.Width(TokenType.UInt8) == 1,
+                "the smallest token type that holds the ids (rule 74)");
 
             // Images [N, 2, 3] as float32 and int64 class labels; float64 targets [N, 2]; uint8 features.
             const int N = 40;

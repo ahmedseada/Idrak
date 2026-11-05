@@ -23,8 +23,12 @@ public enum TokenDocuments
 /// <summary>Settings for <see cref="TokenFileWriter.Write"/>.</summary>
 public sealed record TokenFileWriterOptions
 {
-    /// <summary>How ids are stored (the reader, <see cref="TokenFileSource"/>, is told the same).</summary>
-    public TokenType Type { get; init; } = TokenType.UInt16;
+    /// <summary>
+    /// How ids are stored, or null for the smallest type that holds the tokenizer's ids and the separator
+    /// (<see cref="TokenFileRecord.Smallest"/>). The type is recorded beside the file (<see cref="TokenFileRecord"/>), where
+    /// <see cref="TokenFileSource"/> reads it.
+    /// </summary>
+    public TokenType? Type { get; init; }
 
     /// <summary>An id written after every document (a document's end, "&lt;/s&gt;" for example), or null for none.</summary>
     public int? Separator { get; init; }
@@ -41,13 +45,16 @@ public sealed record TokenFileWriterOptions
 /// <param name="Documents">Documents encoded.</param>
 /// <param name="Tokens">Ids written (separators included).</param>
 /// <param name="Bytes">The text's bytes read.</param>
-public sealed record TokenFileResult(string Path, long Documents, long Tokens, long Bytes);
+/// <param name="Type">How the ids are stored (the one asked, else the smallest that holds them).</param>
+/// <param name="Record">The record written beside the file (<see cref="TokenFileRecord"/>).</param>
+public sealed record TokenFileResult(string Path, long Documents, long Tokens, long Bytes, TokenType Type, string Record);
 
 /// <summary>
 /// Encodes text files into a token file for pretraining (read back by <see cref="TokenFileSource"/>): each document's
-/// ids, then the separator, little-endian in the chosen width, in the files' order. Documents are encoded on every
-/// processor in batches and written in order; a tokenizer whose ids do not fit the width is refused before anything
-/// is written.
+/// ids, then the separator, little-endian in the type asked or else the smallest that holds the tokenizer's ids, in
+/// the files' order, and the type in a record beside the file (<see cref="TokenFileRecord"/>). Documents are encoded on
+/// every processor in batches and written in order; ids that do not fit the type asked are refused before anything is
+/// written.
 /// </summary>
 public static class TokenFileWriter
 {
@@ -55,7 +62,7 @@ public static class TokenFileWriter
 
     /// <summary>Writes the ids of <paramref name="inputs"/>' documents to <paramref name="output"/>.</summary>
     /// <exception cref="FileNotFoundException">An input is missing.</exception>
-    /// <exception cref="ArgumentException">The tokenizer's ids (or the separator) do not fit <see cref="TokenFileWriterOptions.Type"/>.</exception>
+    /// <exception cref="ArgumentException">The tokenizer's ids (or the separator) do not fit <see cref="TokenFileWriterOptions.Type"/>, or no type holds them.</exception>
     public static TokenFileResult Write(string output, IReadOnlyList<string> inputs, ITokenizer tokenizer, TokenFileWriterOptions? options = null,
         IProgress<long>? progress = null, CancellationToken cancellationToken = default)
     {
@@ -63,10 +70,26 @@ public static class TokenFileWriter
         ArgumentNullException.ThrowIfNull(inputs);
         ArgumentNullException.ThrowIfNull(tokenizer);
         options ??= new TokenFileWriterOptions();
-        long largest = options.Type switch { TokenType.UInt16 => ushort.MaxValue, TokenType.Int32 => int.MaxValue, _ => uint.MaxValue };
-        if (tokenizer.VocabularySize - 1 > largest || options.Separator is int s && (s < 0 || s > largest))
+        if (options.Separator is < 0)
         {
-            throw new ArgumentException($"The tokenizer's {tokenizer.VocabularySize} ids do not fit {options.Type}; write {TokenType.UInt32} or {TokenType.Int32} ids.", nameof(options));
+            throw new ArgumentException($"The separator id {options.Separator} is negative.", nameof(options));
+        }
+
+        long needed = Math.Max(tokenizer.VocabularySize - 1L, options.Separator ?? 0);
+        TokenType type;
+        if (options.Type is { } asked)
+        {
+            if (needed > TokenFileRecord.Largest(asked))
+            {
+                throw new ArgumentException($"The tokenizer's ids (up to {needed}) do not fit {asked}; ask {TokenFileRecord.Smallest(Math.Min(needed, uint.MaxValue))} "
+                                            + "or no type (the smallest that holds them).", nameof(options));
+            }
+
+            type = asked;
+        }
+        else
+        {
+            type = needed <= uint.MaxValue ? TokenFileRecord.Smallest(needed) : throw new ArgumentException($"No token type holds the tokenizer's ids (up to {needed}).", nameof(options));
         }
 
         foreach (string input in inputs)
@@ -77,7 +100,7 @@ public static class TokenFileWriter
             }
         }
 
-        int width = options.Type == TokenType.UInt16 ? 2 : 4;
+        int width = TokenFileRecord.Width(type);
         long documents = 0, tokens = 0, bytes = 0;
         var parallel = new ParallelOptions { MaxDegreeOfParallelism = options.Workers > 0 ? options.Workers : ComputeResources.MaxCpuThreads, CancellationToken = cancellationToken };
         string? folder = System.IO.Path.GetDirectoryName(System.IO.Path.GetFullPath(output));
@@ -103,12 +126,12 @@ public static class TokenFileWriter
                     var span = buffer.AsSpan(0, n * width);
                     for (int k = 0; k < ids.Count; k++)
                     {
-                        Put(span, k, ids[k], options.Type);
+                        Put(span, k, ids[k], type);
                     }
 
                     if (options.Separator is int separator)
                     {
-                        Put(span, ids.Count, separator, options.Type);
+                        Put(span, ids.Count, separator, type);
                     }
 
                     stream.Write(span);
@@ -184,12 +207,24 @@ public static class TokenFileWriter
             Flush();
         }
 
-        return new TokenFileResult(System.IO.Path.GetFullPath(output), documents, tokens, bytes);
+        stream.Flush();
+        string record = TokenFileRecord.PathOf(System.IO.Path.GetFullPath(output));
+        var described = new System.Text.Json.Nodes.JsonObject
+        {
+            ["format"] = TokenFileRecord.Format, ["type"] = type.ToString(), ["tokens"] = tokens, ["documents"] = documents, ["separator"] = options.Separator,
+            ["vocabulary"] = tokenizer.VocabularySize,
+        };
+        File.WriteAllText(record, described.ToJsonString(new System.Text.Json.JsonSerializerOptions { WriteIndented = true }) + "\n");
+        return new TokenFileResult(System.IO.Path.GetFullPath(output), documents, tokens, bytes, type, record);
     }
 
     private static void Put(Span<byte> span, int index, int id, TokenType type)
     {
-        if (type == TokenType.UInt16)
+        if (type == TokenType.UInt8)
+        {
+            span[index] = checked((byte)id);
+        }
+        else if (type == TokenType.UInt16)
         {
             BinaryPrimitives.WriteUInt16LittleEndian(span[(index * 2)..], checked((ushort)id));
         }

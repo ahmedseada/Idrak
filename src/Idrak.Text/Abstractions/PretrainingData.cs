@@ -28,8 +28,11 @@ public sealed record PretrainingSource(string Kind, IReadOnlyList<string> Paths)
     /// <summary>Records: the folder or .zip their sounds are in, or null for beside each file.</summary>
     public string? Audios { get; init; }
 
-    /// <summary>Tokens: how ids are stored in a raw token file (a .npy file says it itself).</summary>
-    public TokenType TokenType { get; init; } = TokenType.UInt16;
+    /// <summary>
+    /// Tokens: how ids are stored in a raw token file, or null for what the file's record says (<see cref="TokenFileRecord"/>;
+    /// a .npy file says it itself).
+    /// </summary>
+    public TokenType? TokenType { get; init; }
 
     /// <summary>The source as JSON (<see cref="FromJson"/> reads it back).</summary>
     public JsonObject ToJson()
@@ -50,9 +53,9 @@ public sealed record PretrainingSource(string Kind, IReadOnlyList<string> Paths)
             json["audios"] = Audios;
         }
 
-        if (TokenType != TokenType.UInt16)
+        if (TokenType is { } type)
         {
-            json["token_type"] = TokenType.ToString();
+            json["token_type"] = type.ToString();
         }
 
         return json;
@@ -66,10 +69,11 @@ public sealed record PretrainingSource(string Kind, IReadOnlyList<string> Paths)
         string kind = (string?)json["kind"] ?? throw new InvalidDataException("A pretraining source has no \"kind\" (tokens or records).");
         var paths = json["paths"] is JsonArray many ? many.Select(p => (string?)p ?? throw new InvalidDataException("A source path is not a string.")).ToList()
             : json["path"] is JsonValue one ? [(string)one!] : throw new InvalidDataException($"The {kind} source names no \"paths\".");
-        var type = TokenType.UInt16;
-        if ((string?)json["token_type"] is { } t && !Enum.TryParse(t, ignoreCase: true, out type))
+        TokenType? type = null;
+        if ((string?)json["token_type"] is { } t)
         {
-            throw new InvalidDataException($"Token type '{t}' is not one of {string.Join(", ", Enum.GetNames<TokenType>())}.");
+            type = Enum.TryParse(t, ignoreCase: true, out TokenType named) && Enum.IsDefined(named) ? named
+                : throw new InvalidDataException($"Token type '{t}' is not one of {string.Join(", ", Enum.GetNames<TokenType>())}.");
         }
 
         return new PretrainingSource(kind, paths)

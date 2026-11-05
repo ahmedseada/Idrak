@@ -12,12 +12,20 @@ public static class PretrainedModelExtensions
 {
     extension(PretrainedModel model)
     {
-        /// <summary>A text generator for the model (int8 KV cache with <paramref name="cacheFormat"/>).</summary>
-        public TextGenerator CreateGenerator(KeyValueFormat cacheFormat = KeyValueFormat.Float32, int? contextLength = null)
+        /// <summary>
+        /// A text generator for the model, its KV cache in <paramref name="cacheFormat"/>; null: <see cref="KeyValueLayouts.EnvironmentVariable"/>,
+        /// else the model's element type (<see cref="KeyValueLayouts.Choose"/>).
+        /// </summary>
+        public TextGenerator CreateGenerator(KeyValueFormat? cacheFormat = null, int? contextLength = null)
         {
+            if (cacheFormat is null)
+            {
+                return model.CreateGenerator(KeyValueLayouts.Choose(null, model.ElementType.Type).Layout, contextLength);
+            }
+
             model.Network.Eval();
             return new TextGenerator(model.Network, model.Tokenizer ?? throw new InvalidOperationException("The model has no tokenizer."),
-                Math.Min(contextLength ?? model.MaxPositions, model.MaxPositions)) { CacheFormat = cacheFormat, RecommendedSampling = model.RecommendedSampling };
+                Math.Min(contextLength ?? model.MaxPositions, model.MaxPositions)) { CacheFormat = cacheFormat.Value, RecommendedSampling = model.RecommendedSampling };
         }
 
         /// <summary>A text generator for the model whose KV cache is stored by <paramref name="cacheLayout"/> (see <see cref="KeyValueLayouts"/>).</summary>
@@ -29,8 +37,11 @@ public static class PretrainedModelExtensions
                 Math.Min(contextLength ?? model.MaxPositions, model.MaxPositions)) { CacheLayout = cacheLayout, RecommendedSampling = model.RecommendedSampling };
         }
 
-        /// <summary>A chat model using the model's own chat template (and its tool-call format).</summary>
-        public ChatGenerator CreateChat(KeyValueFormat cacheFormat = KeyValueFormat.Float32, int? contextLength = null) =>
+        /// <summary>
+        /// A chat model using the model's own chat template (and its tool-call format), its KV cache in
+        /// <paramref name="cacheFormat"/>; null: <see cref="KeyValueLayouts.EnvironmentVariable"/>, else the model's element type.
+        /// </summary>
+        public ChatGenerator CreateChat(KeyValueFormat? cacheFormat = null, int? contextLength = null) =>
             new(model.CreateGenerator(cacheFormat, contextLength), model.ChatTemplate ?? throw new InvalidOperationException("The model has no chat template."));
 
         /// <summary>A chat model using the model's own chat template, its KV cache stored by <paramref name="cacheLayout"/>.</summary>

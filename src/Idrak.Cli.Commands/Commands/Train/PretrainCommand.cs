@@ -56,6 +56,8 @@ internal sealed class PretrainCommand : Command
         Options:
           -C, --config FILE        the run's stages and settings (pretrain.json); the options below then change it
               --tokens FILE        a token file to train on (repeat for several; one stage)
+              --token-type T       how the token files store ids, for files without the record idrak data tokens writes
+                                   beside them: u8, u16, i32 or u32 (auto: the record's)
               --data FILE          conversation records to train on (messages or sharegpt JSON Lines; repeat)
               --images DIR|ZIP     where the records' images are
               --audio DIR|ZIP      where the records' sounds are (an audio-language model's records)
@@ -130,7 +132,7 @@ internal sealed class PretrainCommand : Command
 
     public override IReadOnlyCollection<string> ValueOptions { get; } =
     [
-        "--tokens", "--data", "--images", "--weight", "--steps", "--trained", "--lr", "--min-lr", "--warmup", "--schedule", "--max-length",
+        "--tokens", "--token-type", "--data", "--images", "--weight", "--steps", "--trained", "--lr", "--min-lr", "--warmup", "--schedule", "--max-length",
         "--batch-tokens", "--accumulate", "--optimizer", "--weight-decay", "--clip", "--save-every", "--keep", "--eval", "--eval-every", "--log-every", "--out",
         "--image-transform", "--vision", "--audio", "--feature-cache", "--sequences", "--teacher", "--temperature", "--alpha", "--top-k", "--teacher-device", ModelChoices.DtypeOption,
         .. SpeechPretraining.ValueOptions, "--rank", .. ClusterJoin.Options, .. ClusterJoin.PipelineOptions,
@@ -381,9 +383,15 @@ internal sealed class PretrainCommand : Command
         }
 
         var sources = new List<PretrainingSource>();
+        var tokenType = Idrak.Cli.Commands.Data.DataTokensCommand.ParseType("--token-type", context.Option("--token-type"));
+        if (context.Option("--token-type") is not null && context.Options("--tokens").Count == 0 && context.Options("--eval").Count == 0)
+        {
+            throw new UsageException("--token-type applies to --tokens and --eval token files; a --config's sources take \"token_type\".");
+        }
+
         if (context.Options("--tokens") is { Count: > 0 } tokens)
         {
-            sources.Add(new PretrainingSource(PretrainingSources.Tokens, tokens) { Weight = weights.GetValueOrDefault("tokens", 1) });
+            sources.Add(new PretrainingSource(PretrainingSources.Tokens, tokens) { Weight = weights.GetValueOrDefault("tokens", 1), TokenType = tokenType });
         }
 
         if (context.Options("--data") is { Count: > 0 } data)
@@ -435,7 +443,7 @@ internal sealed class PretrainCommand : Command
             EvaluateEvery = context.IntOption("--eval-every", options.EvaluateEvery),
             Evaluation = context.Options("--eval") is { Count: > 0 } eval
                 ? [.. eval.Select(e => new PretrainingSource(e.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase) || e.EndsWith(".json", StringComparison.OrdinalIgnoreCase)
-                    ? PretrainingSources.Records : PretrainingSources.Tokens, [e]) { Images = context.Option("--images"), Audios = context.Option("--audio") })]
+                    ? PretrainingSources.Records : PretrainingSources.Tokens, [e]) { Images = context.Option("--images"), Audios = context.Option("--audio"), TokenType = tokenType })]
                 : options.Evaluation,
             Checkpointing = Switch("--checkpointing", "--no-checkpointing") ?? options.Checkpointing,
             RecomputeFeedForward = context.Flag("--recompute") ? true : options.RecomputeFeedForward,

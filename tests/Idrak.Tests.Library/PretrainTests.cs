@@ -30,6 +30,7 @@ internal abstract partial class Tests
         string path = Path.Combine(folder, "windows.bin");
         var bytes = File.ReadAllBytes(PretrainData("tokens.bin"));
         File.WriteAllBytes(path, bytes[..(129 * 2)]);
+        File.WriteAllText(Idrak.Datasets.TokenFileRecord.PathOf(path), $"{{\"format\": \"{Idrak.Datasets.TokenFileRecord.Format}\", \"type\": \"UInt16\"}}");   // the fixture's ids
         return path;
     }
 

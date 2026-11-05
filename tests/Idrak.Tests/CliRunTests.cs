@@ -107,6 +107,12 @@ internal abstract partial class DesktopTests : Tests
         return (code, output.ToString(), error.ToString());
     }
 
+    // Standard error holds the load's report and nothing else: the element type each device computes in (plan 37 T0,
+    // always shown, whichever type the run asked) and the weights kept packed or expanded (Q0).
+    private static bool OnlyLoadReport(string error) => error.Split('\n').All(line => line.Trim().Length == 0
+        || line.StartsWith("element type: ", StringComparison.Ordinal) || line.StartsWith("weights kept packed: ", StringComparison.Ordinal)
+        || line.StartsWith("weights expanded: ", StringComparison.Ordinal));
+
     private static JsonObject JsonOf(string text, string what)
     {
         try
@@ -201,7 +207,7 @@ internal abstract partial class DesktopTests : Tests
     private static void CliRunRun(Device device)
     {
         var (code, text, error) = RunIdrakOn(device, null, "run", CliModel, "Hello", "--max-tokens", "6", "--seed", "1");
-        Check(code == 0 && text.Length > 0 && error.Length == 0, $"run: exit {code}, error {error}");
+        Check(code == 0 && text.Length > 0 && OnlyLoadReport(error), $"run: exit {code}, error {error}");
 
         (code, text, _) = RunIdrakOn(device, null, "r", CliModel, "Hello", "--max-tokens", "5", "--temperature", "0", "-j");
         var json = JsonOf(text, "run --json");
@@ -230,7 +236,7 @@ internal abstract partial class DesktopTests : Tests
         (code, _, error) = RunIdrakOn(device, null, "run", CliModel, "hi", "--top-k", "many");
         Check(code == 2 && error.Contains("--top-k"), "a bad --top-k");
         (code, _, error) = RunIdrakOn(device, null, "run", CliModel, "hi", "-k", "nosuch");
-        Check(code == 2 && error.Contains("Unknown --kv format"), $"a bad --kv: {error}");
+        Check(code == 2 && error.Contains("--kv 'nosuch'", StringComparison.Ordinal) && error.Contains("Use auto", StringComparison.Ordinal), $"a bad --kv names it and the formats: {error}");
         (code, _, _) = RunIdrakOn(device, null, "run", CliModel, "hi", "-k", "int8", "--max-tokens", "2", "-q");
         Check(code == 0, "int8 KV cache");
     }
@@ -247,7 +253,7 @@ internal abstract partial class DesktopTests : Tests
                 "how are \\", "you", "/stats", "/retry", "/copy", "/think off", "/set", "/tools", "/file " + notes, "and this?", $"/save {saved}", "/bogus", "/help",
                 "/exit", "never sent");
             var (code, text, error) = RunIdrakOn(device, input, "chat", CliModel, "--max-tokens", "6", "--seed", "3", "--history", history, "--file", notes);
-            Check(code == 0 && error.Length == 0, $"chat: exit {code}, {error}");
+            Check(code == 0 && OnlyLoadReport(error), $"chat: exit {code}, {error}");
             Check(text.Contains("temperature = 0") && text.Contains("max-tokens = 4") && text.Contains("--top-p needs"), "chat: /set");
             Check(text.Contains("System prompt set.") && text.Contains("System prompt: Be brief."), "chat: /system");
             Check(text.Contains("Context ") && text.Contains("tokens/s on average") && text.Contains("Memory "), "chat: /stats");

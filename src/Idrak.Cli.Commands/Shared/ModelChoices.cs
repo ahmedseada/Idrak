@@ -396,14 +396,26 @@ internal static class ModelChoices
 
     /// <summary>
     /// The KV cache layout named by <c>--kv</c> (or the alias's "kv"): auto, float32 (f32), int8, bfloat16 (bf16) or any
-    /// registered format; when not given IDRAK_KV_CACHE_TYPE, else auto, which keeps the run's element type
-    /// (<paramref name="model"/>'s: a bfloat16 cache for a bfloat16 run; float32 without a model; plan 37 T2).
+    /// registered format; when not given IDRAK_KV_CACHE_TYPE, else auto, which keeps the element type
+    /// <paramref name="model"/>'s run computes in (a bfloat16 cache for a bfloat16 run; plan 37 T2).
     /// </summary>
-    public static Idrak.Abstraction.Generation.IKeyValueLayout CacheLayout(ModelChoice choice, PretrainedModel? model = null)
+    public static Idrak.Abstraction.Generation.IKeyValueLayout CacheLayout(ModelChoice choice, PretrainedModel model)
     {
+        ArgumentNullException.ThrowIfNull(model);
+        return CacheLayout(choice, model.ElementType.Type);
+    }
+
+    /// <summary>
+    /// The KV cache layout named by <c>--kv</c> (or the alias's "kv"), else IDRAK_KV_CACHE_TYPE, else auto, which keeps
+    /// <paramref name="runType"/>, the element type the run computes in.
+    /// </summary>
+    public static Idrak.Abstraction.Generation.IKeyValueLayout CacheLayout(ModelChoice choice, Idrak.Abstraction.ElementType runType)
+    {
+        ArgumentNullException.ThrowIfNull(choice);
+        ArgumentNullException.ThrowIfNull(runType);
         try
         {
-            return Idrak.Abstraction.Generation.KeyValueLayouts.Choose(choice.Kv, model?.ElementType.Type ?? Idrak.Abstraction.ElementType.Float32).Layout;
+            return Idrak.Abstraction.Generation.KeyValueLayouts.Choose(choice.Kv, runType).Layout;
         }
         catch (NotSupportedException e)
         {

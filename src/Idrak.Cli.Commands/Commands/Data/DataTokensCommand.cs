@@ -25,8 +25,8 @@ internal sealed class DataTokensCommand : Command
         FILE... --tokenizer FILE -o TOKENS.bin [options]
 
         Encodes text files with a tokenizer into one token file: each document's ids, then the separator, little-endian,
-        in the files' order (a .json beside it says the count, the width and the tokenizer). idrak pretrain reads it as a
-        "tokens" source, cut into windows of its maximum length.
+        in the files' order, and a .json beside it with the count, the id type and the tokenizer (readers take the type
+        from it). idrak pretrain reads it as a "tokens" source, cut into windows of its maximum length.
 
         Arguments:
           FILE  text files (UTF-8), folders of .txt files, or patterns (corpus/*.txt)
@@ -36,7 +36,8 @@ internal sealed class DataTokensCommand : Command
               --documents D      blocks (documents between lines of ---, as idrak data text writes, the default), lines
                                  (each line a document) or files (each file a document)
               --separator TOKEN  the token written after every document (</s> when the tokenizer has it; none to write none)
-              --type T           u16 (ids up to 65,535, the default), i32 or u32
+              --type T           how ids are stored: auto (the smallest that holds the tokenizer's ids: u8 up to 256,
+                                 u16 up to 65,536, else u32; the default), u8, u16, i32 or u32
               --workers N        threads encoding documents (one per processor)
           -o, --out FILE         the token file to write
 
@@ -61,13 +62,7 @@ internal sealed class DataTokensCommand : Command
         }
 
         var tokenizer = PretrainedTokenizers.TryLoad(tokenizerPath) ?? throw new UsageException($"No tokenizer at {tokenizerPath} (readers: {string.Join(", ", TokenizerFiles.Names)}).");
-        var type = (context.Option("--type") ?? "u16").ToLowerInvariant() switch
-        {
-            "u16" or "uint16" => TokenType.UInt16,
-            "i32" or "int32" => TokenType.Int32,
-            "u32" or "uint32" => TokenType.UInt32,
-            var t => throw new UsageException($"--type is u16, i32 or u32, not '{t}'."),
-        };
+        TokenType? type = ParseType("--type", context.Option("--type"));
         var documents = (context.Option("--documents") ?? "blocks").ToLowerInvariant() switch
         {
             "blocks" => TokenDocuments.Blocks,
@@ -99,21 +94,37 @@ internal sealed class DataTokensCommand : Command
             line.Finish();
         }
 
-        var described = new JsonObject
-        {
-            ["format"] = "idrak-tokens/1", ["tokens"] = result.Tokens, ["documents"] = result.Documents, ["type"] = type.ToString(),
-            ["separator"] = separator, ["tokenizer"] = Path.GetFullPath(tokenizerPath), ["vocabulary"] = tokenizer.VocabularySize,
-            ["vocabulary_fingerprint"] = Idrak.Text.Abstractions.DistillationTeacher.VocabularyFingerprint(tokenizer),
-            ["files"] = new JsonArray([.. files.Select(f => (JsonNode)Path.GetFullPath(f))]),
-        };
-        File.WriteAllText(output + ".json", described.ToJsonString(CommandContext.JsonOutput) + "\n");
+        // The library's record (the format, the id type, the counts) with what the command knows: the tokenizer and the files.
+        var described = JsonNode.Parse(File.ReadAllText(result.Record)) as JsonObject ?? throw new InvalidDataException($"{result.Record} is not a JSON object.");
+        described["tokenizer"] = Path.GetFullPath(tokenizerPath);
+        described["vocabulary_fingerprint"] = Idrak.Text.Abstractions.DistillationTeacher.VocabularyFingerprint(tokenizer);
+        described["files"] = new JsonArray([.. files.Select(f => (JsonNode)Path.GetFullPath(f))]);
+        File.WriteAllText(result.Record, described.ToJsonString(CommandContext.JsonOutput) + "\n");
         context.Write(string.Create(CultureInfo.InvariantCulture,
             $"{result.Tokens:N0} tokens of {result.Documents:N0} documents ({total / 1048576.0:F1} MB of text) in {watch.Elapsed.TotalSeconds:F1} s, written to {result.Path}"));
         context.WriteJson(new JsonObject
         {
-            ["path"] = result.Path, ["tokens"] = result.Tokens, ["documents"] = result.Documents, ["bytes"] = result.Bytes, ["type"] = type.ToString(),
+            ["path"] = result.Path, ["tokens"] = result.Tokens, ["documents"] = result.Documents, ["bytes"] = result.Bytes, ["type"] = result.Type.ToString(),
             ["separator"] = separator, ["seconds"] = Math.Round(watch.Elapsed.TotalSeconds, 3),
         });
         return ExitCodes.Ok;
+    }
+
+    /// <summary>A token type option: null (not given) or auto for the file's own choice, else u8, u16, i32 or u32.</summary>
+    internal static TokenType? ParseType(string option, string? text)
+    {
+        if (text is null || text.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        try
+        {
+            return TokenFileRecord.Parse(text);
+        }
+        catch (ArgumentException)
+        {
+            throw new UsageException($"{option} is auto, u8, u16, i32 or u32, not '{text}'.");
+        }
     }
 }

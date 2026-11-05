@@ -1,0 +1,8 @@
+{
+ "documents": 96,
+ "format": "idrak-tokens/1",
+ "separator": 2,
+ "tokens": 25515,
+ "type": "UInt16",
+ "vocabulary": 512
+}

@@ -120,7 +120,8 @@ internal static class Seq2SeqRun
 
         CheckChoice(choice, model, architecture);
         var (beams, penalty) = Beams(context);
-        var layout = ModelChoices.CacheLayout(choice);
+        // Auto keeps the run's type: an encoder-decoder load computes in float32 (its weights take no element type choice yet).
+        var layout = ModelChoices.CacheLayout(choice, Idrak.Abstraction.ElementType.Float32);
         var device = context.Device;
         var watch = Stopwatch.StartNew();
         PretrainedSeq2SeqModel loaded;

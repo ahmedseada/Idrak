@@ -30,7 +30,7 @@ internal sealed class ChatCommand : Command
           -w, --weights FORMAT   int8, int4, bf16 or a registered packed format (default: auto)
           --head-weights F       the output head's format beside -w (bf16: the checkpoint's own scores and one
                                  vocabulary table for tied models, less memory than int8/int4 heads, slower)
-          -k, --kv FORMAT        KV cache format: float32, int8, bfloat16 or a registered one (default float32)
+          -k, --kv FORMAT        KV cache format: float32, int8, bfloat16 or a registered one (default: the run's type)
               --context N        context window in tokens (default 4096, at most the model's)
               --adapter DIR      merge a LoRA adapter into the weights as they are read; one tuned on images
                                  (idrak tune) brings its trained projector and image preparation too
