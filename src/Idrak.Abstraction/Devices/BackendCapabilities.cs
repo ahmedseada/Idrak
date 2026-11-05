@@ -93,7 +93,8 @@ public sealed record BackendCapabilities
     /// Per operation, the value types its kernel on this device reads and writes without a conversion (plan 37, decision 8:
     /// activations in the run's type), each backend's own report from its kernels and what the device reports at run time;
     /// an operation not listed takes <see cref="DefaultValueTypes"/>. The dispatcher converts a storage of another type for
-    /// the call once, counts it and says so in the telemetry (<see cref="ElementTypes.Conversions"/>). Default: none listed.
+    /// the call once, counts it and says so in the telemetry (<see cref="ElementTypes.Conversions"/>); an operation with no
+    /// types reported here or in <see cref="DefaultValueTypes"/> takes its storages as given. Default: none listed.
     /// </summary>
     public IReadOnlyDictionary<Operations.Operation, IReadOnlyList<ElementType>> ValueTypes { get; init; } = new Dictionary<Operations.Operation, IReadOnlyList<ElementType>>();
 

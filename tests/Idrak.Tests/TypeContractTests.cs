@@ -17,6 +17,17 @@ internal abstract partial class DesktopTests : Tests
         var backend = device.Backend;
         float[] values = [0.5f, -1.25f, 3f, 100f, -0.0078125f, 2f];
         var accepted = backend.ValueTypesOf(Ops.Unary);
+        if (accepted.Count == 0)
+        {
+            // No value types reported for the operation: its kernel takes its storages as given, nothing converted.
+            using var given = Tensor.FromValues(values, [values.Length], ElementType.BFloat16, device);
+            using var same = Tensor.FromValues(new float[values.Length], [values.Length], ElementType.BFloat16, device);
+            long was = ElementTypes.Conversions;
+            backend.Unary(UnaryOp.Tanh, given.Storage, same.Storage, 0);
+            Check(ElementTypes.Conversions == was, $"{device}: no value types reported for Unary, so no conversion: {ElementTypes.Conversions - was}");
+            return;
+        }
+
         if (accepted.Contains(ElementType.BFloat16))
         {
             return;                                                        // the device's kernel takes bfloat16: nothing to convert

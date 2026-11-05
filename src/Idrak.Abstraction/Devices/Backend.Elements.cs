@@ -77,13 +77,15 @@ public abstract partial class Backend
 
     /// <summary>
     /// The value types <paramref name="operation"/>'s kernel on this device reads and writes without a conversion
-    /// (<see cref="BackendCapabilities.ValueTypesOf"/>); float32 where the device reports none, what every kernel took
-    /// before the reports (decision 8). The dispatcher converts a value storage of another type into the first.
+    /// (<see cref="BackendCapabilities.ValueTypesOf"/>), the first being the one the dispatcher converts a value storage of
+    /// another type into (decision 8). Empty where the device reports none for the operation: its kernel takes its
+    /// storages as given, as every kernel did before the reports (some read a 16-bit storage on purpose), so nothing is
+    /// converted for it and no type is assumed in its place.
     /// </summary>
     public IReadOnlyList<ElementType> ValueTypesOf(Operation operation)
     {
         ArgumentNullException.ThrowIfNull(operation);
-        return operation.IsPlugin ? ValueTypesFrom(Capabilities.ValueTypesOf(operation)) : ValueTypesAt(operation.Index);
+        return operation.IsPlugin ? Capabilities.ValueTypesOf(operation) : ValueTypesAt(operation.Index);
     }
 
     // The value types of each library operation on this device, read once from its capabilities.
@@ -97,15 +99,11 @@ public abstract partial class Backend
         var types = new IReadOnlyList<ElementType>[OperationIndex.Count];
         foreach (var operation in Ops.All)
         {
-            types[operation.Index] = ValueTypesFrom(capabilities.ValueTypesOf(operation));
+            types[operation.Index] = capabilities.ValueTypesOf(operation);
         }
 
         return _valueTypes = types;
     }
-
-    private static IReadOnlyList<ElementType> ValueTypesFrom(IReadOnlyList<ElementType> reported) => reported.Count > 0 ? reported : s_float32Values;
-
-    private static readonly IReadOnlyList<ElementType> s_float32Values = [ElementType.Float32];
 
     /// <summary>
     /// The storage <paramref name="operation"/>'s kernel reads in place of <paramref name="given"/> (an index storage of
@@ -173,7 +171,8 @@ public abstract partial class Backend
 /// converted once into the kernel's first value type, counted; after the call each converted one the kernel changed is
 /// converted back into the caller's storage (counted), so an output, or an input written in place, keeps its own type,
 /// and one the kernel only read is left as it was (its values never pass through another type and back). A storage given
-/// twice is converted once. Disposing gives the converted storages back.
+/// twice is converted once. Disposing gives the converted storages back. An operation the device reports no value types
+/// for takes every storage as given (<see cref="Backend.ValueTypesOf"/>).
 /// </summary>
 internal sealed class ValueConversions(Backend backend, Operation operation, int index) : IDisposable
 {
@@ -184,7 +183,7 @@ internal sealed class ValueConversions(Backend backend, Operation operation, int
     {
         var type = given.ElementType;
         var accepted = backend.ValueTypesAt(index);
-        if (Contains(accepted, type) || Reads(type))
+        if (accepted.Count == 0 || Contains(accepted, type) || Reads(type))
         {
             return given;
         }
