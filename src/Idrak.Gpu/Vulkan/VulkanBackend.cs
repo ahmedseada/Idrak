@@ -329,6 +329,11 @@ internal sealed unsafe partial class VulkanBackend : Backend
         SpanAttentionHeadDim = VulkanKernels.AttentionMaxDim,              // VulkanBackend.Spans.cs: larger heads take the host fallback
         StoresAnyFormat = false,                                           // weights kept as stored: the types it expands itself (plan 37, Q0)
         StoredFormats = StoredTypes,
+        // Decisions 7 and 8 (plan 37), its own report: every kernel reads and writes float32 values (storage buffers of
+        // float words) and sums in float32, the cooperative-matrix products too (bfloat16 or 16-bit float operands,
+        // float32 accumulators).
+        DefaultValueTypes = [ElementType.Float32],
+        DefaultSumTypes = [ElementType.Float32],
     };
 
     /// <summary>The number of usable Vulkan devices (0 when there is no loader or driver).</summary>

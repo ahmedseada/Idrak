@@ -448,7 +448,7 @@ internal abstract partial class Tests
             return;                                                              // nothing device-specific: once
         }
 
-        var documented = Idrak.Gpu.Cuda.CudaDeviceLimits.Documented(8, 6, 30);
+        var documented = CudaLimitFixtures.Documented(8, 6, 30);
         var old = documented with { SharedPerBlockOptin = 48 << 10 };
         for (int d = 8; d <= Idrak.Gpu.Cuda.PtxKernels.SpanMaxDim; d += d < Idrak.Gpu.Cuda.PtxKernels.FlashMaxDim ? 8 : 16)
         {

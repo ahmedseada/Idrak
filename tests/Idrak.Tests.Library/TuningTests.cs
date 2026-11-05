@@ -737,14 +737,14 @@ internal abstract partial class Tests
         // The cards the defaults were measured on, and the other compute capabilities as documented.
         var cards = new (string Name, CudaDeviceLimits Limits)[]
         {
-            ("12.0, 70 SMs", CudaDeviceLimits.Documented(12, 0, 70, 16L << 30, 48 << 20)),
-            ("12.0, 20 SMs", CudaDeviceLimits.Documented(12, 0, 20, 8L << 30, 32 << 20)),
-            ("8.6, 30 SMs", CudaDeviceLimits.Documented(8, 6, 30, 6L << 30, 3 << 20)),
-            ("8.0", CudaDeviceLimits.Documented(8, 0, 108)),
-            ("8.9", CudaDeviceLimits.Documented(8, 9, 76)),
-            ("9.0", CudaDeviceLimits.Documented(9, 0, 132)),
-            ("10.0", CudaDeviceLimits.Documented(10, 0, 148)),
-            ("7.5", CudaDeviceLimits.Documented(7, 5, 40)),
+            ("12.0, 70 SMs", CudaLimitFixtures.Documented(12, 0, 70, 16L << 30, 48 << 20)),
+            ("12.0, 20 SMs", CudaLimitFixtures.Documented(12, 0, 20, 8L << 30, 32 << 20)),
+            ("8.6, 30 SMs", CudaLimitFixtures.Documented(8, 6, 30, 6L << 30, 3 << 20)),
+            ("8.0", CudaLimitFixtures.Documented(8, 0, 108)),
+            ("8.9", CudaLimitFixtures.Documented(8, 9, 76)),
+            ("9.0", CudaLimitFixtures.Documented(9, 0, 132)),
+            ("10.0", CudaLimitFixtures.Documented(10, 0, 148)),
+            ("7.5", CudaLimitFixtures.Documented(7, 5, 40)),
         };
         foreach (var (name, limits) in cards)
         {
@@ -759,7 +759,7 @@ internal abstract partial class Tests
         Check(sharedBytes["sum_f32"] == 256 * 4 && sharedBytes["norm_stats_f32"] == 2 * 256 * 4 && sharedBytes["fill_f32"] == 0, "static shared memory read from the PTX");
 
         // A device with larger blocks: the shape-generic kernels take them, the others keep their geometry.
-        var large = CudaDeviceLimits.Documented(12, 0, 70) with { MaxThreadsPerBlock = 2048 };
+        var large = CudaLimitFixtures.Documented(12, 0, 70) with { MaxThreadsPerBlock = 2048 };
         var wide = KernelShapes.Derive(large, out string? largeReason);
         Check(wide is { BlockSize: 512, SamplerThreads: 2048, MaxWarpsPerBlock: 64 }, $"2048 threads per block: larger shapes ({largeReason})");
         string source = PtxKernels.SourceFor(wide!);
@@ -850,7 +850,7 @@ internal abstract partial class Tests
 
         // Tensor-core modules: judged by the shared memory a block may use (static, and with opting in).
         var modules = PtxKernels.TensorCoreModules.ToDictionary(m => m.Name, m => m.Source);
-        var ampere = CudaDeviceLimits.Documented(8, 6, 30);
+        var ampere = CudaLimitFixtures.Documented(8, 6, 30);
         Check(modules.Values.All(m => PtxKernels.Fits(m, ampere) is null), "every tensor-core module fits 8.6 (99 KiB per block)");
         var tight = ampere with { SharedPerBlockOptin = 48 << 10 };
         Check(PtxKernels.Fits(modules["products"], tight) is null, "the products need no more than 48 KiB");

@@ -128,6 +128,10 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
     {
         IndexType = ElementType.Int32, StoresAnyFormat = false,
         NativeTypes = [ElementType.Float32], NativeReport = "the HIP kernels compute float32 (no 16-bit products are built in GCN yet)",
+        // Decisions 7 and 8 (plan 37), its own report: the GCN kernels read and write float32 values and sum in float32,
+        // as the host fallback (the CPU's code) does.
+        DefaultValueTypes = [ElementType.Float32],
+        DefaultSumTypes = [ElementType.Float32],
     };
 
     /// <summary>"6.2.41134" for a runtime version 60241134 (major · 10⁷ + minor · 10⁵ + patch).</summary>

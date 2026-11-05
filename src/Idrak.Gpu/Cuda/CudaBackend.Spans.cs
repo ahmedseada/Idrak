@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
 using System.Text;
+using Idrak.Abstraction.Operations;
 using static Idrak.Gpu.Cuda.CudaDriver;
 
 namespace Idrak.Gpu.Cuda;
@@ -56,7 +57,13 @@ internal sealed unsafe partial class CudaBackend
         ulong lse = logSumExp is null ? 0UL : P(logSumExp);
         int td = PtxKernels.SpanTensorDim(dim);
         Span<int> candidates = stackalloc int[2 * PtxKernels.SpanTensorWarps.Length];
-        if (variant.Softcap <= 0f && MixedPrecision.UsesTensorCores && td > 0 && SpanTensorCandidates(dim, kvHeads, keyRows, candidates) is > 0 and var count)
+        if (variant.Softcap <= 0f && td > 0 && MixedPrecision.Current is not MatMulPrecision.BFloat16)
+        {
+            // A reduced precision without span tensor kernels (fp8, float16): the float32 kernels, counted, never the
+            // bfloat16 ones in its place (ReducedPrecision).
+            ReducedPrecision.InFloat32(this, Ops.AttentionSpans, (long)heads * rows * dim + 2L * kvHeads * keyRows * dim);
+        }
+        else if (variant.Softcap <= 0f && td > 0 && SpanTensorCandidates(dim, kvHeads, keyRows, candidates) is > 0 and var count)
         {
             var key = new TuneKey(TuneOp.SpanKernel, dim, heads, TuneSizes.Class(rows), TuneSizes.Class(keyRows), kvHeads, headsPerTable);
             int chosen = SpanTensorForced is int forced && candidates[..count].Contains(forced) ? forced
@@ -256,7 +263,7 @@ internal sealed unsafe partial class CudaBackend
         var outputs = SpanLayout.Rows(heads, rows, heads * dim, dim);
         ulong qp = P(q) + (ulong)qOffset * 4, kp = P(k) + (ulong)kOffset * 4, vp = P(v) + (ulong)vOffset * 4;
         int td = PtxKernels.SpanTensorDim(dim);
-        if (MixedPrecision.UsesTensorCores && td > 0 && SpanTensorCandidates(dim, allKv, rows, stackalloc int[2 * PtxKernels.SpanTensorWarps.Length]) > 0)
+        if (BFloat16Products && td > 0 && SpanTensorCandidates(dim, allKv, rows, stackalloc int[2 * PtxKernels.SpanTensorWarps.Length]) > 0)
         {
             // Candidates: 0 = the copies and AttentionSpans (its own measured kernel), or SpanPipelined + warps.
             Span<int> candidates = stackalloc int[1 + PtxKernels.SpanTensorWarps.Length];

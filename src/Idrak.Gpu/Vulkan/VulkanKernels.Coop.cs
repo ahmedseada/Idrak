@@ -23,21 +23,22 @@ namespace Idrak.Gpu.Vulkan;
 // than float32 rounding would. (An infinite input, whose row or column is lost anyway, may give NaN where the float32
 // kernels give an infinity: its low part is 0 and infinity · 0 is NaN.)
 //
-// Reduced precision (CoopPrecision.BFloat16 and Float16), only for products the user asked to run in reduced precision
-// (MixedPrecision.BFloat16 or Float8, as on CUDA): one matrix product per step instead of three, each operand rounded
+// Reduced precision (CoopPrecision.BFloat16 and Float16), each only for products the run asked in that type
+// (MixedPrecision.BFloat16, Float16): one matrix product per step instead of three, each operand rounded
 // once to the nearest value, ties to even (in integer arithmetic, so the result does not depend on how the device
 // rounds conversions), the sums in float32.
-//   - bfloat16 operands, on devices that report bfloat16 cooperative matrices: what MatMulPrecision.BFloat16 states and
+//   - bfloat16 operands (MatMulPrecision.BFloat16), on devices that report bfloat16 cooperative matrices: what MatMulPrecision.BFloat16 states and
 //     the CUDA tensor cores compute, every operand rounded to bfloat16 (8 significant bits, float32's exponent range, so
 //     no scaling pass) and summed in float32. A bfloat16 or int8 weight is exact; an int4 weight times its scale is
 //     rounded like any operand.
-//   - 16-bit float operands, on devices with float16 cooperative matrices only: the lines scaled by powers of two as
+//   - 16-bit float operands (MatMulPrecision.Float16), on devices that report float16 cooperative matrices: the lines scaled by powers of two as
 //     above, then each operand rounded once to a 16-bit float: 11 significant bits for every value within 2^-29 of its
 //     line's largest magnitude (bfloat16 keeps 8), fewer below that, 0 below about 2^-39 of it. Each term's error is at
 //     most a quarter of what bfloat16 rounding allows, plus, for such small values, less than 2^-39 of the line's
 //     largest magnitude times the other operand (far below float32's resolution of the sum): the error bound of
 //     MatMulPrecision.BFloat16 holds, but the bits are not bfloat16's (the outputs are closer to float32).
-// FP8 matrices are not used: MatMulPrecision.Float8 takes the same path, as it takes bfloat16 on CUDA GPUs without FP8.
+// FP8 matrices are not used: MatMulPrecision.Float8 has no kernel here, so its products run the float32 kernels, counted
+// as conversions (ReducedPrecision), never bfloat16 or 16-bit float operands in fp8's place.
 internal static partial class VulkanKernels
 {
     /// <summary>How a cooperative-matrix product treats its float32 operands.</summary>

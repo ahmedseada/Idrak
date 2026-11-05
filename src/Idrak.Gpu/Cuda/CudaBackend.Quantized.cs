@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Operations;
 using static Idrak.Gpu.Cuda.CudaDriver;
 
 namespace Idrak.Gpu.Cuda;
@@ -336,7 +337,7 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
     bool IFusedPackedKernels.PrefersPackedMatMul(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k)
     {
         using var operation = EnterOperation();                            // addresses read until the work is queued (the move guard)
-        if (format != PackedFormat.Int8 || m < 2 || n < 64 || k < 32 || !MixedPrecision.UsesTensorCores)
+        if (format != PackedFormat.Int8 || m < 2 || n < 64 || k < 32 || !BFloat16Products)
         {
             return false;
         }
@@ -415,11 +416,12 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
             return false;
         }
 
-        // Tensor cores (MixedPrecision): the weights unpacked into the bfloat16 tiles as they are loaded.
+        // Tensor cores (MixedPrecision.BFloat16): the weights unpacked into the bfloat16 tiles as they are loaded. Another
+        // reduced precision (fp8, float16) has no packed product here: float32 tiles below, counted (ReducedPrecision).
         int tileRows = PromptTileRows(m);
         int packedVariant = (int)format * 2 + (tileRows == 64 ? 1 : 0);
         string packedKernel = PackedTensorKernels[packedVariant];
-        if (MixedPrecision.UsesTensorCores && k >= 32 && TensorKernel(packedKernel) is { } tensor)
+        if (BFloat16Products && k >= 32 && TensorKernel(packedKernel) is { } tensor)
         {
             int perWord = format.ValuesPerWord();
             if (_profile is not null)
@@ -441,6 +443,11 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
         }
 
         // Without tensor cores: 128 × 128 tiles when that still gives every SM a block, else 64 × 64, measured per shape.
+        if (k >= 32)
+        {
+            ReducedPrecision.InFloat32(this, Ops.PackedMatMulLarge, (long)m * k + (long)k * n);
+        }
+
         string formatName = format.KernelName();
         long tiles128 = (long)((m + 127) / 128) * ((n + 127) / 128);
         void RunTiles(int tile) =>
@@ -460,7 +467,7 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
     public override void PackedMatMulEpilogueKernel(PackedFormat format, Storage x, Storage packed, Storage? scales, Storage y, int m, int n, int k, Storage? bias,
         Storage? residual, bool gelu)
     {
-        if (format != PackedFormat.BFloat16 || m <= PtxKernels.GemvRows || n < 64 || k < 32 || !MixedPrecision.UsesTensorCores
+        if (format != PackedFormat.BFloat16 || m <= PtxKernels.GemvRows || n < 64 || k < 32 || !BFloat16Products
             || gelu && (bias is null || residual is not null))
         {
             base.PackedMatMulEpilogueKernel(format, x, packed, scales, y, m, n, k, bias, residual, gelu);
@@ -510,7 +517,7 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
     private bool PackedManyLarge(PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage? Bias, Storage Output, int Columns)> products)
     {
-        if (products.Length is < 2 or > 3 || m < 64 || k < 32 || !MixedPrecision.UsesTensorCores)
+        if (products.Length is < 2 or > 3 || m < 64 || k < 32 || !BFloat16Products)
         {
             return false;
         }
@@ -568,8 +575,7 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
     bool IFusedPackedKernels.PackedMatMulLowRank(PackedFormat format, Storage x, int m, int k,
         ReadOnlySpan<(Storage Packed, Storage? Scales, Storage Output, int Columns, Storage U, Storage V)> products, int rank)
     {
-        if (products.Length is < 1 or > 3 || format is not (PackedFormat.Int4 or PackedFormat.BFloat16) || m < 64 || k < 32 || rank is < 1 or > 32 || !MixedPrecision.UsesTensorCores
-            || MixedPrecision.Current == MatMulPrecision.Float8)
+        if (products.Length is < 1 or > 3 || format is not (PackedFormat.Int4 or PackedFormat.BFloat16) || m < 64 || k < 32 || rank is < 1 or > 32 || !BFloat16Products)
         {
             return false;
         }
@@ -1146,7 +1152,7 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
     public override void AttentionTiledKernel(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage? logSumExp, int heads,
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant = default)
     {
-        if (variant.IsPlain && FlashTensorCore(dim) is { } tc)
+        if (variant.IsPlain && FlashTensorCore(dim, Ops.AttentionTiled, (long)heads * (rowsPerHead + 2L * steps) * dim) is { } tc)
         {
             Launch(tc[FlashNames(dim).Forward], (uint)((rowsPerHead + PtxKernels.FlashTensorRows - 1) / PtxKernels.FlashTensorRows), (uint)heads, 1, 128, 1,
                 [P(q), P(keys), P(values), P(position), P(y), logSumExp is null ? 0UL : P(logSumExp),
@@ -1186,7 +1192,9 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
     bool IMatrixUnitBackend.AttentionStrided(Storage q, long qOffset, Storage k, long kOffset, Storage v, long vOffset, int qRow, int kRow,
         Storage y, Storage? logSumExp, int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
-        if (!PtxKernels.FlashTensorDim(dim) || !FlashKernelsLoaded(dim))
+        // The bfloat16 flash kernels; an fp8 run (no fp8 flash kernels) gets the caller's composed attention (its products
+        // on the fp8 kernels or in float32, counted), never the bfloat16 kernels in fp8's place.
+        if (MixedPrecision.Current == MatMulPrecision.Float8 || !PtxKernels.FlashTensorDim(dim) || !FlashKernelsLoaded(dim))
         {
             return false;
         }
@@ -1203,7 +1211,7 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
         Storage y, Storage logSumExp, Storage dOutput, Storage dq, long dqOffset, Storage dk, long dkOffset, Storage dv, long dvOffset,
         int batch, int kvHeads, int group, int steps, int dim, float scale)
     {
-        if (!PtxKernels.FlashTensorDim(dim) || !FlashKernelsLoaded(dim))
+        if (MixedPrecision.Current == MatMulPrecision.Float8 || !PtxKernels.FlashTensorDim(dim) || !FlashKernelsLoaded(dim))   // as AttentionStrided
         {
             return false;
         }
@@ -1255,9 +1263,29 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
         }
     }
 
-    // The tensor-core flash kernels when MixedPrecision asks for bfloat16 and the head size and GPU allow them.
-    private Dictionary<string, IntPtr>? FlashTensorCore(int dim) =>
-        MixedPrecision.UsesTensorCores && PtxKernels.FlashTensorDim(dim) && FlashKernelsLoaded(dim) ? _tensorCoreAny : null;
+    // The tensor-core flash kernels (bfloat16) when MixedPrecision asks for bfloat16 and the head size and GPU allow them.
+    // A call that runs (`running`; null for a question) at a head size they serve, in a reduced precision without them
+    // (fp8 and float16 have no flash kernels here; bfloat16 where they did not load), takes the float32 kernels, counted
+    // (ReducedPrecision): never the bfloat16 kernels in another type's place.
+    private Dictionary<string, IntPtr>? FlashTensorCore(int dim, Operation? running = null, long elements = 0)
+    {
+        if (MixedPrecision.Current == MatMulPrecision.Float32 || !PtxKernels.FlashTensorDim(dim))
+        {
+            return null;
+        }
+
+        if (BFloat16Products && FlashKernelsLoaded(dim))
+        {
+            return _tensorCoreAny;
+        }
+
+        if (running is not null)
+        {
+            ReducedPrecision.InFloat32(this, running, elements);
+        }
+
+        return null;
+    }
 
     private bool FlashKernelsLoaded(int dim) =>
         TensorKernel(FlashNames(dim).Forward) is not null && TensorKernel(FlashNames(dim).BackwardQ) is not null
@@ -1282,7 +1310,7 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
         try
         {
             Launch1D(K("attn_bwd_d_f32"), rows, P(output), P(dOutput), P(delta), U(dim), U(rows));
-            if (variant.IsPlain && FlashTensorCore(dim) is { } tc)
+            if (variant.IsPlain && FlashTensorCore(dim, Ops.AttentionTiledBackward, (long)heads * (rowsPerHead + 2L * steps) * dim) is { } tc)
             {
                 var layout = ContiguousLayout(rowsPerHead, steps, capacity, dim);
                 t_sharedBytes = (uint)PtxKernels.FlashTensorBackwardKvShared(dim);
@@ -1320,7 +1348,7 @@ internal sealed unsafe partial class CudaBackend : IFusedPackedKernels, ISegment
     bool IRowAttentionBackend.AttentionRows(Storage q, Storage keys, Storage values, Storage position, Storage y, Storage starts, int heads, int headsPerRow,
         int rowsPerHead, int steps, int capacity, int dim, float scale, AttentionVariant variant)
     {
-        if (!variant.IsPlain || FlashTensorCore(dim) is not { } tc)
+        if (!variant.IsPlain || FlashTensorCore(dim, Ops.AttentionRows, (long)heads * (rowsPerHead + 2L * steps) * dim) is not { } tc)
         {
             if (dim > PtxKernels.DecodeMaxDim)
             {

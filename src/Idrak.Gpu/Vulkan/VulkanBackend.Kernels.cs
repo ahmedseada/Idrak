@@ -4,6 +4,7 @@
 using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Numerics;
+using Idrak.Abstraction.Operations;
 
 namespace Idrak.Gpu.Vulkan;
 
@@ -897,6 +898,12 @@ internal sealed partial class VulkanBackend : IKernelAvailability
         int mixed = WithWidth(Width, MatMixed);
         if (!MatValid(mixed, m, n))
         {
+            if (MixedPrecision.Current != MatMulPrecision.Float32 && MixedKernel(null) is null)
+            {
+                // No kernel of the asked type here: float32, counted (ReducedPrecision).
+                ReducedPrecision.InFloat32(this, Ops.BatchedMatMul, (long)batch * ((long)m * k + (long)k * n));
+            }
+
             return chosen;
         }
 

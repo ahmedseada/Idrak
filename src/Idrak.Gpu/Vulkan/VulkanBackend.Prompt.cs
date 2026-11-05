@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using Idrak.Abstraction.Operations;
+
 namespace Idrak.Gpu.Vulkan;
 
 // Prompt processing (many rows at once) as kernels: attention over many query rows (attention_tiled, with each row's
@@ -184,6 +186,12 @@ internal sealed partial class VulkanBackend
         }
 
         int choice = Float32PromptChoice(format, x, weights, scales, y, m, n, k);
+        if (choice != 0 && MixedPrecision.Current != MatMulPrecision.Float32 && MixedKernel(format) is null)
+        {
+            // No kernel of the asked type here: float32, counted (ReducedPrecision).
+            ReducedPrecision.InFloat32(this, Ops.PackedMatMulLarge, (long)m * k + (long)k * n);
+        }
+
         if (choice == 0 || !mixedFits || PackedPromptKernel is not null)
         {
             return choice;

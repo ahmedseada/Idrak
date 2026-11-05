@@ -4,6 +4,7 @@
 using System.Collections.Frozen;
 using System.Runtime.InteropServices;
 using System.Text;
+using Idrak.Abstraction.Operations;
 using static Idrak.Gpu.Cuda.CudaDriver;
 
 namespace Idrak.Gpu.Cuda;
@@ -179,12 +180,22 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         TiledAttentionHeadDim = PtxKernels.FlashMaxDim,
         SpanAttentionHeadDim = PtxKernels.FlashMaxDim,                     // set from the device's limits (SpanHeadDim) once they are read
         IndexType = ElementType.Int32,                                      // indices, token ids and offsets (plan 37, T1b: the int32 kernels)
+        // Decisions 7 and 8 (plan 37), from the kernels: every kernel reads and writes float32 values (a reduced precision
+        // rounds operands inside the product's tiles, its storage stays float32), and sums in float32: the products,
+        // on tensor cores too (bfloat16 or fp8 operands, float32 accumulators), the reductions, norms and attention (the
+        // CTC loss keeps its rows in float32 and only their running offsets in float64).
+        DefaultValueTypes = [ElementType.Float32],
+        DefaultSumTypes = [ElementType.Float32],
     };
 
     bool IMatrixUnitBackend.AttentionHeadDim(int dim) => PtxKernels.FlashTensorDim(dim);
 
     string? IMatrixUnitBackend.TensorCoresUnavailable() =>
         TensorCoreKernels() is null ? TensorCoreUnavailableReason ?? "the tensor-core products did not load" : null;
+
+    // Whether the thread's MixedPrecision asks for bfloat16 products: the only mode the bfloat16 tensor-core kernels serve
+    // (an fp8 run takes the fp8 kernels where they loaded and float32 elsewhere, counted: ReducedPrecision).
+    private static bool BFloat16Products => MixedPrecision.Current == MatMulPrecision.BFloat16;
 
     // A loaded tensor-core kernel by name, or null.
     private IntPtr? TensorKernel(string name)
@@ -1344,8 +1355,13 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         // tokens, which the 16 × 16 float kernel ran at 0.1 TFLOPS with 8 blocks.)
         bool skinny = batch == 1 && Math.Min(m, n) >= 8 && k >= 16
             && (Math.Max(m, n) >= 256 && (long)m * n * k >= 1 << 24 || Math.Max(m, n) >= 64 && k >= 2048);
-        var tensorCore = !few && (large || skinny) && MixedPrecision.UsesTensorCores ? TensorCoreKernels() : null;
-        if (tensorCore is not null && large && MixedPrecision.Current == MatMulPrecision.Float8 && EightBitReady(fp8: true) && batch <= 64)
+        // Each precision on its own kernels: fp8 products on the fp8 kernels (large ones, where they loaded), bfloat16 on
+        // the bfloat16 ones; a reduced precision without a kernel here for the call runs float32, counted
+        // (ReducedPrecision), never another reduced type in its place.
+        var precision = MixedPrecision.Current;
+        bool reduced = !few && (large || skinny) && precision != MatMulPrecision.Float32;
+        var tensorCore = reduced && precision is MatMulPrecision.BFloat16 or MatMulPrecision.Float8 ? TensorCoreKernels() : null;
+        if (tensorCore is not null && large && precision == MatMulPrecision.Float8 && EightBitReady(fp8: true) && batch <= 64)
         {
             for (int i = 0; i < batch; i++)
             {
@@ -1354,6 +1370,16 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
             }
 
             return;
+        }
+
+        if (precision != MatMulPrecision.BFloat16)
+        {
+            tensorCore = null;
+        }
+
+        if (reduced && tensorCore is null)
+        {
+            ReducedPrecision.InFloat32(this, Ops.BatchedMatMul, (long)batch * (long)(mk + kn));
         }
 
         if (tensorCore is not null && (transA || transB) && batch <= maxGridZ && PretransposeForTensorCores)
@@ -1498,8 +1524,15 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
             return false;
         }
 
-        if (MixedPrecision.Current == MatMulPrecision.Float8 && EightBitReady(fp8: true))
+        if (MixedPrecision.Current == MatMulPrecision.Float8)
         {
+            // fp8 on the fp8 kernels where they loaded; else the caller's composed product (float32, counted there),
+            // never the bfloat16 kernel in fp8's place.
+            if (!EightBitReady(fp8: true))
+            {
+                return false;
+            }
+
             Gemm8(true, P(a), k, false, P(b), n, false, P(c), n, m, n, k, 0f, P(bias), GemmEpilogue.None, 0UL);
             return true;
         }
@@ -1572,8 +1605,15 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
             return false;
         }
 
-        if (MixedPrecision.Current == MatMulPrecision.Float8 && EightBitReady(fp8: true) && k >= 16)
+        if (MixedPrecision.Current == MatMulPrecision.Float8)
         {
+            // fp8 on the fp8 kernels where they loaded; else the caller's composed products (float32, counted there),
+            // never the bfloat16 kernels in fp8's place.
+            if (!EightBitReady(fp8: true) || k < 16)
+            {
+                return false;
+            }
+
             Gemm8(true, P(a) + (ulong)aOffset * 4, lda, transA, P(b) + (ulong)bOffset * 4, ldb, transB, P(c) + (ulong)cOffset * 4, ldc, m, n, k, beta,
                 bias is null ? 0UL : P(bias), epilogue, aux is null ? 0UL : P(aux) + (ulong)auxOffset * 4);
             return true;
