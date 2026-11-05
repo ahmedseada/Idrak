@@ -19,7 +19,7 @@ internal abstract partial class Tests
     [
         ("gcn kernels: routing: every routing and expert kernel assembles for gfx90c, gfx906, gfx1030 and gfx1100 with its block of 256 declared, within its register budget, its printed text reading back to its bytes, with its profile cost; GcnKernels.All lists each once", GcnRoutingAssembled),
         ("gcn kernels: routing: route_choose_f32, route_counts_f32, route_offsets_f32 and route_place_f32 equal the CPU's RouteTopK bit for bit (weights normalized or not, ties to the lowest index, k of 1 and k of every expert, a NaN and -inf, tokens past two blocks, choices left as garbage before), the same bits on two grids and wave orders", GcnRoutingRoute),
-        ("gcn kernels: routing: expert_matmul_f32 and expert_gated_{silu,gelu,relu,tanh}_f32 equal the CPU's ExpertMatMul and ExpertGatedPair over rows grouped by expert (an empty expert, biases and none, odd widths, outputs past four blocks): the products and the ReLU pair bit for bit, the other activations within tolerance, the same bits on two grids and wave orders", GcnRoutingExperts),
+        ("gcn kernels: routing: expert_matmul_f32 and expert_gated_{silu,gelu,relu,tanh}_f32, each launch walking its experts, equal the CPU's ExpertMatMul and ExpertGatedPair over rows grouped by expert (an empty expert, biases and none, odd widths, outputs past four blocks): the products and the ReLU pair bit for bit, the other activations within tolerance, the same bits on two grids and wave orders and in launches of 3 experts or of 1", GcnRoutingExperts),
     ];
 
     private static readonly Dictionary<(string, GcnIsaVersion), (GcnKernelCode Code, GcnKernelImage Image)> routingKernels = [];
@@ -157,24 +157,39 @@ internal abstract partial class Tests
 
                     b.ExpertGatedPairKernel(s[0], s[1], pairs, s[^1], Rows, K, N, activation);
                 };
-                Action<GcnMemory, ulong[], (int X, int Y), ulong> gcn = (m, a, grid, seed) =>
+                // The experts in launches of `per` (each walking its experts: x, offsets, hidden; first, experts, k, n; then
+                // each expert's gate, gate bias, up and up bias, the slots past the launch's experts 0).
+                Action<GcnMemory, ulong[], (int X, int Y), ulong> Walk(int per) => (m, a, grid, seed) =>
                 {
-                    for (int e = 0; e < Experts; e++)
+                    for (int first = 0; first < Experts; first += per)
                     {
-                        int at = 2 + 4 * e;
-                        RoutingDispatch(name, isa, m, grid.X, seed, a[0], a[1], a[at], GateBiased(e) ? a[at + 1] : 0UL, a[at + 2], UpBiased(e) ? a[at + 3] : 0UL, a[^1],
-                            (ulong)e, K, N);
+                        int count = Math.Min(per, Experts - first);
+                        var values = new ulong[7 + 4 * GcnKernels.ExpertsPerLaunch];
+                        (values[0], values[1], values[2], values[3], values[4], values[5], values[6]) = (a[0], a[1], a[^1], (ulong)first, (ulong)count, (ulong)K, (ulong)N);
+                        for (int j = 0; j < count; j++)
+                        {
+                            int e = first + j, at = 2 + 4 * e;
+                            (values[7 + 4 * j], values[8 + 4 * j], values[9 + 4 * j], values[10 + 4 * j]) =
+                                (a[at], GateBiased(e) ? a[at + 1] : 0UL, a[at + 2], UpBiased(e) ? a[at + 3] : 0UL);
+                        }
+
+                        RoutingDispatch(name, isa, m, grid.X, seed, values);
                     }
                 };
                 string what = $"{name} ({isa}), {Rows} rows of {K} into {N} over {Experts} experts";
                 if (kind == 2)
                 {
-                    ShapesCase(what, gated, blocks, [gated.Length - 1], cpu, gcn);
+                    ShapesCase(what, gated, blocks, [gated.Length - 1], cpu, Walk(GcnKernels.ExpertsPerLaunch));
                 }
                 else
                 {
-                    RowsCase(what, gated, blocks, [gated.Length - 1], cpu, gcn, worst, name);
+                    RowsCase(what, gated, blocks, [gated.Length - 1], cpu, Walk(GcnKernels.ExpertsPerLaunch), worst, name);
                 }
+
+                // Launches of 3 experts and of 1 give one launch's bits.
+                float[][] together = RowsOnGcn(gated, (m, a) => Walk(GcnKernels.ExpertsPerLaunch)(m, a, (blocks, 1), 7));
+                RowsSameBits(together, RowsOnGcn(gated, (m, a) => Walk(3)(m, a, (2, 1), 3)), $"{what}, launches of 3 experts against one launch");
+                RowsSameBits(together, RowsOnGcn(gated, (m, a) => Walk(1)(m, a, (blocks, 1), 5)), $"{what}, a launch an expert against one launch");
             }
 
             // The products: x, offsets, then each expert's weight and bias (absent on expert 3), then y.
@@ -192,13 +207,27 @@ internal abstract partial class Tests
 
                     b.ExpertMatMulKernel(s[0], s[1], weights, s[^1], Rows, K, N);
                 },
-                (m, a, grid, seed) =>
+                Products(GcnKernels.ExpertsPerLaunch));
+            RowsSameBits(RowsOnGcn(products, (m, a) => Products(GcnKernels.ExpertsPerLaunch)(m, a, (blocks, 1), 7)),
+                RowsOnGcn(products, (m, a) => Products(3)(m, a, (2, 1), 3)), $"expert_matmul_f32 ({isa}), launches of 3 experts against one launch");
+
+            // The experts in launches of `per`: x, offsets, y; first, experts, k, n; then each expert's weight and bias.
+            Action<GcnMemory, ulong[], (int X, int Y), ulong> Products(int per) => (m, a, grid, seed) =>
+            {
+                for (int first = 0; first < Experts; first += per)
                 {
-                    for (int e = 0; e < Experts; e++)
+                    int count = Math.Min(per, Experts - first);
+                    var values = new ulong[7 + 2 * GcnKernels.ExpertsPerLaunch];
+                    (values[0], values[1], values[2], values[3], values[4], values[5], values[6]) = (a[0], a[1], a[^1], (ulong)first, (ulong)count, (ulong)K, (ulong)N);
+                    for (int j = 0; j < count; j++)
                     {
-                        RoutingDispatch("expert_matmul_f32", isa, m, grid.X, seed, a[0], a[1], a[2 + 2 * e], Biased(e) ? a[3 + 2 * e] : 0UL, a[^1], (ulong)e, K, N);
+                        int e = first + j;
+                        (values[7 + 2 * j], values[8 + 2 * j]) = (a[2 + 2 * e], Biased(e) ? a[3 + 2 * e] : 0UL);
                     }
-                });
+
+                    RoutingDispatch("expert_matmul_f32", isa, m, grid.X, seed, values);
+                }
+            };
         }
 
         RowsReport(worst);

@@ -2137,6 +2137,28 @@ internal static partial class GcnKernels
             return index;
         }
 
+        /// <summary>
+        /// Runs <paramref name="body"/> with i = index, index + grid, ... below <paramref name="count"/> (i in a fresh
+        /// register, the lanes past it left out), then gives the lanes back: a grid-stride loop that a kernel may run
+        /// several times (after <see cref="GridIndex"/>).
+        /// </summary>
+        public void StrideLoop(string count, string index, Action<string> body)
+        {
+            string i = V(), saved = SPair(), head = NewLabel(), done = NewLabel();
+            L($"v_mov_b32_e32 {i}, {index}");
+            L($"v_cmp_gt_u32_e32 vcc, {count}, {i}");
+            L($"s_and_saveexec_b64 {saved}, vcc");
+            L($"s_cbranch_execz {done}");
+            Label(head);
+            body(i);
+            L($"v_add_u32_e32 {i}, {_grid}, {i}");
+            L($"v_cmp_gt_u32_e32 vcc, {count}, {i}");
+            L($"s_and_b64 exec, exec, vcc");
+            L($"s_cbranch_execnz {head}");
+            Label(done);
+            L($"s_or_b64 exec, exec, {saved}");
+        }
+
         /// <summary>Runs <paramref name="body"/> for index, index + grid, ... below <paramref name="count"/>, the lanes past it left out; then the kernel's end.</summary>
         public void GridLoop(string count, string index, Action body)
         {

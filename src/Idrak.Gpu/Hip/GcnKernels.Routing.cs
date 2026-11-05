@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text;
 
 namespace Idrak.Gpu.Hip;
@@ -12,10 +13,13 @@ namespace Idrak.Gpu.Hip;
 //   the weights' sum added in that order and each weight divided by it (LLVM's correctly rounded division) when asked.
 // - route_counts_f32 (one work-item per expert), route_offsets_f32 (one work-item: the counts added in expert order),
 //   route_place_f32 (one work-item per expert: its rows in slot order): offsets, tokenOfRow and slotRow (int32).
-// - expert_gated_{silu,gelu,relu,tanh}_f32 and expert_matmul_f32: one launch per expert, whose grid-stride loop runs
-//   over its rows × n outputs (the count read from the offsets on the device); each output one fused multiply-add chain
-//   over k from zero, in order (rule 86, the CPU's product), the bias added after it (a null bias pointer: none), the
-//   gated activation as the CPU's (PointwiseWriter.Gated).
+// - expert_gated_{silu,gelu,relu,tanh}_f32 and expert_matmul_f32: one launch for up to ExpertsPerLaunch experts (plan 37,
+//   R0d). HIP has no launch sized by the device, so the launch walks its experts one after another. Each expert's
+//   addresses are read from the arguments' table, its rows from the offsets on the device, and the whole grid runs over
+//   its rows × n outputs grid-stride. So an expert without rows costs two reads, not a launch, and a mixture of up to 32
+//   experts takes one launch.
+//   Each output is one fused multiply-add chain over k from zero, in order (rule 86, the CPU's product). The bias is
+//   added after it (a null bias pointer means none), then the gated activation as gated_*_f32's (PointwiseWriter.Gated).
 // Every kernel walks its work grid-stride in blocks of ShapeBlock, as the shape kernels do; byte offsets are 32-bit (the
 // backend checks every buffer stays below 2^30 floats, else the host fallback).
 //
@@ -25,8 +29,8 @@ namespace Idrak.Gpu.Hip;
 // | route_counts_f32   | choices, counts; slots, n                                        | an expert's slot | 0          | 4            |
 // | route_offsets_f32  | counts, offsets; slots, experts, n                               | an expert        | 0          | 8            |
 // | route_place_f32    | choices, offsets, tokenOfRow, slotRow; slots, k, n               | an expert's slot | 0          | 4            |
-// | expert_gated_*_f32 | x, offsets, gate, gatebias, up, upbias, hidden; expert, k, n     | an output × k    | 4          | 16           |
-// | expert_matmul_f32  | x, offsets, weight, bias, y; expert, k, n                        | an output × k    | 2          | 8            |
+// | expert_gated_*_f32 | x, offsets, hidden; first, experts, k, n; per expert gate, gatebias, up, upbias | an output × k | 4 | 16 |
+// | expert_matmul_f32  | x, offsets, y; first, experts, k, n; per expert weight, bias     | an output × k    | 2          | 8            |
 internal static partial class GcnKernels
 {
     /// <summary>The expert gated pairs' kernels by the activation's kind (0 SiLU, 1 GELU, 2 ReLU, 3 tanh · sigmoid), as <see cref="GatedKinds"/>.</summary>
@@ -54,19 +58,45 @@ internal static partial class GcnKernels
         GcnArgument.Value(32, 4, "slots"), GcnArgument.Value(36, 4, "k"), GcnArgument.Value(40, 4, "n"),
     ];
 
-    /// <summary>An expert gated pair's arguments (gatebias and upbias: 0 for none).</summary>
-    internal static IReadOnlyList<GcnArgument> ExpertGatedArguments { get; } =
-    [
-        GcnArgument.Buffer(0, "x"), GcnArgument.Buffer(8, "offsets"), GcnArgument.Buffer(16, "gate"), GcnArgument.Buffer(24, "gatebias"), GcnArgument.Buffer(32, "up"),
-        GcnArgument.Buffer(40, "upbias"), GcnArgument.Buffer(48, "hidden"), GcnArgument.Value(56, 4, "expert"), GcnArgument.Value(60, 4, "k"), GcnArgument.Value(64, 4, "n"),
-    ];
+    /// <summary>
+    /// The experts one expert launch takes (plan 37, R0d): their weights' addresses are read from the arguments as the
+    /// launch walks them, an expert at a time. A mixture with more experts takes a launch for each such group.
+    /// </summary>
+    internal const int ExpertsPerLaunch = 32;
 
-    /// <summary>expert_matmul_f32's arguments (bias: 0 for none).</summary>
-    internal static IReadOnlyList<GcnArgument> ExpertMatMulArguments { get; } =
-    [
-        GcnArgument.Buffer(0, "x"), GcnArgument.Buffer(8, "offsets"), GcnArgument.Buffer(16, "weight"), GcnArgument.Buffer(24, "bias"), GcnArgument.Buffer(32, "y"),
-        GcnArgument.Value(40, 4, "expert"), GcnArgument.Value(44, 4, "k"), GcnArgument.Value(48, 4, "n"),
-    ];
+    // Bytes of an expert launch's arguments before its experts' addresses (x, offsets, the output; first, experts, k, n).
+    private const int ExpertTable = 40;
+
+    // Bytes of one expert's addresses: the gated pair's gate, gate bias, up and up bias; the product's weight and bias.
+    private const int GatedSlot = 32, ProductSlot = 16;
+
+    /// <summary>An expert gated pair's arguments: x, offsets, hidden; first, experts, k, n; then each expert's gate, gatebias, up and upbias (a bias 0 for none).</summary>
+    internal static IReadOnlyList<GcnArgument> ExpertGatedArguments => _expertGatedArguments ??= ExpertArguments(GatedSlot, ["gate", "gatebias", "up", "upbias"], "hidden");
+
+    private static GcnArgument[]? _expertGatedArguments;
+
+    /// <summary>expert_matmul_f32's arguments: x, offsets, y; first, experts, k, n; then each expert's weight and bias (0 for none).</summary>
+    internal static IReadOnlyList<GcnArgument> ExpertMatMulArguments => _expertMatMulArguments ??= ExpertArguments(ProductSlot, ["weight", "bias"], "y");
+
+    private static GcnArgument[]? _expertMatMulArguments;
+
+    private static GcnArgument[] ExpertArguments(int slot, string[] pointers, string output)
+    {
+        var list = new List<GcnArgument>
+        {
+            GcnArgument.Buffer(0, "x"), GcnArgument.Buffer(8, "offsets"), GcnArgument.Buffer(16, output),
+            GcnArgument.Value(24, 4, "first"), GcnArgument.Value(28, 4, "experts"), GcnArgument.Value(32, 4, "k"), GcnArgument.Value(36, 4, "n"),
+        };
+        for (int j = 0; j < ExpertsPerLaunch; j++)
+        {
+            for (int p = 0; p < pointers.Length; p++)
+            {
+                list.Add(GcnArgument.Buffer(ExpertTable + slot * j + 8 * p, string.Create(CultureInfo.InvariantCulture, $"{pointers[p]}{j}")));
+            }
+        }
+
+        return [.. list];
+    }
 
     /// <summary>The routing kernels, in the order they join <see cref="All"/>.</summary>
     internal static IReadOnlyList<GcnKernelSource> Routing => _routing ??=
@@ -375,7 +405,7 @@ internal static partial class GcnKernels
     }
 
     // The bounds of expert `expert`'s rows (offsets[expert], offsets[expert + 1], read on the scalar unit) and its outputs'
-    // count (rows · n): the grid-stride loop's bound.
+    // count (rows · n): the expert's grid-stride loop's bound.
     private static (string First, string Count) ExpertRows(ProductWriter w, string expert, string n)
     {
         string at = w.Offset64(w.Pointer("offsets"), expert), first = w.S(), end = w.S(), rows = w.S(), count = w.S();
@@ -387,7 +417,7 @@ internal static partial class GcnKernels
     }
 
     // `sum` = Σ over p < k of x[row · k + p] · w[p · n + col] (one fused chain from zero, p in order), then + bias[col]
-    // unless the bias pointer is 0; another weight's chain alongside when `other` is given (the gated pair's up side).
+    // unless the bias pointer is 0; several weights' chains side by side (the gated pair's gate and up).
     private static void ExpertChains(ProductWriter w, string x, string row, string col, string k, string n, (string Weight, string Bias, string Sum)[] chains)
     {
         string rowStart = w.V(), p = w.S(), pn = w.S();
@@ -425,27 +455,53 @@ internal static partial class GcnKernels
         }
     }
 
-    // One expert's gate and up projections over its rows and their gated activation into those rows of hidden.
+    // The experts first … first + experts - 1, one after another (a scalar loop: the whole grid on one expert at a time):
+    // each expert's addresses (`slot` bytes of the arguments' table, `dwords` of them) read into scalar registers, its rows
+    // and outputs from the offsets, and `body` (the expert's addresses' first register, its first row, the output) over
+    // its outputs grid-stride. An expert without rows costs its two offsets' reads.
+    private static void WalkExperts(ProductWriter w, int slot, string n, Action<int, string, string> body)
+    {
+        string first = w.Scalar("first"), experts = w.Scalar("experts");
+        string reciprocal = w.Reciprocal(n);
+        string index = w.GridIndex();
+        string j = w.S();
+        ScalarLoop(w, j, experts, () =>
+        {
+            string expert = w.S(), at = w.S();
+            int pointers = w.SRange(slot / 4);
+            w.L($"s_add_u32 {expert}, {first}, {j}");
+            w.L($"s_mul_i32 {at}, {j}, {slot}");
+            w.L($"s_add_u32 {at}, {at}, {ExpertTable}");
+            w.L($"s_load_dwordx{slot / 4} %s[{pointers}:{pointers + slot / 4 - 1}], {w.Kernarg}, {at}      ; the expert's addresses");
+            var (rowFirst, count) = ExpertRows(w, expert, n);
+            w.StrideLoop(count, index, i =>
+            {
+                var (offset, col) = w.DivMod(i, n, reciprocal);
+                string row = w.V();
+                w.L($"v_add_u32_e32 {row}, {rowFirst}, {offset}");
+                body(pointers, row, col);
+            });
+        });
+        w.L($"s_endpgm");
+    }
+
+    // A launch's experts' gate and up projections over their rows and the gated activation into those rows of hidden.
     private static GcnKernelSource ExpertGated(int kind)
     {
         var w = new ProductWriter(ExpertGatedKinds[kind]);
-        w.Head(ExpertGatedArguments, ShapeBlock, dispatch: true);
-        string x = w.Pointer("x"), hidden = w.Pointer("hidden"), expert = w.Scalar("expert"), k = w.Scalar("k"), n = w.Scalar("n");
+        w.Head(ExpertGatedArguments, ShapeBlock, dispatch: true, loadDwords: ExpertTable / 4);
+        string x = w.Pointer("x"), hidden = w.Pointer("hidden"), k = w.Scalar("k"), n = w.Scalar("n");
         var p = new PointwiseWriter(firstVector: 3000, firstScalar: 3000);
         var activation = new StringBuilder();
         p.Into(activation);
         string g = w.V(), u = w.V(), h = w.V();
         p.Gated(h, g, u, kind);
         w.Lines(p.Held);
-        var (first, count) = ExpertRows(w, expert, n);
-        string reciprocal = w.Reciprocal(n);
-        string index = w.GridIndex();
-        w.GridLoop(count, index, () =>
+        WalkExperts(w, GatedSlot, n, (pointers, row, col) =>
         {
-            var (offset, col) = w.DivMod(index, n, reciprocal);
-            string row = w.V(), outAt = w.V();
-            w.L($"v_add_u32_e32 {row}, {first}, {offset}");
-            ExpertChains(w, x, row, col, k, n, [(w.Pointer("gate"), w.Pointer("gatebias"), g), (w.Pointer("up"), w.Pointer("upbias"), u)]);
+            string Pair(int at) => string.Create(CultureInfo.InvariantCulture, $"%s[{pointers + at}:{pointers + at + 1}]");
+            string outAt = w.V();
+            ExpertChains(w, x, row, col, k, n, [(Pair(0), Pair(2), g), (Pair(4), Pair(6), u)]);
             w.Lines(activation);
             w.L($"v_mul_lo_u32 {outAt}, {row}, {n}");
             w.L($"v_add_u32_e32 {outAt}, {outAt}, {col}");
@@ -454,21 +510,17 @@ internal static partial class GcnKernels
         return w.Source();
     }
 
-    // One expert's product over its rows into those rows of y.
+    // A launch's experts' products over their rows into those rows of y.
     private static GcnKernelSource ExpertMatMul()
     {
         var w = new ProductWriter("expert_matmul_f32");
-        w.Head(ExpertMatMulArguments, ShapeBlock, dispatch: true);
-        string x = w.Pointer("x"), y = w.Pointer("y"), expert = w.Scalar("expert"), k = w.Scalar("k"), n = w.Scalar("n");
-        var (first, count) = ExpertRows(w, expert, n);
-        string reciprocal = w.Reciprocal(n);
-        string index = w.GridIndex();
-        w.GridLoop(count, index, () =>
+        w.Head(ExpertMatMulArguments, ShapeBlock, dispatch: true, loadDwords: ExpertTable / 4);
+        string x = w.Pointer("x"), y = w.Pointer("y"), k = w.Scalar("k"), n = w.Scalar("n");
+        WalkExperts(w, ProductSlot, n, (pointers, row, col) =>
         {
-            var (offset, col) = w.DivMod(index, n, reciprocal);
-            string row = w.V(), sum = w.V(), outAt = w.V();
-            w.L($"v_add_u32_e32 {row}, {first}, {offset}");
-            ExpertChains(w, x, row, col, k, n, [(w.Pointer("weight"), w.Pointer("bias"), sum)]);
+            string Pair(int at) => string.Create(CultureInfo.InvariantCulture, $"%s[{pointers + at}:{pointers + at + 1}]");
+            string sum = w.V(), outAt = w.V();
+            ExpertChains(w, x, row, col, k, n, [(Pair(0), Pair(2), sum)]);
             w.L($"v_mul_lo_u32 {outAt}, {row}, {n}");
             w.L($"v_add_u32_e32 {outAt}, {outAt}, {col}");
             StoreAt(w, sum, outAt, y);

@@ -246,9 +246,11 @@ internal sealed unsafe partial class VulkanBackend : IGraphCaptureBackend
         {
             SType = StructureMemoryBarrier,
             SourceAccessMask = AccessShaderWrite | AccessTransferWrite,
-            DestinationAccessMask = AccessShaderRead | AccessShaderWrite | AccessTransferRead | AccessTransferWrite | (toHost ? AccessHostRead | AccessHostWrite : 0),
+            DestinationAccessMask = AccessShaderRead | AccessShaderWrite | AccessTransferRead | AccessTransferWrite | AccessIndirectCommandRead
+                                    | (toHost ? AccessHostRead | AccessHostWrite : 0),
         };
-        vkCmdPipelineBarrier(commands, StageComputeShader | StageTransfer, StageComputeShader | StageTransfer | (toHost ? StageHost : 0), 0, 1, &barrier, 0, null, 0, null);
+        vkCmdPipelineBarrier(commands, StageComputeShader | StageTransfer, StageComputeShader | StageTransfer | StageDrawIndirect | (toHost ? StageHost : 0), 0, 1, &barrier, 0, null,
+            0, null);
         _span++;
         Barriers++;
     }

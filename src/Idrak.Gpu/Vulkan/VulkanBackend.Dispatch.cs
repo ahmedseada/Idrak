@@ -129,7 +129,7 @@ internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
     private ulong _boundPipeline;
 
     // The blocks of the command being recorded (reused: dispatches allocate nothing).
-    private readonly VulkanBlock[] _commandBlocks = new VulkanBlock[VulkanKernel.MaxBindings];
+    private readonly VulkanBlock[] _commandBlocks = new VulkanBlock[VulkanKernel.MaxBindings + 1];      // and an indirect dispatch's counts
 
     // The descriptors of the command being recorded, reused under _gate like _commandBlocks: a kernel binds up to
     // MaxBindings storages (a plug-in decides how many), too many for the stack on every dispatch.
@@ -217,11 +217,47 @@ internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
             return;
         }
 
+        Enqueue(kernel, groupsX, groupsY, groupsZ, storages, pushConstants, windows, counts: null, countsOffset: 0);
+    }
+
+    /// <summary>
+    /// Queues <paramref name="kernel"/> as <see cref="Dispatch"/> does, over the workgroup counts the device reads when it
+    /// runs: three uint32 (x, y, z) at byte <paramref name="countsOffset"/> of <paramref name="counts"/> (a multiple of 4),
+    /// written by work queued before (vkCmdDispatchIndirect). A count of zero dispatches nothing. Each count must stay
+    /// within the device's maxComputeWorkGroupCount; the kernel that writes them clamps them.
+    /// </summary>
+    internal void DispatchIndirect(VulkanKernel kernel, Storage counts, long countsOffset, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> pushConstants)
+    {
+        ArgumentNullException.ThrowIfNull(kernel);
+        ArgumentNullException.ThrowIfNull(counts);
+        if (storages.Length != kernel.Bindings || pushConstants.Length != kernel.PushConstantBytes)
+        {
+            throw new ArgumentException($"Vulkan kernel '{kernel.Name}' binds {kernel.Bindings} storages and takes {kernel.PushConstantBytes} bytes of push constants; {storages.Length} and {pushConstants.Length} given.");
+        }
+
+        if (countsOffset < 0 || countsOffset % 4 != 0 || countsOffset + 12 > 4L * counts.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(countsOffset), $"Vulkan kernel '{kernel.Name}': the counts at byte {countsOffset} are not three words within {4L * counts.Length} bytes.");
+        }
+
+        Enqueue(kernel, 0, 0, 0, storages, pushConstants, default, counts, countsOffset);
+    }
+
+    // Records a dispatch (Dispatch, DispatchIndirect): the counts' block, when indirect, joins the command's blocks as one
+    // it reads, so a barrier orders it after the command that wrote the counts.
+    private void Enqueue(VulkanKernel kernel, uint groupsX, uint groupsY, uint groupsZ, ReadOnlySpan<Storage> storages, ReadOnlySpan<byte> pushConstants,
+        ReadOnlySpan<long> windows, Storage? counts, long countsOffset)
+    {
         int bindings = kernel.Bindings;
         lock (_gate)
         {
             var pipeline = PipelineOf(kernel);
-            var blocks = _commandBlocks.AsSpan(0, bindings);
+            var blocks = _commandBlocks.AsSpan(0, bindings + (counts is null ? 0 : 1));
+            if (counts is not null)
+            {
+                blocks[bindings] = BlockOf(counts);
+            }
+
             fixed (VkDescriptorBufferInfo* buffers = _descriptorBuffers)
             fixed (VkWriteDescriptorSet* writes = _descriptorWrites)
             try
@@ -287,7 +323,14 @@ internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
                     }
                 }
 
-                vkCmdDispatch(commands, groupsX, groupsY, groupsZ);
+                if (counts is null)
+                {
+                    vkCmdDispatch(commands, groupsX, groupsY, groupsZ);
+                }
+                else
+                {
+                    vkCmdDispatchIndirect(commands, blocks[bindings].Buffer, (ulong)countsOffset);
+                }
             }
             finally
             {
@@ -434,9 +477,10 @@ internal sealed unsafe partial class VulkanBackend : IVulkanKernelDispatcher
             {
                 SType = StructureMemoryBarrier,
                 SourceAccessMask = AccessShaderWrite | AccessTransferWrite,
-                DestinationAccessMask = AccessShaderRead | AccessShaderWrite | AccessTransferRead | AccessTransferWrite,
+                // An indirect dispatch's counts are read before its shader runs (the draw-indirect stage).
+                DestinationAccessMask = AccessShaderRead | AccessShaderWrite | AccessTransferRead | AccessTransferWrite | AccessIndirectCommandRead,
             };
-            vkCmdPipelineBarrier(batch.Commands, StageComputeShader | StageTransfer, StageComputeShader | StageTransfer, 0, 1, &barrier, 0, null, 0, null);
+            vkCmdPipelineBarrier(batch.Commands, StageComputeShader | StageTransfer, StageComputeShader | StageTransfer | StageDrawIndirect, 0, 1, &barrier, 0, null, 0, null);
             _span++;
             Barriers++;
         }

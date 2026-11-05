@@ -659,7 +659,7 @@ internal sealed unsafe partial class VulkanBackend : Backend
         {
             SType = StructureBufferCreateInfo,
             Size = (ulong)bytes,
-            Usage = BufferStorage | BufferTransferSource | BufferTransferDestination,
+            Usage = BufferStorage | BufferTransferSource | BufferTransferDestination | BufferIndirect,          // any block may hold a dispatch's counts
             SharingMode = SharingExclusive,
         };
         Check(vkCreateBuffer(_device, &info, null, out ulong buffer), nameof(vkCreateBuffer));

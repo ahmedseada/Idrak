@@ -172,7 +172,7 @@ internal static unsafe partial class VulkanDriver
     public const uint HeapDeviceLocal = 0x1;
 
     // Buffers.
-    public const uint BufferTransferSource = 0x1, BufferTransferDestination = 0x2, BufferStorage = 0x20;
+    public const uint BufferTransferSource = 0x1, BufferTransferDestination = 0x2, BufferStorage = 0x20, BufferIndirect = 0x100;
     public const uint SharingExclusive = 0;
     public const ulong WholeSize = ulong.MaxValue;
 
@@ -192,8 +192,8 @@ internal static unsafe partial class VulkanDriver
     public const uint StructureCommandBufferInheritanceInfo = 41;
 
     // Pipeline stages and memory access.
-    public const uint StageTopOfPipe = 0x1, StageComputeShader = 0x800, StageTransfer = 0x1000, StageHost = 0x4000;
-    public const uint AccessShaderRead = 0x20, AccessShaderWrite = 0x40, AccessTransferRead = 0x800, AccessTransferWrite = 0x1000,
+    public const uint StageTopOfPipe = 0x1, StageDrawIndirect = 0x2, StageComputeShader = 0x800, StageTransfer = 0x1000, StageHost = 0x4000;
+    public const uint AccessIndirectCommandRead = 0x1, AccessShaderRead = 0x20, AccessShaderWrite = 0x40, AccessTransferRead = 0x800, AccessTransferWrite = 0x1000,
         AccessHostRead = 0x2000, AccessHostWrite = 0x4000;
 
     // Instance and devices.
@@ -349,6 +349,10 @@ internal static unsafe partial class VulkanDriver
 
     [LibraryImport(Library)]
     public static partial void vkCmdDispatch(IntPtr commandBuffer, uint groupsX, uint groupsY, uint groupsZ);
+
+    // A dispatch whose workgroup counts (three uint32) the device reads from `buffer` at `offset` when it runs.
+    [LibraryImport(Library)]
+    public static partial void vkCmdDispatchIndirect(IntPtr commandBuffer, ulong buffer, ulong offset);
 
     [LibraryImport(Library)]
     public static partial void vkCmdPipelineBarrier(

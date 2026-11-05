@@ -141,6 +141,24 @@ internal static partial class VulkanKernels
             return k.Build();
         });
 
+        // Each expert's workgroups for its gated pair and product, from the offsets where they are (plan 37, R0d): counts
+        // [3 · experts] (int32) holds expert e's dispatch at 3e (x = its row blocks of ExpertRows, at most `most`; y = z =
+        // 1), read by vkCmdDispatchIndirect, so an expert without rows dispatches no workgroup.
+        yield return ("expert_sizes", () =>
+        {
+            var k = new KernelBuilder("expert_sizes", Block);
+            var (offsets, counts) = (k.Buffer("offsets"), k.Buffer("counts"));
+            var (experts, most) = (k.PushInt("experts"), k.PushInt("most"));
+            Grid(k, experts, e =>
+            {
+                var rows = offsets.Int(e + 1) - offsets.Int(e);
+                counts[e * 3] = k.Min((rows + (ExpertRows - 1)) / ExpertRows, most);
+                counts[e * 3 + 1] = k.Int(1);
+                counts[e * 3 + 2] = k.Int(1);
+            });
+            return k.Build();
+        });
+
         // One expert's gate and up projections over its rows (offsets[expert] to offsets[expert + 1] of x [rows, k]) and
         // their gated activation into those rows of hidden [rows, n]: gate and up [k, n], biases [n] where flagged. The
         // workgroups take blocks of ExpertRows rows from the expert's first, their invocations the columns.

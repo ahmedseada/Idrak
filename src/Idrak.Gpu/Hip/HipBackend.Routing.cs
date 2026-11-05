@@ -4,12 +4,16 @@
 namespace Idrak.Gpu.Hip;
 
 // The mixture-of-experts operations (plan 37, R0b; GcnKernels.Routing.cs) on the device, as Vulkan's (VulkanBackend.Routing.cs):
-// the routing in four launches (each token's choices and weights, each expert's count, the offsets, then the rows grouped
-// by expert), and each expert's gated pair and product in one launch per expert, its rows read from the offsets where
-// they are. Nothing is read back, so a mixture-of-experts layer routes here (Backend.RoutesExperts) and a decoding step
-// through it is recorded. An expert's launch covers every row (the host never learns the counts): the work-items past its
-// own rows leave at once. The host fallback takes over when the kernels are unavailable or a buffer holds 2^30 floats or
-// more (the kernels' 32-bit byte offsets).
+// - the routing in four launches: each token's choices and weights, each expert's count, the offsets, then the rows
+//   grouped by expert;
+// - the experts' gated pairs and products in one launch per GcnKernels.ExpertsPerLaunch experts (plan 37, R0d). Each
+//   launch walks its experts on the device, each expert's rows read from the offsets where they are.
+// HIP has no launch whose size the device writes, so an expert without rows costs a few reads in a launch shared with
+// the others, not a launch of its own. Its grid is an element-wise launch's for every row: the host never learns the
+// counts, and each expert's outputs go grid-stride.
+// Nothing is read back, so a mixture-of-experts layer routes here (Backend.RoutesExperts) and a decoding step through it
+// is recorded. The host fallback takes over when the kernels are unavailable or a buffer holds 2^30 floats or more (the
+// kernels' 32-bit byte offsets).
 internal sealed unsafe partial class HipBackend
 {
     // Each slot's chosen expert (and, while route_choose runs, each token's list) and each expert's slot count between the
@@ -65,12 +69,21 @@ internal sealed unsafe partial class HipBackend
             return;
         }
 
-        double flops = Cost(f.Name).Flops * outputs * k;
-        for (int e = 0; e < experts.Length; e++)
+        // x, offsets, hidden; first, experts, k, n; then each expert's four addresses (the slots past the launch's experts 0).
+        Span<ulong> values = stackalloc ulong[7 + 4 * GcnKernels.ExpertsPerLaunch];
+        for (int first = 0; first < experts.Length; first += GcnKernels.ExpertsPerLaunch)
         {
-            var (gate, gateBias, up, upBias) = experts[e];
-            LaunchShape(f, (int)outputs, flops, P(x), P(offsets), P(gate), gateBias is null ? 0UL : P(gateBias), P(up), upBias is null ? 0UL : P(upBias), P(hidden),
-                U(e), U(k), U(n));
+            int count = Math.Min(GcnKernels.ExpertsPerLaunch, experts.Length - first);
+            values.Clear();
+            (values[0], values[1], values[2], values[3], values[4], values[5], values[6]) = (P(x), P(offsets), P(hidden), U(first), U(count), U(k), U(n));
+            for (int j = 0; j < count; j++)
+            {
+                var (gate, gateBias, up, upBias) = experts[first + j];
+                (values[7 + 4 * j], values[8 + 4 * j], values[9 + 4 * j], values[10 + 4 * j]) =
+                    (P(gate), gateBias is null ? 0UL : P(gateBias), P(up), upBias is null ? 0UL : P(upBias));
+            }
+
+            LaunchShape(f, (int)outputs, Cost(f.Name).Flops * outputs * k * count / experts.Length, values);
         }
     }
 
@@ -88,11 +101,20 @@ internal sealed unsafe partial class HipBackend
             return;
         }
 
-        double flops = Cost(f.Name).Flops * outputs * k;
-        for (int e = 0; e < experts.Length; e++)
+        // x, offsets, y; first, experts, k, n; then each expert's weight and bias (the slots past the launch's experts 0).
+        Span<ulong> values = stackalloc ulong[7 + 2 * GcnKernels.ExpertsPerLaunch];
+        for (int first = 0; first < experts.Length; first += GcnKernels.ExpertsPerLaunch)
         {
-            var (weight, bias) = experts[e];
-            LaunchShape(f, (int)outputs, flops, P(x), P(offsets), P(weight), bias is null ? 0UL : P(bias), P(y), U(e), U(k), U(n));
+            int count = Math.Min(GcnKernels.ExpertsPerLaunch, experts.Length - first);
+            values.Clear();
+            (values[0], values[1], values[2], values[3], values[4], values[5], values[6]) = (P(x), P(offsets), P(y), U(first), U(count), U(k), U(n));
+            for (int j = 0; j < count; j++)
+            {
+                var (weight, bias) = experts[first + j];
+                (values[7 + 2 * j], values[8 + 2 * j]) = (P(weight), bias is null ? 0UL : P(bias));
+            }
+
+            LaunchShape(f, (int)outputs, Cost(f.Name).Flops * outputs * k * count / experts.Length, values);
         }
     }
 }

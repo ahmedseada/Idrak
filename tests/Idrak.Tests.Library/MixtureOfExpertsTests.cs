@@ -25,7 +25,7 @@ internal abstract partial class Tests
         ("mixture of experts: routing where the tensors are (RouteTopK, ExpertGatedPair, ExpertMatMul) gives the host routing's values bit for bit (biases, odd widths, experts with many rows and few, every activation, a shared expert); RouteTopK matches the layer's host routing; a device without the kernels routes on the host, counted as a host fallback of RouteTopK; IDRAK_MOE_ROUTING=host turns it off", ExpertRoutingOnDevice),
         ("mixture of experts: a device that can offload (IOffloadingBackend, as CUDA always is) routes its experts on the device while nothing is offloaded and offloading is off; with a storage offloaded or ComputeResources.OffloadToHostMemory on, it reads the routing back (a recorded graph could not follow a moved weight)", ExpertsWithOffloadSupport),
         ("mixture of experts: Mixtral-, Qwen2-MoE- and Qwen3-MoE-shaped decoders match the loop reference (prompt, training, cached decoding, batches); packed experts; recording falls back; JSON and parameter counts", ExpertDecoders),
-        ("mixture of experts: CUDA's routing and expert kernels (PtxKernels.Routing.cs), read on the host: each declares the parameters its launch passes and only the registers it declares, every branch reaches a label of its own kernel, indices are read as int32, the weights divided by div.rn, each product one fma.rn chain from zero with its bias added by add.rn, and the gated pair's activation is gated_act_f32's", ExpertPtx),
+        ("mixture of experts: CUDA's routing and expert kernels (PtxKernels.Routing.cs), read on the host: each declares the parameters its launch passes and only the registers it declares, every branch reaches a label of its own kernel, indices are read as int32, the weights divided by div.rn, each product one fma.rn chain from zero with its bias added by add.rn, the gated pair's activation is gated_act_f32's, and an expert launch walks its experts' slots grid-stride", ExpertPtx),
         ("mixture of experts: gradients of router, experts, shared expert and input match finite differences; load-balancing loss; LoRA on attention fine-tunes a model with experts", ExpertTraining),
         ("pretrained: Mixtral, Qwen2-MoE and Qwen3-MoE configs and checkpoints (their tensor names) load and match the reference; GGUF files with experts (qwen2moe, qwen3moe, llama as Mixtral) too", ExpertCheckpoints),
     ];
@@ -551,10 +551,13 @@ internal abstract partial class Tests
         string source = Idrak.Gpu.Cuda.PtxKernels.Source;
         var entries = Idrak.Gpu.Cuda.PtxKernels.Entries(source);
         var counts = Idrak.Gpu.Cuda.PtxKernels.ParameterCounts;
-        // The launches' arguments (CudaBackend.Routing.cs): pointers, then the scalars, then the thread count.
+        // The launches' arguments (CudaBackend.Routing.cs): the routing's pointers, scalars and thread count; an expert
+        // launch's x, offsets, output, scalars, then a slot of addresses for each expert it walks (R0d).
+        int slots = Idrak.Gpu.Cuda.PtxKernels.ExpertsPerLaunch;
         var expected = new Dictionary<string, int>
         {
-            ["route_choose_f32"] = 7, ["route_counts_f32"] = 4, ["route_offsets_f32"] = 5, ["route_place_f32"] = 7, ["expert_gated_f32"] = 12, ["expert_matmul_f32"] = 9,
+            ["route_choose_f32"] = 7, ["route_counts_f32"] = 4, ["route_offsets_f32"] = 5, ["route_place_f32"] = 7, ["expert_gated_f32"] = 8 + 4 * slots,
+            ["expert_matmul_f32"] = 7 + 2 * slots,
         };
         Check(Idrak.Gpu.Cuda.PtxKernels.RoutingNames.Order().SequenceEqual(expected.Keys.Order()), $"the routing kernels: {string.Join(", ", Idrak.Gpu.Cuda.PtxKernels.RoutingNames)}");
         foreach (var (name, parameters) in expected)
@@ -600,6 +603,16 @@ internal abstract partial class Tests
         Check(gated.Contains("fma.rn.f32 %f20, %f22, %f23, %f20;", StringComparison.Ordinal) && gated.Contains("fma.rn.f32 %f21, %f22, %f24, %f21;", StringComparison.Ordinal)
               && gated.Contains("add.rn.f32 %f21, %f21, %f22;", StringComparison.Ordinal),
             "expert_gated_f32: the gate and up chains by fma.rn from zero, their biases by add.rn");
+        for (int j = 0; j < slots; j++)
+        {
+            Check(gated.Contains($"@%p1 ld.param.u64 %rd13, [p_upbias{j}];", StringComparison.Ordinal) && product.Contains($"@%p1 ld.param.u64 %rd11, [p_bias{j}];", StringComparison.Ordinal)
+                  && product.Contains($"setp.eq.u32 %p1, %r27, {j};", StringComparison.Ordinal),
+                $"expert slot {j}: its addresses read where the walk reaches it");
+        }
+
+        Check(product.Contains("add.u32 %r25, %r25, %r29;", StringComparison.Ordinal) && product.Contains("mul.lo.u32 %r29, %r1, %r2;", StringComparison.Ordinal)
+              && product.Contains("setp.ge.u32 %p0, %r27, %s_experts;", StringComparison.Ordinal),
+            "the expert launches walk their experts, each one's outputs grid-stride over the whole grid");
         string act = Kernel("gated_act_f32");
         int from = act.IndexOf("mov.f32 %f17", StringComparison.Ordinal), to = act.IndexOf("ACT_DONE:", StringComparison.Ordinal);
         Check(from > 0 && to > from && gated.Contains(act[from..to], StringComparison.Ordinal), "expert_gated_f32: the activation of gated_act_f32, line for line");
