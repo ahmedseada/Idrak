@@ -2,6 +2,14 @@
 
 These are the owner's standing rules. They hold in every session, after every compaction, and for every agent.
 
+- **Re-read the rules after every compaction.** A compaction's summary loses rules. Right after one, before any other
+  action, the session re-reads this whole file and the rules the owner gave in the session so far (their words in the
+  summary and the messages kept after it), and every agent's next brief repeats the ones it needs.
+- **Nothing runs quietly; the work is visible in the Tasks window.** No command hides its output or is described as
+  quiet (no `-q`, `--quiet`, `-v q`, `> /dev/null`, no "quietly" in a command's description); builds and test runs show
+  their progress. The session's work (each piece, each merge, each agent's piece) is listed as tasks in the Tasks window
+  (TaskCreate / TaskUpdate), set in progress when started and completed when done, so the owner sees what is running.
+
 - **Ambiguous instructions are asked, not guessed.** When the owner's wording could mean start or stop, now or later,
   this or that, ask in one line before acting; never start new work (a phase, an agent, a side fix) the owner did not
   ask for.
@@ -62,9 +70,13 @@ These are the owner's standing rules. They hold in every session, after every co
 - **The fix workflow (the owner's, in this order).** 1. Fix every error of the task first; never run tests between
   fixes. 2. Update the tests the fixes touch (expectations, and failure messages that name the cause, e.g. which
   operation took a host fallback). 3. Build once, only the projects that changed, and only after all the work is
-  written; if it has compile errors, fix every one, then rebuild once. 4. Run the targeted filtered tests once with
-  `--no-build` (CPU here). Fix every failure, then rebuild once and rerun only the failed tests (by name) or the
-  targeted filter. A failing test seen in any run is fixed directly in the piece at hand, whatever caused it; reports
+  written; if it has compile errors, fix every one, then rebuild once. Before the first build, review every edited file
+  (new names searched for clashes, doc comments and attributes in place, every call site of a changed member updated).
+  After a failed build, read its whole output and list every error; the compiler stops at the first failing project,
+  so read the projects it did not reach for the same mistakes, fix them all, and only then rebuild once. Never rebuild
+  after a single fix. 4. Run the targeted filtered tests once with `--no-build` (CPU here), as one run with one filter
+  covering every group, never test by test. Fix every failure, then rebuild once and rerun all the failed tests
+  together in one run (by name) or the targeted filter. A failing test seen in any run is fixed directly in the piece at hand, whatever caused it; reports
   say what failed and what fixed it, never whose change it was. 5. Merge and push; a merge without conflicts gets no
   build and no tests (its branch was built and tested already); a merge with conflicts gets one build and one run of
   the filter covering every test group that uses the code the merge touched, not only the piece's own groups. 6. Hand the owner one targeted command list for only what changed: the pull of
