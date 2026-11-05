@@ -165,6 +165,45 @@ internal abstract partial class DesktopTests : Tests
         }
     }
 
+    private static void LazyGgufReadsTheMapping(Device device)
+    {
+        _ = device;
+        if (!FirstRun(nameof(LazyGgufReadsTheMapping)))
+        {
+            return;
+        }
+
+        var cpu = Device.Cpu;
+        string cache = Path.Combine(Path.GetTempPath(), "ns-mapped-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            string gguf = TestData("gguf/tiny-qwen3-q8.gguf");
+            string folder = GgufModel.Prepare(gguf, cache);
+            using var eager = PretrainedModel.Load(folder, new PretrainedOptions { Device = cpu, KeepPacked = true, WeightMapping = Idrak.Models.Abstractions.WeightMappings.Map });
+            var start = MappedWeights.Read();
+            using var lazy = PretrainedModel.Load(folder, new PretrainedOptions { Device = cpu, KeepPacked = true, LazyLayers = true, WeightMapping = Idrak.Models.Abstractions.WeightMappings.Map });
+            int[] ids = [.. lazy.Tokenizer!.Encode("the answer is in the thin rain, and then another answer")];
+            TrainingSequence[] probe = [new TrainingSequence(ids, [.. ids.Select(_ => true)])];
+            float lossEager = FineTuner.Evaluate(eager, probe), lossLazy = FineTuner.Evaluate(lazy, probe);
+            var counted = MappedWeights.Read().Since(start);
+            var linears = lazy.Network.Descendants().OfType<DecoderBlock>().SelectMany(b => b.Descendants().OfType<Linear>()).ToList();
+            var inPlace = linears.Where(l => l.PackedWeight is StoredWeight { Mapping: not null }).ToList();
+            long inPlaceBytes = inPlace.Sum(l => ((StoredWeight)l.PackedWeight!).Type.ByteCount((long)l.InFeatures * l.OutFeatures));
+            Check(eager.Network.Descendants().OfType<Linear>().All(l => l.PackedWeight is not StoredWeight { Mapping: not null }), "eager: nothing read in place on one device");
+            Check(inPlace.Count > 0 && inPlace.Any(l => ((StoredWeight)l.PackedWeight!).Type.Name == "q8_0") && counted.Mapped == inPlace.Count && counted.MappedBytes == inPlaceBytes
+                  && (inPlace.Count == linears.Count || counted.CopiedFor.Keys.Any(k => k.StartsWith("at load: ", StringComparison.Ordinal))),
+                $"{inPlace.Count} of {linears.Count} block matrices read in place ({inPlaceBytes} bytes), the others' copies counted: {counted}");
+            Check(BitConverter.SingleToInt32Bits(lossLazy) == BitConverter.SingleToInt32Bits(lossEager), $"loss {lossLazy} read in place, {lossEager} copied");
+        }
+        finally
+        {
+            if (Directory.Exists(cache))
+            {
+                Directory.Delete(cache, true);
+            }
+        }
+    }
+
     private static void StoredGgufModel(Device device)
     {
         _ = device;

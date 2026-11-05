@@ -14,7 +14,9 @@ namespace Idrak.Abstraction.Devices.Cpu;
 // expanded. The tiles are independent (each its own columns of y), spread over the threads, each product on one thread;
 // where the whole product splits over k (CpuMatMul.SplitsK on its m, n and k, as the float32 product decides) they run one
 // after another, each tile's product split over k in the same chunks. The widening goes through a source of rows
-// (StoredRows), the one place a tile's float values come from.
+// (StoredRows), the one place a tile's float values come from: stored bytes in the CPU's memory, or a checkpoint's file
+// mapping read in place (plan 37, W3: MappedStorage), whose float32 rows are laid into the panel straight from the file's
+// pages, with no copy of their own.
 internal sealed partial class CpuBackend
 {
     public override void StoredMatMulKernel(Storage x, Storage weight, Storage? scales, Storage? zeros, Storage y, int m, int n, int k, StoredScales layout)
@@ -66,17 +68,29 @@ internal sealed partial class CpuBackend
             return;
         }
 
+        if (weight is MappedStorage)
+        {
+            MappedWeights.CountCopied((long)n * k * sizeof(float), "expanded to float32");   // a layout materialized (plan 37, W3)
+        }
+
         int tile = StoredTile(n, k), tiles = (n + tile - 1) / tile;
         Parallel.For(0, tiles, ComputeResources.ParallelOptions, t =>
         {
             int j0 = t * tile, columns = Math.Min(tile, n - j0);
-            float[] decoded = ArrayPool<float>.Shared.Rent(columns * k);
+            float[]? decoded = null;
             try
             {
-                rows.Widen(j0, columns, decoded);
+                var source = rows.Floats(j0, columns);
+                if (source.IsEmpty)
+                {
+                    decoded = ArrayPool<float>.Shared.Rent(columns * k);
+                    rows.Widen(j0, columns, decoded);
+                    source = decoded.AsSpan(0, columns * k);
+                }
+
                 for (int j = 0; j < columns; j++)
                 {
-                    var row = decoded.AsSpan(j * k, k);
+                    var row = source.Slice(j * k, k);
                     for (int p = 0; p < k; p++)
                     {
                         wv[p * n + j0 + j] = row[p];
@@ -85,7 +99,10 @@ internal sealed partial class CpuBackend
             }
             finally
             {
-                ArrayPool<float>.Shared.Return(decoded);
+                if (decoded is not null)
+                {
+                    ArrayPool<float>.Shared.Return(decoded);
+                }
             }
         });
     }
@@ -94,15 +111,23 @@ internal sealed partial class CpuBackend
     // `how` says (TileProduct).
     private static void StoredTileProduct(StoredRows rows, float[] x, float[] y, int m, int n, int k, int j0, int columns, TileProduct how)
     {
-        float[] decoded = ArrayPool<float>.Shared.Rent(columns * k);
+        float[]? decoded = null;
         float[] panel = ArrayPool<float>.Shared.Rent(k * columns);
         float[] c = ArrayPool<float>.Shared.Rent(m * columns);
         try
         {
-            rows.Widen(j0, columns, decoded);
+            // Float32 rows read in place (a mapped file's) go straight into the panel; any other are widened first.
+            var source = rows.Floats(j0, columns);
+            if (source.IsEmpty)
+            {
+                decoded = ArrayPool<float>.Shared.Rent(columns * k);
+                rows.Widen(j0, columns, decoded);
+                source = decoded.AsSpan(0, columns * k);
+            }
+
             for (int j = 0; j < columns; j++)
             {
-                var row = decoded.AsSpan(j * k, k);
+                var row = source.Slice(j * k, k);
                 for (int p = 0; p < k; p++)
                 {
                     panel[p * columns + j] = row[p];
@@ -129,7 +154,11 @@ internal sealed partial class CpuBackend
         }
         finally
         {
-            ArrayPool<float>.Shared.Return(decoded);
+            if (decoded is not null)
+            {
+                ArrayPool<float>.Shared.Return(decoded);
+            }
+
             ArrayPool<float>.Shared.Return(panel);
             ArrayPool<float>.Shared.Return(c);
         }
@@ -149,15 +178,55 @@ internal sealed partial class CpuBackend
 
 /// <summary>
 /// Where a stored weight's tiles get their float values (plan 37, Q0): rows [first, first + count) of the stored
-/// [n, k] matrix widened to float32 into [count, k]. Stored bytes of a registered element type with their scales are one
-/// source; another (a mapped file's float rows, a transposed source) plugs in here without changing the tiled product.
+/// [n, k] matrix widened to float32 into [count, k]. Stored bytes of a registered element type with their scales in the
+/// CPU's memory are one source; a checkpoint's file mapping read in place (plan 37, W3) is another, plugged in here
+/// without changing the tiled product.
 /// </summary>
-internal abstract class StoredRows
+internal abstract class StoredRows(ElementType elementType, float[]? scaleValues, float[]? zeroValues, StoredScales scaleLayout, int rowValues)
 {
     /// <summary>Rows <paramref name="first"/>.. of the stored matrix, <paramref name="count"/> of them, as [count, k] floats.</summary>
-    public abstract void Widen(int first, int count, Span<float> destination);
+    public void Widen(int first, int count, Span<float> destination)
+    {
+        int k = rowValues;
+        long rowBytes = elementType.ByteCount(k);
+        var values = destination[..(count * k)];
+        elementType.Decode(StoredBytes(first * rowBytes, checked((int)(count * rowBytes))), values);
+        if (scaleValues is not { } scales)
+        {
+            return;
+        }
 
-    // The rows of a storage of stored bytes: its element type (checked to take rows of k), its scales and zero points.
+        var zeros = zeroValues;
+        for (int r = 0; r < count; r++)
+        {
+            int row = first + r;
+            var span = values.Slice(r * k, k);
+            for (int c = 0; c < span.Length; c++)
+            {
+                int i = scaleLayout.IndexOf(row, c);
+                span[c] = zeros is null ? span[c] * scales[i] : (span[c] - zeros[i]) * scales[i];
+            }
+        }
+    }
+
+    /// <summary>
+    /// Rows <paramref name="first"/>.. as [count, k] float32 values read where they are stored (float32 rows without
+    /// scales in a file's mapping, in place), or empty when they must be widened (<see cref="Widen"/>): the same values.
+    /// </summary>
+    public ReadOnlySpan<float> Floats(int first, int count) =>
+        InPlace && ReferenceEquals(elementType, ElementType.Float32) && scaleValues is null && BitConverter.IsLittleEndian
+            ? MemoryMarshal.Cast<byte, float>(StoredBytes((long)first * rowValues * sizeof(float), checked(count * rowValues * sizeof(float))))
+            : default;
+
+    // `count` stored bytes from byte `start` of the matrix.
+    private protected abstract ReadOnlySpan<byte> StoredBytes(long start, int count);
+
+    // Whether the stored rows are read where they lie (a mapping) rather than from the CPU's own memory, which the widening
+    // reads into the tile's buffer as before.
+    private protected abstract bool InPlace { get; }
+
+    // The rows of a storage of stored bytes: its element type (checked to take rows of k), its scales and zero points; a
+    // mapped storage's read from the file's pages in place.
     public static StoredRows Of(Storage weight, Storage? scales, Storage? zeros, StoredScales layout, int n, int k)
     {
         var type = weight.ElementType;
@@ -167,33 +236,30 @@ internal abstract class StoredRows
             throw new ArgumentException($"A {type.Name} storage of {weight.ElementCount} values cannot hold [{n}, {k}].", nameof(weight));
         }
 
-        return new Bytes(type, CpuBackend.D(weight), weight.Length, scales is null ? null : CpuBackend.D(scales), zeros is null ? null : CpuBackend.D(zeros), layout, k);
+        float[]? s = scales is null ? null : CpuBackend.D(scales), z = zeros is null ? null : CpuBackend.D(zeros);
+        return weight is MappedStorage mapped
+            ? new Mapped(type, mapped.Mapping, s, z, layout, k)
+            : new Bytes(type, CpuBackend.D(weight), weight.Length, s, z, layout, k);
     }
 
-    // Stored bytes: each row widened by the type, then (value − zero) · scale where there are scales, as the stores do.
-    private sealed class Bytes(ElementType type, float[] words, int length, float[]? scales, float[]? zeros, StoredScales layout, int k) : StoredRows
+    // Stored bytes in the CPU's memory: each row widened by the type, then (value - zero) * scale where there are scales, as
+    // the stores do.
+    private sealed class Bytes(ElementType type, float[] words, int length, float[]? scales, float[]? zeros, StoredScales layout, int k)
+        : StoredRows(type, scales, zeros, layout, k)
     {
-        public override void Widen(int first, int count, Span<float> destination)
-        {
-            long rowBytes = type.ByteCount(k);
-            var bytes = MemoryMarshal.AsBytes(words.AsSpan(0, length));
-            var values = destination[..(count * k)];
-            type.Decode(bytes.Slice(checked((int)(first * rowBytes)), checked((int)(count * rowBytes))), values);
-            if (scales is null)
-            {
-                return;
-            }
+        private protected override ReadOnlySpan<byte> StoredBytes(long start, int count) =>
+            MemoryMarshal.AsBytes(words.AsSpan(0, length)).Slice(checked((int)start), count);
 
-            for (int r = 0; r < count; r++)
-            {
-                int row = first + r;
-                var span = values.Slice(r * k, k);
-                for (int c = 0; c < span.Length; c++)
-                {
-                    int i = layout.IndexOf(row, c);
-                    span[c] = zeros is null ? span[c] * scales[i] : (span[c] - zeros[i]) * scales[i];
-                }
-            }
-        }
+        private protected override bool InPlace => false;
+    }
+
+    // Stored bytes in a checkpoint's file mapping (plan 37, W3): read where the file's pages lie, widened as Bytes widens
+    // them (the same values, so the same products bit for bit).
+    private sealed class Mapped(ElementType type, FileMapping mapping, float[]? scales, float[]? zeros, StoredScales layout, int k)
+        : StoredRows(type, scales, zeros, layout, k)
+    {
+        private protected override ReadOnlySpan<byte> StoredBytes(long start, int count) => mapping.Bytes(start, count);
+
+        private protected override bool InPlace => true;
     }
 }

@@ -315,6 +315,17 @@ public sealed record PretrainedOptions
     public bool? KeepPacked { get; init; }
 
     /// <summary>
+    /// Whether a decoder's weights are read in place from the checkpoint's file mapping (plan 37, W3,
+    /// <see cref="WeightMappings"/>): "map" (a split model's CPU layers and lazily built layers read their weights where the
+    /// file's pages lie, on the CPU, where the file stores them as they are computed, float32, or as the load keeps them,
+    /// <see cref="KeepPacked"/>: the operating system's page cache holds them once, the same products bit for bit), "copy"
+    /// (every weight copied into memory, as before), or a mapping of one's own. Null takes
+    /// <see cref="WeightMappings.DefaultName"/> (IDRAK_WEIGHT_MAPPING; map). What was read in place and every copy taken
+    /// instead is counted in <see cref="MappedWeights"/>.
+    /// </summary>
+    public string? WeightMapping { get; init; }
+
+    /// <summary>
     /// Whether a split or auto placement moves layers between the device and the CPU at a run's step boundaries as the
     /// device's measured free memory changes (more on the device when memory frees, fewer under pressure; plan 37 W2):
     /// null takes <see cref="WeightPlacements.DefaultGrow"/> (IDRAK_WEIGHT_GROW; on).
@@ -522,6 +533,9 @@ public sealed class PretrainedModel : IDisposable
 
         ElementTypes.Report(elementType, placementTarget);
 
+        // Whether layers read their weights from the file's mapping (plan 37, W3): looked up before any weight is read.
+        var weightMapping = WeightMappings.Get(options.WeightMapping ?? WeightMappings.DefaultName);
+
         // The experts' placement (plan 37, R1): where a mixture-of-experts model's experts live, decided before the layers'
         // placement, which then counts only the experts kept on the device.
         ExpertPlan? expertPlan = null;
@@ -595,7 +609,8 @@ public sealed class PretrainedModel : IDisposable
         var lazyReader = lazy ? format.Open(folder) : null;
         var buildWeights = lazyReader is not null ? new CheckpointWeights(lazyReader, architecture) : weights;
         var buildOptions = new DecoderBuildOptions { Device = buildDevice, DeviceLayers = plan is { Split: true } ? plan.DeviceLayers : null,
-            LazyLayers = lazy, Experts = expertPlan, LazyExperts = lazy, FollowMemory = follow ? (placement!, placedRequest!) : null, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions, PackedCache = packedCache, KeepPacked = options.KeepPacked ?? WeightStorage.DefaultKeep };
+            LazyLayers = lazy, Experts = expertPlan, LazyExperts = lazy, FollowMemory = follow ? (placement!, placedRequest!) : null, Int8 = options.Int8, BFloat16 = options.BFloat16, Int4 = options.Int4, PackedFormatName = options.PackedFormatName, HeadFormatName = options.HeadFormatName, LookupTables = options.LookupTables, MaxPositions = maxPositions, PackedCache = packedCache, KeepPacked = options.KeepPacked ?? WeightStorage.DefaultKeep,
+            WeightMapping = weightMapping };
         long building = Stopwatch.GetTimestamp();
         var fileTime = reader.ReadTime;
         Sequential network;
@@ -705,6 +720,7 @@ public sealed class PretrainedModel : IDisposable
         // float16 operands where the device computes them, float32 sums; a float32 run as before (plan 37, T2).
         network.Precision = ReferenceEquals(elementType.Type, Abstraction.ElementType.Float32) ? null : MixedPrecision.For(elementType.Type);
         model.KeptWeights = buildWeights.StoredSummary;                      // weights kept as stored or expanded (plan 37, Q0)
+        model.WeightsMapped = buildWeights.MappedSummary;                    // read in place from the file, or copied and why (W3)
         if (model.KeptWeights is { } keptWeights)
         {
             WeightStorage.Report(keptWeights, options.Device ?? Abstraction.Device.Default);
@@ -974,6 +990,14 @@ public sealed class PretrainedModel : IDisposable
     /// Published to telemetry when the load ends.
     /// </summary>
     public StoredWeightsSummary? KeptWeights { get; private set; }
+
+    /// <summary>
+    /// What the load read in place from the checkpoint's file mapping and what it copied instead (plan 37, W3,
+    /// <see cref="PretrainedOptions.WeightMapping"/>): "weights mapped: 12 matrices read in place from the file (1.2 MB); 0
+    /// copied into memory (0 MB)"; null when no layer built at load asked for the mapping (a model on one device; a lazy
+    /// load, whose layers count in <see cref="MappedWeights"/> as they are built).
+    /// </summary>
+    public string? WeightsMapped { get; private set; }
 
     /// <summary>Where the time of <see cref="Load"/> went, by stage (read, convert, upload, adapter merge, tokenizer, …).</summary>
     public PretrainedLoadTimes LoadTimes { get; private set; } = new(default, default, default, default, default, default, default, default, default);

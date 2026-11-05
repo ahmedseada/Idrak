@@ -45,6 +45,10 @@ public static class DecoderBuilder
         int deviceLayers = Math.Clamp(options.DeviceLayers ?? spec.Layers, 0, spec.Layers);
         bool split = deviceLayers < spec.Layers && hostDevice != mainDevice;
         int maxPositions = options.MaxPositions ?? spec.MaxPositions;
+        // Whether a layer's projections are read in place from the checkpoint's file mapping (plan 37, W3): asked per
+        // projection, for the layer being made (a split's CPU layer, a lazy build's) on the device it is made on.
+        var weightMapping = weights is null ? null : options.WeightMapping ?? WeightMappings.Get(WeightMappings.DefaultName);
+        bool inLayer = false, cpuLayer = false;
         var random = new Random(options.Seed);
         var created = new List<Module>();
         Linear? head = null;
@@ -114,6 +118,14 @@ public static class DecoderBuilder
 
                 if (packed is null && factory is null)
                 {
+                    // A layer's weight the file holds as the product reads it (float32, or a format kept as stored) is read
+                    // there in place where the mapping asks (plan 37, W3): the same products bit for bit, no second copy.
+                    if (weights is not null && tiedTable is null && inLayer && weightMapping!.Maps(new WeightMappingRequest(device, cpuLayer, options.LazyLayers))
+                        && weights.ReadMapped($"{name}.weight", shape, device, options.KeepPacked) is { } mapped)
+                    {
+                        return Linear.FromPacked(mapped, b);
+                    }
+
                     // A weight the source stores in a format of its own stays in it where the device multiplies it (plan 37,
                     // Q0): the float32 product's bits, about the file's size in memory. The source counts it either way.
                     if (weights is not null && tiedTable is null && weights.ReadStored($"{name}.weight", shape, device, options.KeepPacked) is { } kept)
@@ -267,14 +279,15 @@ public static class DecoderBuilder
             DecoderBlock MakeBlock(int i, Device on)
             {
                 var outer = device;
-                device = on;
+                var (outerInLayer, outerCpuLayer) = (inLayer, cpuLayer);
+                (device, inLayer, cpuLayer) = (on, true, split && on == hostDevice);
                 try
                 {
                     return MakeBlockOn(i);
                 }
                 finally
                 {
-                    device = outer;
+                    (device, inLayer, cpuLayer) = (outer, outerInLayer, outerCpuLayer);
                 }
             }
 

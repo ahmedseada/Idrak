@@ -14,6 +14,12 @@ internal sealed partial class CpuBackend
     public override void DownloadRange(Storage source, int offset, Span<float> destination)
     {
         ThrowIfDisposed();
+        if (source is MappedStorage mapped)
+        {
+            CopyOutOfMapping(mapped, offset, destination, "downloaded (read whole, moved to another device)");
+            return;
+        }
+
         D(source).AsSpan(offset, destination.Length).CopyTo(destination);
     }
 

@@ -166,6 +166,12 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
 
     public override void Return(Storage storage)
     {
+        if (storage is MappedStorage mapped)
+        {
+            ReleaseMapping(mapped);                                        // a file's mapping (plan 37, W3): not pooled
+            return;
+        }
+
         var data = ((CpuStorage)storage).Data;
         lock (_pool)
         {
@@ -210,24 +216,51 @@ internal sealed partial class CpuBackend : Backend, ISegmentedAttentionBackend, 
     public override void Upload(ReadOnlySpan<float> source, Storage destination)
     {
         ThrowIfDisposed();
+        if (destination is MappedStorage mapped)
+        {
+            WriteIntoMapping(source, mapped, 0);
+            return;
+        }
+
         source.CopyTo(D(destination));
     }
 
     public override void Download(Storage source, Span<float> destination)
     {
         ThrowIfDisposed();
+        if (source is MappedStorage mapped)
+        {
+            CopyOutOfMapping(mapped, 0, destination, "downloaded (read whole, moved to another device)");
+            return;
+        }
+
         D(source).AsSpan(0, destination.Length).CopyTo(destination);
     }
 
     public override void UploadRange(ReadOnlySpan<float> source, Storage destination, int offset)
     {
         ThrowIfDisposed();
+        if (destination is MappedStorage mapped)
+        {
+            WriteIntoMapping(source, mapped, offset);
+            return;
+        }
+
         source.CopyTo(D(destination).AsSpan(offset, source.Length));
     }
 
     public override void FillKernel(Storage y, int n, float value) => D(y).AsSpan(0, n).Fill(value);
 
-    public override void Copy(Storage x, Storage y, int n) => D(x).AsSpan(0, n).CopyTo(D(y));
+    public override void Copy(Storage x, Storage y, int n)
+    {
+        if (x is MappedStorage mapped)
+        {
+            CopyOutOfMapping(mapped, 0, D(y).AsSpan(0, n), "copied (cloned)");
+            return;
+        }
+
+        D(x).AsSpan(0, n).CopyTo(D(y));
+    }
 
     public override void UnaryKernel(UnaryOp op, Storage x, Storage y, int n)
     {

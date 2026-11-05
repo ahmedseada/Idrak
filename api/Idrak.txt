@@ -1608,6 +1608,7 @@ public sealed record Idrak.Models.Abstractions.DecoderBuildOptions : System.IEqu
   public Idrak.Abstraction.Device? HostDevice { get; init; }
   public Idrak.Abstraction.Devices.LookupTablePlacement? LookupTables { get; init; }
   public Idrak.Models.Abstractions.ExpertPlan? Experts { get; init; }
+  public Idrak.Models.Abstractions.IWeightMapping? WeightMapping { get; init; }
   public bool BFloat16 { get; init; }
   public bool Int4 { get; init; }
   public bool Int8 { get; init; }
@@ -1801,6 +1802,9 @@ public interface Idrak.Models.Abstractions.IGgufType
   public string Name { get; }
   public void Dequantize(System.ReadOnlySpan<byte> raw, System.Span<float> values)
 
+public interface Idrak.Models.Abstractions.IMappedTensorStore : Idrak.Abstraction.Formats.ITensorStore, System.IDisposable
+  public Idrak.Models.Abstractions.StoredLocation? Locate(string name, out string? why)
+
 public interface Idrak.Models.Abstractions.INetworkBuildingArchitecture : Idrak.Models.Abstractions.IPretrainedArchitecture
   public System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module> Build(Idrak.Models.Abstractions.PretrainedBuildContext context)
 
@@ -1864,12 +1868,16 @@ public interface Idrak.Models.Abstractions.IVisionFamily
   public Idrak.Abstraction.Generation.IPretrainedVision? Read(Idrak.Models.Abstractions.VisionCheckpoint checkpoint)
   public string Name { get; }
 
+public interface Idrak.Models.Abstractions.IWeightMapping : Idrak.Abstraction.IKind
+  public bool Maps(Idrak.Models.Abstractions.WeightMappingRequest request)
+
 public interface Idrak.Models.Abstractions.IWeightPlacement : Idrak.Abstraction.IKind
   public (default) int Adjust(Idrak.Models.Abstractions.WeightPlacementRequest request, int current)
   public Idrak.Models.Abstractions.WeightPlan Place(Idrak.Models.Abstractions.WeightPlacementRequest request)
 
 public interface Idrak.Models.Abstractions.IWeightSource
   public (default) Idrak.Abstraction.Generation.BFloat16Weight? ReadBFloat16(string name, System.Collections.Generic.IReadOnlyList<int> shape, Idrak.Abstraction.Device device, bool transposed = false)
+  public (default) Idrak.Abstraction.Generation.IPackedWeight? ReadMapped(string name, System.Collections.Generic.IReadOnlyList<int> shape, Idrak.Abstraction.Device device, bool keep)
   public (default) Idrak.Abstraction.Generation.IPackedWeight? ReadStored(string name, System.Collections.Generic.IReadOnlyList<int> shape, Idrak.Abstraction.Device device, bool keep)
   public (default) bool ReadRows(string name, System.Collections.Generic.IReadOnlyList<int> shape, int first, int count, System.Span<float> destination)
   public (default) string? IdentityOf(string name, System.Collections.Generic.IReadOnlyList<int> shape)
@@ -1958,6 +1966,13 @@ public static class Idrak.Models.Abstractions.PretrainedSeq2Seq
   public static bool Unregister(string name)
   public static string? Origin(string name)
   public static void Register(Idrak.Models.Abstractions.IPretrainedSeq2SeqFamily family)
+
+public sealed record Idrak.Models.Abstractions.StoredLocation : System.IEquatable<Idrak.Models.Abstractions.StoredLocation>
+  public Idrak.Abstraction.ElementType Type { get; init; }
+  public StoredLocation(string File, long Offset, long Length, Idrak.Abstraction.ElementType Type)
+  public long Length { get; init; }
+  public long Offset { get; init; }
+  public string File { get; init; }
 
 public static class Idrak.Models.Abstractions.TokenizerComponents
   public static Idrak.Models.Abstractions.ITokenizerComponentKind<Idrak.Models.Abstractions.IPreTokenizer>? DefaultPreTokenizer(string type)
@@ -2151,6 +2166,26 @@ public abstract class Idrak.Models.Abstractions.WeightCodec
   public abstract void Decode(System.ReadOnlySpan<byte> bytes, System.Span<float> values)
   public abstract void Encode(System.ReadOnlySpan<float> values, System.Span<byte> bytes)
   public static Idrak.Models.Abstractions.WeightCodec For(Idrak.Abstraction.Formats.WeightFormat format)
+
+public sealed record Idrak.Models.Abstractions.WeightMappingRequest : System.IEquatable<Idrak.Models.Abstractions.WeightMappingRequest>
+  public Idrak.Abstraction.Device Device { get; init; }
+  public WeightMappingRequest(Idrak.Abstraction.Device Device, bool CpuLayer, bool Lazy)
+  public bool CpuLayer { get; init; }
+  public bool Lazy { get; init; }
+
+public static class Idrak.Models.Abstractions.WeightMappings
+  public const string Copy = "copy"
+  public const string EnvironmentVariable = "IDRAK_WEIGHT_MAPPING"
+  public const string Map = "map"
+  public static Idrak.Models.Abstractions.IWeightMapping Get(string name)
+  public static Idrak.Models.Abstractions.IWeightMapping? Default(string name)
+  public static Idrak.Models.Abstractions.IWeightMapping? Find(string name)
+  public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
+  public static bool Unregister(string name)
+  public static string DefaultName { get; }
+  public static string Describe()
+  public static string? Origin(string name)
+  public static void Register(Idrak.Models.Abstractions.IWeightMapping mapping)
 
 public sealed record Idrak.Models.Abstractions.WeightPlacementRequest : System.IEquatable<Idrak.Models.Abstractions.WeightPlacementRequest>
   public Idrak.Abstraction.Device Device { get; init; }
@@ -2432,6 +2467,7 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public static Idrak.Models.PretrainedModel Create(string folder, Idrak.Abstraction.Generation.DecoderSpec spec, string architecture, Idrak.Models.ModelFiles files, Idrak.Models.CreateOptions? options = null)
   public static Idrak.Models.PretrainedModel Load(string folder, Idrak.Models.PretrainedOptions? options = null)
   public string Folder { get; }
+  public string? WeightsMapped { get; }
   public void Dispose()
   public void Place()
   public void SaveAdapter(string folder)
@@ -2471,6 +2507,7 @@ public sealed record Idrak.Models.PretrainedOptions : System.IEquatable<Idrak.Mo
   public string? MergeAdapter { get; init; }
   public string? PackedCacheFolder { get; init; }
   public string? PackedFormatName { get; init; }
+  public string? WeightMapping { get; init; }
   public string? WeightPlacement { get; init; }
 
 public sealed class Idrak.Models.PretrainedSeq2SeqModel : System.IDisposable
@@ -2544,7 +2581,7 @@ public enum Idrak.Models.SafeTensorType : int
   F8_E5M2 = 4
   I8 = 5
 
-public sealed class Idrak.Models.SafeTensorsReader : Idrak.Abstraction.Formats.IBFloat16TensorStore, Idrak.Abstraction.Formats.ITensorStore, Idrak.Models.Abstractions.IStoredWeightStore, System.IDisposable
+public sealed class Idrak.Models.SafeTensorsReader : Idrak.Abstraction.Formats.IBFloat16TensorStore, Idrak.Abstraction.Formats.ITensorStore, Idrak.Models.Abstractions.IMappedTensorStore, Idrak.Models.Abstractions.IStoredWeightStore, System.IDisposable
   public System.Collections.Generic.Dictionary<string, string> Metadata { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, Idrak.Models.SafeTensorInfo> Tensors { get; }
   public System.Collections.Generic.IReadOnlyDictionary<string, string> LeftOut { get; }

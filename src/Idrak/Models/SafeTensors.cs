@@ -64,8 +64,30 @@ public sealed record SafeTensorInfo(string Name, SafeTensorType Type, int[] Shap
 /// DeepSeek's), else rows / scale rows when they divide. The scales, and the activation scales such a checkpoint carries
 /// (<c>input_scale</c>, <c>k_scale</c>, …), are not among <see cref="Tensors"/>: see <see cref="QuantizationScales"/>.
 /// </remarks>
-public sealed class SafeTensorsReader : IDisposable, IBFloat16TensorStore, IStoredWeightStore
+public sealed class SafeTensorsReader : IDisposable, IBFloat16TensorStore, IStoredWeightStore, IMappedTensorStore
 {
+    // A matrix's bytes in its file (plan 37, W3): float32 as stored (on a little-endian machine), or a type kept as stored
+    // (F8, I8 with its scale: StoredTypeOf), each a contiguous range of whole rows.
+    StoredLocation? IMappedTensorStore.Locate(string name, out string? why)
+    {
+        why = null;
+        if (!_tensors.TryGetValue(name, out var info) || info.Shape.Length != 2)
+        {
+            why = "not a matrix of the checkpoint";
+            return null;
+        }
+
+        var type = info.Type == SafeTensorType.F32 ? (BitConverter.IsLittleEndian ? ElementType.Float32 : null) : ((IStoredWeightStore)this).StoredTypeOf(name);
+        if (type is null || info.Length != type.ByteCount(info.Count))
+        {
+            why = info.Type == SafeTensorType.F32 ? "float32 stored little-endian, on a machine of the other byte order"
+                : $"stored as {info.Type}, computed in float32 (widened at load)";
+            return null;
+        }
+
+        return new StoredLocation(info.File, info.Offset, info.Length, type);
+    }
+
     IEnumerable<string> ITensorStore.Names => _tensors.Keys;
 
     // An F8 matrix, or an I8 one with its scale, is kept as stored (plan 37, Q0): its codes as one byte each, read with the

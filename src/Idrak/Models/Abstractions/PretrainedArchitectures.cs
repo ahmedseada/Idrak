@@ -210,6 +210,15 @@ public sealed record DecoderBuildOptions
     /// </summary>
     public bool KeepPacked { get; init; } = WeightStorage.DefaultKeep;
 
+    /// <summary>
+    /// Whether a projection's weights are read in place from the checkpoint's file mapping (plan 37, W3,
+    /// <see cref="WeightMappings"/>: <see cref="IWeightSource.ReadMapped"/>, frozen <c>StoredWeight</c>s whose products
+    /// equal the float32 weights' bit for bit, with no second copy in memory) or copied into memory. Null (the default) takes
+    /// <see cref="WeightMappings.DefaultName"/> (IDRAK_WEIGHT_MAPPING; map: a split's CPU layers and lazily built layers
+    /// read in place on the CPU).
+    /// </summary>
+    public IWeightMapping? WeightMapping { get; init; }
+
     // The placement the layers follow the memory with at step boundaries, with its request at load (PretrainedModel.Load
     // sets it when the placement may move layers), or null: they stay where they are built.
     internal (IWeightPlacement Placement, WeightPlacementRequest Request)? FollowMemory { get; init; }

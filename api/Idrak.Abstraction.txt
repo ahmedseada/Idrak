@@ -1951,6 +1951,16 @@ public static class Idrak.Abstraction.Devices.EightBitMoments
   public const int BlockSize = 256
   public static byte Nearest(System.ReadOnlySpan<float> map, float x)
 
+public sealed class Idrak.Abstraction.Devices.FileMapping : System.IDisposable
+  public System.ReadOnlySpan<byte> Bytes(long start, int count)
+  public long Length { get; }
+  public long Offset { get; }
+  public override string ToString()
+  public static Idrak.Abstraction.Devices.FileMapping Map(string path, long offset, long length)
+  public static int MappedFiles { get; }
+  public string Path { get; }
+  public void Dispose()
+
 public enum Idrak.Abstraction.Devices.GemmEpilogue : int
   Gelu = 1
   GeluGradient = 2
@@ -2032,6 +2042,9 @@ public interface Idrak.Abstraction.Devices.IKernelProfiler
 
 public interface Idrak.Abstraction.Devices.ILongLivedAllocations
   public System.IDisposable LongLivedAllocations()
+
+public interface Idrak.Abstraction.Devices.IMappedStorageBackend
+  public Idrak.Abstraction.Devices.Storage MapStorage(Idrak.Abstraction.Devices.FileMapping mapping, Idrak.Abstraction.ElementType type, long count)
 
 public interface Idrak.Abstraction.Devices.IMaskedCacheAttentionBackend
   public bool AttentionMaskedBFloat16(Idrak.Abstraction.Devices.Storage q, Idrak.Abstraction.Devices.Storage keys, Idrak.Abstraction.Devices.Storage values, Idrak.Abstraction.Devices.Storage? mask, Idrak.Abstraction.Devices.Storage y, int heads, int rowsPerHead, int maskRows, int capacity, int dim, float scale)
@@ -2132,6 +2145,25 @@ public enum Idrak.Abstraction.Devices.LookupTablePlacement : byte
   Automatic = 0
   DeviceMemory = 2
   HostMemory = 1
+
+public sealed record Idrak.Abstraction.Devices.MappedWeightCounts : System.IEquatable<Idrak.Abstraction.Devices.MappedWeightCounts>
+  public Idrak.Abstraction.Devices.MappedWeightCounts Since(Idrak.Abstraction.Devices.MappedWeightCounts before)
+  public MappedWeightCounts(long Mapped, long MappedBytes, long Released, long ReleasedBytes, long Copies, long CopiedBytes, System.Collections.Generic.IReadOnlyDictionary<string, long> CopiedFor)
+  public System.Collections.Generic.IReadOnlyDictionary<string, long> CopiedFor { get; init; }
+  public long CopiedBytes { get; init; }
+  public long Copies { get; init; }
+  public long LiveBytes { get; }
+  public long Mapped { get; init; }
+  public long MappedBytes { get; init; }
+  public long Released { get; init; }
+  public long ReleasedBytes { get; init; }
+  public override string ToString()
+
+public static class Idrak.Abstraction.Devices.MappedWeights
+  public static Idrak.Abstraction.Devices.MappedWeightCounts Read()
+  public static void CountCopied(long bytes, string reason)
+  public static void CountMapped(long bytes)
+  public static void CountReleased(long bytes)
 
 public static class Idrak.Abstraction.Devices.MeasuredChoiceProviders
   public static Idrak.Abstraction.Devices.IMeasuredChoicesProvider? Default(string name)
@@ -4715,6 +4747,7 @@ public static class Idrak.Abstraction.Generation.SpeculativeDecoding
   public static string? Refusal(Idrak.Abstraction.Generation.ITokenizer target, Idrak.Abstraction.Generation.IDraftModel draft)
 
 public sealed class Idrak.Abstraction.Generation.StoredWeight : Idrak.Abstraction.Generation.PackedWeight, Idrak.Abstraction.IRecordable
+  public Idrak.Abstraction.Devices.FileMapping? Mapping { get; }
   public Idrak.Abstraction.ElementType Type { get; }
   public Idrak.Abstraction.StoredScales Layout { get; }
   public Idrak.Abstraction.Tensor StoredValues { get; }
@@ -4732,6 +4765,7 @@ public sealed class Idrak.Abstraction.Generation.StoredWeight : Idrak.Abstractio
   public override string ShortName { get; }
   public override void DequantizeInto(Idrak.Abstraction.Devices.Storage destination)
   public override void Dispose()
+  public static Idrak.Abstraction.Generation.StoredWeight FromMapped(Idrak.Abstraction.ElementType type, Idrak.Abstraction.Devices.FileMapping mapping, int rows, int columns, Idrak.Abstraction.Formats.StoredScaling? scaling, Idrak.Abstraction.Device device)
   public static Idrak.Abstraction.Generation.StoredWeight FromStored(Idrak.Abstraction.ElementType type, System.ReadOnlySpan<byte> stored, int rows, int columns, Idrak.Abstraction.Formats.StoredScaling? scaling, Idrak.Abstraction.Device device)
 
 public sealed record Idrak.Abstraction.Generation.StoredWeightsSummary : System.IEquatable<Idrak.Abstraction.Generation.StoredWeightsSummary>

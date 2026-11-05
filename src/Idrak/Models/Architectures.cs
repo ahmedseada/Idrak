@@ -507,6 +507,96 @@ internal sealed class CheckpointWeights(ITensorStore reader, IPretrainedArchitec
         return weight;
     }
 
+    // What the build read in place from the file's mapping and what it copied instead (plan 37, W3).
+    private int _mapped, _copied;
+    private long _mappedBytes, _copiedBytes;
+    private string? _copiedWhy;
+
+    /// <summary>"weights mapped: 14 read in place from the file (1.2 MB); 2 copied (0.1 MB): why"; null when the build asked for none.</summary>
+    public string? MappedSummary => _mapped + _copied == 0 ? null
+        : string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"weights mapped: {_mapped} matrices read in place from the file ({_mappedBytes / 1e6:0.##} MB); {_copied} copied into memory ({_copiedBytes / 1e6:0.##} MB){(_copiedWhy is null ? "" : ": " + _copiedWhy)}");
+
+    public Abstraction.Generation.IPackedWeight? ReadMapped(string name, IReadOnlyList<int> shape, Device device, bool keep)
+    {
+        if (Deferred || shape.Count != 2 || device.Backend is not IMappedStorageBackend || architecture.TensorName(name) is not { } storedName
+            || !reader.Contains(storedName))
+        {
+            return null;
+        }
+
+        // As the product reads it: [outputs, inputs] in the file (rows of inputs), nothing added on reading (an adapter).
+        int k = shape[0], n = shape[1];
+        var storedType = (reader as IStoredWeightStore)?.StoredTypeOf(storedName);
+        StoredLocation? at = null;
+        string? why = reader is not IMappedTensorStore ? "the checkpoint's format is not read in place"
+            : !architecture.Transposed(name) ? "stored [inputs, outputs], transposed on reading"
+            : Adapter is not null && storedName.EndsWith(".weight", StringComparison.Ordinal) && Adapter.Updates(storedName[..^".weight".Length]) ? "an adapter is merged into it"
+            : null;
+        if (why is null)
+        {
+            at = ((IMappedTensorStore)reader).Locate(storedName, out why);
+        }
+
+        if (at is not null && !ReferenceEquals(at.Type, ElementType.Float32))
+        {
+            // A format of its own: read in place only where it is kept (as ReadStored keeps it), else expanded at load.
+            why = !keep ? $"kept packed off ({Abstraction.Generation.WeightStorage.EnvironmentVariable}, PretrainedOptions.KeepPacked)"
+                : !Abstraction.Generation.WeightStorage.Multiplies(device.Backend, at.Type) ? $"{device} has no {at.Type.Name} product of its own"
+                : k % at.Type.BlockSize != 0 ? $"rows of {k} are not whole {at.Type.Name} blocks"
+                : null;
+        }
+
+        if (why is not null || at is null)
+        {
+            // Copied as before: kept as stored where ReadStored keeps it (its rows put back in order), else float32.
+            bool kept = storedType is not null && keep && Abstraction.Generation.WeightStorage.Multiplies(device.Backend, storedType) && k % storedType.BlockSize == 0;
+            long bytes = kept ? storedType!.ByteCount((long)k * n) : (long)k * n * sizeof(float);
+            Copied(bytes, why ?? "not located in the file");
+            return null;
+        }
+
+        if (Stored(name, shape) is not { } stored)
+        {
+            return null;
+        }
+
+        FileMapping mapping;
+        long start = Stopwatch.GetTimestamp();
+        try
+        {
+            mapping = FileMapping.Map(at.File, at.Offset, at.Length);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException)
+        {
+            Copied(ReferenceEquals(at.Type, ElementType.Float32) ? (long)k * n * sizeof(float) : at.Length, $"the file could not be mapped ({e.Message})");
+            return null;
+        }
+
+        var scaling = ReferenceEquals(at.Type, ElementType.Float32) ? null : (reader as IStoredWeightStore)?.ScalingOf(stored);
+        var weight = Abstraction.Generation.StoredWeight.FromMapped(at.Type, mapping, k, n, scaling, device);
+        _readTicks += Stopwatch.GetTimestamp() - start;
+        _mapped++;
+        _mappedBytes += at.Length;
+        if (!ReferenceEquals(at.Type, ElementType.Float32))
+        {
+            _storedFormats.Add(at.Type.Name);                               // kept as stored (plan 37, Q0), in place
+            _kept++;
+            _keptBytes += weight.Bytes;
+        }
+
+        return weight;
+    }
+
+    // A weight the build copied into memory where it asked for the file's mapping, counted with why.
+    private void Copied(long bytes, string why)
+    {
+        _copied++;
+        _copiedBytes += bytes;
+        _copiedWhy ??= why;
+        MappedWeights.CountCopied(bytes, "at load: " + why);
+    }
+
     public BFloat16Weight? ReadBFloat16(string name, IReadOnlyList<int> shape, Device device, bool transposed = false)
     {
         if (Stored(name, shape) is not { } stored)

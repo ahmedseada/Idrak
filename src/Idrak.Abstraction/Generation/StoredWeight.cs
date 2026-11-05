@@ -15,7 +15,9 @@ namespace Idrak.Abstraction.Generation;
 /// memory. The product (<see cref="Backend.StoredMatMul"/>) expands the weights a tile of outputs at a time inside the
 /// kernel and multiplies them as the float32 weights would be: the same values and the same arithmetic as the weights
 /// expanded at load, bit for bit. A product that records gradients expands the whole matrix for it
-/// (<see cref="Dequantize"/>), as the float path computes them. Frozen.
+/// (<see cref="Dequantize"/>), as the float path computes them. Frozen. Its stored bytes are in the device's memory
+/// (<see cref="FromStored"/>), or read in place from a checkpoint's file mapping (plan 37, W3: <see cref="FromMapped"/>),
+/// the file's own float32 rows among them.
 /// </summary>
 public sealed class StoredWeight : PackedWeight, IRecordable
 {
@@ -45,6 +47,69 @@ public sealed class StoredWeight : PackedWeight, IRecordable
             throw new ArgumentException($"[{columns}, {rows}] {type.Name} values take {bytes} bytes; {stored.Length} given.", nameof(stored));
         }
 
+        var layout = CheckScaling(scaling, rows, columns);
+        Tensor? values = null;
+        try
+        {
+            values = TensorScope.Untrack(Tensor.FromBytes(stored, type, [columns, rows], device));
+            return WithScales(values, scaling, layout, rows, columns, device);
+        }
+        catch
+        {
+            values?.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// The weight [<paramref name="rows"/>, <paramref name="columns"/>] (inputs, outputs) read in place from
+    /// <paramref name="mapping"/> (plan 37, W3): its stored bytes as <see cref="FromStored"/> takes them (the file's
+    /// [outputs, inputs] rows of <paramref name="type"/>; float32 among the types), with their <paramref name="scaling"/> or
+    /// none, on <paramref name="device"/>, whose kernels read the mapping where the file's pages lie
+    /// (<see cref="IMappedStorageBackend"/>: the CPU), so the weights are not copied a second time into memory: the
+    /// system's page cache holds them once. The products are <see cref="FromStored"/>'s bit for bit. The weight takes the
+    /// mapping (closed when the weight is disposed, or at once when this throws); a copy taken of it later (a move to
+    /// another device, an expansion to float32) is counted in <see cref="MappedWeights"/>.
+    /// </summary>
+    /// <exception cref="ArgumentException">The type has no conversion to float32, a row is not whole blocks or bytes, the mapping does not hold the values, the scales do not fit.</exception>
+    /// <exception cref="NotSupportedException">The device does not read a mapping in place.</exception>
+    public static StoredWeight FromMapped(ElementType type, FileMapping mapping, int rows, int columns, StoredScaling? scaling, Device device)
+    {
+        ArgumentNullException.ThrowIfNull(mapping);
+        Tensor? values = null;
+        try
+        {
+            ArgumentNullException.ThrowIfNull(type);
+            ArgumentNullException.ThrowIfNull(device);
+            CheckRows(type, rows);
+            var layout = CheckScaling(scaling, rows, columns);
+            if (device.Backend is not IMappedStorageBackend mapped)
+            {
+                throw new NotSupportedException($"{device} does not read a file's mapping in place: read the weight into its memory (FromStored).");
+            }
+
+            // The storage takes the mapping (it closes it when it throws too; closing twice does nothing).
+            values = Tensor.OverStorage(mapped.MapStorage(mapping, type, (long)rows * columns), [columns, rows], device);
+            return WithScales(values, scaling, layout, rows, columns, device);
+        }
+        catch
+        {
+            if (values is not null)
+            {
+                values.Dispose();                                           // its storage closes the mapping
+            }
+            else
+            {
+                mapping.Dispose();
+            }
+
+            throw;
+        }
+    }
+
+    // Which scale each value takes: none without scaling, else the scaling's layout, checked to cover [columns, rows].
+    private static StoredScales CheckScaling(StoredScaling? scaling, int rows, int columns)
+    {
         var layout = scaling?.Layout ?? default;
         if (scaling is not null)
         {
@@ -56,17 +121,21 @@ public sealed class StoredWeight : PackedWeight, IRecordable
             }
         }
 
-        Tensor? values = null, scales = null, zeros = null;
+        return layout;
+    }
+
+    // The weight over `values` with its scales and zero points made on the device (values disposed by the caller on failure).
+    private static StoredWeight WithScales(Tensor values, StoredScaling? scaling, StoredScales layout, int rows, int columns, Device device)
+    {
+        Tensor? scales = null, zeros = null;
         try
         {
-            values = TensorScope.Untrack(Tensor.FromBytes(stored, type, [columns, rows], device));
             scales = scaling is null ? null : Tensor.Persistent(scaling.Scales, [scaling.Scales.Length], device);
             zeros = scaling?.Zeros is { } zeroPoints ? Tensor.Persistent(zeroPoints, [zeroPoints.Length], device) : null;
             return new StoredWeight(values, scales, zeros, layout, rows, columns);
         }
         catch
         {
-            values?.Dispose();
             scales?.Dispose();
             zeros?.Dispose();
             throw;
@@ -102,6 +171,12 @@ public sealed class StoredWeight : PackedWeight, IRecordable
     /// <summary>Which scale each stored value takes.</summary>
     public StoredScales Layout { get; }
 
+    /// <summary>
+    /// The file mapping the stored values are read from in place (plan 37, W3: <see cref="FromMapped"/>), or null when
+    /// they are in the device's memory.
+    /// </summary>
+    public FileMapping? Mapping => (_values.Storage as Devices.Cpu.MappedStorage)?.Mapping;
+
     /// <inheritdoc />
     public override string Name => Type.Name;
 
@@ -118,7 +193,7 @@ public sealed class StoredWeight : PackedWeight, IRecordable
     public override Device Device => _values.Device;
 
     /// <inheritdoc />
-    public override string Description => $"{Type.Name} (as stored)";
+    public override string Description => Mapping is { } mapping ? $"{Type.Name} (read in place from {System.IO.Path.GetFileName(mapping.Path)})" : $"{Type.Name} (as stored)";
 
     /// <inheritdoc />
     public override string ShortName => Type.Name;

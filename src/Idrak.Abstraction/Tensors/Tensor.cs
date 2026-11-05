@@ -501,6 +501,19 @@ public sealed partial class Tensor : IDisposable
         return new Tensor(shape.ToArray(), device.Backend.Allocate(type, size, zeroed), device, track);
     }
 
+    // A tensor of `shape` over `storage`, which it takes (its one reference), made by the device outside Allocate (a file's
+    // mapping, plan 37 W3: IMappedStorageBackend.MapStorage); not tracked by a scope.
+    internal static Tensor OverStorage(Storage storage, ReadOnlySpan<int> shape, Device device)
+    {
+        if (storage.ElementCount != ElementCount(shape))
+        {
+            storage.Release();
+            throw new ArgumentException($"A storage of {storage.ElementCount} {storage.ElementType.Name} elements cannot hold {FormatShape(shape)}.", nameof(shape));
+        }
+
+        return new Tensor(shape.ToArray(), storage, device, track: false);
+    }
+
     private static int ElementCount(ReadOnlySpan<int> shape)
     {
         int size = 1;

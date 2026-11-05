@@ -730,7 +730,25 @@ public sealed partial class Linear : Module, IAdaptableLinear, IPackableLinear, 
     protected override void MoveTo(Device device)
     {
         _weight = _weight is null ? null : MoveTensor(_weight, device);
-        _packed?.MoveWeights(device, MoveTensor);
+        if (_packed is StoredWeight { Mapping: not null } mapped && ReferenceEquals(mapped.Type, ElementType.Float32) && device != mapped.Device
+            && !WeightStorage.Multiplies(device.Backend, mapped.Type))
+        {
+            // A float32 weight read in place from the file (plan 37, W3) going to a device that does not multiply stored
+            // float32 (a CPU layer moving to the GPU, W2): the layer's own float weights there, expanded once (counted in
+            // MappedWeights), so the device runs its float product; the mapping is closed.
+            using (var expanded = mapped.Dequantize())
+            {
+                _weight = Tensor.Persistent(expanded.ToArray(), [InFeatures, OutFeatures], device);
+            }
+
+            mapped.Dispose();
+            SetPacked(null);
+        }
+        else
+        {
+            _packed?.MoveWeights(device, MoveTensor);
+        }
+
         Bias = Bias is null ? null : MoveTensor(Bias, device);
         if (Adapter is { } a)
         {

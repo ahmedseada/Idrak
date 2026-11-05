@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Ahmed Seada
 // Licensed under the Apache License, Version 2.0. See LICENSE in the repository root.
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 using Idrak;
 using Idrak.Abstraction.Devices;
@@ -9,7 +10,8 @@ using Idrak.Models;
 using Idrak.Models.Abstractions;
 
 // Plan 37, W0 and W1: what crosses the bus per token (OffloadTraffic, printed by idrak run), and a decoder split between the
-// device and the CPU (WeightPlacements), whose results are the all-device run's.
+// device and the CPU (WeightPlacements), whose results are the all-device run's. W3: a split's CPU layers and lazily built
+// layers read their weights in place from the checkpoint's file mapping (WeightMappings, MappedWeights).
 internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] OffloadTelemetryGroup =
@@ -22,6 +24,8 @@ internal abstract partial class DesktopTests : Tests
     private static readonly (string Name, Action<Device> Run)[] LazyLoadGroup =
     [
         ("lazy load: a lazy load builds no decoder layer and reads none of their weights until its first use (counted), then each on first use; the logits of a pass, a prompt and cached steps equal an eager load's bit for bit; disposed, it closes its checkpoint", LazyLoadMatchesEager),
+        ("lazy load: on the CPU a lazy load's layers read their float32 weights in place from the checkpoint's file mapping (W3): every projection mapped, none copied, the logits of the copied weights bit for bit, the CPU's own memory lower by at least the mapped bytes (its counters); IDRAK_WEIGHT_MAPPING=copy copies them; disposed, the mapping is closed; on another device nothing is mapped", LazyLayersReadTheMapping),
+        ("lazy load: a lazily loaded Q8_0 GGUF model's matrices are read in place from the file as kept (W3), each block matrix mapped or its copy counted with why, the loss of the eager load bit for bit", LazyGgufReadsTheMapping),
     ];
 
     private static readonly (string Name, Action<Device> Run)[] WeightPlacementGroup =
@@ -29,6 +33,7 @@ internal abstract partial class DesktopTests : Tests
         ("weight placement: device, split, stream and auto plan from the request (the layers the free memory holds beside the fixed weights, the working memory and each layer's cache; the user's count; stream refused where the device cannot and the model does not fit; auto keeps a model that fits on the device); the names are registered, an unknown one is not; device layers parse", PlacementPlans),
         ("weight placement: a decoder split between the device and the CPU gives the all-device and the all-CPU logits (a pass, a prompt and cached steps, a truncated context), its later layers' weights and caches on the CPU; a free memory that holds part of it splits it at load (auto) instead of failing; on the CPU nothing is split", SplitMatchesOneDevice),
         ("weight placement: layers follow the free memory at step boundaries (more on the device when it frees, fewer under pressure, a user's count kept), their weights and caches moved, the run going on with the all-CPU logits; FollowMemory off keeps them; lazy layers built where they then belong", LayersFollowMemory),
+        ("weight placement: the weight mappings are registered (map, copy; an unknown name is not), map reads a split's CPU layer or a lazy layer in place on a device that reads a mapping in place and never a layer kept on the device, copy never; IDRAK_WEIGHT_MAPPING names the default; the counts' difference and line", WeightMappingsPlan),
     ];
 
     private static string PlacementModel => PretrainData("tiny-llama");
@@ -167,6 +172,12 @@ internal abstract partial class DesktopTests : Tests
               && blocks[0].Parameters().All(p => p.Device == device) && blocks[1].Parameters().All(p => p.Device == Device.Cpu)
               && split.Notes.Any(n => n.StartsWith("placement split: 1 of 2 layers on", StringComparison.Ordinal)),
             $"layer 0 on {device}, layer 1 on the CPU ({split.Placement})");
+        // W3: the CPU layer's projections read in place from the file's mapping, the device layer's in its memory.
+        var cpuLinears = blocks[1].Descendants().OfType<Linear>().ToList();
+        Check(cpuLinears.Count > 0 && cpuLinears.All(l => l.PackedWeight is StoredWeight { Mapping: not null })
+              && blocks[0].Descendants().OfType<Linear>().All(l => l.PackedWeight is null)
+              && split.WeightsMapped is { } mappedLine && mappedLine.StartsWith($"weights mapped: {cpuLinears.Count} matrices read in place", StringComparison.Ordinal),
+            $"the CPU layer's {cpuLinears.Count} projections read in place: {split.WeightsMapped}");
 
         var expected = Decode(whole, truncate: true);
         var onCpu = Decode(host, truncate: true);
@@ -215,7 +226,10 @@ internal abstract partial class DesktopTests : Tests
                 Check(got[i].Select(BitConverter.SingleToInt32Bits).SequenceEqual(expected[i].Select(BitConverter.SingleToInt32Bits)), $"pass {i}: the eager logits bit for bit");
             }
 
-            Check(lazy.Network.Parameters().Count() == eager.Network.Parameters().Count(), "the same parameters once built");
+            // A projection whose weights are read in place from the file (W3: lazy layers on the CPU) holds them as buffers.
+            int inPlace = lazy.Network.Descendants().OfType<Linear>().Count(l => l.PackedWeight is StoredWeight { Mapping: not null });
+            Check(lazy.Network.Parameters().Count() + inPlace == eager.Network.Parameters().Count(),
+                $"the same weights once built ({lazy.Network.Parameters().Count()} parameters, {inPlace} read in place from the file; {eager.Network.Parameters().Count()} eager)");
         }
 
         // One layer at a time: a pass through the first layer only builds that one.
@@ -438,6 +452,140 @@ internal abstract partial class DesktopTests : Tests
         long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
         Check(allocated == 0 && backend.Stages - stages == 200 && backend.Prefetches - prefetches == 200,
             $"100 passes of two layers: {allocated} bytes allocated, {backend.Stages - stages} stagings, {backend.Prefetches - prefetches} prefetches");
+    }
+
+    private static void WeightMappingsPlan(Device device)
+    {
+        _ = device;
+        if (!FirstRun(nameof(WeightMappingsPlan)))
+        {
+            return;
+        }
+
+        var map = WeightMappings.Get("MAP");
+        var copy = WeightMappings.Get(WeightMappings.Copy);
+        var host = Device.Cpu;
+        Check(map.Maps(new WeightMappingRequest(host, CpuLayer: true, Lazy: false)) && map.Maps(new WeightMappingRequest(host, CpuLayer: false, Lazy: true))
+              && !map.Maps(new WeightMappingRequest(host, CpuLayer: false, Lazy: false)) && host.Backend is IMappedStorageBackend
+              && !copy.Maps(new WeightMappingRequest(host, CpuLayer: true, Lazy: true)),
+            "map: a split's CPU layer or a lazy layer on the CPU, not a layer kept where it is built; copy: never");
+        bool unknown = false;
+        try
+        {
+            WeightMappings.Get("nowhere");
+        }
+        catch (NotSupportedException e)
+        {
+            unknown = e.Message.Contains("not registered", StringComparison.Ordinal);
+        }
+
+        Check(unknown && WeightMappings.Names.Order(StringComparer.Ordinal).SequenceEqual(["copy", "map"]), "the names; an unknown one is not registered");
+        WithEnvironment(new Dictionary<string, string?> { [WeightMappings.EnvironmentVariable] = "copy" }, () =>
+            Check(WeightMappings.DefaultName == WeightMappings.Copy, $"IDRAK_WEIGHT_MAPPING=copy: {WeightMappings.DefaultName}"));
+        WithEnvironment(new Dictionary<string, string?> { [WeightMappings.EnvironmentVariable] = null }, () =>
+            Check(WeightMappings.DefaultName == WeightMappings.Map, "map by default"));
+
+        // The counts: a snapshot's difference, the bytes read in place now, the copies by why.
+        var before = MappedWeights.Read();
+        MappedWeights.CountMapped(300);
+        MappedWeights.CountReleased(100);
+        MappedWeights.CountCopied(40, "a test's copy");
+        var counted = MappedWeights.Read().Since(before);
+        Check(counted is { Mapped: 1, MappedBytes: 300, Released: 1, ReleasedBytes: 100, LiveBytes: 200, Copies: 1, CopiedBytes: 40 } && counted.CopiedFor["a test's copy"] == 40
+              && counted.ToString().StartsWith("weights mapped: 1 read in place from the file", StringComparison.Ordinal),
+            $"the counts: {counted}");
+    }
+
+    private static void LazyLayersReadTheMapping(Device device)
+    {
+        if (device.Type != DeviceType.Cpu)
+        {
+            // Layers built on a device that does not read a mapping in place are read into its memory as before.
+            var start = MappedWeights.Read();
+            using var onDevice = PretrainedModel.Load(PlacementModel, new PretrainedOptions { Device = device, LazyLayers = true });
+            Decode(onDevice, truncate: false);
+            Check(MappedWeights.Read().Since(start).Mapped == 0 && onDevice.Network.Descendants().OfType<Linear>().All(l => l.PackedWeight is null),
+                $"{device}: lazy layers built on the device read nothing in place ({MappedWeights.Read().Since(start)})");
+            return;
+        }
+
+        var cpu = Device.Cpu;
+        long InUse()
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            return cpu.Backend.GetMemoryUsage().InUse;
+        }
+
+        int filesBefore = FileMapping.MappedFiles;
+        // Each path run once first, so what the process makes once on a kernel's first use (and keeps) is in neither measure.
+        foreach (var warm in new[] { WeightMappings.Copy, WeightMappings.Map })
+        {
+            using var once = PretrainedModel.Load(PlacementModel, new PretrainedOptions { Device = cpu, LazyLayers = true, WeightMapping = warm });
+            Decode(once, truncate: true);
+        }
+
+        // The same lazy load with its weights copied, then read in place: the CPU memory each holds once its layers are built.
+        List<float[]> copiedLogits, mappedLogits;
+        long copiedGrowth, mappedGrowth, projectionBytes;
+        int projections;
+        MappedWeightCounts copiedCounts, mappedCounts;
+        long start0 = InUse();
+        var counts0 = MappedWeights.Read();
+        using (var copied = PretrainedModel.Load(PlacementModel, new PretrainedOptions { Device = cpu, LazyLayers = true, WeightMapping = WeightMappings.Copy }))
+        {
+            copiedLogits = Decode(copied, truncate: true);
+            copiedGrowth = InUse() - start0;
+            copiedCounts = MappedWeights.Read().Since(counts0);
+            Check(copied.Network.Descendants().OfType<DecoderBlock>().SelectMany(b => b.Descendants().OfType<Linear>()).All(l => l.PackedWeight is null),
+                "copy: every projection's weights in the CPU's memory");
+        }
+
+        long start1 = InUse();
+        var counts1 = MappedWeights.Read();
+        using (var mapped = PretrainedModel.Load(PlacementModel, new PretrainedOptions { Device = cpu, LazyLayers = true, WeightMapping = WeightMappings.Map }))
+        {
+            Check(MappedWeights.Read().Since(counts1).Mapped == 0, "nothing mapped before a layer is built");
+            mappedLogits = Decode(mapped, truncate: true);
+            mappedGrowth = InUse() - start1;
+            mappedCounts = MappedWeights.Read().Since(counts1);
+            var linears = mapped.Network.Descendants().OfType<DecoderBlock>().SelectMany(b => b.Descendants().OfType<Linear>()).ToList();
+            projections = linears.Count;
+            projectionBytes = linears.Sum(l => (long)l.InFeatures * l.OutFeatures * sizeof(float));
+            Check(projections > 0 && linears.All(l => l.PackedWeight is StoredWeight { Mapping: not null } w && ReferenceEquals(w.Type, ElementType.Float32)),
+                $"map: every projection reads its float32 weights in place ({string.Join(", ", linears.Select(l => l.ToString()))})");
+            Check(FileMapping.MappedFiles >= Math.Max(1, filesBefore), $"the checkpoint is mapped ({FileMapping.MappedFiles} files)");
+        }
+
+        Check(copiedCounts.Mapped == 0 && copiedCounts.Copies == 0, $"copy: nothing mapped, nothing counted ({copiedCounts})");
+        Check(mappedCounts.Mapped == projections && mappedCounts.MappedBytes == projectionBytes && mappedCounts.Copies == 0,
+            $"map: {projections} projections of {projectionBytes} bytes read in place, no copy ({mappedCounts})");
+        for (int i = 0; i < copiedLogits.Count; i++)
+        {
+            Check(mappedLogits[i].Select(BitConverter.SingleToInt32Bits).SequenceEqual(copiedLogits[i].Select(BitConverter.SingleToInt32Bits)),
+                $"pass {i}: the logits of the weights read in place are the copied weights' bit for bit");
+        }
+
+        // The CPU's own memory (its accountant: what the process allocated for tensors) holds the mapped weights nowhere.
+        Check(copiedGrowth - mappedGrowth >= projectionBytes,
+            $"the CPU's memory in use grew by {copiedGrowth} bytes with the weights copied and {mappedGrowth} read in place: lower by {copiedGrowth - mappedGrowth}, expected at least the {projectionBytes} mapped");
+        Console.WriteLine(string.Create(CultureInfo.InvariantCulture,
+            $"    measured: CPU memory in use after the lazy layers are built: {copiedGrowth:N0} B copied, {mappedGrowth:N0} B read in place, {copiedGrowth - mappedGrowth:N0} B lower ({projections} projections, {projectionBytes:N0} B mapped)"));
+
+        InUse();                                                         // the disposed model's tensors finalized, if any were left
+        var released = MappedWeights.Read().Since(counts1);
+        Check(released.ReleasedBytes == projectionBytes && released.LiveBytes == 0 && FileMapping.MappedFiles == filesBefore,
+            $"disposed: every mapping closed ({released}; {FileMapping.MappedFiles} files mapped, {filesBefore} before)");
+
+        // IDRAK_WEIGHT_MAPPING=copy: a load without the option copies.
+        WithEnvironment(new Dictionary<string, string?> { [WeightMappings.EnvironmentVariable] = "copy" }, () =>
+        {
+            var before = MappedWeights.Read();
+            using var byVariable = PretrainedModel.Load(PlacementModel, new PretrainedOptions { Device = cpu, LazyLayers = true });
+            Decode(byVariable, truncate: false);
+            Check(MappedWeights.Read().Since(before).Mapped == 0, $"IDRAK_WEIGHT_MAPPING=copy: nothing read in place ({MappedWeights.Read().Since(before)})");
+        });
     }
 
     // Logits of a plain pass, a prompt of 4 positions and 3 cached steps; with truncate, the context cut back to the prompt

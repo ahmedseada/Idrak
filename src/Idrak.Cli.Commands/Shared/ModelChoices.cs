@@ -339,6 +339,11 @@ internal static class ModelChoices
         {
             context.Error(kept.ToString());                             // "weights kept packed: 14 matrices (q8_0), 1.2 MB; ..." (plan 37, Q0)
         }
+
+        if (model.WeightsMapped is { } mapped)
+        {
+            context.Error(mapped);                                      // "weights mapped: 12 matrices read in place from the file ..." (plan 37, W3)
+        }
         if (model.Placement is { } placed)
         {
             // A model split with the CPU or streamed from system memory is said on the error output (it is slower for it).

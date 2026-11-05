@@ -300,7 +300,7 @@ public static class GgufModel
     }
 
     // The GGUF file's tensors under Hugging Face names, in Hugging Face layouts.
-    private sealed class GgufTensors : IStoredWeightStore
+    private sealed class GgufTensors : IStoredWeightStore, IMappedTensorStore
     {
         // A Hugging Face tensor: the GGUF tensor holding it, which expert of a tensor of all the experts (-1 for the whole
         // tensor), its shape, and what llama.cpp added to its values (subtracted on reading).
@@ -551,6 +551,33 @@ public static class GgufModel
             }
 
             return true;
+        }
+
+        // A matrix's bytes in the file (plan 37, W3): float32 as stored (on a little-endian machine) or a block format kept as
+        // stored (StoredTypeOf), its rows (an expert's of a tensor of all the experts) in the order Read gives them.
+        public StoredLocation? Locate(string name, out string? why)
+        {
+            why = null;
+            if (!_names.TryGetValue(name, out var source) || source.Shape.Length != 2)
+            {
+                why = "not a matrix of the file";
+                return null;
+            }
+
+            var info = _file.Tensors[source.Gguf];
+            var type = info.Type == 0 ? (BitConverter.IsLittleEndian ? ElementType.Float32 : null) : StoredTypeOf(name);
+            why = source.Offset != 0 ? "a value the converter added is taken off on reading"
+                : Permuted(source.Gguf) is not null ? "its rows are put back in order on reading (interleaved q / k heads)"
+                : type is null ? info.Type == 0 ? "float32 stored little-endian, on a machine of the other byte order" : $"stored as {GgufFile.TypeName(info.Type)}, computed in float32 (widened at load)"
+                : null;
+            if (why is not null)
+            {
+                return null;
+            }
+
+            int rows = source.Shape[0];
+            long rowBytes = _file.RowBytes(source.Gguf), first = (long)Math.Max(0, source.Expert) * rows;
+            return new StoredLocation(_file.Path, info.Offset + first * rowBytes, rows * rowBytes, type!);
         }
 
         // The heads whose q / k rows llama.cpp interleaved in the tensor gguf (families that store them so), else null.
