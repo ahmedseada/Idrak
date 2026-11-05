@@ -74,4 +74,18 @@ public sealed record BackendCapabilities
     /// (<see cref="StoresAnyFormat"/>); a load expands weights of any other type to float32 for it. Default: none.
     /// </summary>
     public IReadOnlySet<string> StoredFormats { get; init; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// The element types this device computes natively (plan 37, T2), read by each backend at run time from what the device
+    /// and its driver report (a compute capability, cooperative matrix types), never from a list of cards, and only where
+    /// the backend has kernels that compute in them: <see cref="ElementTypes.Choose"/>'s auto picks bfloat16 where it is
+    /// listed, float16 where only it is, float32 otherwise. float32 is always computed. Default: float32 alone.
+    /// </summary>
+    public IReadOnlyList<ElementType> NativeTypes { get; init; } = [ElementType.Float32];
+
+    /// <summary>
+    /// What the device reported that <see cref="NativeTypes"/> follows from, for people ("compute capability 8.9: bfloat16
+    /// tensor cores (8.0 or newer), fp8 tensor cores (8.9 or newer)"): the telemetry says it with auto's pick.
+    /// </summary>
+    public string NativeReport { get; init; } = "the device reports no 16-bit arithmetic the backend computes in";
 }

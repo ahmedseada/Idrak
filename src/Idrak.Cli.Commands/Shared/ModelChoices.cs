@@ -37,8 +37,10 @@ internal static class ModelChoices
                                  (the most used on the GPU, the rest in system memory, copied in when picked) or auto
                                  (the default: resident when it fits; IDRAK_MOE_EXPERTS, IDRAK_MOE_DEVICE_EXPERTS_MB,
                                  IDRAK_MOE_COLD=cpu computes cold experts on the CPU)
-              --dtype TYPE       the element type the run computes in: auto (the default, picked per run) or float32
-                                 (IDRAK_DEFAULT_DTYPE)
+              --dtype TYPE       the element type the run computes in: auto (the default: what the GPU computes natively,
+                                 bfloat16, else float16, else float32), float32 (results as before), bfloat16 (bf16)
+                                 or float16 (f16); without -w a 16-bit run's weights are bfloat16 or smaller, as
+                                 memory allows (IDRAK_DEFAULT_DTYPE)
         """;
 
     /// <summary>
@@ -47,7 +49,7 @@ internal static class ModelChoices
     /// </summary>
     public const string MoeExpertsOption = "--moe-experts";
 
-    /// <summary>The option naming the element type a run computes in (auto or float32, plan 37's T0); over IDRAK_DEFAULT_DTYPE.</summary>
+    /// <summary>The option naming the element type a run computes in (auto, float32, bfloat16 or float16, plan 37's T0 and T2); over IDRAK_DEFAULT_DTYPE.</summary>
     public const string DtypeOption = "--dtype";
 
     /// <summary>The option giving a vision family's own options, KEY=VALUE (repeatable).</summary>
@@ -98,6 +100,9 @@ internal static class ModelChoices
 
         /// <summary>The element type the run computes in (<c>--dtype</c>, or the alias's "dtype"), or null for IDRAK_DEFAULT_DTYPE, else auto.</summary>
         public string? Dtype { get; init; }
+
+        /// <summary>Where <see cref="Dtype"/> came from when a command set it itself ("check: the reference is float32"), or null for --dtype.</summary>
+        public string? DtypeSource { get; init; }
 
         /// <summary>The transforms every image goes through: <c>grayscale</c> first when asked (and not already a step), then <see cref="ImageTransforms"/>.</summary>
         public ImageTransformPipeline Transforms => Grayscale && ImageTransforms?.Contains("grayscale") != true
@@ -320,12 +325,16 @@ internal static class ModelChoices
                 DeviceLayers = choice.DeviceLayers,
                 ElementType = choice.Dtype,
                 ExpertPlacement = choice.MoeExperts,
-                ElementTypeSource = DtypeOption,
+                ElementTypeSource = choice.DtypeSource ?? DtypeOption,
             });
             progress.Clear();
         }
 
-        context.Error(model.ElementType.ToString());                   // "element type: float32 (picked by auto)", always shown (plan 37, T0)
+        foreach (var type in model.DeviceElementTypes)
+        {
+            context.Error(type.ToString());                             // "element type: bfloat16 on cuda:0 (picked by auto: ...)", always shown (plan 37, T0, T2)
+        }
+
         if (model.KeptWeights is { } kept)
         {
             context.Error(kept.ToString());                             // "weights kept packed: 14 matrices (q8_0), 1.2 MB; ..." (plan 37, Q0)
@@ -381,30 +390,30 @@ internal static class ModelChoices
     public static int ContextLength(ModelChoice choice, PretrainedModel model) => Math.Min(choice.Context ?? DefaultContext, model.MaxPositions);
 
     /// <summary>
-    /// The KV cache layout named by <c>--kv</c>: float32 (f32), int8, bfloat16 (bf16) or any registered format; float32
-    /// when not given.
+    /// The KV cache layout named by <c>--kv</c> (or the alias's "kv"): auto, float32 (f32), int8, bfloat16 (bf16) or any
+    /// registered format; when not given IDRAK_KV_CACHE_TYPE, else auto, which keeps the run's element type
+    /// (<paramref name="model"/>'s: a bfloat16 cache for a bfloat16 run; float32 without a model; plan 37 T2).
     /// </summary>
-    public static Idrak.Abstraction.Generation.IKeyValueLayout CacheLayout(ModelChoice choice)
+    public static Idrak.Abstraction.Generation.IKeyValueLayout CacheLayout(ModelChoice choice, PretrainedModel? model = null)
     {
-        string name = choice.Kv?.ToLowerInvariant() switch { null or "f32" or "fp32" => "float32", "bf16" => "bfloat16", var other => other };
         try
         {
-            return Idrak.Abstraction.Generation.KeyValueLayouts.Get(name);
+            return Idrak.Abstraction.Generation.KeyValueLayouts.Choose(choice.Kv, model?.ElementType.Type ?? Idrak.Abstraction.ElementType.Float32).Layout;
         }
-        catch (NotSupportedException)
+        catch (NotSupportedException e)
         {
-            throw new UsageException($"Unknown --kv format '{choice.Kv}'; use {string.Join(", ", Idrak.Abstraction.Generation.KeyValueLayouts.Names.Order(StringComparer.Ordinal))}, "
+            throw new UsageException($"{e.Message} Use auto, {string.Join(", ", Idrak.Abstraction.Generation.KeyValueLayouts.Names.Order(StringComparer.Ordinal))}, "
                                      + "or load a plug-in that registers it (--plugin).");
         }
     }
 
     /// <summary>A text generator for <paramref name="model"/> with the chosen KV cache format and context window.</summary>
     public static Idrak.Generation.TextGenerator CreateGenerator(PretrainedModel model, ModelChoice choice) =>
-        model.CreateGenerator(CacheLayout(choice), ContextLength(choice, model));
+        model.CreateGenerator(CacheLayout(choice, model), ContextLength(choice, model));
 
     /// <summary>A chat generator for <paramref name="model"/> (its own chat template) with the chosen KV cache format and context window.</summary>
     public static Idrak.Text.Generation.ChatGenerator CreateChat(PretrainedModel model, ModelChoice choice) =>
         model.ChatTemplate is null
             ? throw new InvalidOperationException($"{choice.Model} has no chat template (tokenizer_config.json); use 'idrak complete' for raw completion.")
-            : model.CreateChat(CacheLayout(choice), ContextLength(choice, model));
+            : model.CreateChat(CacheLayout(choice, model), ContextLength(choice, model));
 }

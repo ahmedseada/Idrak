@@ -60,8 +60,9 @@ internal sealed class CheckCommand : Command
         }
 
         // The reference's logits are float32: products stay float32 unless the weights are packed anyway.
-        var precision = MixedPrecision.Default;
+        var precision = MixedPrecision.Chosen;
         MixedPrecision.Default = MatMulPrecision.Float32;
+        choice = choice with { Dtype = choice.Dtype ?? "float32", DtypeSource = choice.Dtype is null ? "check: the reference is float32" : null };
         try
         {
             using var model = ModelChoices.Load(context, choice);
@@ -69,7 +70,7 @@ internal sealed class CheckCommand : Command
         }
         finally
         {
-            MixedPrecision.Default = precision;
+            MixedPrecision.Chosen = precision;
         }
     }
 

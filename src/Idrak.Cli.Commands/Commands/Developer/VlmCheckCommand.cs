@@ -281,7 +281,7 @@ internal sealed class VlmCheckCommand : Command
 
         int imageToken = vision.PromptFormat.ImageToken;
         int afterImage = Math.Max(0, System.Array.LastIndexOf(ids, imageToken) + 1);
-        var layout = ModelChoices.CacheLayout(choice);
+        var layout = ModelChoices.CacheLayout(choice, model);
 
         // 4. Teacher forcing, 5. greedy.
         Pass Force(string label, float[] featureValues, bool promptRows)

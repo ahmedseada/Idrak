@@ -92,7 +92,9 @@ internal sealed class TuneTool(ToolConsole console)
         Chat:      --system S, --max-new N, --temperature T (0: greedy)
         Model:     --cuda | --gpu | --cpu | --device cuda:N | vulkan:N (default: the best GPU found, else the CPU; any CUDA
                    GPU works, the faster kernels load where the GPU has them), --int8 | --int4 | --bf16 (base weights), --context N,
-                   --kv8 | --kv16 | --kv FORMAT (float32, int8, bfloat16), --no-think, --matmul fp32|bf16|fp8, --offload, --gpu-memory GiB,
+                   --kv8 | --kv16 | --kv FORMAT (float32, int8, bfloat16), --no-think, --offload, --gpu-memory GiB,
+                   --dtype auto | float32 | bf16 | f16 (the element type the products compute in: auto, the default, what the GPU
+                   computes natively, said per device; IDRAK_DEFAULT_DTYPE), --matmul fp32|bf16|fp8 (the products' precision over it),
                    --device-layers N | auto (chat and evaluate of a model larger than the GPU: N layers on it, the rest computed by
                    the CPU from system memory; training keeps every layer on the device, --offload staging what does not fit),
                    --moe-experts resident | offload | auto (chat and evaluate of a mixture-of-experts model: offload keeps the
@@ -110,7 +112,7 @@ internal sealed class TuneTool(ToolConsole console)
         "--min-lr", "--decay", "--loss", "--beta", "--margin", "--adapter-type", "--gpu-memory", "--matmul", "--samples", "--batch", "--max-new",
         "--metric", "--choices", "--temperature", "--eval-fraction", "--system", "--kind", "--max-rows", "--seed", "--min-chars", "--max-chars",
         "--balance", "--data-format", "--images", "--image-transform", "--vision", "--vision-option", "--parts", "--feature-cache", "--metric-every",
-        "--metric-samples", "--audio", "--audio-prompt", "--resume-from", "--device-layers", "--moe-experts",
+        "--metric-samples", "--audio", "--audio-prompt", "--resume-from", "--device-layers", "--moe-experts", "--dtype",
     ];
 
     /// <summary>The flags.</summary>
@@ -130,7 +132,7 @@ internal sealed class TuneTool(ToolConsole console)
     public static readonly string[] SessionValueOptions =
     [
         "--rank", "--alpha", "--lr", "--max-length", "--batch-tokens", "--accumulate", "--targets", "--optimizer", "--weight-decay", "--momentum", "--schedule",
-        "--warmup", "--min-lr", "--decay", "--adapter-type", "--adapter", "--context", "--matmul", "--gpu-memory",
+        "--warmup", "--min-lr", "--decay", "--adapter-type", "--adapter", "--context", "--matmul", "--gpu-memory", "--dtype",
     ];
 
     /// <summary>The flags of train that set up a fine-tuning session (the activations' memory, the packing, FP8, the optimizer's place, offloading).</summary>
@@ -149,7 +151,7 @@ internal sealed class TuneTool(ToolConsole console)
     private long? gpuMemoryLimit;
     private int balance;
     private double evalFraction;
-    private string? output, evalFile, adapterFolder, systemPrompt, choices, deviceLayers, moeExperts;
+    private string? output, evalFile, adapterFolder, systemPrompt, choices, deviceLayers, moeExperts, dtype;
     private float? temperature;
     private string metric = ChatEvaluation.Auto;
 
@@ -268,6 +270,7 @@ internal sealed class TuneTool(ToolConsole console)
                 case "--offload": offload = true; break;
                 case "--device-layers": deviceLayers = Next(); break;
                 case "--moe-experts": moeExperts = Next(); break;
+                case "--dtype": dtype = Next(); break;
                 case "--cpu-optimizer": tuning = tuning with { HostOptimizer = true }; break;
                 case "--optimizer": optimizerName = Next().ToLowerInvariant(); break;
                 case "--weight-decay": weightDecay = NextFloat(); break;
@@ -416,7 +419,7 @@ internal sealed class TuneTool(ToolConsole console)
         {
             if (s_running++ == 0)
             {
-                s_saved = (MixedPrecision.Default, Device.Default, ComputeResources.OffloadToHostMemory, ComputeResources.GpuMemoryLimit);
+                s_saved = (MixedPrecision.Chosen, Device.Default, ComputeResources.OffloadToHostMemory, ComputeResources.GpuMemoryLimit);
             }
         }
 
@@ -440,7 +443,7 @@ internal sealed class TuneTool(ToolConsole console)
             {
                 if (--s_running == 0)
                 {
-                    (MixedPrecision.Default, Device.Default) = (s_saved.Precision, s_saved.Device);
+                    (MixedPrecision.Chosen, Device.Default) = (s_saved.Precision, s_saved.Device);
                     (ComputeResources.OffloadToHostMemory, ComputeResources.GpuMemoryLimit) = (s_saved.Offload, s_saved.Limit);
                 }
             }
@@ -450,7 +453,7 @@ internal sealed class TuneTool(ToolConsole console)
     // The process-wide settings as they were before the first of the runs under way (Execute).
     private static readonly Lock ProcessSettingsGate = new();
     private static int s_running;
-    private static (MatMulPrecision Precision, Device Device, bool Offload, long? Limit) s_saved;
+    private static (MatMulPrecision? Precision, Device Device, bool Offload, long? Limit) s_saved;
 
     private int Run()
     {
@@ -464,8 +467,9 @@ internal sealed class TuneTool(ToolConsole console)
             tuning = tuning with { Cluster = rank.Collectives, ClusterOptions = rank.Context.Options };
         }
 
-        // Tensor cores (bfloat16) for the larger products unless asked otherwise.
-        MixedPrecision.Default = matmul ?? MatMulPrecision.BFloat16;
+        // The products in the run's element type (plan 37, T2: --dtype, IDRAK_DEFAULT_DTYPE, else auto: bfloat16 tensor cores
+        // where the device computes them, float32 sums), forward and backward, unless --matmul names a precision.
+        MixedPrecision.Default = matmul ?? MixedPrecision.For(ElementTypes.Choose(dtype, "--dtype", device).Type);
         if (Cluster.ClusterSession.Current is null)
         {
             Device.Default = device;
@@ -1477,10 +1481,17 @@ internal sealed class TuneTool(ToolConsole console)
             DeviceLayers = training ? null : Idrak.Models.Abstractions.WeightPlacements.ParseDeviceLayers(deviceLayers, "--device-layers"),
             // Training moves no expert between memories: every expert stays resident (plan 37, R1).
             ExpertPlacement = training ? Idrak.Models.Abstractions.ExpertPlacements.Resident : moeExperts,
+            ElementType = dtype,
+            ElementTypeSource = "--dtype",
         });
         _out.WriteLine($"loaded {model.Config["architectures"]?[0]} from {folder} in {watch.Elapsed.TotalSeconds:F1} s on {device}{(int8 ? ", int8 weights" : int4 ? ", int4 weights" : bf16 ? ", bf16 weights" : "")}");
         _out.WriteLine($"  {model.Spec.ParameterCount / 1e6:F0}M parameters, {model.Spec.Layers} layers, dim {model.Spec.Dim}, heads {model.Spec.Heads}/{model.Spec.KvHeads}, "
                        + $"vocabulary {model.Spec.Vocabulary}, context {model.MaxPositions}");
+        foreach (var type in model.DeviceElementTypes)
+        {
+            _out.WriteLine($"  {type}");                              // the type per device and how it was chosen (plan 37, T2)
+        }
+
         foreach (var note in model.Notes)
         {
             _out.WriteLine($"  note: {note}");

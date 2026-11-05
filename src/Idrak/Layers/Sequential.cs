@@ -37,6 +37,14 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
     /// <summary>The layer at <paramref name="index"/>.</summary>
     public Module this[int index] => _modules[index];
 
+    /// <summary>
+    /// The arithmetic of the matrix products its passes run (plan 37, T2), unless the caller chose one (a
+    /// <see cref="MixedPrecision"/> scope, or <see cref="MixedPrecision.Chosen"/>): a loaded model's is the precision of
+    /// the element type its run computes in (<c>PretrainedModel.ElementType</c>, <see cref="MixedPrecision.For"/>), so a
+    /// device that computes bfloat16 natively multiplies in it with float32 sums. Null (the default): the caller's.
+    /// </summary>
+    public MatMulPrecision? Precision { get; set; }
+
     /// <summary>Appends a layer.</summary>
     public void Add(Module module) => _modules.Add(module ?? throw new ArgumentNullException(nameof(module)));
 
@@ -73,6 +81,8 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
     // before(i, x): what layer i reads instead of x (images put into a prompt's embeddings), inside the layer's scope.
     internal Tensor Run(Tensor input, int layers, Func<int, Tensor, Tensor>? before)
     {
+        using var precision = MixedPrecision.Prefer(Precision);            // the run's element type, unless the caller chose (plan 37, T2)
+
         // Inference (nothing recorded, no per-layer telemetry, no graph being recorded: the folded weights are freed as soon
         // as the convolution is queued): a convolution and the batch norm (evaluation mode) and activation after it run as
         // one convolution (Conv2d.ForwardFused).
@@ -187,6 +197,7 @@ public sealed class Sequential : Module, IEnumerable<Module>, ICachedModule
         ArgumentOutOfRangeException.ThrowIfNegative(layers);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(layers, _modules.Count);
         int steps = input.Shape[1];
+        using var precision = MixedPrecision.Prefer(Precision);            // the run's element type, unless the caller chose (plan 37, T2)
         using var step = context.OpenStep(steps);
         bool outermost = step.Opened;
 

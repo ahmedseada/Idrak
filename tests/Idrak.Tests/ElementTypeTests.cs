@@ -16,11 +16,11 @@ internal abstract partial class DesktopTests : Tests
 {
     private static readonly (string Name, Action<Device> Run)[] ElementTypesGroup =
     [
-        ("element types: the registry holds float32, bfloat16, float16, float8_e4m3, float8_e5m2, int64, int32, int8, uint8, int4, int2 and bool (any case), ggml's block formats from Idrak, an app's type over them and back; an unknown name is \"not registered\"", ElementTypeRegistry),
-        ("element types: every built-in type's values round trip against a reference (rounding to nearest even, saturation, fp8 codes both ways, packed int4 and int2), on the host and through a typed tensor's bytes", ElementTypeRoundTrips),
+        ("element types: the registry holds float32, bfloat16, float16, float8_e4m3, float8_e5m2, int64, int32, int8, uint8, int4, int2, bool, int16, uint16 and float64 (any case, and the short names bf16, f16, fp32, double, fp8), ggml's block formats from Idrak, an app's type over them and back; an unknown name is \"not registered\"", ElementTypeRegistry),
+        ("element types: every built-in type's values round trip against a reference (rounding to nearest even, saturation, fp8 codes both ways, packed int4 and int2, int16, uint16 and float64), on the host and through a typed tensor's bytes", ElementTypeRoundTrips),
         ("element types: conversions between float32, int32 and int64 are exact or refused (a fraction, an index past 2^24 for float32, past int32's range); the dispatcher converts an index storage of another type for its operation once, counted and published to telemetry, with the same result as the integer path", ElementTypeConversions),
         ("element types: a block format describes its bits a value, block, scales and zero points (q4_k: 4.5 bits, blocks of 256, 8 scales with minimums), takes whole blocks only, and decodes as its GGUF type does", ElementTypeBlockFormats),
-        ("element types: the run's type is auto (picked: float32 until T2) or float32 (selected by --dtype or IDRAK_DEFAULT_DTYPE, said so); another value is refused naming the accepted ones; the CPU's indices are int32, a device that says nothing float32", ElementTypeChoosing),
+        ("element types: the run's type is auto (picked from what the device reports natively: bfloat16, else float16, else float32; the CPU float32) or one the user selects (--dtype or IDRAK_DEFAULT_DTYPE, short names too, said so, and said when the device computes it in float32); another value is refused naming the accepted ones; CUDA's native types follow the compute capability; the CPU's indices are int32, a device that says nothing float32", ElementTypeChoosing),
         ("element types: indices past 2^24 are exact: an embedding lookup, its gradient (scatter-add), a one-hot and a top-k at row 16,777,217; int64 indices through the counted conversion", IndicesPast2To24),
         ("element types: decoding with learned positions (a decoder's position table, and a position encoding's) takes no counted conversion on the device: the prompt's ids, the step's positions and the sampled ids in its index type; the tokens as without the cache, and the cached lookup the float positions' converted one bit for bit", LearnedPositionDecoding),
     ];
@@ -33,10 +33,13 @@ internal abstract partial class DesktopTests : Tests
             return;
         }
 
-        string[] builtIns = ["float32", "bfloat16", "float16", "float8_e4m3", "float8_e5m2", "int64", "int32", "int8", "uint8", "int4", "int2", "bool"];
+        string[] builtIns = ["float32", "bfloat16", "float16", "float8_e4m3", "float8_e5m2", "int64", "int32", "int8", "uint8", "int4", "int2", "bool", "int16", "uint16", "float64"];
         Check(ElementTypes.Names.Take(builtIns.Length).SequenceEqual(builtIns), $"the built-ins in order: {string.Join(", ", ElementTypes.Names)}");
         Check(ReferenceEquals(ElementTypes.Get("INT32"), ElementType.Int32) && ReferenceEquals(ElementTypes.Find("BFloat16"), ElementType.BFloat16)
               && ElementTypes.Origin("int32") == Overrides.Library, "found by name, ignoring case; the library's");
+        Check(ElementTypes.Find("bf16") == ElementType.BFloat16 && ElementTypes.Get("F16") == ElementType.Float16 && ElementTypes.Find("fp32") == ElementType.Float32
+              && ElementTypes.Find(" double ") == ElementType.Float64 && ElementTypes.Find("fp8") == ElementType.Float8E4M3 && ElementTypes.Find("half") == ElementType.Float16
+              && ElementTypes.Find("bf17") is null, "the short names find their types");
         Check(ElementTypes.Find("q4_k") is { BlockSize: 256 } && ElementTypes.Find("iq2_xxs") is { IsBlock: true } && ElementTypes.Find("mxfp4") is { IsFloat: true },
             $"ggml's block formats registered by Idrak: {string.Join(", ", ElementTypes.Names.Skip(builtIns.Length))}");
         try
@@ -80,6 +83,9 @@ internal abstract partial class DesktopTests : Tests
             (ElementType.Int4, x => float.IsNaN(x) ? 0f : Math.Clamp(MathF.Round(x), -8f, 7f)),
             (ElementType.Int2, x => float.IsNaN(x) ? 0f : Math.Clamp(MathF.Round(x), -2f, 1f)),
             (ElementType.Bool, x => x != 0f && !float.IsNaN(x) ? 1f : 0f),
+            (ElementType.Int16, x => float.IsNaN(x) ? 0f : Math.Clamp(MathF.Round(x), -32768f, 32767f)),
+            (ElementType.UInt16, x => float.IsNaN(x) ? 0f : Math.Clamp(MathF.Round(x), 0f, 65535f)),
+            (ElementType.Float64, x => x),
         ];
         foreach (var (type, reference) in cases)
         {
@@ -247,19 +253,42 @@ internal abstract partial class DesktopTests : Tests
             return;
         }
 
+        string cpuReport = Device.Cpu.Backend.Capabilities.NativeReport;
         WithEnvironment(new Dictionary<string, string?> { [ElementTypes.EnvironmentVariable] = null }, () =>
         {
             var auto = ElementTypes.Choose();
             var given = ElementTypes.Choose("FLOAT32", "--dtype");
-            Check(auto.Picked && auto.Type == ElementType.Float32 && auto.ToString() == "element type: float32 (picked by auto)"
-                  && !given.Picked && given.ToString() == "element type: float32 (selected by the user (--dtype))", $"{auto}; {given}");
-            Check(ThrowsWith<ArgumentException>(() => ElementTypes.Choose("bf16"), "auto, float32"), "another value refused, naming auto and float32");
+            var half = ElementTypes.Choose("bf16", "--dtype", Device.Cpu);
+            Check(auto.Picked && auto.Type == ElementType.Float32 && auto.Device == "cpu"
+                  && auto.ToString() == $"element type: float32 on cpu (picked by auto: cpu computes float32 natively ({cpuReport}))"
+                  && !given.Picked && given.IsNative && given.ToString() == "element type: float32 on cpu (selected by the user (--dtype))", $"{auto}; {given}");
+            Check(half.Type == ElementType.BFloat16 && !half.Picked && !half.IsNative
+                  && half.How == $"selected by the user (--dtype); cpu computes it in float32 (it computes float32 natively ({cpuReport}))",
+                $"bfloat16 selected on the CPU, which computes it in float32: {half}");
+            Check(ThrowsWith<ArgumentException>(() => ElementTypes.Choose("int8"), "auto, bfloat16, float16, float32"), "a type nothing computes in refused, naming the accepted ones");
+            Check(ThrowsWith<ArgumentException>(() => ElementTypes.Choose("float7", "--dtype"), "--dtype 'float7'"), "an unknown name refused, naming the option");
+            Check(ElementTypes.Choose(null, "--dtype", device).Type == ElementTypes.Pick(device.Backend.Capabilities) && device.Backend.Capabilities.NativeTypes.Contains(ElementType.Float32),
+                $"auto on {device} picks from what it reports: {string.Join(", ", device.Backend.Capabilities.NativeTypes)} ({device.Backend.Capabilities.NativeReport})");
         });
-        WithEnvironment(new Dictionary<string, string?> { [ElementTypes.EnvironmentVariable] = "float32" }, () =>
-            Check(ElementTypes.Choose().ToString() == "element type: float32 (selected by the user (IDRAK_DEFAULT_DTYPE))" && ElementTypes.Choose("auto").Picked,
-                "the variable selects, an option over it"));
+        WithEnvironment(new Dictionary<string, string?> { [ElementTypes.EnvironmentVariable] = "f16" }, () =>
+            Check(ElementTypes.Choose() is { Type: var t, Picked: false, Source: ElementTypes.EnvironmentVariable } && t == ElementType.Float16
+                  && ElementTypes.Choose("auto").Picked && ElementTypes.Choose("float32").Source == "--dtype",
+                "the variable selects (a short name), an option over it"));
         WithEnvironment(new Dictionary<string, string?> { [ElementTypes.EnvironmentVariable] = "int8" }, () =>
             Check(ThrowsWith<ArgumentException>(() => ElementTypes.Choose(), "IDRAK_DEFAULT_DTYPE 'int8'"), "the variable's value refused, naming it"));
+
+        // Auto's pick from what a backend reports: bfloat16 first, then float16, else float32.
+        BackendCapabilities Reporting(params ElementType[] types) => new() { FewRows = 1, DecodeAttentionHeadDim = 1, TiledAttentionHeadDim = 1, NativeTypes = types };
+        Check(ElementTypes.Pick(Reporting(ElementType.Float16, ElementType.BFloat16, ElementType.Float32)) == ElementType.BFloat16
+              && ElementTypes.Pick(Reporting(ElementType.Float16, ElementType.Float32)) == ElementType.Float16
+              && ElementTypes.Pick(Reporting(ElementType.Float8E4M3, ElementType.Float32)) == ElementType.Float32
+              && ElementTypes.Pick(new BackendCapabilities { FewRows = 1, DecodeAttentionHeadDim = 1, TiledAttentionHeadDim = 1 }) == ElementType.Float32,
+            "auto picks bfloat16, then float16, else float32 (fp8 is never picked)");
+        Check(Idrak.Gpu.Cuda.CudaNativeTypes.Of(7, 5).SequenceEqual([ElementType.Float32])
+              && Idrak.Gpu.Cuda.CudaNativeTypes.Of(8, 6).SequenceEqual([ElementType.BFloat16, ElementType.Float32])
+              && Idrak.Gpu.Cuda.CudaNativeTypes.Of(8, 9).SequenceEqual([ElementType.BFloat16, ElementType.Float8E4M3, ElementType.Float32])
+              && Idrak.Gpu.Cuda.CudaNativeTypes.Of(12, 0).SequenceEqual([ElementType.BFloat16, ElementType.Float8E4M3, ElementType.Float32]),
+            "CUDA's native types from the compute capability: bfloat16 from 8.0, fp8 from 8.9");
         Check(Device.Cpu.Backend.Capabilities.IndexType == ElementType.Int32 && Device.Cpu.Backend.IndexTypeOf(Ops.Gather) == ElementType.Int32
               && new BackendCapabilities { FewRows = 1, DecodeAttentionHeadDim = 1, TiledAttentionHeadDim = 1 }.IndexType == ElementType.Float32,
             "the CPU reads int32 indices; a device that says nothing float32");

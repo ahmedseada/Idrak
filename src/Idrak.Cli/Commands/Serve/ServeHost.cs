@@ -360,8 +360,7 @@ internal sealed class ServeHost
         long before = ComputeResources.GetMemoryUsage(device).InUse;
         var watch = Stopwatch.StartNew();
         var pretrained = ModelChoices.Load(_context, model.Choice with { Model = model.Path });
-        var generator = model.Choice.Kv is { } kv ? pretrained.CreateGenerator(KeyValueLayouts.Get(kv), model.Choice.Context)
-            : pretrained.CreateGenerator(contextLength: model.Choice.Context);
+        var generator = pretrained.CreateGenerator(ModelChoices.CacheLayout(model.Choice, pretrained), model.Choice.Context);   // --kv, else the run's type
         _loaded.AddOrUpdate(generator, pretrained);
         _memory[model.Name] = Math.Max(0, ComputeResources.GetMemoryUsage(device).InUse - before);
         Print($"loaded {model.Name} in {watch.Elapsed.TotalSeconds:F1} s on {device}");

@@ -122,8 +122,13 @@ internal sealed unsafe partial class HipBackend : Backend, IMemoryReport, IKerne
     // Every operation without a kernel of its own takes the host fallback, which runs the CPU's code: the layers follow
     // the CPU's limits so the two agree. Its kernels read indices, token ids and offsets as int32, as the CPU's (plan 37,
     // T1b: the gathers, one-hot, scatter-add, top-k and the sampler's ids and history in GCN).
-    // Weights kept in their file's format (plan 37, Q0) have no product of its own yet: a load expands them for it.
-    public override BackendCapabilities Capabilities { get; } = Device.Cpu.Backend.Capabilities with { IndexType = ElementType.Int32, StoresAnyFormat = false };
+    // Weights kept in their file's format (plan 37, Q0) have no product of its own yet: a load expands them for it. Its
+    // kernels compute float32 alone (plan 37, T2: no 16-bit product is built in GCN yet), so auto picks float32 here.
+    public override BackendCapabilities Capabilities { get; } = Device.Cpu.Backend.Capabilities with
+    {
+        IndexType = ElementType.Int32, StoresAnyFormat = false,
+        NativeTypes = [ElementType.Float32], NativeReport = "the HIP kernels compute float32 (no 16-bit products are built in GCN yet)",
+    };
 
     /// <summary>"6.2.41134" for a runtime version 60241134 (major · 10⁷ + minor · 10⁵ + patch).</summary>
     internal static string FormatVersion(int version) => $"{version / 10_000_000}.{version / 100_000 % 100}.{version % 100_000}";

@@ -77,7 +77,7 @@ internal sealed class EvalCommand : Command
         var rows = ReadRows(set).Take(limit).ToList();
         var choice = ModelChoices.Choose(context, modelName);
         using var model = ModelChoices.Load(context, choice);
-        var chat = model.CreateChat(KeyValueLayouts.Get(choice.Kv ?? "float32"), model.MaxPositions);
+        var chat = model.CreateChat(ModelChoices.CacheLayout(choice, model), model.MaxPositions);
         int done = 0;
         EvaluationReport report;
         using (var progress = new ProgressLine(context, "answering", rows.Count))

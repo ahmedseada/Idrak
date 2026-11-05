@@ -93,6 +93,8 @@ internal sealed class PretrainCommand : Command
               --no-checkpointing   never
               --recompute          recompute the feed-forward activations from the start
               --bf16-activations   hold activations as bfloat16 between the passes
+              --dtype TYPE         the element type the products compute in: auto (what the GPU computes natively),
+                                   float32, bf16 or f16 (IDRAK_DEFAULT_DTYPE); the weights stay float32
               --host-optimizer     the optimizer's update on the CPU, its state in system memory
               --no-packing         one sequence a row
               --no-graphs          no recorded step graphs
@@ -130,7 +132,7 @@ internal sealed class PretrainCommand : Command
     [
         "--tokens", "--data", "--images", "--weight", "--steps", "--trained", "--lr", "--min-lr", "--warmup", "--schedule", "--max-length",
         "--batch-tokens", "--accumulate", "--optimizer", "--weight-decay", "--clip", "--save-every", "--keep", "--eval", "--eval-every", "--log-every", "--out",
-        "--image-transform", "--vision", "--audio", "--feature-cache", "--sequences", "--teacher", "--temperature", "--alpha", "--top-k", "--teacher-device",
+        "--image-transform", "--vision", "--audio", "--feature-cache", "--sequences", "--teacher", "--temperature", "--alpha", "--top-k", "--teacher-device", ModelChoices.DtypeOption,
         .. SpeechPretraining.ValueOptions, "--rank", .. ClusterJoin.Options, .. ClusterJoin.PipelineOptions,
     ];
 
@@ -236,7 +238,11 @@ internal sealed class PretrainCommand : Command
         {
             // A rank holding part of the model (a pipeline stage, a parameters shard) reads only its own tensors (plan 23, C8b).
             bool part = rank?.Context.Options is { OwnTensorsOnly: true } cluster && (cluster.Pipelined || cluster.Shard == ShardMode.Parameters);
-            model = PretrainedModel.Load(modelFolder, new PretrainedOptions { Device = device, Deferred = part });
+            model = PretrainedModel.Load(modelFolder, new PretrainedOptions { Device = device, Deferred = part, ElementType = context.Option(ModelChoices.DtypeOption), ElementTypeSource = ModelChoices.DtypeOption });
+            foreach (var type in model.DeviceElementTypes)
+            {
+                context.Error(type.ToString());                         // the type per device and how it was chosen (plan 37, T2)
+            }
         }
         catch (NotRegisteredException e)
         {
@@ -280,6 +286,8 @@ internal sealed class PretrainCommand : Command
                 line.Report(resume?.Step ?? 0);
                 try
                 {
+                    // The run's element type for the backward products too (the forward's come from the network; plan 37, T2).
+                    using var precision = MixedPrecision.Prefer(model.Network.Precision);
                     result = Pretrainer.Train(model, options, run, resume, reports, interrupt.Token, context.Verbose ? context.Detail : null);
                 }
                 catch (ClusterRunStoppedException stopped) when (!stopped.Agreed)

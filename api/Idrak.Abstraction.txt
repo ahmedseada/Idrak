@@ -1860,6 +1860,7 @@ public sealed record Idrak.Abstraction.Devices.BackendCapabilities : System.IEqu
   [Obsolete("Constructors of types with required members are not supported in this version of your compiler.", true)] public BackendCapabilities()
   public Idrak.Abstraction.ElementType IndexType { get; init; }
   public System.Collections.Generic.IReadOnlyDictionary<Idrak.Abstraction.Operations.Operation, Idrak.Abstraction.ElementType> IndexTypes { get; init; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementType> NativeTypes { get; init; }
   public System.Collections.Generic.IReadOnlySet<Idrak.Abstraction.Operations.Operation> StridedInputs { get; init; }
   public System.Collections.Generic.IReadOnlySet<string> StoredFormats { get; init; }
   public bool StoresAnyFormat { get; init; }
@@ -1867,6 +1868,7 @@ public sealed record Idrak.Abstraction.Devices.BackendCapabilities : System.IEqu
   public required int DecodeAttentionHeadDim { get; init; }
   public required int FewRows { get; init; }
   public required int TiledAttentionHeadDim { get; init; }
+  public string NativeReport { get; init; }
 
 public sealed record Idrak.Abstraction.Devices.BackendHardware : System.IEquatable<Idrak.Abstraction.Devices.BackendHardware>
   public BackendHardware()
@@ -2409,10 +2411,11 @@ public readonly record struct Idrak.Abstraction.Diagnostics.DeviceListed : Syste
   public string? Error { get; init; }
 
 public readonly record struct Idrak.Abstraction.Diagnostics.ElementTypeChosen : System.IEquatable<Idrak.Abstraction.Diagnostics.ElementTypeChosen>
-  public ElementTypeChosen(string Device, string ElementType, string How)
+  public ElementTypeChosen(string Device, string ElementType, string How, string Native = "")
   public string Device { get; init; }
   public string ElementType { get; init; }
   public string How { get; init; }
+  public string Native { get; init; }
 
 public readonly record struct Idrak.Abstraction.Diagnostics.ElementsConverted : System.IEquatable<Idrak.Abstraction.Diagnostics.ElementsConverted>
   public ElementsConverted(string Device, string Operation, string From, string To, long Elements)
@@ -3173,13 +3176,16 @@ public sealed class Idrak.Abstraction.ElementType : Idrak.Abstraction.IKind
   public static readonly Idrak.Abstraction.ElementType Bool
   public static readonly Idrak.Abstraction.ElementType Float16
   public static readonly Idrak.Abstraction.ElementType Float32
+  public static readonly Idrak.Abstraction.ElementType Float64
   public static readonly Idrak.Abstraction.ElementType Float8E4M3
   public static readonly Idrak.Abstraction.ElementType Float8E5M2
+  public static readonly Idrak.Abstraction.ElementType Int16
   public static readonly Idrak.Abstraction.ElementType Int2
   public static readonly Idrak.Abstraction.ElementType Int32
   public static readonly Idrak.Abstraction.ElementType Int4
   public static readonly Idrak.Abstraction.ElementType Int64
   public static readonly Idrak.Abstraction.ElementType Int8
+  public static readonly Idrak.Abstraction.ElementType UInt16
   public static readonly Idrak.Abstraction.ElementType UInt8
   public string Describe()
   public void Decode(System.ReadOnlySpan<byte> source, System.Span<float> destination)
@@ -3188,20 +3194,25 @@ public sealed class Idrak.Abstraction.ElementType : Idrak.Abstraction.IKind
 public sealed record Idrak.Abstraction.ElementTypeChoice : System.IEquatable<Idrak.Abstraction.ElementTypeChoice>
   public ElementTypeChoice(Idrak.Abstraction.ElementType Type, bool Picked, string? Source)
   public Idrak.Abstraction.ElementType Type { get; init; }
+  public bool IsNative { get; init; }
   public bool Picked { get; init; }
   public override string ToString()
   public string How { get; }
+  public string? Device { get; init; }
+  public string? Native { get; init; }
   public string? Source { get; init; }
 
 public static class Idrak.Abstraction.ElementTypes
   public const string Auto = "auto"
   public const string EnvironmentVariable = "IDRAK_DEFAULT_DTYPE"
   public static Idrak.Abstraction.ElementType Get(System.ReadOnlySpan<char> name)
+  public static Idrak.Abstraction.ElementType Pick(Idrak.Abstraction.Devices.BackendCapabilities capabilities)
   public static Idrak.Abstraction.ElementType? Default(string name)
   public static Idrak.Abstraction.ElementType? Find(System.ReadOnlySpan<char> name)
-  public static Idrak.Abstraction.ElementTypeChoice Choose(string? asked = null, string source = "--dtype")
+  public static Idrak.Abstraction.ElementTypeChoice Choose(string? asked = null, string source = "--dtype", Idrak.Abstraction.Device? device = null)
   public static System.Collections.Generic.IReadOnlyDictionary<string, long> ConversionsByOperation { get; }
   public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementType> All { get; }
+  public static System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementType> ComputeTypes { get; }
   public static System.Collections.Generic.IReadOnlyList<string> Accepted { get; }
   public static System.Collections.Generic.IReadOnlyList<string> Names { get; }
   public static bool Unregister(string name)
@@ -4412,11 +4423,22 @@ public abstract class Idrak.Abstraction.Generation.KeyValueLayout : Idrak.Abstra
   public virtual Idrak.Abstraction.Tensor ExpandPrefix(Idrak.Abstraction.Generation.KeyValueCache cache, bool keys, int positions)
   public virtual string Summary { get; }
 
+public sealed record Idrak.Abstraction.Generation.KeyValueLayoutChoice : System.IEquatable<Idrak.Abstraction.Generation.KeyValueLayoutChoice>
+  public Idrak.Abstraction.Generation.IKeyValueLayout Layout { get; init; }
+  public KeyValueLayoutChoice(Idrak.Abstraction.Generation.IKeyValueLayout Layout, bool Picked, string? Source, string How)
+  public bool Picked { get; init; }
+  public override string ToString()
+  public string How { get; init; }
+  public string? Source { get; init; }
+
 public static class Idrak.Abstraction.Generation.KeyValueLayouts
+  public const string Auto = "auto"
+  public const string EnvironmentVariable = "IDRAK_KV_CACHE_TYPE"
   public static Idrak.Abstraction.Generation.IKeyValueLayout For(Idrak.Abstraction.Generation.KeyValueFormat format)
   public static Idrak.Abstraction.Generation.IKeyValueLayout Get(System.ReadOnlySpan<char> name)
   public static Idrak.Abstraction.Generation.IKeyValueLayout? Default(string name)
   public static Idrak.Abstraction.Generation.KeyValueFormat FormatOf(Idrak.Abstraction.Generation.IKeyValueLayout layout)
+  public static Idrak.Abstraction.Generation.KeyValueLayoutChoice Choose(string? asked, Idrak.Abstraction.ElementType computeType, string source = "--kv")
   public static System.Collections.Generic.IReadOnlyCollection<string> Names { get; }
   public static bool Unregister(string name)
   public static string? Origin(string name)
@@ -5096,6 +5118,7 @@ public sealed class Idrak.Abstraction.LibraryRegistrationsAttribute : System.Att
 
 public enum Idrak.Abstraction.MatMulPrecision : int
   BFloat16 = 1
+  Float16 = 3
   Float32 = 0
   Float8 = 2
 
@@ -5112,10 +5135,14 @@ public readonly record struct Idrak.Abstraction.MemoryUsage : System.IEquatable<
 
 public static class Idrak.Abstraction.MixedPrecision
   nested Idrak.Abstraction.MixedPrecision.Scope (below)
+  public const string EnvironmentVariable = "IDRAK_MATMUL"
   public static Idrak.Abstraction.MatMulPrecision Current { get; }
   public static Idrak.Abstraction.MatMulPrecision Default { get; set; }
+  public static Idrak.Abstraction.MatMulPrecision For(Idrak.Abstraction.ElementType type)
+  public static Idrak.Abstraction.MatMulPrecision? Chosen { get; set; }
   public static Idrak.Abstraction.MixedPrecision.Scope BFloat16()
   public static Idrak.Abstraction.MixedPrecision.Scope Use(Idrak.Abstraction.MatMulPrecision precision)
+  public static Idrak.Abstraction.MixedPrecision.Scope? Prefer(Idrak.Abstraction.MatMulPrecision? precision)
   public static bool UsesTensorCores { get; }
   public static string? TensorCoresUnavailable(Idrak.Abstraction.Device device)
 
@@ -6679,6 +6706,7 @@ public sealed class Idrak.Abstraction.Tensor : System.IDisposable
   public Idrak.Abstraction.Tensor Clone()
   public Idrak.Abstraction.Tensor Col2Im(in Idrak.Abstraction.Devices.ConvGeometry geometry)
   public Idrak.Abstraction.Tensor Contiguous()
+  public Idrak.Abstraction.Tensor ConvertTo(Idrak.Abstraction.ElementType type)
   public Idrak.Abstraction.Tensor Convolution(Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Tensor? bias, in Idrak.Abstraction.Devices.ConvGeometry geometry, int groups = 1, Idrak.Abstraction.Devices.ConvActivation activation = (Idrak.Abstraction.Devices.ConvActivation)0)
   public Idrak.Abstraction.Tensor ConvolutionTranspose(Idrak.Abstraction.Tensor weight, Idrak.Abstraction.Tensor? bias, in Idrak.Abstraction.Devices.ConvGeometry geometry, int groups = 1)
   public Idrak.Abstraction.Tensor Cos()

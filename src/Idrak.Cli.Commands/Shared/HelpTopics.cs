@@ -244,8 +244,10 @@ internal static class HelpTopics
     private const string Precision = """
         idrak help precision
 
-        Products run in float32 by default. IDRAK_MATMUL=bf16 (or fp8) and the library's precision scopes run them
-        with bfloat16 or float8 operands and float32 sums where the device has matrix units; elsewhere float32 stays.
+        A run computes in the element type its device computes natively (--dtype, IDRAK_DEFAULT_DTYPE: auto picks
+        bfloat16, else float16, else float32; the load says which per device and how it was chosen): its products take
+        16-bit operands and float32 sums there, float32 elsewhere; --dtype float32 keeps the results as before.
+        IDRAK_MATMUL=bf16, fp16, fp8 or fp32 and the library's precision scopes choose the products' precision over it.
         Weights can be packed (-w int8, int4, bf16, or a registered format): smaller and faster to read, with a small
         loss (idrak quantize reports a perplexity check). The KV cache has its own formats (-k), which bound the memory
         a long context takes (idrak memory shows what fits where).

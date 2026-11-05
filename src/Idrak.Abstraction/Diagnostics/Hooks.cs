@@ -917,6 +917,7 @@ public static class TelemetryJson
                 w.WriteString("device", e.Device);
                 w.WriteString("element_type", e.ElementType);
                 w.WriteString("how", e.How);
+                w.WriteString("native", e.Native);
                 break;
             case TuningCompleted e:
                 w.WriteString("event", "tuning");

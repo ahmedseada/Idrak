@@ -56,8 +56,10 @@ the config. A model in the cache is used without asking the network (and its las
 that is not is downloaded into the cache with a progress line, or, with `--offline`, is an error that names
 `idrak pull`. `-w, --weights` picks the weight format (int8, int4, bf16 or any registered packed format),
 `--head-weights` the output head's own format (bf16 beside int8 or int4 keeps the checkpoint's next-token scores and,
-for tied embeddings, one vocabulary table: less memory than an int8 or int4 head, a little slower per token) and `-k,
---kv` the KV cache format.
+for tied embeddings, one vocabulary table: less memory than an int8 or int4 head, a little slower per token), `-k,
+--kv` the KV cache format (default `auto`: the run's element type) and `--dtype` the element type the run computes in
+(default `auto`: bfloat16 where the GPU computes it natively, else float16, else float32; `float32` keeps the results as
+before).
 
 Common options (every command):
 
@@ -747,11 +749,12 @@ stored by `idrak login`, not here. The most used:
 | `IDRAK_CACHE` | The cache folder (`--cache` wins) |
 | `IDRAK_PACKED_CACHE`, `IDRAK_PACKED_CACHE_DIR` | Whether int8 and int4 weights are kept between loads (default on; `0` or `off`: quantized on every load) and their folder (default `packed` in the cache folder); `--packed-cache` wins |
 | `IDRAK_KEEP_PACKED` | Whether weights stored in a format of their own (GGUF block formats such as q4_k, F8 or I8 with scales) stay in it in memory, about the file's size, where the device multiplies it (default on; `0` or `off`: expanded to float32 at load; the same results either way). The load says `weights kept packed: …` or `weights expanded: …` |
-| `IDRAK_DEFAULT_DTYPE` | The element type a run computes in: `auto` (default, float32 until plan 37's T2) or `float32`; `--dtype` wins |
+| `IDRAK_DEFAULT_DTYPE` | The element type a run computes in on each device: `auto` (default: what the device computes natively as its backend reports it, bfloat16, else float16, else float32), `float32` (results as before), `bfloat16` (`bf16`) or `float16` (`f16`). A 16-bit run multiplies in its type with float32 sums and chooses its weights among the 16-bit and smaller formats; the load says `element type: bfloat16 on cuda:0 (picked by auto: …)` or `(selected by the user (--dtype))` for each device. `--dtype` (run, serve, ui, tune, pretrain, bench) wins |
+| `IDRAK_KV_CACHE_TYPE` | The KV cache format when `--kv` names none: `auto` (default: the run's element type, a bfloat16 cache for a bfloat16 run), `float32`, `bfloat16`, `int8` or a registered format |
 | `IDRAK_CONFIG`, `IDRAK_CONFIG_PROFILE` | The config file and the profile in use |
 | `IDRAK_DISABLE_CUDA`, `IDRAK_DISABLE_VULKAN`, `IDRAK_DISABLE_HIP` | Backends not looked for |
 | `IDRAK_VULKAN_DEFAULT` | A Vulkan GPU may be the default device |
-| `IDRAK_MATMUL`, `IDRAK_OFFLOAD`, `IDRAK_LOOKUP_TABLES` | Matrix product precision; spilling to system memory; where a token table lives (auto, host, device) |
+| `IDRAK_MATMUL`, `IDRAK_OFFLOAD`, `IDRAK_LOOKUP_TABLES` | Matrix product precision over the run's element type (bf16, fp16, fp8, fp32); spilling to system memory; where a token table lives (auto, host, device) |
 | `IDRAK_GPU_CHUNK_MB`, `IDRAK_GPU_STACK_BYTES` | The chunks long-lived GPU blocks share (0: off); each GPU thread's stack |
 | `IDRAK_CPU_THREADS`, `IDRAK_CPU_MEMORY_LIMIT_MB`, `IDRAK_GPU_MEMORY_LIMIT_MB` | The most CPU threads (default every core) and the most MiB of tensor memory on the CPU and on each GPU (default unlimited) |
 | `IDRAK_GPU_MEMORY_RESERVE_MB`, `IDRAK_OFFLOAD_RETURN_HEADROOM_MB`, `IDRAK_WORKSPACE_SHARE` | MiB kept free on a GPU for the display (default a sixteenth); MiB kept free when offloaded tensors return (an eighth); the share of free memory one operation's working buffers may take (0.5) |

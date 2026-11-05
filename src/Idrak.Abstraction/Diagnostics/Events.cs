@@ -410,14 +410,15 @@ public readonly record struct HostFallback(string Device, string Operation, stri
 public readonly record struct ElementsConverted(string Device, string Operation, string From, string To, long Elements);
 
 /// <summary>
-/// Published when a load chooses the element type its run computes in (plan 37, T0): the type and how it was chosen,
-/// "picked by auto" or "selected by the user" (naming <c>--dtype</c> or <c>IDRAK_DEFAULT_DTYPE</c>), at
-/// <c>TelemetryLevel.Devices</c>.
+/// Published when a load chooses the element type its run computes in on a device (plan 37, T0 and T2): the type and how
+/// it was chosen, "picked by auto" (with what the device reported) or "selected by the user" (naming <c>--dtype</c> or
+/// <c>IDRAK_DEFAULT_DTYPE</c>), at <c>TelemetryLevel.Devices</c>; one for each device the run computes on.
 /// </summary>
 /// <param name="Device">The device the run computes on.</param>
 /// <param name="ElementType">The type's name.</param>
-/// <param name="How">"picked by auto" or "selected by the user (…)".</param>
-public readonly record struct ElementTypeChosen(string Device, string ElementType, string How);
+/// <param name="How">"picked by auto: …" (with what the device reported) or "selected by the user (…)".</param>
+/// <param name="Native">What the device reported (plan 37, T2): the types it computes natively and why ("bfloat16, float32 natively (compute capability 8.9: …)").</param>
+public readonly record struct ElementTypeChosen(string Device, string ElementType, string How, string Native = "");
 
 /// <summary>
 /// Published when a load has placed weights stored in a format of their own (plan 37, Q0): how many matrices it kept as

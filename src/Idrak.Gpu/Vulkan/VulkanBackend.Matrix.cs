@@ -293,12 +293,14 @@ internal sealed unsafe partial class VulkanBackend
     // after scaling). Null in float32 mode and without cooperative matrices.
     private VulkanKernel? MixedKernel(VulkanKernels.PackedFormat? format)
     {
-        if (MixedPrecision.Current == MatMulPrecision.Float32 || _matrix is null)
+        var precision = MixedPrecision.Current;
+        if (precision == MatMulPrecision.Float32 || _matrix is null)
         {
             return null;
         }
 
-        return MixedOperandsOverride switch
+        // Float16 asked (a run computing in float16, plan 37 T2): 16-bit float operands, never bfloat16 ones.
+        return (precision == MatMulPrecision.Float16 ? VulkanKernels.CoopPrecision.Float16 : MixedOperandsOverride) switch
         {
             VulkanKernels.CoopPrecision.BFloat16 => CoopKernel(format, VulkanKernels.CoopPrecision.BFloat16),
             VulkanKernels.CoopPrecision.Float16 => CoopKernel(format, VulkanKernels.CoopPrecision.Float16),
@@ -313,6 +315,16 @@ internal sealed unsafe partial class VulkanBackend
     public override string? TensorCoresUnavailable() => _matrix is null
         ? base.TensorCoresUnavailable()
         : "the device computes matrix products in float32, or with MixedPrecision on cooperative matrices where measured faster";
+
+    // The element types the products compute natively here (plan 37, T2), from what the device reported when it was
+    // created: bfloat16 where it lists bfloat16 cooperative matrices, float16 where it has float16 ones; float32 always.
+    private (IReadOnlyList<ElementType> Types, string Report) NativeTypesReported() => _matrix switch
+    {
+        null => ([ElementType.Float32], "no cooperative matrices with 16-bit operands reported"),
+        { BFloat16Shape: { } b } m => ([ElementType.BFloat16, ElementType.Float16, ElementType.Float32],
+            $"cooperative matrices: bfloat16 {b} and float16 {m.Shape} operands, float32 sums{(m.Emulated > 0 ? " (emulated, tests)" : "")}"),
+        { } m => ([ElementType.Float16, ElementType.Float32], $"cooperative matrices: float16 {m.Shape} operands, float32 sums, no bfloat16 ones{(m.Emulated > 0 ? " (emulated, tests)" : "")}"),
+    };
 
     /// <summary>The cooperative matrices in one line, for benchmark headers.</summary>
     internal string DescribeMatrixUnits() => _matrix switch

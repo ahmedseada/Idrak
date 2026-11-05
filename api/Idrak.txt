@@ -1507,6 +1507,7 @@ public sealed class Idrak.Layers.SequenceEncoder : Idrak.Abstraction.Module, Idr
   public override void Dispose()
 
 public sealed class Idrak.Layers.Sequential : Idrak.Abstraction.Module, Idrak.Layers.Abstractions.ICachedModule, System.Collections.Generic.IEnumerable<Idrak.Abstraction.Module>, System.Collections.IEnumerable
+  public Idrak.Abstraction.MatMulPrecision? Precision { get; set; }
   public Idrak.Abstraction.Module this[int index] { get; }
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context)
   public Idrak.Abstraction.Tensor ForwardCached(Idrak.Abstraction.Tensor input, Idrak.Abstraction.Generation.DecodingContext context, int layers)
@@ -2401,6 +2402,7 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public Idrak.Abstraction.Generation.ITokenizer? Tokenizer { get; }
   public Idrak.Abstraction.Generation.ITrainableSoftParts OpenPart(string kind, Idrak.Abstraction.Device? device = null, Idrak.Abstraction.Generation.IFeatureCache? cache = null)
   public Idrak.Abstraction.Generation.IVisionEncoder CreateVisionEncoder(Idrak.Abstraction.Generation.VisionEncoderOptions? options = null)
+  public Idrak.Abstraction.Generation.KeyValueLayoutChoice CacheChoice { get; }
   public Idrak.Abstraction.Generation.SamplingSettings? RecommendedSampling { get; }
   public Idrak.Abstraction.Generation.StoredWeightsSummary? KeptWeights { get; }
   public Idrak.Layers.Sequential Network { get; }
@@ -2414,6 +2416,7 @@ public sealed class Idrak.Models.PretrainedModel : System.IDisposable
   public System.Collections.Generic.IReadOnlyCollection<string> Parts { get; }
   public System.Collections.Generic.IReadOnlyCollection<string> TrainedPartTensors { get; }
   public System.Collections.Generic.IReadOnlyCollection<string> TrainedVisionTensors { get; }
+  public System.Collections.Generic.IReadOnlyList<Idrak.Abstraction.ElementTypeChoice> DeviceElementTypes { get; }
   public System.Collections.Generic.IReadOnlyList<Idrak.Models.StoredTensor> StoredTensors()
   public System.Collections.Generic.IReadOnlyList<string> Notes { get; }
   public System.Text.Json.Nodes.JsonObject Config { get; }

@@ -133,7 +133,8 @@ internal abstract partial class Tests
         {
             long budget = Need(format);
             string expected = AutoWeights.Formats.First(f => Need(f) <= budget);
-            using var auto = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, AutoWeights = true, AutoWeightsBudget = budget, PackedCache = false });
+            // A float32 run: its formats start at float32 (a 16-bit run's leave it out, plan 37 T2: "element types:" tests it).
+            using var auto = PretrainedModel.Load(folder, new PretrainedOptions { Device = device, AutoWeights = true, AutoWeightsBudget = budget, PackedCache = false, ElementType = "float32" });
             using var named = PretrainedModel.Load(folder, new PretrainedOptions
             {
                 Device = device, Int8 = expected == "int8", Int4 = expected == "int4", BFloat16 = expected == "bfloat16", PackedCache = false,

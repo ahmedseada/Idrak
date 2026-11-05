@@ -130,6 +130,28 @@ public sealed class ElementType : IKind
         ToFloat32 = ElementConversions.BoolToFloat32, FromFloat32 = ElementConversions.BoolFromFloat32,
     };
 
+    /// <summary>16-bit signed integer (plan 37, T2): audio's 16-bit samples kept as stored; storage and conversions only.</summary>
+    public static readonly ElementType Int16 = new()
+    {
+        Name = "int16", Summary = "16-bit signed integer (audio's 16-bit samples kept as stored; storage and conversions only)", BlockBits = 16, IsSigned = true, Kernels = [],
+        ToFloat32 = ElementConversions.Int16ToFloat32, FromFloat32 = ElementConversions.Int16FromFloat32,
+    };
+
+    /// <summary>16-bit unsigned integer (plan 37, T2): token ids of vocabularies under 65,536 in datasets; storage and conversions only.</summary>
+    public static readonly ElementType UInt16 = new()
+    {
+        Name = "uint16", Summary = "16-bit unsigned integer (token ids of vocabularies under 65,536, half of int32's memory; storage and conversions only)", BlockBits = 16, Kernels = [],
+        ToFloat32 = ElementConversions.UInt16ToFloat32, FromFloat32 = ElementConversions.UInt16FromFloat32,
+    };
+
+    /// <summary>64-bit IEEE float (plan 37, T2): values kept for checks against a reference; storage and conversions only.</summary>
+    public static readonly ElementType Float64 = new()
+    {
+        Name = "float64", Summary = "64-bit IEEE float (values kept for checks against a reference; storage and conversions only, narrowed to float32 rounded to nearest)",
+        BlockBits = 64, IsFloat = true, IsSigned = true, Kernels = [],
+        ToFloat32 = ElementConversions.Float64ToFloat32, FromFloat32 = ElementConversions.Float64FromFloat32,
+    };
+
     /// <inheritdoc />
     public required string Name { get; init; }
 
@@ -228,40 +250,68 @@ public sealed class ElementType : IKind
     public override string ToString() => Name;
 }
 
-/// <summary>Which element type a run uses and how it was chosen (<see cref="ElementTypes.Choose"/>).</summary>
+/// <summary>Which element type a run computes in on a device and how it was chosen (<see cref="ElementTypes.Choose"/>).</summary>
 /// <param name="Type">The type.</param>
 /// <param name="Picked">Whether "auto" picked it (else the user selected it).</param>
 /// <param name="Source">Where the choice came from when the user made it ("--dtype", "IDRAK_DEFAULT_DTYPE", an option's name), else null.</param>
 public sealed record ElementTypeChoice(ElementType Type, bool Picked, string? Source)
 {
-    /// <summary>"picked by auto", or "selected by the user (IDRAK_DEFAULT_DTYPE)".</summary>
-    public string How => Picked ? "picked by auto" : $"selected by the user ({Source})";
+    /// <summary>The device the run computes on ("cuda:0"), or null when the choice names none.</summary>
+    public string? Device { get; init; }
 
-    /// <summary>"element type: float32 (picked by auto)": the line a load's report shows.</summary>
-    public override string ToString() => $"element type: {Type.Name} ({How})";
+    /// <summary>
+    /// What the device reported (plan 37, T2): the types it computes natively and why, "bfloat16, float8_e4m3, float32
+    /// (compute capability 8.9: ...)"; null when the choice names no device.
+    /// </summary>
+    public string? Native { get; init; }
+
+    /// <summary>Whether the device computes <see cref="Type"/> natively (else its operations compute in float32 over it).</summary>
+    public bool IsNative { get; init; } = true;
+
+    /// <summary>
+    /// "picked by auto: cuda:0 computes bfloat16, float32 natively (...)", or "selected by the user (IDRAK_DEFAULT_DTYPE)"
+    /// (with "; cpu computes it in float32" where the device has no arithmetic of the type).
+    /// </summary>
+    public string How => Picked
+        ? Native is null ? "picked by auto" : $"picked by auto: {Device} computes {Native}"
+        : IsNative ? $"selected by the user ({Source})" : $"selected by the user ({Source}); {Device} computes it in float32 (it computes {Native})";
+
+    /// <summary>"element type: bfloat16 on cuda:0 (picked by auto: ...)": the line a load's report shows.</summary>
+    public override string ToString() => Device is null ? $"element type: {Type.Name} ({How})" : $"element type: {Type.Name} on {Device} ({How})";
 }
 
 /// <summary>
 /// The element types, by name (ignoring case): the per-element types float32, bfloat16, float16, float8_e4m3,
-/// float8_e5m2, int64, int32, int8, uint8, int4, int2 and bool, which Idrak.Abstraction registers, and the block formats
-/// the packages register (Idrak adds ggml's, from its GGUF types). A name nobody registered is refused with "not
-/// registered". The default type of a run comes from <see cref="EnvironmentVariable"/> (IDRAK_DEFAULT_DTYPE) or a run's
-/// option (<c>--dtype</c>): <see cref="Auto"/> (the default) picks per run, and until plan 37's T2 it picks float32
-/// everywhere, so every result stays as it was. The conversions the dispatcher makes for an operation whose kernel takes
-/// another type are counted here (<see cref="Conversions"/>) and published to telemetry
-/// (<see cref="Diagnostics.ElementsConverted"/>).
+/// float8_e5m2, int64, int32, int8, uint8, int4, int2, bool, int16, uint16 and float64, which Idrak.Abstraction
+/// registers, and the block formats the packages register (Idrak adds ggml's, from its GGUF types). The short names
+/// bf16, f16, fp16, half, f32, fp32, f64, fp64, double and fp8 find their types too. A name nobody registered is refused
+/// with "not registered". The type a run computes in on a device comes from a run's option (<c>--dtype</c>), else
+/// <see cref="EnvironmentVariable"/> (IDRAK_DEFAULT_DTYPE), else <see cref="Auto"/> (the default, plan 37 T2), which
+/// picks what the device computes natively as its backend reports it (<see cref="Devices.BackendCapabilities.NativeTypes"/>,
+/// measured at run time): bfloat16 where native, float16 where only it is, float32 otherwise; float32 selected keeps every
+/// result as before T2. The conversions the dispatcher makes for an operation whose kernel takes another type are counted
+/// here (<see cref="Conversions"/>) and published to telemetry (<see cref="Diagnostics.ElementsConverted"/>).
 /// </summary>
 public static class ElementTypes
 {
     /// <summary>The variable naming the default element type: "IDRAK_DEFAULT_DTYPE".</summary>
     public const string EnvironmentVariable = "IDRAK_DEFAULT_DTYPE";
 
-    /// <summary>The choice that picks the type per run (the default): float32 until plan 37's T2.</summary>
+    /// <summary>The choice that picks the type per device (the default): what the device computes natively, best first.</summary>
     public const string Auto = "auto";
 
     private static readonly KindTable<ElementType> Table = new(nameof(ElementTypes), "Element type", "add it with ElementTypes.Register",
         comparer: StringComparer.OrdinalIgnoreCase,
         unguarded: "a type decides how stored bytes read: another type cannot stand in for it");
+
+    // The short names people write for the built-ins ("bf16"), resolved before the registry (rule 15: no string made).
+    private static readonly Dictionary<string, string> ShortNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["f32"] = "float32", ["fp32"] = "float32", ["bf16"] = "bfloat16", ["f16"] = "float16", ["fp16"] = "float16", ["half"] = "float16",
+        ["f64"] = "float64", ["fp64"] = "float64", ["double"] = "float64", ["fp8"] = "float8_e4m3", ["e4m3"] = "float8_e4m3", ["e5m2"] = "float8_e5m2",
+    };
+
+    private static readonly Dictionary<string, string>.AlternateLookup<ReadOnlySpan<char>> ShortLookup = ShortNames.GetAlternateLookup<ReadOnlySpan<char>>();
 
     private static long s_conversions, s_convertedElements;
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> s_byOperation = new(StringComparer.Ordinal);
@@ -269,7 +319,8 @@ public static class ElementTypes
     static ElementTypes()
     {
         foreach (var type in (ReadOnlySpan<ElementType>)[ElementType.Float32, ElementType.BFloat16, ElementType.Float16, ElementType.Float8E4M3, ElementType.Float8E5M2,
-                     ElementType.Int64, ElementType.Int32, ElementType.Int8, ElementType.UInt8, ElementType.Int4, ElementType.Int2, ElementType.Bool])
+                     ElementType.Int64, ElementType.Int32, ElementType.Int8, ElementType.UInt8, ElementType.Int4, ElementType.Int2, ElementType.Bool,
+                     ElementType.Int16, ElementType.UInt16, ElementType.Float64])
         {
             Table.RegisterDefault(type);
         }
@@ -295,12 +346,13 @@ public static class ElementTypes
     /// <summary>The registered types, in the order of <see cref="Names"/>.</summary>
     public static IReadOnlyList<ElementType> All => Table.Kinds;
 
-    /// <summary>The type registered as <paramref name="name"/>, or null.</summary>
-    public static ElementType? Find(ReadOnlySpan<char> name) => Table.Find(name);
+    /// <summary>The type registered as <paramref name="name"/> (or a built-in's short name: bf16, f16, fp32, ...), or null.</summary>
+    public static ElementType? Find(ReadOnlySpan<char> name) =>
+        Table.Find(name) ?? (ShortLookup.TryGetValue(name.Trim(), out var full) ? Table.Find(full) : null);
 
-    /// <summary>The type registered as <paramref name="name"/>.</summary>
+    /// <summary>The type registered as <paramref name="name"/> (or a built-in's short name: bf16, f16, fp32, ...).</summary>
     /// <exception cref="NotRegisteredException">None is: the message names it and the registered ones.</exception>
-    public static ElementType Get(ReadOnlySpan<char> name) => Table.Get(name);
+    public static ElementType Get(ReadOnlySpan<char> name) => Find(name) ?? Table.Get(name);
 
     /// <summary>The library's type <paramref name="name"/>, whatever an app registered over it; null when the library has none.</summary>
     public static ElementType? Default(string name) => Table.Default(name);
@@ -311,17 +363,63 @@ public static class ElementTypes
     /// <summary>Each registered type as "name: summary", one per line.</summary>
     public static string Describe() => Table.Describe();
 
-    /// <summary>The values <see cref="Choose"/> accepts until plan 37's T2: auto and float32.</summary>
-    public static IReadOnlyList<string> Accepted { get; } = [Auto, ElementType.Float32.Name];
+    /// <summary>The types a run may compute in (plan 37, T2), best first as <see cref="Auto"/> prefers them: bfloat16, float16, float32.</summary>
+    public static IReadOnlyList<ElementType> ComputeTypes { get; } = [ElementType.BFloat16, ElementType.Float16, ElementType.Float32];
+
+    /// <summary>The values <see cref="Choose"/> accepts: auto and the <see cref="ComputeTypes"/> (with their short names, bf16, f16, fp32, ...).</summary>
+    public static IReadOnlyList<string> Accepted { get; } = [Auto, .. ComputeTypes.Select(t => t.Name)];
 
     /// <summary>
-    /// The default type of a run: <paramref name="asked"/> (a run's option, named <paramref name="source"/> in the choice
-    /// and in a refusal) when given, else <see cref="EnvironmentVariable"/>, else <see cref="Auto"/>. Auto picks float32
-    /// until plan 37's T2, so every result stays as it was.
+    /// The type <see cref="Auto"/> picks on a device whose backend reports <paramref name="capabilities"/>: the first of
+    /// <see cref="ComputeTypes"/> it computes natively (<see cref="Devices.BackendCapabilities.NativeTypes"/>), float32 when
+    /// it computes none of the others.
+    /// </summary>
+    public static ElementType Pick(Devices.BackendCapabilities capabilities)
+    {
+        ArgumentNullException.ThrowIfNull(capabilities);
+        foreach (var type in ComputeTypes)
+        {
+            if (IsNative(capabilities, type))
+            {
+                return type;
+            }
+        }
+
+        return ElementType.Float32;
+    }
+
+    // Whether the device computes `type` natively (float32 always: every backend's kernels compute it).
+    private static bool IsNative(Devices.BackendCapabilities capabilities, ElementType type)
+    {
+        if (ReferenceEquals(type, ElementType.Float32))
+        {
+            return true;
+        }
+
+        foreach (var native in capabilities.NativeTypes)
+        {
+            if (ReferenceEquals(native, type))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The type a run computes in on <paramref name="device"/> (the CPU when null): <paramref name="asked"/> (a run's
+    /// option, named <paramref name="source"/> in the choice and in a refusal) when given, else
+    /// <see cref="EnvironmentVariable"/>, else <see cref="Auto"/>, which picks what the device computes natively
+    /// (<see cref="Pick"/>, from what its backend measured at run time). The choice says how it was made and what the
+    /// device reported; a type the device has no arithmetic for is stored in it and computed in float32 (said so).
     /// </summary>
     /// <exception cref="ArgumentException">A value other than those <see cref="Accepted"/> lists (the message names them).</exception>
-    public static ElementTypeChoice Choose(string? asked = null, string source = "--dtype")
+    public static ElementTypeChoice Choose(string? asked = null, string source = "--dtype", Device? device = null)
     {
+        device ??= Device.Cpu;
+        var capabilities = device.Backend.Capabilities;
+        string native = $"{string.Join(", ", capabilities.NativeTypes.Select(t => t.Name))} natively ({capabilities.NativeReport})";
         string? value = asked, from = source;
         if (string.IsNullOrWhiteSpace(value))
         {
@@ -331,21 +429,22 @@ public static class ElementTypes
 
         if (string.IsNullOrWhiteSpace(value) || value.Trim().Equals(Auto, StringComparison.OrdinalIgnoreCase))
         {
-            return new ElementTypeChoice(ElementType.Float32, Picked: true, Source: null);
+            return new ElementTypeChoice(Pick(capabilities), Picked: true, Source: null) { Device = device.ToString(), Native = native };
         }
 
-        if (value.Trim().Equals(ElementType.Float32.Name, StringComparison.OrdinalIgnoreCase))
+        var type = Find(value.AsSpan().Trim());
+        if (type is null || !ComputeTypes.Contains(type))
         {
-            return new ElementTypeChoice(ElementType.Float32, Picked: false, Source: from);
+            throw new ArgumentException($"{from} '{value}': the element type a run computes in is one of {string.Join(", ", Accepted)} (bf16, f16 and fp32 for short; auto picks what the device computes natively).");
         }
 
-        throw new ArgumentException($"{from} '{value}': the default element type is one of {string.Join(", ", Accepted)} (auto picks per run; the other types come with plan 37's T2).");
+        return new ElementTypeChoice(type, Picked: false, Source: from) { Device = device.ToString(), Native = native, IsNative = IsNative(capabilities, type) };
     }
 
     /// <summary>
     /// Publishes <paramref name="choice"/> for a run on <paramref name="device"/> to telemetry
     /// (<see cref="Diagnostics.ElementTypeChosen"/>, at <see cref="Diagnostics.TelemetryLevel.Devices"/>): a load says which type
-    /// it computes in and how it was chosen.
+    /// it computes in on each device, how it was chosen and what the device reported.
     /// </summary>
     public static void Report(ElementTypeChoice choice, Device device)
     {
@@ -353,7 +452,7 @@ public static class ElementTypes
         ArgumentNullException.ThrowIfNull(device);
         if (Diagnostics.Telemetry.IsEnabled(Diagnostics.TelemetryLevel.Devices))
         {
-            Diagnostics.Telemetry.ElementTypeChosen(new Diagnostics.ElementTypeChosen(device.ToString(), choice.Type.Name, choice.How));
+            Diagnostics.Telemetry.ElementTypeChosen(new Diagnostics.ElementTypeChosen(device.ToString(), choice.Type.Name, choice.How, choice.Native ?? ""));
         }
     }
 
@@ -644,6 +743,85 @@ internal static class ElementConversions
         for (int i = 0; i < source.Length; i++)
         {
             destination[i] = source[i] != 0f && !float.IsNaN(source[i]) ? (byte)1 : (byte)0;
+        }
+    }
+
+    // Widened a vector at a time (the halves of each 16-bit vector to int32, then to float32), a scalar tail for the rest.
+    public static void Int16ToFloat32(ReadOnlySpan<byte> source, Span<float> destination)
+    {
+        var values = MemoryMarshal.Cast<byte, short>(source)[..destination.Length];
+        int i = 0;
+        if (Vector.IsHardwareAccelerated)
+        {
+            for (; i <= values.Length - Vector<short>.Count; i += Vector<short>.Count)
+            {
+                Vector.Widen(new Vector<short>(values[i..]), out var low, out var high);
+                Vector.ConvertToSingle(low).CopyTo(destination[i..]);
+                Vector.ConvertToSingle(high).CopyTo(destination[(i + Vector<int>.Count)..]);
+            }
+        }
+
+        for (; i < values.Length; i++)
+        {
+            destination[i] = values[i];
+        }
+    }
+
+    public static void Int16FromFloat32(ReadOnlySpan<float> source, Span<byte> destination)
+    {
+        var values = MemoryMarshal.Cast<byte, short>(destination);
+        for (int i = 0; i < source.Length; i++)
+        {
+            values[i] = (short)Saturate(source[i], short.MinValue, short.MaxValue);
+        }
+    }
+
+    public static void UInt16ToFloat32(ReadOnlySpan<byte> source, Span<float> destination)
+    {
+        var values = MemoryMarshal.Cast<byte, ushort>(source)[..destination.Length];
+        int i = 0;
+        if (Vector.IsHardwareAccelerated)
+        {
+            for (; i <= values.Length - Vector<ushort>.Count; i += Vector<ushort>.Count)
+            {
+                Vector.Widen(new Vector<ushort>(values[i..]), out var low, out var high);
+                Vector.ConvertToSingle(Vector.AsVectorInt32(low)).CopyTo(destination[i..]);     // at most 65,535: exact as int32
+                Vector.ConvertToSingle(Vector.AsVectorInt32(high)).CopyTo(destination[(i + Vector<int>.Count)..]);
+            }
+        }
+
+        for (; i < values.Length; i++)
+        {
+            destination[i] = values[i];
+        }
+    }
+
+    public static void UInt16FromFloat32(ReadOnlySpan<float> source, Span<byte> destination)
+    {
+        var values = MemoryMarshal.Cast<byte, ushort>(destination);
+        for (int i = 0; i < source.Length; i++)
+        {
+            values[i] = (ushort)Saturate(source[i], ushort.MinValue, ushort.MaxValue);
+        }
+    }
+
+    // Narrowed to the nearest float32 (ties to even; past float32's range an infinity, as a cast does).
+    public static void Float64ToFloat32(ReadOnlySpan<byte> source, Span<float> destination)
+    {
+        var values = MemoryMarshal.Cast<byte, double>(source);
+        for (int i = 0; i < destination.Length; i++)
+        {
+            destination[i] = (float)values[i];
+        }
+    }
+
+    // Exact: every float32 is a float64.
+    public static void Float64FromFloat32(ReadOnlySpan<float> source, Span<byte> destination)
+    {
+        var values = MemoryMarshal.Cast<byte, double>(destination);
+        for (int i = 0; i < source.Length; i++)
+        {
+            values[i] = source[i];
         }
     }
 

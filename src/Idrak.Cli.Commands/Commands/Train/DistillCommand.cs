@@ -99,7 +99,7 @@ internal sealed class DistillCommand : Command
           -w, --weights F           the student's base weights, kept frozen: int8, int4 (QLoRA-style, not NF4) or bf16
           and these options of idrak tune train: --rank, --lora-alpha (tune's --alpha), --lr, --epochs, --max-length,
           --batch-tokens, --accumulate, --targets, --optimizer, --weight-decay, --momentum, --schedule, --warmup, --min-lr,
-          --decay, --adapter-type, --adapter, --context, --matmul, --gpu-memory, --eval, --eval-fraction, --eval-every,
+          --decay, --adapter-type, --adapter, --context, --matmul, --dtype, --gpu-memory, --eval, --eval-fraction, --eval-every,
           --save-every, --system, --max-rows, --no-packing, --checkpointing, --no-checkpointing, --recompute,
           --bf16-activations, --no-activation-estimate, --no-graphs, --fp8, --cpu-optimizer, --no-dedup, --offload, and for image
           records --data-format, --images, --image-transform, --vision, --parts and --feature-cache (a vision-language

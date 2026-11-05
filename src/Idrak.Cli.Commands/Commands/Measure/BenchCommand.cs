@@ -40,7 +40,10 @@ internal sealed class BenchCommand : Command
         "Options:\n" +
         "  -w, --weights FORMAT  int8, int4, bf16 or a registered packed format (the model's weights; the gemv kernels)\n" +
         "      --head-weights F  the output head's format beside -w (bf16: the checkpoint's own scores, less memory, slower)\n" +
-        "  -k, --kv FORMAT       the key/value cache format (float32, int8, bfloat16 or a registered one)\n" +
+        "  -k, --kv FORMAT       the key/value cache format (auto: the run's element type; float32, int8, bfloat16 or a\n" +
+        "                        registered one; IDRAK_KV_CACHE_TYPE)\n" +
+        "      --dtype TYPE      with a model: the element type the run computes in (auto, float32, bf16, f16;\n" +
+        "                        IDRAK_DEFAULT_DTYPE): the load says the type per device and how it was chosen\n" +
         "      --context N       the model's context length\n" +
         "      --adapter DIR     merge a LoRA or DoRA adapter first\n" +
         "      --prompt-tokens N prompt length (default 512, at most the context)\n" +
@@ -81,7 +84,7 @@ internal sealed class BenchCommand : Command
         "  idrak b big-model --draft small-model -d cuda:0 -w int8";
 
     public override IReadOnlyCollection<string> ValueOptions =>
-        [.. ModelChoices.ValueOptions, "--prompt-tokens", "--tokens", "--num-ctx", "--kernels", "--repeat", "--save", "--compare", "--devices", "--draft", "--draft-tokens", .. WarmupOptions];
+        [.. ModelChoices.ValueOptions, ModelChoices.DtypeOption, "--prompt-tokens", "--tokens", "--num-ctx", "--kernels", "--repeat", "--save", "--compare", "--devices", "--draft", "--draft-tokens", .. WarmupOptions];
 
     // The kernel benchmarks' warm-up options (BenchSettle).
     private static readonly string[] WarmupOptions = ["--warmup", "--warmup-calls", "--settle", "--settle-rounds", "--warmup-round"];
@@ -290,9 +293,10 @@ internal sealed class BenchCommand : Command
         }
 
         string prompt = Prompt(tokenizer, promptTokens);
-        string kv = choice.Kv ?? "float32";
+        var layout = ModelChoices.CacheLayout(choice, model);           // --kv, IDRAK_KV_CACHE_TYPE, else the run's element type (plan 37, T2)
+        string kv = layout.Name;
         int window = Math.Min(Math.Max(context.IntOption("--num-ctx", promptTokens + tokens + 1), promptTokens + tokens + 1), model.MaxPositions);
-        var generator = model.CreateGenerator(KeyValueLayouts.Get(kv), window);
+        var generator = model.CreateGenerator(layout, window);
         generator.KeepCache = false;                                    // every run reads its whole prompt again
         var options = new GenerationOptions
         {
@@ -432,7 +436,7 @@ internal sealed class BenchCommand : Command
         }
 
         using var model = ModelChoices.Load(context, choice, run.Device);
-        var draft = model.CreateGenerator(KeyValueLayouts.Get(choice.Kv ?? "float32"), contextLength);
+        var draft = model.CreateGenerator(ModelChoices.CacheLayout(choice, model), contextLength);
         draft.KeepCache = false;                                        // every run reads its whole prompt again, as the target's
         if (SpeculativeDecoding.Refusal(target.Tokenizer, draft) is { } reason)
         {

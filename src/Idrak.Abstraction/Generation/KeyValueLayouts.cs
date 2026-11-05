@@ -234,9 +234,21 @@ public interface IRowStartsLayout : IKeyValueLayout
     Tensor? AttendRows(Tensor q, KeyValueCache cache, Tensor position, int steps, float scale, Tensor starts, int headsPerRow, AttentionVariant variant);
 }
 
+/// <summary>Which key/value cache format a run uses and how it was chosen (<see cref="KeyValueLayouts.Choose"/>, plan 37 T2).</summary>
+/// <param name="Layout">The format.</param>
+/// <param name="Picked">Whether "auto" picked it (from the run's element type), else the user selected it.</param>
+/// <param name="Source">Where the user's choice came from ("--kv", "IDRAK_KV_CACHE_TYPE"), else null.</param>
+/// <param name="How">"picked by auto: the run computes in bfloat16", or "selected by the user (--kv)".</param>
+public sealed record KeyValueLayoutChoice(IKeyValueLayout Layout, bool Picked, string? Source, string How)
+{
+    /// <summary>"kv cache: bfloat16 (picked by auto: the run computes in bfloat16)".</summary>
+    public override string ToString() => $"kv cache: {Layout.Name} ({How})";
+}
+
 /// <summary>
 /// The key/value cache formats by name: "float32", "int8" and "bfloat16" (the built-in <see cref="KeyValueFormat"/>s) are
-/// registered; add formats of one's own with <see cref="Register"/>, so options and tools can choose them by name.
+/// registered; add formats of one's own with <see cref="Register"/>, so options and tools can choose them by name. A run's
+/// format is chosen by <see cref="Choose"/>: the user's (<c>--kv</c>, IDRAK_KV_CACHE_TYPE), else the run's compute type.
 /// </summary>
 public static class KeyValueLayouts
 {
@@ -296,6 +308,45 @@ public static class KeyValueLayouts
 
     /// <summary>Who registered the layout <paramref name="name"/>: <see cref="Overrides.Library"/> or the app's assembly; null when none is.</summary>
     public static string? Origin(string name) => Registry.Origin(name);
+
+    /// <summary>The variable naming a run's key/value cache type (plan 37, T2): "IDRAK_KV_CACHE_TYPE".</summary>
+    public const string EnvironmentVariable = "IDRAK_KV_CACHE_TYPE";
+
+    /// <summary>The cache type that keeps the run's compute type (the default): the format named as that element type, where one is registered.</summary>
+    public const string Auto = "auto";
+
+    /// <summary>
+    /// The key/value cache format of a run computing in <paramref name="computeType"/> (plan 37, T2):
+    /// <paramref name="asked"/> (a run's option, named <paramref name="source"/>) when given, else
+    /// <see cref="EnvironmentVariable"/>, else <see cref="Auto"/>, which keeps the compute type (the format registered under
+    /// its name: bfloat16 for a bfloat16 run, float32 for a float32 one; float32 where none is). A name is a registered
+    /// format's or an element type's (short names too: bf16, f32).
+    /// </summary>
+    /// <exception cref="NotRegisteredException">No format of the name is registered (the message names the source and the registered ones).</exception>
+    public static KeyValueLayoutChoice Choose(string? asked, ElementType computeType, string source = "--kv")
+    {
+        ArgumentNullException.ThrowIfNull(computeType);
+        string? value = asked, from = source;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            value = Environment.GetEnvironmentVariable(EnvironmentVariable);
+            from = EnvironmentVariable;
+        }
+
+        if (string.IsNullOrWhiteSpace(value) || value.Trim().Equals(Auto, StringComparison.OrdinalIgnoreCase))
+        {
+            return Registry.Find(computeType.Name) is { } kept
+                ? new KeyValueLayoutChoice(kept, Picked: true, Source: null, $"picked by auto: the run computes in {computeType.Name}")
+                : new KeyValueLayoutChoice(BuiltIn[(int)KeyValueFormat.Float32], Picked: true, Source: null,
+                    $"picked by auto: the run computes in {computeType.Name}, which has no cache format registered");
+        }
+
+        var name = value.AsSpan().Trim();
+        var layout = Registry.Find(name) ?? (ElementTypes.Find(name) is { } type ? Registry.Find(type.Name) : null)
+            ?? throw new NotRegisteredException(nameof(KeyValueLayouts), name.ToString(), Registry.Names,
+                $"{from} '{value}': no key/value cache format of that name is registered ({Auto}, {string.Join(", ", Registry.Names)}); add it with KeyValueLayouts.Register.");
+        return new KeyValueLayoutChoice(layout, Picked: false, Source: from, $"selected by the user ({from})");
+    }
 
     private sealed class Float32Layout : KeyValueLayout, IRowStartsLayout, IRecordableLayout, ISlidingWindowLayout, IFusedWriteLayout
     {

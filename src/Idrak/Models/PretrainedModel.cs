@@ -292,9 +292,13 @@ public sealed record PretrainedOptions
     public bool? ColdExpertsOnCpu { get; init; }
 
     /// <summary>
-    /// The element type the run computes in (plan 37, T0): "auto" (picked per run) or "float32"; null takes
-    /// <see cref="ElementTypes.EnvironmentVariable"/> (IDRAK_DEFAULT_DTYPE), else auto. Until plan 37's T2 auto picks
-    /// float32, so every result is as before. <see cref="PretrainedModel.ElementType"/> says what was chosen and how.
+    /// The element type the run computes in (plan 37, T0 and T2): "auto" (what the device computes natively: bfloat16,
+    /// float16, else float32), "float32" (every result as before T2), "bfloat16" or "float16" (bf16, f16 for short); null
+    /// takes <see cref="ElementTypes.EnvironmentVariable"/> (IDRAK_DEFAULT_DTYPE), else auto. A 16-bit run multiplies in its
+    /// type where the device computes it (float32 sums); with <see cref="AutoWeights"/> its weights' format is chosen among
+    /// the 16-bit and smaller ones (float32 weights would give the same products in twice the memory). Weights a load does
+    /// not choose by memory stay as named (float32 by default: a training run's trainable weights).
+    /// <see cref="PretrainedModel.ElementType"/> says what was chosen and how.
     /// </summary>
     public string? ElementType { get; init; }
 
@@ -486,6 +490,12 @@ public sealed class PretrainedModel : IDisposable
         string placementName = options.WeightPlacement ?? WeightPlacements.DefaultName;
         var placement = !options.Deferred && placementTarget.Type != DeviceType.Cpu ? WeightPlacements.Get(placementName) : null;
         bool mayLeaveDevice = placement is not null && !placement.Name.Equals(WeightPlacements.AllOnDevice, StringComparison.OrdinalIgnoreCase);
+
+        // The run's element type (plan 37, T0 and T2): chosen before any weight is read, so a value nobody accepts fails at
+        // once, and the weights' format follows it. Auto picks what the device computes natively (bfloat16, float16, else
+        // float32); the user's --dtype or IDRAK_DEFAULT_DTYPE wins.
+        var elementType = ElementTypes.Choose(options.ElementType, options.ElementTypeSource, placementTarget);
+        bool sixteenBits = ReferenceEquals(elementType.Type, Abstraction.ElementType.BFloat16) || ReferenceEquals(elementType.Type, Abstraction.ElementType.Float16);
         if (options.AutoWeights && !options.NamesFormat && !options.Deferred)
         {
             // The weights' format chosen before any weight is read: the largest that fits what the device reports free (the
@@ -493,8 +503,10 @@ public sealed class PretrainedModel : IDisposable
             var target = placementTarget;
             int context = Math.Min(options.AutoWeightsContext ?? options.MaxPositions ?? AutoWeights.DefaultContext, spec.MaxPositions);
             // A bfloat16 checkpoint's values are bfloat16 already: float32 would hold the same values in twice the memory.
+            // A run computing in 16 bits rounds its products' operands to 16 bits anyway: float32 weights would be the same
+            // products in twice the memory (plan 37, T2).
             IReadOnlyList<string> formats = options.AutoWeightsFormats
-                ?? (reader.Names.Select(reader.FormatOf).OfType<WeightFormat>().GroupBy(f => f).MaxBy(g => g.Count())?.Key == WeightFormat.BFloat16
+                ?? (sixteenBits || reader.Names.Select(reader.FormatOf).OfType<WeightFormat>().GroupBy(f => f).MaxBy(g => g.Count())?.Key == WeightFormat.BFloat16
                     ? [.. AutoWeights.Formats.Where(f => f != "float32")] : AutoWeights.Formats);
             weightsChoice = AutoWeights.Choose(spec, context, options.AutoWeightsBudget ?? target.Backend.AvailableMemory(), ComputeResources.OffloadToHostMemory || mayLeaveDevice,
                 options.AutoWeightsHeadroom, formats, $"{name} on {target}");
@@ -508,9 +520,7 @@ public sealed class PretrainedModel : IDisposable
             notes.Add($"weights {weightsChoice}.");
         }
 
-        // The run's element type (plan 37, T0): chosen before any weight is read, so a value nobody accepts fails at once.
-        var elementType = ElementTypes.Choose(options.ElementType, options.ElementTypeSource);
-        ElementTypes.Report(elementType, options.Device ?? Abstraction.Device.Default);
+        ElementTypes.Report(elementType, placementTarget);
 
         // The experts' placement (plan 37, R1): where a mixture-of-experts model's experts live, decided before the layers'
         // placement, which then counts only the experts kept on the device.
@@ -682,6 +692,18 @@ public sealed class PretrainedModel : IDisposable
         model.Placement = plan;
         model.ExpertPlacement = expertPlan;
         model.ElementType = elementType;
+        model.DeviceElementTypes = [elementType];
+        if (plan is { Split: true } && placementTarget.Type != DeviceType.Cpu)
+        {
+            // The layers the CPU computes (W1's split): its own choice, said beside the device's (auto: float32 there).
+            var cpuType = ElementTypes.Choose(options.ElementType, options.ElementTypeSource, Abstraction.Device.Cpu);
+            ElementTypes.Report(cpuType, Abstraction.Device.Cpu);
+            model.DeviceElementTypes = [elementType, cpuType];
+        }
+
+        // The products in the run's type, unless the caller chooses (a MixedPrecision scope, IDRAK_MATMUL): bfloat16 or
+        // float16 operands where the device computes them, float32 sums; a float32 run as before (plan 37, T2).
+        network.Precision = ReferenceEquals(elementType.Type, Abstraction.ElementType.Float32) ? null : MixedPrecision.For(elementType.Type);
         model.KeptWeights = buildWeights.StoredSummary;                      // weights kept as stored or expanded (plan 37, Q0)
         if (model.KeptWeights is { } keptWeights)
         {
@@ -923,10 +945,28 @@ public sealed class PretrainedModel : IDisposable
     public ExpertPlan? ExpertPlacement { get; private set; }
 
     /// <summary>
-    /// The element type the load chose for the run and how (<see cref="PretrainedOptions.ElementType"/>): "element type:
-    /// float32 (picked by auto)", or "(selected by the user (IDRAK_DEFAULT_DTYPE))". Published to telemetry when chosen.
+    /// The element type the load chose for the run on its device and how (<see cref="PretrainedOptions.ElementType"/>, plan
+    /// 37 T0 and T2): "element type: bfloat16 on cuda:0 (picked by auto: cuda:0 computes bfloat16, float32 natively (...))",
+    /// or "(selected by the user (IDRAK_DEFAULT_DTYPE))". The network's products run in it (<see cref="Sequential.Precision"/>),
+    /// and a format chosen by memory (<see cref="PretrainedOptions.AutoWeights"/>) is a 16-bit or smaller one for a 16-bit
+    /// run. Published to telemetry when chosen.
     /// </summary>
-    public ElementTypeChoice ElementType { get; private set; } = ElementTypes.Choose(ElementTypes.Auto);
+    public ElementTypeChoice ElementType { get; private set; } = new(Abstraction.ElementType.Float32, Picked: true, Source: null);
+
+    /// <summary>
+    /// The element type of each device the run computes on (plan 37, T2): the model's device first, then the CPU when the
+    /// load split the layers with it (<see cref="Placement"/>), each chosen and said on its own.
+    /// </summary>
+    public IReadOnlyList<ElementTypeChoice> DeviceElementTypes { get; private set; } = [];
+
+    /// <summary>
+    /// The key/value cache format generation with the model uses unless one is named (plan 37, T2): IDRAK_KV_CACHE_TYPE,
+    /// else auto, which keeps the run's compute type (<see cref="KeyValueLayouts.Choose"/>: a bfloat16 cache for a
+    /// bfloat16 run, float32 for a float32 one). Pass its <see cref="KeyValueLayoutChoice.Layout"/> to <c>CreateGenerator</c>.
+    /// </summary>
+    public KeyValueLayoutChoice CacheChoice => _cacheChoice ??= KeyValueLayouts.Choose(null, ElementType.Type, KeyValueLayouts.EnvironmentVariable);
+
+    private KeyValueLayoutChoice? _cacheChoice;
 
     /// <summary>
     /// What the load did with the weights stored in a format of their own (plan 37, Q0, <see cref="PretrainedOptions.KeepPacked"/>):

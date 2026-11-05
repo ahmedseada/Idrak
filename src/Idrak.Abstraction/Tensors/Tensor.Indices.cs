@@ -100,6 +100,41 @@ public sealed partial class Tensor
         return t;
     }
 
+    /// <summary>
+    /// A new tensor of the same shape on the same device holding these elements in <paramref name="type"/> (plan 37, T2):
+    /// bfloat16 or float16 storage of a float32 tensor at half its memory, int16 or uint16 samples and token ids, float64
+    /// values for a check, and back. Converted on the device by its own conversion (<c>Backend.ConvertElements</c>),
+    /// rounded to nearest (ties to even) and saturated as the type's own conversion does; integers between float32, int32
+    /// and int64 exactly or refused. The same type gives a copy. Not recorded for gradients.
+    /// </summary>
+    public Tensor ConvertTo(ElementType type)
+    {
+        ArgumentNullException.ThrowIfNull(type);
+        ThrowIfDisposed();
+        if (ReferenceEquals(type, ElementType))
+        {
+            return Clone();
+        }
+
+        var result = ReferenceEquals(type, ElementType.Float32) ? Empty(_shape, Device) : Empty(_shape, Device, type);
+        var storage = ReadStorage(out var scratch);
+        try
+        {
+            Backend.ConvertElements(storage, result.Storage);
+        }
+        catch
+        {
+            result.Dispose();
+            throw;
+        }
+        finally
+        {
+            scratch?.Release();
+        }
+
+        return result;
+    }
+
     /// <summary>The elements' stored bytes (<see cref="ElementType"/>.ByteCount(<see cref="Size"/>) of them), row-major.</summary>
     public byte[] ToBytes()
     {

@@ -365,6 +365,11 @@ internal sealed unsafe partial class CudaBackend : Backend, IKernelProfiler, IFl
         // Kernel shapes from what the device reports (KernelShapes); the main module is generated for them.
         _limits = CudaDeviceLimits.Read(device, (long)memory);
         Capabilities = Capabilities with { SpanAttentionHeadDim = SpanHeadDim(_limits) };   // the span kernels this device holds
+        Capabilities = Capabilities with                                    // the types its kernels compute natively here (plan 37, T2)
+        {
+            NativeTypes = CudaNativeTypes.Of(_computeMajor, _computeMinor),
+            NativeReport = $"compute capability {_computeMajor}.{_computeMinor}: bfloat16 tensor cores from 8.0, fp8 tensor cores from 8.9; float16 products are not built",
+        };
         _shapes = KernelShapes.Derive(_limits, out string? unsupported)
                   ?? throw new CudaException($"{Marshal.PtrToStringAnsi((IntPtr)name)} cannot run the Idrak kernels: {unsupported}.");
         // The CUDA version the installed driver supports (13000 = 13.0), not the driver's own release number.

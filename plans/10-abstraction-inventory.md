@@ -155,7 +155,7 @@ puts it (Abstraction when Abstraction or several packages use it, else the one p
 | `Idrak.Abstraction.Diagnostics.ProfileWriters` | registry | public | — |  | csv, json, markdown, table | — | Abstraction |
 | `Idrak.Abstraction.Diagnostics.ProgressReporters` | registry | public | — |  | console, json, plain, quiet | — | Abstraction |
 | `Idrak.Abstraction.Diagnostics.SettingAdvisors` | registry | public | — |  | cluster, image reader, pretrained model | Idrak, Network, Text | Abstraction |
-| `Idrak.Abstraction.ElementTypes` | registry | public | Device |  | bfloat16, bool, float16, float32, float8_e4m3, float8_e5m2, int2, int32, +26 | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
+| `Idrak.Abstraction.ElementTypes` | registry | public | Device |  | bfloat16, bool, float16, float32, float64, float8_e4m3, float8_e5m2, int16, +29 | Abstraction, AspNetCore, Audio, Audio.Plugins, Cluster, Data, Gpu, Idrak, Imaging, Mcp, Network, Onnx.Runtime, Reinforcement, Reinforcement.Plugins, Text, Text.Plugins, Vision, Vision.Plugins | Abstraction |
 | `Idrak.Abstraction.Formats.CheckpointFormats` | registry | public | — |  | gguf, pytorch, safetensors | Audio, Idrak, Vision | Abstraction |
 | `Idrak.Abstraction.Formats.IBFloat16TensorStore` | interface | public | — | RenamedTensorStore, SafeTensorsReader |  | Idrak | Abstraction |
 | `Idrak.Abstraction.Formats.ICheckpointFormat` | interface | public | — | CheckpointFormats.GuardedFormat, GgufCheckpointFormat, PyTorchCheckpointFormat, SafeTensorsCheckpointFormat |  | Abstraction, Audio, Idrak, Vision | Abstraction |
