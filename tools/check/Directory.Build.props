@@ -1,0 +1,12 @@
+<Project>
+  <!-- The pre-build check is a developer tool, not a package: it stops here instead of taking the repository's root props
+       (their global usings of Idrak.Abstraction and the package settings are the library's). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

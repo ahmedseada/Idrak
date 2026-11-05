@@ -329,7 +329,7 @@ Working rules for this repository are in `CLAUDE.md`; the performance rules in `
 | `samples/` | 19 sample apps (Arabic OCR, chat, coding agent, GPT API and training, house prices and its API, OCR, ONNX import, an override checked with the testing kit, quantization, RAG, re-ranker, sentiment, shape recognition, spirals, summarizer, text generation, XOR), two of them with their own tests, and scripts (IdrakVision, OpenVoice, WhisperSpeech) |
 | `api/` | the public API dumps the guard test checks |
 | `docs/` | `optimization.md` and the longer guides |
-| `tools/` | fixture makers (Python references the tests compare against: uroman, HarfBuzz, torch losses, ffmpeg) |
+| `tools/` | fixture makers (Python references the tests compare against: uroman, HarfBuzz, torch losses, ffmpeg); `tools/check`, the pre-build check (every project's compile errors in one pass, without building) |
 
 ---
 

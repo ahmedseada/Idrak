@@ -4,7 +4,9 @@ Thank you for helping. Bug reports, benchmark runs on new hardware, and pull req
 
 ## Before a pull request
 
-- **Build:** `dotnet build -c Release` must show 0 warnings and 0 errors (warnings are errors).
+- **Build:** `dotnet build -c Release` must show 0 warnings and 0 errors (warnings are errors). Before it, the pre-build
+  check `dotnet run -c Release --project tools/check -- tests/Idrak.Tests/Idrak.Tests.csproj` lists every project's
+  errors in one pass (the build stops at the first failing project); see `tools/check/README.md`.
 - **Tests:** `dotnet run -c Release --project tests/Idrak.Tests` runs every test on every device present (CPU, and CUDA
   GPUs); all must pass. `IDRAK_FILTER=<text>` runs the tests whose names contain the text.
 - **Speed:** changes to kernels or hot paths come with before and after numbers from the matching benchmark
